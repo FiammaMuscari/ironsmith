@@ -10,6 +10,7 @@ use crate::ids::ObjectId;
 use crate::object::CounterType;
 use crate::target::ObjectFilter;
 use crate::zone::Zone;
+use std::collections::HashMap;
 
 /// A remove counters cost.
 ///
@@ -250,21 +251,49 @@ impl CostPayer for RemoveAnyCountersAmongCost {
             FallbackStrategy::Maximum,
         );
 
-        let distributed_total: u32 = distribution.iter().map(|(_, amount)| *amount).sum();
-        if distributed_total != self.count {
+        let mut allocations: HashMap<ObjectId, u32> = HashMap::new();
+        for (target, amount) in distribution {
+            if let Target::Object(object_id) = target {
+                *allocations.entry(object_id).or_insert(0) += amount;
+            }
+        }
+
+        let distributed_total: u32 = allocations.values().copied().sum();
+        if distributed_total > self.count {
             return Err(CostPaymentError::Other(
-                "counter distribution must assign the full cost".to_string(),
+                "counter distribution assigned too many counters".to_string(),
             ));
         }
 
+        if distributed_total < self.count {
+            let mut remaining = self.count - distributed_total;
+            for object_id in &valid_targets {
+                if remaining == 0 {
+                    break;
+                }
+                let available_total = game
+                    .object(*object_id)
+                    .map(|obj| obj.counters.values().copied().sum::<u32>())
+                    .unwrap_or(0);
+                let already_allocated = allocations.get(object_id).copied().unwrap_or(0);
+                let free_capacity = available_total.saturating_sub(already_allocated);
+                if free_capacity == 0 {
+                    continue;
+                }
+                let add = remaining.min(free_capacity);
+                *allocations.entry(*object_id).or_insert(0) += add;
+                remaining -= add;
+            }
+            if remaining > 0 {
+                return Err(CostPaymentError::InsufficientCounters);
+            }
+        }
+
         let mut removed_total = 0u32;
-        for (target, amount_for_target) in distribution {
+        for (object_id, amount_for_target) in allocations {
             if amount_for_target == 0 {
                 continue;
             }
-            let Target::Object(object_id) = target else {
-                continue;
-            };
 
             let available_counters: Vec<(CounterType, u32)> = game
                 .object(object_id)
