@@ -345,6 +345,13 @@ pub trait CostPayer: std::fmt::Debug + Send + Sync {
         // Default: immediate payment
         crate::costs::CostProcessingMode::Immediate
     }
+
+    /// Returns the backing effect when this cost is effect-backed.
+    ///
+    /// Default is `None` for non-effect costs.
+    fn effect_ref(&self) -> Option<&crate::effect::Effect> {
+        None
+    }
 }
 
 // Implement Clone for Box<dyn CostPayer>

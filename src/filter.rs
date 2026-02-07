@@ -369,6 +369,12 @@ pub struct ObjectFilter {
     /// If true, must be untapped
     pub untapped: bool,
 
+    /// If true, must be attacking
+    pub attacking: bool,
+
+    /// If true, must be blocking
+    pub blocking: bool,
+
     /// Power comparison (creature must satisfy)
     pub power: Option<Comparison>,
 
@@ -905,6 +911,22 @@ impl ObjectFilter {
         if self.untapped && is_tapped {
             return false;
         }
+        if self.attacking
+            && !game
+                .combat
+                .as_ref()
+                .is_some_and(|combat| crate::combat_state::is_attacking(combat, object.id))
+        {
+            return false;
+        }
+        if self.blocking
+            && !game
+                .combat
+                .as_ref()
+                .is_some_and(|combat| crate::combat_state::is_blocking(combat, object.id))
+        {
+            return false;
+        }
 
         // Power check
         if let Some(power_cmp) = &self.power {
@@ -1388,6 +1410,12 @@ impl ObjectFilter {
         }
         if self.nontoken {
             parts.push("nontoken".to_string());
+        }
+        if self.attacking {
+            parts.push("attacking".to_string());
+        }
+        if self.blocking {
+            parts.push("blocking".to_string());
         }
 
         // Handle card types

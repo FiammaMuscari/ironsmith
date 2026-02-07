@@ -1812,7 +1812,8 @@ fn collect_effect_descriptions(effects: &[crate::effect::Effect]) -> Vec<String>
 }
 
 fn ensure_sentence(text: &str) -> String {
-    let trimmed = text.trim();
+    let cleaned = cleanup_decompiled_text(text);
+    let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         return String::new();
     }
@@ -1821,6 +1822,17 @@ fn ensure_sentence(text: &str) -> String {
     } else {
         format!("{trimmed}.")
     }
+}
+
+fn cleanup_decompiled_text(text: &str) -> String {
+    let mut out = text.to_string();
+    while out.contains("target target") {
+        out = out.replace("target target", "target");
+    }
+    while out.contains("Target target") {
+        out = out.replace("Target target", "Target");
+    }
+    out
 }
 
 fn join_effect_descriptions(descriptions: &[String]) -> String {
@@ -3267,7 +3279,13 @@ fn describe_choose_spec(
 ) -> String {
     match spec {
         crate::target::ChooseSpec::Target(inner) => {
-            format!("target {}", strip_leading_article(&describe_choose_spec(inner, tagged_subjects)))
+            let inner_text =
+                strip_leading_article(&describe_choose_spec(inner, tagged_subjects)).to_string();
+            if inner_text.starts_with("target ") {
+                inner_text
+            } else {
+                format!("target {inner_text}")
+            }
         }
         crate::target::ChooseSpec::Object(filter) => filter.description(),
         crate::target::ChooseSpec::Player(filter) => {

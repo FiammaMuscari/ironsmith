@@ -104,4 +104,8 @@ impl CostPayer for EffectCost {
     fn processing_mode(&self) -> crate::costs::CostProcessingMode {
         crate::costs::CostProcessingMode::Immediate
     }
+
+    fn effect_ref(&self) -> Option<&crate::effect::Effect> {
+        Some(&self.effect)
+    }
 }

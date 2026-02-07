@@ -319,6 +319,11 @@ impl Cost {
         self.0.mana_cost()
     }
 
+    /// Get the backing effect for effect-backed costs.
+    pub fn effect_ref(&self) -> Option<&crate::effect::Effect> {
+        self.0.effect_ref()
+    }
+
     /// Check if this cost needs player interaction/choice.
     pub fn needs_player_choice(&self) -> bool {
         self.0.needs_player_choice()

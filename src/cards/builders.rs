@@ -486,12 +486,16 @@ enum EffectAst {
         count: u32,
         player: PlayerAst,
         half_power_toughness_round_up: bool,
+        has_haste: bool,
+        sacrifice_at_next_end_step: bool,
     },
     CreateTokenCopyFromSource {
         source: TargetAst,
         count: u32,
         player: PlayerAst,
         half_power_toughness_round_up: bool,
+        has_haste: bool,
+        sacrifice_at_next_end_step: bool,
     },
     CreateTokenWithMods {
         name: String,
@@ -517,6 +521,13 @@ enum EffectAst {
         power: Value,
         toughness: Value,
         target: TargetAst,
+        duration: Until,
+    },
+    PumpForEach {
+        power_per: i32,
+        toughness_per: i32,
+        target: TargetAst,
+        count_filter: ObjectFilter,
         duration: Until,
     },
     PumpAll {
@@ -567,6 +578,8 @@ enum EffectAst {
         count: u32,
         optional: bool,
     },
+    TokenCopyGainHasteUntilEot,
+    TokenCopySacrificeAtNextEndStep,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1223,11 +1236,12 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
         return Ok(LineAst::Ability(ability));
     }
 
-    if let Some(trigger_idx) = tokens.iter().enumerate().position(|(idx, token)| {
+    if let Some((trigger_idx, _)) = tokens.iter().enumerate().find(|(idx, token)| {
         token.is_word("whenever")
             || token.is_word("when")
-            || (token.is_word("at") && tokens.get(idx + 1).is_some_and(|next| next.is_word("the")))
-    }) {
+            || (token.is_word("at") && tokens.get(*idx + 1).is_some_and(|next| next.is_word("the")))
+    }) && trigger_idx <= 1
+    {
         return parse_triggered_line(&tokens[trigger_idx..]);
     }
 
@@ -4254,6 +4268,9 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
         }
 
         let mut sentence_effects = parse_effect_sentence(&sentence)?;
+        if try_apply_token_copy_followup(&mut effects, &sentence_effects)? {
+            continue;
+        }
         let has_instead = sentence.iter().any(|token| token.is_word("instead"));
         if has_instead && sentence_effects.len() == 1 && effects.len() >= 1 {
             if matches!(
@@ -4284,6 +4301,49 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
     Ok(effects)
 }
 
+fn try_apply_token_copy_followup(
+    effects: &mut [EffectAst],
+    sentence_effects: &[EffectAst],
+) -> Result<bool, CardTextError> {
+    if sentence_effects.len() != 1 {
+        return Ok(false);
+    }
+
+    let Some(last) = effects.last_mut() else {
+        return Ok(false);
+    };
+
+    let Some((haste, sacrifice)) = (match sentence_effects.first() {
+        Some(EffectAst::TokenCopyGainHasteUntilEot) => Some((true, false)),
+        Some(EffectAst::TokenCopySacrificeAtNextEndStep) => Some((false, true)),
+        _ => None,
+    }) else {
+        return Ok(false);
+    };
+
+    match last {
+        EffectAst::CreateTokenCopy {
+            has_haste,
+            sacrifice_at_next_end_step,
+            ..
+        }
+        | EffectAst::CreateTokenCopyFromSource {
+            has_haste,
+            sacrifice_at_next_end_step,
+            ..
+        } => {
+            if haste {
+                *has_haste = true;
+            }
+            if sacrifice {
+                *sacrifice_at_next_end_step = true;
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
     let sentence_words = words(tokens);
     if sentence_words.starts_with(&["activate", "only"]) {
@@ -4294,6 +4354,9 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
     }
     if sentence_words.starts_with(&["round", "up", "each", "time"]) {
         return Ok(Vec::new());
+    }
+    if let Some(effect) = parse_token_copy_modifier_sentence(tokens) {
+        return Ok(vec![effect]);
     }
     if let Some(effect) = parse_each_player_choose_and_sacrifice_rest(tokens)? {
         return Ok(vec![effect]);
@@ -4397,6 +4460,34 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
     }
 
     parse_effect_chain(tokens)
+}
+
+fn parse_token_copy_modifier_sentence(tokens: &[Token]) -> Option<EffectAst> {
+    let filtered: Vec<&str> = words(tokens)
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+
+    if filtered.starts_with(&["it", "gains", "haste"])
+        || filtered.starts_with(&["they", "gain", "haste"])
+    {
+        let has_until_eot = filtered.windows(3).any(|window| window == ["until", "end", "of"])
+            && filtered.contains(&"turn");
+        if has_until_eot {
+            return Some(EffectAst::TokenCopyGainHasteUntilEot);
+        }
+    }
+
+    if filtered.starts_with(&["sacrifice", "it"]) || filtered.starts_with(&["sacrifice", "them"]) {
+        let has_next_end_step = filtered
+            .windows(6)
+            .any(|window| window == ["at", "beginning", "of", "next", "end", "step"]);
+        if has_next_end_step {
+            return Some(EffectAst::TokenCopySacrificeAtNextEndStep);
+        }
+    }
+
+    None
 }
 
 fn parse_each_player_choose_and_sacrifice_rest(
@@ -4613,6 +4704,8 @@ fn merge_filters(base: &ObjectFilter, specific: &ObjectFilter) -> ObjectFilter {
     merged.nontoken |= specific.nontoken;
     merged.tapped |= specific.tapped;
     merged.untapped |= specific.untapped;
+    merged.attacking |= specific.attacking;
+    merged.blocking |= specific.blocking;
     merged.is_commander |= specific.is_commander;
     merged.colorless |= specific.colorless;
     merged.multicolored |= specific.multicolored;
@@ -6257,7 +6350,8 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
             if let Some(mod_token) = tokens.get(verb_idx + 1).and_then(Token::as_word)
                 && let Ok((power, toughness)) = parse_pt_modifier(mod_token)
             {
-                let rest_words = words(&tokens[verb_idx + 1..]);
+                let modifier_tail = &tokens[verb_idx + 1..];
+                let rest_words = words(modifier_tail);
                 let duration = if rest_words.contains(&"until")
                     && rest_words.contains(&"end")
                     && rest_words.contains(&"turn")
@@ -6266,6 +6360,17 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
                 } else {
                     Until::EndOfTurn
                 };
+
+                if let Some(count_filter) = parse_get_for_each_count_filter(modifier_tail)? {
+                    let target = parse_target_phrase(subject_tokens)?;
+                    return Ok(EffectAst::PumpForEach {
+                        power_per: power,
+                        toughness_per: toughness,
+                        target,
+                        count_filter,
+                        duration,
+                    });
+                }
 
                 if subject_words.contains(&"target") {
                     let target = parse_target_phrase(subject_tokens)?;
@@ -6313,6 +6418,44 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
     let rest = &tokens[verb_idx + 1..];
 
     parse_effect_with_verb(verb, Some(subject), rest)
+}
+
+fn parse_get_for_each_count_filter(tokens: &[Token]) -> Result<Option<ObjectFilter>, CardTextError> {
+    let mut for_each_idx = None;
+    for idx in 0..tokens.len().saturating_sub(1) {
+        if tokens[idx].is_word("for") && tokens[idx + 1].is_word("each") {
+            for_each_idx = Some(idx);
+            break;
+        }
+    }
+
+    let Some(idx) = for_each_idx else {
+        return Ok(None);
+    };
+
+    let mut filter_tokens = &tokens[idx + 2..];
+    if filter_tokens.is_empty() {
+        return Err(CardTextError::ParseError(
+            "missing filter after 'for each' in gets clause".to_string(),
+        ));
+    }
+
+    let mut other = false;
+    if filter_tokens
+        .first()
+        .is_some_and(|token| token.is_word("other") || token.is_word("another"))
+    {
+        other = true;
+        filter_tokens = &filter_tokens[1..];
+    }
+
+    if filter_tokens.is_empty() {
+        return Err(CardTextError::ParseError(
+            "missing filter after 'for each' in gets clause".to_string(),
+        ));
+    }
+
+    Ok(Some(parse_object_filter(filter_tokens, other)?))
 }
 
 fn parse_for_each_opponent_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
@@ -7502,6 +7645,8 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                         count,
                         player,
                         half_power_toughness_round_up: half_pt,
+                        has_haste: false,
+                        sacrifice_at_next_end_step: false,
                     });
                 }
             }
@@ -7510,6 +7655,8 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                 count,
                 player,
                 half_power_toughness_round_up: half_pt,
+                has_haste: false,
+                sacrifice_at_next_end_step: false,
             });
         }
         return Err(CardTextError::ParseError(
@@ -7958,8 +8105,9 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
             "nontoken" => filter.nontoken = true,
             "tapped" => filter.tapped = true,
             "untapped" => filter.untapped = true,
+            "attacking" => filter.attacking = true,
+            "blocking" => filter.blocking = true,
             "commander" | "commanders" => filter.is_commander = true,
-            "attacking" | "blocking" => {}
             "nonbasic" => {
                 filter = filter.without_supertype(Supertype::Basic);
             }
@@ -8077,6 +8225,8 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         || filter.nontoken
         || filter.tapped
         || filter.untapped
+        || filter.attacking
+        || filter.blocking
         || filter.is_commander
         || !filter.excluded_colors.is_empty()
         || filter.colorless
@@ -8424,6 +8574,7 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::ReturnToHand { target }
         | EffectAst::ReturnToBattlefield { target, .. }
         | EffectAst::Pump { target, .. }
+        | EffectAst::PumpForEach { target, .. }
         | EffectAst::PumpByLastEffect { target, .. }
         | EffectAst::GrantAbilitiesToTarget { target, .. }
         | EffectAst::CreateTokenCopyFromSource { source: target, .. } => {
@@ -8552,6 +8703,7 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::ReturnToHand { target }
         | EffectAst::ReturnToBattlefield { target, .. }
         | EffectAst::Pump { target, .. }
+        | EffectAst::PumpForEach { target, .. }
         | EffectAst::PumpByLastEffect { target, .. }
         | EffectAst::GrantAbilitiesToTarget { target, .. }
         | EffectAst::CreateTokenCopyFromSource { source: target, .. } => {
@@ -9914,6 +10066,8 @@ fn compile_effect(
             count,
             player,
             half_power_toughness_round_up,
+            has_haste,
+            sacrifice_at_next_end_step,
         } => {
             let tag = match object {
                 ObjectRefAst::It => ctx.last_object_tag.clone().ok_or_else(|| {
@@ -9932,6 +10086,12 @@ fn compile_effect(
             if *half_power_toughness_round_up {
                 effect = effect.half_power_toughness_round_up();
             }
+            if *has_haste {
+                effect = effect.haste(true);
+            }
+            if *sacrifice_at_next_end_step {
+                effect = effect.sacrifice_at_next_end_step(true);
+            }
             Ok((vec![Effect::new(effect)], Vec::new()))
         }
         EffectAst::CreateTokenCopyFromSource {
@@ -9939,6 +10099,8 @@ fn compile_effect(
             count,
             player,
             half_power_toughness_round_up,
+            has_haste,
+            sacrifice_at_next_end_step,
         } => {
             let source_spec = choose_spec_for_target(source);
             let source_spec = resolve_choose_spec_it_tag(&source_spec, ctx)?;
@@ -9951,6 +10113,12 @@ fn compile_effect(
             if *half_power_toughness_round_up {
                 effect = effect.half_power_toughness_round_up();
             }
+            if *has_haste {
+                effect = effect.haste(true);
+            }
+            if *sacrifice_at_next_end_step {
+                effect = effect.sacrifice_at_next_end_step(true);
+            }
             let mut choices = Vec::new();
             if source_spec.is_target() {
                 choices.push(source_spec);
@@ -9958,6 +10126,8 @@ fn compile_effect(
             Ok((vec![Effect::new(effect)], choices))
         }
         EffectAst::ExileThatTokenAtEndOfCombat => Ok((Vec::new(), Vec::new())),
+        EffectAst::TokenCopyGainHasteUntilEot
+        | EffectAst::TokenCopySacrificeAtNextEndStep => Ok((Vec::new(), Vec::new())),
         EffectAst::Monstrosity { amount } => {
             Ok((vec![Effect::monstrosity(amount.clone())], Vec::new()))
         }
@@ -10019,6 +10189,34 @@ fn compile_effect(
                     power.clone(),
                     toughness.clone(),
                     spec.clone(),
+                    duration.clone(),
+                ),
+                &spec,
+                ctx,
+                "pumped",
+            );
+            let mut choices = Vec::new();
+            if spec.is_target() {
+                choices.push(spec);
+            }
+            Ok((vec![effect], choices))
+        }
+        EffectAst::PumpForEach {
+            power_per,
+            toughness_per,
+            target,
+            count_filter,
+            duration,
+        } => {
+            let spec = choose_spec_for_target(target);
+            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let resolved_count_filter = resolve_it_tag(count_filter, ctx)?;
+            let effect = tag_object_target_effect(
+                Effect::pump_for_each(
+                    spec.clone(),
+                    *power_per,
+                    *toughness_per,
+                    Value::Count(resolved_count_filter),
                     duration.clone(),
                 ),
                 &spec,
@@ -12385,11 +12583,14 @@ mod target_parse_tests {
 mod effect_parse_tests {
     use super::*;
     use crate::alternative_cast::AlternativeCastingMethod;
+    use crate::compiled_text::compiled_lines;
+    use crate::effect::Value;
     use crate::effects::CantEffect;
     use crate::effects::{
         CounterEffect, CreateTokenCopyEffect, DiscardEffect, ExchangeControlEffect, ForEachObject,
         ExileInsteadOfGraveyardEffect, GainControlEffect, GrantPlayFromGraveyardEffect,
-        LookAtHandEffect, ModifyPowerToughnessEffect, PutCountersEffect,
+        LookAtHandEffect, ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect,
+        PutCountersEffect,
         RemoveUpToAnyCountersEffect, ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect,
         SacrificeEffect, SetLifeTotalEffect, SkipDrawStepEffect, SkipTurnEffect, SurveilEffect,
         TransformEffect,
@@ -12397,6 +12598,7 @@ mod effect_parse_tests {
     use crate::ids::CardId;
     use crate::object::CounterType;
     use crate::target::ChooseSpec;
+    use crate::types::Subtype;
 
     #[test]
     fn parse_yawgmoths_will_from_text() {
@@ -12584,6 +12786,76 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
                     || format!("{e:?}").contains("CreateTokenCopyEffect")
             }),
             "should include create-token-copy effect"
+        );
+    }
+
+    #[test]
+    fn parse_molten_duplication_style_copy_haste_and_delayed_sacrifice() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Molten Duplication Variant")
+            .parse_text("Create a token that's a copy of target artifact or creature you control, except it's an artifact in addition to its other types. It gains haste until end of turn. Sacrifice it at the beginning of the next end step.")
+            .expect("parse molten duplication style text");
+
+        let effects = def.spell_effect.expect("spell effect");
+        let copy = effects
+            .iter()
+            .find_map(|e| e.downcast_ref::<CreateTokenCopyEffect>())
+            .expect("should include create-token-copy effect");
+        assert!(copy.has_haste, "copy should gain haste");
+        assert!(
+            copy.sacrifice_at_next_end_step,
+            "copy should sacrifice at next end step"
+        );
+    }
+
+    #[test]
+    fn parse_shaleskin_bruiser_style_scaling_attack_trigger() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Shaleskin Bruiser Variant")
+            .parse_text(
+                "Trample\nWhenever this creature attacks, it gets +3/+0 until end of turn for each other attacking Beast.",
+            )
+            .expect("parse shaleskin bruiser style text");
+
+        let triggered = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered) => Some(triggered),
+                _ => None,
+            })
+            .expect("expected triggered ability");
+
+        let modify = triggered
+            .effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<ModifyPowerToughnessForEachEffect>())
+            .expect("trigger should include ModifyPowerToughnessForEachEffect");
+        assert_eq!(modify.power_per, 3);
+        assert_eq!(modify.toughness_per, 0);
+        let Value::Count(filter) = &modify.count else {
+            panic!("expected count-based scaling");
+        };
+        assert!(filter.other, "filter should require other permanents");
+        assert!(filter.attacking, "filter should require attacking permanents");
+        assert!(
+            filter.subtypes.contains(&Subtype::Beast),
+            "filter should require Beast subtype"
+        );
+    }
+
+    #[test]
+    fn compiled_text_cleans_duplicate_target_mentions() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Torch Fiend Variant")
+            .parse_text("{R}, Sacrifice this creature: Destroy target artifact.")
+            .expect("parse torch fiend style text");
+        let lines = compiled_lines(&def);
+        let joined = lines.join("\n");
+        assert!(
+            joined.contains("Destroy target artifact"),
+            "compiled text should include destroy target artifact: {joined}"
+        );
+        assert!(
+            !joined.contains("target target"),
+            "compiled text should not duplicate target wording: {joined}"
         );
     }
 

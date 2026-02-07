@@ -4,6 +4,7 @@ pub mod card;
 pub mod cards;
 pub mod color;
 pub mod combat_state;
+pub mod compiled_text;
 pub mod continuous;
 pub mod cost;
 pub mod costs;

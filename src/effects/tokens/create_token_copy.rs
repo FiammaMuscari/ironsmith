@@ -5,7 +5,8 @@ use crate::card::PtValue;
 use crate::effect::{Effect, EffectOutcome, EffectResult, Value};
 use crate::effects::helpers::{resolve_objects_from_spec, resolve_value};
 use crate::effects::{
-    EffectExecutor, EnterAttackingEffect, GrantObjectAbilityEffect, ScheduleDelayedTriggerEffect,
+    EffectExecutor, EnterAttackingEffect, GrantObjectAbilityEffect, SacrificeTargetEffect,
+    ScheduleDelayedTriggerEffect,
 };
 use crate::events::EnterBattlefieldEvent;
 use crate::events::zones::ZoneChangeEvent;
@@ -54,6 +55,8 @@ pub struct CreateTokenCopyEffect {
     pub enters_attacking: bool,
     /// Whether to exile at end of combat.
     pub exile_at_end_of_combat: bool,
+    /// Whether to sacrifice at the beginning of the next end step.
+    pub sacrifice_at_next_end_step: bool,
     /// Optional power/toughness adjustment for the created tokens.
     pub pt_adjustment: Option<CopyPtAdjustment>,
 }
@@ -76,6 +79,7 @@ impl CreateTokenCopyEffect {
             has_haste: false,
             enters_attacking: false,
             exile_at_end_of_combat: false,
+            sacrifice_at_next_end_step: false,
             pt_adjustment: None,
         }
     }
@@ -128,6 +132,12 @@ impl CreateTokenCopyEffect {
     /// Set whether to exile at end of combat.
     pub fn exile_at_eoc(mut self, value: bool) -> Self {
         self.exile_at_end_of_combat = value;
+        self
+    }
+
+    /// Set whether to sacrifice at the beginning of the next end step.
+    pub fn sacrifice_at_next_end_step(mut self, value: bool) -> Self {
+        self.sacrifice_at_next_end_step = value;
         self
     }
 
@@ -252,6 +262,19 @@ impl EffectExecutor for CreateTokenCopyEffect {
                 let schedule = ScheduleDelayedTriggerEffect::new(
                     Trigger::end_of_combat(),
                     vec![Effect::exile(ChooseSpec::SpecificObject(id))],
+                    true,
+                    vec![id],
+                    PlayerFilter::Specific(controller_id),
+                );
+                let _ = execute_effect(game, &Effect::new(schedule), ctx)?;
+            }
+
+            if self.sacrifice_at_next_end_step {
+                let schedule = ScheduleDelayedTriggerEffect::new(
+                    Trigger::beginning_of_end_step(PlayerFilter::Any),
+                    vec![Effect::new(SacrificeTargetEffect::new(
+                        ChooseSpec::SpecificObject(id),
+                    ))],
                     true,
                     vec![id],
                     PlayerFilter::Specific(controller_id),
