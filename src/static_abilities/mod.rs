@@ -299,6 +299,11 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// Get additional cost per target beyond the first, if any.
+    fn cost_increase_per_additional_target(&self) -> Option<u32> {
+        None
+    }
+
     /// Returns true if this affects the untap step.
     fn affects_untap(&self) -> bool {
         false
@@ -507,6 +512,10 @@ impl StaticAbility {
 
     pub fn cost_increase(&self) -> Option<&CostIncrease> {
         self.0.cost_increase()
+    }
+
+    pub fn cost_increase_per_additional_target(&self) -> Option<u32> {
+        self.0.cost_increase_per_additional_target()
     }
 
     pub fn is_anthem(&self) -> bool {
@@ -718,10 +727,15 @@ impl StaticAbility {
         Self::new(EntersTapped)
     }
 
-    pub fn enters_with_counters(
-        counter_type: crate::object::CounterType,
-        count: u32,
-    ) -> Self {
+    pub fn enters_tapped_unless_control_two_or_more_other_lands() -> Self {
+        Self::new(EntersTappedUnlessControlTwoOrMoreOtherLands)
+    }
+
+    pub fn enters_tapped_unless_two_or_more_opponents() -> Self {
+        Self::new(EntersTappedUnlessTwoOrMoreOpponents)
+    }
+
+    pub fn enters_with_counters(counter_type: crate::object::CounterType, count: u32) -> Self {
         Self::new(EntersWithCounters::new(counter_type, count))
     }
 
@@ -823,6 +837,10 @@ impl StaticAbility {
 
     pub fn affinity_for_artifacts() -> Self {
         Self::new(AffinityForArtifacts)
+    }
+
+    pub fn cost_increase_per_target_beyond_first(amount: u32) -> Self {
+        Self::new(CostIncreasePerAdditionalTarget::new(amount))
     }
 
     pub fn delve() -> Self {

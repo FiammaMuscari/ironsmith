@@ -200,7 +200,9 @@ fn evaluate_condition_simple(
                 || evaluate_condition_simple(game, b, controller)
         }
         // Target-dependent conditions default to false during casting
-        Condition::TargetIsTapped | Condition::TargetIsAttacking => false,
+        Condition::TargetIsTapped | Condition::TargetIsAttacking | Condition::SourceIsTapped => {
+            false
+        }
     }
 }
 
@@ -267,6 +269,7 @@ fn evaluate_condition(
             }
             Ok(false)
         }
+        Condition::SourceIsTapped => Ok(game.is_tapped(ctx.source)),
         Condition::TargetIsAttacking => {
             // Check if the target is among declared attackers
             // Note: Combat attackers are tracked in game_loop, not game_state directly.

@@ -258,7 +258,12 @@ pub fn execute_untap_step(game: &mut GameState) {
                     false
                 }
             });
-            if has_doesnt_untap { None } else { Some(id) }
+            let blocked_by_restriction = !game.can_untap(id);
+            if has_doesnt_untap || blocked_by_restriction {
+                None
+            } else {
+                Some(id)
+            }
         })
         .collect();
 
@@ -726,6 +731,52 @@ mod tests {
         assert!(!game.is_tapped(id));
         assert!(!game.is_summoning_sick(id));
         assert!(game.turn.priority_player.is_none());
+    }
+
+    #[test]
+    fn test_execute_untap_step_respects_cant_untap_restrictions() {
+        let mut game = test_game();
+        let active_player = game.turn.active_player;
+
+        use crate::card::{CardBuilder, PowerToughness};
+        use crate::effect::{Restriction, Until};
+        use crate::ids::CardId;
+        use crate::mana::{ManaCost, ManaSymbol};
+        use crate::target::ObjectFilter;
+        use crate::types::{CardType, Subtype};
+
+        let source_card = CardBuilder::new(CardId::from_raw(99), "Restriction Source")
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Blue]]))
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Wizard])
+            .power_toughness(PowerToughness::fixed(1, 1))
+            .build();
+        let source_id =
+            game.create_object_from_card(&source_card, active_player, Zone::Battlefield);
+
+        let creature_card = CardBuilder::new(CardId::from_raw(1), "Test Creature")
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Green]]))
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Bear])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let id = game.create_object_from_card(&creature_card, active_player, Zone::Battlefield);
+        game.tap(id);
+
+        game.add_restriction_effect(
+            Restriction::untap(ObjectFilter::specific(id)),
+            Until::YouStopControllingThis,
+            source_id,
+            active_player,
+        );
+        game.update_cant_effects();
+
+        execute_untap_step(&mut game);
+
+        assert!(
+            game.is_tapped(id),
+            "restricted permanent should stay tapped"
+        );
     }
 
     #[test]

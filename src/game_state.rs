@@ -130,6 +130,10 @@ pub struct CantEffectTracker {
     /// Example: Goblin War Drums, Madcap Skills
     pub cant_block: HashSet<ObjectId>,
 
+    /// Permanents that can't untap during their controller's untap step.
+    /// Example: "It doesn't untap during its controller's untap step"
+    pub cant_untap: HashSet<ObjectId>,
+
     /// Permanents that can't be destroyed (indestructible via effect, not ability).
     /// Note: Intrinsic indestructible keyword is checked separately on the object.
     pub cant_be_destroyed: HashSet<ObjectId>,
@@ -199,7 +203,25 @@ pub struct RestrictionEffectInstance {
 impl RestrictionEffectInstance {
     pub fn is_expired(&self, current_turn: u32) -> bool {
         matches!(self.duration, crate::effect::Until::EndOfTurn)
-            && self.expires_end_of_turn <= current_turn
+            && current_turn > self.expires_end_of_turn
+    }
+
+    pub fn is_active(&self, game: &GameState, current_turn: u32) -> bool {
+        if self.is_expired(current_turn) {
+            return false;
+        }
+
+        match self.duration {
+            crate::effect::Until::ThisLeavesTheBattlefield => game
+                .object(self.source)
+                .is_some_and(|obj| obj.zone == Zone::Battlefield),
+            crate::effect::Until::YouStopControllingThis => {
+                game.object(self.source).is_some_and(|obj| {
+                    obj.zone == Zone::Battlefield && obj.controller == self.controller
+                })
+            }
+            _ => true,
+        }
     }
 }
 
@@ -214,6 +236,7 @@ impl CantEffectTracker {
         self.cant_search.extend(other.cant_search);
         self.cant_attack.extend(other.cant_attack);
         self.cant_block.extend(other.cant_block);
+        self.cant_untap.extend(other.cant_untap);
         self.cant_be_destroyed.extend(other.cant_be_destroyed);
         self.cant_be_sacrificed.extend(other.cant_be_sacrificed);
         self.cant_cast_spells.extend(other.cant_cast_spells);
@@ -239,6 +262,7 @@ impl CantEffectTracker {
         self.cant_search.clear();
         self.cant_attack.clear();
         self.cant_block.clear();
+        self.cant_untap.clear();
         self.cant_be_destroyed.clear();
         self.cant_be_sacrificed.clear();
         self.cant_cast_spells.clear();
@@ -282,6 +306,11 @@ impl CantEffectTracker {
     /// Check if a creature can block.
     pub fn can_block(&self, creature: ObjectId) -> bool {
         !self.cant_block.contains(&creature)
+    }
+
+    /// Check if a permanent can untap during untap step.
+    pub fn can_untap(&self, permanent: ObjectId) -> bool {
+        !self.cant_untap.contains(&permanent)
     }
 
     /// Check if damage can be prevented.
@@ -357,6 +386,11 @@ impl CantEffectTracker {
     /// Add a creature to the "can't block" set.
     pub fn add_cant_block(&mut self, creature: ObjectId) {
         self.cant_block.insert(creature);
+    }
+
+    /// Add a permanent to the "can't untap" set.
+    pub fn add_cant_untap(&mut self, permanent: ObjectId) {
+        self.cant_untap.insert(permanent);
     }
 
     /// Add a creature to the "can't be blocked" set.
@@ -903,8 +937,10 @@ impl GameState {
 
     pub fn cleanup_restrictions_end_of_turn(&mut self) {
         let current_turn = self.turn.turn_number;
-        self.restriction_effects
-            .retain(|effect| !effect.is_expired(current_turn));
+        self.restriction_effects.retain(|effect| {
+            !matches!(effect.duration, crate::effect::Until::EndOfTurn)
+                || effect.expires_end_of_turn > current_turn
+        });
     }
 
     /// Can the player draw any cards?
@@ -945,6 +981,11 @@ impl GameState {
     /// Can the creature block?
     pub fn can_block(&self, creature: ObjectId) -> bool {
         self.cant_effects.can_block(creature)
+    }
+
+    /// Can the permanent untap during untap step?
+    pub fn can_untap(&self, permanent: ObjectId) -> bool {
+        self.cant_effects.can_untap(permanent)
     }
 
     /// Can damage be prevented?
@@ -1798,9 +1839,17 @@ impl GameState {
         }
 
         // Apply active restriction effects from spells/abilities.
-        let restriction_effects = self.restriction_effects.clone();
+        let current_turn = self.turn.turn_number;
+        let mut active_restrictions = Vec::new();
+        for effect in &self.restriction_effects {
+            if effect.is_active(self, current_turn) {
+                active_restrictions.push(effect.clone());
+            }
+        }
+        self.restriction_effects = active_restrictions.clone();
+
         let mut restriction_tracker = CantEffectTracker::default();
-        for effect in restriction_effects {
+        for effect in active_restrictions {
             effect.restriction.apply(
                 self,
                 &mut restriction_tracker,
@@ -2960,6 +3009,10 @@ mod tests {
         game.cant_effects.cant_be_sacrificed.insert(obj_id);
         assert!(!game.can_be_sacrificed(obj_id));
 
+        assert!(game.can_untap(obj_id));
+        game.cant_effects.cant_untap.insert(obj_id);
+        assert!(!game.can_untap(obj_id));
+
         assert!(game.can_have_counters_placed(obj_id));
         game.cant_effects.cant_have_counters_placed.insert(obj_id);
         assert!(!game.can_have_counters_placed(obj_id));
@@ -3006,6 +3059,7 @@ mod tests {
         tracker.cant_have_counters_placed.insert(object);
         tracker.cant_attack.insert(object);
         tracker.cant_block.insert(object);
+        tracker.cant_untap.insert(object);
         tracker.cant_be_destroyed.insert(object);
         tracker.cant_be_blocked.insert(object);
         tracker.cant_be_countered.insert(object);
@@ -3025,6 +3079,7 @@ mod tests {
         assert!(!tracker.cant_have_counters_placed.is_empty());
         assert!(!tracker.cant_attack.is_empty());
         assert!(!tracker.cant_block.is_empty());
+        assert!(!tracker.cant_untap.is_empty());
         assert!(!tracker.cant_be_destroyed.is_empty());
         assert!(!tracker.cant_be_blocked.is_empty());
         assert!(!tracker.cant_be_countered.is_empty());
@@ -3082,6 +3137,10 @@ mod tests {
         assert!(
             tracker.cant_block.is_empty(),
             "cant_block should be cleared"
+        );
+        assert!(
+            tracker.cant_untap.is_empty(),
+            "cant_untap should be cleared"
         );
         assert!(
             tracker.cant_be_destroyed.is_empty(),

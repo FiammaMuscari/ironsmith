@@ -108,7 +108,10 @@ fn describe_value(value: &Value) -> String {
             describe_player_filter(filter)
         ),
         Value::SpellsCastThisTurn(filter) => {
-            format!("the number of spells cast this turn by {}", describe_player_filter(filter))
+            format!(
+                "the number of spells cast this turn by {}",
+                describe_player_filter(filter)
+            )
         }
         Value::SpellsCastBeforeThisTurn(filter) => format!(
             "the number of spells cast before this spell this turn by {}",
@@ -161,9 +164,71 @@ fn describe_until(until: &Until) -> String {
         Until::EndOfTurn => "until end of turn".to_string(),
         Until::YourNextTurn => "until your next turn".to_string(),
         Until::EndOfCombat => "until end of combat".to_string(),
-        Until::ThisLeavesTheBattlefield => "while this source remains on the battlefield".to_string(),
+        Until::ThisLeavesTheBattlefield => {
+            "while this source remains on the battlefield".to_string()
+        }
         Until::YouStopControllingThis => "while you control this source".to_string(),
         Until::TurnsPass(turns) => format!("for {} turn(s)", describe_value(turns)),
+    }
+}
+
+fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
+    match restriction {
+        crate::effect::Restriction::GainLife(filter) => {
+            format!("{} can't gain life", describe_player_filter(filter))
+        }
+        crate::effect::Restriction::SearchLibraries(filter) => {
+            format!("{} can't search libraries", describe_player_filter(filter))
+        }
+        crate::effect::Restriction::CastSpells(filter) => {
+            format!("{} can't cast spells", describe_player_filter(filter))
+        }
+        crate::effect::Restriction::DrawCards(filter) => {
+            format!("{} can't draw cards", describe_player_filter(filter))
+        }
+        crate::effect::Restriction::DrawExtraCards(filter) => {
+            format!("{} can't draw extra cards", describe_player_filter(filter))
+        }
+        crate::effect::Restriction::ChangeLifeTotal(filter) => {
+            format!(
+                "{} can't have life total changed",
+                describe_player_filter(filter)
+            )
+        }
+        crate::effect::Restriction::LoseGame(filter) => {
+            format!("{} can't lose the game", describe_player_filter(filter))
+        }
+        crate::effect::Restriction::WinGame(filter) => {
+            format!("{} can't win the game", describe_player_filter(filter))
+        }
+        crate::effect::Restriction::PreventDamage => "damage can't be prevented".to_string(),
+        crate::effect::Restriction::Attack(filter) => {
+            format!("{} can't attack", filter.description())
+        }
+        crate::effect::Restriction::Block(filter) => {
+            format!("{} can't block", filter.description())
+        }
+        crate::effect::Restriction::Untap(filter) => {
+            format!("{} can't untap", filter.description())
+        }
+        crate::effect::Restriction::BeBlocked(filter) => {
+            format!("{} can't be blocked", filter.description())
+        }
+        crate::effect::Restriction::BeDestroyed(filter) => {
+            format!("{} can't be destroyed", filter.description())
+        }
+        crate::effect::Restriction::BeSacrificed(filter) => {
+            format!("{} can't be sacrificed", filter.description())
+        }
+        crate::effect::Restriction::HaveCountersPlaced(filter) => {
+            format!("counters can't be placed on {}", filter.description())
+        }
+        crate::effect::Restriction::BeTargeted(filter) => {
+            format!("{} can't be targeted", filter.description())
+        }
+        crate::effect::Restriction::BeCountered(filter) => {
+            format!("{} can't be countered", filter.description())
+        }
     }
 }
 
@@ -204,6 +269,7 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::CreatureDiedThisTurn => "a creature died this turn".to_string(),
         Condition::CastSpellThisTurn => "a spell was cast this turn".to_string(),
         Condition::TargetIsTapped => "the target is tapped".to_string(),
+        Condition::SourceIsTapped => "this source is tapped".to_string(),
         Condition::TargetIsAttacking => "the target is attacking".to_string(),
         Condition::YouControlCommander => "you control your commander".to_string(),
         Condition::TaggedObjectMatches(tag, filter) => format!(
@@ -373,8 +439,7 @@ fn describe_effect(effect: &Effect) -> String {
     if let Some(counter_spell) = effect.downcast_ref::<crate::effects::CounterEffect>() {
         return format!("Counter {}", describe_choose_spec(&counter_spell.target));
     }
-    if let Some(counter_unless) = effect.downcast_ref::<crate::effects::CounterUnlessPaysEffect>()
-    {
+    if let Some(counter_unless) = effect.downcast_ref::<crate::effects::CounterUnlessPaysEffect>() {
         return format!(
             "Counter {} unless its controller pays {}",
             describe_choose_spec(&counter_unless.target),
@@ -466,7 +531,10 @@ fn describe_effect(effect: &Effect) -> String {
         return format!("Untap {}", describe_choose_spec(&untap.spec));
     }
     if let Some(attach) = effect.downcast_ref::<crate::effects::AttachToEffect>() {
-        return format!("Attach this source to {}", describe_choose_spec(&attach.target));
+        return format!(
+            "Attach this source to {}",
+            describe_choose_spec(&attach.target)
+        );
     }
     if let Some(sacrifice) = effect.downcast_ref::<crate::effects::SacrificeEffect>() {
         return format!(
@@ -477,7 +545,10 @@ fn describe_effect(effect: &Effect) -> String {
         );
     }
     if let Some(sacrifice_target) = effect.downcast_ref::<crate::effects::SacrificeTargetEffect>() {
-        return format!("Sacrifice {}", describe_choose_spec(&sacrifice_target.target));
+        return format!(
+            "Sacrifice {}",
+            describe_choose_spec(&sacrifice_target.target)
+        );
     }
     if let Some(return_to_hand) = effect.downcast_ref::<crate::effects::ReturnToHandEffect>() {
         return format!(
@@ -525,7 +596,10 @@ fn describe_effect(effect: &Effect) -> String {
         return text;
     }
     if let Some(look_at_hand) = effect.downcast_ref::<crate::effects::LookAtHandEffect>() {
-        return format!("Look at {}'s hand", describe_choose_spec(&look_at_hand.target));
+        return format!(
+            "Look at {}'s hand",
+            describe_choose_spec(&look_at_hand.target)
+        );
     }
     if let Some(grant_all) = effect.downcast_ref::<crate::effects::GrantAbilitiesAllEffect>() {
         return format!(
@@ -600,8 +674,7 @@ fn describe_effect(effect: &Effect) -> String {
             describe_until(&gain_control.duration)
         );
     }
-    if let Some(exchange_control) = effect.downcast_ref::<crate::effects::ExchangeControlEffect>()
-    {
+    if let Some(exchange_control) = effect.downcast_ref::<crate::effects::ExchangeControlEffect>() {
         return format!(
             "Exchange control of {} and {}",
             describe_choose_spec(&exchange_control.permanent1),
@@ -627,7 +700,10 @@ fn describe_effect(effect: &Effect) -> String {
     }
     if let Some(tag_triggering) = effect.downcast_ref::<crate::effects::TagTriggeringObjectEffect>()
     {
-        return format!("Tag the triggering object as '{}'", tag_triggering.tag.as_str());
+        return format!(
+            "Tag the triggering object as '{}'",
+            tag_triggering.tag.as_str()
+        );
     }
     if let Some(tag_attached) = effect.downcast_ref::<crate::effects::TagAttachedToSourceEffect>() {
         return format!(
@@ -692,7 +768,10 @@ fn describe_effect(effect: &Effect) -> String {
                 describe_value(&choose_mode.choose_count)
             )
         } else {
-            format!("choose {} mode(s)", describe_value(&choose_mode.choose_count))
+            format!(
+                "choose {} mode(s)",
+                describe_value(&choose_mode.choose_count)
+            )
         };
         let modes = choose_mode
             .modes
@@ -703,7 +782,12 @@ fn describe_effect(effect: &Effect) -> String {
                 if mode_effects.is_empty() {
                     format!("mode {} ('{}')", idx + 1, mode.description)
                 } else {
-                    format!("mode {} ('{}'): {}", idx + 1, mode.description, mode_effects)
+                    format!(
+                        "mode {} ('{}'): {}",
+                        idx + 1,
+                        mode.description,
+                        mode_effects
+                    )
                 }
             })
             .collect::<Vec<_>>()
@@ -769,6 +853,13 @@ fn describe_effect(effect: &Effect) -> String {
             describe_until(&regenerate.duration)
         );
     }
+    if let Some(cant) = effect.downcast_ref::<crate::effects::CantEffect>() {
+        return format!(
+            "{} {}",
+            describe_restriction(&cant.restriction),
+            describe_until(&cant.duration)
+        );
+    }
     if let Some(remove_up_to_any) =
         effect.downcast_ref::<crate::effects::RemoveUpToAnyCountersEffect>()
     {
@@ -795,7 +886,10 @@ fn describe_timing(timing: &ActivationTiming) -> &'static str {
 fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
     match &ability.kind {
         AbilityKind::Static(static_ability) => {
-            vec![format!("Static ability {index}: {}", static_ability.display())]
+            vec![format!(
+                "Static ability {index}: {}",
+                static_ability.display()
+            )]
         }
         AbilityKind::Triggered(triggered) => {
             let mut line = format!("Triggered ability {index}: {}", triggered.trigger.display());
@@ -933,7 +1027,10 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
     if let Some(spell_effects) = &def.spell_effect
         && !spell_effects.is_empty()
     {
-        out.push(format!("Spell effects: {}", describe_effect_list(spell_effects)));
+        out.push(format!(
+            "Spell effects: {}",
+            describe_effect_list(spell_effects)
+        ));
     }
     if !def.cost_effects.is_empty() {
         out.push(format!(

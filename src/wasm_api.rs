@@ -7,10 +7,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::StdRng};
+use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::*;
 
 use crate::ability::{Ability, AbilityKind};
 use crate::cards::{CardDefinition, CardRegistry};
@@ -22,9 +22,8 @@ use crate::decision::{
 use crate::decisions::context::DecisionContext;
 use crate::game_loop::{
     ActivationStage, CastStage, PriorityLoopState, PriorityResponse, add_saga_lore_counters,
-    advance_priority, generate_and_queue_step_triggers,
-    apply_priority_response_with_dm, get_declare_attackers_decision,
-    get_declare_blockers_decision,
+    advance_priority, apply_priority_response_with_dm, generate_and_queue_step_triggers,
+    get_declare_attackers_decision, get_declare_blockers_decision,
 };
 use crate::game_state::{GameState, Phase, Step, Target};
 use crate::ids::{ObjectId, PlayerId};
@@ -93,7 +92,6 @@ struct ObjectDetailsSnapshot {
     counters: Vec<CounterSnapshot>,
     abilities: Vec<String>,
 }
-
 
 #[derive(Debug, Clone, Serialize)]
 struct GameSnapshot {
@@ -527,13 +525,27 @@ impl GameOverView {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum UiCommand {
-    PriorityAction { action_index: usize },
-    NumberChoice { value: u32 },
-    SelectOptions { option_indices: Vec<usize> },
-    SelectObjects { object_ids: Vec<u64> },
-    SelectTargets { targets: Vec<TargetInput> },
-    DeclareAttackers { declarations: Vec<AttackerDeclarationInput> },
-    DeclareBlockers { declarations: Vec<BlockerDeclarationInput> },
+    PriorityAction {
+        action_index: usize,
+    },
+    NumberChoice {
+        value: u32,
+    },
+    SelectOptions {
+        option_indices: Vec<usize>,
+    },
+    SelectObjects {
+        object_ids: Vec<u64>,
+    },
+    SelectTargets {
+        targets: Vec<TargetInput>,
+    },
+    DeclareAttackers {
+        declarations: Vec<AttackerDeclarationInput>,
+    },
+    DeclareBlockers {
+        declarations: Vec<BlockerDeclarationInput>,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -630,7 +642,11 @@ impl WasmGame {
     /// Return a JS object snapshot of public game state.
     #[wasm_bindgen]
     pub fn snapshot(&self) -> Result<JsValue, JsValue> {
-        let pending_cast_stack_id = self.priority_state.pending_cast.as_ref().map(|p| p.stack_id);
+        let pending_cast_stack_id = self
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
         let snap = GameSnapshot::from_game(
             &self.game,
             self.perspective,
@@ -666,7 +682,11 @@ impl WasmGame {
     /// Return game snapshot as pretty JSON.
     #[wasm_bindgen(js_name = snapshotJson)]
     pub fn snapshot_json(&self) -> Result<String, JsValue> {
-        let pending_cast_stack_id = self.priority_state.pending_cast.as_ref().map(|p| p.stack_id);
+        let pending_cast_stack_id = self
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
         let snap = GameSnapshot::from_game(
             &self.game,
             self.perspective,
@@ -743,9 +763,11 @@ impl WasmGame {
             })
             .ok_or_else(|| JsValue::from_str(&format!("unknown card name: {query}")))?;
 
-        let object_id = self
-            .game
-            .create_object_from_definition(&definition, player_id, crate::zone::Zone::Hand);
+        let object_id = self.game.create_object_from_definition(
+            &definition,
+            player_id,
+            crate::zone::Zone::Hand,
+        );
         self.recompute_ui_decision()?;
         Ok(object_id.0)
     }
@@ -1439,10 +1461,7 @@ impl WasmGame {
                 let converted = validate_attacker_declarations(attackers, &declarations)?;
                 Ok(PriorityResponse::Attackers(converted))
             }
-            (
-                DecisionContext::Blockers(blockers),
-                UiCommand::DeclareBlockers { declarations },
-            ) => {
+            (DecisionContext::Blockers(blockers), UiCommand::DeclareBlockers { declarations }) => {
                 let converted = validate_blocker_declarations(blockers, &declarations)?;
                 Ok(PriorityResponse::Blockers {
                     defending_player: blockers.player,
@@ -1571,7 +1590,6 @@ impl Default for WasmGame {
     }
 }
 
-
 fn build_object_details_snapshot(game: &GameState, id: ObjectId) -> Option<ObjectDetailsSnapshot> {
     let obj = game.object(id)?;
     let counters = obj
@@ -1631,7 +1649,10 @@ fn collect_object_abilities(obj: &crate::object::Object) -> Vec<String> {
 fn describe_compiled_ability(index: usize, ability: &Ability) -> Vec<String> {
     match &ability.kind {
         AbilityKind::Static(static_ability) => {
-            vec![format!("Static ability {index}: {}", static_ability.display())]
+            vec![format!(
+                "Static ability {index}: {}",
+                static_ability.display()
+            )]
         }
         AbilityKind::Triggered(triggered) => describe_triggered_compiled(index, triggered),
         AbilityKind::Activated(activated) => describe_activated_compiled(index, activated),
@@ -1643,15 +1664,9 @@ fn describe_triggered_compiled(
     index: usize,
     triggered: &crate::ability::TriggeredAbility,
 ) -> Vec<String> {
-    let mut intro = format!(
-        "Triggered ability {index}: {}",
-        triggered.trigger.display()
-    );
+    let mut intro = format!("Triggered ability {index}: {}", triggered.trigger.display());
     if let Some(condition) = &triggered.intervening_if {
-        intro.push_str(&format!(
-            ", {}",
-            describe_intervening_if(condition)
-        ));
+        intro.push_str(&format!(", {}", describe_intervening_if(condition)));
     }
 
     let mut clauses = Vec::new();
@@ -1849,7 +1864,9 @@ fn describe_exile_then_gain_life_combo(
     tagged_subjects: &mut HashMap<String, String>,
 ) -> Option<String> {
     let tagged = first.downcast_ref::<crate::effects::TaggedEffect>()?;
-    let move_to_zone = tagged.effect.downcast_ref::<crate::effects::MoveToZoneEffect>()?;
+    let move_to_zone = tagged
+        .effect
+        .downcast_ref::<crate::effects::MoveToZoneEffect>()?;
     if move_to_zone.zone != Zone::Exile {
         return None;
     }
@@ -2007,7 +2024,10 @@ fn describe_mana_condition(condition: &crate::ability::ManaAbilityCondition) -> 
             if subtypes.is_empty() {
                 "you control a land with required subtype".to_string()
             } else if subtypes.len() == 1 {
-                format!("you control a {}", split_camel_case(&format!("{:?}", subtypes[0])))
+                format!(
+                    "you control a {}",
+                    split_camel_case(&format!("{:?}", subtypes[0]))
+                )
             } else {
                 let names = subtypes
                     .iter()
@@ -2048,7 +2068,10 @@ fn describe_condition(
             format!("you control {}", filter.description())
         }
         crate::effect::Condition::OpponentControls(filter) => {
-            format!("an opponent controls {}", strip_leading_article(&filter.description()))
+            format!(
+                "an opponent controls {}",
+                strip_leading_article(&filter.description())
+            )
         }
         crate::effect::Condition::LifeTotalOrLess(value) => {
             format!("your life total is {value} or less")
@@ -2063,10 +2086,9 @@ fn describe_condition(
         crate::effect::Condition::CreatureDiedThisTurn => "a creature died this turn".to_string(),
         crate::effect::Condition::CastSpellThisTurn => "you cast a spell this turn".to_string(),
         crate::effect::Condition::TargetIsTapped => "the target is tapped".to_string(),
+        crate::effect::Condition::SourceIsTapped => "this source is tapped".to_string(),
         crate::effect::Condition::TargetIsAttacking => "the target is attacking".to_string(),
-        crate::effect::Condition::YouControlCommander => {
-            "you control your commander".to_string()
-        }
+        crate::effect::Condition::YouControlCommander => "you control your commander".to_string(),
         crate::effect::Condition::TaggedObjectMatches(tag, filter) => {
             format!(
                 "the tagged object '{}' matches {}",
@@ -2124,17 +2146,26 @@ fn describe_restriction(
 ) -> String {
     match restriction {
         crate::effect::Restriction::GainLife(filter) => {
-            format!("{} can't gain life", describe_player_filter(filter, tagged_subjects))
+            format!(
+                "{} can't gain life",
+                describe_player_filter(filter, tagged_subjects)
+            )
         }
         crate::effect::Restriction::SearchLibraries(filter) => format!(
             "{} can't search libraries",
             describe_player_filter(filter, tagged_subjects)
         ),
         crate::effect::Restriction::CastSpells(filter) => {
-            format!("{} can't cast spells", describe_player_filter(filter, tagged_subjects))
+            format!(
+                "{} can't cast spells",
+                describe_player_filter(filter, tagged_subjects)
+            )
         }
         crate::effect::Restriction::DrawCards(filter) => {
-            format!("{} can't draw cards", describe_player_filter(filter, tagged_subjects))
+            format!(
+                "{} can't draw cards",
+                describe_player_filter(filter, tagged_subjects)
+            )
         }
         crate::effect::Restriction::DrawExtraCards(filter) => format!(
             "{} can't draw extra cards",
@@ -2145,10 +2176,16 @@ fn describe_restriction(
             describe_player_filter(filter, tagged_subjects)
         ),
         crate::effect::Restriction::LoseGame(filter) => {
-            format!("{} can't lose the game", describe_player_filter(filter, tagged_subjects))
+            format!(
+                "{} can't lose the game",
+                describe_player_filter(filter, tagged_subjects)
+            )
         }
         crate::effect::Restriction::WinGame(filter) => {
-            format!("{} can't win the game", describe_player_filter(filter, tagged_subjects))
+            format!(
+                "{} can't win the game",
+                describe_player_filter(filter, tagged_subjects)
+            )
         }
         crate::effect::Restriction::PreventDamage => "damage can't be prevented".to_string(),
         crate::effect::Restriction::Attack(filter) => {
@@ -2156,6 +2193,9 @@ fn describe_restriction(
         }
         crate::effect::Restriction::Block(filter) => {
             format!("{} can't block", filter.description())
+        }
+        crate::effect::Restriction::Untap(filter) => {
+            format!("{} can't untap", filter.description())
         }
         crate::effect::Restriction::BeBlocked(filter) => {
             format!("{} can't be blocked", filter.description())
@@ -2387,7 +2427,10 @@ fn describe_effect_core_expanded(
     if let Some(for_players) = effect.downcast_ref::<crate::effects::ForPlayersEffect>() {
         return Some(format!(
             "For each {}, {}.",
-            pluralize_noun_phrase(&describe_player_filter(&for_players.filter, tagged_subjects)),
+            pluralize_noun_phrase(&describe_player_filter(
+                &for_players.filter,
+                tagged_subjects
+            )),
             describe_effects_inline(&for_players.effects, tagged_subjects)
         ));
     }
@@ -2398,8 +2441,8 @@ fn describe_effect_core_expanded(
             describe_effects_inline(&for_each_tagged.effects, tagged_subjects)
         ));
     }
-    if let Some(for_each_controller) = effect
-        .downcast_ref::<crate::effects::ForEachControllerOfTaggedEffect>()
+    if let Some(for_each_controller) =
+        effect.downcast_ref::<crate::effects::ForEachControllerOfTaggedEffect>()
     {
         return Some(format!(
             "For each controller of tagged '{}' objects, {}.",
@@ -2407,8 +2450,8 @@ fn describe_effect_core_expanded(
             describe_effects_inline(&for_each_controller.effects, tagged_subjects)
         ));
     }
-    if let Some(for_each_tagged_player) = effect
-        .downcast_ref::<crate::effects::ForEachTaggedPlayerEffect>()
+    if let Some(for_each_tagged_player) =
+        effect.downcast_ref::<crate::effects::ForEachTaggedPlayerEffect>()
     {
         return Some(format!(
             "For each tagged '{}' player, {}.",
@@ -2435,8 +2478,7 @@ fn describe_effect_core_expanded(
             tag_trigger.tag.as_str()
         ));
     }
-    if let Some(tag_attached) = effect.downcast_ref::<crate::effects::TagAttachedToSourceEffect>()
-    {
+    if let Some(tag_attached) = effect.downcast_ref::<crate::effects::TagAttachedToSourceEffect>() {
         return Some(format!(
             "Tag the object attached to this source as '{}'.",
             tag_attached.tag.as_str()
@@ -2474,7 +2516,10 @@ fn describe_effect_core_expanded(
         if put_onto_battlefield.tapped {
             text.push_str(" tapped");
         }
-        if !matches!(put_onto_battlefield.controller, crate::target::PlayerFilter::You) {
+        if !matches!(
+            put_onto_battlefield.controller,
+            crate::target::PlayerFilter::You
+        ) {
             text.push_str(&format!(
                 " under {} control",
                 describe_player_filter(&put_onto_battlefield.controller, tagged_subjects)
@@ -2573,7 +2618,11 @@ fn describe_effect_core_expanded(
     }
     if let Some(surveil) = effect.downcast_ref::<crate::effects::SurveilEffect>() {
         let player = describe_player_filter(&surveil.player, tagged_subjects);
-        let verb = if player == "You" { "surveil" } else { "surveils" };
+        let verb = if player == "You" {
+            "surveil"
+        } else {
+            "surveils"
+        };
         return Some(format!(
             "{} {} {}.",
             player,
@@ -2583,7 +2632,11 @@ fn describe_effect_core_expanded(
     }
     if let Some(discard) = effect.downcast_ref::<crate::effects::DiscardEffect>() {
         let player = describe_player_filter(&discard.player, tagged_subjects);
-        let verb = if player == "You" { "discard" } else { "discards" };
+        let verb = if player == "You" {
+            "discard"
+        } else {
+            "discards"
+        };
         let mut text = format!(
             "{} {} {} card(s)",
             player,
@@ -2603,10 +2656,7 @@ fn describe_effect_core_expanded(
         } else {
             "discards their hand"
         };
-        return Some(format!(
-            "{} {}.",
-            player, verb
-        ));
+        return Some(format!("{} {}.", player, verb));
     }
     if let Some(search_library) = effect.downcast_ref::<crate::effects::SearchLibraryEffect>() {
         let destination = match search_library.destination {
@@ -2706,8 +2756,7 @@ fn describe_effect_core_expanded(
             describe_choose_spec(&counter.target, tagged_subjects)
         ));
     }
-    if let Some(counter_unless) = effect.downcast_ref::<crate::effects::CounterUnlessPaysEffect>()
-    {
+    if let Some(counter_unless) = effect.downcast_ref::<crate::effects::CounterUnlessPaysEffect>() {
         let mana = counter_unless
             .mana
             .iter()
@@ -2717,7 +2766,11 @@ fn describe_effect_core_expanded(
         return Some(format!(
             "Counter {} unless its controller pays {}.",
             describe_choose_spec(&counter_unless.target, tagged_subjects),
-            if mana.is_empty() { "{0}".to_string() } else { mana }
+            if mana.is_empty() {
+                "{0}".to_string()
+            } else {
+                mana
+            }
         ));
     }
     if let Some(copy_spell) = effect.downcast_ref::<crate::effects::CopySpellEffect>() {
@@ -2727,7 +2780,8 @@ fn describe_effect_core_expanded(
             describe_value(&copy_spell.count, tagged_subjects)
         ));
     }
-    if let Some(choose_new_targets) = effect.downcast_ref::<crate::effects::ChooseNewTargetsEffect>()
+    if let Some(choose_new_targets) =
+        effect.downcast_ref::<crate::effects::ChooseNewTargetsEffect>()
     {
         return Some(format!(
             "{} choose new targets for copied effect #{}.",
@@ -2746,7 +2800,10 @@ fn describe_effect_core_expanded(
         ));
     }
     if let Some(exile) = effect.downcast_ref::<crate::effects::ExileEffect>() {
-        return Some(format!("Exile {}.", describe_choose_spec(&exile.spec, tagged_subjects)));
+        return Some(format!(
+            "Exile {}.",
+            describe_choose_spec(&exile.spec, tagged_subjects)
+        ));
     }
     if let Some(destroy) = effect.downcast_ref::<crate::effects::DestroyEffect>() {
         return Some(format!(
@@ -2762,8 +2819,7 @@ fn describe_effect_core_expanded(
             pluralize_noun_phrase(&sacrifice.filter.description())
         ));
     }
-    if let Some(sacrifice_target) = effect.downcast_ref::<crate::effects::SacrificeTargetEffect>()
-    {
+    if let Some(sacrifice_target) = effect.downcast_ref::<crate::effects::SacrificeTargetEffect>() {
         return Some(format!(
             "Sacrifice {}.",
             describe_choose_spec(&sacrifice_target.target, tagged_subjects)
@@ -2788,7 +2844,11 @@ fn describe_effect_core_expanded(
             .join("");
         return Some(format!(
             "Add {} to {} mana pool.",
-            if mana.is_empty() { "{0}".to_string() } else { mana },
+            if mana.is_empty() {
+                "{0}".to_string()
+            } else {
+                mana
+            },
             describe_player_filter(&add_mana.player, tagged_subjects)
         ));
     }
@@ -2799,8 +2859,7 @@ fn describe_effect_core_expanded(
             describe_player_filter(&add_colorless.player, tagged_subjects)
         ));
     }
-    if let Some(add_any_color) = effect.downcast_ref::<crate::effects::AddManaOfAnyColorEffect>()
-    {
+    if let Some(add_any_color) = effect.downcast_ref::<crate::effects::AddManaOfAnyColorEffect>() {
         return Some(format!(
             "Add {} mana of any color to {} mana pool.",
             describe_value(&add_any_color.amount, tagged_subjects),
@@ -2986,6 +3045,9 @@ fn describe_effect_core_expanded(
         if create_copy.exile_at_end_of_combat {
             text.push_str(", and exile them at end of combat");
         }
+        if create_copy.sacrifice_at_next_end_step {
+            text.push_str(", and sacrifice it at the beginning of the next end step");
+        }
         if let Some(adjustment) = &create_copy.pt_adjustment {
             text.push_str(&format!(", with P/T adjustment {adjustment:?}"));
         }
@@ -3005,8 +3067,7 @@ fn describe_effect_core_expanded(
             describe_until(&gain_control.duration, tagged_subjects)
         ));
     }
-    if let Some(exchange_control) = effect.downcast_ref::<crate::effects::ExchangeControlEffect>()
-    {
+    if let Some(exchange_control) = effect.downcast_ref::<crate::effects::ExchangeControlEffect>() {
         return Some(format!(
             "Exchange control of {} and {}.",
             describe_choose_spec(&exchange_control.permanent1, tagged_subjects),
@@ -3063,11 +3124,13 @@ fn describe_effect_core_expanded(
             describe_choose_spec(&move_all_counters.to, tagged_subjects)
         ));
     }
-    if effect.downcast_ref::<crate::effects::ProliferateEffect>().is_some() {
+    if effect
+        .downcast_ref::<crate::effects::ProliferateEffect>()
+        .is_some()
+    {
         return Some("Proliferate.".to_string());
     }
-    if let Some(apply_continuous) = effect.downcast_ref::<crate::effects::ApplyContinuousEffect>()
-    {
+    if let Some(apply_continuous) = effect.downcast_ref::<crate::effects::ApplyContinuousEffect>() {
         return Some(format!(
             "Apply continuous effect to {:?}: {:?} {}.",
             apply_continuous.target,
@@ -3167,7 +3230,8 @@ fn describe_effect_core_expanded(
             describe_player_filter(&extra_turn.player, tagged_subjects)
         ));
     }
-    if let Some(exile_instead) = effect.downcast_ref::<crate::effects::ExileInsteadOfGraveyardEffect>()
+    if let Some(exile_instead) =
+        effect.downcast_ref::<crate::effects::ExileInsteadOfGraveyardEffect>()
     {
         return Some(format!(
             "If {} cards would go to graveyard this turn, exile them instead.",
@@ -3231,7 +3295,9 @@ fn describe_gain_life_player(
     tagged_subjects: &HashMap<String, String>,
 ) -> String {
     match spec.base() {
-        crate::target::ChooseSpec::Player(filter) => describe_player_filter(filter, tagged_subjects),
+        crate::target::ChooseSpec::Player(filter) => {
+            describe_player_filter(filter, tagged_subjects)
+        }
         _ => describe_choose_spec(spec, tagged_subjects),
     }
 }
@@ -3245,7 +3311,10 @@ fn describe_player_filter(
         crate::target::PlayerFilter::Opponent => "An opponent".to_string(),
         crate::target::PlayerFilter::Any => "A player".to_string(),
         crate::target::PlayerFilter::Target(inner) => {
-            format!("Target {}", strip_leading_article(&describe_player_filter(inner, tagged_subjects)))
+            format!(
+                "Target {}",
+                strip_leading_article(&describe_player_filter(inner, tagged_subjects))
+            )
         }
         crate::target::PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag)) => {
             if tagged_subjects.contains_key(tag.as_str()) {
@@ -3299,14 +3368,21 @@ fn describe_choose_spec(
             .get(tag.as_str())
             .map(|subject| format!("the tagged {subject}"))
             .unwrap_or_else(|| "the tagged object".to_string()),
-        crate::target::ChooseSpec::All(filter) => format!("all {}", pluralize_noun_phrase(&filter.description())),
+        crate::target::ChooseSpec::All(filter) => {
+            format!("all {}", pluralize_noun_phrase(&filter.description()))
+        }
         crate::target::ChooseSpec::EachPlayer(filter) => {
-            format!("each {}", pluralize_noun_phrase(&describe_player_filter(filter, tagged_subjects)))
+            format!(
+                "each {}",
+                pluralize_noun_phrase(&describe_player_filter(filter, tagged_subjects))
+            )
         }
         crate::target::ChooseSpec::SpecificObject(_) => "that object".to_string(),
         crate::target::ChooseSpec::SpecificPlayer(_) => "that player".to_string(),
         crate::target::ChooseSpec::Iterated => "that object".to_string(),
-        crate::target::ChooseSpec::WithCount(inner, _) => describe_choose_spec(inner, tagged_subjects),
+        crate::target::ChooseSpec::WithCount(inner, _) => {
+            describe_choose_spec(inner, tagged_subjects)
+        }
     }
 }
 
@@ -3342,7 +3418,10 @@ fn describe_value(
         crate::effect::Value::X => "X".to_string(),
         crate::effect::Value::XTimes(n) => format!("{n}*X"),
         crate::effect::Value::Count(filter) => {
-            format!("the number of {}", pluralize_noun_phrase(&filter.description()))
+            format!(
+                "the number of {}",
+                pluralize_noun_phrase(&filter.description())
+            )
         }
         crate::effect::Value::CountPlayers(filter) => format!(
             "the number of {}",
@@ -3351,10 +3430,16 @@ fn describe_value(
         crate::effect::Value::SourcePower => "this source's power".to_string(),
         crate::effect::Value::SourceToughness => "this source's toughness".to_string(),
         crate::effect::Value::PowerOf(spec) => {
-            format!("the power of {}", describe_choose_spec(spec, tagged_subjects))
+            format!(
+                "the power of {}",
+                describe_choose_spec(spec, tagged_subjects)
+            )
         }
         crate::effect::Value::ToughnessOf(spec) => {
-            format!("the toughness of {}", describe_choose_spec(spec, tagged_subjects))
+            format!(
+                "the toughness of {}",
+                describe_choose_spec(spec, tagged_subjects)
+            )
         }
         crate::effect::Value::LifeTotal(_) => "that player's life total".to_string(),
         crate::effect::Value::CardsInHand(_) => "the number of cards in hand".to_string(),
@@ -3495,7 +3580,9 @@ fn action_drag_metadata(
             Some(zone_name(Zone::Battlefield)),
         ),
         LegalAction::CastSpell {
-            spell_id, from_zone, ..
+            spell_id,
+            from_zone,
+            ..
         } => (
             "cast_spell",
             Some(spell_id.0),
@@ -3740,7 +3827,10 @@ fn validate_blocker_declarations(
     }
 
     for option in &blockers.blocker_options {
-        let assigned = counts_by_attacker.get(&option.attacker.0).copied().unwrap_or(0);
+        let assigned = counts_by_attacker
+            .get(&option.attacker.0)
+            .copied()
+            .unwrap_or(0);
         // "Minimum blockers" applies only when the attacker is blocked at all.
         // Example: menace means if blocked, it must be by 2+, but not blocked is legal.
         if assigned > 0 && assigned < option.min_blockers {

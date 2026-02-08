@@ -1173,6 +1173,17 @@ pub fn calculate_effective_mana_cost(
     spell: &crate::object::Object,
     base_cost: &crate::mana::ManaCost,
 ) -> crate::mana::ManaCost {
+    calculate_effective_mana_cost_with_targets(game, player, spell, base_cost, 1)
+}
+
+/// Calculate the effective mana cost with explicit chosen target count.
+pub fn calculate_effective_mana_cost_with_targets(
+    game: &GameState,
+    player: PlayerId,
+    spell: &crate::object::Object,
+    base_cost: &crate::mana::ManaCost,
+    chosen_target_count: usize,
+) -> crate::mana::ManaCost {
     use crate::ability::AbilityKind;
 
     let mut current_cost = base_cost.clone();
@@ -1193,7 +1204,8 @@ pub fn calculate_effective_mana_cost(
     }
 
     // Apply explicit cost reductions/increases on the spell itself.
-    current_cost = apply_spell_cost_modifiers(game, player, spell, &current_cost);
+    current_cost =
+        apply_spell_cost_modifiers(game, player, spell, &current_cost, chosen_target_count);
 
     // Check for Delve
     let has_delve_ability = has_delve(spell);
@@ -1230,6 +1242,7 @@ fn apply_spell_cost_modifiers(
     player: PlayerId,
     spell: &crate::object::Object,
     cost: &crate::mana::ManaCost,
+    chosen_target_count: usize,
 ) -> crate::mana::ManaCost {
     use crate::ability::AbilityKind;
 
@@ -1250,6 +1263,13 @@ fn apply_spell_cost_modifiers(
             let amount = resolve_cost_modifier_value(game, player, spell, &increase.increase);
             if amount > 0 {
                 total_increase = total_increase.saturating_add(amount);
+            }
+        }
+        if let Some(per_target_amount) = static_ability.cost_increase_per_additional_target() {
+            let additional_targets = chosen_target_count.saturating_sub(1);
+            if additional_targets > 0 {
+                let extra = (per_target_amount as i32).saturating_mul(additional_targets as i32);
+                total_increase = total_increase.saturating_add(extra);
             }
         }
     }
@@ -1304,6 +1324,17 @@ pub fn calculate_delve_exile_count(
     spell: &crate::object::Object,
     base_cost: &crate::mana::ManaCost,
 ) -> u32 {
+    calculate_delve_exile_count_with_targets(game, player, spell, base_cost, 1)
+}
+
+/// Calculate the number of cards to exile for Delve with explicit target count.
+pub fn calculate_delve_exile_count_with_targets(
+    game: &GameState,
+    player: PlayerId,
+    spell: &crate::object::Object,
+    base_cost: &crate::mana::ManaCost,
+    chosen_target_count: usize,
+) -> u32 {
     use crate::ability::AbilityKind;
 
     // Only calculate Delve if the spell actually has Delve
@@ -1334,7 +1365,13 @@ pub fn calculate_delve_exile_count(
         cost_after_reductions = cost_after_reductions.reduce_generic(artifact_count);
     }
 
-    cost_after_reductions = apply_spell_cost_modifiers(game, player, spell, &cost_after_reductions);
+    cost_after_reductions = apply_spell_cost_modifiers(
+        game,
+        player,
+        spell,
+        &cost_after_reductions,
+        chosen_target_count,
+    );
 
     // Now calculate how much generic mana remains
     let generic_remaining = cost_after_reductions.generic_mana_total();
@@ -1560,7 +1597,8 @@ pub fn calculate_convoke_creatures_to_tap(
         cost_after_reductions = cost_after_reductions.reduce_generic(artifact_count);
     }
 
-    cost_after_reductions = apply_spell_cost_modifiers(game, player, spell, &cost_after_reductions);
+    cost_after_reductions =
+        apply_spell_cost_modifiers(game, player, spell, &cost_after_reductions, 1);
 
     let has_delve_ability = has_delve(spell);
 
@@ -1691,7 +1729,8 @@ pub fn calculate_improvise_artifacts_to_tap(
         cost_after_reductions = cost_after_reductions.reduce_generic(artifact_count);
     }
 
-    cost_after_reductions = apply_spell_cost_modifiers(game, player, spell, &cost_after_reductions);
+    cost_after_reductions =
+        apply_spell_cost_modifiers(game, player, spell, &cost_after_reductions, 1);
 
     let has_delve_ability = has_delve(spell);
 

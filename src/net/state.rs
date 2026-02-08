@@ -296,6 +296,7 @@ struct TrackerDigest {
     cant_search: Vec<GamePlayerId>,
     cant_attack: Vec<GameObjectId>,
     cant_block: Vec<GameObjectId>,
+    cant_untap: Vec<GameObjectId>,
     cant_be_destroyed: Vec<GameObjectId>,
     cant_be_sacrificed: Vec<GameObjectId>,
     cant_cast_spells: Vec<GamePlayerId>,
@@ -339,6 +340,7 @@ impl CanonicalEncode for TrackerDigest {
         self.cant_search.encode(out);
         self.cant_attack.encode(out);
         self.cant_block.encode(out);
+        self.cant_untap.encode(out);
         self.cant_be_destroyed.encode(out);
         self.cant_be_sacrificed.encode(out);
         self.cant_cast_spells.encode(out);
@@ -674,6 +676,7 @@ fn hash_trackers_state(game: &GameState) -> Hash32 {
         cant_search: sort_players(game.cant_effects.cant_search.iter().copied()),
         cant_attack: sort_objects(game.cant_effects.cant_attack.iter().copied()),
         cant_block: sort_objects(game.cant_effects.cant_block.iter().copied()),
+        cant_untap: sort_objects(game.cant_effects.cant_untap.iter().copied()),
         cant_be_destroyed: sort_objects(game.cant_effects.cant_be_destroyed.iter().copied()),
         cant_be_sacrificed: sort_objects(game.cant_effects.cant_be_sacrificed.iter().copied()),
         cant_cast_spells: sort_players(game.cant_effects.cant_cast_spells.iter().copied()),

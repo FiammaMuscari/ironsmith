@@ -610,6 +610,7 @@ pub enum Restriction {
     PreventDamage,
     Attack(ObjectFilter),
     Block(ObjectFilter),
+    Untap(ObjectFilter),
     BeBlocked(ObjectFilter),
     BeDestroyed(ObjectFilter),
     BeSacrificed(ObjectFilter),
@@ -661,6 +662,10 @@ impl Restriction {
 
     pub fn block(filter: ObjectFilter) -> Self {
         Self::Block(filter)
+    }
+
+    pub fn untap(filter: ObjectFilter) -> Self {
+        Self::Untap(filter)
     }
 
     pub fn be_blocked(filter: ObjectFilter) -> Self {
@@ -806,6 +811,15 @@ impl Restriction {
                         && filter.matches(obj, &ctx, game)
                     {
                         tracker.cant_block.insert(obj_id);
+                    }
+                }
+            }
+            Restriction::Untap(filter) => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && filter.matches(obj, &ctx, game)
+                    {
+                        tracker.cant_untap.insert(obj_id);
                     }
                 }
             }
@@ -1069,6 +1083,9 @@ pub enum Condition {
 
     /// Target is attacking
     TargetIsAttacking,
+
+    /// Source object is tapped
+    SourceIsTapped,
 
     /// You control your commander on the battlefield.
     /// Used for Commander-specific effects like Akroma's Will.

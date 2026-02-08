@@ -75,6 +75,7 @@ pub enum StaticAbilityId {
     // === Cost modifiers ===
     CostReduction,
     CostIncrease,
+    CostIncreasePerAdditionalTarget,
     AffinityForArtifacts,
     Delve,
     Convoke,
@@ -98,6 +99,8 @@ pub enum StaticAbilityId {
     // === Other abilities ===
     DoesntUntap,
     EntersTapped,
+    EntersTappedUnlessControlTwoOrMoreOtherLands,
+    EntersTappedUnlessTwoOrMoreOpponents,
     EnterWithCounters,
     ShuffleIntoLibraryFromGraveyard,
     AllPermanentsEnterTapped,

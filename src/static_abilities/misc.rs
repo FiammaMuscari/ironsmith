@@ -6,9 +6,11 @@ use super::{StaticAbilityId, StaticAbilityKind};
 use crate::ability::LevelAbility;
 use crate::effect::Value;
 use crate::events::cards::matchers::WouldDiscardMatcher;
+use crate::events::traits::{EventKind, ReplacementMatcher, ReplacementPriority, downcast_event};
 use crate::events::zones::matchers::{
     ThisWouldEnterBattlefieldMatcher, ThisWouldGoToGraveyardMatcher, WouldEnterBattlefieldMatcher,
 };
+use crate::events::zones::{EnterBattlefieldEvent, ZoneChangeEvent};
 use crate::game_state::GameState;
 use crate::grant::GrantSpec;
 use crate::ids::{ObjectId, PlayerId};
@@ -75,6 +77,174 @@ impl StaticAbilityKind for EntersTapped {
             .self_replacing(),
         )
     }
+}
+
+/// "This enters the battlefield tapped unless you control two or more other lands."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EntersTappedUnlessControlTwoOrMoreOtherLands;
+
+impl StaticAbilityKind for EntersTappedUnlessControlTwoOrMoreOtherLands {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::EntersTappedUnlessControlTwoOrMoreOtherLands
+    }
+
+    fn display(&self) -> String {
+        "This enters the battlefield tapped unless you control two or more other lands".to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(
+            ReplacementEffect::with_matcher(
+                source,
+                controller,
+                ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLandsMatcher,
+                ReplacementAction::EnterTapped,
+            )
+            .self_replacing(),
+        )
+    }
+}
+
+/// "This enters tapped unless you have two or more opponents."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EntersTappedUnlessTwoOrMoreOpponents;
+
+impl StaticAbilityKind for EntersTappedUnlessTwoOrMoreOpponents {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::EntersTappedUnlessTwoOrMoreOpponents
+    }
+
+    fn display(&self) -> String {
+        "This enters the battlefield tapped unless you have two or more opponents".to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(
+            ReplacementEffect::with_matcher(
+                source,
+                controller,
+                ThisWouldEnterTappedUnlessTwoOrMoreOpponentsMatcher,
+                ReplacementAction::EnterTapped,
+            )
+            .self_replacing(),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLandsMatcher;
+
+impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLandsMatcher {
+    fn matches_event(
+        &self,
+        event: &dyn crate::events::traits::GameEventType,
+        ctx: &crate::events::EventContext,
+    ) -> bool {
+        if !matches_this_would_enter_battlefield(event, ctx) {
+            return false;
+        }
+
+        let land_count = ctx
+            .game
+            .battlefield
+            .iter()
+            .filter_map(|&id| ctx.game.object(id))
+            .filter(|obj| obj.controller == ctx.controller && obj.is_land())
+            .count();
+        land_count < 2
+    }
+
+    fn priority(&self) -> ReplacementPriority {
+        ReplacementPriority::SelfReplacement
+    }
+
+    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
+        Box::new(*self)
+    }
+
+    fn display(&self) -> String {
+        "When this would enter tapped unless you control two or more other lands".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct ThisWouldEnterTappedUnlessTwoOrMoreOpponentsMatcher;
+
+impl ReplacementMatcher for ThisWouldEnterTappedUnlessTwoOrMoreOpponentsMatcher {
+    fn matches_event(
+        &self,
+        event: &dyn crate::events::traits::GameEventType,
+        ctx: &crate::events::EventContext,
+    ) -> bool {
+        if !matches_this_would_enter_battlefield(event, ctx) {
+            return false;
+        }
+
+        let opponents = ctx
+            .game
+            .players
+            .iter()
+            .filter(|player| player.is_in_game() && player.id != ctx.controller)
+            .count();
+        opponents < 2
+    }
+
+    fn priority(&self) -> ReplacementPriority {
+        ReplacementPriority::SelfReplacement
+    }
+
+    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
+        Box::new(*self)
+    }
+
+    fn display(&self) -> String {
+        "When this would enter tapped unless you have two or more opponents".to_string()
+    }
+}
+
+fn matches_this_would_enter_battlefield(
+    event: &dyn crate::events::traits::GameEventType,
+    ctx: &crate::events::EventContext,
+) -> bool {
+    let object_id = match event.event_kind() {
+        EventKind::ZoneChange => {
+            let Some(zone_change) = downcast_event::<ZoneChangeEvent>(event) else {
+                return false;
+            };
+            if zone_change.to != Zone::Battlefield {
+                return false;
+            }
+            let Some(&object_id) = zone_change.objects.first() else {
+                return false;
+            };
+            object_id
+        }
+        EventKind::EnterBattlefield => {
+            let Some(etb) = downcast_event::<EnterBattlefieldEvent>(event) else {
+                return false;
+            };
+            etb.object
+        }
+        _ => return false,
+    };
+
+    ctx.source == Some(object_id)
 }
 
 /// Enters the battlefield with counters.

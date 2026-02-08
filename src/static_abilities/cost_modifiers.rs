@@ -180,6 +180,44 @@ impl StaticAbilityKind for CostIncrease {
     }
 }
 
+/// Cost increase per additional target:
+/// "This spell costs {N} more to cast for each target beyond the first."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CostIncreasePerAdditionalTarget {
+    pub amount: u32,
+}
+
+impl CostIncreasePerAdditionalTarget {
+    pub fn new(amount: u32) -> Self {
+        Self { amount }
+    }
+}
+
+impl StaticAbilityKind for CostIncreasePerAdditionalTarget {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CostIncreasePerAdditionalTarget
+    }
+
+    fn display(&self) -> String {
+        format!(
+            "This spell costs {{{}}} more to cast for each target beyond the first",
+            self.amount
+        )
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn modifies_costs(&self) -> bool {
+        true
+    }
+
+    fn cost_increase_per_additional_target(&self) -> Option<u32> {
+        Some(self.amount)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
