@@ -82,8 +82,12 @@ impl TriggerMatcher for SpellCastTrigger {
 
 fn describe_spell_filter(filter: &ObjectFilter) -> String {
     if filter.card_types.is_empty()
-        && filter.excluded_card_types.contains(&crate::types::CardType::Creature)
-        && filter.excluded_card_types.contains(&crate::types::CardType::Land)
+        && filter
+            .excluded_card_types
+            .contains(&crate::types::CardType::Creature)
+        && filter
+            .excluded_card_types
+            .contains(&crate::types::CardType::Land)
     {
         return "a noncreature spell".to_string();
     }
@@ -125,10 +129,8 @@ mod tests {
 
     #[test]
     fn test_display_noncreature_spell_filter() {
-        let trigger = SpellCastTrigger::new(Some(ObjectFilter::noncreature_spell()), PlayerFilter::You);
-        assert_eq!(
-            trigger.display(),
-            "Whenever you cast a noncreature spell"
-        );
+        let trigger =
+            SpellCastTrigger::new(Some(ObjectFilter::noncreature_spell()), PlayerFilter::You);
+        assert_eq!(trigger.display(), "Whenever you cast a noncreature spell");
     }
 }

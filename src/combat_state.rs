@@ -642,6 +642,7 @@ mod tests {
             alternative_casts: vec![],
             optional_costs: vec![],
             optional_costs_paid: OptionalCostsPaid::default(),
+            mana_spent_to_cast: crate::player::ManaPool::default(),
             cost_effects: vec![],
             max_saga_chapter: None,
         }
@@ -675,6 +676,7 @@ mod tests {
             alternative_casts: vec![],
             optional_costs: vec![],
             optional_costs_paid: OptionalCostsPaid::default(),
+            mana_spent_to_cast: crate::player::ManaPool::default(),
             cost_effects: vec![],
             max_saga_chapter: None,
         }

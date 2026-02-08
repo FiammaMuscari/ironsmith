@@ -88,8 +88,8 @@ pub use delayed::ScheduleDelayedTriggerEffect;
 pub use life::{ExchangeLifeTotalsEffect, GainLifeEffect, LoseLifeEffect, SetLifeTotalEffect};
 pub use mana::{
     AddColorlessManaEffect, AddManaEffect, AddManaFromCommanderColorIdentityEffect,
-    AddScaledManaEffect,
-    AddManaOfAnyColorEffect, AddManaOfAnyOneColorEffect, PayManaEffect,
+    AddManaOfAnyColorEffect, AddManaOfAnyOneColorEffect, AddManaOfLandProducedTypesEffect,
+    AddScaledManaEffect, PayManaEffect,
 };
 pub use permanents::{
     AttachToEffect, EarthbendEffect, GrantObjectAbilityEffect, MonstrosityEffect, RegenerateEffect,

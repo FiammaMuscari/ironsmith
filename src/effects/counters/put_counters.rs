@@ -81,40 +81,49 @@ impl EffectExecutor for PutCountersEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        // Handle Source target specially (for abilities like level-up that target themselves)
-        let target_id = match &self.target {
-            ChooseSpec::Source => ctx.source,
+        // Handle Source target specially (for abilities like level-up that target themselves).
+        let target_ids = match &self.target {
+            ChooseSpec::Source => vec![ctx.source],
             _ => match resolve_objects_from_spec(game, &self.target, ctx) {
-                Ok(objects) if !objects.is_empty() => objects[0],
+                Ok(objects) if !objects.is_empty() => objects,
                 _ => {
-                    // No target chosen (valid for "up to" effects)
+                    // No target chosen (valid for "up to" effects).
                     return Ok(EffectOutcome::resolved());
                 }
             },
         };
 
         let count = resolve_value(game, &self.count, ctx)?.max(0) as u32;
-
-        // Process through replacement effects (e.g., Melira, Doubling Season)
-        let final_count =
-            process_put_counters_with_event(game, target_id, self.counter_type, count);
-
-        if final_count == 0 {
-            // Counters were prevented
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+        if count == 0 {
+            return Ok(EffectOutcome::count(0));
         }
 
-        // Use centralized method which handles counter addition, timestamp recording, and event creation
-        match game.add_counters_with_source(
-            target_id,
-            self.counter_type,
-            final_count,
-            Some(ctx.source),
-            Some(ctx.controller),
-        ) {
-            Some(event) => Ok(EffectOutcome::count(final_count as i32).with_event(event)),
-            None => Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
+        let mut outcomes = Vec::with_capacity(target_ids.len());
+        for target_id in target_ids {
+            // Process through replacement effects (e.g., Melira, Doubling Season).
+            let final_count =
+                process_put_counters_with_event(game, target_id, self.counter_type, count);
+            if final_count == 0 {
+                outcomes.push(EffectOutcome::from_result(EffectResult::Prevented));
+                continue;
+            }
+
+            // Use centralized method which handles counter addition, timestamp recording, and event creation.
+            match game.add_counters_with_source(
+                target_id,
+                self.counter_type,
+                final_count,
+                Some(ctx.source),
+                Some(ctx.controller),
+            ) {
+                Some(event) => {
+                    outcomes.push(EffectOutcome::count(final_count as i32).with_event(event))
+                }
+                None => outcomes.push(EffectOutcome::from_result(EffectResult::TargetInvalid)),
+            }
         }
+
+        Ok(EffectOutcome::aggregate(outcomes))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
@@ -257,6 +266,41 @@ mod tests {
         assert_eq!(result.result, EffectResult::Count(3));
         let obj = game.object(creature_id).unwrap();
         assert_eq!(obj.counters.get(&CounterType::PlusOnePlusOne), Some(&5)); // 2 + 3
+    }
+
+    #[test]
+    fn test_put_counters_multiple_targets() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let first = create_creature(&mut game, "First", alice);
+        let second = create_creature(&mut game, "Second", alice);
+        let source = game.new_object_id();
+
+        let mut ctx = ExecutionContext::new_default(source, alice).with_targets(vec![
+            ResolvedTarget::Object(first),
+            ResolvedTarget::Object(second),
+        ]);
+
+        let effect = PutCountersEffect::plus_one_counters(1, ChooseSpec::creature())
+            .with_target_count(ChoiceCount::any_number());
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(result.events.len(), 2);
+        assert_eq!(
+            game.object(first)
+                .unwrap()
+                .counters
+                .get(&CounterType::PlusOnePlusOne),
+            Some(&1)
+        );
+        assert_eq!(
+            game.object(second)
+                .unwrap()
+                .counters
+                .get(&CounterType::PlusOnePlusOne),
+            Some(&1)
+        );
     }
 
     #[test]

@@ -690,8 +690,30 @@ pub fn resolve_objects_from_spec(
         // All matching - filter battlefield
         ChooseSpec::All(filter) => {
             let filter_ctx = ctx.filter_context(game);
-            let objects: Vec<ObjectId> = game
-                .battlefield
+            let candidate_ids: Vec<ObjectId> = match filter.zone {
+                Some(Zone::Battlefield) => game.battlefield.clone(),
+                Some(Zone::Graveyard) => game
+                    .players
+                    .iter()
+                    .flat_map(|player| player.graveyard.iter().copied())
+                    .collect(),
+                Some(Zone::Hand) => game
+                    .players
+                    .iter()
+                    .flat_map(|player| player.hand.iter().copied())
+                    .collect(),
+                Some(Zone::Library) => game
+                    .players
+                    .iter()
+                    .flat_map(|player| player.library.iter().copied())
+                    .collect(),
+                Some(Zone::Stack) => game.stack.iter().map(|entry| entry.object_id).collect(),
+                Some(Zone::Exile) => game.exile.clone(),
+                Some(Zone::Command) => game.command_zone.clone(),
+                None => game.battlefield.clone(),
+            };
+
+            let objects: Vec<ObjectId> = candidate_ids
                 .iter()
                 .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
                 .filter(|(_, obj)| filter.matches(obj, &filter_ctx, game))

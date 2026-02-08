@@ -7,6 +7,7 @@ use crate::color::ColorSet;
 use crate::cost::{OptionalCost, OptionalCostsPaid};
 use crate::ids::{CardId, ObjectId, PlayerId, StableId};
 use crate::mana::ManaCost;
+use crate::player::ManaPool;
 use crate::types::{CardType, Subtype, Supertype};
 use crate::zone::Zone;
 
@@ -218,6 +219,9 @@ pub struct Object {
     pub optional_costs: Vec<OptionalCost>,
     /// Which optional costs were paid when this spell was cast (for ETB triggers)
     pub optional_costs_paid: OptionalCostsPaid,
+    /// Mana actually spent to cast this object while it was a spell.
+    /// Used by conditional text like "if at least three blue mana was spent to cast this spell".
+    pub mana_spent_to_cast: ManaPool,
     /// Cost effects (new unified model) - effects executed as part of paying costs.
     pub cost_effects: Vec<crate::effect::Effect>,
 
@@ -273,6 +277,7 @@ impl Object {
             alternative_casts: Vec::new(),
             optional_costs: Vec::new(),
             optional_costs_paid: OptionalCostsPaid::default(),
+            mana_spent_to_cast: ManaPool::default(),
             cost_effects: Vec::new(),
             max_saga_chapter: None,
         }
@@ -335,6 +340,7 @@ impl Object {
             alternative_casts: Vec::new(),
             optional_costs: Vec::new(),
             optional_costs_paid: OptionalCostsPaid::default(),
+            mana_spent_to_cast: ManaPool::default(),
             cost_effects: Vec::new(),
             max_saga_chapter: None,
         }
@@ -377,6 +383,8 @@ impl Object {
             optional_costs: source.optional_costs.clone(),
             // Optional costs paid is non-copiable (tokens weren't cast)
             optional_costs_paid: OptionalCostsPaid::default(),
+            // Tokens are never cast.
+            mana_spent_to_cast: ManaPool::default(),
             // Cost effects are copiable
             cost_effects: source.cost_effects.clone(),
             // Saga fields - copiable (a token copy of a saga is also a saga)
@@ -427,6 +435,7 @@ impl Object {
             alternative_casts: Vec::new(),
             optional_costs: Vec::new(),
             optional_costs_paid: OptionalCostsPaid::default(),
+            mana_spent_to_cast: ManaPool::default(),
             cost_effects: Vec::new(),
             max_saga_chapter: None,
         }
@@ -808,6 +817,7 @@ impl Object {
             alternative_casts: def.alternative_casts.clone(),
             optional_costs: def.optional_costs.clone(),
             optional_costs_paid: OptionalCostsPaid::default(),
+            mana_spent_to_cast: ManaPool::default(),
             cost_effects: def.cost_effects.clone(),
             max_saga_chapter: def.max_saga_chapter,
         }

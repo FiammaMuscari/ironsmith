@@ -1497,6 +1497,33 @@ impl ObjectFilter {
                 parts.push(format!("non{}", describe_card_type_word(*card_type)));
             }
         }
+        if !self.excluded_supertypes.is_empty() {
+            for supertype in &self.excluded_supertypes {
+                parts.push(format!("non{}", format!("{supertype:?}").to_ascii_lowercase()));
+            }
+        }
+        if !self.excluded_subtypes.is_empty() {
+            for subtype in &self.excluded_subtypes {
+                parts.push(format!("non{subtype:?}"));
+            }
+        }
+        if !self.excluded_colors.is_empty() {
+            if self.excluded_colors.contains(crate::color::Color::White) {
+                parts.push("nonwhite".to_string());
+            }
+            if self.excluded_colors.contains(crate::color::Color::Blue) {
+                parts.push("nonblue".to_string());
+            }
+            if self.excluded_colors.contains(crate::color::Color::Black) {
+                parts.push("nonblack".to_string());
+            }
+            if self.excluded_colors.contains(crate::color::Color::Red) {
+                parts.push("nonred".to_string());
+            }
+            if self.excluded_colors.contains(crate::color::Color::Green) {
+                parts.push("nongreen".to_string());
+            }
+        }
         if self.attacking && self.blocking {
             parts.push("attacking/blocking".to_string());
         } else if self.attacking {
@@ -1513,7 +1540,15 @@ impl ObjectFilter {
         }
 
         // Handle card types
-        if !self.card_types.is_empty() {
+        if !self.all_card_types.is_empty() {
+            let types_str = self
+                .all_card_types
+                .iter()
+                .map(|t| format!("{:?}", t).to_lowercase())
+                .collect::<Vec<_>>()
+                .join(" ");
+            parts.push(types_str);
+        } else if !self.card_types.is_empty() {
             let types_str = self
                 .card_types
                 .iter()
@@ -1542,7 +1577,7 @@ impl ObjectFilter {
                 .iter()
                 .map(|t| format!("{:?}", t))
                 .collect::<Vec<_>>()
-                .join(" ");
+                .join(" or ");
             parts.push(subtypes_str);
         }
 
@@ -1774,6 +1809,35 @@ mod tests {
     fn test_filter_description_includes_tapped_state() {
         let filter = ObjectFilter::creature().tapped();
         assert_eq!(filter.description(), "tapped creature");
+    }
+
+    #[test]
+    fn test_filter_description_includes_all_card_types() {
+        let filter = ObjectFilter::default()
+            .with_all_type(CardType::Artifact)
+            .with_all_type(CardType::Creature);
+        assert_eq!(filter.description(), "artifact creature");
+    }
+
+    #[test]
+    fn test_filter_description_includes_excluded_subtypes() {
+        let filter = ObjectFilter::creature()
+            .without_subtype(crate::types::Subtype::Vampire)
+            .without_subtype(crate::types::Subtype::Werewolf)
+            .without_subtype(crate::types::Subtype::Zombie);
+        assert_eq!(
+            filter.description(),
+            "nonVampire nonWerewolf nonZombie creature"
+        );
+    }
+
+    #[test]
+    fn test_filter_description_includes_excluded_colors() {
+        let filter = ObjectFilter::creature().without_colors(
+            ColorSet::from_color(crate::color::Color::Black)
+                .union(ColorSet::from_color(crate::color::Color::Red)),
+        );
+        assert_eq!(filter.description(), "nonblack nonred creature");
     }
 
     #[test]

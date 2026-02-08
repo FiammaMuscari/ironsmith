@@ -96,16 +96,17 @@ mod tests {
         let source = game.new_object_id();
         let mut ctx = ExecutionContext::new_default(source, alice);
 
-        let effect = AddScaledManaEffect::new(
-            vec![ManaSymbol::Black],
-            Value::Fixed(3),
-            PlayerFilter::You,
-        );
+        let effect =
+            AddScaledManaEffect::new(vec![ManaSymbol::Black], Value::Fixed(3), PlayerFilter::You);
         let result = effect.execute(&mut game, &mut ctx).expect("execute");
 
         assert_eq!(
             result.result,
-            EffectResult::ManaAdded(vec![ManaSymbol::Black, ManaSymbol::Black, ManaSymbol::Black])
+            EffectResult::ManaAdded(vec![
+                ManaSymbol::Black,
+                ManaSymbol::Black,
+                ManaSymbol::Black
+            ])
         );
         assert_eq!(game.player(alice).expect("alice").mana_pool.black, 3);
     }
@@ -117,28 +118,17 @@ mod tests {
         let source = game.new_object_id();
         let mut ctx = ExecutionContext::new_default(source, alice);
 
-        put_card_in_graveyard(
-            &mut game,
-            alice,
-            "Dead Bear",
-            vec![CardType::Creature],
-        );
-        put_card_in_graveyard(
-            &mut game,
-            alice,
-            "Dead Elf",
-            vec![CardType::Creature],
-        );
-        put_card_in_graveyard(
-            &mut game,
-            alice,
-            "Dead Ritual",
-            vec![CardType::Sorcery],
-        );
+        put_card_in_graveyard(&mut game, alice, "Dead Bear", vec![CardType::Creature]);
+        put_card_in_graveyard(&mut game, alice, "Dead Elf", vec![CardType::Creature]);
+        put_card_in_graveyard(&mut game, alice, "Dead Ritual", vec![CardType::Sorcery]);
 
         let effect = AddScaledManaEffect::new(
             vec![ManaSymbol::Black],
-            Value::Count(ObjectFilter::creature().in_zone(Zone::Graveyard).owned_by(PlayerFilter::You)),
+            Value::Count(
+                ObjectFilter::creature()
+                    .in_zone(Zone::Graveyard)
+                    .owned_by(PlayerFilter::You),
+            ),
             PlayerFilter::You,
         );
         let result = effect.execute(&mut game, &mut ctx).expect("execute");

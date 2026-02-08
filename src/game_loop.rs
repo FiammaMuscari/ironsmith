@@ -38,6 +38,7 @@ use crate::net::{CostPayment, CostStep, GameObjectId, ManaSymbolCode, ManaSymbol
 #[cfg(not(feature = "net"))]
 type CostStep = ();
 use crate::object::CounterType;
+use crate::player::ManaPool;
 use crate::rules::combat::{
     deals_first_strike_damage_with_game, deals_regular_combat_damage_with_game,
 };
@@ -155,7 +156,9 @@ impl std::error::Error for GameLoopError {}
 pub fn requires_target_selection(spec: &ChooseSpec) -> bool {
     match spec {
         // Target wrapper - check the inner spec
-        ChooseSpec::Target(inner) => requires_target_selection(inner),
+        ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
+            requires_target_selection(inner)
+        }
         // These require target selection during casting
         ChooseSpec::AnyTarget | ChooseSpec::Player(_) | ChooseSpec::Object(_) => true,
         // These don't require selection - they're resolved at execution time
@@ -1700,6 +1703,8 @@ pub struct PendingCast {
     pub optional_costs_paid: OptionalCostsPaid,
     /// Ordered trace of cost payments performed so far.
     pub payment_trace: Vec<CostStep>,
+    /// Mana actually spent to cast the spell (color-by-color).
+    pub mana_spent_to_cast: ManaPool,
     /// The computed mana cost to pay (set during PayingMana stage).
     pub mana_cost_to_pay: Option<crate::mana::ManaCost>,
     /// Remaining mana pips to pay (pip-by-pip payment flow).
@@ -2391,6 +2396,7 @@ pub fn apply_priority_response_with_dm(
                     casting_method: casting_method.clone(),
                     optional_costs_paid,
                     payment_trace: Vec::new(),
+                    mana_spent_to_cast: ManaPool::default(),
                     mana_cost_to_pay: None,
                     remaining_mana_pips: Vec::new(),
                     cards_to_exile: Vec::new(),
@@ -2429,6 +2435,7 @@ pub fn apply_priority_response_with_dm(
                     casting_method: casting_method.clone(),
                     optional_costs_paid,
                     payment_trace: Vec::new(),
+                    mana_spent_to_cast: ManaPool::default(),
                     mana_cost_to_pay: None,
                     remaining_mana_pips: Vec::new(),
                     cards_to_exile: Vec::new(),
@@ -3907,6 +3914,7 @@ fn continue_spell_cast_mana_payment(
 
     // If no remaining pips, we're done with mana payment - finalize the spell
     if pending.remaining_mana_pips.is_empty() {
+        let mana_spent_to_cast = pending.mana_spent_to_cast.clone();
         let result = finalize_spell_cast(
             game,
             trigger_queue,
@@ -3919,6 +3927,7 @@ fn continue_spell_cast_mana_payment(
             pending.optional_costs_paid,
             pending.chosen_modes,
             pending.cards_to_exile,
+            mana_spent_to_cast,
             &mut pending.payment_trace,
             true, // mana_already_paid via pip-by-pip
             pending.stack_id,
@@ -3970,6 +3979,7 @@ fn continue_spell_cast_mana_payment(
             &action,
             &mut *decision_maker,
             &mut pending.payment_trace,
+            Some(&mut pending.mana_spent_to_cast),
         )?;
         if pip_paid {
             pending.remaining_mana_pips.remove(0);
@@ -4555,6 +4565,7 @@ fn continue_activation(
                     &action,
                     &mut *decision_maker,
                     &mut pending.payment_trace,
+                    None,
                 )?;
                 if pip_paid {
                     pending.remaining_mana_pips.remove(0);
@@ -5106,6 +5117,7 @@ fn execute_pip_payment_action(
     action: &ManaPipPaymentAction,
     decision_maker: &mut impl DecisionMaker,
     payment_trace: &mut Vec<CostStep>,
+    mut mana_spent_to_cast: Option<&mut ManaPool>,
 ) -> Result<bool, GameLoopError> {
     match action {
         ManaPipPaymentAction::UseFromPool(symbol) => {
@@ -5117,6 +5129,9 @@ fn execute_pip_payment_action(
                         symbol
                     )));
                 }
+            }
+            if let Some(spent) = mana_spent_to_cast.as_deref_mut() {
+                track_spent_mana_symbol(spent, *symbol);
             }
             record_pip_payment_action(payment_trace, action);
             Ok(true) // Pip was paid
@@ -5143,6 +5158,19 @@ fn execute_pip_payment_action(
             record_pip_payment_action(payment_trace, action);
             Ok(true) // Pip was paid
         }
+    }
+}
+
+fn track_spent_mana_symbol(pool: &mut ManaPool, symbol: crate::mana::ManaSymbol) {
+    use crate::mana::ManaSymbol;
+    match symbol {
+        ManaSymbol::White
+        | ManaSymbol::Blue
+        | ManaSymbol::Black
+        | ManaSymbol::Red
+        | ManaSymbol::Green
+        | ManaSymbol::Colorless => pool.add(symbol, 1),
+        ManaSymbol::Generic(_) | ManaSymbol::Snow | ManaSymbol::Life(_) | ManaSymbol::X => {}
     }
 }
 
@@ -5666,6 +5694,7 @@ fn apply_pip_payment_response_activation(
         action,
         &mut *decision_maker,
         &mut pending.payment_trace,
+        None,
     )?;
 
     // Only remove the pip if it was actually paid (not just mana generated)
@@ -5725,6 +5754,7 @@ fn apply_pip_payment_response_cast(
         action,
         &mut *decision_maker,
         &mut pending.payment_trace,
+        Some(&mut pending.mana_spent_to_cast),
     )?;
 
     // Only remove the pip if it was actually paid (not just mana generated)
@@ -5971,6 +6001,7 @@ fn apply_casting_method_choice_response(
             casting_method,
             optional_costs_paid,
             payment_trace: Vec::new(),
+            mana_spent_to_cast: ManaPool::default(),
             mana_cost_to_pay: None,
             remaining_mana_pips: Vec::new(),
             cards_to_exile: Vec::new(),
@@ -6008,6 +6039,7 @@ fn apply_casting_method_choice_response(
             casting_method,
             optional_costs_paid,
             payment_trace: Vec::new(),
+            mana_spent_to_cast: ManaPool::default(),
             mana_cost_to_pay: None,
             remaining_mana_pips: Vec::new(),
             cards_to_exile: Vec::new(),
@@ -6075,6 +6107,7 @@ fn finalize_spell_cast(
     optional_costs_paid: OptionalCostsPaid,
     chosen_modes: Option<Vec<usize>>,
     pre_chosen_exile_cards: Vec<ObjectId>,
+    mut mana_spent_to_cast: ManaPool,
     _payment_trace: &mut Vec<CostStep>,
     mana_already_paid: bool,
     stack_id: ObjectId,
@@ -6370,10 +6403,20 @@ fn finalize_spell_cast(
     // Skip if mana was already paid via pip-by-pip payment
     if !mana_already_paid && let Some(cost) = effective_cost {
         let x = x_value.unwrap_or(0);
+        let before_pool = game.player(caster).map(|player| player.mana_pool.clone());
         if !game.try_pay_mana_cost(caster, Some(spell_id), &cost, x) {
             return Err(GameLoopError::InvalidState(
                 "Cannot pay mana cost".to_string(),
             ));
+        }
+        let after_pool = game.player(caster).map(|player| player.mana_pool.clone());
+        if let (Some(before), Some(after)) = (before_pool, after_pool) {
+            mana_spent_to_cast.white += before.white.saturating_sub(after.white);
+            mana_spent_to_cast.blue += before.blue.saturating_sub(after.blue);
+            mana_spent_to_cast.black += before.black.saturating_sub(after.black);
+            mana_spent_to_cast.red += before.red.saturating_sub(after.red);
+            mana_spent_to_cast.green += before.green.saturating_sub(after.green);
+            mana_spent_to_cast.colorless += before.colorless.saturating_sub(after.colorless);
         }
     }
 
@@ -6473,6 +6516,9 @@ fn finalize_spell_cast(
 
     // Spell was already moved to stack during proposal (601.2a compliant).
     let new_id = stack_id;
+    if let Some(spell_obj) = game.object_mut(new_id) {
+        spell_obj.mana_spent_to_cast = mana_spent_to_cast;
+    }
 
     // Create stack entry with targets, X value, casting method, optional costs, and chosen modes
     let mut entry = StackEntry::new(new_id, caster)
@@ -12730,6 +12776,7 @@ mod tests {
             OptionalCostsPaid::default(),
             None,
             Vec::new(),
+            ManaPool::default(),
             &mut payment_trace,
             false,
             None,

@@ -45,4 +45,16 @@ impl EffectExecutor for TargetOnlyEffect {
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
     }
+
+    fn get_target_spec(&self) -> Option<&ChooseSpec> {
+        Some(&self.target)
+    }
+
+    fn get_target_count(&self) -> Option<crate::effect::ChoiceCount> {
+        Some(self.target.count())
+    }
+
+    fn target_description(&self) -> &'static str {
+        "target"
+    }
 }

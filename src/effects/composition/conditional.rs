@@ -87,7 +87,7 @@ impl EffectExecutor for ConditionalEffect {
         source: ObjectId,
     ) -> Option<ModalSpec> {
         // Evaluate the condition at cast time to determine which branch to use
-        let condition_result = evaluate_condition_simple(game, &self.condition, controller);
+        let condition_result = evaluate_condition_simple(game, &self.condition, controller, source);
 
         // Search the appropriate branch for modal specs
         let effects_to_search = if condition_result {
@@ -124,6 +124,7 @@ fn evaluate_condition_simple(
     game: &GameState,
     condition: &Condition,
     controller: PlayerId,
+    source: ObjectId,
 ) -> bool {
     // Build a simple filter context with opponents
     let opponents: Vec<PlayerId> = game
@@ -189,15 +190,26 @@ fn evaluate_condition_simple(
             }
             false
         }
+        Condition::ManaSpentToCastThisSpellAtLeast { amount, symbol } => {
+            let Some(source_obj) = game.object(source) else {
+                return false;
+            };
+            let spent = if let Some(sym) = symbol {
+                source_obj.mana_spent_to_cast.amount(*sym)
+            } else {
+                source_obj.mana_spent_to_cast.total()
+            };
+            spent >= *amount
+        }
         Condition::TaggedObjectMatches(_, _) => false,
-        Condition::Not(inner) => !evaluate_condition_simple(game, inner, controller),
+        Condition::Not(inner) => !evaluate_condition_simple(game, inner, controller, source),
         Condition::And(a, b) => {
-            evaluate_condition_simple(game, a, controller)
-                && evaluate_condition_simple(game, b, controller)
+            evaluate_condition_simple(game, a, controller, source)
+                && evaluate_condition_simple(game, b, controller, source)
         }
         Condition::Or(a, b) => {
-            evaluate_condition_simple(game, a, controller)
-                || evaluate_condition_simple(game, b, controller)
+            evaluate_condition_simple(game, a, controller, source)
+                || evaluate_condition_simple(game, b, controller, source)
         }
         // Target-dependent conditions default to false during casting
         Condition::TargetIsTapped | Condition::TargetIsAttacking | Condition::SourceIsTapped => {
@@ -318,6 +330,17 @@ fn evaluate_condition(
                 return Ok(false);
             };
             Ok(filter.matches_snapshot(snapshot, &filter_ctx, game))
+        }
+        Condition::ManaSpentToCastThisSpellAtLeast { amount, symbol } => {
+            let Some(source_obj) = game.object(ctx.source) else {
+                return Ok(false);
+            };
+            let spent = if let Some(sym) = symbol {
+                source_obj.mana_spent_to_cast.amount(*sym)
+            } else {
+                source_obj.mana_spent_to_cast.total()
+            };
+            Ok(spent >= *amount)
         }
         Condition::Not(inner) => {
             let inner_result = evaluate_condition(game, inner, ctx)?;
@@ -457,5 +480,36 @@ mod tests {
             ConditionalEffect::if_only(Condition::LifeTotalOrLess(10), vec![Effect::gain_life(1)]);
         let cloned = effect.clone_box();
         assert!(format!("{:?}", cloned).contains("ConditionalEffect"));
+    }
+
+    #[test]
+    fn test_conditional_mana_spent_to_cast_this_spell() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let card = CardBuilder::new(CardId::new(), "Adamant Probe")
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(4)]]))
+            .card_types(vec![CardType::Instant])
+            .build();
+        let source = game.new_object_id();
+        let mut source_obj = Object::from_card(source, &card, alice, Zone::Stack);
+        source_obj.mana_spent_to_cast.blue = 3;
+        source_obj.mana_spent_to_cast.white = 1;
+        game.add_object(source_obj);
+
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        let initial_life = game.player(alice).unwrap().life;
+
+        let effect = ConditionalEffect::new(
+            Condition::ManaSpentToCastThisSpellAtLeast {
+                amount: 3,
+                symbol: Some(ManaSymbol::Blue),
+            },
+            vec![Effect::gain_life(5)],
+            vec![Effect::gain_life(1)],
+        );
+        effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(game.player(alice).unwrap().life, initial_life + 5);
     }
 }

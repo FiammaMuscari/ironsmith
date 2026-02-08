@@ -2490,6 +2490,7 @@ impl GameState {
             attacking_player: None,
             your_commanders,
             iterated_player: None,
+            target_players: Vec::new(),
             tagged_objects: std::collections::HashMap::new(),
         }
     }

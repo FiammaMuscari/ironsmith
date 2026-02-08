@@ -1087,6 +1087,13 @@ pub enum Condition {
     /// Source object is tapped
     SourceIsTapped,
 
+    /// At least N mana of a specific color/type was spent to cast this spell.
+    /// If `symbol` is `None`, checks total mana spent instead.
+    ManaSpentToCastThisSpellAtLeast {
+        amount: u32,
+        symbol: Option<ManaSymbol>,
+    },
+
     /// You control your commander on the battlefield.
     /// Used for Commander-specific effects like Akroma's Will.
     YouControlCommander,
@@ -1624,6 +1631,24 @@ impl Effect {
         Self::new(AddManaOfAnyOneColorEffect::new(amount, player))
     }
 
+    /// Create an "add mana constrained by what matching lands could produce" effect.
+    pub fn add_mana_of_land_produced_types_player(
+        amount: impl Into<Value>,
+        player: PlayerFilter,
+        land_filter: ObjectFilter,
+        allow_colorless: bool,
+        same_type: bool,
+    ) -> Self {
+        use crate::effects::AddManaOfLandProducedTypesEffect;
+        Self::new(AddManaOfLandProducedTypesEffect::new(
+            amount,
+            player,
+            land_filter,
+            allow_colorless,
+            same_type,
+        ))
+    }
+
     /// Create an "add mana from commander color identity" effect.
     pub fn add_mana_from_commander_color_identity(amount: impl Into<Value>) -> Self {
         use crate::effects::AddManaFromCommanderColorIdentityEffect;
@@ -1896,11 +1921,7 @@ impl Effect {
     ///     vec![ManaSymbol::Blue],
     /// )
     /// ```
-    pub fn unless_pays(
-        effects: Vec<Effect>,
-        player: PlayerFilter,
-        mana: Vec<ManaSymbol>,
-    ) -> Self {
+    pub fn unless_pays(effects: Vec<Effect>, player: PlayerFilter, mana: Vec<ManaSymbol>) -> Self {
         use crate::effects::UnlessPaysEffect;
         Self::new(UnlessPaysEffect::new(effects, player, mana))
     }

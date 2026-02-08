@@ -1602,7 +1602,10 @@ fn parse_ability_line(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
 }
 
 fn parse_protection_chain(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
-    let words = words(tokens);
+    let mut words = words(tokens);
+    if words.first().copied() == Some("and") {
+        words.remove(0);
+    }
     if words.len() < 3 {
         return None;
     }
@@ -1768,8 +1771,8 @@ fn parse_static_ability_line(
     if let Some(ability) = parse_remove_snow_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
-    if let Some(ability) = parse_all_creatures_have_haste_line(tokens)? {
-        return Ok(Some(vec![ability]));
+    if let Some(abilities) = parse_granted_keyword_static_line(tokens)? {
+        return Ok(Some(abilities));
     }
     if let Some(abilities) = parse_lose_all_abilities_and_base_pt_line(tokens)? {
         return Ok(Some(abilities));
@@ -2219,30 +2222,166 @@ fn parse_remove_snow_line(tokens: &[Token]) -> Result<Option<StaticAbility>, Car
     Ok(None)
 }
 
-fn parse_all_creatures_have_haste_line(
+fn parse_granted_keyword_static_line(
     tokens: &[Token],
-) -> Result<Option<StaticAbility>, CardTextError> {
-    let words = words(tokens);
-    let have_idx = words
+) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+    let clause_words = words(tokens);
+    if !clause_words
         .iter()
-        .position(|word| *word == "have" || *word == "has");
-    let Some(have_idx) = have_idx else {
+        .any(|word| *word == "have" || *word == "has")
+    {
+        return Ok(None);
+    }
+
+    let have_token_idx = tokens
+        .iter()
+        .position(|token| token.is_word("have") || token.is_word("has"))
+        .ok_or_else(|| CardTextError::ParseError("missing granted-keyword verb".to_string()))?;
+    if words(&tokens[..have_token_idx])
+        .iter()
+        .any(|word| *word == "get" || *word == "gets")
+    {
+        return Ok(None);
+    }
+
+    let (prefix_condition, subject_start) = parse_anthem_prefix_condition(tokens, have_token_idx)?;
+    let subject_tokens = trim_commas(&tokens[subject_start..have_token_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let subject_words = words(&subject_tokens);
+    if subject_words.contains(&"equipped")
+        || subject_words.contains(&"enchanted")
+        || subject_words.contains(&"mana")
+    {
+        return Ok(None);
+    }
+    if subject_words.iter().any(|word| {
+        matches!(
+            *word,
+            "can"
+                | "cant"
+                | "cannot"
+                | "attack"
+                | "attacks"
+                | "block"
+                | "blocks"
+                | "blocked"
+                | "blocking"
+                | "cast"
+                | "spell"
+                | "spells"
+                | "during"
+                | "until"
+                | "unless"
+                | "when"
+                | "whenever"
+                | "if"
+                | "though"
+        )
+    }) {
+        return Ok(None);
+    }
+
+    let tail_tokens = trim_commas(&tokens[have_token_idx + 1..]);
+    if tail_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let mut keyword_tokens = tail_tokens.clone();
+    let mut suffix_condition = None;
+    if let Some(idx) = words(&tail_tokens)
+        .windows(3)
+        .position(|window| window == ["as", "long", "as"])
+    {
+        if idx + 3 >= tail_tokens.len() {
+            return Err(CardTextError::ParseError(format!(
+                "missing condition after trailing 'as long as' clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        keyword_tokens = trim_commas(&tail_tokens[..idx]);
+        suffix_condition = Some(parse_static_condition_clause(&tail_tokens[idx + 3..])?);
+    }
+    if keyword_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing granted keyword list (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let mut grants_must_attack = false;
+    let keyword_words = words(&keyword_tokens);
+    if let Some(and_idx) = keyword_words
+        .windows(6)
+        .position(|window| window == ["and", "attack", "each", "combat", "if", "able"])
+        .or_else(|| {
+            keyword_words
+                .windows(6)
+                .position(|window| window == ["and", "attacks", "each", "combat", "if", "able"])
+        })
+    {
+        keyword_tokens = trim_commas(&keyword_tokens[..and_idx]);
+        grants_must_attack = true;
+    }
+    if keyword_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(actions) = parse_ability_line(&keyword_tokens) else {
         return Ok(None);
     };
-
-    if !words.iter().skip(have_idx + 1).any(|word| *word == "haste") {
+    if actions.is_empty() {
         return Ok(None);
     }
 
-    let subject_words = &words[..have_idx];
-    if subject_words.contains(&"equipped") || subject_words.contains(&"enchanted") {
+    let condition = match (prefix_condition, suffix_condition) {
+        (Some(_), Some(_)) => {
+            return Err(CardTextError::ParseError(format!(
+                "multiple static conditions are not supported in granted-keyword clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        (Some(cond), None) | (None, Some(cond)) => Some(cond),
+        (None, None) => None,
+    };
+
+    let mapped = actions
+        .into_iter()
+        .filter_map(keyword_action_to_static_ability)
+        .collect::<Vec<_>>();
+    if mapped.is_empty() && !grants_must_attack {
         return Ok(None);
     }
-    let filter = parse_object_filter(&tokens[..have_idx], false)?;
-    Ok(Some(StaticAbility::grant_ability(
-        filter,
-        StaticAbility::haste(),
-    )))
+
+    let subject = parse_anthem_subject(&subject_tokens)?;
+    let mut compiled = Vec::new();
+    let mut granted_abilities = mapped;
+    if grants_must_attack {
+        granted_abilities.push(StaticAbility::must_attack());
+    }
+    for ability in granted_abilities {
+        match &subject {
+            AnthemSubjectAst::Source => {
+                if let Some(condition) = &condition {
+                    let granted = GrantAbility::source(ability).with_condition(condition.clone());
+                    compiled.push(StaticAbility::new(granted));
+                } else {
+                    compiled.push(ability);
+                }
+            }
+            AnthemSubjectAst::Filter(filter) => {
+                let granted = if let Some(condition) = &condition {
+                    GrantAbility::new(filter.clone(), ability).with_condition(condition.clone())
+                } else {
+                    GrantAbility::new(filter.clone(), ability)
+                };
+                compiled.push(StaticAbility::new(granted));
+            }
+        }
+    }
+    Ok(Some(compiled))
 }
 
 fn parse_all_creatures_lose_flying_line(
@@ -2314,16 +2453,26 @@ fn parse_all_have_indestructible_line(
     let Some(have_idx) = have_idx else {
         return Ok(None);
     };
-
-    if !words
+    if words[..have_idx]
         .iter()
-        .skip(have_idx + 1)
-        .any(|word| *word == "indestructible")
+        .any(|word| *word == "get" || *word == "gets")
     {
         return Ok(None);
     }
 
-    let filter = parse_object_filter(&tokens[..have_idx], false)?;
+    let have_token_idx = tokens
+        .iter()
+        .position(|token| token.is_word("have") || token.is_word("has"))
+        .ok_or_else(|| CardTextError::ParseError("missing granted-keyword verb".to_string()))?;
+    let tail = trim_commas(&tokens[have_token_idx + 1..]);
+    let Some(actions) = parse_ability_line(&tail) else {
+        return Ok(None);
+    };
+    if actions.len() != 1 || !matches!(actions[0], KeywordAction::Indestructible) {
+        return Ok(None);
+    }
+
+    let filter = parse_object_filter(&tokens[..have_token_idx], false)?;
     Ok(Some(StaticAbility::grant_ability(
         filter,
         StaticAbility::indestructible(),
@@ -7699,6 +7848,7 @@ fn parse_subtype_word(word: &str) -> Option<Subtype> {
         "demon" => Some(Subtype::Demon),
         "dinosaur" => Some(Subtype::Dinosaur),
         "djinn" => Some(Subtype::Djinn),
+        "efreet" | "efreets" => Some(Subtype::Efreet),
         "dog" => Some(Subtype::Dog),
         "dragon" => Some(Subtype::Dragon),
         "drake" => Some(Subtype::Drake),
@@ -10843,7 +10993,32 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     let mut saw_permanent_type = false;
 
     let mut saw_subtype = false;
-    for word in &all_words {
+    let mut negated_word_indices = std::collections::HashSet::new();
+    for idx in 0..all_words.len().saturating_sub(1) {
+        if all_words[idx] != "non" {
+            continue;
+        }
+        let next = all_words[idx + 1];
+        if let Some(card_type) = parse_card_type(next)
+            && !filter.excluded_card_types.contains(&card_type)
+        {
+            filter.excluded_card_types.push(card_type);
+            negated_word_indices.insert(idx + 1);
+        }
+        if let Some(color) = parse_color(next) {
+            filter.excluded_colors = filter.excluded_colors.union(color);
+            negated_word_indices.insert(idx + 1);
+        }
+        if let Some(subtype) = parse_subtype_word(next)
+            .or_else(|| next.strip_suffix('s').and_then(parse_subtype_word))
+            && !filter.excluded_subtypes.contains(&subtype)
+        {
+            filter.excluded_subtypes.push(subtype);
+            negated_word_indices.insert(idx + 1);
+        }
+    }
+
+    for (idx, word) in all_words.iter().enumerate() {
         match *word {
             "permanent" | "permanents" => saw_permanent = true,
             "spell" | "spells" => saw_spell = true,
@@ -10862,12 +11037,21 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
             _ => {}
         }
 
+        if negated_word_indices.contains(&idx) {
+            continue;
+        }
+
         if let Some(card_type) = parse_non_type(word) {
             filter.excluded_card_types.push(card_type);
         }
 
         if let Some(color) = parse_non_color(word) {
             filter.excluded_colors = filter.excluded_colors.union(color);
+        }
+        if let Some(subtype) = parse_non_subtype(word)
+            && !filter.excluded_subtypes.contains(&subtype)
+        {
+            filter.excluded_subtypes.push(subtype);
         }
 
         if let Some(color) = parse_color(word) {
@@ -10962,6 +11146,7 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     let has_constraints = !filter.card_types.is_empty()
         || !filter.all_card_types.is_empty()
         || !filter.excluded_card_types.is_empty()
+        || !filter.excluded_subtypes.is_empty()
         || !filter.subtypes.is_empty()
         || filter.zone.is_some()
         || filter.controller.is_some()
@@ -10995,6 +11180,7 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     let has_object_identity = !filter.card_types.is_empty()
         || !filter.all_card_types.is_empty()
         || !filter.excluded_card_types.is_empty()
+        || !filter.excluded_subtypes.is_empty()
         || !filter.subtypes.is_empty()
         || filter.zone.is_some()
         || filter.token
@@ -11107,6 +11293,11 @@ fn parse_non_color(word: &str) -> Option<ColorSet> {
         "green" => Some(ColorSet::GREEN),
         _ => None,
     }
+}
+
+fn parse_non_subtype(word: &str) -> Option<Subtype> {
+    let rest = word.strip_prefix("non")?;
+    parse_subtype_word(rest).or_else(|| rest.strip_suffix('s').and_then(parse_subtype_word))
 }
 
 fn parse_color(word: &str) -> Option<ColorSet> {
@@ -15873,6 +16064,48 @@ mod target_parse_tests {
             Some(crate::filter::AlternativeCastKind::Flashback)
         );
     }
+
+    #[test]
+    fn parse_target_djinn_or_efreet_includes_both_subtypes() {
+        let tokens = tokenize_line("target Djinn or Efreet", 0);
+        let target = parse_target_phrase(&tokens).expect("parse subtype-or target phrase");
+        let TargetAst::Object(filter, _, _) = target else {
+            panic!("expected object target");
+        };
+        assert!(
+            filter.subtypes.contains(&Subtype::Djinn),
+            "expected Djinn subtype in filter"
+        );
+        assert!(
+            filter.subtypes.contains(&Subtype::Efreet),
+            "expected Efreet subtype in filter"
+        );
+    }
+
+    #[test]
+    fn parse_target_non_subtypes_populates_excluded_subtypes() {
+        let tokens = tokenize_line("target non-Vampire, non-Werewolf, non-Zombie creature", 0);
+        let target = parse_target_phrase(&tokens).expect("parse excluded subtype target");
+        let TargetAst::Object(filter, _, _) = target else {
+            panic!("expected object target");
+        };
+        assert!(
+            filter.card_types.contains(&CardType::Creature),
+            "expected creature type in filter"
+        );
+        assert!(
+            filter.excluded_subtypes.contains(&Subtype::Vampire),
+            "expected excluded Vampire subtype"
+        );
+        assert!(
+            filter.excluded_subtypes.contains(&Subtype::Werewolf),
+            "expected excluded Werewolf subtype"
+        );
+        assert!(
+            filter.excluded_subtypes.contains(&Subtype::Zombie),
+            "expected excluded Zombie subtype"
+        );
+    }
 }
 
 #[cfg(all(test, feature = "parser-tests"))]
@@ -17717,6 +17950,99 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_conditional_anthem_and_haste_keeps_pump_and_keyword() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Conditional Haste Variant")
+            .parse_text(
+                "As long as you control another multicolored permanent, this creature gets +1/+1 and has haste.",
+            )
+            .expect("parse conditional anthem and haste");
+
+        assert_eq!(def.abilities.len(), 2, "expected two static abilities");
+        let displays: Vec<String> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Static(static_ability) => Some(static_ability.display()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            displays.iter().any(|display| {
+                display.contains("this creature gets +1/+1")
+                    && display.contains("as long as you control another multicolored permanent")
+            }),
+            "expected conditional self buff ability, got: {displays:?}"
+        );
+        assert!(
+            displays.iter().any(|display| {
+                display.contains("has Haste")
+                    && display.contains("as long as you control another multicolored permanent")
+            }),
+            "expected conditional haste ability, got: {displays:?}"
+        );
+    }
+
+    #[test]
+    fn parse_conditional_multi_keyword_grant_keeps_all_keywords() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Conditional Multi Keyword Variant")
+            .parse_text(
+                "As long as you control an artifact, this creature has trample and indestructible.",
+            )
+            .expect("parse conditional multi-keyword grant");
+
+        let displays: Vec<String> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Static(static_ability) => Some(static_ability.display()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            displays.iter().any(|display| {
+                display.contains("has Trample")
+                    && display.contains("as long as you control an artifact")
+            }),
+            "expected conditional trample ability, got: {displays:?}"
+        );
+        assert!(
+            displays.iter().any(|display| {
+                display.contains("has Indestructible")
+                    && display.contains("as long as you control an artifact")
+            }),
+            "expected conditional indestructible ability, got: {displays:?}"
+        );
+    }
+
+    #[test]
+    fn parse_granted_keyword_and_must_attack_clause_keeps_both_parts() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Hellraiser Variant")
+            .parse_text("Creatures you control have haste and attack each combat if able.")
+            .expect("parse granted keyword + must-attack line");
+
+        let displays: Vec<String> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Static(static_ability) => Some(static_ability.display()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|display| display.contains("have Haste")),
+            "expected granted haste ability, got: {displays:?}"
+        );
+        assert!(
+            displays
+                .iter()
+                .any(|display| display.contains("attack each combat if able")),
+            "expected granted must-attack ability, got: {displays:?}"
+        );
+    }
+
+    #[test]
     fn parse_static_gets_rejects_unsupported_trailing_clause() {
         let err = CardDefinitionBuilder::new(CardId::new(), "Unsupported Static Tail Variant")
             .parse_text("This creature gets +1/+1 unless you control an artifact.")
@@ -18483,5 +18809,103 @@ mod tests {
             .iter()
             .any(|a| matches!(a.kind, AbilityKind::Triggered(_)));
         assert!(has_triggered, "expected triggered ability");
+    }
+
+    #[test]
+    fn test_parse_conditional_anthem_and_haste_keeps_pump_and_keyword() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Conditional Haste Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "As long as you control another multicolored permanent, this creature gets +1/+1 and has haste.",
+            )
+            .expect("parse conditional anthem and haste");
+
+        let lines = compiled_lines(&def);
+        assert!(
+            lines.iter().any(|line| line.contains("gets +1/+1")),
+            "expected self buff line, got {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("has Haste") && line.contains("multicolored permanent")),
+            "expected conditional haste line, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_granted_keyword_list_handles_leading_and_protection_chain() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Akroma's Memorial Variant")
+            .card_types(vec![CardType::Artifact])
+            .parse_text(
+                "Creatures you control have flying, first strike, vigilance, trample, haste, and protection from black and from red.",
+            )
+            .expect("parse granted keyword list");
+
+        let lines = compiled_lines(&def);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Protection from black")),
+            "expected black protection grant, got {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Protection from red")),
+            "expected red protection grant, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_granted_keyword_and_must_attack_keeps_both_parts() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Hellraiser Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text("Creatures you control have haste and attack each combat if able.")
+            .expect("parse granted keyword + must-attack");
+
+        let lines = compiled_lines(&def);
+        assert!(
+            lines.iter().any(|line| line.contains("have Haste")),
+            "expected haste grant line, got {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("Attacks each combat if able")),
+            "expected must-attack grant line, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_landwalk_as_though_clause_is_not_partially_parsed() {
+        let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Landwalk Override Variant")
+            .card_types(vec![CardType::Enchantment])
+            .parse_text("Creatures with islandwalk can be blocked as though they didn't have islandwalk.")
+            .expect_err("landwalk as-though clause should not partially parse");
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("could not find verb in effect clause")
+                || message.contains("unsupported"),
+            "expected actionable parse failure, got {message}"
+        );
+    }
+
+    #[test]
+    fn test_render_multiple_cycling_variants_preserves_variant_names() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Cycling Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text("Mountaincycling {2}, forestcycling {2}.")
+            .expect("parse multiple cycling variants");
+
+        let lines = compiled_lines(&def);
+        assert!(
+            lines.iter().any(|line| line.contains("Mountaincycling")),
+            "expected mountaincycling keyword in render, got {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("Forestcycling")),
+            "expected forestcycling keyword in render, got {lines:?}"
+        );
     }
 }

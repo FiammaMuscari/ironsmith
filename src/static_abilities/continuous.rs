@@ -8,7 +8,7 @@ use crate::ability::Ability;
 use crate::continuous::{
     ContinuousEffect, EffectSourceType, EffectTarget, Modification, PtSublayer,
 };
-use crate::effect::Value;
+use crate::effect::{Comparison, Value};
 use crate::filter::TaggedOpbjectRelation;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
@@ -47,22 +47,248 @@ fn effect_target_for_filter(source: ObjectId, filter: &ObjectFilter) -> EffectTa
 
 /// Anthem effect: "Creatures you control get +N/+M"
 #[derive(Debug, Clone, PartialEq)]
+pub enum AnthemCountExpression {
+    /// Count all objects matching a filter.
+    MatchingFilter(ObjectFilter),
+    /// Count attachments on the source that match a filter.
+    AttachedToSource(ObjectFilter),
+    /// Count distinct basic land types among matching lands.
+    BasicLandTypesAmong(ObjectFilter),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AnthemValue {
+    /// A fixed power/toughness modifier.
+    Fixed(i32),
+    /// A modifier that scales by a counted quantity.
+    PerCount {
+        multiplier: i32,
+        count: AnthemCountExpression,
+    },
+}
+
+impl AnthemValue {
+    pub fn scaled(multiplier: i32, count: AnthemCountExpression) -> Self {
+        if multiplier == 0 {
+            Self::Fixed(0)
+        } else {
+            Self::PerCount { multiplier, count }
+        }
+    }
+
+    fn evaluate(&self, game: &GameState, source: ObjectId, controller: PlayerId) -> i32 {
+        match self {
+            Self::Fixed(value) => *value,
+            Self::PerCount { multiplier, count } => {
+                multiplier * resolve_anthem_count_expression(count, game, source, controller)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StaticCondition {
+    /// "During your turn" / "as long as it's your turn"
+    YourTurn,
+    /// "As long as this creature is equipped"
+    SourceIsEquipped,
+    /// Count-based condition ("as long as you control three or more artifacts", etc.)
+    CountComparison {
+        count: AnthemCountExpression,
+        comparison: Comparison,
+        display: Option<String>,
+    },
+}
+
+fn strip_article(text: String) -> String {
+    if let Some(rest) = text.strip_prefix("a ") {
+        return rest.to_string();
+    }
+    if let Some(rest) = text.strip_prefix("an ") {
+        return rest.to_string();
+    }
+    text
+}
+
+fn describe_anthem_count_expression(expr: &AnthemCountExpression) -> String {
+    match expr {
+        AnthemCountExpression::MatchingFilter(filter) => strip_article(filter.description()),
+        AnthemCountExpression::AttachedToSource(filter) => {
+            format!(
+                "{} attached to this creature",
+                strip_article(filter.description())
+            )
+        }
+        AnthemCountExpression::BasicLandTypesAmong(_) => {
+            "basic land type among lands you control".to_string()
+        }
+    }
+}
+
+fn comparison_display(cmp: &Comparison) -> String {
+    match cmp {
+        Comparison::GreaterThan(n) => format!("more than {n}"),
+        Comparison::GreaterThanOrEqual(n) => format!("{n} or more"),
+        Comparison::Equal(n) => n.to_string(),
+        Comparison::LessThan(n) => format!("less than {n}"),
+        Comparison::LessThanOrEqual(0) => "no".to_string(),
+        Comparison::LessThanOrEqual(n) => format!("{n} or less"),
+        Comparison::NotEqual(n) => format!("not {n}"),
+    }
+}
+
+fn describe_static_condition(condition: &StaticCondition) -> String {
+    match condition {
+        StaticCondition::YourTurn => "as long as it's your turn".to_string(),
+        StaticCondition::SourceIsEquipped => "as long as this creature is equipped".to_string(),
+        StaticCondition::CountComparison {
+            count,
+            comparison,
+            display,
+        } => {
+            if let Some(display) = display {
+                return format!("as long as {display}");
+            }
+            format!(
+                "as long as there are {} {}",
+                comparison_display(comparison),
+                describe_anthem_count_expression(count)
+            )
+        }
+    }
+}
+
+fn all_game_object_ids(game: &GameState) -> Vec<ObjectId> {
+    let mut ids = Vec::new();
+    ids.extend(game.battlefield.iter().copied());
+    ids.extend(game.exile.iter().copied());
+    ids.extend(game.command_zone.iter().copied());
+    ids.extend(game.stack.iter().map(|entry| entry.object_id));
+    for player in &game.players {
+        ids.extend(player.library.iter().copied());
+        ids.extend(player.hand.iter().copied());
+        ids.extend(player.graveyard.iter().copied());
+    }
+    ids
+}
+
+fn resolve_anthem_count_expression(
+    count: &AnthemCountExpression,
+    game: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+) -> i32 {
+    let filter_ctx = game.filter_context_for(controller, Some(source));
+    match count {
+        AnthemCountExpression::MatchingFilter(filter) => all_game_object_ids(game)
+            .into_iter()
+            .filter_map(|id| game.object(id))
+            .filter(|obj| filter.matches(obj, &filter_ctx, game))
+            .count() as i32,
+        AnthemCountExpression::AttachedToSource(filter) => game
+            .object(source)
+            .map(|source_obj| {
+                source_obj
+                    .attachments
+                    .iter()
+                    .filter_map(|id| game.object(*id))
+                    .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                    .count() as i32
+            })
+            .unwrap_or(0),
+        AnthemCountExpression::BasicLandTypesAmong(filter) => {
+            use std::collections::HashSet;
+
+            let mut seen = HashSet::new();
+            for obj in all_game_object_ids(game)
+                .into_iter()
+                .filter_map(|id| game.object(id))
+                .filter(|obj| filter.matches(obj, &filter_ctx, game))
+            {
+                for subtype in &obj.subtypes {
+                    if matches!(
+                        subtype,
+                        Subtype::Plains
+                            | Subtype::Island
+                            | Subtype::Swamp
+                            | Subtype::Mountain
+                            | Subtype::Forest
+                    ) {
+                        seen.insert(subtype.clone());
+                    }
+                }
+            }
+            seen.len() as i32
+        }
+    }
+}
+
+fn static_condition_is_active(
+    condition: &StaticCondition,
+    game: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+) -> bool {
+    match condition {
+        StaticCondition::YourTurn => game.turn.active_player == controller,
+        StaticCondition::SourceIsEquipped => game.object(source).is_some_and(|source_obj| {
+            source_obj.attachments.iter().any(|id| {
+                game.object(*id)
+                    .is_some_and(|obj| obj.subtypes.contains(&Subtype::Equipment))
+            })
+        }),
+        StaticCondition::CountComparison {
+            count, comparison, ..
+        } => comparison.evaluate(resolve_anthem_count_expression(
+            count, game, source, controller,
+        )),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Anthem {
     /// Filter for which permanents are affected.
     pub filter: ObjectFilter,
+    /// If true, the source permanent itself is the only affected object.
+    pub source_only: bool,
     /// Power modification.
-    pub power: i32,
+    pub power: AnthemValue,
     /// Toughness modification.
-    pub toughness: i32,
+    pub toughness: AnthemValue,
+    /// Optional activation condition.
+    pub condition: Option<StaticCondition>,
 }
 
 impl Anthem {
     pub fn new(filter: ObjectFilter, power: i32, toughness: i32) -> Self {
         Self {
             filter,
-            power,
-            toughness,
+            source_only: false,
+            power: AnthemValue::Fixed(power),
+            toughness: AnthemValue::Fixed(toughness),
+            condition: None,
         }
+    }
+
+    pub fn for_source(power: i32, toughness: i32) -> Self {
+        Self {
+            filter: ObjectFilter::creature(),
+            source_only: true,
+            power: AnthemValue::Fixed(power),
+            toughness: AnthemValue::Fixed(toughness),
+            condition: None,
+        }
+    }
+
+    pub fn with_values(mut self, power: AnthemValue, toughness: AnthemValue) -> Self {
+        self.power = power;
+        self.toughness = toughness;
+        self
+    }
+
+    pub fn with_condition(mut self, condition: StaticCondition) -> Self {
+        self.condition = Some(condition);
+        self
     }
 
     /// Create a standard anthem for creatures you control.
@@ -77,15 +303,80 @@ impl StaticAbilityKind for Anthem {
     }
 
     fn display(&self) -> String {
-        let sign_p = if self.power >= 0 { "+" } else { "" };
-        let sign_t = if self.toughness >= 0 { "+" } else { "" };
-        if let Some(subject) = attached_subject(&self.filter) {
-            return format!("{subject} gets {}{}/{}{}", sign_p, self.power, sign_t, self.toughness);
+        let subject = if self.source_only {
+            "this creature".to_string()
+        } else if let Some(subject) = attached_subject(&self.filter) {
+            subject
+        } else {
+            "Affected creatures".to_string()
+        };
+        let verb = if subject == "Affected creatures" {
+            "get"
+        } else {
+            "gets"
+        };
+
+        let signed = |value: i32| {
+            if value >= 0 {
+                format!("+{value}")
+            } else {
+                value.to_string()
+            }
+        };
+
+        let mut text = match (&self.power, &self.toughness) {
+            (AnthemValue::Fixed(power), AnthemValue::Fixed(toughness)) => {
+                format!("{subject} {verb} {}/{}", signed(*power), signed(*toughness),)
+            }
+            (
+                AnthemValue::PerCount {
+                    multiplier: power,
+                    count: power_count,
+                },
+                AnthemValue::PerCount {
+                    multiplier: toughness,
+                    count: toughness_count,
+                },
+            ) if power_count == toughness_count => {
+                format!(
+                    "{subject} {verb} {}/{} for each {}",
+                    signed(*power),
+                    signed(*toughness),
+                    describe_anthem_count_expression(power_count),
+                )
+            }
+            (
+                AnthemValue::PerCount {
+                    multiplier: power,
+                    count,
+                },
+                AnthemValue::Fixed(toughness),
+            ) => format!(
+                "{subject} {verb} {}/{} for each {}",
+                signed(*power),
+                signed(*toughness),
+                describe_anthem_count_expression(count),
+            ),
+            (
+                AnthemValue::Fixed(power),
+                AnthemValue::PerCount {
+                    multiplier: toughness,
+                    count,
+                },
+            ) => format!(
+                "{subject} {verb} {}/{} for each {}",
+                signed(*power),
+                signed(*toughness),
+                describe_anthem_count_expression(count),
+            ),
+            _ => format!("{subject} {verb} dynamic power/toughness"),
+        };
+
+        if let Some(condition) = &self.condition {
+            text.push(' ');
+            text.push_str(&describe_static_condition(condition));
         }
-        format!(
-            "Affected creatures get {}{}/{}{}",
-            sign_p, self.power, sign_t, self.toughness
-        )
+        text
     }
 
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
@@ -96,20 +387,34 @@ impl StaticAbilityKind for Anthem {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        _game: &GameState,
+        game: &GameState,
     ) -> Vec<ContinuousEffect> {
+        let power = self.power.evaluate(game, source, controller);
+        let toughness = self.toughness.evaluate(game, source, controller);
+        let target = if self.source_only {
+            EffectTarget::Source
+        } else {
+            effect_target_for_filter(source, &self.filter)
+        };
         vec![
             ContinuousEffect::new(
                 source,
                 controller,
-                effect_target_for_filter(source, &self.filter),
-                Modification::ModifyPowerToughness {
-                    power: self.power,
-                    toughness: self.toughness,
-                },
+                target,
+                Modification::ModifyPowerToughness { power, toughness },
             )
             .with_source_type(EffectSourceType::StaticAbility),
         ]
+    }
+
+    fn is_active(&self, game: &GameState, source: ObjectId) -> bool {
+        let Some(condition) = &self.condition else {
+            return true;
+        };
+        let Some(source_obj) = game.object(source) else {
+            return false;
+        };
+        static_condition_is_active(condition, game, source, source_obj.controller)
     }
 
     fn is_anthem(&self) -> bool {
@@ -122,19 +427,45 @@ impl StaticAbilityKind for Anthem {
 pub struct GrantAbility {
     /// Filter for which permanents gain the ability.
     pub filter: ObjectFilter,
+    /// If true, this grants only to the source object.
+    pub source_only: bool,
     /// The ability to grant.
     pub ability: StaticAbility,
+    /// Optional activation condition.
+    pub condition: Option<StaticCondition>,
 }
 
 impl GrantAbility {
     pub fn new(filter: ObjectFilter, ability: StaticAbility) -> Self {
-        Self { filter, ability }
+        Self {
+            filter,
+            source_only: false,
+            ability,
+            condition: None,
+        }
+    }
+
+    pub fn source(ability: StaticAbility) -> Self {
+        Self {
+            filter: ObjectFilter::creature(),
+            source_only: true,
+            ability,
+            condition: None,
+        }
+    }
+
+    pub fn with_condition(mut self, condition: StaticCondition) -> Self {
+        self.condition = Some(condition);
+        self
     }
 }
 
 impl PartialEq for GrantAbility {
     fn eq(&self, other: &Self) -> bool {
-        self.filter == other.filter && self.ability == other.ability
+        self.filter == other.filter
+            && self.source_only == other.source_only
+            && self.ability == other.ability
+            && self.condition == other.condition
     }
 }
 
@@ -144,10 +475,18 @@ impl StaticAbilityKind for GrantAbility {
     }
 
     fn display(&self) -> String {
-        if let Some(subject) = attached_subject(&self.filter) {
-            return format!("{subject} has {}", self.ability.display());
+        let mut text = if self.source_only {
+            format!("this creature has {}", self.ability.display())
+        } else if let Some(subject) = attached_subject(&self.filter) {
+            format!("{subject} has {}", self.ability.display())
+        } else {
+            format!("Affected permanents have {}", self.ability.display())
+        };
+        if let Some(condition) = &self.condition {
+            text.push(' ');
+            text.push_str(&describe_static_condition(condition));
         }
-        format!("Affected permanents have {}", self.ability.display())
+        text
     }
 
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
@@ -164,11 +503,16 @@ impl StaticAbilityKind for GrantAbility {
         controller: PlayerId,
         _game: &GameState,
     ) -> Vec<ContinuousEffect> {
+        let target = if self.source_only {
+            EffectTarget::Source
+        } else {
+            effect_target_for_filter(source, &self.filter)
+        };
         vec![
             ContinuousEffect::new(
                 source,
                 controller,
-                effect_target_for_filter(source, &self.filter),
+                target,
                 Modification::AddAbility(self.ability.clone()),
             )
             .with_source_type(EffectSourceType::StaticAbility),
@@ -176,6 +520,11 @@ impl StaticAbilityKind for GrantAbility {
     }
 
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
+        if self.source_only {
+            self.ability.apply_restrictions(game, _source, controller);
+            return;
+        }
+
         // Find permanents matching the filter
         let filter_ctx = game.filter_context_for(controller, None);
         let matching: Vec<ObjectId> = game
@@ -193,6 +542,16 @@ impl StaticAbilityKind for GrantAbility {
         for perm_id in matching {
             self.ability.apply_restrictions(game, perm_id, controller);
         }
+    }
+
+    fn is_active(&self, game: &GameState, source: ObjectId) -> bool {
+        let Some(condition) = &self.condition else {
+            return true;
+        };
+        let Some(source_obj) = game.object(source) else {
+            return false;
+        };
+        static_condition_is_active(condition, game, source, source_obj.controller)
     }
 }
 
@@ -863,6 +1222,10 @@ impl StaticAbilityKind for TophFirstMetalbender {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::ids::CardId;
+    use crate::types::Subtype;
+    use crate::zone::Zone;
 
     #[test]
     fn test_anthem() {
@@ -910,6 +1273,124 @@ mod tests {
         assert!(matches!(
             effects[0].applies_to,
             EffectTarget::AttachedTo(id) if id == source
+        ));
+    }
+
+    #[test]
+    fn test_source_dynamic_anthem_scales_from_filter_count() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let source_card = CardBuilder::new(CardId::new(), "Nim Lasher")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(1, 1))
+            .build();
+        let source = game.create_object_from_card(&source_card, alice, Zone::Battlefield);
+
+        let artifact_card = CardBuilder::new(CardId::new(), "Myr Token")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        game.create_object_from_card(&artifact_card, alice, Zone::Battlefield);
+        game.create_object_from_card(&artifact_card, alice, Zone::Battlefield);
+
+        let anthem = Anthem::for_source(0, 0).with_values(
+            AnthemValue::scaled(
+                1,
+                AnthemCountExpression::MatchingFilter(ObjectFilter::artifact().you_control()),
+            ),
+            AnthemValue::Fixed(0),
+        );
+
+        let effects = anthem.generate_effects(source, alice, &game);
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(
+            effects[0].modification,
+            Modification::ModifyPowerToughness {
+                power: 2,
+                toughness: 0
+            }
+        ));
+        assert!(matches!(effects[0].applies_to, EffectTarget::Source));
+    }
+
+    #[test]
+    fn test_conditional_anthem_is_active_only_when_condition_matches() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let source_card = CardBuilder::new(CardId::new(), "Ardent Recruit")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(1, 1))
+            .build();
+        let source = game.create_object_from_card(&source_card, alice, Zone::Battlefield);
+
+        let artifact_card = CardBuilder::new(CardId::new(), "Myr Token")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        game.create_object_from_card(&artifact_card, alice, Zone::Battlefield);
+        game.create_object_from_card(&artifact_card, alice, Zone::Battlefield);
+
+        let anthem = Anthem::for_source(2, 2).with_condition(StaticCondition::CountComparison {
+            count: AnthemCountExpression::MatchingFilter(ObjectFilter::artifact().you_control()),
+            comparison: Comparison::GreaterThanOrEqual(3),
+            display: Some("you control three or more artifacts".to_string()),
+        });
+
+        assert!(
+            !anthem.is_active(&game, source),
+            "condition should be false with only two artifacts"
+        );
+
+        game.create_object_from_card(&artifact_card, alice, Zone::Battlefield);
+        assert!(
+            anthem.is_active(&game, source),
+            "condition should be true with three artifacts"
+        );
+    }
+
+    #[test]
+    fn test_domain_count_expression_counts_distinct_basic_land_types() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let source_card = CardBuilder::new(CardId::new(), "Kavu Scout")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(0, 2))
+            .build();
+        let source = game.create_object_from_card(&source_card, alice, Zone::Battlefield);
+
+        let plains = CardBuilder::new(CardId::new(), "Plains")
+            .card_types(vec![CardType::Land])
+            .subtypes(vec![Subtype::Plains])
+            .build();
+        let forest = CardBuilder::new(CardId::new(), "Forest")
+            .card_types(vec![CardType::Land])
+            .subtypes(vec![Subtype::Forest])
+            .build();
+        let second_plains = CardBuilder::new(CardId::new(), "Snow Plains")
+            .card_types(vec![CardType::Land])
+            .subtypes(vec![Subtype::Plains])
+            .build();
+
+        game.create_object_from_card(&plains, alice, Zone::Battlefield);
+        game.create_object_from_card(&forest, alice, Zone::Battlefield);
+        game.create_object_from_card(&second_plains, alice, Zone::Battlefield);
+
+        let anthem = Anthem::for_source(0, 0).with_values(
+            AnthemValue::scaled(
+                1,
+                AnthemCountExpression::BasicLandTypesAmong(ObjectFilter::land().you_control()),
+            ),
+            AnthemValue::Fixed(0),
+        );
+        let effects = anthem.generate_effects(source, alice, &game);
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(
+            effects[0].modification,
+            Modification::ModifyPowerToughness {
+                power: 2,
+                toughness: 0
+            }
         ));
     }
 

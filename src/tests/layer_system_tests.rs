@@ -2099,7 +2099,6 @@ fn test_undying_does_not_trigger_with_plus_counter_integration() {
 #[test]
 fn test_counter_annihilation_enables_undying_loop() {
     use crate::cards::definitions::{basic_mountain, lightning_bolt};
-    use crate::decision::GameProgress;
     use crate::game_state::StackEntry;
     use crate::mana::ManaSymbol;
 
@@ -2166,13 +2165,12 @@ fn test_counter_annihilation_enables_undying_loop() {
         &mut decision_maker,
     )
     .expect("Activation should start");
-
-    // Handle ChooseTargets decision - target Butcher Ghoul for -1/-1 counter
-    // (With cost_effects model, targeting comes first, then sacrifice happens via cost_effects)
     let _progress = match progress {
-        GameProgress::NeedsDecisionCtx(crate::decisions::context::DecisionContext::Targets(_)) => {
-            let targets = vec![crate::game_state::Target::Object(butcher_id)];
-            let response = PriorityResponse::Targets(targets);
+        crate::decision::GameProgress::NeedsDecisionCtx(
+            crate::decisions::context::DecisionContext::Targets(_),
+        ) => {
+            let response =
+                PriorityResponse::Targets(vec![crate::game_state::Target::Object(butcher_id)]);
             apply_priority_response_with_dm(
                 &mut game,
                 &mut trigger_queue,
@@ -2426,21 +2424,15 @@ fn test_yawgmoth_undying_loop_draws_cards_until_death() {
             &mut decision_maker,
         )
         .expect("Activation should start");
-
-        // Step 2: Handle ChooseTargets decision (for -1/-1 counter)
-        // With cost_effects model, targeting comes FIRST, then cost_effects execute
-        use crate::decision::GameProgress;
+        let targets = if *target_plus_counters > 0 {
+            vec![crate::game_state::Target::Object(*target_for_counter)]
+        } else {
+            vec![]
+        };
         let _progress = match progress {
-            GameProgress::NeedsDecisionCtx(
+            crate::decision::GameProgress::NeedsDecisionCtx(
                 crate::decisions::context::DecisionContext::Targets(_),
             ) => {
-                // Target the creature that WON'T be sacrificed (if it has +1/+1 counter)
-                let targets = if *target_plus_counters > 0 {
-                    vec![crate::game_state::Target::Object(*target_for_counter)]
-                } else {
-                    // No target needed (first iteration or target has no +1/+1 counter)
-                    vec![]
-                };
                 let response = PriorityResponse::Targets(targets);
                 apply_priority_response_with_dm(
                     &mut game,

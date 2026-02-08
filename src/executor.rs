@@ -518,8 +518,17 @@ impl<'a> ExecutionContext<'a> {
 
     /// Build a filter context for evaluating filters.
     pub fn filter_context(&self, game: &GameState) -> FilterContext {
+        let target_players = self
+            .targets
+            .iter()
+            .filter_map(|target| match target {
+                ResolvedTarget::Player(id) => Some(*id),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         game.filter_context_for(self.controller, Some(self.source))
             .with_iterated_player(self.iterated_player)
+            .with_target_players(target_players)
             .with_tagged_objects(&self.tagged_objects)
     }
 }

@@ -4,6 +4,7 @@
 
 use super::{StaticAbilityId, StaticAbilityKind};
 use crate::ability::ProtectionFrom;
+use crate::color::Color;
 use crate::cost::TotalCost;
 use crate::target::ObjectFilter;
 
@@ -41,6 +42,40 @@ impl Protection {
     }
 }
 
+fn join_with_and(parts: &[&str]) -> String {
+    match parts.len() {
+        0 => String::new(),
+        1 => parts[0].to_string(),
+        2 => format!("{} and {}", parts[0], parts[1]),
+        _ => {
+            let mut out = parts[..parts.len() - 1].join(", ");
+            out.push_str(", and ");
+            out.push_str(parts.last().copied().unwrap_or_default());
+            out
+        }
+    }
+}
+
+fn describe_color_set(colors: crate::color::ColorSet) -> String {
+    let mut names = Vec::new();
+    if colors.contains(Color::White) {
+        names.push("white");
+    }
+    if colors.contains(Color::Blue) {
+        names.push("blue");
+    }
+    if colors.contains(Color::Black) {
+        names.push("black");
+    }
+    if colors.contains(Color::Red) {
+        names.push("red");
+    }
+    if colors.contains(Color::Green) {
+        names.push("green");
+    }
+    join_with_and(&names)
+}
+
 impl StaticAbilityKind for Protection {
     fn id(&self) -> StaticAbilityId {
         StaticAbilityId::Protection
@@ -48,13 +83,22 @@ impl StaticAbilityKind for Protection {
 
     fn display(&self) -> String {
         match &self.from {
-            ProtectionFrom::Color(color) => format!("Protection from {:?}", color).to_lowercase(),
+            ProtectionFrom::Color(colors) => {
+                let described = describe_color_set(*colors);
+                if described.is_empty() {
+                    "Protection from colorless".to_string()
+                } else {
+                    format!("Protection from {}", described)
+                }
+            }
             ProtectionFrom::AllColors => "Protection from all colors".to_string(),
             ProtectionFrom::Colorless => "Protection from colorless".to_string(),
             ProtectionFrom::Everything => "Protection from everything".to_string(),
             ProtectionFrom::CardType(ct) => format!("Protection from {:?}s", ct).to_lowercase(),
             ProtectionFrom::Creatures => "Protection from creatures".to_string(),
-            ProtectionFrom::Permanents(_) => "Protection from permanents".to_string(),
+            ProtectionFrom::Permanents(filter) => {
+                format!("Protection from {}", filter.description())
+            }
         }
     }
 
@@ -190,6 +234,26 @@ mod tests {
         let ward = Ward::new(cost.clone());
         assert_eq!(ward.id(), StaticAbilityId::Ward);
         assert!(ward.ward_cost().is_some());
+    }
+
+    #[test]
+    fn test_protection_display_single_color() {
+        let prot = Protection::from_color(Color::Black);
+        assert_eq!(prot.display(), "Protection from black");
+    }
+
+    #[test]
+    fn test_protection_display_multi_color() {
+        let colors = crate::color::ColorSet::WHITE.union(crate::color::ColorSet::BLUE);
+        let prot = Protection::new(ProtectionFrom::Color(colors));
+        assert_eq!(prot.display(), "Protection from white and blue");
+    }
+
+    #[test]
+    fn test_protection_display_permanents_filter() {
+        let filter = ObjectFilter::artifact();
+        let prot = Protection::new(ProtectionFrom::Permanents(filter));
+        assert_eq!(prot.display(), "Protection from artifact");
     }
 
     #[test]

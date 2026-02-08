@@ -39,6 +39,7 @@
 use crate::alternative_cast::AlternativeCastingMethod;
 use crate::static_abilities::StaticAbility;
 use crate::target::ObjectFilter;
+use crate::types::CardType;
 use crate::zone::Zone;
 
 /// What can be granted to a card.
@@ -141,6 +142,12 @@ impl GrantSpec {
 
     /// Get a display string for this grant specification.
     pub fn display(&self) -> String {
+        if matches!(self.grantable, Grantable::PlayFrom)
+            && self.zone == Zone::Graveyard
+            && self.filter.card_types.as_slice() == [CardType::Land]
+        {
+            return "You may play lands from your graveyard".to_string();
+        }
         format!("Cards in {:?} have {}", self.zone, self.grantable.display())
     }
 }

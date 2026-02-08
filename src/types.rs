@@ -30,6 +30,7 @@ pub enum Subtype {
 
     // Non-basic land types
     Urzas,
+    Gate,
 
     // Creature types (alphabetical, common ones)
     Advisor,
@@ -59,6 +60,7 @@ pub enum Subtype {
     Demon,
     Dinosaur,
     Djinn,
+    Efreet,
     Dog,
     Dragon,
     Drake,
@@ -306,6 +308,7 @@ impl Subtype {
                 | Subtype::Demon
                 | Subtype::Dinosaur
                 | Subtype::Djinn
+                | Subtype::Efreet
                 | Subtype::Dog
                 | Subtype::Dragon
                 | Subtype::Drake

@@ -1683,8 +1683,25 @@ fn describe_keyword_ability(ability: &Ability) -> Option<String> {
     if words.len() >= 2 && words[0] == "level" && words[1] == "up" {
         return Some("Level up".to_string());
     }
-    if words.iter().any(|word| word.ends_with("cycling")) {
-        return Some("Cycling".to_string());
+    let cycling_words = words
+        .iter()
+        .copied()
+        .filter(|word| word.ends_with("cycling"))
+        .collect::<Vec<_>>();
+    if !cycling_words.is_empty() {
+        let rendered = cycling_words
+            .into_iter()
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    Some(first) => {
+                        format!("{}{}", first.to_ascii_uppercase(), chars.as_str())
+                    }
+                    None => "Cycling".to_string(),
+                }
+            })
+            .collect::<Vec<_>>();
+        return Some(rendered.join(", "));
     }
     if text == "prowess" {
         return Some("Prowess".to_string());

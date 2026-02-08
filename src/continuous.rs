@@ -1547,6 +1547,7 @@ fn resolve_value_direct(
                 attacking_player: None,
                 your_commanders: Vec::new(),
                 iterated_player: None,
+                target_players: Vec::new(),
                 tagged_objects: HashMap::new(),
             };
 
@@ -2325,6 +2326,7 @@ fn resolve_value_with_context(
                 attacking_player: None,
                 your_commanders: Vec::new(),
                 iterated_player: None,
+                target_players: Vec::new(),
                 tagged_objects: std::collections::HashMap::new(),
             };
 
