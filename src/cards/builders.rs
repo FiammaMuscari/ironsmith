@@ -15,10 +15,13 @@ use crate::effect::{
     ChoiceCount, Condition, Effect, EffectId, EffectMode, EffectPredicate, Until, Value,
 };
 use crate::effects::VoteOption;
+use crate::filter::AlternativeCastKind;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::object::CounterType;
-use crate::static_abilities::StaticAbility;
+use crate::static_abilities::{
+    Anthem, AnthemCountExpression, AnthemValue, GrantAbility, StaticAbility, StaticCondition,
+};
 use crate::tag::TagKey;
 use crate::target::{
     ChooseSpec, ObjectFilter, ObjectRef, PlayerFilter, TaggedObjectConstraint,
@@ -232,6 +235,10 @@ enum PredicateAst {
     ItMatches(ObjectFilter),
     TaggedMatches(TagKey, ObjectFilter),
     SourceIsTapped,
+    ManaSpentToCastThisSpellAtLeast {
+        amount: u32,
+        symbol: Option<ManaSymbol>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,6 +284,7 @@ enum EffectAst {
         counter_type: CounterType,
         count: Value,
         target: TargetAst,
+        target_count: Option<ChoiceCount>,
     },
     PutCountersAll {
         counter_type: CounterType,
@@ -337,6 +345,13 @@ enum EffectAst {
     AddManaAnyOneColor {
         amount: Value,
         player: PlayerAst,
+    },
+    AddManaFromLandCouldProduce {
+        amount: Value,
+        player: PlayerAst,
+        land_filter: ObjectFilter,
+        allow_colorless: bool,
+        same_type: bool,
     },
     AddManaCommanderIdentity {
         amount: Value,
@@ -1158,7 +1173,9 @@ fn split_cost_segments(tokens: &[Token]) -> Vec<Vec<Token>> {
     segments
 }
 
-fn parse_mana_output_options_tokens(tokens: &[Token]) -> Result<Vec<Vec<ManaSymbol>>, CardTextError> {
+fn parse_mana_output_options_tokens(
+    tokens: &[Token],
+) -> Result<Vec<Vec<ManaSymbol>>, CardTextError> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
 
@@ -1238,7 +1255,10 @@ fn parse_mana_output_options_for_line(
     let Some(primary_sentence) = sentences.first() else {
         return Ok(None);
     };
-    let Some(add_idx) = primary_sentence.iter().position(|token| token.is_word("add")) else {
+    let Some(add_idx) = primary_sentence
+        .iter()
+        .position(|token| token.is_word("add"))
+    else {
         return Ok(None);
     };
     let options = parse_mana_output_options_tokens(&primary_sentence[add_idx + 1..])?;
@@ -1405,6 +1425,22 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
             && rather_tail.contains(&"cost")
             && (rather_tail.contains(&"spell") || rather_tail.contains(&"spells"));
         if is_spell_cost_clause {
+            let cost_clause_end = (rather_idx + 1..tokens.len())
+                .rfind(|idx| tokens[*idx].is_word("cost") || tokens[*idx].is_word("costs"))
+                .ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "alternative cost line missing terminal cost word (line: '{}')",
+                        line
+                    ))
+                })?;
+            let trailing_words = words(&tokens[cost_clause_end + 1..]);
+            if !trailing_words.is_empty() {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported trailing clause after alternative cost (line: '{}', trailing: '{}')",
+                    line,
+                    trailing_words.join(" ")
+                )));
+            }
             let cost_tokens = tokens.get(2..rather_idx).unwrap_or_default();
             if cost_tokens.is_empty() {
                 return Err(CardTextError::ParseError(
@@ -2294,6 +2330,449 @@ fn parse_all_have_indestructible_line(
     )))
 }
 
+#[derive(Debug, Clone)]
+enum AnthemSubjectAst {
+    Source,
+    Filter(ObjectFilter),
+}
+
+#[derive(Debug, Clone)]
+struct ParsedAnthemClause {
+    subject: AnthemSubjectAst,
+    power: AnthemValue,
+    toughness: AnthemValue,
+    condition: Option<StaticCondition>,
+}
+
+fn words_start_with(tokens: &[Token], expected: &[&str]) -> bool {
+    words(tokens).starts_with(expected)
+}
+
+fn find_source_reference_start(tokens: &[Token]) -> Option<usize> {
+    let mut token_indices = Vec::new();
+    let mut token_words = Vec::new();
+    for (idx, token) in tokens.iter().enumerate() {
+        if let Some(word) = token.as_word() {
+            token_indices.push(idx);
+            token_words.push(word);
+        }
+    }
+
+    for word_start in 0..token_words.len() {
+        if is_source_reference_words(&token_words[word_start..]) {
+            return token_indices.get(word_start).copied();
+        }
+    }
+    None
+}
+
+fn object_filter_specificity_score(filter: &ObjectFilter) -> usize {
+    let mut score = 0usize;
+    score += filter.tagged_constraints.len() * 20;
+    score += filter.card_types.len() * 10;
+    score += filter.all_card_types.len() * 10;
+    score += filter.subtypes.len() * 8;
+    score += usize::from(filter.controller.is_some()) * 6;
+    score += usize::from(filter.owner.is_some()) * 6;
+    score += usize::from(filter.zone.is_some()) * 4;
+    score += usize::from(filter.other) * 3;
+    score += usize::from(filter.token || filter.nontoken) * 3;
+    score += usize::from(filter.tapped || filter.untapped) * 2;
+    score += usize::from(filter.attacking || filter.blocking) * 2;
+    score += usize::from(filter.colorless || filter.multicolored) * 2;
+    score += usize::from(!filter.excluded_card_types.is_empty()) * 2;
+    score += usize::from(filter.colors.is_some()) * 2;
+    score += usize::from(filter.power.is_some() || filter.toughness.is_some()) * 2;
+    score
+}
+
+fn parse_best_object_filter_suffix(tokens: &[Token]) -> Option<ObjectFilter> {
+    let mut best: Option<(usize, ObjectFilter)> = None;
+    for start in 0..tokens.len() {
+        if tokens[start].as_word().is_none() {
+            continue;
+        }
+        let candidate = &tokens[start..];
+        let Ok(filter) = parse_object_filter(candidate, false) else {
+            continue;
+        };
+        let score = object_filter_specificity_score(&filter);
+        if best
+            .as_ref()
+            .is_none_or(|(best_score, _)| score > *best_score)
+        {
+            best = Some((score, filter));
+        }
+    }
+    best.map(|(_, filter)| filter)
+}
+
+fn parse_anthem_subject(tokens: &[Token]) -> Result<AnthemSubjectAst, CardTextError> {
+    if find_source_reference_start(tokens).is_some() {
+        return Ok(AnthemSubjectAst::Source);
+    }
+    parse_best_object_filter_suffix(tokens)
+        .map(AnthemSubjectAst::Filter)
+        .ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "unsupported anthem subject (clause: '{}')",
+                words(tokens).join(" ")
+            ))
+        })
+}
+
+fn parse_static_quantity_prefix(
+    tokens: &[Token],
+    allow_default_one: bool,
+) -> Result<(crate::effect::Comparison, usize), CardTextError> {
+    if tokens.is_empty() {
+        return Err(CardTextError::ParseError(
+            "missing quantity in static condition".to_string(),
+        ));
+    }
+
+    if tokens[0].is_word("no") {
+        return Ok((crate::effect::Comparison::LessThanOrEqual(0), 1));
+    }
+
+    if let Some((value, used)) = parse_number(tokens) {
+        let value = value as i32;
+        let first_word = tokens.first().and_then(Token::as_word);
+        if matches!(first_word, Some("a" | "an")) {
+            return Ok((crate::effect::Comparison::GreaterThanOrEqual(1), used));
+        }
+        if tokens.get(used).is_some_and(|token| token.is_word("or"))
+            && tokens
+                .get(used + 1)
+                .is_some_and(|token| token.is_word("more") || token.is_word("greater"))
+        {
+            return Ok((
+                crate::effect::Comparison::GreaterThanOrEqual(value),
+                used + 2,
+            ));
+        }
+        if tokens.get(used).is_some_and(|token| token.is_word("or"))
+            && tokens
+                .get(used + 1)
+                .is_some_and(|token| token.is_word("less") || token.is_word("fewer"))
+        {
+            return Ok((crate::effect::Comparison::LessThanOrEqual(value), used + 2));
+        }
+        return Ok((crate::effect::Comparison::Equal(value), used));
+    }
+
+    if allow_default_one {
+        return Ok((crate::effect::Comparison::GreaterThanOrEqual(1), 0));
+    }
+
+    Err(CardTextError::ParseError(
+        "missing quantity in static condition".to_string(),
+    ))
+}
+
+fn parse_permanent_card_count_filter(tokens: &[Token]) -> Option<ObjectFilter> {
+    let token_words = words(tokens);
+    if !token_words.starts_with(&["permanent", "card"])
+        && !token_words.starts_with(&["permanent", "cards"])
+    {
+        return None;
+    }
+
+    let mut filter = ObjectFilter::default();
+    filter.card_types = vec![
+        CardType::Artifact,
+        CardType::Creature,
+        CardType::Enchantment,
+        CardType::Land,
+        CardType::Planeswalker,
+        CardType::Battle,
+    ];
+
+    for (idx, word) in token_words.iter().enumerate() {
+        if let Some(zone) = parse_zone_word(word) {
+            filter.zone = Some(zone);
+            if idx > 0 {
+                match token_words[idx - 1] {
+                    "your" => filter.owner = Some(PlayerFilter::You),
+                    "opponent" | "opponents" => filter.owner = Some(PlayerFilter::Opponent),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    filter.zone.map(|_| filter)
+}
+
+fn parse_static_condition_clause(tokens: &[Token]) -> Result<StaticCondition, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.is_empty() {
+        return Err(CardTextError::ParseError(
+            "missing condition clause after 'as long as'".to_string(),
+        ));
+    }
+
+    if clause_words == ["this", "creature", "is", "equipped"]
+        || clause_words == ["it", "is", "equipped"]
+    {
+        return Ok(StaticCondition::SourceIsEquipped);
+    }
+    if clause_words == ["it", "is", "your", "turn"] || clause_words == ["its", "your", "turn"] {
+        return Ok(StaticCondition::YourTurn);
+    }
+
+    if clause_words.starts_with(&["there", "are"]) {
+        let quantified = &tokens[2..];
+        let (comparison, used) = parse_static_quantity_prefix(quantified, false)?;
+        let mut filter_tokens = &quantified[used..];
+        if filter_tokens
+            .first()
+            .is_some_and(|token| token.is_word("card") || token.is_word("cards"))
+        {
+            filter_tokens = &filter_tokens[1..];
+        }
+        if filter_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing object phrase in static condition (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+
+        let filter = parse_permanent_card_count_filter(filter_tokens)
+            .or_else(|| parse_object_filter(filter_tokens, false).ok())
+            .ok_or_else(|| {
+                CardTextError::ParseError(format!(
+                    "unsupported counted object phrase in static condition (clause: '{}')",
+                    clause_words.join(" ")
+                ))
+            })?;
+        return Ok(StaticCondition::CountComparison {
+            count: AnthemCountExpression::MatchingFilter(filter),
+            comparison,
+            display: Some(clause_words.join(" ")),
+        });
+    }
+
+    let control_prefix_len = if clause_words.starts_with(&["you", "control"])
+        || clause_words.starts_with(&["you", "controls"])
+        || clause_words.starts_with(&["opponent", "control"])
+        || clause_words.starts_with(&["opponent", "controls"])
+        || clause_words.starts_with(&["opponents", "control"])
+        || clause_words.starts_with(&["opponents", "controls"])
+    {
+        2
+    } else {
+        0
+    };
+    if control_prefix_len > 0 {
+        let quantified = &tokens[control_prefix_len..];
+        let (comparison, used) = parse_static_quantity_prefix(quantified, true)?;
+        let mut filter_tokens: Vec<Token> = tokens[..control_prefix_len].to_vec();
+        filter_tokens.extend_from_slice(&quantified[used..]);
+        let filter = parse_object_filter(&filter_tokens, false).map_err(|_| {
+            CardTextError::ParseError(format!(
+                "unsupported control condition filter (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+        return Ok(StaticCondition::CountComparison {
+            count: AnthemCountExpression::MatchingFilter(filter),
+            comparison,
+            display: Some(clause_words.join(" ")),
+        });
+    }
+
+    Err(CardTextError::ParseError(format!(
+        "unsupported static condition clause (clause: '{}')",
+        clause_words.join(" ")
+    )))
+}
+
+fn parse_anthem_for_each_expression(
+    tokens: &[Token],
+) -> Result<AnthemCountExpression, CardTextError> {
+    if !words_start_with(tokens, &["for", "each"]) {
+        return Err(CardTextError::ParseError(
+            "missing 'for each' in anthem scaling clause".to_string(),
+        ));
+    }
+    let rest = &tokens[2..];
+    if rest.is_empty() {
+        return Err(CardTextError::ParseError(
+            "missing object phrase after 'for each'".to_string(),
+        ));
+    }
+
+    if words_start_with(rest, &["basic", "land", "type", "among"]) {
+        let filter_tokens = &rest[4..];
+        let filter = parse_object_filter(filter_tokens, false).map_err(|_| {
+            CardTextError::ParseError(format!(
+                "unsupported domain count filter (clause: '{}')",
+                words(tokens).join(" ")
+            ))
+        })?;
+        return Ok(AnthemCountExpression::BasicLandTypesAmong(filter));
+    }
+
+    if let Some(attached_idx) = rest.iter().position(|token| token.is_word("attached")) {
+        let filter_tokens = &rest[..attached_idx];
+        let tail_words = words(&rest[attached_idx + 1..]);
+        let attached_to_source = tail_words == ["to", "it"]
+            || tail_words == ["to", "this", "creature"]
+            || tail_words == ["to", "this", "permanent"];
+        if attached_to_source {
+            let filter = parse_object_filter(filter_tokens, false).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported attached-object filter in anthem scaling clause (clause: '{}')",
+                    words(tokens).join(" ")
+                ))
+            })?;
+            return Ok(AnthemCountExpression::AttachedToSource(filter));
+        }
+    }
+
+    let filter = parse_object_filter(rest, false).map_err(|_| {
+        CardTextError::ParseError(format!(
+            "unsupported 'for each' filter in anthem clause (clause: '{}')",
+            words(tokens).join(" ")
+        ))
+    })?;
+    Ok(AnthemCountExpression::MatchingFilter(filter))
+}
+
+fn parse_anthem_prefix_condition(
+    tokens: &[Token],
+    get_idx: usize,
+) -> Result<(Option<StaticCondition>, usize), CardTextError> {
+    if words_start_with(tokens, &["during", "your", "turn"]) {
+        let subject_start = tokens[..get_idx]
+            .iter()
+            .position(|token| matches!(token, Token::Comma(_)))
+            .map(|idx| idx + 1)
+            .or_else(|| find_source_reference_start(&tokens[..get_idx]))
+            .unwrap_or(3);
+        return Ok((Some(StaticCondition::YourTurn), subject_start));
+    }
+
+    if words_start_with(tokens, &["as", "long", "as"]) {
+        let subject_start = tokens[..get_idx]
+            .iter()
+            .position(|token| matches!(token, Token::Comma(_)))
+            .map(|idx| idx + 1)
+            .or_else(|| find_source_reference_start(&tokens[..get_idx]))
+            .ok_or_else(|| {
+                CardTextError::ParseError(format!(
+                    "missing subject boundary in leading static condition clause (clause: '{}')",
+                    words(tokens).join(" ")
+                ))
+            })?;
+        if subject_start <= 3 {
+            return Err(CardTextError::ParseError(format!(
+                "missing condition after leading 'as long as' clause (clause: '{}')",
+                words(tokens).join(" ")
+            )));
+        }
+        let condition_tokens = trim_commas(&tokens[3..subject_start]);
+        let condition = parse_static_condition_clause(&condition_tokens)?;
+        return Ok((Some(condition), subject_start));
+    }
+
+    Ok((None, 0))
+}
+
+fn parse_anthem_clause(
+    tokens: &[Token],
+    get_idx: usize,
+    tail_end: usize,
+) -> Result<ParsedAnthemClause, CardTextError> {
+    let (prefix_condition, subject_start) = parse_anthem_prefix_condition(tokens, get_idx)?;
+    let subject_tokens = trim_commas(&tokens[subject_start..get_idx]);
+    if subject_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing anthem subject (clause: '{}')",
+            words(tokens).join(" ")
+        )));
+    }
+    let subject = parse_anthem_subject(&subject_tokens)?;
+
+    let modifier_token = tokens
+        .get(get_idx + 1)
+        .and_then(Token::as_word)
+        .ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing power/toughness modifier in anthem clause (clause: '{}')",
+                words(tokens).join(" ")
+            ))
+        })?;
+    let (base_power, base_toughness) = parse_pt_modifier(modifier_token).map_err(|_| {
+        CardTextError::ParseError(format!(
+            "invalid power/toughness modifier in anthem clause (clause: '{}')",
+            words(tokens).join(" ")
+        ))
+    })?;
+
+    let tail_tokens = trim_commas(&tokens[get_idx + 2..tail_end]);
+    let mut scale: Option<AnthemCountExpression> = None;
+    let mut suffix_condition: Option<StaticCondition> = None;
+    if !tail_tokens.is_empty() {
+        if words_start_with(&tail_tokens, &["for", "each"]) {
+            scale = Some(parse_anthem_for_each_expression(&tail_tokens)?);
+        } else if words_start_with(&tail_tokens, &["as", "long", "as"]) {
+            suffix_condition = Some(parse_static_condition_clause(&tail_tokens[3..])?);
+        } else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported trailing anthem clause (clause: '{}')",
+                words(tokens).join(" ")
+            )));
+        }
+    }
+
+    let condition = match (prefix_condition, suffix_condition) {
+        (Some(_prefix), Some(_)) => {
+            return Err(CardTextError::ParseError(format!(
+                "multiple anthem conditions are not supported (clause: '{}')",
+                words(tokens).join(" ")
+            )));
+        }
+        (Some(condition), None) | (None, Some(condition)) => Some(condition),
+        (None, None) => None,
+    };
+
+    let (power, toughness) = if let Some(scale_expr) = scale {
+        (
+            AnthemValue::scaled(base_power, scale_expr.clone()),
+            AnthemValue::scaled(base_toughness, scale_expr),
+        )
+    } else {
+        (
+            AnthemValue::Fixed(base_power),
+            AnthemValue::Fixed(base_toughness),
+        )
+    };
+
+    parser_trace_stack("parse_static:anthem-clause:matched", tokens);
+    Ok(ParsedAnthemClause {
+        subject,
+        power,
+        toughness,
+        condition,
+    })
+}
+
+fn build_anthem_static_ability(clause: &ParsedAnthemClause) -> StaticAbility {
+    let mut anthem = match &clause.subject {
+        AnthemSubjectAst::Source => Anthem::for_source(0, 0),
+        AnthemSubjectAst::Filter(filter) => Anthem::new(filter.clone(), 0, 0),
+    }
+    .with_values(clause.power.clone(), clause.toughness.clone());
+
+    if let Some(condition) = &clause.condition {
+        anthem = anthem.with_condition(condition.clone());
+    }
+
+    StaticAbility::new(anthem)
+}
+
 fn parse_anthem_and_keyword_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
@@ -2320,10 +2799,9 @@ fn parse_anthem_and_keyword_line(
         return Ok(None);
     }
 
-    // Find the token index corresponding to have_idx in words
-    let have_token_idx = tokens
-        .iter()
-        .position(|token| token.is_word("have") || token.is_word("has"));
+    let have_token_idx = tokens.iter().enumerate().find_map(|(idx, token)| {
+        (idx > get_idx && (token.is_word("have") || token.is_word("has"))).then_some(idx)
+    });
     let Some(have_token_idx) = have_token_idx else {
         return Ok(None);
     };
@@ -2340,20 +2818,28 @@ fn parse_anthem_and_keyword_line(
         return Ok(None);
     }
 
-    let filter_tokens = &tokens[..get_idx];
-    let filter = parse_object_filter(filter_tokens, false)?;
-
-    let modifier_token = tokens.get(get_idx + 1).and_then(Token::as_word);
-    let Some(modifier_token) = modifier_token else {
-        return Ok(None);
+    let clause_tail_end = if have_token_idx > get_idx + 2
+        && tokens
+            .get(have_token_idx - 1)
+            .is_some_and(|token| token.is_word("and"))
+    {
+        have_token_idx - 1
+    } else {
+        have_token_idx
     };
-    let Ok((power, toughness)) = parse_pt_modifier(modifier_token) else {
-        return Ok(None);
-    };
-
-    let mut result = vec![StaticAbility::anthem(filter.clone(), power, toughness)];
+    let clause = parse_anthem_clause(tokens, get_idx, clause_tail_end)?;
+    let mut result = vec![build_anthem_static_ability(&clause)];
     for ability in abilities {
-        result.push(StaticAbility::grant_ability(filter.clone(), ability));
+        let granted = match &clause.subject {
+            AnthemSubjectAst::Source => GrantAbility::source(ability),
+            AnthemSubjectAst::Filter(filter) => GrantAbility::new(filter.clone(), ability),
+        };
+        let granted = if let Some(condition) = &clause.condition {
+            granted.with_condition(condition.clone())
+        } else {
+            granted
+        };
+        result.push(StaticAbility::new(granted));
     }
     Ok(Some(result))
 }
@@ -2379,28 +2865,20 @@ fn parse_anthem_line(tokens: &[Token]) -> Result<Option<StaticAbility>, CardText
     let Some(get_idx) = get_idx else {
         return Ok(None);
     };
-
-    let filter_tokens = &tokens[..get_idx];
-    let filter = parse_object_filter(filter_tokens, false)?;
-
-    let modifier_token = tokens.get(get_idx + 1).and_then(Token::as_word);
-    let Some(modifier_token) = modifier_token else {
-        return Ok(None);
-    };
-
-    let Ok((power, toughness)) = parse_pt_modifier(modifier_token) else {
-        return Ok(None);
-    };
-    Ok(Some(StaticAbility::anthem(filter, power, toughness)))
+    let clause = parse_anthem_clause(tokens, get_idx, tokens.len())?;
+    Ok(Some(build_anthem_static_ability(&clause)))
 }
 
 fn parse_enters_with_counters_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let words = words(tokens);
-    if !(words.starts_with(&["this", "enters"])
-        || words.starts_with(&["this", "creature", "enters"]))
-    {
+    let enters_idx = words
+        .iter()
+        .position(|word| *word == "enters")
+        .unwrap_or(usize::MAX);
+    let subject_words = words.get(..enters_idx).unwrap_or_default();
+    if !is_source_reference_words(subject_words) {
         return Ok(None);
     }
     if !words.contains(&"with")
@@ -2447,17 +2925,23 @@ fn parse_enters_with_counters_line(
     }
     if tail.first().is_some_and(|token| token.is_word("it")) {
         tail = &tail[1..];
-    } else if tail.first().is_some_and(|token| token.is_word("this")) {
+    } else if tail
+        .first()
+        .is_some_and(|token| token.is_word("this") || token.is_word("thiss"))
+    {
         tail = &tail[1..];
-        if tail
-            .first()
-            .is_some_and(|token| token.is_word("creature") || token.is_word("permanent"))
+        if let Some(word) = tail.first().and_then(Token::as_word)
+            && (matches!(word, "source" | "spell" | "card")
+                || word == "creature"
+                || word == "permanent"
+                || parse_card_type(word).is_some())
         {
             tail = &tail[1..];
         }
     }
     let tail = trim_commas(tail);
-    if !tail.is_empty() {
+    let tail_has_words = tail.iter().any(|token| token.as_word().is_some());
+    if tail_has_words {
         count = parse_where_x_value_clause(&tail).ok_or_else(|| {
             CardTextError::ParseError(format!(
                 "unsupported trailing self ETB counter clause (clause: '{}')",
@@ -2499,7 +2983,42 @@ fn parse_where_x_value_clause(tokens: &[Token]) -> Option<Value> {
         return Some(Value::CardsInHand(PlayerFilter::You));
     }
 
+    // where X is the number of <objects>
+    if let Some(value) = parse_where_x_is_number_of_filter_value(tokens) {
+        return Some(value);
+    }
+
     None
+}
+
+fn parse_where_x_is_number_of_filter_value(tokens: &[Token]) -> Option<Value> {
+    let words = words(tokens);
+    if !words.starts_with(&["where", "x", "is"]) {
+        return None;
+    }
+
+    let number_idx = words.iter().position(|word| *word == "number")?;
+    if words.get(number_idx + 1).copied() != Some("of") {
+        return None;
+    }
+
+    let object_start_word_idx = number_idx + 2;
+    let mut seen_words = 0usize;
+    let mut object_start_token_idx = None;
+    for (idx, token) in tokens.iter().enumerate() {
+        if token.as_word().is_none() {
+            continue;
+        }
+        if seen_words == object_start_word_idx {
+            object_start_token_idx = Some(idx);
+            break;
+        }
+        seen_words += 1;
+    }
+    let object_start_token_idx = object_start_token_idx?;
+    let filter_tokens = &tokens[object_start_token_idx..];
+    let filter = parse_object_filter(filter_tokens, false).ok()?;
+    Some(Value::Count(filter))
 }
 
 fn parse_enters_tapped_for_filter_line(
@@ -3290,12 +3809,14 @@ fn parse_activated_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardT
                 .windows(2)
                 .any(|window| window[0].is_word("for") && window[1].is_word("each"));
             let dynamic_amount = if has_for_each_tail {
-                Some(parse_dynamic_cost_modifier_value(mana_tokens)?.ok_or_else(|| {
-                    CardTextError::ParseError(format!(
-                        "unsupported dynamic mana amount (clause: '{}')",
-                        words(primary_sentence).join(" ")
-                    ))
-                })?)
+                Some(
+                    parse_dynamic_cost_modifier_value(mana_tokens)?.ok_or_else(|| {
+                        CardTextError::ParseError(format!(
+                            "unsupported dynamic mana amount (clause: '{}')",
+                            words(primary_sentence).join(" ")
+                        ))
+                    })?,
+                )
             } else {
                 None
             };
@@ -3305,15 +3826,21 @@ fn parse_activated_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardT
                 && mana_words
                     .iter()
                     .any(|word| *word == "color" || *word == "colors");
-            let has_any_color = mana_words.contains(&"any") && mana_words.contains(&"color");
+            let has_any_choice_mana = mana_words.contains(&"any")
+                && (mana_words.contains(&"color") || mana_words.contains(&"type"));
             let uses_commander_identity = mana_words
                 .iter()
                 .any(|word| *word == "commander" || *word == "commanders")
                 && mana_words.contains(&"identity");
-            if has_imprinted_colors {
-                let mut effects = vec![Effect::new(
-                    crate::effects::mana::AddManaOfImprintedColorsEffect::new(),
-                )];
+            if has_imprinted_colors || has_any_choice_mana || uses_commander_identity {
+                let mana_ast = parse_add_mana(mana_tokens, None)?;
+                let mut compile_ctx = CompileContext::new();
+                let (mut effects, choices) = compile_effect(&mana_ast, &mut compile_ctx)?;
+                if !choices.is_empty() {
+                    return Err(CardTextError::ParseError(
+                        "unsupported target choice in mana ability".to_string(),
+                    ));
+                }
                 effects.extend(extra_effects);
                 let mut ability = Ability {
                     kind: AbilityKind::Mana(ManaAbility {
@@ -3330,55 +3857,11 @@ fn parse_activated_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardT
                 {
                     mana_ability.activation_condition = Some(condition);
                 }
-                let effects_ast = if extra_effects_ast.is_empty() {
-                    None
-                } else {
-                    Some(extra_effects_ast)
-                };
+                let mut effects_ast = vec![mana_ast];
+                effects_ast.extend(extra_effects_ast);
                 return Ok(Some(ParsedAbility {
                     ability,
-                    effects_ast,
-                }));
-            }
-            if has_any_color {
-                let amount = if let Some(dynamic_amount) = dynamic_amount.clone() {
-                    dynamic_amount
-                } else if mana_words.contains(&"two") {
-                    Value::Fixed(2)
-                } else if mana_words.contains(&"three") {
-                    Value::Fixed(3)
-                } else {
-                    Value::Fixed(1)
-                };
-                let mut effects = if uses_commander_identity {
-                    vec![Effect::add_mana_from_commander_color_identity(amount)]
-                } else {
-                    vec![Effect::add_mana_of_any_color(amount)]
-                };
-                effects.extend(extra_effects);
-                let mut ability = Ability {
-                    kind: AbilityKind::Mana(ManaAbility {
-                        mana_cost,
-                        mana: Vec::new(),
-                        effects: Some(effects),
-                        activation_condition: None,
-                    }),
-                    functional_zones: functional_zones.clone(),
-                    text: None,
-                };
-                if let Some(condition) = activation_condition
-                    && let AbilityKind::Mana(ref mut mana_ability) = ability.kind
-                {
-                    mana_ability.activation_condition = Some(condition);
-                }
-                let effects_ast = if extra_effects_ast.is_empty() {
-                    None
-                } else {
-                    Some(extra_effects_ast)
-                };
-                return Ok(Some(ParsedAbility {
-                    ability,
-                    effects_ast,
+                    effects_ast: Some(effects_ast),
                 }));
             }
 
@@ -3397,11 +3880,12 @@ fn parse_activated_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardT
 
             if !mana.is_empty() {
                 if let Some(amount) = dynamic_amount {
-                    let mut effects = vec![Effect::new(crate::effects::mana::AddScaledManaEffect::new(
-                        mana,
-                        amount,
-                        PlayerFilter::You,
-                    ))];
+                    let mut effects =
+                        vec![Effect::new(crate::effects::mana::AddScaledManaEffect::new(
+                            mana,
+                            amount,
+                            PlayerFilter::You,
+                        ))];
                     effects.extend(extra_effects);
                     let mut ability = Ability {
                         kind: AbilityKind::Mana(ManaAbility {
@@ -3999,10 +4483,7 @@ fn parse_activation_cost(tokens: &[Token]) -> Result<(TotalCost, Vec<Effect>), C
 
             let remaining = &segment[idx..];
             let remaining_words = words(remaining);
-            let from_source = remaining_words.as_slice() == ["this"]
-                || remaining_words.as_slice() == ["this", "creature"]
-                || remaining_words.as_slice() == ["this", "permanent"]
-                || remaining_words.as_slice() == ["this", "source"];
+            let from_source = is_source_reference_words(&remaining_words);
             if from_source {
                 explicit_costs.push(crate::costs::Cost::remove_counters(counter_type, count));
             } else {
@@ -5623,6 +6104,10 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
         parser_trace("parse_effect_sentence:round-up-reminder", tokens);
         return Ok(Vec::new());
     }
+    if let Some(stripped) = strip_labeled_conditional_prefix(tokens) {
+        parser_trace("parse_effect_sentence:conditional-labeled", stripped);
+        return parse_conditional_sentence(stripped);
+    }
     if let Some(effects) = run_sentence_primitives(tokens, PRE_CONDITIONAL_SENTENCE_PRIMITIVES)? {
         return Ok(effects);
     }
@@ -5648,6 +6133,50 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
     }
 
     parse_effect_chain(tokens)
+}
+
+fn strip_labeled_conditional_prefix(tokens: &[Token]) -> Option<&[Token]> {
+    let if_idx = tokens.iter().position(|token| token.is_word("if"))?;
+    if !(1..=3).contains(&if_idx) {
+        return None;
+    }
+    if !tokens[..if_idx]
+        .iter()
+        .all(|token| matches!(token, Token::Word(_, _)))
+    {
+        return None;
+    }
+
+    let prefix_words = words(&tokens[..if_idx]);
+    if prefix_words.is_empty() {
+        return None;
+    }
+    let is_known_label = matches!(
+        prefix_words[0],
+        "adamant"
+            | "addendum"
+            | "ascend"
+            | "battalion"
+            | "delirium"
+            | "domain"
+            | "ferocious"
+            | "formidable"
+            | "hellbent"
+            | "metalcraft"
+            | "morbid"
+            | "raid"
+            | "revolt"
+            | "spectacle"
+            | "spell"
+            | "surge"
+            | "threshold"
+            | "undergrowth"
+    );
+    if !is_known_label {
+        return None;
+    }
+
+    Some(&tokens[if_idx..])
 }
 
 fn is_negated_untap_clause(words: &[&str]) -> bool {
@@ -6717,6 +7246,7 @@ fn parse_search_library_sentence(
             },
         ]
     } else {
+        let battlefield_tapped = destination == Zone::Battlefield && words_all.contains(&"tapped");
         vec![EffectAst::SearchLibrary {
             filter,
             destination,
@@ -6724,7 +7254,7 @@ fn parse_search_library_sentence(
             reveal,
             shuffle,
             count,
-            tapped: false,
+            tapped: battlefield_tapped,
         }]
     };
 
@@ -7141,8 +7671,9 @@ fn parse_subtype_word(word: &str) -> Option<Subtype> {
         "mountain" => Some(Subtype::Mountain),
         "forest" => Some(Subtype::Forest),
         "urzas" => Some(Subtype::Urzas),
+        "gate" | "gates" => Some(Subtype::Gate),
         "advisor" => Some(Subtype::Advisor),
-        "ally" => Some(Subtype::Ally),
+        "ally" | "allies" => Some(Subtype::Ally),
         "angel" => Some(Subtype::Angel),
         "ape" => Some(Subtype::Ape),
         "archer" => Some(Subtype::Archer),
@@ -7659,6 +8190,10 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
         return Ok(PredicateAst::SourceIsTapped);
     }
 
+    if let Some((amount, symbol)) = parse_mana_spent_to_cast_predicate(&filtered) {
+        return Ok(PredicateAst::ManaSpentToCastThisSpellAtLeast { amount, symbol });
+    }
+
     if filtered[0] == "its" {
         filtered[0] = "it";
     }
@@ -7714,6 +8249,52 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
         "unsupported predicate (predicate: '{}')",
         filtered.join(" ")
     )))
+}
+
+fn parse_mana_spent_to_cast_predicate(words: &[&str]) -> Option<(u32, Option<ManaSymbol>)> {
+    if words.len() < 10 || words[0] != "at" || words[1] != "least" {
+        return None;
+    }
+
+    let amount_tokens = vec![Token::Word(words[2].to_string(), TextSpan::synthetic())];
+    let (amount, _) = parse_number(&amount_tokens)?;
+
+    let mut idx = 3;
+    if words.get(idx).copied() == Some("of") {
+        idx += 1;
+    }
+
+    let symbol = if let Some(word) = words.get(idx).copied() {
+        if let Some(parsed) = parse_mana_symbol_word(word) {
+            idx += 1;
+            Some(parsed)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let tail = &words[idx..];
+    let canonical_tail = ["mana", "was", "spent", "to", "cast", "this", "spell"];
+    let plural_tail = ["mana", "were", "spent", "to", "cast", "this", "spell"];
+    if tail == canonical_tail || tail == plural_tail {
+        return Some((amount, symbol));
+    }
+
+    None
+}
+
+fn parse_mana_symbol_word(word: &str) -> Option<ManaSymbol> {
+    match word {
+        "white" => Some(ManaSymbol::White),
+        "blue" => Some(ManaSymbol::Blue),
+        "black" => Some(ManaSymbol::Black),
+        "red" => Some(ManaSymbol::Red),
+        "green" => Some(ManaSymbol::Green),
+        "colorless" => Some(ManaSymbol::Colorless),
+        _ => None,
+    }
 }
 
 fn parse_effect_chain(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
@@ -7960,6 +8541,16 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
     })?;
     parser_trace_stack("parse_effect_clause:verb-found", tokens);
 
+    if matches!(verb, Verb::Counter)
+        && verb_idx > 0
+        && tokens.iter().any(|token| token.is_word("on"))
+    {
+        if let Ok(effect) = parse_put_counters(tokens) {
+            parser_trace("parse_effect_clause:counter-noun-treated-as-put", tokens);
+            return Ok(effect);
+        }
+    }
+
     if matches!(verb, Verb::Get) {
         let subject_tokens = &tokens[..verb_idx];
         if !subject_tokens.is_empty() {
@@ -8053,9 +8644,7 @@ fn parse_has_base_power_toughness_clause(
     }
 
     let rest_words = &words_all[has_idx + 1..];
-    if rest_words.len() < 5
-        || !rest_words.starts_with(&["base", "power", "and", "toughness"])
-    {
+    if rest_words.len() < 5 || !rest_words.starts_with(&["base", "power", "and", "toughness"]) {
         return Ok(None);
     }
 
@@ -8276,6 +8865,14 @@ fn find_verb(tokens: &[Token]) -> Option<(Verb, usize)> {
         let Some(word) = token.as_word() else {
             continue;
         };
+        if matches!(word, "counter" | "counters")
+            && tokens
+                .get(idx + 1)
+                .and_then(Token::as_word)
+                .is_some_and(|next| matches!(next, "on" | "from" | "among"))
+        {
+            continue;
+        }
         let verb = match word {
             "adds" | "add" => Verb::Add,
             "moves" | "move" => Verb::Move,
@@ -8865,6 +9462,12 @@ fn parse_put_into_hand(
     };
 
     let words = words(tokens);
+    if words.contains(&"from") && words.contains(&"among") {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported put-from-among clause (clause: '{}')",
+            words.join(" ")
+        )));
+    }
     let has_it = words.contains(&"it");
     let has_them = words.contains(&"them");
     let has_hand = words.contains(&"hand");
@@ -8946,6 +9549,23 @@ fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         })?;
 
     let target_tokens = &rest[on_idx + 1..];
+    if let Some((target_count, used)) = parse_counter_target_count_prefix(target_tokens)? {
+        let target_phrase = &target_tokens[used..];
+        if target_phrase.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing counter target after count clause (clause: '{}')",
+                words(tokens).join(" ")
+            )));
+        }
+        let target = parse_target_phrase(target_phrase)?;
+        return Ok(EffectAst::PutCounters {
+            counter_type,
+            count: Value::Fixed(count as i32),
+            target,
+            target_count: Some(target_count),
+        });
+    }
+
     if target_tokens
         .first()
         .is_some_and(|token| token.is_word("each"))
@@ -8962,7 +9582,69 @@ fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         counter_type,
         count: Value::Fixed(count as i32),
         target,
+        target_count: None,
     })
+}
+
+fn parse_counter_target_count_prefix(
+    tokens: &[Token],
+) -> Result<Option<(ChoiceCount, usize)>, CardTextError> {
+    if tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let mut idx = 0usize;
+    let mut each_prefix = false;
+
+    if tokens[idx].is_word("each") {
+        each_prefix = true;
+        idx += 1;
+        if tokens.get(idx).is_some_and(|token| token.is_word("of")) {
+            idx += 1;
+        }
+    }
+
+    if each_prefix && tokens.get(idx).is_some_and(|token| token.is_word("target")) {
+        return Ok(Some((ChoiceCount::any_number(), idx)));
+    }
+
+    if tokens.get(idx).is_some_and(|token| token.is_word("any"))
+        && tokens
+            .get(idx + 1)
+            .is_some_and(|token| token.is_word("number"))
+    {
+        idx += 2;
+        if tokens.get(idx).is_some_and(|token| token.is_word("of")) {
+            idx += 1;
+        }
+        return Ok(Some((ChoiceCount::any_number(), idx)));
+    }
+
+    if tokens.get(idx).is_some_and(|token| token.is_word("up"))
+        && tokens.get(idx + 1).is_some_and(|token| token.is_word("to"))
+    {
+        let Some((value, used)) = parse_number(&tokens[idx + 2..]) else {
+            return Err(CardTextError::ParseError(format!(
+                "missing count after 'up to' in counter target clause (clause: '{}')",
+                words(tokens).join(" ")
+            )));
+        };
+        idx += 2 + used;
+        if tokens.get(idx).is_some_and(|token| token.is_word("of")) {
+            idx += 1;
+        }
+        return Ok(Some((ChoiceCount::up_to(value as usize), idx)));
+    }
+
+    if let Some((value, used)) = parse_number(&tokens[idx..]) {
+        idx += used;
+        if tokens.get(idx).is_some_and(|token| token.is_word("of")) {
+            idx += 1;
+        }
+        return Ok(Some((ChoiceCount::exactly(value as usize), idx)));
+    }
+
+    Ok(None)
 }
 
 fn parse_tap(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
@@ -9285,6 +9967,98 @@ fn parse_add_mana(
         _ => PlayerAst::Implicit,
     };
     parser_trace_stack("parse_add_mana:entry", tokens);
+    let clause_words = words(tokens);
+
+    let has_card_word = clause_words
+        .iter()
+        .any(|word| *word == "card" || *word == "cards");
+    if clause_words.contains(&"exiled") && has_card_word && clause_words.contains(&"colors") {
+        return Ok(EffectAst::AddManaImprintedColors);
+    }
+
+    if (clause_words.contains(&"commander") || clause_words.contains(&"commanders"))
+        && clause_words.contains(&"color")
+        && clause_words.contains(&"identity")
+    {
+        let amount = parse_value(tokens)
+            .map(|(value, _)| value)
+            .unwrap_or(Value::Fixed(1));
+        return Ok(EffectAst::AddManaCommanderIdentity { amount, player });
+    }
+
+    let any_one = clause_words
+        .windows(3)
+        .any(|window| window == ["any", "one", "color"] || window == ["any", "one", "type"]);
+    let any_color = clause_words
+        .windows(2)
+        .any(|window| window == ["any", "color"] || window == ["one", "color"]);
+    let any_type = clause_words
+        .windows(2)
+        .any(|window| window == ["any", "type"] || window == ["one", "type"]);
+    if any_color || any_type {
+        let mut amount = parse_value(tokens)
+            .map(|(value, _)| value)
+            .unwrap_or(Value::Fixed(1));
+        let allow_colorless = any_type;
+        let phrase_end = tokens
+            .iter()
+            .enumerate()
+            .find_map(|(idx, token)| {
+                let word = token.as_word()?;
+                if (word == "color" && any_color) || (word == "type" && any_type) {
+                    Some(idx + 1)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(tokens.len());
+        let tail_tokens = trim_leading_commas(&tokens[phrase_end..]);
+
+        if tail_tokens.is_empty() || is_mana_pool_tail_tokens(tail_tokens) {
+            if any_type {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported any-type mana clause without producer filter (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+            if any_one {
+                return Ok(EffectAst::AddManaAnyOneColor { amount, player });
+            }
+            return Ok(EffectAst::AddManaAnyColor { amount, player });
+        }
+
+        if let Some(filter) = parse_land_could_produce_filter(tail_tokens)? {
+            parser_trace_stack("parse_add_mana:land-could-produce", tokens);
+            return Ok(EffectAst::AddManaFromLandCouldProduce {
+                amount,
+                player,
+                land_filter: filter,
+                allow_colorless,
+                same_type: any_one,
+            });
+        }
+
+        if matches!(amount, Value::X)
+            && let Some(dynamic_amount) = parse_where_x_is_number_of_filter_value(tail_tokens)
+        {
+            amount = dynamic_amount;
+            if any_type {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported any-type mana clause without producer filter (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+            if any_one {
+                return Ok(EffectAst::AddManaAnyOneColor { amount, player });
+            }
+            return Ok(EffectAst::AddManaAnyColor { amount, player });
+        }
+
+        return Err(CardTextError::ParseError(format!(
+            "unsupported trailing mana clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
 
     let for_each_idx = tokens
         .windows(2)
@@ -9323,45 +10097,72 @@ fn parse_add_mana(
         return Ok(EffectAst::AddMana { mana, player });
     }
 
-    if mana.is_empty() {
-        let clause_words = words(tokens);
-        let has_card_word = clause_words
-            .iter()
-            .any(|word| *word == "card" || *word == "cards");
-        if clause_words.contains(&"exiled") && has_card_word && clause_words.contains(&"colors") {
-            return Ok(EffectAst::AddManaImprintedColors);
-        }
+    Err(CardTextError::ParseError(format!(
+        "missing mana symbols (clause: '{}')",
+        clause_words.join(" ")
+    )))
+}
 
-        if clause_words.contains(&"commander")
-            && clause_words.contains(&"color")
-            && clause_words.contains(&"identity")
-        {
-            let amount = parse_value(tokens)
-                .map(|(value, _)| value)
-                .unwrap_or(Value::Fixed(1));
-            return Ok(EffectAst::AddManaCommanderIdentity { amount, player });
-        }
+fn trim_leading_commas(tokens: &[Token]) -> &[Token] {
+    let start = tokens
+        .iter()
+        .position(|token| !matches!(token, Token::Comma(_)))
+        .unwrap_or(tokens.len());
+    &tokens[start..]
+}
 
-        if clause_words.contains(&"any") && clause_words.contains(&"color") {
-            let amount = parse_value(tokens)
-                .map(|(value, _)| value)
-                .unwrap_or(Value::Fixed(1));
-            let any_one = clause_words
-                .windows(3)
-                .any(|window| window == ["any", "one", "color"]);
-            if any_one {
-                return Ok(EffectAst::AddManaAnyOneColor { amount, player });
-            }
-            return Ok(EffectAst::AddManaAnyColor { amount, player });
-        }
+fn is_mana_pool_tail_tokens(tokens: &[Token]) -> bool {
+    let words = words(tokens);
+    if words.is_empty() || words[0] != "to" || !words.contains(&"mana") || !words.contains(&"pool")
+    {
+        return false;
+    }
+    words.iter().all(|word| {
+        matches!(
+            *word,
+            "to" | "your" | "their" | "its" | "that" | "player" | "players" | "mana" | "pool"
+        )
+    })
+}
 
+fn parse_land_could_produce_filter(
+    tokens: &[Token],
+) -> Result<Option<ObjectFilter>, CardTextError> {
+    let words = words(tokens);
+    if words.len() < 4 || words[0] != "that" {
+        return Ok(None);
+    }
+    let Some(could_idx) = words
+        .windows(2)
+        .position(|window| window == ["could", "produce"])
+    else {
+        return Ok(None);
+    };
+    if could_idx + 2 != words.len() {
         return Err(CardTextError::ParseError(format!(
-            "missing mana symbols (clause: '{}')",
-            clause_words.join(" ")
+            "unsupported trailing mana clause (tail: '{}')",
+            words.join(" ")
         )));
     }
 
-    Ok(EffectAst::AddMana { mana, player })
+    let could_token_idx = tokens
+        .iter()
+        .position(|token| token.is_word("could"))
+        .ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing 'could' in mana tail '{}'",
+                words.join(" ")
+            ))
+        })?;
+    let filter_tokens = trim_leading_commas(&tokens[1..could_token_idx]);
+    if filter_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing land filter in mana clause (tail: '{}')",
+            words.join(" ")
+        )));
+    }
+    let filter = parse_object_filter(filter_tokens, false)?;
+    Ok(Some(filter))
 }
 
 fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
@@ -9734,13 +10535,7 @@ fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
         return Ok(TargetAst::Spell(span));
     }
 
-    if remaining_words.as_slice() == ["this"]
-        || remaining_words.as_slice() == ["thiss"]
-        || remaining_words.as_slice() == ["this", "creature"]
-        || remaining_words.as_slice() == ["thiss", "creature"]
-        || remaining_words.as_slice() == ["this", "permanent"]
-        || remaining_words.as_slice() == ["thiss", "permanent"]
-    {
+    if is_source_reference_words(&remaining_words) {
         return Ok(TargetAst::Source(span));
     }
     if is_source_from_your_graveyard_words(&remaining_words) {
@@ -9797,6 +10592,29 @@ fn is_source_from_your_graveyard_words(words: &[&str]) -> bool {
         && words.contains(&"from")
         && words.contains(&"your")
         && words.contains(&"graveyard")
+}
+
+fn is_source_reference_words(words: &[&str]) -> bool {
+    if words.is_empty() {
+        return false;
+    }
+
+    if words[0] != "this" && words[0] != "thiss" {
+        return false;
+    }
+
+    if words.len() == 1 {
+        return true;
+    }
+
+    if words.len() != 2 {
+        return false;
+    }
+
+    match words[1] {
+        "source" | "spell" | "permanent" | "card" | "creature" => true,
+        other => parse_card_type(other).is_some(),
+    }
 }
 
 fn contains_source_from_your_graveyard_phrase(words: &[&str]) -> bool {
@@ -9913,6 +10731,22 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         }
     }
 
+    let mut with_idx = 0usize;
+    while with_idx + 1 < all_words.len() {
+        if all_words[with_idx] != "with" {
+            with_idx += 1;
+            continue;
+        }
+
+        if let Some((kind, consumed)) = parse_alternative_cast_words(&all_words[with_idx + 1..]) {
+            filter.alternative_cast = Some(kind);
+            with_idx += 1 + consumed;
+            continue;
+        }
+
+        with_idx += 1;
+    }
+
     for idx in 0..all_words.len() {
         if let Some(zone) = parse_zone_word(all_words[idx]) {
             let is_reference_zone_for_spell = if all_words.contains(&"spell") {
@@ -9944,6 +10778,9 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
                     }
                     "opponent" | "opponents" => {
                         filter.owner = Some(PlayerFilter::Opponent);
+                    }
+                    "their" => {
+                        filter.owner = Some(PlayerFilter::target_player());
                     }
                     _ => {}
                 }
@@ -10144,6 +10981,7 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         || filter.toughness.is_some()
         || filter.mana_value.is_some()
         || filter.name.is_some()
+        || filter.alternative_cast.is_some()
         || filter.targets_player.is_some()
         || filter.targets_object.is_some();
 
@@ -10173,6 +11011,7 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         || filter.toughness.is_some()
         || filter.mana_value.is_some()
         || filter.name.is_some()
+        || filter.alternative_cast.is_some()
         || filter.colors.is_some()
         || !filter.tagged_constraints.is_empty()
         || filter.targets_player.is_some()
@@ -10289,6 +11128,18 @@ fn parse_zone_word(word: &str) -> Option<Zone> {
         "library" | "libraries" => Some(Zone::Library),
         "exile" => Some(Zone::Exile),
         "stack" => Some(Zone::Stack),
+        _ => None,
+    }
+}
+
+fn parse_alternative_cast_words(words: &[&str]) -> Option<(AlternativeCastKind, usize)> {
+    match words {
+        ["flashback", ..] => Some((AlternativeCastKind::Flashback, 1)),
+        ["jump", "start", ..] => Some((AlternativeCastKind::JumpStart, 2)),
+        ["jumpstart", ..] => Some((AlternativeCastKind::JumpStart, 1)),
+        ["escape", ..] => Some((AlternativeCastKind::Escape, 1)),
+        ["madness", ..] => Some((AlternativeCastKind::Madness, 1)),
+        ["miracle", ..] => Some((AlternativeCastKind::Miracle, 1)),
         _ => None,
     }
 }
@@ -10595,6 +11446,7 @@ fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::AddManaScaled { player, .. }
         | EffectAst::AddManaAnyColor { player, .. }
         | EffectAst::AddManaAnyOneColor { player, .. }
+        | EffectAst::AddManaFromLandCouldProduce { player, .. }
         | EffectAst::AddManaCommanderIdentity { player, .. }
         | EffectAst::Scry { player, .. }
         | EffectAst::Surveil { player, .. }
@@ -10819,7 +11671,26 @@ fn compile_effects(
         let next_is_if_result_with_opponent_doesnt = next_is_if_result
             && idx + 2 < effects.len()
             && matches!(effects[idx + 2], EffectAst::ForEachOpponentDoesNot { .. });
-        if next_is_if_result && !next_is_if_result_with_opponent_doesnt {
+        if next_is_if_result_with_opponent_doesnt {
+            let (mut effect_list, effect_choices) = compile_effect(&effects[idx], ctx)?;
+            if !effect_list.is_empty() {
+                let id = ctx.next_effect_id();
+                let last = effect_list.pop().expect("non-empty effect list");
+                effect_list.push(Effect::with_id(id.0, last));
+                ctx.last_effect_id = Some(id);
+            } else {
+                ctx.last_effect_id = None;
+            }
+
+            compiled.extend(effect_list);
+            for choice in effect_choices {
+                push_choice(&mut choices, choice);
+            }
+            idx += 1;
+            continue;
+        }
+
+        if next_is_if_result {
             let (mut effect_list, effect_choices) = compile_effect(&effects[idx], ctx)?;
             if !effect_list.is_empty() {
                 let id = ctx.next_effect_id();
@@ -11087,6 +11958,48 @@ fn compile_vote_sequence(
     Ok(Some((vec![effect], choices, consumed)))
 }
 
+fn choose_spec_for_targeted_player_filter(filter: &PlayerFilter) -> Option<ChooseSpec> {
+    if let PlayerFilter::Target(inner) = filter {
+        return Some(ChooseSpec::target(ChooseSpec::Player((**inner).clone())));
+    }
+    None
+}
+
+fn collect_targeted_player_specs_from_filter(filter: &ObjectFilter, specs: &mut Vec<ChooseSpec>) {
+    if let Some(controller) = &filter.controller
+        && let Some(spec) = choose_spec_for_targeted_player_filter(controller)
+    {
+        push_choice(specs, spec);
+    }
+
+    if let Some(owner) = &filter.owner
+        && let Some(spec) = choose_spec_for_targeted_player_filter(owner)
+    {
+        push_choice(specs, spec);
+    }
+
+    if let Some(targets_player) = &filter.targets_player
+        && let Some(spec) = choose_spec_for_targeted_player_filter(targets_player)
+    {
+        push_choice(specs, spec);
+    }
+
+    if let Some(targets_object) = &filter.targets_object {
+        collect_targeted_player_specs_from_filter(targets_object, specs);
+    }
+}
+
+fn target_context_prelude_for_filter(filter: &ObjectFilter) -> (Vec<Effect>, Vec<ChooseSpec>) {
+    let mut choices = Vec::new();
+    collect_targeted_player_specs_from_filter(filter, &mut choices);
+    let effects = choices
+        .iter()
+        .cloned()
+        .map(|spec| Effect::new(crate::effects::TargetOnlyEffect::new(spec)))
+        .collect();
+    (effects, choices)
+}
+
 fn compile_effect(
     effect: &EffectAst,
     ctx: &mut CompileContext,
@@ -11121,15 +12034,20 @@ fn compile_effect(
             counter_type,
             count,
             target,
+            target_count,
         } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
-            let effect = tag_object_target_effect(
-                Effect::put_counters(*counter_type, count.clone(), spec.clone()),
-                &spec,
-                ctx,
-                "counters",
-            );
+            let mut spec = choose_spec_for_target(target);
+            spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            if let Some(target_count) = target_count {
+                spec = spec.with_count(*target_count);
+            }
+            let mut put_counters =
+                crate::effects::PutCountersEffect::new(*counter_type, count.clone(), spec.clone());
+            if let Some(target_count) = target_count {
+                put_counters = put_counters.with_target_count(*target_count);
+            }
+            let effect =
+                tag_object_target_effect(Effect::new(put_counters), &spec, ctx, "counters");
             let mut choices = Vec::new();
             if spec.is_target() {
                 choices.push(spec);
@@ -11219,8 +12137,9 @@ fn compile_effect(
         }
         EffectAst::UntapAll { filter } => {
             let resolved_filter = resolve_it_tag(filter, ctx)?;
-            let effect = Effect::untap_all(resolved_filter);
-            Ok((vec![effect], Vec::new()))
+            let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
+            prelude.push(Effect::untap_all(resolved_filter));
+            Ok((prelude, choices))
         }
         EffectAst::GrantProtectionChoice {
             target,
@@ -11426,6 +12345,26 @@ fn compile_effect(
             } else {
                 Effect::add_mana_of_any_one_color_player(amount.clone(), filter.clone())
             };
+            if !matches!(*player, PlayerAst::Implicit) {
+                ctx.last_player_filter = Some(filter);
+            }
+            Ok((vec![effect], Vec::new()))
+        }
+        EffectAst::AddManaFromLandCouldProduce {
+            amount,
+            player,
+            land_filter,
+            allow_colorless,
+            same_type,
+        } => {
+            let filter = resolve_non_target_player_filter(*player, ctx)?;
+            let effect = Effect::add_mana_of_land_produced_types_player(
+                amount.clone(),
+                filter.clone(),
+                land_filter.clone(),
+                *allow_colorless,
+                *same_type,
+            );
             if !matches!(*player, PlayerAst::Implicit) {
                 ctx.last_player_filter = Some(filter);
             }
@@ -11795,9 +12734,7 @@ fn compile_effect(
             let saved_last_effect = ctx.last_effect_id;
             let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
             ctx.last_effect_id = saved_last_effect;
-            let id = ctx.next_effect_id();
-            ctx.last_effect_id = Some(id);
-            let effect = Effect::with_id(id.0, Effect::may(inner_effects));
+            let effect = Effect::may(inner_effects);
             Ok((vec![effect], inner_choices))
         }
         EffectAst::UnlessPays {
@@ -11827,14 +12764,9 @@ fn compile_effect(
             let saved_last_effect = ctx.last_effect_id;
             let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
             ctx.last_effect_id = saved_last_effect;
-            let id = ctx.next_effect_id();
-            ctx.last_effect_id = Some(id);
-            let effect = Effect::with_id(
-                id.0,
-                Effect::for_each_controller_of_tagged(
-                    tag.clone(),
-                    vec![Effect::may(inner_effects)],
-                ),
+            let effect = Effect::for_each_controller_of_tagged(
+                tag.clone(),
+                vec![Effect::may(inner_effects)],
             );
             Ok((vec![effect], inner_choices))
         }
@@ -11944,9 +12876,15 @@ fn compile_effect(
             Ok((vec![effect], choices))
         }
         EffectAst::DestroyAll { filter } => {
-            Ok((vec![Effect::destroy_all(filter.clone())], Vec::new()))
+            let (mut prelude, choices) = target_context_prelude_for_filter(filter);
+            prelude.push(Effect::destroy_all(filter.clone()));
+            Ok((prelude, choices))
         }
-        EffectAst::ExileAll { filter } => Ok((vec![Effect::exile_all(filter.clone())], Vec::new())),
+        EffectAst::ExileAll { filter } => {
+            let (mut prelude, choices) = target_context_prelude_for_filter(filter);
+            prelude.push(Effect::exile_all(filter.clone()));
+            Ok((prelude, choices))
+        }
         EffectAst::Exile { target } => {
             let spec = choose_spec_for_target(target);
             let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
@@ -12094,6 +13032,12 @@ fn compile_effect(
                     Condition::TaggedObjectMatches(tag.clone(), resolved)
                 }
                 PredicateAst::SourceIsTapped => Condition::SourceIsTapped,
+                PredicateAst::ManaSpentToCastThisSpellAtLeast { amount, symbol } => {
+                    Condition::ManaSpentToCastThisSpellAtLeast {
+                        amount: *amount,
+                        symbol: *symbol,
+                    }
+                }
             };
             let effect = if false_effects.is_empty() {
                 Effect::conditional_only(condition, true_effects)
@@ -14917,6 +15861,18 @@ mod target_parse_tests {
             filter.tagged_constraints
         );
     }
+
+    #[test]
+    fn parse_object_filter_flashback_cards_from_their_graveyard() {
+        let tokens = tokenize_line("cards with flashback from their graveyard", 0);
+        let filter = parse_object_filter(&tokens, false).expect("parse flashback graveyard filter");
+        assert_eq!(filter.zone, Some(Zone::Graveyard));
+        assert_eq!(filter.owner, Some(PlayerFilter::target_player()));
+        assert_eq!(
+            filter.alternative_cast,
+            Some(crate::filter::AlternativeCastKind::Flashback)
+        );
+    }
 }
 
 #[cfg(all(test, feature = "parser-tests"))]
@@ -14924,16 +15880,18 @@ mod effect_parse_tests {
     use super::*;
     use crate::alternative_cast::AlternativeCastingMethod;
     use crate::compiled_text::compiled_lines;
-    use crate::effect::{Until, Value};
+    use crate::effect::{Condition, Until, Value};
     use crate::effects::CantEffect;
     use crate::effects::{
-        AddScaledManaEffect, CounterEffect, CreateTokenCopyEffect, DiscardEffect, DrawCardsEffect,
-        ExchangeControlEffect, ExileEffect, ExileInsteadOfGraveyardEffect, ForEachObject,
-        GainControlEffect, GrantPlayFromGraveyardEffect, LookAtHandEffect,
-        ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect, PutCountersEffect,
-        RemoveUpToAnyCountersEffect, ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect,
-        SacrificeEffect, SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipDrawStepEffect,
-        SkipTurnEffect, SurveilEffect, TransformEffect,
+        AddManaOfAnyOneColorEffect, AddManaOfLandProducedTypesEffect, AddScaledManaEffect,
+        CounterEffect,
+        CreateTokenCopyEffect, DiscardEffect, DrawCardsEffect, ExchangeControlEffect, ExileEffect,
+        ExileInsteadOfGraveyardEffect, ForEachObject, GainControlEffect,
+        GrantPlayFromGraveyardEffect, LookAtHandEffect, ModifyPowerToughnessEffect,
+        ModifyPowerToughnessForEachEffect, PutCountersEffect, RemoveUpToAnyCountersEffect,
+        ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect, SacrificeEffect,
+        SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipDrawStepEffect, SkipTurnEffect,
+        SurveilEffect, TargetOnlyEffect, TransformEffect,
     };
     use crate::ids::CardId;
     use crate::mana::{ManaCost, ManaSymbol};
@@ -15004,7 +15962,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .parse_text("Return up to two target creature cards from your graveyard to your hand.")
             .expect("parse up-to return to hand");
 
-        let effects = def.spell_effect.expect("spell effect");
+        let effects = def.spell_effect.as_ref().expect("spell effect");
         assert!(
             effects
                 .iter()
@@ -15021,7 +15979,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             )
             .expect("parse return to battlefield");
 
-        let effects = def.spell_effect.expect("spell effect");
+        let effects = def.spell_effect.as_ref().expect("spell effect");
         assert!(
             effects.iter().any(|e| e
                 .downcast_ref::<ReturnFromGraveyardToBattlefieldEffect>()
@@ -15036,7 +15994,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .parse_text("Exchange control of two target creatures.")
             .expect("parse exchange control");
 
-        let effects = def.spell_effect.expect("spell effect");
+        let effects = def.spell_effect.as_ref().expect("spell effect");
         assert!(
             effects
                 .iter()
@@ -15052,16 +16010,15 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .parse_text("{T}: Target player draws a card, then discards a card.")
             .expect("parse target-player loot ability");
 
-        let lines = compiled_lines(&def);
+        let lines = crate::compiled_text::compiled_lines(&def);
         let activated_line = lines
             .iter()
             .find(|line| line.contains("Activated ability"))
             .expect("expected activated ability line");
 
         assert!(
-            activated_line.contains(
-                "target a player draws a card. target a player discards a card"
-            ),
+            activated_line
+                .contains("target a player draws a card. target a player discards a card"),
             "expected carried target player in discard clause, got {activated_line}"
         );
         assert!(
@@ -15127,7 +16084,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert_eq!(ability.0.functional_zones, vec![Zone::Graveyard]);
         assert!(ability.1.choices.is_empty(), "should not target");
 
-        let lines = compiled_lines(&def);
+        let lines = crate::compiled_text::compiled_lines(&def);
         assert!(
             lines.iter().any(|line| line.contains("Return this source")),
             "expected source return text, got {lines:?}"
@@ -15166,7 +16123,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert_eq!(set_base.toughness, Value::Fixed(1));
         assert_eq!(set_base.duration, Until::EndOfTurn);
 
-        let lines = compiled_lines(&def);
+        let lines = crate::compiled_text::compiled_lines(&def);
         let spell_line = lines
             .iter()
             .find(|line| line.starts_with("Spell effects:"))
@@ -15193,7 +16150,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .parse_text("Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle.")
             .expect("parse split search destinations");
 
-        let lines = compiled_lines(&def);
+        let lines = crate::compiled_text::compiled_lines(&def);
         let spell_line = lines
             .iter()
             .find(|line| line.starts_with("Spell effects:"))
@@ -15206,6 +16163,33 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             spell_line.contains("put it into hand"),
             "expected hand placement leg, got {spell_line}"
+        );
+    }
+
+    #[test]
+    fn parse_search_to_battlefield_tapped_preserves_tapped_flag() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Roiling Regrowth Variant")
+            .parse_text(
+                "Search your library for up to two basic land cards, put them onto the battlefield tapped, then shuffle.",
+            )
+            .expect("parse tapped battlefield search");
+
+        let lines = crate::compiled_text::compiled_lines(&def);
+        let spell_line = lines
+            .iter()
+            .find(|line| line.starts_with("Spell effects:"))
+            .expect("expected spell effects line");
+        assert!(
+            spell_line.contains("onto the battlefield tapped"),
+            "expected tapped battlefield placement in compiled text, got {spell_line}"
+        );
+        assert!(
+            spell_line.contains("Search your library"),
+            "expected compact search wording, got {spell_line}"
+        );
+        assert!(
+            !spell_line.contains("chooses up to"),
+            "should not leak choose-object internals in search display: {spell_line}"
         );
     }
 
@@ -15340,7 +16324,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         let def = CardDefinitionBuilder::new(CardId::new(), "Torch Fiend Variant")
             .parse_text("{R}, Sacrifice this creature: Destroy target artifact.")
             .expect("parse torch fiend style text");
-        let lines = compiled_lines(&def);
+        let lines = crate::compiled_text::compiled_lines(&def);
         let joined = lines.join("\n");
         assert!(
             joined.contains("Destroy target artifact"),
@@ -15359,6 +16343,68 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             result.is_err(),
             "restriction-only line should fail instead of being silently ignored"
+        );
+    }
+
+    #[test]
+    fn parse_adamant_mana_spent_conditional_compiles_semantically() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Turn into a Pumpkin Variant")
+            .parse_text(
+                "Return target nonland permanent to its owner's hand. Draw a card.\nAdamant — If at least three blue mana was spent to cast this spell, create a Food token.",
+            )
+            .expect("adamant conditional should parse");
+
+        let effects = def.spell_effect.as_ref().expect("spell effect");
+        let conditional = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<crate::effects::ConditionalEffect>())
+            .expect("expected conditional effect");
+
+        assert!(
+            matches!(
+                conditional.condition,
+                Condition::ManaSpentToCastThisSpellAtLeast {
+                    amount: 3,
+                    symbol: Some(ManaSymbol::Blue),
+                }
+            ),
+            "expected mana-spent condition, got {:?}",
+            conditional.condition
+        );
+
+        let lines = crate::compiled_text::compiled_lines(&def);
+        let joined = lines.join("\n");
+        assert!(
+            joined.contains("If at least 3 {U} mana was spent to cast this spell"),
+            "compiled text should reflect mana-spent condition: {joined}"
+        );
+    }
+
+    #[test]
+    fn parse_adamant_mana_spent_conditional_rejects_unparsed_tail() {
+        let result = CardDefinitionBuilder::new(CardId::new(), "Broken Adamant Variant")
+            .parse_text(
+                "Adamant — If at least three blue mana was spent to cast this spell while you control a creature, create a Food token.",
+            );
+        assert!(
+            result.is_err(),
+            "unsupported predicate tail should fail parse instead of partial success"
+        );
+    }
+
+    #[test]
+    fn create_token_render_includes_compiled_token_semantics() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Experimental Aviator Variant")
+            .parse_text(
+                "Flying\nWhen this creature enters, create two 1/1 colorless Thopter artifact creature tokens with flying.",
+            )
+            .expect("experimental aviator style text should parse");
+
+        let lines = compiled_lines(&def);
+        let joined = lines.join("\n").to_ascii_lowercase();
+        assert!(
+            joined.contains("create 2 1/1 colorless thopter artifact creature token with flying"),
+            "compiled token text should include token characteristics and keyword, got: {joined}"
         );
     }
 
@@ -15548,20 +16594,27 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .iter()
             .filter(|line| line.starts_with("Mana ability"))
             .collect::<Vec<_>>();
-        assert_eq!(mana_lines.len(), 4, "expected 4 mana abilities, got {lines:?}");
+        assert_eq!(
+            mana_lines.len(),
+            4,
+            "expected 4 mana abilities, got {lines:?}"
+        );
 
         assert!(
-            lines.iter()
+            lines
+                .iter()
                 .any(|line| line.contains("Pay {U/R}, Tap this source, Add {U}{U}")),
             "missing {{U}}{{U}} filtered output: {lines:?}"
         );
         assert!(
-            lines.iter()
+            lines
+                .iter()
                 .any(|line| line.contains("Pay {U/R}, Tap this source, Add {U}{R}")),
             "missing {{U}}{{R}} filtered output: {lines:?}"
         );
         assert!(
-            lines.iter()
+            lines
+                .iter()
                 .any(|line| line.contains("Pay {U/R}, Tap this source, Add {R}{R}")),
             "missing {{R}}{{R}} filtered output: {lines:?}"
         );
@@ -15712,6 +16765,163 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_add_x_any_one_color_where_count_keeps_dynamic_amount() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Harabaz Druid Variant")
+            .parse_text("{T}: Add X mana of any one color, where X is the number of Allies you control.")
+            .expect("dynamic any-one-color mana line should parse");
+
+        let mana_ability = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Mana(mana) => Some(mana),
+                _ => None,
+            })
+            .expect("expected mana ability");
+        let effects = mana_ability
+            .effects
+            .as_ref()
+            .expect("dynamic any-one-color mana should compile via effects");
+        let add_any_one = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<AddManaOfAnyOneColorEffect>())
+            .expect("expected AddManaOfAnyOneColorEffect");
+        match &add_any_one.amount {
+            Value::Count(filter) => {
+                assert_eq!(filter.controller, Some(PlayerFilter::You));
+                assert!(
+                    filter.subtypes.contains(&Subtype::Ally),
+                    "expected ally subtype filter, got {:?}",
+                    filter.subtypes
+                );
+            }
+            other => panic!("expected count-based amount, got {other:?}"),
+        }
+
+        let lines = compiled_lines(&def);
+        let mana_line = lines
+            .iter()
+            .find(|line| line.starts_with("Mana ability"))
+            .expect("expected mana ability line");
+        assert!(
+            mana_line.contains("any one color"),
+            "compiled text should preserve any-one-color semantics: {mana_line}"
+        );
+        assert!(
+            !mana_line.contains("{X}{X}"),
+            "compiled text should not duplicate X as mana symbols: {mana_line}"
+        );
+    }
+
+    #[test]
+    fn parse_add_any_color_that_opponent_land_could_produce_compiles_restricted_mana_effect() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Exotic Orchard Variant")
+            .parse_text(
+                "{T}: Add one mana of any color that a land an opponent controls could produce.",
+            )
+            .expect("land-could-produce mana line should parse");
+
+        let mana_ability = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Mana(mana) => Some(mana),
+                _ => None,
+            })
+            .expect("expected mana ability");
+        let effects = mana_ability
+            .effects
+            .as_ref()
+            .expect("restricted mana ability should compile via effects");
+        let restricted = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<AddManaOfLandProducedTypesEffect>())
+            .expect("expected AddManaOfLandProducedTypesEffect");
+        assert_eq!(restricted.amount, Value::Fixed(1));
+        assert_eq!(restricted.player, PlayerFilter::You);
+        assert!(
+            !restricted.allow_colorless,
+            "any color clause must not allow colorless"
+        );
+        assert!(
+            !restricted.same_type,
+            "any color clause should allow independent color choices"
+        );
+        assert!(
+            restricted.land_filter.card_types.contains(&CardType::Land),
+            "expected land filter, got {:?}",
+            restricted.land_filter
+        );
+        assert_eq!(
+            restricted.land_filter.controller,
+            Some(PlayerFilter::Opponent),
+            "expected opponent-controlled land filter"
+        );
+
+        let lines = compiled_lines(&def);
+        let mana_line = lines
+            .iter()
+            .find(|line| line.starts_with("Mana ability"))
+            .expect("expected mana ability line");
+        assert!(
+            mana_line.contains("could produce"),
+            "compiled text should preserve could-produce clause, got {mana_line}"
+        );
+    }
+
+    #[test]
+    fn parse_add_any_type_that_gate_you_control_could_produce_keeps_type_semantics() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Gond Gate Variant")
+            .parse_text("{T}: Add one mana of any type that a Gate you control could produce.")
+            .expect("gate could-produce mana line should parse");
+
+        let mana_ability = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Mana(mana) => Some(mana),
+                _ => None,
+            })
+            .expect("expected mana ability");
+        let effects = mana_ability
+            .effects
+            .as_ref()
+            .expect("restricted mana ability should compile via effects");
+        let restricted = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<AddManaOfLandProducedTypesEffect>())
+            .expect("expected AddManaOfLandProducedTypesEffect");
+        assert!(
+            restricted.allow_colorless,
+            "any type clause must allow colorless"
+        );
+        assert_eq!(
+            restricted.land_filter.controller,
+            Some(PlayerFilter::You),
+            "expected you-control filter for gates"
+        );
+        assert!(
+            restricted.land_filter.subtypes.contains(&Subtype::Gate),
+            "expected gate subtype filter, got {:?}",
+            restricted.land_filter
+        );
+    }
+
+    #[test]
+    fn parse_add_any_color_with_unsupported_trailing_clause_fails() {
+        let err = CardDefinitionBuilder::new(CardId::new(), "Broken Orchard Variant")
+            .parse_text(
+                "{T}: Add one mana of any color that a land an opponent controls could produce unless it's your turn.",
+            )
+            .expect_err("unsupported could-produce tail should fail");
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("unsupported trailing mana clause"),
+            "expected strict-tail parse error, got: {message}"
+        );
+    }
+
+    #[test]
     fn parse_spell_cost_increase_per_target_beyond_first_line() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Fireball Variant")
             .parse_text("This spell costs {1} more to cast for each target beyond the first.")
@@ -15797,6 +17007,47 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_draw_then_discard_renders_then_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Bazaar Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text("{T}: Draw two cards, then discard three cards.")
+            .expect("parse draw-then-discard activation");
+
+        let lines = compiled_lines(&def);
+        let activated = lines
+            .iter()
+            .find(|line| line.starts_with("Activated ability"))
+            .expect("expected activated ability line");
+        assert!(
+            activated.contains("draw 2 cards, then discard 3 cards"),
+            "expected draw/discard to render as one then-clause, got {activated}"
+        );
+    }
+
+    #[test]
+    fn parse_additional_cost_line_renders_before_spell_effects() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Altar's Reap Variant")
+            .parse_text(
+                "As an additional cost to cast this spell, sacrifice a creature.\nDraw two cards.",
+            )
+            .expect("parse additional cost spell");
+
+        let lines = compiled_lines(&def);
+        let cost_idx = lines
+            .iter()
+            .position(|line| line.starts_with("As an additional cost to cast this spell:"))
+            .expect("expected spell cost effects line");
+        let effects_idx = lines
+            .iter()
+            .position(|line| line.starts_with("Spell effects:"))
+            .expect("expected spell effects line");
+        assert!(
+            cost_idx < effects_idx,
+            "spell cost effects should render before spell effects: {lines:?}"
+        );
+    }
+
+    #[test]
     fn parse_search_library_named_card_with_leading_you_may() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Wretched Throng Variant")
             .parse_text(
@@ -15862,6 +17113,63 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_put_counters_on_each_of_any_number_of_targets() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Molten Duplication Variant")
+            .parse_text(
+                "When this creature enters, put a +1/+1 counter on each of any number of target creatures and a charge counter on each of any number of target artifacts.",
+            )
+            .expect("parse molten-duplication-style counters");
+
+        let triggered = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered) => Some(triggered),
+                _ => None,
+            })
+            .expect("expected triggered ability");
+
+        let put_effects: Vec<&PutCountersEffect> = triggered
+            .effects
+            .iter()
+            .filter_map(|effect| effect.downcast_ref::<PutCountersEffect>())
+            .collect();
+        assert_eq!(put_effects.len(), 2, "expected two put-counters effects");
+
+        let plus_one = put_effects
+            .iter()
+            .find(|effect| effect.counter_type == CounterType::PlusOnePlusOne)
+            .expect("expected +1/+1 counters effect");
+        assert!(
+            plus_one.target.count().is_any_number(),
+            "expected any-number target count for creature counters"
+        );
+
+        let charge = put_effects
+            .iter()
+            .find(|effect| effect.counter_type == CounterType::Charge)
+            .expect("expected charge counters effect");
+        assert!(
+            charge.target.count().is_any_number(),
+            "expected any-number target count for artifact counters"
+        );
+
+        let lines = compiled_lines(&def);
+        let line = lines
+            .iter()
+            .find(|line| line.contains("When this permanent enters the battlefield"))
+            .expect("expected triggered compiled line");
+        assert!(
+            line.contains("Put 1 +1/+1 counter(s) on any number of target"),
+            "expected any-number target text for +1/+1 counters, got {line}"
+        );
+        assert!(
+            line.contains("Put 1 Charge counter(s) on any number of target"),
+            "expected any-number target text for charge counters, got {line}"
+        );
+    }
+
+    #[test]
     fn parse_realm_seekers_keeps_x_and_source_counter_cost() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Realm Seekers Variant")
             .parse_text(
@@ -15871,10 +17179,8 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
 
         let lines = compiled_lines(&def);
         assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("with X PlusOnePlusOne")),
-            "expected X counters in static line, got {lines:?}"
+            lines.iter().any(|line| line.contains("PlusOnePlusOne")),
+            "expected +1/+1 counters in static line, got {lines:?}"
         );
         let static_debug = format!("{:?}", def.abilities);
         assert!(
@@ -15934,6 +17240,34 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_remove_charge_counter_from_this_artifact_cost() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Ox Cart Variant")
+            .card_types(vec![CardType::Artifact])
+            .parse_text(
+                "{1}, {T}, Remove a charge counter from this artifact: Destroy target creature.",
+            )
+            .expect("source-specific remove-counter artifact cost should parse");
+
+        let activated = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(activated) => Some(activated),
+                _ => None,
+            })
+            .expect("expected activated ability");
+        let cost_debug = format!("{:?}", activated.mana_cost);
+        assert!(
+            cost_debug.contains("RemoveCountersCost"),
+            "expected source remove-counters cost, got {cost_debug}"
+        );
+        assert!(
+            !cost_debug.contains("RemoveAnyCountersAmongCost"),
+            "expected source-specific cost, got distributed remove cost: {cost_debug}"
+        );
+    }
+
+    #[test]
     fn parse_exile_all_creatures_with_power_constraint() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Power Exile Variant")
             .parse_text("Exile all creatures with power 4 or greater.")
@@ -15950,6 +17284,136 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert_eq!(
             filter.power,
             Some(crate::filter::Comparison::GreaterThanOrEqual(4))
+        );
+    }
+
+    #[test]
+    fn parse_target_player_exiles_flashback_cards_from_their_graveyard() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Tombfire Variant")
+            .parse_text("Target player exiles all cards with flashback from their graveyard.")
+            .expect("parse tombfire-like text");
+
+        let effects = def.spell_effect.expect("spell effects");
+        assert!(
+            effects
+                .iter()
+                .any(|effect| effect.downcast_ref::<TargetOnlyEffect>().is_some()),
+            "expected explicit target-context effect for target player"
+        );
+
+        let exile = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<ExileEffect>())
+            .expect("expected exile effect");
+        let ChooseSpec::All(filter) = &exile.spec else {
+            panic!("expected non-targeted exile-all spec");
+        };
+
+        assert_eq!(filter.zone, Some(Zone::Graveyard));
+        assert_eq!(filter.owner, Some(PlayerFilter::target_player()));
+        assert_eq!(
+            filter.alternative_cast,
+            Some(crate::filter::AlternativeCastKind::Flashback)
+        );
+    }
+
+    #[test]
+    fn parse_each_player_sacrifices_creature_of_their_choice_renders_compactly() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Fleshbag Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text("When this creature enters, each player sacrifices a creature of their choice.")
+            .expect("parse fleshbag-style trigger");
+
+        let lines = compiled_lines(&def);
+        let triggered = lines
+            .iter()
+            .find(|line| line.starts_with("Triggered ability"))
+            .expect("expected triggered ability line");
+        assert!(
+            triggered.contains("Each player sacrifices a creature of their choice"),
+            "expected compact each-player sacrifice text, got {triggered}"
+        );
+    }
+
+    #[test]
+    fn parse_each_opponent_sacrifices_creature_of_their_choice_renders_compactly() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Each Opponent Sacrifice Variant")
+            .parse_text("Each opponent sacrifices a creature of their choice.")
+            .expect("parse each-opponent sacrifice text");
+
+        let lines = compiled_lines(&def);
+        let spell_line = lines
+            .iter()
+            .find(|line| line.starts_with("Spell effects:"))
+            .expect("expected spell effects line");
+        assert!(
+            spell_line.contains("Each opponent sacrifices a creature of their choice"),
+            "expected compact each-opponent sacrifice text, got {spell_line}"
+        );
+    }
+
+    #[test]
+    fn parse_sacrifice_cost_renders_compactly() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Stronghold Assassin Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text("{T}, Sacrifice a creature: Destroy target nonblack creature.")
+            .expect("parse sacrifice-cost activation");
+
+        let lines = compiled_lines(&def);
+        let activated = lines
+            .iter()
+            .find(|line| line.starts_with("Activated ability"))
+            .expect("expected activated ability line");
+        assert!(
+            activated.contains("you sacrifice a creature"),
+            "expected compact sacrifice-cost text, got {activated}"
+        );
+        assert!(
+            !activated.contains("chooses exactly 1"),
+            "should not leak choose-object internals in cost text: {activated}"
+        );
+    }
+
+    #[test]
+    fn parse_etb_sacrifice_creature_renders_compactly() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Kjeldoran Dead Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text("When this creature enters, sacrifice a creature.")
+            .expect("parse etb sacrifice line");
+
+        let lines = compiled_lines(&def);
+        let triggered = lines
+            .iter()
+            .find(|line| line.starts_with("Triggered ability"))
+            .expect("expected triggered ability line");
+        assert!(
+            triggered.contains("you sacrifice a creature"),
+            "expected compact sacrifice text, got {triggered}"
+        );
+        assert!(
+            !triggered.contains("chooses exactly 1"),
+            "should not leak choose-object internals in trigger text: {triggered}"
+        );
+    }
+
+    #[test]
+    fn parse_unless_action_sacrifice_clause_renders_compactly() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Unless Sacrifice Variant")
+            .parse_text("Sacrifice a creature unless you discard a card.")
+            .expect("parse unless-action sacrifice clause");
+
+        let lines = compiled_lines(&def);
+        let spell_line = lines
+            .iter()
+            .find(|line| line.starts_with("Spell effects:"))
+            .expect("expected spell effects line");
+        assert!(
+            spell_line.contains("you sacrifice a creature unless you discard a card"),
+            "expected compact unless-action sacrifice text, got {spell_line}"
+        );
+        assert!(
+            !spell_line.contains("chooses exactly 1"),
+            "should not leak choose-object internals in unless-action text: {spell_line}"
         );
     }
 
@@ -16086,6 +17550,174 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_enchanted_creature_pump_keeps_enchanted_subject_in_display() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Flowstone Embrace Variant")
+            .card_types(vec![CardType::Enchantment])
+            .subtypes(vec![Subtype::Aura])
+            .parse_text("Enchant creature\n{T}: Enchanted creature gets +2/-2 until end of turn.")
+            .expect("parse aura activated pump");
+
+        let lines = compiled_lines(&def);
+        assert!(
+            lines.first().is_some_and(|line| line == "Enchant creature"),
+            "expected enchant line first, got {lines:?}"
+        );
+        let activated = lines
+            .iter()
+            .find(|line| line.starts_with("Activated ability"))
+            .expect("expected activated ability line");
+        assert!(
+            activated.contains("enchanted creature get +2/-2"),
+            "expected enchanted subject in compiled display, got {activated}"
+        );
+    }
+
+    #[test]
+    fn parse_metalcraft_self_buff_preserves_condition_and_subject() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Ardent Recruit Variant")
+            .parse_text(
+                "Metalcraft — This creature gets +2/+2 as long as you control three or more artifacts.",
+            )
+            .expect("parse metalcraft static buff");
+
+        assert_eq!(def.abilities.len(), 1, "expected one static ability");
+        let display = match &def.abilities[0].kind {
+            AbilityKind::Static(static_ability) => static_ability.display(),
+            other => panic!("expected static ability, got {other:?}"),
+        };
+        assert!(
+            display.contains("this creature gets +2/+2"),
+            "expected source-scoped anthem display, got: {display}"
+        );
+        assert!(
+            display.contains("as long as you control three or more artifacts"),
+            "expected condition to be preserved, got: {display}"
+        );
+    }
+
+    #[test]
+    fn parse_domain_self_buff_preserves_for_each_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Kavu Scout Variant")
+            .parse_text(
+                "Domain — This creature gets +1/+0 for each basic land type among lands you control.",
+            )
+            .expect("parse domain static buff");
+
+        assert_eq!(def.abilities.len(), 1, "expected one static ability");
+        let display = match &def.abilities[0].kind {
+            AbilityKind::Static(static_ability) => static_ability.display(),
+            other => panic!("expected static ability, got {other:?}"),
+        };
+        assert!(
+            display.contains(
+                "this creature gets +1/+0 for each basic land type among lands you control"
+            ),
+            "expected dynamic domain display, got: {display}"
+        );
+    }
+
+    #[test]
+    fn parse_descend_condition_keeps_permanent_cards_qualifier() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Basking Capybara Variant")
+            .parse_text(
+                "Descend 4 — This creature gets +3/+0 as long as there are four or more permanent cards in your graveyard.",
+            )
+            .expect("parse descend static buff");
+
+        assert_eq!(def.abilities.len(), 1, "expected one static ability");
+        let display = match &def.abilities[0].kind {
+            AbilityKind::Static(static_ability) => static_ability.display(),
+            other => panic!("expected static ability, got {other:?}"),
+        };
+        assert!(
+            display.contains("as long as there are four or more permanent cards in your graveyard"),
+            "expected descend condition text to be preserved, got: {display}"
+        );
+    }
+
+    #[test]
+    fn parse_attached_for_each_self_buff_keeps_attachment_scope() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Kor Spiritdancer Variant")
+            .parse_text("This creature gets +2/+2 for each Aura attached to it.")
+            .expect("parse attached dynamic static buff");
+
+        assert_eq!(def.abilities.len(), 1, "expected one static ability");
+        let display = match &def.abilities[0].kind {
+            AbilityKind::Static(static_ability) => static_ability.display(),
+            other => panic!("expected static ability, got {other:?}"),
+        };
+        assert!(
+            display.contains("for each aura"),
+            "expected attachment-based scaling in display, got: {display}"
+        );
+        assert!(
+            display.contains("attached to this creature"),
+            "expected source attachment scope in display, got: {display}"
+        );
+    }
+
+    #[test]
+    fn parse_conditional_anthem_and_keyword_applies_condition_to_both() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Conditional Grant Variant")
+            .parse_text(
+                "As long as you control an artifact, this creature gets +1/+1 and has deathtouch.",
+            )
+            .expect("parse conditional anthem and keyword");
+
+        assert_eq!(def.abilities.len(), 2, "expected two static abilities");
+        let displays: Vec<String> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Static(static_ability) => Some(static_ability.display()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            displays
+                .iter()
+                .any(|display| display.contains("this creature gets +1/+1")
+                    && display.contains("as long as you control an artifact")),
+            "expected conditional self buff ability, got: {displays:?}"
+        );
+        assert!(
+            displays
+                .iter()
+                .any(|display| display.contains("has Deathtouch")
+                    && display.contains("as long as you control an artifact")),
+            "expected conditional grant ability, got: {displays:?}"
+        );
+    }
+
+    #[test]
+    fn parse_static_gets_rejects_unsupported_trailing_clause() {
+        let err = CardDefinitionBuilder::new(CardId::new(), "Unsupported Static Tail Variant")
+            .parse_text("This creature gets +1/+1 unless you control an artifact.")
+            .expect_err("unsupported static tail should fail parsing");
+
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("unsupported trailing anthem clause"),
+            "expected trailing-clause parse error, got: {message}"
+        );
+    }
+
+    #[test]
+    fn parse_put_from_among_into_hand_fails_instead_of_misparsing() {
+        let err = CardDefinitionBuilder::new(CardId::new(), "Ainok Wayfarer Variant")
+            .parse_text(
+                "When this creature enters, mill three cards. You may put a land card from among them into your hand. If you don't, put a +1/+1 counter on this creature.",
+            )
+            .expect_err("put-from-among clause should not silently parse as returning source");
+
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("unsupported put-from-among clause"),
+            "expected strict put-from-among parse error, got {message}"
+        );
+    }
+
+    #[test]
     fn parse_fireblast_style_alternative_cost_line_from_text() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Fireblast Variant")
             .parse_text(
@@ -16142,6 +17774,21 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             }
             other => panic!("expected AlternativeCost, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_alternative_cost_with_trailing_clause_fails() {
+        let err = CardDefinitionBuilder::new(CardId::new(), "Treasure Alt Cost Variant")
+            .parse_text(
+                "You may pay {R}{G} rather than pay this spell's mana cost. Spend only mana produced by Treasures to cast it this way.",
+            )
+            .expect_err("alternative cost line with trailing clause should fail");
+
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("unsupported trailing clause after alternative cost"),
+            "expected strict trailing-clause error, got {message}"
+        );
     }
 
     #[test]
@@ -16232,6 +17879,52 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             def.abilities
         );
     }
+
+    #[test]
+    fn parse_this_artifact_enters_with_counters_and_source_remove_cost() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Ox Cart Variant")
+            .card_types(vec![CardType::Artifact])
+            .parse_text(
+                "This artifact enters with three charge counters on it.\n{1}, {T}, Remove a charge counter from this artifact: Destroy target creature.",
+            )
+            .expect("parse artifact enters counters plus source remove cost");
+
+        assert!(
+            def.spell_effect.is_none(),
+            "artifact ETB counters should not compile as spell effect"
+        );
+
+        let has_etb_replacement = def.abilities.iter().any(|ability| {
+            matches!(
+                &ability.kind,
+                AbilityKind::Static(static_ability)
+                    if static_ability.id() == crate::static_abilities::StaticAbilityId::EnterWithCounters
+            )
+        });
+        assert!(
+            has_etb_replacement,
+            "expected ETB counters static ability, got {:?}",
+            def.abilities
+        );
+
+        let activated = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(activated) => Some(activated),
+                _ => None,
+            })
+            .expect("expected activated ability");
+        let cost_debug = format!("{:?}", activated.mana_cost);
+        assert!(
+            cost_debug.contains("RemoveCountersCost"),
+            "expected source-specific remove-counters cost, got {cost_debug}"
+        );
+        assert!(
+            !cost_debug.contains("RemoveAnyCountersAmongCost"),
+            "expected no distributed remove-counter fallback, got {cost_debug}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -16239,6 +17932,7 @@ mod tests {
     use super::*;
     use crate::ability::AbilityKind;
     use crate::color::Color;
+    use crate::compiled_text::compiled_lines;
     use crate::static_abilities::StaticAbilityId;
     use crate::target::ChooseSpec;
 
@@ -16504,6 +18198,14 @@ mod tests {
             "expected pump effect, got {:?}",
             triggered.effects
         );
+
+        let lines = compiled_lines(&def);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Keyword ability 1: Prowess"),
+            "expected keyword rendering for prowess, got {lines:?}"
+        );
     }
 
     #[test]
@@ -16532,6 +18234,14 @@ mod tests {
             "expected pump effect, got {:?}",
             triggered.effects
         );
+
+        let lines = compiled_lines(&def);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Keyword ability 1: Bushido 1"),
+            "expected keyword rendering for bushido, got {lines:?}"
+        );
     }
 
     #[test]
@@ -16553,6 +18263,48 @@ mod tests {
         assert_eq!(def.abilities[0].text.as_deref(), Some("Exalted"));
         assert!(triggered.trigger.display().contains("attacks alone"));
         assert_eq!(triggered.effects.len(), 2);
+
+        let lines = compiled_lines(&def);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Keyword ability 1: Exalted"),
+            "expected keyword rendering for exalted, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_persist_keyword_line() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Persist Creature")
+            .card_types(vec![CardType::Creature])
+            .parse_text("Persist")
+            .expect("parse persist keyword");
+
+        assert_eq!(def.abilities[0].text.as_deref(), Some("Persist"));
+        let lines = compiled_lines(&def);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Keyword ability 1: Persist"),
+            "expected keyword rendering for persist, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_undying_keyword_line() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Undying Creature")
+            .card_types(vec![CardType::Creature])
+            .parse_text("Undying")
+            .expect("parse undying keyword");
+
+        assert_eq!(def.abilities[0].text.as_deref(), Some("Undying"));
+        let lines = compiled_lines(&def);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Keyword ability 1: Undying"),
+            "expected keyword rendering for undying, got {lines:?}"
+        );
     }
 
     #[test]
@@ -16613,6 +18365,82 @@ mod tests {
             format!("{:?}", triggered.effects[1]).contains("ChooseNewTargetsEffect"),
             "expected choose-new-targets effect, got {:?}",
             triggered.effects
+        );
+    }
+
+    #[test]
+    fn test_standalone_may_effect_does_not_emit_with_id_wrapper() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Slayer Probe")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "When this creature enters, you may destroy target Vampire, Werewolf, or Zombie.",
+            )
+            .expect("parse slayer-like triggered line");
+
+        let triggered = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered) => Some(triggered),
+                _ => None,
+            })
+            .expect("expected triggered ability");
+
+        assert_eq!(triggered.choices.len(), 1, "expected one target choice");
+
+        let debug = format!("{:?}", triggered.effects);
+        assert!(
+            debug.contains("MayEffect"),
+            "expected optional may wrapper, got {debug}"
+        );
+        assert!(
+            debug.contains("DestroyEffect"),
+            "expected destroy effect, got {debug}"
+        );
+        assert!(
+            !debug.contains("WithIdEffect"),
+            "standalone may should not be wrapped with WithId, got {debug}"
+        );
+    }
+
+    #[test]
+    fn test_if_you_do_still_wraps_antecedent_with_with_id() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "If You Do Probe")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "When this creature enters, you may draw a card. If you do, discard a card.",
+            )
+            .expect("parse if-you-do triggered line");
+
+        let triggered = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered) => Some(triggered),
+                _ => None,
+            })
+            .expect("expected triggered ability");
+
+        assert_eq!(
+            triggered.effects.len(),
+            2,
+            "expected antecedent and if-you-do follow-up"
+        );
+
+        let first_debug = format!("{:?}", triggered.effects[0]);
+        assert!(
+            first_debug.contains("WithIdEffect"),
+            "if-you-do antecedent must store result id, got {first_debug}"
+        );
+        assert!(
+            first_debug.contains("MayEffect"),
+            "if-you-do antecedent should stay optional, got {first_debug}"
+        );
+
+        let second_debug = format!("{:?}", triggered.effects[1]);
+        assert!(
+            second_debug.contains("IfEffect"),
+            "if-you-do follow-up must compile to IfEffect, got {second_debug}"
         );
     }
 

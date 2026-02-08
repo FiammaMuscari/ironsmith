@@ -97,6 +97,9 @@ pub struct FilterContext {
     /// The current iterated player (for ForEachOpponent/ForEachPlayer effects)
     pub iterated_player: Option<PlayerId>,
 
+    /// Resolved player targets from the current execution context.
+    pub target_players: Vec<PlayerId>,
+
     /// Tagged objects from prior effects in the same spell/ability.
     /// Used by tag-aware object filter constraints.
     pub tagged_objects: std::collections::HashMap<TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
@@ -138,6 +141,12 @@ impl FilterContext {
     /// Set the iterated player (for ForEachOpponent/ForEachPlayer effects).
     pub fn with_iterated_player(mut self, player: Option<PlayerId>) -> Self {
         self.iterated_player = player;
+        self
+    }
+
+    /// Set resolved player targets from the execution context.
+    pub fn with_target_players(mut self, players: Vec<PlayerId>) -> Self {
+        self.target_players = players;
         self
     }
 
@@ -269,9 +278,16 @@ impl PlayerFilter {
 
             // These are resolved at runtime during effect execution
             PlayerFilter::IteratedPlayer => ctx.iterated_player.is_some_and(|p| p == player),
-            PlayerFilter::Target(_) => true, // Targets are resolved separately
+            PlayerFilter::Target(inner) => {
+                if !ctx.target_players.is_empty() {
+                    return ctx.target_players.contains(&player)
+                        && inner.matches_player(player, ctx);
+                }
+                ctx.iterated_player.is_some_and(|p| p == player)
+                    && inner.matches_player(player, ctx)
+            }
             PlayerFilter::ControllerOf(_) => false, // Resolved via object lookup
-            PlayerFilter::OwnerOf(_) => false, // Resolved via object lookup
+            PlayerFilter::OwnerOf(_) => false,      // Resolved via object lookup
         }
     }
 }
@@ -287,6 +303,16 @@ pub enum TaggedOpbjectRelation {
     SameStableId,
     /// The object must NOT be one of the tagged objects.
     IsNotTaggedObject,
+}
+
+/// Alternative casting capability qualifier for card filters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlternativeCastKind {
+    Flashback,
+    JumpStart,
+    Escape,
+    Madness,
+    Miracle,
 }
 
 /// A tagged-object constraint used by `ObjectFilter`.
@@ -393,6 +419,9 @@ pub struct ObjectFilter {
 
     /// Name must match (for cards like "Rat Colony")
     pub name: Option<String>,
+
+    /// Require a card to have a specific alternative casting capability.
+    pub alternative_cast: Option<AlternativeCastKind>,
 
     /// If true, must be a commander creature (for Commander format)
     pub is_commander: bool,
@@ -699,6 +728,12 @@ impl ObjectFilter {
         self
     }
 
+    /// Require a specific alternative casting capability.
+    pub fn with_alternative_cast(mut self, kind: AlternativeCastKind) -> Self {
+        self.alternative_cast = Some(kind);
+        self
+    }
+
     /// Add a tagged-object matching rule.
     pub fn match_tagged(mut self, tag: impl Into<TagKey>, relation: TaggedOpbjectRelation) -> Self {
         self.tagged_constraints.push(TaggedObjectConstraint {
@@ -981,6 +1016,12 @@ impl ObjectFilter {
         // Name check
         if let Some(required_name) = &self.name
             && !object.name.eq_ignore_ascii_case(required_name)
+        {
+            return false;
+        }
+
+        if let Some(kind) = self.alternative_cast
+            && !object_has_alternative_cast_kind(object, kind, game, ctx)
         {
             return false;
         }
@@ -1280,6 +1321,15 @@ impl ObjectFilter {
             return false;
         }
 
+        if let Some(kind) = self.alternative_cast {
+            let has_kind = game
+                .object(snapshot.object_id)
+                .is_some_and(|obj| object_has_alternative_cast_kind(obj, kind, game, ctx));
+            if !has_kind {
+                return false;
+            }
+        }
+
         // Commander check
         if self.is_commander && !ctx.your_commanders.contains(&snapshot.object_id) {
             return false;
@@ -1411,12 +1461,55 @@ impl ObjectFilter {
         if self.nontoken {
             parts.push("nontoken".to_string());
         }
+        if let Some(colors) = self.colors {
+            let mut color_words = Vec::new();
+            if colors.contains(crate::color::Color::White) {
+                color_words.push("white");
+            }
+            if colors.contains(crate::color::Color::Blue) {
+                color_words.push("blue");
+            }
+            if colors.contains(crate::color::Color::Black) {
+                color_words.push("black");
+            }
+            if colors.contains(crate::color::Color::Red) {
+                color_words.push("red");
+            }
+            if colors.contains(crate::color::Color::Green) {
+                color_words.push("green");
+            }
+            if !color_words.is_empty() {
+                parts.push(color_words.join(" or "));
+            }
+        }
+        for constraint in &self.tagged_constraints {
+            if constraint.relation != TaggedOpbjectRelation::IsTaggedObject {
+                continue;
+            }
+            match constraint.tag.as_str() {
+                "enchanted" => parts.push("enchanted".to_string()),
+                "equipped" => parts.push("equipped".to_string()),
+                _ => {}
+            }
+        }
+        if !self.excluded_card_types.is_empty() {
+            for card_type in &self.excluded_card_types {
+                parts.push(format!("non{}", describe_card_type_word(*card_type)));
+            }
+        }
         if self.attacking && self.blocking {
             parts.push("attacking/blocking".to_string());
         } else if self.attacking {
             parts.push("attacking".to_string());
         } else if self.blocking {
             parts.push("blocking".to_string());
+        }
+        if self.tapped && self.untapped {
+            parts.push("tapped/untapped".to_string());
+        } else if self.tapped {
+            parts.push("tapped".to_string());
+        } else if self.untapped {
+            parts.push("untapped".to_string());
         }
 
         // Handle card types
@@ -1428,9 +1521,18 @@ impl ObjectFilter {
                 .collect::<Vec<_>>()
                 .join(" or ");
             parts.push(types_str);
-        } else if parts.is_empty() || parts.last() == Some(&"another".to_string()) {
-            // Default to "permanent" if no type specified
-            parts.push("permanent".to_string());
+        } else if !self.token {
+            // Default noun depends on zone context.
+            let default_noun = match self.zone {
+                Some(Zone::Battlefield) | None => "permanent",
+                Some(Zone::Stack) => "spell",
+                Some(Zone::Graveyard)
+                | Some(Zone::Hand)
+                | Some(Zone::Library)
+                | Some(Zone::Exile)
+                | Some(Zone::Command) => "card",
+            };
+            parts.push(default_noun.to_string());
         }
 
         // Handle subtypes
@@ -1456,10 +1558,146 @@ impl ObjectFilter {
             parts.push(format!("with toughness {}", describe_comparison(toughness)));
         }
         if let Some(ref mana_value) = self.mana_value {
-            parts.push(format!("with mana value {}", describe_comparison(mana_value)));
+            parts.push(format!(
+                "with mana value {}",
+                describe_comparison(mana_value)
+            ));
+        }
+        if let Some(kind) = self.alternative_cast {
+            parts.push(format!("with {}", describe_alternative_cast_kind(kind)));
+        }
+
+        if let Some(zone) = self.zone {
+            let zone_name = match zone {
+                Zone::Battlefield => None,
+                Zone::Graveyard => Some("graveyard"),
+                Zone::Hand => Some("hand"),
+                Zone::Library => Some("library"),
+                Zone::Exile => Some("exile"),
+                Zone::Stack => None,
+                Zone::Command => Some("command zone"),
+            };
+            if let Some(zone_name) = zone_name {
+                if let Some(owner) = &self.owner {
+                    parts.push(format!(
+                        "in {} {}",
+                        describe_possessive_player_filter(owner),
+                        zone_name
+                    ));
+                } else {
+                    parts.push(format!("in {}", zone_name));
+                }
+            } else if zone == Zone::Stack {
+                parts.push("on stack".to_string());
+            }
         }
 
         parts.join(" ")
+    }
+}
+
+fn describe_possessive_player_filter(filter: &PlayerFilter) -> String {
+    match filter {
+        PlayerFilter::Any => "a player's".to_string(),
+        PlayerFilter::You => "your".to_string(),
+        PlayerFilter::Opponent => "an opponent's".to_string(),
+        PlayerFilter::Teammate => "a teammate's".to_string(),
+        PlayerFilter::Active => "the active player's".to_string(),
+        PlayerFilter::Defending => "the defending player's".to_string(),
+        PlayerFilter::Attacking => "an attacking player's".to_string(),
+        PlayerFilter::DamagedPlayer => "the damaged player's".to_string(),
+        PlayerFilter::Specific(_) => "that player's".to_string(),
+        PlayerFilter::IteratedPlayer => "that player's".to_string(),
+        PlayerFilter::Target(inner) => {
+            let base = match inner.as_ref() {
+                PlayerFilter::Any => "target player".to_string(),
+                other => format!("target {}", describe_player_filter(other)),
+            };
+            format!("{base}'s")
+        }
+        PlayerFilter::ControllerOf(_) => "that object's controller's".to_string(),
+        PlayerFilter::OwnerOf(_) => "that object's owner's".to_string(),
+    }
+}
+
+fn describe_player_filter(filter: &PlayerFilter) -> String {
+    match filter {
+        PlayerFilter::Any => "player".to_string(),
+        PlayerFilter::You => "you".to_string(),
+        PlayerFilter::Opponent => "opponent".to_string(),
+        PlayerFilter::Teammate => "teammate".to_string(),
+        PlayerFilter::Active => "active player".to_string(),
+        PlayerFilter::Defending => "defending player".to_string(),
+        PlayerFilter::Attacking => "attacking player".to_string(),
+        PlayerFilter::DamagedPlayer => "damaged player".to_string(),
+        PlayerFilter::Specific(_) => "player".to_string(),
+        PlayerFilter::IteratedPlayer => "that player".to_string(),
+        PlayerFilter::Target(inner) => format!("target {}", describe_player_filter(inner)),
+        PlayerFilter::ControllerOf(_) => "controller".to_string(),
+        PlayerFilter::OwnerOf(_) => "owner".to_string(),
+    }
+}
+
+fn describe_card_type_word(card_type: CardType) -> &'static str {
+    match card_type {
+        CardType::Artifact => "artifact",
+        CardType::Battle => "battle",
+        CardType::Creature => "creature",
+        CardType::Enchantment => "enchantment",
+        CardType::Instant => "instant",
+        CardType::Kindred => "kindred",
+        CardType::Land => "land",
+        CardType::Planeswalker => "planeswalker",
+        CardType::Sorcery => "sorcery",
+    }
+}
+
+fn alternative_cast_matches_kind(
+    method: &crate::alternative_cast::AlternativeCastingMethod,
+    kind: AlternativeCastKind,
+) -> bool {
+    use crate::alternative_cast::AlternativeCastingMethod;
+    match (kind, method) {
+        (AlternativeCastKind::Flashback, AlternativeCastingMethod::Flashback { .. }) => true,
+        (AlternativeCastKind::JumpStart, AlternativeCastingMethod::JumpStart) => true,
+        (AlternativeCastKind::Escape, AlternativeCastingMethod::Escape { .. }) => true,
+        (AlternativeCastKind::Madness, AlternativeCastingMethod::Madness { .. }) => true,
+        (AlternativeCastKind::Miracle, AlternativeCastingMethod::Miracle { .. }) => true,
+        _ => false,
+    }
+}
+
+fn object_has_alternative_cast_kind(
+    object: &Object,
+    kind: AlternativeCastKind,
+    game: &crate::game_state::GameState,
+    ctx: &FilterContext,
+) -> bool {
+    if object
+        .alternative_casts
+        .iter()
+        .any(|method| alternative_cast_matches_kind(method, kind))
+    {
+        return true;
+    }
+
+    // Include temporary grants (e.g., Snapcaster Mage granting flashback).
+    let Some(player) = ctx.you else {
+        return false;
+    };
+    game.grant_registry
+        .granted_alternative_casts_for_card(game, object.id, object.zone, player)
+        .iter()
+        .any(|grant| alternative_cast_matches_kind(&grant.method, kind))
+}
+
+fn describe_alternative_cast_kind(kind: AlternativeCastKind) -> &'static str {
+    match kind {
+        AlternativeCastKind::Flashback => "flashback",
+        AlternativeCastKind::JumpStart => "jump-start",
+        AlternativeCastKind::Escape => "escape",
+        AlternativeCastKind::Madness => "madness",
+        AlternativeCastKind::Miracle => "miracle",
     }
 }
 
@@ -1523,6 +1761,19 @@ mod tests {
             .with_subtype(crate::types::Subtype::Warrior);
 
         assert_eq!(filter.subtypes.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_description_includes_positive_colors() {
+        let filter =
+            ObjectFilter::creature().with_colors(ColorSet::from_color(crate::color::Color::Blue));
+        assert_eq!(filter.description(), "blue creature");
+    }
+
+    #[test]
+    fn test_filter_description_includes_tapped_state() {
+        let filter = ObjectFilter::creature().tapped();
+        assert_eq!(filter.description(), "tapped creature");
     }
 
     #[test]

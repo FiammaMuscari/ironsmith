@@ -1,7 +1,7 @@
 use crate::ability::{Ability, AbilityKind, ActivationTiming};
 use crate::alternative_cast::AlternativeCastingMethod;
 use crate::effect::{ChoiceCount, Comparison, Condition, EffectPredicate, Until, Value};
-use crate::target::{ChooseSpec, PlayerFilter};
+use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::{CardDefinition, Effect, ManaSymbol, Zone};
 
 fn describe_player_filter(filter: &PlayerFilter) -> String {
@@ -38,6 +38,114 @@ fn describe_possessive_player_filter(filter: &PlayerFilter) -> String {
     } else {
         format!("{player}'s")
     }
+}
+
+fn join_with_and(parts: &[String]) -> String {
+    match parts.len() {
+        0 => String::new(),
+        1 => parts[0].clone(),
+        2 => format!("{} and {}", parts[0], parts[1]),
+        _ => {
+            let mut text = parts[..parts.len() - 1].join(", ");
+            text.push_str(", and ");
+            text.push_str(parts.last().map(String::as_str).unwrap_or_default());
+            text
+        }
+    }
+}
+
+fn describe_pt_value(value: crate::card::PtValue) -> String {
+    match value {
+        crate::card::PtValue::Fixed(n) => n.to_string(),
+        crate::card::PtValue::Star => "*".to_string(),
+        crate::card::PtValue::StarPlus(n) => format!("*+{n}"),
+    }
+}
+
+fn describe_token_color_words(colors: crate::color::ColorSet, include_colorless: bool) -> String {
+    if colors.is_empty() {
+        return if include_colorless {
+            "colorless".to_string()
+        } else {
+            String::new()
+        };
+    }
+
+    let mut names = Vec::new();
+    if colors.contains(crate::color::Color::White) {
+        names.push("white".to_string());
+    }
+    if colors.contains(crate::color::Color::Blue) {
+        names.push("blue".to_string());
+    }
+    if colors.contains(crate::color::Color::Black) {
+        names.push("black".to_string());
+    }
+    if colors.contains(crate::color::Color::Red) {
+        names.push("red".to_string());
+    }
+    if colors.contains(crate::color::Color::Green) {
+        names.push("green".to_string());
+    }
+    join_with_and(&names)
+}
+
+fn describe_token_blueprint(token: &CardDefinition) -> String {
+    let card = &token.card;
+    let mut parts = Vec::new();
+
+    if let Some(pt) = card.power_toughness {
+        parts.push(format!(
+            "{}/{}",
+            describe_pt_value(pt.power),
+            describe_pt_value(pt.toughness)
+        ));
+    }
+
+    let colors = describe_token_color_words(card.colors(), card.is_creature());
+    if !colors.is_empty() {
+        parts.push(colors);
+    }
+
+    if !card.subtypes.is_empty() {
+        parts.push(
+            card.subtypes
+                .iter()
+                .map(|subtype| format!("{subtype:?}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+
+    if !card.card_types.is_empty() {
+        parts.push(
+            card.card_types
+                .iter()
+                .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+
+    parts.push("token".to_string());
+
+    let mut text = parts.join(" ");
+    let mut keyword_texts = Vec::new();
+    for ability in &token.abilities {
+        if let AbilityKind::Static(static_ability) = &ability.kind
+            && static_ability.is_keyword()
+        {
+            keyword_texts.push(static_ability.display().to_ascii_lowercase());
+        }
+    }
+    keyword_texts.sort();
+    keyword_texts.dedup();
+    if !keyword_texts.is_empty() {
+        text.push_str(" with ");
+        text.push_str(&join_with_and(&keyword_texts));
+    }
+
+    text
 }
 
 fn player_verb(subject: &str, you_form: &'static str, other_form: &'static str) -> &'static str {
@@ -78,7 +186,20 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
         ChooseSpec::SpecificObject(_) => "that object".to_string(),
         ChooseSpec::SpecificPlayer(_) => "that player".to_string(),
         ChooseSpec::Iterated => "that object".to_string(),
-        ChooseSpec::WithCount(inner, _) => describe_choose_spec(inner),
+        ChooseSpec::WithCount(inner, count) => {
+            let inner_text = describe_choose_spec(inner);
+            if count.is_single() {
+                inner_text
+            } else {
+                match (count.min, count.max) {
+                    (0, None) => format!("any number of {inner_text}"),
+                    (min, None) => format!("at least {min} {inner_text}"),
+                    (0, Some(max)) => format!("up to {max} {inner_text}"),
+                    (min, Some(max)) if min == max => format!("{min} {inner_text}"),
+                    (min, Some(max)) => format!("{min} to {max} {inner_text}"),
+                }
+            }
+        }
     }
 }
 
@@ -324,6 +445,16 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::TargetIsTapped => "the target is tapped".to_string(),
         Condition::SourceIsTapped => "this source is tapped".to_string(),
         Condition::TargetIsAttacking => "the target is attacking".to_string(),
+        Condition::ManaSpentToCastThisSpellAtLeast { amount, symbol } => {
+            if let Some(symbol) = symbol {
+                format!(
+                    "at least {amount} {} mana was spent to cast this spell",
+                    describe_mana_symbol(*symbol)
+                )
+            } else {
+                format!("at least {amount} mana was spent to cast this spell")
+            }
+        }
         Condition::YouControlCommander => "you control your commander".to_string(),
         Condition::TaggedObjectMatches(tag, filter) => format!(
             "the tagged object '{}' matches {}",
@@ -349,11 +480,49 @@ fn describe_condition(condition: &Condition) -> String {
 }
 
 fn describe_effect_list(effects: &[Effect]) -> String {
-    let text = effects
+    let has_non_target_only = effects.iter().any(|effect| {
+        effect
+            .downcast_ref::<crate::effects::TargetOnlyEffect>()
+            .is_none()
+    });
+    let filtered = effects
         .iter()
-        .map(describe_effect)
-        .collect::<Vec<_>>()
-        .join(". ");
+        .filter(|effect| {
+            !(has_non_target_only
+                && effect
+                    .downcast_ref::<crate::effects::TargetOnlyEffect>()
+                    .is_some())
+        })
+        .collect::<Vec<_>>();
+
+    let mut parts = Vec::new();
+    let mut idx = 0usize;
+    while idx < filtered.len() {
+        if idx + 1 < filtered.len()
+            && let Some(choose) =
+                filtered[idx].downcast_ref::<crate::effects::ChooseObjectsEffect>()
+            && let Some(sacrifice) =
+                filtered[idx + 1].downcast_ref::<crate::effects::SacrificeEffect>()
+            && let Some(compact) = describe_choose_then_sacrifice(choose, sacrifice)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < filtered.len()
+            && let Some(draw) = filtered[idx].downcast_ref::<crate::effects::DrawCardsEffect>()
+            && let Some(discard) =
+                filtered[idx + 1].downcast_ref::<crate::effects::DiscardEffect>()
+            && let Some(compact) = describe_draw_then_discard(draw, discard)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        parts.push(describe_effect(filtered[idx]));
+        idx += 1;
+    }
+    let text = parts.join(". ");
     cleanup_decompiled_text(&text)
 }
 
@@ -415,8 +584,246 @@ fn describe_cost_component(cost: &crate::costs::Cost) -> String {
     }
 }
 
+fn describe_cost_list(costs: &[crate::costs::Cost]) -> String {
+    let mut parts = Vec::new();
+    let mut idx = 0usize;
+    while idx < costs.len() {
+        if idx + 1 < costs.len()
+            && let Some(choose) = costs[idx]
+                .effect_ref()
+                .and_then(|effect| effect.downcast_ref::<crate::effects::ChooseObjectsEffect>())
+            && let Some(sacrifice) = costs[idx + 1]
+                .effect_ref()
+                .and_then(|effect| effect.downcast_ref::<crate::effects::SacrificeEffect>())
+            && let Some(compact) = describe_choose_then_sacrifice(choose, sacrifice)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        parts.push(describe_cost_component(&costs[idx]));
+        idx += 1;
+    }
+    parts.join(", ")
+}
+
+fn with_indefinite_article(noun: &str) -> String {
+    let trimmed = noun.trim();
+    if trimmed.is_empty() {
+        return "a permanent".to_string();
+    }
+    if trimmed.starts_with("a ")
+        || trimmed.starts_with("an ")
+        || trimmed.starts_with("another ")
+        || trimmed.starts_with("target ")
+        || trimmed.starts_with("each ")
+        || trimmed.starts_with("all ")
+        || trimmed
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_digit())
+    {
+        return trimmed.to_string();
+    }
+    let first = trimmed.chars().next().unwrap_or('a').to_ascii_lowercase();
+    let article = if matches!(first, 'a' | 'e' | 'i' | 'o' | 'u') {
+        "an"
+    } else {
+        "a"
+    };
+    format!("{article} {trimmed}")
+}
+
+fn sacrifice_uses_chosen_tag(filter: &ObjectFilter, tag: &str) -> bool {
+    filter.tagged_constraints.iter().any(|constraint| {
+        constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
+            && constraint.tag.as_str() == tag
+    })
+}
+
+fn describe_for_players_choose_then_sacrifice(
+    for_players: &crate::effects::ForPlayersEffect,
+) -> Option<String> {
+    if for_players.effects.len() != 2 {
+        return None;
+    }
+    let choose = for_players.effects[0].downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
+    let sacrifice = for_players.effects[1].downcast_ref::<crate::effects::SacrificeEffect>()?;
+    if choose.zone != Zone::Battlefield
+        || choose.is_search
+        || !choose.count.is_single()
+        || choose.chooser != PlayerFilter::IteratedPlayer
+        || !matches!(sacrifice.count, Value::Fixed(1))
+        || sacrifice.player != PlayerFilter::IteratedPlayer
+        || !sacrifice_uses_chosen_tag(&sacrifice.filter, choose.tag.as_str())
+    {
+        return None;
+    }
+
+    let (subject, verb, possessive) = match for_players.filter {
+        PlayerFilter::Any => ("Each player", "sacrifices", "their"),
+        PlayerFilter::Opponent => ("Each opponent", "sacrifices", "their"),
+        PlayerFilter::You => ("You", "sacrifice", "your"),
+        _ => return None,
+    };
+    let chosen = with_indefinite_article(&choose.filter.description());
+    Some(format!(
+        "{subject} {verb} {chosen} of {possessive} choice"
+    ))
+}
+
+fn describe_choose_then_sacrifice(
+    choose: &crate::effects::ChooseObjectsEffect,
+    sacrifice: &crate::effects::SacrificeEffect,
+) -> Option<String> {
+    if choose.zone != Zone::Battlefield
+        || choose.is_search
+        || !choose.count.is_single()
+        || !matches!(sacrifice.count, Value::Fixed(1))
+        || sacrifice.player != choose.chooser
+        || !sacrifice_uses_chosen_tag(&sacrifice.filter, choose.tag.as_str())
+    {
+        return None;
+    }
+
+    let player = describe_player_filter(&choose.chooser);
+    let chosen = with_indefinite_article(&choose.filter.description());
+    Some(format!(
+        "{player} {} {chosen}",
+        player_verb(&player, "sacrifice", "sacrifices")
+    ))
+}
+
+fn describe_draw_then_discard(
+    draw: &crate::effects::DrawCardsEffect,
+    discard: &crate::effects::DiscardEffect,
+) -> Option<String> {
+    if draw.player != discard.player {
+        return None;
+    }
+    let player = describe_player_filter(&draw.player);
+    let mut text = format!(
+        "{player} {} {}, then {} {}",
+        player_verb(&player, "draw", "draws"),
+        describe_card_count(&draw.count),
+        player_verb(&player, "discard", "discards"),
+        describe_card_count(&discard.count)
+    );
+    if discard.random {
+        text.push_str(" at random");
+    }
+    Some(text)
+}
+
+fn describe_search_sequence(sequence: &crate::effects::SequenceEffect) -> Option<String> {
+    enum SearchDestination {
+        Battlefield { tapped: bool },
+        Hand,
+        LibraryTop,
+    }
+
+    if sequence.effects.len() < 2 || sequence.effects.len() > 3 {
+        return None;
+    }
+    let choose = sequence.effects[0].downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
+    if !choose.is_search || choose.zone != Zone::Library {
+        return None;
+    }
+    let for_each = sequence.effects[1].downcast_ref::<crate::effects::ForEachTaggedEffect>()?;
+    if for_each.tag != choose.tag || for_each.effects.len() != 1 {
+        return None;
+    }
+    let destination = if let Some(put) =
+        for_each.effects[0].downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()
+    {
+        if !matches!(put.target, ChooseSpec::Iterated) {
+            return None;
+        }
+        SearchDestination::Battlefield { tapped: put.tapped }
+    } else if let Some(return_to_hand) =
+        for_each.effects[0].downcast_ref::<crate::effects::ReturnToHandEffect>()
+    {
+        if !matches!(return_to_hand.spec, ChooseSpec::Iterated) {
+            return None;
+        }
+        SearchDestination::Hand
+    } else if let Some(move_to_zone) =
+        for_each.effects[0].downcast_ref::<crate::effects::MoveToZoneEffect>()
+    {
+        if !matches!(move_to_zone.target, ChooseSpec::Iterated)
+            || move_to_zone.zone != Zone::Library
+            || !move_to_zone.to_top
+        {
+            return None;
+        }
+        SearchDestination::LibraryTop
+    } else {
+        return None;
+    };
+
+    let shuffle = if sequence.effects.len() == 3 {
+        let shuffle = sequence.effects[2].downcast_ref::<crate::effects::ShuffleLibraryEffect>()?;
+        if shuffle.player != choose.chooser {
+            return None;
+        }
+        true
+    } else {
+        false
+    };
+
+    let filter_text = choose.filter.description();
+    let selection_text = if choose.count.is_single() {
+        with_indefinite_article(&filter_text)
+    } else {
+        format!("{} {}", describe_choice_count(&choose.count), filter_text)
+    };
+    let pronoun = if choose.count.max == Some(1) {
+        "it"
+    } else {
+        "them"
+    };
+
+    let mut text;
+    match destination {
+        SearchDestination::Battlefield { tapped } => {
+            text = format!(
+                "Search {} library for {}, put {} onto the battlefield",
+                describe_possessive_player_filter(&choose.chooser),
+                selection_text,
+                pronoun
+            );
+            if tapped {
+                text.push_str(" tapped");
+            }
+        }
+        SearchDestination::Hand => {
+            text = format!(
+                "Search {} library for {}, put {} into hand",
+                describe_possessive_player_filter(&choose.chooser),
+                selection_text,
+                pronoun
+            );
+        }
+        SearchDestination::LibraryTop => {
+            text = format!(
+                "Search {} library for {}, put {} on top of library",
+                describe_possessive_player_filter(&choose.chooser),
+                selection_text,
+                pronoun
+            );
+        }
+    }
+    if shuffle {
+        text.push_str(", then shuffle");
+    }
+    Some(text)
+}
+
 fn describe_effect(effect: &Effect) -> String {
     if let Some(sequence) = effect.downcast_ref::<crate::effects::SequenceEffect>() {
+        if let Some(compact) = describe_search_sequence(sequence) {
+            return compact;
+        }
         return describe_effect_list(&sequence.effects);
     }
     if let Some(for_each) = effect.downcast_ref::<crate::effects::ForEachObject>() {
@@ -434,6 +841,9 @@ fn describe_effect(effect: &Effect) -> String {
         );
     }
     if let Some(for_players) = effect.downcast_ref::<crate::effects::ForPlayersEffect>() {
+        if let Some(compact) = describe_for_players_choose_then_sacrifice(for_players) {
+            return compact;
+        }
         return format!(
             "For each {}, {}",
             describe_player_filter(&for_players.filter),
@@ -516,11 +926,7 @@ fn describe_effect(effect: &Effect) -> String {
         );
     }
     if let Some(unless_pays) = effect.downcast_ref::<crate::effects::UnlessPaysEffect>() {
-        let inner_text: Vec<String> = unless_pays
-            .effects
-            .iter()
-            .map(|e| describe_effect(e))
-            .collect();
+        let inner_text = describe_effect_list(&unless_pays.effects);
         let mana_text = unless_pays
             .mana
             .iter()
@@ -530,27 +936,24 @@ fn describe_effect(effect: &Effect) -> String {
             .join("");
         return format!(
             "{} unless {} pays {}",
-            inner_text.join(", then "),
+            inner_text,
             describe_player_filter(&unless_pays.player),
             mana_text
         );
     }
     if let Some(unless_action) = effect.downcast_ref::<crate::effects::UnlessActionEffect>() {
-        let inner_text: Vec<String> = unless_action
-            .effects
-            .iter()
-            .map(|e| describe_effect(e))
-            .collect();
-        let alt_text: Vec<String> = unless_action
-            .alternative
-            .iter()
-            .map(|e| describe_effect(e))
-            .collect();
+        let inner_text = describe_effect_list(&unless_action.effects);
+        let alt_text = describe_effect_list(&unless_action.alternative);
+        let player = describe_player_filter(&unless_action.player);
+        let unless_clause = if alt_text == player || alt_text.starts_with(&format!("{player} ")) {
+            alt_text
+        } else {
+            format!("{player} {alt_text}")
+        };
         return format!(
-            "{} unless {} {}",
-            inner_text.join(", then "),
-            describe_player_filter(&unless_action.player),
-            alt_text.join(", then ")
+            "{} unless {}",
+            inner_text,
+            unless_clause
         );
     }
     if let Some(put_counters) = effect.downcast_ref::<crate::effects::PutCountersEffect>() {
@@ -624,7 +1027,11 @@ fn describe_effect(effect: &Effect) -> String {
     }
     if let Some(discard_hand) = effect.downcast_ref::<crate::effects::DiscardHandEffect>() {
         let player = describe_player_filter(&discard_hand.player);
-        let hand = if player == "you" { "your hand" } else { "their hand" };
+        let hand = if player == "you" {
+            "your hand"
+        } else {
+            "their hand"
+        };
         return format!(
             "{} {} {}",
             player,
@@ -969,10 +1376,11 @@ fn describe_effect(effect: &Effect) -> String {
         return format!("{choose_text}: {modes}");
     }
     if let Some(create_token) = effect.downcast_ref::<crate::effects::CreateTokenEffect>() {
+        let token_blueprint = describe_token_blueprint(&create_token.token);
         let mut text = format!(
-            "Create {} {} token(s) under {}'s control",
+            "Create {} {} under {}'s control",
             describe_value(&create_token.count),
-            create_token.token.card.name,
+            token_blueprint,
             describe_player_filter(&create_token.controller)
         );
         if create_token.enters_tapped {
@@ -1147,6 +1555,28 @@ fn describe_effect(effect: &Effect) -> String {
             describe_mana_pool_owner(&add_one.player)
         );
     }
+    if let Some(add_land_produced) =
+        effect.downcast_ref::<crate::effects::AddManaOfLandProducedTypesEffect>()
+    {
+        let any_word = if add_land_produced.allow_colorless {
+            "type"
+        } else {
+            "color"
+        };
+        let one_word = if add_land_produced.same_type {
+            " one"
+        } else {
+            ""
+        };
+        return format!(
+            "Add {} mana of any{} {} to {} that {} could produce",
+            describe_value(&add_land_produced.amount),
+            one_word,
+            any_word,
+            describe_mana_pool_owner(&add_land_produced.player),
+            add_land_produced.land_filter.description()
+        );
+    }
     if let Some(add_commander) =
         effect.downcast_ref::<crate::effects::AddManaFromCommanderColorIdentityEffect>()
     {
@@ -1164,7 +1594,11 @@ fn describe_effect(effect: &Effect) -> String {
         } else {
             "all damage"
         };
-        return format!("Prevent {} {}", damage_type, describe_until(&prevent_all.until));
+        return format!(
+            "Prevent {} {}",
+            damage_type,
+            describe_until(&prevent_all.until)
+        );
     }
     if let Some(schedule) = effect.downcast_ref::<crate::effects::ScheduleDelayedTriggerEffect>() {
         return format!(
@@ -1228,17 +1662,33 @@ fn describe_timing(timing: &ActivationTiming) -> &'static str {
     }
 }
 
-fn describe_keyword_ability(ability: &Ability) -> Option<&'static str> {
-    let text = ability.text.as_deref()?.trim().to_ascii_lowercase();
+fn describe_keyword_ability(ability: &Ability) -> Option<String> {
+    let raw_text = ability.text.as_deref()?.trim();
+    let text = raw_text.to_ascii_lowercase();
     let words = text.split_whitespace().collect::<Vec<_>>();
     if words.first().copied() == Some("equip") {
-        return Some("Equip");
+        return Some("Equip".to_string());
     }
     if words.len() >= 2 && words[0] == "level" && words[1] == "up" {
-        return Some("Level up");
+        return Some("Level up".to_string());
     }
     if words.iter().any(|word| word.ends_with("cycling")) {
-        return Some("Cycling");
+        return Some("Cycling".to_string());
+    }
+    if text == "prowess" {
+        return Some("Prowess".to_string());
+    }
+    if text == "exalted" {
+        return Some("Exalted".to_string());
+    }
+    if text == "persist" {
+        return Some("Persist".to_string());
+    }
+    if text == "undying" {
+        return Some("Undying".to_string());
+    }
+    if text.starts_with("bushido ") {
+        return Some(raw_text.to_string());
     }
     None
 }
@@ -1282,15 +1732,7 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
             }
             let mut pre = Vec::new();
             if !activated.mana_cost.costs().is_empty() {
-                pre.push(
-                    activated
-                        .mana_cost
-                        .costs()
-                        .iter()
-                        .map(describe_cost_component)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                );
+                pre.push(describe_cost_list(activated.mana_cost.costs()));
             }
             if !activated.choices.is_empty() {
                 pre.push(format!(
@@ -1317,15 +1759,7 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
             let mut line = format!("Mana ability {index}");
             let mut parts = Vec::new();
             if !mana_ability.mana_cost.costs().is_empty() {
-                parts.push(
-                    mana_ability
-                        .mana_cost
-                        .costs()
-                        .iter()
-                        .map(describe_cost_component)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                );
+                parts.push(describe_cost_list(mana_ability.mana_cost.costs()));
             }
             if !mana_ability.mana.is_empty() {
                 parts.push(format!(
@@ -1354,8 +1788,25 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
     }
 }
 
+fn describe_enchant_filter(filter: &ObjectFilter) -> String {
+    let desc = filter.description();
+    if let Some(stripped) = desc.strip_prefix("a ") {
+        stripped.to_string()
+    } else if let Some(stripped) = desc.strip_prefix("an ") {
+        stripped.to_string()
+    } else {
+        desc
+    }
+}
+
 pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
     let mut out = Vec::new();
+    let has_attach_only_spell_effect = def.spell_effect.as_ref().is_some_and(|effects| {
+        effects.len() == 1
+            && effects[0]
+                .downcast_ref::<crate::effects::AttachToEffect>()
+                .is_some()
+    });
     for (idx, method) in def.alternative_casts.iter().enumerate() {
         match method {
             AlternativeCastingMethod::AlternativeCost {
@@ -1383,6 +1834,9 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
             }
             other => out.push(format!("Alternative cast {}: {}", idx + 1, other.name())),
         }
+    }
+    if let Some(filter) = &def.aura_attach_filter {
+        out.push(format!("Enchant {}", describe_enchant_filter(filter)));
     }
     let mut ability_idx = 0usize;
     while ability_idx < def.abilities.len() {
@@ -1413,15 +1867,7 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
                 let mut line = format!("Mana ability {}", ability_idx + 1);
                 let mut parts = Vec::new();
                 if !first.mana_cost.costs().is_empty() {
-                    parts.push(
-                        first
-                            .mana_cost
-                            .costs()
-                            .iter()
-                            .map(describe_cost_component)
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    );
+                    parts.push(describe_cost_list(first.mana_cost.costs()));
                 }
                 parts.push(format!("Add {}", describe_mana_alternatives(&symbols)));
                 line.push_str(": ");
@@ -1434,18 +1880,19 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
         out.extend(describe_ability(ability_idx + 1, ability));
         ability_idx += 1;
     }
+    if !def.cost_effects.is_empty() {
+        out.push(format!(
+            "As an additional cost to cast this spell: {}",
+            describe_effect_list(&def.cost_effects)
+        ));
+    }
     if let Some(spell_effects) = &def.spell_effect
         && !spell_effects.is_empty()
+        && !(def.aura_attach_filter.is_some() && has_attach_only_spell_effect)
     {
         out.push(format!(
             "Spell effects: {}",
             describe_effect_list(spell_effects)
-        ));
-    }
-    if !def.cost_effects.is_empty() {
-        out.push(format!(
-            "Spell cost effects: {}",
-            describe_effect_list(&def.cost_effects)
         ));
     }
     out
