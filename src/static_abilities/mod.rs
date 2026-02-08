@@ -736,6 +736,16 @@ impl StaticAbility {
     }
 
     pub fn enters_with_counters(counter_type: crate::object::CounterType, count: u32) -> Self {
+        Self::new(EntersWithCounters::new(
+            counter_type,
+            crate::effect::Value::Fixed(count as i32),
+        ))
+    }
+
+    pub fn enters_with_counters_value(
+        counter_type: crate::object::CounterType,
+        count: crate::effect::Value,
+    ) -> Self {
         Self::new(EntersWithCounters::new(counter_type, count))
     }
 

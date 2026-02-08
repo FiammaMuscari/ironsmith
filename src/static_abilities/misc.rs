@@ -248,14 +248,14 @@ fn matches_this_would_enter_battlefield(
 }
 
 /// Enters the battlefield with counters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EntersWithCounters {
     pub counter_type: CounterType,
-    pub count: u32,
+    pub count: Value,
 }
 
 impl EntersWithCounters {
-    pub fn new(counter_type: CounterType, count: u32) -> Self {
+    pub fn new(counter_type: CounterType, count: Value) -> Self {
         Self {
             counter_type,
             count,
@@ -269,14 +269,20 @@ impl StaticAbilityKind for EntersWithCounters {
     }
 
     fn display(&self) -> String {
+        let count = match &self.count {
+            Value::Fixed(v) => v.to_string(),
+            Value::X => "X".to_string(),
+            Value::Count(_) => "the appropriate number of".to_string(),
+            _ => format!("{:?}", self.count),
+        };
         format!(
             "Enters the battlefield with {} {:?} counter(s)",
-            self.count, self.counter_type
+            count, self.counter_type
         )
     }
 
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
+        Box::new(self.clone())
     }
 
     fn generate_replacement_effect(
@@ -291,7 +297,7 @@ impl StaticAbilityKind for EntersWithCounters {
                 ThisWouldEnterBattlefieldMatcher,
                 ReplacementAction::EnterWithCounters {
                     counter_type: self.counter_type,
-                    count: Value::Fixed(self.count as i32),
+                    count: self.count.clone(),
                 },
             )
             .self_replacing(),
@@ -433,7 +439,10 @@ impl StaticAbilityKind for EnterTappedForFilter {
     }
 
     fn display(&self) -> String {
-        "Permanents enter the battlefield tapped".to_string()
+        format!(
+            "Permanents matching {} enter the battlefield tapped",
+            self.filter.description()
+        )
     }
 
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {

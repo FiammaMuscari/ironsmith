@@ -22,6 +22,40 @@ fn describe_player_filter(filter: &PlayerFilter) -> String {
     }
 }
 
+fn describe_mana_pool_owner(filter: &PlayerFilter) -> String {
+    let player = describe_player_filter(filter);
+    if player == "you" {
+        "your mana pool".to_string()
+    } else {
+        format!("{player}'s mana pool")
+    }
+}
+
+fn describe_possessive_player_filter(filter: &PlayerFilter) -> String {
+    let player = describe_player_filter(filter);
+    if player == "you" {
+        "your".to_string()
+    } else {
+        format!("{player}'s")
+    }
+}
+
+fn player_verb(subject: &str, you_form: &'static str, other_form: &'static str) -> &'static str {
+    if subject == "you" {
+        you_form
+    } else {
+        other_form
+    }
+}
+
+fn describe_card_count(value: &Value) -> String {
+    match value {
+        Value::Fixed(1) => "a card".to_string(),
+        Value::Fixed(n) => format!("{n} cards"),
+        _ => format!("{} cards", describe_value(value)),
+    }
+}
+
 fn describe_choose_spec(spec: &ChooseSpec) -> String {
     match spec {
         ChooseSpec::Target(inner) => {
@@ -70,6 +104,25 @@ fn describe_mana_symbol(symbol: ManaSymbol) -> String {
         ManaSymbol::Snow => "{S}".to_string(),
         ManaSymbol::Life(_) => "{P}".to_string(),
         ManaSymbol::X => "{X}".to_string(),
+    }
+}
+
+fn describe_mana_alternatives(symbols: &[ManaSymbol]) -> String {
+    let rendered = symbols
+        .iter()
+        .copied()
+        .map(describe_mana_symbol)
+        .collect::<Vec<_>>();
+    match rendered.len() {
+        0 => "{0}".to_string(),
+        1 => rendered[0].clone(),
+        2 => format!("{} or {}", rendered[0], rendered[1]),
+        _ => {
+            let mut text = rendered[..rendered.len() - 1].join(", ");
+            text.push_str(", or ");
+            text.push_str(rendered.last().map(String::as_str).unwrap_or("{0}"));
+            text
+        }
     }
 }
 
@@ -152,7 +205,7 @@ fn describe_value(value: &Value) -> String {
 
 fn describe_signed_value(value: &Value) -> String {
     match value {
-        Value::Fixed(n) if *n > 0 => format!("+{n}"),
+        Value::Fixed(n) if *n >= 0 => format!("+{n}"),
         Value::Fixed(n) => n.to_string(),
         _ => describe_value(value),
     }
@@ -339,10 +392,10 @@ fn describe_cost_component(cost: &crate::costs::Cost) -> String {
         return describe_effect(effect);
     }
     if cost.requires_tap() {
-        return "Tap this source".to_string();
+        return "{T}".to_string();
     }
     if cost.requires_untap() {
-        return "Untap this source".to_string();
+        return "{Q}".to_string();
     }
     if let Some(amount) = cost.life_amount() {
         return if amount == 1 {
@@ -423,6 +476,16 @@ fn describe_effect(effect: &Effect) -> String {
             Zone::Command => format!("Move {target} to the command zone"),
         };
     }
+    if let Some(put_onto_battlefield) =
+        effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()
+    {
+        let target = describe_choose_spec(&put_onto_battlefield.target);
+        let mut text = format!("Put {target} onto the battlefield");
+        if put_onto_battlefield.tapped {
+            text.push_str(" tapped");
+        }
+        return text;
+    }
     if let Some(exile) = effect.downcast_ref::<crate::effects::ExileEffect>() {
         return format!("Exile {}", describe_choose_spec(&exile.spec));
     }
@@ -450,6 +513,44 @@ fn describe_effect(effect: &Effect) -> String {
                 .map(describe_mana_symbol)
                 .collect::<Vec<_>>()
                 .join("")
+        );
+    }
+    if let Some(unless_pays) = effect.downcast_ref::<crate::effects::UnlessPaysEffect>() {
+        let inner_text: Vec<String> = unless_pays
+            .effects
+            .iter()
+            .map(|e| describe_effect(e))
+            .collect();
+        let mana_text = unless_pays
+            .mana
+            .iter()
+            .copied()
+            .map(describe_mana_symbol)
+            .collect::<Vec<_>>()
+            .join("");
+        return format!(
+            "{} unless {} pays {}",
+            inner_text.join(", then "),
+            describe_player_filter(&unless_pays.player),
+            mana_text
+        );
+    }
+    if let Some(unless_action) = effect.downcast_ref::<crate::effects::UnlessActionEffect>() {
+        let inner_text: Vec<String> = unless_action
+            .effects
+            .iter()
+            .map(|e| describe_effect(e))
+            .collect();
+        let alt_text: Vec<String> = unless_action
+            .alternative
+            .iter()
+            .map(|e| describe_effect(e))
+            .collect();
+        return format!(
+            "{} unless {} {}",
+            inner_text.join(", then "),
+            describe_player_filter(&unless_action.player),
+            alt_text.join(", then ")
         );
     }
     if let Some(put_counters) = effect.downcast_ref::<crate::effects::PutCountersEffect>() {
@@ -486,42 +587,103 @@ fn describe_effect(effect: &Effect) -> String {
     }
     if let Some(draw) = effect.downcast_ref::<crate::effects::DrawCardsEffect>() {
         let player = describe_player_filter(&draw.player);
-        return format!("{player} draws {}", describe_value(&draw.count));
+        return format!(
+            "{player} {} {}",
+            player_verb(&player, "draw", "draws"),
+            describe_card_count(&draw.count)
+        );
     }
     if let Some(gain) = effect.downcast_ref::<crate::effects::GainLifeEffect>() {
+        let player = describe_choose_spec(&gain.player);
         return format!(
-            "{} gains {} life",
-            describe_choose_spec(&gain.player),
+            "{} {} {} life",
+            player,
+            player_verb(&player, "gain", "gains"),
             describe_value(&gain.amount)
         );
     }
     if let Some(lose) = effect.downcast_ref::<crate::effects::LoseLifeEffect>() {
+        let player = describe_choose_spec(&lose.player);
         return format!(
-            "{} loses {} life",
-            describe_choose_spec(&lose.player),
+            "{} {} {} life",
+            player,
+            player_verb(&player, "lose", "loses"),
             describe_value(&lose.amount)
         );
     }
     if let Some(discard) = effect.downcast_ref::<crate::effects::DiscardEffect>() {
+        let player = describe_player_filter(&discard.player);
         let random_suffix = if discard.random { " at random" } else { "" };
         return format!(
-            "{} discards {} card(s){}",
-            describe_player_filter(&discard.player),
-            describe_value(&discard.count),
+            "{} {} {}{}",
+            player,
+            player_verb(&player, "discard", "discards"),
+            describe_card_count(&discard.count),
             random_suffix
         );
     }
     if let Some(discard_hand) = effect.downcast_ref::<crate::effects::DiscardHandEffect>() {
+        let player = describe_player_filter(&discard_hand.player);
+        let hand = if player == "you" { "your hand" } else { "their hand" };
         return format!(
-            "{} discards their hand",
-            describe_player_filter(&discard_hand.player)
+            "{} {} {}",
+            player,
+            player_verb(&player, "discard", "discards"),
+            hand
+        );
+    }
+    if let Some(add_mana) = effect.downcast_ref::<crate::effects::AddManaEffect>() {
+        let mana = add_mana
+            .mana
+            .iter()
+            .copied()
+            .map(describe_mana_symbol)
+            .collect::<Vec<_>>()
+            .join("");
+        return format!(
+            "Add {} to {}",
+            if mana.is_empty() { "{0}" } else { &mana },
+            describe_mana_pool_owner(&add_mana.player)
+        );
+    }
+    if let Some(add_colorless) = effect.downcast_ref::<crate::effects::AddColorlessManaEffect>() {
+        return format!(
+            "Add {} colorless mana to {}",
+            describe_value(&add_colorless.amount),
+            describe_mana_pool_owner(&add_colorless.player)
+        );
+    }
+    if let Some(add_scaled) = effect.downcast_ref::<crate::effects::AddScaledManaEffect>() {
+        let mana = add_scaled
+            .mana
+            .iter()
+            .copied()
+            .map(describe_mana_symbol)
+            .collect::<Vec<_>>()
+            .join("");
+        let mana_text = if mana.is_empty() { "{0}" } else { &mana };
+        if let Value::Count(filter) = &add_scaled.amount {
+            return format!(
+                "Add {} for each {} to {}",
+                mana_text,
+                filter.description(),
+                describe_mana_pool_owner(&add_scaled.player)
+            );
+        }
+        return format!(
+            "Add {} {} time(s) to {}",
+            mana_text,
+            describe_value(&add_scaled.amount),
+            describe_mana_pool_owner(&add_scaled.player)
         );
     }
     if let Some(mill) = effect.downcast_ref::<crate::effects::MillEffect>() {
+        let player = describe_player_filter(&mill.player);
         return format!(
-            "{} mills {}",
-            describe_player_filter(&mill.player),
-            describe_value(&mill.count)
+            "{} {} {}",
+            player,
+            player_verb(&player, "mill", "mills"),
+            describe_card_count(&mill.count)
         );
     }
     if let Some(tap) = effect.downcast_ref::<crate::effects::TapEffect>() {
@@ -558,31 +720,33 @@ fn describe_effect(effect: &Effect) -> String {
     }
     if let Some(shuffle_library) = effect.downcast_ref::<crate::effects::ShuffleLibraryEffect>() {
         return format!(
-            "Shuffle {}'s library",
-            describe_player_filter(&shuffle_library.player)
+            "Shuffle {} library",
+            describe_possessive_player_filter(&shuffle_library.player)
         );
     }
     if let Some(search_library) = effect.downcast_ref::<crate::effects::SearchLibraryEffect>() {
         let destination = match search_library.destination {
-            Zone::Hand => "into their hand",
+            Zone::Hand => "into hand",
             Zone::Battlefield => "onto the battlefield",
-            Zone::Library => "on top of their library",
+            Zone::Library => "on top of library",
             Zone::Graveyard => "into their graveyard",
             Zone::Exile => "into exile",
             Zone::Stack => "onto the stack",
             Zone::Command => "into the command zone",
         };
-        let reveal = if search_library.reveal {
-            ", reveal it"
-        } else {
-            ""
-        };
+        if search_library.reveal && search_library.destination != Zone::Battlefield {
+            return format!(
+                "Search {} library for {}, reveal it, put it {}, then shuffle",
+                describe_possessive_player_filter(&search_library.player),
+                search_library.filter.description(),
+                destination
+            );
+        }
         return format!(
-            "Search {}'s library for {}, put it {}{}, then shuffle",
-            describe_player_filter(&search_library.player),
+            "Search {} library for {}, put it {}, then shuffle",
+            describe_possessive_player_filter(&search_library.player),
             search_library.filter.description(),
-            destination,
-            reveal
+            destination
         );
     }
     if let Some(reveal_top) = effect.downcast_ref::<crate::effects::RevealTopEffect>() {
@@ -642,6 +806,16 @@ fn describe_effect(effect: &Effect) -> String {
             describe_signed_value(&modify_pt.power),
             describe_signed_value(&modify_pt.toughness),
             describe_until(&modify_pt.duration)
+        );
+    }
+    if let Some(set_base_pt) = effect.downcast_ref::<crate::effects::SetBasePowerToughnessEffect>()
+    {
+        return format!(
+            "{} has base power and toughness {}/{} {}",
+            describe_choose_spec(&set_base_pt.target),
+            describe_value(&set_base_pt.power),
+            describe_value(&set_base_pt.toughness),
+            describe_until(&set_base_pt.duration)
         );
     }
     if let Some(modify_pt_all) =
@@ -869,6 +1043,177 @@ fn describe_effect(effect: &Effect) -> String {
             describe_choose_spec(&remove_up_to_any.target)
         );
     }
+    if let Some(surveil) = effect.downcast_ref::<crate::effects::SurveilEffect>() {
+        let player = describe_player_filter(&surveil.player);
+        return format!(
+            "{} {} {}",
+            player,
+            player_verb(&player, "surveil", "surveils"),
+            describe_value(&surveil.count)
+        );
+    }
+    if let Some(scry) = effect.downcast_ref::<crate::effects::ScryEffect>() {
+        let player = describe_player_filter(&scry.player);
+        return format!(
+            "{} {} {}",
+            player,
+            player_verb(&player, "scry", "scries"),
+            describe_value(&scry.count)
+        );
+    }
+    if let Some(investigate) = effect.downcast_ref::<crate::effects::InvestigateEffect>() {
+        return format!("Investigate {}", describe_value(&investigate.count));
+    }
+    if let Some(poison) = effect.downcast_ref::<crate::effects::PoisonCountersEffect>() {
+        return format!(
+            "{} gets {} poison counter(s)",
+            describe_player_filter(&poison.player),
+            describe_value(&poison.count)
+        );
+    }
+    if let Some(energy) = effect.downcast_ref::<crate::effects::EnergyCountersEffect>() {
+        return format!(
+            "{} gets {} energy counter(s)",
+            describe_player_filter(&energy.player),
+            describe_value(&energy.count)
+        );
+    }
+    if let Some(extra_turn) = effect.downcast_ref::<crate::effects::ExtraTurnEffect>() {
+        return format!(
+            "{} takes an extra turn after this one",
+            describe_player_filter(&extra_turn.player)
+        );
+    }
+    if let Some(lose_game) = effect.downcast_ref::<crate::effects::LoseTheGameEffect>() {
+        return format!(
+            "{} loses the game",
+            describe_player_filter(&lose_game.player)
+        );
+    }
+    if let Some(skip_draw) = effect.downcast_ref::<crate::effects::SkipDrawStepEffect>() {
+        return format!(
+            "{} skips their next draw step",
+            describe_player_filter(&skip_draw.player)
+        );
+    }
+    if let Some(skip_turn) = effect.downcast_ref::<crate::effects::SkipTurnEffect>() {
+        return format!(
+            "{} skips their next turn",
+            describe_player_filter(&skip_turn.player)
+        );
+    }
+    if let Some(monstrosity) = effect.downcast_ref::<crate::effects::MonstrosityEffect>() {
+        return format!("Monstrosity {}", describe_value(&monstrosity.n));
+    }
+    if let Some(copy_spell) = effect.downcast_ref::<crate::effects::CopySpellEffect>() {
+        return format!(
+            "Copy {} {} time(s)",
+            describe_choose_spec(&copy_spell.target),
+            describe_value(&copy_spell.count)
+        );
+    }
+    if let Some(choose_new) = effect.downcast_ref::<crate::effects::ChooseNewTargetsEffect>() {
+        return format!(
+            "{}choose new targets for effect #{}",
+            if choose_new.may { "You may " } else { "" },
+            choose_new.from_effect.0
+        );
+    }
+    if let Some(set_life) = effect.downcast_ref::<crate::effects::SetLifeTotalEffect>() {
+        return format!(
+            "{}'s life total becomes {}",
+            describe_player_filter(&set_life.player),
+            describe_value(&set_life.amount)
+        );
+    }
+    if let Some(pay_mana) = effect.downcast_ref::<crate::effects::PayManaEffect>() {
+        return format!(
+            "{} pays {}",
+            describe_choose_spec(&pay_mana.player),
+            pay_mana.cost.to_oracle()
+        );
+    }
+    if let Some(add_any) = effect.downcast_ref::<crate::effects::AddManaOfAnyColorEffect>() {
+        return format!(
+            "Add {} mana of any color to {}",
+            describe_value(&add_any.amount),
+            describe_mana_pool_owner(&add_any.player)
+        );
+    }
+    if let Some(add_one) = effect.downcast_ref::<crate::effects::AddManaOfAnyOneColorEffect>() {
+        return format!(
+            "Add {} mana of any one color to {}",
+            describe_value(&add_one.amount),
+            describe_mana_pool_owner(&add_one.player)
+        );
+    }
+    if let Some(add_commander) =
+        effect.downcast_ref::<crate::effects::AddManaFromCommanderColorIdentityEffect>()
+    {
+        return format!(
+            "Add {} mana of commander's color identity to {}",
+            describe_value(&add_commander.amount),
+            describe_mana_pool_owner(&add_commander.player)
+        );
+    }
+    if let Some(prevent_all) = effect.downcast_ref::<crate::effects::PreventAllDamageEffect>() {
+        let damage_type = if prevent_all.damage_filter.combat_only {
+            "combat damage"
+        } else if prevent_all.damage_filter.noncombat_only {
+            "noncombat damage"
+        } else {
+            "all damage"
+        };
+        return format!("Prevent {} {}", damage_type, describe_until(&prevent_all.until));
+    }
+    if let Some(schedule) = effect.downcast_ref::<crate::effects::ScheduleDelayedTriggerEffect>() {
+        return format!(
+            "Schedule delayed trigger: {}",
+            describe_effect_list(&schedule.effects)
+        );
+    }
+    if let Some(exile_instead) =
+        effect.downcast_ref::<crate::effects::ExileInsteadOfGraveyardEffect>()
+    {
+        return format!(
+            "Cards {} puts into a graveyard are exiled instead",
+            describe_player_filter(&exile_instead.player)
+        );
+    }
+    if let Some(grant_play) = effect.downcast_ref::<crate::effects::GrantPlayFromGraveyardEffect>()
+    {
+        return format!(
+            "{} may play cards from their graveyard",
+            describe_player_filter(&grant_play.player)
+        );
+    }
+    if let Some(control_player) = effect.downcast_ref::<crate::effects::ControlPlayerEffect>() {
+        return format!(
+            "Control {} during their next turn",
+            describe_player_filter(&control_player.player)
+        );
+    }
+    if let Some(exile_hand) = effect.downcast_ref::<crate::effects::ExileFromHandAsCostEffect>() {
+        return format!("Exile {} card(s) from your hand", exile_hand.count);
+    }
+    if let Some(for_each_ctrl) =
+        effect.downcast_ref::<crate::effects::ForEachControllerOfTaggedEffect>()
+    {
+        return format!(
+            "For each controller of tagged '{}' objects, {}",
+            for_each_ctrl.tag.as_str(),
+            describe_effect_list(&for_each_ctrl.effects)
+        );
+    }
+    if let Some(for_each_tagged_player) =
+        effect.downcast_ref::<crate::effects::ForEachTaggedPlayerEffect>()
+    {
+        return format!(
+            "For each tagged '{}' player, {}",
+            for_each_tagged_player.tag.as_str(),
+            describe_effect_list(&for_each_tagged_player.effects)
+        );
+    }
     format!("{effect:?}")
 }
 
@@ -883,7 +1228,25 @@ fn describe_timing(timing: &ActivationTiming) -> &'static str {
     }
 }
 
+fn describe_keyword_ability(ability: &Ability) -> Option<&'static str> {
+    let text = ability.text.as_deref()?.trim().to_ascii_lowercase();
+    let words = text.split_whitespace().collect::<Vec<_>>();
+    if words.first().copied() == Some("equip") {
+        return Some("Equip");
+    }
+    if words.len() >= 2 && words[0] == "level" && words[1] == "up" {
+        return Some("Level up");
+    }
+    if words.iter().any(|word| word.ends_with("cycling")) {
+        return Some("Cycling");
+    }
+    None
+}
+
 fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
+    if let Some(keyword) = describe_keyword_ability(ability) {
+        return vec![format!("Keyword ability {index}: {keyword}")];
+    }
     match &ability.kind {
         AbilityKind::Static(static_ability) => {
             vec![format!(
@@ -913,10 +1276,10 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
             vec![line]
         }
         AbilityKind::Activated(activated) => {
-            let mut line = format!(
-                "Activated ability {index}: timing {}",
-                describe_timing(&activated.timing)
-            );
+            let mut line = format!("Activated ability {index}");
+            if !matches!(activated.timing, ActivationTiming::AnyTime) {
+                line.push_str(&format!(" (timing {})", describe_timing(&activated.timing)));
+            }
             let mut pre = Vec::new();
             if !activated.mana_cost.costs().is_empty() {
                 pre.push(
@@ -1021,8 +1384,55 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
             other => out.push(format!("Alternative cast {}: {}", idx + 1, other.name())),
         }
     }
-    for (idx, ability) in def.abilities.iter().enumerate() {
-        out.extend(describe_ability(idx + 1, ability));
+    let mut ability_idx = 0usize;
+    while ability_idx < def.abilities.len() {
+        let ability = &def.abilities[ability_idx];
+        if let AbilityKind::Mana(first) = &ability.kind
+            && first.effects.is_none()
+            && first.activation_condition.is_none()
+            && first.mana.len() == 1
+        {
+            let mut symbols = vec![first.mana[0]];
+            let mut consumed = 1usize;
+            while ability_idx + consumed < def.abilities.len() {
+                let next = &def.abilities[ability_idx + consumed];
+                let AbilityKind::Mana(next_mana) = &next.kind else {
+                    break;
+                };
+                if next_mana.effects.is_some()
+                    || next_mana.activation_condition.is_some()
+                    || next_mana.mana.len() != 1
+                    || next_mana.mana_cost != first.mana_cost
+                {
+                    break;
+                }
+                symbols.push(next_mana.mana[0]);
+                consumed += 1;
+            }
+            if consumed > 1 {
+                let mut line = format!("Mana ability {}", ability_idx + 1);
+                let mut parts = Vec::new();
+                if !first.mana_cost.costs().is_empty() {
+                    parts.push(
+                        first
+                            .mana_cost
+                            .costs()
+                            .iter()
+                            .map(describe_cost_component)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                }
+                parts.push(format!("Add {}", describe_mana_alternatives(&symbols)));
+                line.push_str(": ");
+                line.push_str(&parts.join(", "));
+                out.push(line);
+                ability_idx += consumed;
+                continue;
+            }
+        }
+        out.extend(describe_ability(ability_idx + 1, ability));
+        ability_idx += 1;
     }
     if let Some(spell_effects) = &def.spell_effect
         && !spell_effects.is_empty()

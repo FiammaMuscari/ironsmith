@@ -125,21 +125,17 @@ mod tests {
 
         let ability = &def.abilities[0];
         if let AbilityKind::Activated(activated) = &ability.kind {
-            // Search sequence is composed as a single SequenceEffect
+            // Search is compiled as a direct SearchLibraryEffect
             assert_eq!(activated.effects.len(), 1, "Should have 1 effect");
 
             let debug_str = format!("{:?}", activated.effects[0]);
             assert!(
-                debug_str.contains("SequenceEffect"),
-                "Effect should be a SequenceEffect"
+                debug_str.contains("SearchLibraryEffect"),
+                "Effect should be a SearchLibraryEffect"
             );
             assert!(
-                debug_str.contains("ChooseObjectsEffect"),
-                "Sequence should include ChooseObjectsEffect"
-            );
-            assert!(
-                debug_str.contains("ShuffleLibraryEffect"),
-                "Sequence should include ShuffleLibraryEffect"
+                debug_str.contains("destination: Battlefield"),
+                "Search should put onto battlefield"
             );
         } else {
             panic!("Expected activated ability");
@@ -156,8 +152,8 @@ mod tests {
 
             // Verify the effect contains the right filter criteria via debug output
             assert!(
-                debug_str.contains("ChooseObjectsEffect"),
-                "Should include ChooseObjectsEffect"
+                debug_str.contains("SearchLibraryEffect"),
+                "Should include SearchLibraryEffect"
             );
             assert!(
                 debug_str.contains("Swamp"),

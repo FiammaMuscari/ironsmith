@@ -20,8 +20,11 @@ js-sys = { version = "0.3", optional = true }
 
 [features]
 default = []
+generated-registry = []
+parser-tests = []
 net = ["sha2", "secp256k1"]
 wasm = [
+    "generated-registry",
     "dep:wasm-bindgen",
     "dep:serde-wasm-bindgen",
     "dep:console_error_panic_hook",

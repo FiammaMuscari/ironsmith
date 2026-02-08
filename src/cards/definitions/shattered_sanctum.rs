@@ -48,9 +48,9 @@ mod tests {
     }
 
     #[test]
-    fn test_shattered_sanctum_has_two_abilities() {
+    fn test_shattered_sanctum_has_three_abilities() {
         let def = shattered_sanctum();
-        assert_eq!(def.abilities.len(), 2);
+        assert_eq!(def.abilities.len(), 3);
     }
 
     // ========================================
@@ -60,29 +60,39 @@ mod tests {
     #[test]
     fn test_first_ability_produces_white_mana() {
         let def = shattered_sanctum();
-        let ability = &def.abilities[0];
-
-        assert!(ability.is_mana_ability());
-        if let AbilityKind::Mana(mana_ability) = &ability.kind {
-            assert_eq!(mana_ability.mana, vec![ManaSymbol::White]);
-            assert!(mana_ability.has_tap_cost());
-        } else {
-            panic!("Expected mana ability");
-        }
+        let mana_abilities: Vec<_> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Mana(mana_ability) => Some(mana_ability),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(mana_abilities.len(), 2);
+        assert!(
+            mana_abilities
+                .iter()
+                .any(|ability| ability.mana == vec![ManaSymbol::White] && ability.has_tap_cost())
+        );
     }
 
     #[test]
     fn test_second_ability_produces_black_mana() {
         let def = shattered_sanctum();
-        let ability = &def.abilities[1];
-
-        assert!(ability.is_mana_ability());
-        if let AbilityKind::Mana(mana_ability) = &ability.kind {
-            assert_eq!(mana_ability.mana, vec![ManaSymbol::Black]);
-            assert!(mana_ability.has_tap_cost());
-        } else {
-            panic!("Expected mana ability");
-        }
+        let mana_abilities: Vec<_> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Mana(mana_ability) => Some(mana_ability),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(mana_abilities.len(), 2);
+        assert!(
+            mana_abilities
+                .iter()
+                .any(|ability| ability.mana == vec![ManaSymbol::Black] && ability.has_tap_cost())
+        );
     }
 
     // ========================================
@@ -100,7 +110,7 @@ mod tests {
         assert!(game.battlefield.contains(&sanctum_id));
 
         let obj = game.object(sanctum_id).unwrap();
-        assert_eq!(obj.abilities.len(), 2);
+        assert_eq!(obj.abilities.len(), 3);
     }
 
     #[test]

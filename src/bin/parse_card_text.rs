@@ -41,12 +41,21 @@ fn classify_card_type(type_line: &str) -> String {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pattern: Option<String> = None;
+    let mut allow_unsupported = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--pattern"
             && let Some(value) = args.next()
         {
             pattern = Some(value);
+        } else if arg == "--allow-unsupported" {
+            allow_unsupported = true;
+        }
+    }
+
+    if allow_unsupported {
+        unsafe {
+            std::env::set_var("IRONSMITH_PARSER_ALLOW_UNSUPPORTED", "1");
         }
     }
 

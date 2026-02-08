@@ -1646,7 +1646,25 @@ fn collect_object_abilities(obj: &crate::object::Object) -> Vec<String> {
         .collect()
 }
 
+fn describe_keyword_ability(ability: &Ability) -> Option<&'static str> {
+    let text = ability.text.as_deref()?.trim().to_ascii_lowercase();
+    let words = text.split_whitespace().collect::<Vec<_>>();
+    if words.first().copied() == Some("equip") {
+        return Some("Equip");
+    }
+    if words.len() >= 2 && words[0] == "level" && words[1] == "up" {
+        return Some("Level up");
+    }
+    if words.iter().any(|word| word.ends_with("cycling")) {
+        return Some("Cycling");
+    }
+    None
+}
+
 fn describe_compiled_ability(index: usize, ability: &Ability) -> Vec<String> {
+    if let Some(keyword) = describe_keyword_ability(ability) {
+        return vec![format!("Keyword ability {index}: {keyword}")];
+    }
     match &ability.kind {
         AbilityKind::Static(static_ability) => {
             vec![format!(
@@ -1695,10 +1713,13 @@ fn describe_activated_compiled(
     index: usize,
     activated: &crate::ability::ActivatedAbility,
 ) -> Vec<String> {
-    let intro = format!(
-        "Activated ability {index}: timing {}",
-        describe_activation_timing(&activated.timing)
-    );
+    let mut intro = format!("Activated ability {index}");
+    if !matches!(activated.timing, crate::ability::ActivationTiming::AnyTime) {
+        intro.push_str(&format!(
+            " (timing {})",
+            describe_activation_timing(&activated.timing)
+        ));
+    }
 
     let mut pre_effect_parts = Vec::new();
     if !activated.mana_cost.costs().is_empty() {
@@ -1948,11 +1969,14 @@ fn describe_cost_component(cost: &crate::costs::Cost) -> String {
     if let Some(mana_cost) = cost.mana_cost_ref() {
         return format!("Pay {}", mana_cost.to_oracle());
     }
+    if let Some(effect) = cost.effect_ref() {
+        return describe_effect_core(effect, &HashMap::new());
+    }
     if cost.requires_tap() {
-        return "Tap this source".to_string();
+        return "{T}".to_string();
     }
     if cost.requires_untap() {
-        return "Untap this source".to_string();
+        return "{Q}".to_string();
     }
     if let Some(amount) = cost.life_amount() {
         return if amount == 1 {
@@ -2852,6 +2876,35 @@ fn describe_effect_core_expanded(
             describe_player_filter(&add_mana.player, tagged_subjects)
         ));
     }
+    if let Some(add_scaled) = effect.downcast_ref::<crate::effects::AddScaledManaEffect>() {
+        let mana = add_scaled
+            .mana
+            .iter()
+            .map(|symbol| mana_symbol_to_oracle(*symbol))
+            .collect::<Vec<_>>()
+            .join("");
+        let mana_text = if mana.is_empty() { "{0}" } else { mana.as_str() };
+        let player = describe_player_filter(&add_scaled.player, tagged_subjects);
+        let mana_pool = if player == "You" {
+            "your mana pool".to_string()
+        } else {
+            format!("{player}'s mana pool")
+        };
+        if let crate::effect::Value::Count(filter) = &add_scaled.amount {
+            return Some(format!(
+                "Add {} for each {} to {}.",
+                mana_text,
+                filter.description(),
+                mana_pool
+            ));
+        }
+        return Some(format!(
+            "Add {} {} time(s) to {}.",
+            mana_text,
+            describe_value(&add_scaled.amount, tagged_subjects),
+            mana_pool
+        ));
+    }
     if let Some(add_colorless) = effect.downcast_ref::<crate::effects::AddColorlessManaEffect>() {
         return Some(format!(
             "Add {} colorless mana to {} mana pool.",
@@ -2894,9 +2947,19 @@ fn describe_effect_core_expanded(
         return Some(format!(
             "{} gets {}/{} {}.",
             describe_choose_spec(&modify_pt.target, tagged_subjects),
-            describe_value(&modify_pt.power, tagged_subjects),
-            describe_value(&modify_pt.toughness, tagged_subjects),
+            describe_signed_value(&modify_pt.power, tagged_subjects),
+            describe_signed_value(&modify_pt.toughness, tagged_subjects),
             describe_until(&modify_pt.duration, tagged_subjects)
+        ));
+    }
+    if let Some(set_base_pt) = effect.downcast_ref::<crate::effects::SetBasePowerToughnessEffect>()
+    {
+        return Some(format!(
+            "{} has base power and toughness {}/{} {}.",
+            describe_choose_spec(&set_base_pt.target, tagged_subjects),
+            describe_value(&set_base_pt.power, tagged_subjects),
+            describe_value(&set_base_pt.toughness, tagged_subjects),
+            describe_until(&set_base_pt.duration, tagged_subjects)
         ));
     }
     if let Some(modify_pt_all) =
@@ -2905,8 +2968,8 @@ fn describe_effect_core_expanded(
         return Some(format!(
             "{} get {}/{} {}.",
             pluralize_noun_phrase(&modify_pt_all.filter.description()),
-            describe_value(&modify_pt_all.power, tagged_subjects),
-            describe_value(&modify_pt_all.toughness, tagged_subjects),
+            describe_signed_value(&modify_pt_all.power, tagged_subjects),
+            describe_signed_value(&modify_pt_all.toughness, tagged_subjects),
             describe_until(&modify_pt_all.duration, tagged_subjects)
         ));
     }
@@ -3478,6 +3541,17 @@ fn describe_value(
             )
         }
         crate::effect::Value::TaggedCount => "the tagged count".to_string(),
+    }
+}
+
+fn describe_signed_value(
+    value: &crate::effect::Value,
+    tagged_subjects: &HashMap<String, String>,
+) -> String {
+    match value {
+        crate::effect::Value::Fixed(n) if *n > 0 => format!("+{n}"),
+        crate::effect::Value::Fixed(n) => n.to_string(),
+        _ => describe_value(value, tagged_subjects),
     }
 }
 

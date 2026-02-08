@@ -9,12 +9,41 @@ use crate::continuous::{
     ContinuousEffect, EffectSourceType, EffectTarget, Modification, PtSublayer,
 };
 use crate::effect::Value;
+use crate::filter::TaggedOpbjectRelation;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::object::CounterType;
 use crate::target::ObjectFilter;
 use crate::types::{CardType, Subtype, Supertype};
 use crate::zone::Zone;
+
+fn attached_subject(filter: &ObjectFilter) -> Option<String> {
+    let attachment = filter.tagged_constraints.iter().find_map(|constraint| {
+        if constraint.relation != TaggedOpbjectRelation::IsTaggedObject {
+            return None;
+        }
+        match constraint.tag.as_str() {
+            "enchanted" => Some("enchanted"),
+            "equipped" => Some("equipped"),
+            _ => None,
+        }
+    })?;
+
+    let noun = if filter.card_types.len() == 1 {
+        format!("{:?}", filter.card_types[0]).to_ascii_lowercase()
+    } else {
+        "permanent".to_string()
+    };
+    Some(format!("{attachment} {noun}"))
+}
+
+fn effect_target_for_filter(source: ObjectId, filter: &ObjectFilter) -> EffectTarget {
+    if attached_subject(filter).is_some() {
+        EffectTarget::AttachedTo(source)
+    } else {
+        EffectTarget::Filter(filter.clone())
+    }
+}
 
 /// Anthem effect: "Creatures you control get +N/+M"
 #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +79,9 @@ impl StaticAbilityKind for Anthem {
     fn display(&self) -> String {
         let sign_p = if self.power >= 0 { "+" } else { "" };
         let sign_t = if self.toughness >= 0 { "+" } else { "" };
+        if let Some(subject) = attached_subject(&self.filter) {
+            return format!("{subject} gets {}{}/{}{}", sign_p, self.power, sign_t, self.toughness);
+        }
         format!(
             "Affected creatures get {}{}/{}{}",
             sign_p, self.power, sign_t, self.toughness
@@ -70,7 +102,7 @@ impl StaticAbilityKind for Anthem {
             ContinuousEffect::new(
                 source,
                 controller,
-                EffectTarget::Filter(self.filter.clone()),
+                effect_target_for_filter(source, &self.filter),
                 Modification::ModifyPowerToughness {
                     power: self.power,
                     toughness: self.toughness,
@@ -112,6 +144,9 @@ impl StaticAbilityKind for GrantAbility {
     }
 
     fn display(&self) -> String {
+        if let Some(subject) = attached_subject(&self.filter) {
+            return format!("{subject} has {}", self.ability.display());
+        }
         format!("Affected permanents have {}", self.ability.display())
     }
 
@@ -133,7 +168,7 @@ impl StaticAbilityKind for GrantAbility {
             ContinuousEffect::new(
                 source,
                 controller,
-                EffectTarget::Filter(self.filter.clone()),
+                effect_target_for_filter(source, &self.filter),
                 Modification::AddAbility(self.ability.clone()),
             )
             .with_source_type(EffectSourceType::StaticAbility),
@@ -856,6 +891,29 @@ mod tests {
     }
 
     #[test]
+    fn test_attached_anthem_uses_attached_target() {
+        let mut filter = ObjectFilter::creature();
+        filter
+            .tagged_constraints
+            .push(crate::filter::TaggedObjectConstraint {
+                tag: crate::tag::TagKey::from("enchanted"),
+                relation: crate::filter::TaggedOpbjectRelation::IsTaggedObject,
+            });
+        let anthem = Anthem::new(filter, 1, 1);
+        assert_eq!(anthem.display(), "enchanted creature gets +1/+1");
+
+        let game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let source = ObjectId::from_raw(1);
+        let controller = PlayerId::from_index(0);
+        let effects = anthem.generate_effects(source, controller, &game);
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(
+            effects[0].applies_to,
+            EffectTarget::AttachedTo(id) if id == source
+        ));
+    }
+
+    #[test]
     fn test_blood_moon() {
         let blood_moon = BloodMoon;
         assert_eq!(blood_moon.id(), StaticAbilityId::BloodMoon);
@@ -881,6 +939,29 @@ mod tests {
         );
         assert_eq!(grant.id(), StaticAbilityId::GrantAbility);
         assert!(grant.grants_abilities());
+    }
+
+    #[test]
+    fn test_attached_grant_ability_uses_attached_target() {
+        let mut filter = ObjectFilter::creature();
+        filter
+            .tagged_constraints
+            .push(crate::filter::TaggedObjectConstraint {
+                tag: crate::tag::TagKey::from("equipped"),
+                relation: crate::filter::TaggedOpbjectRelation::IsTaggedObject,
+            });
+        let grant = GrantAbility::new(filter, StaticAbility::trample());
+        assert_eq!(grant.display(), "equipped creature has Trample");
+
+        let game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let source = ObjectId::from_raw(1);
+        let controller = PlayerId::from_index(0);
+        let effects = grant.generate_effects(source, controller, &game);
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(
+            effects[0].applies_to,
+            EffectTarget::AttachedTo(id) if id == source
+        ));
     }
 
     #[test]

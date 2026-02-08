@@ -18,6 +18,7 @@ mod modify_power_toughness_all;
 mod modify_power_toughness_for_each;
 mod prevent_all_damage;
 mod prevent_damage;
+mod set_base_power_toughness;
 
 pub use enter_attacking::EnterAttackingEffect;
 pub use fight::FightEffect;
@@ -28,3 +29,4 @@ pub use modify_power_toughness_all::ModifyPowerToughnessAllEffect;
 pub use modify_power_toughness_for_each::ModifyPowerToughnessForEachEffect;
 pub use prevent_all_damage::PreventAllDamageEffect;
 pub use prevent_damage::PreventDamageEffect;
+pub use set_base_power_toughness::SetBasePowerToughnessEffect;

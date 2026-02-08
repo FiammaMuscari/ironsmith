@@ -1485,6 +1485,19 @@ impl Effect {
         ))
     }
 
+    /// Create a "set base power/toughness to N/M" effect with explicit duration.
+    pub fn set_base_power_toughness(
+        power: impl Into<Value>,
+        toughness: impl Into<Value>,
+        target: ChooseSpec,
+        duration: Until,
+    ) -> Self {
+        use crate::effects::SetBasePowerToughnessEffect;
+        Self::new(SetBasePowerToughnessEffect::new(
+            target, power, toughness, duration,
+        ))
+    }
+
     /// Create a "+N/+M" effect for all creatures matching a filter with explicit duration.
     pub fn pump_all(
         filter: ObjectFilter,
@@ -1871,6 +1884,37 @@ impl Effect {
     pub fn may_single(effect: Effect) -> Self {
         use crate::effects::MayEffect;
         Self::new(MayEffect::single(effect))
+    }
+
+    /// "X unless you/they pay {mana}" - execute effects unless the player pays.
+    ///
+    /// Example: "Sacrifice this creature unless you pay {U}."
+    /// ```ignore
+    /// Effect::unless_pays(
+    ///     vec![Effect::sacrifice_self()],
+    ///     PlayerFilter::You,
+    ///     vec![ManaSymbol::Blue],
+    /// )
+    /// ```
+    pub fn unless_pays(
+        effects: Vec<Effect>,
+        player: PlayerFilter,
+        mana: Vec<ManaSymbol>,
+    ) -> Self {
+        use crate::effects::UnlessPaysEffect;
+        Self::new(UnlessPaysEffect::new(effects, player, mana))
+    }
+
+    /// "X unless you/they [action]" - execute effects unless the player performs an action.
+    ///
+    /// Example: "Sacrifice this creature unless you sacrifice another creature."
+    pub fn unless_action(
+        effects: Vec<Effect>,
+        alternative: Vec<Effect>,
+        player: PlayerFilter,
+    ) -> Self {
+        use crate::effects::UnlessActionEffect;
+        Self::new(UnlessActionEffect::new(effects, alternative, player))
     }
 
     /// "If [prior effect satisfied predicate], then [effects]."

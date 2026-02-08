@@ -70,7 +70,7 @@ impl TriggerMatcher for SpellCastTrigger {
         let spell_text = self
             .filter
             .as_ref()
-            .map(|f| f.description())
+            .map(describe_spell_filter)
             .unwrap_or_else(|| "a spell".to_string());
         format!("Whenever {} {}", caster_text, spell_text)
     }
@@ -80,11 +80,28 @@ impl TriggerMatcher for SpellCastTrigger {
     }
 }
 
+fn describe_spell_filter(filter: &ObjectFilter) -> String {
+    if filter.card_types.is_empty()
+        && filter.excluded_card_types.contains(&crate::types::CardType::Creature)
+        && filter.excluded_card_types.contains(&crate::types::CardType::Land)
+    {
+        return "a noncreature spell".to_string();
+    }
+
+    let fallback = filter.description();
+    if fallback == "permanent" {
+        "a spell".to_string()
+    } else {
+        fallback
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::game_state::GameState;
     use crate::ids::{ObjectId, PlayerId};
+    use crate::target::ObjectFilter;
 
     #[test]
     fn test_matches_own_spell() {
@@ -104,5 +121,14 @@ mod tests {
     fn test_display() {
         let trigger = SpellCastTrigger::you_cast_any();
         assert!(trigger.display().contains("you cast"));
+    }
+
+    #[test]
+    fn test_display_noncreature_spell_filter() {
+        let trigger = SpellCastTrigger::new(Some(ObjectFilter::noncreature_spell()), PlayerFilter::You);
+        assert_eq!(
+            trigger.display(),
+            "Whenever you cast a noncreature spell"
+        );
     }
 }

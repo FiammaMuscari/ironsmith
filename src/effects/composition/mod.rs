@@ -30,6 +30,8 @@ mod tag_attached_to_source;
 mod tag_triggering_object;
 mod tagged;
 mod target_only;
+mod unless_action;
+mod unless_pays;
 mod vote;
 mod with_id;
 
@@ -49,5 +51,7 @@ pub use tag_attached_to_source::TagAttachedToSourceEffect;
 pub use tag_triggering_object::TagTriggeringObjectEffect;
 pub use tagged::{TagAllEffect, TaggedEffect};
 pub use target_only::TargetOnlyEffect;
+pub use unless_action::UnlessActionEffect;
+pub use unless_pays::UnlessPaysEffect;
 pub use vote::{VoteEffect, VoteOption};
 pub use with_id::WithIdEffect;

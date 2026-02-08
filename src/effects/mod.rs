@@ -68,14 +68,14 @@ pub use cards::{
 pub use combat::{
     EnterAttackingEffect, FightEffect, GrantAbilitiesAllEffect, GrantAbilitiesTargetEffect,
     ModifyPowerToughnessAllEffect, ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect,
-    PreventAllDamageEffect, PreventDamageEffect,
+    PreventAllDamageEffect, PreventDamageEffect, SetBasePowerToughnessEffect,
 };
 pub use composition::{
     ChooseModeEffect, ChooseObjectsEffect, ConditionalEffect, ForEachControllerOfTaggedEffect,
     ForEachObject, ForEachOpponentEffect, ForEachTaggedEffect, ForEachTaggedPlayerEffect,
     ForPlayersEffect, IfEffect, MayEffect, SequenceEffect, TagAllEffect, TagAttachedToSourceEffect,
-    TagTriggeringObjectEffect, TaggedEffect, TargetOnlyEffect, VoteEffect, VoteOption,
-    WithIdEffect,
+    TagTriggeringObjectEffect, TaggedEffect, TargetOnlyEffect, UnlessActionEffect,
+    UnlessPaysEffect, VoteEffect, VoteOption, WithIdEffect,
 };
 pub use continuous::ApplyContinuousEffect;
 pub use control::{ExchangeControlEffect, GainControlEffect};
@@ -88,6 +88,7 @@ pub use delayed::ScheduleDelayedTriggerEffect;
 pub use life::{ExchangeLifeTotalsEffect, GainLifeEffect, LoseLifeEffect, SetLifeTotalEffect};
 pub use mana::{
     AddColorlessManaEffect, AddManaEffect, AddManaFromCommanderColorIdentityEffect,
+    AddScaledManaEffect,
     AddManaOfAnyColorEffect, AddManaOfAnyOneColorEffect, PayManaEffect,
 };
 pub use permanents::{

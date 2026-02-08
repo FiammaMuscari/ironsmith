@@ -980,7 +980,7 @@ impl ObjectFilter {
 
         // Name check
         if let Some(required_name) = &self.name
-            && object.name != *required_name
+            && !object.name.eq_ignore_ascii_case(required_name)
         {
             return false;
         }
@@ -1275,7 +1275,7 @@ impl ObjectFilter {
 
         // Name check
         if let Some(required_name) = &self.name
-            && snapshot.name != *required_name
+            && !snapshot.name.eq_ignore_ascii_case(required_name)
         {
             return false;
         }
@@ -1411,10 +1411,11 @@ impl ObjectFilter {
         if self.nontoken {
             parts.push("nontoken".to_string());
         }
-        if self.attacking {
+        if self.attacking && self.blocking {
+            parts.push("attacking/blocking".to_string());
+        } else if self.attacking {
             parts.push("attacking".to_string());
-        }
-        if self.blocking {
+        } else if self.blocking {
             parts.push("blocking".to_string());
         }
 
@@ -1448,7 +1449,28 @@ impl ObjectFilter {
             return format!("a {} named {}", parts.join(" "), name);
         }
 
+        if let Some(ref power) = self.power {
+            parts.push(format!("with power {}", describe_comparison(power)));
+        }
+        if let Some(ref toughness) = self.toughness {
+            parts.push(format!("with toughness {}", describe_comparison(toughness)));
+        }
+        if let Some(ref mana_value) = self.mana_value {
+            parts.push(format!("with mana value {}", describe_comparison(mana_value)));
+        }
+
         parts.join(" ")
+    }
+}
+
+fn describe_comparison(cmp: &Comparison) -> String {
+    match cmp {
+        Comparison::Equal(v) => format!("{v}"),
+        Comparison::NotEqual(v) => format!("not equal to {v}"),
+        Comparison::LessThan(v) => format!("less than {v}"),
+        Comparison::LessThanOrEqual(v) => format!("{v} or less"),
+        Comparison::GreaterThan(v) => format!("greater than {v}"),
+        Comparison::GreaterThanOrEqual(v) => format!("{v} or greater"),
     }
 }
 

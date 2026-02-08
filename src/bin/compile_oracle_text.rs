@@ -22,6 +22,9 @@ fn read_input_text(text_arg: Option<String>) -> Result<String, String> {
 fn main() -> Result<(), String> {
     let mut name = "Parser Probe".to_string();
     let mut text_arg: Option<String> = None;
+    let mut stacktrace = false;
+    let mut trace = false;
+    let mut allow_unsupported = false;
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -37,11 +40,38 @@ fn main() -> Result<(), String> {
                         .ok_or_else(|| "--text requires a value".to_string())?,
                 );
             }
+            "--stacktrace" => {
+                stacktrace = true;
+            }
+            "--trace" => {
+                trace = true;
+            }
+            "--allow-unsupported" => {
+                allow_unsupported = true;
+            }
             _ => {
                 return Err(format!(
-                    "unknown argument '{arg}'. expected --name <value> and/or --text <value>"
+                    "unknown argument '{arg}'. expected --name <value>, --text <value>, --trace, --allow-unsupported, and/or --stacktrace"
                 ));
             }
+        }
+    }
+
+    if trace {
+        unsafe {
+            env::set_var("IRONSMITH_PARSER_TRACE", "1");
+        }
+    }
+
+    if stacktrace {
+        unsafe {
+            env::set_var("IRONSMITH_PARSER_STACKTRACE", "1");
+        }
+    }
+
+    if allow_unsupported {
+        unsafe {
+            env::set_var("IRONSMITH_PARSER_ALLOW_UNSUPPORTED", "1");
         }
     }
 

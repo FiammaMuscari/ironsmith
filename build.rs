@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -10,6 +11,17 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is not set");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is not set"));
     let out_file = out_dir.join("generated_registry.rs");
+
+    // Speed up parser/effects iteration by default: only generate/compile the
+    // massive baked registry when the feature is explicitly enabled.
+    if env::var_os("CARGO_FEATURE_GENERATED_REGISTRY").is_none() {
+        let stub = r#"
+pub const GENERATED_PARSER_CARD_SOURCE_COUNT: usize = 0;
+pub fn register_generated_parser_cards(_registry: &mut crate::cards::CardRegistry) {}
+"#;
+        fs::write(&out_file, stub).expect("failed to write generated_registry.rs stub");
+        return;
+    }
 
     let python = env::var("PYTHON").unwrap_or_else(|_| "python3".to_string());
     let status = Command::new(python)

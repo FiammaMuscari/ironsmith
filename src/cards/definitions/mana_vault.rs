@@ -54,10 +54,10 @@ mod tests {
     }
 
     #[test]
-    fn test_mana_vault_has_two_abilities() {
+    fn test_mana_vault_has_four_abilities() {
         let def = mana_vault();
-        // Static ability + mana ability
-        assert_eq!(def.abilities.len(), 2);
+        // 1 static + 2 triggered + 1 mana ability
+        assert_eq!(def.abilities.len(), 4);
     }
 
     // ========================================
@@ -126,7 +126,7 @@ mod tests {
         assert!(game.battlefield.contains(&vault_id));
 
         let obj = game.object(vault_id).unwrap();
-        assert_eq!(obj.abilities.len(), 2);
+        assert_eq!(obj.abilities.len(), 4);
     }
 
     // ========================================
