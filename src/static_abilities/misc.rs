@@ -19,6 +19,14 @@ use crate::replacement::{ReplacementAction, ReplacementEffect};
 use crate::target::ObjectFilter;
 use crate::zone::Zone;
 
+fn describe_counter_type(counter_type: CounterType) -> String {
+    match counter_type {
+        CounterType::PlusOnePlusOne => "+1/+1".to_string(),
+        CounterType::MinusOneMinusOne => "-1/-1".to_string(),
+        other => format!("{other:?}").to_ascii_lowercase(),
+    }
+}
+
 /// Doesn't untap during your untap step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DoesntUntap;
@@ -276,8 +284,9 @@ impl StaticAbilityKind for EntersWithCounters {
             _ => format!("{:?}", self.count),
         };
         format!(
-            "Enters the battlefield with {} {:?} counter(s)",
-            count, self.counter_type
+            "Enters the battlefield with {} {} counter(s)",
+            count,
+            describe_counter_type(self.counter_type)
         )
     }
 
@@ -439,10 +448,7 @@ impl StaticAbilityKind for EnterTappedForFilter {
     }
 
     fn display(&self) -> String {
-        format!(
-            "Permanents matching {} enter the battlefield tapped",
-            self.filter.description()
-        )
+        format!("{} enter the battlefield tapped", self.filter.description())
     }
 
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {

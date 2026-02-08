@@ -68,15 +68,9 @@ impl EffectExecutor for FightEffect {
             _ => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
         };
 
-        // Get power of each creature
-        let power1 = game
-            .object(creature1_id)
-            .and_then(|o| o.power())
-            .unwrap_or(0) as u32;
-        let power2 = game
-            .object(creature2_id)
-            .and_then(|o| o.power())
-            .unwrap_or(0) as u32;
+        // Use calculated power so continuous effects (pumps/shrinks) are respected.
+        let power1 = game.calculated_power(creature1_id).unwrap_or(0).max(0) as u32;
+        let power2 = game.calculated_power(creature2_id).unwrap_or(0).max(0) as u32;
 
         // Each creature deals damage equal to its power to the other.
         // Decompose into two DealDamage effects and aggregate outcomes.
@@ -117,6 +111,8 @@ impl EffectExecutor for FightEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::continuous::ContinuousEffect;
+    use crate::effect::Until;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
@@ -266,5 +262,37 @@ mod tests {
         let effect = FightEffect::you_vs_opponent();
         let cloned = effect.clone_box();
         assert!(format!("{:?}", cloned).contains("FightEffect"));
+    }
+
+    #[test]
+    fn test_fight_uses_calculated_power_with_continuous_effects() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let bear = create_creature(&mut game, "Bear", 2, 2, alice);
+        let ogre = create_creature(&mut game, "Ogre", 2, 2, bob);
+        let source = game.new_object_id();
+
+        // +2/+0 pump should increase fight damage dealt by Bear.
+        game.continuous_effects.add_effect(ContinuousEffect::pump(
+            source,
+            alice,
+            bear,
+            2,
+            0,
+            Until::EndOfTurn,
+        ));
+
+        let mut ctx = ExecutionContext::new_default(source, alice).with_targets(vec![
+            ResolvedTarget::Object(bear),
+            ResolvedTarget::Object(ogre),
+        ]);
+
+        let effect = FightEffect::you_vs_opponent();
+        effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(game.damage_on(ogre), 4);
+        assert_eq!(game.damage_on(bear), 2);
     }
 }

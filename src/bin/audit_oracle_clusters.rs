@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::hash::{Hash, Hasher};
 
 use ironsmith::cards::CardDefinitionBuilder;
 use ironsmith::compiled_text::oracle_like_lines;
@@ -20,6 +21,10 @@ struct Args {
     parser_trace: bool,
     trace_name: Option<String>,
     allow_unsupported: bool,
+    use_embeddings: bool,
+    embedding_dims: usize,
+    embedding_threshold: f32,
+    mismatch_names_out: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +96,10 @@ fn parse_args() -> Result<Args, String> {
     let mut parser_trace = false;
     let mut trace_name = None;
     let mut allow_unsupported = false;
+    let mut use_embeddings = false;
+    let mut embedding_dims = 384usize;
+    let mut embedding_threshold = 0.17f32;
+    let mut mismatch_names_out = None;
 
     let mut iter = env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -152,9 +161,34 @@ fn parse_args() -> Result<Args, String> {
             "--allow-unsupported" => {
                 allow_unsupported = true;
             }
+            "--use-embeddings" => {
+                use_embeddings = true;
+            }
+            "--embedding-dims" => {
+                let raw = iter
+                    .next()
+                    .ok_or_else(|| "--embedding-dims requires a number".to_string())?;
+                embedding_dims = raw
+                    .parse::<usize>()
+                    .map_err(|e| format!("invalid --embedding-dims value '{raw}': {e}"))?;
+            }
+            "--embedding-threshold" => {
+                let raw = iter
+                    .next()
+                    .ok_or_else(|| "--embedding-threshold requires a float".to_string())?;
+                embedding_threshold = raw
+                    .parse::<f32>()
+                    .map_err(|e| format!("invalid --embedding-threshold value '{raw}': {e}"))?;
+            }
+            "--mismatch-names-out" => {
+                mismatch_names_out = Some(
+                    iter.next()
+                        .ok_or_else(|| "--mismatch-names-out requires a path".to_string())?,
+                );
+            }
             _ => {
                 return Err(format!(
-                    "unknown argument '{arg}'. supported: --cards <path> --limit <n> --min-cluster-size <n> --top-clusters <n> --examples <n> --json-out <path> --parser-trace --trace-name <substring> --allow-unsupported"
+                    "unknown argument '{arg}'. supported: --cards <path> --limit <n> --min-cluster-size <n> --top-clusters <n> --examples <n> --json-out <path> --parser-trace --trace-name <substring> --allow-unsupported --use-embeddings --embedding-dims <n> --embedding-threshold <f32> --mismatch-names-out <path>"
                 ));
             }
         }
@@ -170,6 +204,10 @@ fn parse_args() -> Result<Args, String> {
         parser_trace,
         trace_name,
         allow_unsupported,
+        use_embeddings,
+        embedding_dims,
+        embedding_threshold,
+        mismatch_names_out,
     })
 }
 
@@ -195,7 +233,25 @@ fn strip_parenthetical(text: &str) -> String {
 fn semantic_clauses(text: &str) -> Vec<String> {
     let mut clauses = Vec::new();
     for raw_line in text.lines() {
-        let line = strip_parenthetical(raw_line);
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let line = if trimmed.starts_with('(') && trimmed.ends_with(')') {
+            let inner = trimmed
+                .trim_start_matches('(')
+                .trim_end_matches(')')
+                .trim();
+            // Keep parenthetical lines only when they carry executable semantics
+            // (most notably mana abilities like "({T}: Add {G}.)").
+            if inner.contains(':') {
+                inner.to_string()
+            } else {
+                continue;
+            }
+        } else {
+            strip_parenthetical(raw_line)
+        };
         let mut current = String::new();
         for ch in line.chars() {
             if matches!(ch, '.' | ';' | '\n') {
@@ -280,6 +336,25 @@ fn is_pt_token(token: &str) -> bool {
 fn normalize_word(token: &str) -> Option<String> {
     if token.is_empty() {
         return None;
+    }
+    if matches!(
+        token,
+        "zero"
+            | "one"
+            | "two"
+            | "three"
+            | "four"
+            | "five"
+            | "six"
+            | "seven"
+            | "eight"
+            | "nine"
+            | "ten"
+    ) {
+        return Some("<num>".to_string());
+    }
+    if token == "plusoneplusone" || token == "minusoneminusone" {
+        return Some("<pt>".to_string());
     }
     if token.starts_with('{') && token.ends_with('}') {
         return Some("<mana>".to_string());
@@ -465,6 +540,117 @@ fn clause_signature(clause: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct EmbeddingConfig {
+    dims: usize,
+    mismatch_threshold: f32,
+}
+
+fn embedding_tokens(clause: &str) -> Vec<String> {
+    tokenize_text(clause)
+        .into_iter()
+        .filter_map(|token| normalize_word(&token))
+        .collect()
+}
+
+fn hash_index(feature: &str, dims: usize) -> usize {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    feature.hash(&mut hasher);
+    (hasher.finish() as usize) % dims.max(1)
+}
+
+fn hash_sign(feature: &str) -> f32 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    ("sign", feature).hash(&mut hasher);
+    if hasher.finish() & 1 == 0 { 1.0 } else { -1.0 }
+}
+
+fn add_feature(vec: &mut [f32], feature: &str, weight: f32) {
+    let idx = hash_index(feature, vec.len());
+    vec[idx] += hash_sign(feature) * weight;
+}
+
+fn l2_normalize(vec: &mut [f32]) {
+    let norm = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for v in vec {
+            *v /= norm;
+        }
+    }
+}
+
+fn embed_clause(clause: &str, dims: usize) -> Vec<f32> {
+    let mut vec = vec![0.0f32; dims.max(1)];
+    let tokens = embedding_tokens(clause);
+
+    for token in &tokens {
+        add_feature(&mut vec, &format!("u:{token}"), 1.0);
+    }
+    for window in tokens.windows(2) {
+        add_feature(&mut vec, &format!("b:{}|{}", window[0], window[1]), 1.35);
+    }
+    for window in tokens.windows(3) {
+        add_feature(
+            &mut vec,
+            &format!("t:{}|{}|{}", window[0], window[1], window[2]),
+            1.65,
+        );
+    }
+
+    // Structural anchors for common semantic clauses.
+    let lower = clause.to_ascii_lowercase();
+    for marker in ["where", "plus", "minus", "for each", "as long as", "unless"] {
+        if lower.contains(marker) {
+            add_feature(&mut vec, &format!("m:{marker}"), 1.8);
+        }
+    }
+
+    // Lightweight character n-grams help when token sets are similar but syntax differs.
+    let compact = lower
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == ' ')
+        .collect::<String>();
+    let chars: Vec<char> = compact.chars().collect();
+    for ngram in chars.windows(4).take(200) {
+        let key = ngram.iter().collect::<String>();
+        add_feature(&mut vec, &format!("c:{key}"), 0.35);
+    }
+
+    l2_normalize(&mut vec);
+    vec
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let len = a.len().min(b.len());
+    if len == 0 {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    for i in 0..len {
+        dot += a[i] * b[i];
+    }
+    dot.clamp(-1.0, 1.0)
+}
+
+fn directional_embedding_coverage(from: &[Vec<f32>], to: &[Vec<f32>]) -> f32 {
+    if from.is_empty() {
+        return if to.is_empty() { 1.0 } else { 0.0 };
+    }
+
+    let mut total = 0.0f32;
+    for source in from {
+        let mut best = -1.0f32;
+        for target in to {
+            let score = cosine_similarity(source, target);
+            if score > best {
+                best = score;
+            }
+        }
+        total += best.max(0.0);
+    }
+    total / from.len() as f32
+}
+
 fn cluster_key(oracle_text: &str) -> String {
     let mut parts: Vec<String> = semantic_clauses(oracle_text)
         .into_iter()
@@ -528,7 +714,11 @@ fn strip_compiled_prefix(line: &str) -> &str {
     }
 }
 
-fn compare_semantics(oracle_text: &str, compiled_lines: &[String]) -> (f32, f32, isize, bool) {
+fn compare_semantics(
+    oracle_text: &str,
+    compiled_lines: &[String],
+    embedding: Option<EmbeddingConfig>,
+) -> (f32, f32, isize, bool) {
     let oracle_clauses = semantic_clauses(oracle_text);
     let compiled_clauses = compiled_lines
         .iter()
@@ -561,12 +751,26 @@ fn compare_semantics(oracle_text: &str, compiled_lines: &[String]) -> (f32, f32,
     let line_gap = line_delta.abs() >= 3 && min_coverage < 0.50;
     let empty_gap = !oracle_tokens.is_empty() && compiled_tokens.is_empty();
 
-    (
-        oracle_coverage,
-        compiled_coverage,
-        line_delta,
-        semantic_gap || line_gap || empty_gap,
-    )
+    let mut mismatch = semantic_gap || line_gap || empty_gap;
+
+    if let Some(cfg) = embedding {
+        let oracle_emb = oracle_clauses
+            .iter()
+            .map(|clause| embed_clause(clause, cfg.dims))
+            .collect::<Vec<_>>();
+        let compiled_emb = compiled_clauses
+            .iter()
+            .map(|clause| embed_clause(clause, cfg.dims))
+            .collect::<Vec<_>>();
+        let emb_oracle = directional_embedding_coverage(&oracle_emb, &compiled_emb);
+        let emb_compiled = directional_embedding_coverage(&compiled_emb, &oracle_emb);
+        let emb_min = emb_oracle.min(emb_compiled);
+        if emb_min < cfg.mismatch_threshold {
+            mismatch = true;
+        }
+    }
+
+    (oracle_coverage, compiled_coverage, line_delta, mismatch)
 }
 
 fn normalize_parse_error(error: &str) -> String {
@@ -787,6 +991,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         set_allow_unsupported(true);
     }
 
+    let embedding_cfg = if args.use_embeddings {
+        Some(EmbeddingConfig {
+            dims: args.embedding_dims,
+            mismatch_threshold: args.embedding_threshold,
+        })
+    } else {
+        None
+    };
+
     let mut audits = Vec::new();
     for card in cards {
         if let Some(limit) = args.limit
@@ -817,7 +1030,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(definition) => {
                 let compiled = oracle_like_lines(&definition);
                 let (oracle_coverage, compiled_coverage, line_delta, semantic_mismatch) =
-                    compare_semantics(&card_input.oracle_text, &compiled);
+                    compare_semantics(&card_input.oracle_text, &compiled, embedding_cfg);
                 CardAudit {
                     name: card_input.name,
                     oracle_text: card_input.oracle_text,
@@ -878,6 +1091,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|audit| audit.parse_error.is_none() && audit.semantic_mismatch)
         .count();
 
+    if let Some(path) = args.mismatch_names_out.as_ref() {
+        let mut names = clusters
+            .values()
+            .flatten()
+            .filter(|audit| audit.parse_error.is_none() && audit.semantic_mismatch)
+            .map(|audit| audit.name.clone())
+            .collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        fs::write(path, names.join("\n"))?;
+        println!("Wrote mismatch names to {path} ({} names)", names.len());
+    }
+
     let mut ranked: Vec<(String, Vec<CardAudit>)> = clusters
         .into_iter()
         .filter(|(_, entries)| entries.len() >= args.min_cluster_size)
@@ -915,6 +1141,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("- Cards processed: {cards_processed}");
     println!("- Parse failures: {parse_failures}");
     println!("- Semantic mismatches: {semantic_mismatches}");
+    if let Some(cfg) = embedding_cfg {
+        println!(
+            "- Embedding audit: enabled (dims={}, threshold={:.2})",
+            cfg.dims, cfg.mismatch_threshold
+        );
+    } else {
+        println!("- Embedding audit: disabled");
+    }
     println!("- Total clusters: {}", ranked.len());
     println!("- Reporting up to {} clusters", args.top_clusters);
     println!();
@@ -1097,7 +1331,7 @@ mod tests {
         let oracle = "Draw a card. Target player discards a card.";
         let compiled = vec!["you gain 2 life".to_string()];
         let (oracle_coverage, compiled_coverage, line_delta, mismatch) =
-            compare_semantics(oracle, &compiled);
+            compare_semantics(oracle, &compiled, None);
         assert!(mismatch);
         assert!(oracle_coverage < 0.75);
         assert!(compiled_coverage <= 0.25);
@@ -1109,10 +1343,29 @@ mod tests {
         let oracle = "({T}: Add {B} or {R}.)";
         let compiled = vec!["Mana ability 1: Tap this source, Add {B} or {R}".to_string()];
         let (_oracle_coverage, _compiled_coverage, _line_delta, mismatch) =
-            compare_semantics(oracle, &compiled);
+            compare_semantics(oracle, &compiled, None);
         assert!(
             !mismatch,
             "parenthetical-only oracle reminder text should not count as semantic mismatch"
+        );
+    }
+
+    #[test]
+    fn test_embedding_mode_catches_dropped_where_plus_semantics() {
+        let oracle =
+            "Hobbit's Sting deals X damage to target creature, where X is the number of creatures you control plus the number of Foods you control.";
+        let compiled = vec!["Deal X damage to target creature Food".to_string()];
+        let (_oracle_coverage, _compiled_coverage, _line_delta, mismatch) = compare_semantics(
+            oracle,
+            &compiled,
+            Some(EmbeddingConfig {
+                dims: 384,
+                mismatch_threshold: 0.55,
+            }),
+        );
+        assert!(
+            mismatch,
+            "embedding mode should flag lost where/plus value semantics"
         );
     }
 }

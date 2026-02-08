@@ -2191,7 +2191,10 @@ fn describe_intervening_if(condition: &crate::ability::InterveningIfCondition) -
             "the source was enchanted".to_string()
         }
         crate::ability::InterveningIfCondition::HadCounters(counter_type, amount) => {
-            format!("the source had at least {amount} {counter_type:?} counter(s)")
+            format!(
+                "the source had at least {amount} {} counter(s)",
+                describe_counter_type(*counter_type)
+            )
         }
     }
 }
@@ -3738,7 +3741,7 @@ fn describe_effect_core_expanded(
             "Create {} {} under {} control",
             describe_value(&create_token.count, tagged_subjects),
             token_blueprint,
-            describe_player_filter(&create_token.controller, tagged_subjects)
+            describe_player_filter_possessive(&create_token.controller, tagged_subjects)
         );
         if create_token.enters_tapped {
             text.push_str(", tapped");
@@ -3757,7 +3760,7 @@ fn describe_effect_core_expanded(
             "Create {} token copy/copies of {} under {} control",
             describe_value(&create_copy.count, tagged_subjects),
             describe_choose_spec(&create_copy.target, tagged_subjects),
-            describe_player_filter(&create_copy.controller, tagged_subjects)
+            describe_player_filter_possessive(&create_copy.controller, tagged_subjects)
         );
         if create_copy.enters_tapped {
             text.push_str(", tapped");
@@ -3802,25 +3805,25 @@ fn describe_effect_core_expanded(
     }
     if let Some(put_counters) = effect.downcast_ref::<crate::effects::PutCountersEffect>() {
         return Some(format!(
-            "Put {} {:?} counter(s) on {}.",
+            "Put {} {} counter(s) on {}.",
             describe_value(&put_counters.count, tagged_subjects),
-            put_counters.counter_type,
+            describe_counter_type(put_counters.counter_type),
             describe_choose_spec(&put_counters.target, tagged_subjects)
         ));
     }
     if let Some(remove_counters) = effect.downcast_ref::<crate::effects::RemoveCountersEffect>() {
         return Some(format!(
-            "Remove {} {:?} counter(s) from {}.",
+            "Remove {} {} counter(s) from {}.",
             describe_value(&remove_counters.count, tagged_subjects),
-            remove_counters.counter_type,
+            describe_counter_type(remove_counters.counter_type),
             describe_choose_spec(&remove_counters.target, tagged_subjects)
         ));
     }
     if let Some(remove_up_to) = effect.downcast_ref::<crate::effects::RemoveUpToCountersEffect>() {
         return Some(format!(
-            "Remove up to {} {:?} counter(s) from {}.",
+            "Remove up to {} {} counter(s) from {}.",
             describe_value(&remove_up_to.max_count, tagged_subjects),
-            remove_up_to.counter_type,
+            describe_counter_type(remove_up_to.counter_type),
             describe_choose_spec(&remove_up_to.target, tagged_subjects)
         ));
     }
@@ -3835,9 +3838,9 @@ fn describe_effect_core_expanded(
     }
     if let Some(move_counters) = effect.downcast_ref::<crate::effects::MoveCountersEffect>() {
         return Some(format!(
-            "Move {} {:?} counter(s) from {} to {}.",
+            "Move {} {} counter(s) from {} to {}.",
             describe_value(&move_counters.count, tagged_subjects),
-            move_counters.counter_type,
+            describe_counter_type(move_counters.counter_type),
             describe_choose_spec(&move_counters.from, tagged_subjects),
             describe_choose_spec(&move_counters.to, tagged_subjects)
         ));
@@ -4073,6 +4076,26 @@ fn describe_player_filter(
         crate::target::PlayerFilter::IteratedPlayer => "That player".to_string(),
         crate::target::PlayerFilter::ControllerOf(_) => "That object's controller".to_string(),
         crate::target::PlayerFilter::OwnerOf(_) => "That object's owner".to_string(),
+    }
+}
+
+fn describe_player_filter_possessive(
+    filter: &crate::target::PlayerFilter,
+    tagged_subjects: &HashMap<String, String>,
+) -> String {
+    let player = describe_player_filter(filter, tagged_subjects);
+    if player == "You" {
+        "your".to_string()
+    } else {
+        format!("{player}'s")
+    }
+}
+
+fn describe_counter_type(counter_type: crate::object::CounterType) -> String {
+    match counter_type {
+        crate::object::CounterType::PlusOnePlusOne => "+1/+1".to_string(),
+        crate::object::CounterType::MinusOneMinusOne => "-1/-1".to_string(),
+        other => format!("{other:?}").to_ascii_lowercase(),
     }
 }
 

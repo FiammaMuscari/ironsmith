@@ -261,6 +261,10 @@ enum EffectAst {
         amount: Value,
         target: TargetAst,
     },
+    Fight {
+        creature1: TargetAst,
+        creature2: TargetAst,
+    },
     DealDamageEach {
         amount: Value,
         filter: ObjectFilter,
@@ -3423,6 +3427,20 @@ fn parse_where_x_is_number_of_filter_value(tokens: &[Token]) -> Option<Value> {
     Some(Value::Count(filter))
 }
 
+fn token_index_for_word_index(tokens: &[Token], word_index: usize) -> Option<usize> {
+    let mut seen_words = 0usize;
+    for (idx, token) in tokens.iter().enumerate() {
+        if token.as_word().is_none() {
+            continue;
+        }
+        if seen_words == word_index {
+            return Some(idx);
+        }
+        seen_words += 1;
+    }
+    None
+}
+
 fn parse_enters_tapped_for_filter_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
@@ -3430,15 +3448,18 @@ fn parse_enters_tapped_for_filter_line(
     if words.contains(&"unless") {
         return Ok(None);
     }
-    let enter_idx = words
+    let enter_word_idx = words
         .iter()
         .position(|word| *word == "enter" || *word == "enters");
-    let Some(enter_idx) = enter_idx else {
+    let Some(enter_word_idx) = enter_word_idx else {
+        return Ok(None);
+    };
+    let Some(enter_token_idx) = token_index_for_word_index(tokens, enter_word_idx) else {
         return Ok(None);
     };
     if !words
         .iter()
-        .skip(enter_idx + 1)
+        .skip(enter_word_idx + 1)
         .any(|word| *word == "tapped")
     {
         return Ok(None);
@@ -3446,7 +3467,7 @@ fn parse_enters_tapped_for_filter_line(
     if words.first().copied() == Some("this") {
         return Ok(None);
     }
-    let filter = parse_object_filter(&tokens[..enter_idx], false)?;
+    let filter = parse_object_filter(&tokens[..enter_token_idx], false)?;
     Ok(Some(StaticAbility::enters_tapped_for_filter(filter)))
 }
 
@@ -3486,10 +3507,13 @@ fn parse_enters_with_additional_counter_for_filter_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let words = words(tokens);
-    let enter_idx = words
+    let enter_word_idx = words
         .iter()
         .position(|word| *word == "enter" || *word == "enters");
-    let Some(enter_idx) = enter_idx else {
+    let Some(enter_word_idx) = enter_word_idx else {
+        return Ok(None);
+    };
+    let Some(enter_token_idx) = token_index_for_word_index(tokens, enter_word_idx) else {
         return Ok(None);
     };
 
@@ -3506,7 +3530,7 @@ fn parse_enters_with_additional_counter_for_filter_line(
         return Ok(None);
     }
 
-    let filter = parse_object_filter(&tokens[..enter_idx], false)?;
+    let filter = parse_object_filter(&tokens[..enter_token_idx], false)?;
 
     let additional_idx = tokens
         .iter()
@@ -9880,6 +9904,9 @@ fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardText
             parser: parse_copy_spell_clause,
         },
         ClausePrimitive {
+            parser: parse_fight_clause,
+        },
+        ClausePrimitive {
             parser: parse_for_each_opponent_clause,
         },
         ClausePrimitive {
@@ -9899,6 +9926,59 @@ fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardText
         }
     }
     Ok(None)
+}
+
+fn parse_fight_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    let Some(fight_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("fight") || token.is_word("fights"))
+    else {
+        return Ok(None);
+    };
+
+    if fight_idx + 1 >= tokens.len() {
+        return Err(CardTextError::ParseError(format!(
+            "fight clause requires two creatures (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let right_tokens = trim_commas(&tokens[fight_idx + 1..]);
+    if right_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "fight clause requires two creatures (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let creature1 = if fight_idx == 0 {
+        TargetAst::Source(None)
+    } else {
+        let left_tokens = trim_commas(&tokens[..fight_idx]);
+        if left_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "fight clause requires two creatures (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        parse_target_phrase(&left_tokens)?
+    };
+    let creature2 = parse_target_phrase(&right_tokens)?;
+
+    for target in [&creature1, &creature2] {
+        if matches!(target, TargetAst::Player(_, _)) {
+            return Err(CardTextError::ParseError(format!(
+                "fight target must be a creature (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+    }
+
+    Ok(Some(EffectAst::Fight {
+        creature1,
+        creature2,
+    }))
 }
 
 fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
@@ -13160,6 +13240,13 @@ fn effects_reference_tag(effects: &[EffectAst], tag: &str) -> bool {
 
 fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
     match effect {
+        EffectAst::Fight {
+            creature1,
+            creature2,
+        } => {
+            matches!(creature1, TargetAst::Tagged(t, _) if t.as_str() == tag)
+                || matches!(creature2, TargetAst::Tagged(t, _) if t.as_str() == tag)
+        }
         EffectAst::DealDamage { target, .. }
         | EffectAst::Counter { target }
         | EffectAst::PutCounters { target, .. }
@@ -13315,6 +13402,13 @@ fn effect_references_its_controller(effect: &EffectAst) -> bool {
 
 fn effect_references_it_tag(effect: &EffectAst) -> bool {
     match effect {
+        EffectAst::Fight {
+            creature1,
+            creature2,
+        } => {
+            matches!(creature1, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
+                || matches!(creature2, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
+        }
         EffectAst::DealDamage { target, .. }
         | EffectAst::Counter { target }
         | EffectAst::PutCounters { target, .. }
@@ -13585,6 +13679,13 @@ fn collect_tag_spans_from_effect(
     ctx: &NormalizedLine,
 ) {
     match effect {
+        EffectAst::Fight {
+            creature1,
+            creature2,
+        } => {
+            collect_tag_spans_from_target(creature1, annotations, ctx);
+            collect_tag_spans_from_target(creature2, annotations, ctx);
+        }
         EffectAst::DealDamage { target, .. }
         | EffectAst::Counter { target }
         | EffectAst::PutCounters { target, .. }
@@ -13842,6 +13943,22 @@ fn compile_effect(
             }
             if let TargetAst::Player(filter, _) = target {
                 ctx.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
+            }
+            Ok((vec![effect], choices))
+        }
+        EffectAst::Fight {
+            creature1,
+            creature2,
+        } => {
+            let spec1 = resolve_choose_spec_it_tag(&choose_spec_for_target(creature1), ctx)?;
+            let spec2 = resolve_choose_spec_it_tag(&choose_spec_for_target(creature2), ctx)?;
+            let effect = Effect::fight(spec1.clone(), spec2.clone());
+            let mut choices = Vec::new();
+            if spec1.is_target() {
+                choices.push(spec1);
+            }
+            if spec2.is_target() {
+                choices.push(spec2);
             }
             Ok((vec![effect], choices))
         }
@@ -18560,6 +18677,19 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_opponents_control_enter_tapped_preserves_controller_filter() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Frozen Aether Variant")
+            .parse_text("Artifacts, creatures, and lands your opponents control enter the battlefield tapped.")
+            .expect("should parse opponents-control enters tapped line");
+
+        let rendered = compiled_lines(&def).join(" | ").to_ascii_lowercase();
+        assert!(
+            rendered.contains("opponent"),
+            "expected rendered line to preserve opponents controller filter, got {rendered}"
+        );
+    }
+
+    #[test]
     fn parse_pay_life_or_enter_tapped_shockland_line() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Blood Crypt Variant")
             .parse_text(
@@ -20510,6 +20640,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_enters_tapped_filter_keeps_opponent_controller_constraint() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Frozen Aether Variant")
+            .parse_text("Artifacts, creatures, and lands your opponents control enter the battlefield tapped.")
+            .expect("should parse opponents-control enters tapped line");
+
+        let rendered = compiled_lines(&def).join(" | ").to_ascii_lowercase();
+        assert!(
+            rendered.contains("opponent"),
+            "expected rendered line to preserve opponents controller filter, got {rendered}"
+        );
+    }
+
+    #[test]
     fn test_parse_prowess_keyword_line() {
         let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Prowess Creature")
             .card_types(vec![CardType::Creature])
@@ -20611,6 +20754,25 @@ mod tests {
         assert!(
             joined.contains("may choose new targets") && !joined.contains("you may choose new targets"),
             "expected retarget permission to stay linked to targeted player, got {joined}"
+        );
+    }
+
+    #[test]
+    fn test_parse_target_creature_you_control_fights_target_creature_you_dont_control() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Prey Upon Probe")
+            .card_types(vec![CardType::Sorcery])
+            .parse_text("Target creature you control fights target creature you don't control.")
+            .expect("parse fight clause");
+
+        let debug = format!("{:?}", def.spell_effect);
+        assert!(
+            debug.contains("FightEffect"),
+            "expected fight effect in spell text, got {debug}"
+        );
+        let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+        assert!(
+            joined.contains("fights"),
+            "expected compiled fight text, got {joined}"
         );
     }
 

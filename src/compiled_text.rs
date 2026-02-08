@@ -1192,6 +1192,13 @@ fn describe_effect(effect: &Effect) -> String {
             describe_choose_spec(&deal_damage.target)
         );
     }
+    if let Some(fight) = effect.downcast_ref::<crate::effects::FightEffect>() {
+        return format!(
+            "{} fights {}",
+            describe_choose_spec(&fight.creature1),
+            describe_choose_spec(&fight.creature2)
+        );
+    }
     if let Some(counter_spell) = effect.downcast_ref::<crate::effects::CounterEffect>() {
         return format!("Counter {}", describe_choose_spec(&counter_spell.target));
     }
@@ -1664,10 +1671,10 @@ fn describe_effect(effect: &Effect) -> String {
     if let Some(create_token) = effect.downcast_ref::<crate::effects::CreateTokenEffect>() {
         let token_blueprint = describe_token_blueprint(&create_token.token);
         let mut text = format!(
-            "Create {} {} under {}'s control",
+            "Create {} {} under {} control",
             describe_value(&create_token.count),
             token_blueprint,
-            describe_player_filter(&create_token.controller)
+            describe_possessive_player_filter(&create_token.controller)
         );
         if create_token.enters_tapped {
             text.push_str(", tapped");
@@ -1682,10 +1689,10 @@ fn describe_effect(effect: &Effect) -> String {
     }
     if let Some(create_copy) = effect.downcast_ref::<crate::effects::CreateTokenCopyEffect>() {
         let mut text = format!(
-            "Create {} token copy/copies of {} under {}'s control",
+            "Create {} token copy/copies of {} under {} control",
             describe_value(&create_copy.count),
             describe_choose_spec(&create_copy.target),
-            describe_player_filter(&create_copy.controller)
+            describe_possessive_player_filter(&create_copy.controller)
         );
         if create_copy.enters_tapped {
             text.push_str(", tapped");
