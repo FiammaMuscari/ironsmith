@@ -2474,6 +2474,7 @@ fn describe_prevention_target(
         crate::prevention::PreventionTarget::PermanentsMatching(filter) => {
             format!("permanents matching {}", filter.description())
         }
+        crate::prevention::PreventionTarget::Players => "all players".to_string(),
         crate::prevention::PreventionTarget::You => "you".to_string(),
         crate::prevention::PreventionTarget::YouAndPermanentsYouControl => {
             "you and permanents you control".to_string()
@@ -3180,6 +3181,15 @@ fn describe_effect_core_expanded(
             describe_damage_filter(&prevent_damage.damage_filter),
             describe_choose_spec(&prevent_damage.target, tagged_subjects),
             describe_until(&prevent_damage.duration, tagged_subjects)
+        ));
+    }
+    if let Some(prevent_from) =
+        effect.downcast_ref::<crate::effects::PreventAllCombatDamageFromEffect>()
+    {
+        return Some(format!(
+            "Prevent combat damage from {} {}.",
+            describe_choose_spec(&prevent_from.source, tagged_subjects),
+            describe_until(&prevent_from.until, tagged_subjects)
         ));
     }
     if let Some(prevent_all) = effect.downcast_ref::<crate::effects::PreventAllDamageEffect>() {

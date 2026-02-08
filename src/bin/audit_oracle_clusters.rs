@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 
 use ironsmith::cards::CardDefinitionBuilder;
-use ironsmith::compiled_text::compiled_lines;
+use ironsmith::compiled_text::oracle_like_lines;
 use ironsmith::ids::CardId;
 use serde::Serialize;
 use serde_json::Value;
@@ -815,7 +815,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let audit = match parse_result {
             Ok(definition) => {
-                let compiled = compiled_lines(&definition);
+                let compiled = oracle_like_lines(&definition);
                 let (oracle_coverage, compiled_coverage, line_delta, semantic_mismatch) =
                     compare_semantics(&card_input.oracle_text, &compiled);
                 CardAudit {

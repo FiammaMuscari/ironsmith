@@ -1564,6 +1564,34 @@ impl Effect {
         ))
     }
 
+    /// Create a "prevent all combat damage from a chosen source" effect.
+    pub fn prevent_all_combat_damage_from(source: ChooseSpec, until: Until) -> Self {
+        use crate::effects::PreventAllCombatDamageFromEffect;
+        Self::new(PreventAllCombatDamageFromEffect::new(source, until))
+    }
+
+    /// Create a "prevent all combat damage to players" effect.
+    pub fn prevent_all_combat_damage_to_players(until: Until) -> Self {
+        use crate::effects::PreventAllDamageEffect;
+        use crate::prevention::{DamageFilter, PreventionTarget};
+        Self::new(PreventAllDamageEffect::new(
+            PreventionTarget::Players,
+            DamageFilter::combat(),
+            until,
+        ))
+    }
+
+    /// Create a "prevent all combat damage to you" effect.
+    pub fn prevent_all_combat_damage_to_you(until: Until) -> Self {
+        use crate::effects::PreventAllDamageEffect;
+        use crate::prevention::{DamageFilter, PreventionTarget};
+        Self::new(PreventAllDamageEffect::new(
+            PreventionTarget::You,
+            DamageFilter::combat(),
+            until,
+        ))
+    }
+
     /// Create a "prevent all damage to matching permanents" effect.
     pub fn prevent_all_damage_to(filter: ObjectFilter, until: Until) -> Self {
         use crate::effects::PreventAllDamageEffect;

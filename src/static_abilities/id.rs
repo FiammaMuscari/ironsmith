@@ -68,6 +68,7 @@ pub enum StaticAbilityId {
     TophFirstMetalbender,
     MarvinMurderousMimic,
     AttachedAbilityGrant,
+    GrantObjectAbilityForFilter,
     SetColors,
     MakeColorless,
     RemoveSupertypes,
@@ -219,6 +220,7 @@ impl StaticAbilityId {
                 | RemoveAllAbilitiesForFilter
                 | SetBasePowerToughnessForFilter
                 | EquipmentGrant
+                | GrantObjectAbilityForFilter
                 | BloodMoon
                 | Humility
                 | BelloBardOfTheBrambles

@@ -346,6 +346,60 @@ fn describe_until(until: &Until) -> String {
     }
 }
 
+fn describe_damage_filter(filter: &crate::prevention::DamageFilter) -> String {
+    let mut parts = Vec::new();
+    if filter.combat_only {
+        parts.push("combat damage".to_string());
+    } else if filter.noncombat_only {
+        parts.push("noncombat damage".to_string());
+    } else {
+        parts.push("all damage".to_string());
+    }
+
+    if let Some(source_filter) = &filter.from_source {
+        parts.push(format!("from {}", source_filter.description()));
+    }
+    if let Some(source_types) = &filter.from_card_types
+        && !source_types.is_empty()
+    {
+        let text = source_types
+            .iter()
+            .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(" or ");
+        parts.push(format!("from {text} sources"));
+    }
+    if let Some(source_colors) = &filter.from_colors
+        && !source_colors.is_empty()
+    {
+        let text = source_colors
+            .iter()
+            .map(|color| format!("{color:?}").to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(" or ");
+        parts.push(format!("from {text} sources"));
+    }
+    if filter.from_specific_source.is_some() {
+        parts.push("from that source".to_string());
+    }
+
+    parts.join(" ")
+}
+
+fn describe_prevention_target(target: &crate::prevention::PreventionTarget) -> &'static str {
+    match target {
+        crate::prevention::PreventionTarget::Player(_) => "that player",
+        crate::prevention::PreventionTarget::Permanent(_) => "that permanent",
+        crate::prevention::PreventionTarget::PermanentsMatching(_) => "matching permanents",
+        crate::prevention::PreventionTarget::Players => "players",
+        crate::prevention::PreventionTarget::You => "you",
+        crate::prevention::PreventionTarget::YouAndPermanentsYouControl => {
+            "you and permanents you control"
+        }
+        crate::prevention::PreventionTarget::All => "all players and permanents",
+    }
+}
+
 fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
     match restriction {
         crate::effect::Restriction::GainLife(filter) => {
@@ -1655,17 +1709,29 @@ fn describe_effect(effect: &Effect) -> String {
             describe_mana_pool_owner(&add_commander.player)
         );
     }
-    if let Some(prevent_all) = effect.downcast_ref::<crate::effects::PreventAllDamageEffect>() {
-        let damage_type = if prevent_all.damage_filter.combat_only {
-            "combat damage"
-        } else if prevent_all.damage_filter.noncombat_only {
-            "noncombat damage"
-        } else {
-            "all damage"
-        };
+    if let Some(prevent_from) =
+        effect.downcast_ref::<crate::effects::PreventAllCombatDamageFromEffect>()
+    {
         return format!(
-            "Prevent {} {}",
+            "Prevent combat damage from {} {}",
+            describe_choose_spec(&prevent_from.source),
+            describe_until(&prevent_from.until)
+        );
+    }
+    if let Some(prevent_all) = effect.downcast_ref::<crate::effects::PreventAllDamageEffect>() {
+        let damage_type = describe_damage_filter(&prevent_all.damage_filter);
+        let protected = describe_prevention_target(&prevent_all.target);
+        if matches!(prevent_all.target, crate::prevention::PreventionTarget::All) {
+            return format!(
+                "Prevent {} {}",
+                damage_type,
+                describe_until(&prevent_all.until)
+            );
+        }
+        return format!(
+            "Prevent {} to {} {}",
             damage_type,
+            protected,
             describe_until(&prevent_all.until)
         );
     }
@@ -1981,5 +2047,136 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
             describe_effect_list(spell_effects)
         ));
     }
+    out
+}
+
+fn strip_render_heading(line: &str) -> String {
+    let Some((prefix, rest)) = line.split_once(':') else {
+        return line.trim().to_string();
+    };
+    let prefix = prefix.trim().to_ascii_lowercase();
+    let looks_like_heading = prefix.contains("ability")
+        || prefix.contains("effects")
+        || prefix.starts_with("spell")
+        || prefix.starts_with("cost");
+    if looks_like_heading {
+        rest.trim().to_string()
+    } else {
+        line.trim().to_string()
+    }
+}
+
+fn is_keyword_phrase(phrase: &str) -> bool {
+    let lower = phrase.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+    if lower.starts_with("protection from ") {
+        return true;
+    }
+    matches!(
+        lower.as_str(),
+        "flying"
+            | "first strike"
+            | "double strike"
+            | "deathtouch"
+            | "defender"
+            | "flash"
+            | "haste"
+            | "hexproof"
+            | "indestructible"
+            | "intimidate"
+            | "lifelink"
+            | "menace"
+            | "reach"
+            | "shroud"
+            | "trample"
+            | "vigilance"
+            | "fear"
+            | "flanking"
+            | "shadow"
+            | "horsemanship"
+            | "phasing"
+            | "wither"
+            | "infect"
+            | "changeling"
+    )
+}
+
+fn split_have_clause(clause: &str) -> Option<(String, String)> {
+    let trimmed = clause.trim();
+    for verb in [" have ", " has "] {
+        if let Some(idx) = trimmed.to_ascii_lowercase().find(verb) {
+            let subject = trimmed[..idx].trim();
+            let keyword = trimmed[idx + verb.len()..].trim();
+            if !subject.is_empty() && is_keyword_phrase(keyword) {
+                return Some((subject.to_string(), keyword.to_string()));
+            }
+        }
+    }
+    None
+}
+
+fn join_oracle_list(items: &[String]) -> String {
+    match items.len() {
+        0 => String::new(),
+        1 => items[0].clone(),
+        2 => format!("{}, {}", items[0], items[1]),
+        _ => {
+            let mut out = items[..items.len() - 1].join(", ");
+            out.push_str(", ");
+            out.push_str(items.last().map(String::as_str).unwrap_or_default());
+            out
+        }
+    }
+}
+
+/// Render compiled output in a near-oracle style for semantic diffing.
+pub fn oracle_like_lines(def: &CardDefinition) -> Vec<String> {
+    let base_lines = compiled_lines(def);
+    let stripped = base_lines
+        .iter()
+        .map(|line| strip_render_heading(line))
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+
+    let mut out = Vec::new();
+    let mut idx = 0usize;
+    while idx < stripped.len() {
+        if is_keyword_phrase(&stripped[idx]) {
+            let mut keywords = vec![stripped[idx].clone()];
+            let mut consumed = 1usize;
+            while idx + consumed < stripped.len() && is_keyword_phrase(&stripped[idx + consumed]) {
+                keywords.push(stripped[idx + consumed].clone());
+                consumed += 1;
+            }
+            out.push(join_oracle_list(&keywords));
+            idx += consumed;
+            continue;
+        }
+
+        if let Some((subject, keyword)) = split_have_clause(&stripped[idx]) {
+            let mut keywords = vec![keyword];
+            let mut consumed = 1usize;
+            while idx + consumed < stripped.len() {
+                let Some((next_subject, next_keyword)) = split_have_clause(&stripped[idx + consumed])
+                else {
+                    break;
+                };
+                if next_subject != subject {
+                    break;
+                }
+                keywords.push(next_keyword);
+                consumed += 1;
+            }
+            out.push(format!("{subject} have {}", join_oracle_list(&keywords)));
+            idx += consumed;
+            continue;
+        }
+
+        out.push(stripped[idx].clone());
+        idx += 1;
+    }
+
     out
 }

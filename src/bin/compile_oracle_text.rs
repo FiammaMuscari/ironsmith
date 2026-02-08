@@ -2,7 +2,7 @@ use std::env;
 use std::io::{self, Read};
 
 use ironsmith::cards::CardDefinitionBuilder;
-use ironsmith::compiled_text::compiled_lines;
+use ironsmith::compiled_text::{compiled_lines, oracle_like_lines};
 use ironsmith::ids::CardId;
 
 fn read_input_text(text_arg: Option<String>) -> Result<String, String> {
@@ -25,6 +25,7 @@ fn main() -> Result<(), String> {
     let mut stacktrace = false;
     let mut trace = false;
     let mut allow_unsupported = false;
+    let mut detailed = false;
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -49,9 +50,12 @@ fn main() -> Result<(), String> {
             "--allow-unsupported" => {
                 allow_unsupported = true;
             }
+            "--detailed" => {
+                detailed = true;
+            }
             _ => {
                 return Err(format!(
-                    "unknown argument '{arg}'. expected --name <value>, --text <value>, --trace, --allow-unsupported, and/or --stacktrace"
+                    "unknown argument '{arg}'. expected --name <value>, --text <value>, --trace, --allow-unsupported, --detailed, and/or --stacktrace"
                 ));
             }
         }
@@ -92,7 +96,11 @@ fn main() -> Result<(), String> {
             .join(" ")
     );
     println!("Compiled abilities/effects");
-    let lines = compiled_lines(&def);
+    let lines = if detailed {
+        compiled_lines(&def)
+    } else {
+        oracle_like_lines(&def)
+    };
     if lines.is_empty() {
         println!("- <none>");
     } else {

@@ -825,6 +825,14 @@ impl StaticAbility {
         Self::new(AttachedAbilityGrant::new(ability, display))
     }
 
+    pub fn grant_object_ability_for_filter(
+        filter: crate::target::ObjectFilter,
+        ability: crate::ability::Ability,
+        display: String,
+    ) -> Self {
+        Self::new(GrantObjectAbilityForFilter::new(filter, ability, display))
+    }
+
     pub fn spend_mana_as_any_color_players() -> Self {
         Self::new(SpendManaAsAnyColor)
     }

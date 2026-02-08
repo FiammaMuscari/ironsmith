@@ -322,6 +322,16 @@ enum EffectAst {
     PreventAllCombatDamage {
         duration: Until,
     },
+    PreventAllCombatDamageFromSource {
+        duration: Until,
+        source: TargetAst,
+    },
+    PreventAllCombatDamageToPlayers {
+        duration: Until,
+    },
+    PreventAllCombatDamageToYou {
+        duration: Until,
+    },
     GrantProtectionChoice {
         target: TargetAst,
         allow_colorless: bool,
@@ -1724,6 +1734,9 @@ fn parse_static_ability_line(
         return Ok(Some(vec![ability]));
     }
     if let Some(ability) = parse_enchanted_has_activated_ability_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
+    if let Some(ability) = parse_filter_has_granted_ability_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
     if let Some(abilities) = parse_equipped_gets_and_has_activated_ability_line(tokens)? {
@@ -3956,6 +3969,103 @@ fn parse_enchanted_has_activated_ability_line(
     )))
 }
 
+fn parse_filter_has_granted_ability_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.is_empty() {
+        return Ok(None);
+    }
+    if clause_words.iter().any(|word| *word == "get" || *word == "gets") {
+        return Ok(None);
+    }
+
+    let Some(has_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("has") || token.is_word("have"))
+    else {
+        return Ok(None);
+    };
+    if has_idx == 0 || has_idx + 1 >= tokens.len() {
+        return Ok(None);
+    }
+
+    let subject_tokens = trim_commas(&tokens[..has_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+    let subject_words = words(&subject_tokens);
+    if subject_words.first().is_some_and(|word| *word == "enchanted" || *word == "equipped")
+        || is_source_reference_words(&subject_words)
+    {
+        return Ok(None);
+    }
+
+    let ability_tokens = &tokens[has_idx + 1..];
+    let has_colon = ability_tokens
+        .iter()
+        .any(|token| matches!(token, Token::Colon(_)));
+    let looks_like_trigger = ability_tokens.first().is_some_and(|token| {
+        token.is_word("when")
+            || token.is_word("whenever")
+            || (token.is_word("at")
+                && ability_tokens
+                    .get(1)
+                    .is_some_and(|next| next.is_word("the")))
+    });
+    if !has_colon && !looks_like_trigger {
+        return Ok(None);
+    }
+
+    let subject = parse_anthem_subject(&subject_tokens)?;
+    let AnthemSubjectAst::Filter(filter) = subject else {
+        return Ok(None);
+    };
+
+    let mut ability = if has_colon {
+        let Some(parsed) = parse_activated_line(ability_tokens)? else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported granted activated/triggered ability clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        };
+        parsed.ability
+    } else if looks_like_trigger {
+        match parse_triggered_line(ability_tokens)? {
+            LineAst::Triggered { trigger, effects } => {
+                let (compiled_effects, choices) = compile_trigger_effects(Some(&trigger), &effects)?;
+                Ability {
+                    kind: AbilityKind::Triggered(TriggeredAbility {
+                        trigger: compile_trigger_spec(trigger),
+                        effects: compiled_effects,
+                        choices,
+                        intervening_if: None,
+                    }),
+                    functional_zones: vec![Zone::Battlefield],
+                    text: None,
+                }
+            }
+            _ => {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported granted activated/triggered ability clause (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+        }
+    } else {
+        return Ok(None);
+    };
+    if ability.text.is_none() {
+        ability.text = Some(words(ability_tokens).join(" "));
+    }
+
+    Ok(Some(StaticAbility::grant_object_ability_for_filter(
+        filter,
+        ability,
+        clause_words.join(" "),
+    )))
+}
+
 fn parse_activated_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardTextError> {
     let Some(colon_idx) = tokens
         .iter()
@@ -6155,6 +6265,24 @@ fn try_build_unless(
     let action_tokens = &after_unless[action_token_idx..];
     let action_words: Vec<&str> = action_tokens.iter().filter_map(Token::as_word).collect();
 
+    // "unless [player] pays N life" should compile as an unless-action branch
+    // where the deciding player loses life.
+    if action_words.first() == Some(&"pay") || action_words.first() == Some(&"pays") {
+        let life_tokens = &action_tokens[1..];
+        if let Some((amount, used)) = parse_value(life_tokens)
+            && life_tokens.get(used).is_some_and(|token| token.is_word("life"))
+            && life_tokens
+                .get(used + 1)
+                .map_or(true, |token| matches!(token, Token::Period(_)))
+        {
+            return Ok(Some(EffectAst::UnlessAction {
+                effects,
+                alternative: vec![EffectAst::LoseLife { amount, player }],
+                player,
+            }));
+        }
+    }
+
     // Try mana payment first: "pay(s) {mana} [optional trailing condition]"
     // Uses greedy mana parsing — collects mana symbols until first non-mana word,
     // then categorizes remaining tokens to decide whether to accept.
@@ -6213,11 +6341,6 @@ fn try_build_unless(
     }
 
     // Try action-based alternative: "unless you [verb] [object]"
-    // Skip if the action starts with "pay"/"pays" — that's a mana payment variant
-    // that we already tried above and rejected (due to non-mana trailing tokens).
-    if action_words.first() == Some(&"pay") || action_words.first() == Some(&"pays") {
-        return Ok(None);
-    }
     // Both the main effects and the alternative must parse successfully.
     if let Ok(alternative) = parse_effect_chain(action_tokens) {
         if !alternative.is_empty() {
@@ -7463,16 +7586,141 @@ fn parse_gain_life_equal_to_power_sentence(
 
 fn parse_prevent_damage_sentence(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
     let words = words(tokens);
-    if words.starts_with(&["prevent", "all", "combat", "damage"])
-        && words.contains(&"this")
-        && words.contains(&"turn")
-    {
+    let prefix = ["prevent", "all", "combat", "damage"];
+    if !words.starts_with(&prefix) {
+        return Ok(None);
+    }
+
+    let this_turn_positions: Vec<usize> = words
+        .windows(2)
+        .enumerate()
+        .filter_map(|(idx, pair)| (pair == ["this", "turn"]).then_some(idx))
+        .collect();
+    if this_turn_positions.len() != 1 {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported prevent-all-combat-damage duration (clause: '{}')",
+            words.join(" ")
+        )));
+    }
+    let this_turn_idx = this_turn_positions[0];
+    if this_turn_idx < prefix.len() {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported prevent-all-combat-damage duration (clause: '{}')",
+            words.join(" ")
+        )));
+    }
+
+    let mut core_words = Vec::with_capacity(words.len() - prefix.len() - 2);
+    core_words.extend_from_slice(&words[prefix.len()..this_turn_idx]);
+    core_words.extend_from_slice(&words[this_turn_idx + 2..]);
+    let mut core_tokens = Vec::with_capacity(tokens.len() - prefix.len() - 2);
+    core_tokens.extend_from_slice(&tokens[prefix.len()..this_turn_idx]);
+    core_tokens.extend_from_slice(&tokens[this_turn_idx + 2..]);
+    let core_words = core_words;
+    let core_tokens = core_tokens;
+
+    if core_words == ["that", "would", "be", "dealt"] {
         return Ok(Some(EffectAst::PreventAllCombatDamage {
             duration: Until::EndOfTurn,
         }));
     }
 
-    Ok(None)
+    if core_words.starts_with(&["that", "would", "be", "dealt", "by"]) {
+        let source_tokens = &core_tokens[5..];
+        let source = parse_prevent_damage_source_target(source_tokens, &words)?;
+        return Ok(Some(EffectAst::PreventAllCombatDamageFromSource {
+            duration: Until::EndOfTurn,
+            source,
+        }));
+    }
+
+    if core_words.starts_with(&["that", "would", "be", "dealt", "to"]) {
+        return parse_prevent_damage_target_scope(&core_tokens[5..], &words);
+    }
+
+    if let Some(would_idx) = core_words.iter().position(|word| *word == "would")
+        && core_words.get(would_idx + 1) == Some(&"deal")
+    {
+        let source_tokens = &core_tokens[..would_idx];
+        let source = parse_prevent_damage_source_target(source_tokens, &words)?;
+        return Ok(Some(EffectAst::PreventAllCombatDamageFromSource {
+            duration: Until::EndOfTurn,
+            source,
+        }));
+    }
+
+    Err(CardTextError::ParseError(format!(
+        "unsupported prevent-all-combat-damage clause tail (clause: '{}')",
+        words.join(" ")
+    )))
+}
+
+fn parse_prevent_damage_source_target(
+    tokens: &[Token],
+    clause_words: &[&str],
+) -> Result<TargetAst, CardTextError> {
+    if tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing prevent-all source target (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let source_words: Vec<&str> = words(tokens)
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    let is_explicit_reference = source_words.contains(&"target")
+        || source_words
+            .first()
+            .is_some_and(|word| matches!(*word, "this" | "that" | "it"));
+    if !is_explicit_reference {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported prevent-all source target '{}'",
+            source_words.join(" ")
+        )));
+    }
+
+    let source = parse_target_phrase(tokens)?;
+    match source {
+        TargetAst::Source(_) | TargetAst::Object(_, _, _) | TargetAst::Tagged(_, _) => Ok(source),
+        _ => Err(CardTextError::ParseError(format!(
+            "unsupported prevent-all source target '{}'",
+            words(tokens).join(" ")
+        ))),
+    }
+}
+
+fn parse_prevent_damage_target_scope(
+    tokens: &[Token],
+    clause_words: &[&str],
+) -> Result<Option<EffectAst>, CardTextError> {
+    if tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing prevent-all target scope (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let target_words: Vec<&str> = words(tokens)
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    if target_words.as_slice() == ["player"] || target_words.as_slice() == ["players"] {
+        return Ok(Some(EffectAst::PreventAllCombatDamageToPlayers {
+            duration: Until::EndOfTurn,
+        }));
+    }
+    if target_words.as_slice() == ["you"] {
+        return Ok(Some(EffectAst::PreventAllCombatDamageToYou {
+            duration: Until::EndOfTurn,
+        }));
+    }
+
+    Err(CardTextError::ParseError(format!(
+        "unsupported prevent-all target scope '{}'",
+        words(tokens).join(" ")
+    )))
 }
 
 fn parse_gain_x_plus_life_sentence(
@@ -7553,8 +7801,6 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
     } else {
         Until::EndOfTurn
     };
-
-    let subject_tokens = &tokens[..gain_idx];
 
     let ability_tokens = if let Some(until_idx) = tokens.iter().position(|t| t.is_word("until")) {
         if until_idx > gain_idx + 1 {
@@ -13004,6 +13250,23 @@ fn compile_effect(
             vec![Effect::prevent_all_combat_damage(duration.clone())],
             Vec::new(),
         )),
+        EffectAst::PreventAllCombatDamageFromSource { duration, source } => {
+            let spec = choose_spec_for_target(source);
+            let effect = Effect::prevent_all_combat_damage_from(spec.clone(), duration.clone());
+            let mut choices = Vec::new();
+            if spec.is_target() {
+                choices.push(spec);
+            }
+            Ok((vec![effect], choices))
+        }
+        EffectAst::PreventAllCombatDamageToPlayers { duration } => Ok((
+            vec![Effect::prevent_all_combat_damage_to_players(duration.clone())],
+            Vec::new(),
+        )),
+        EffectAst::PreventAllCombatDamageToYou { duration } => Ok((
+            vec![Effect::prevent_all_combat_damage_to_you(duration.clone())],
+            Vec::new(),
+        )),
         EffectAst::AddMana { mana, player } => {
             let filter = resolve_non_target_player_filter(*player, ctx)?;
             let effect = if matches!(&filter, PlayerFilter::You) {
@@ -14214,12 +14477,11 @@ fn resolve_non_target_player_filter(
             }
         }
         PlayerAst::ItsController => {
-            let tag = ctx.last_object_tag.as_ref().ok_or_else(|| {
-                CardTextError::ParseError(
-                    "cannot resolve 'its controller' without prior reference".to_string(),
-                )
-            })?;
-            Ok(PlayerFilter::ControllerOf(ObjectRef::tagged(tag)))
+            if let Some(tag) = ctx.last_object_tag.as_ref() {
+                Ok(PlayerFilter::ControllerOf(ObjectRef::tagged(tag)))
+            } else {
+                Ok(PlayerFilter::ControllerOf(ObjectRef::Target))
+            }
         }
         PlayerAst::Implicit => {
             if ctx.iterated_player {
@@ -18203,6 +18465,28 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_unless_controller_pays_life_keeps_unless_branch() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Unless Life Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text("{T}: Tap target creature unless its controller pays 2 life.")
+            .expect("parse unless-pays-life clause");
+
+        let lines = compiled_lines(&def);
+        let activated = lines
+            .iter()
+            .find(|line| line.starts_with("Activated ability"))
+            .expect("expected activated ability line");
+        assert!(
+            activated.contains("unless"),
+            "expected unless branch in render, got {activated}"
+        );
+        assert!(
+            activated.contains("2 life"),
+            "expected life-payment alternative in render, got {activated}"
+        );
+    }
+
+    #[test]
     fn parse_equip_keyword_displays_as_keyword_ability() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Strider Harness Equip Variant")
             .parse_text(
@@ -19675,6 +19959,123 @@ mod tests {
             message.contains("unsupported equipped activated-ability grant")
                 || message.contains("unsupported activation cost segment"),
             "expected actionable equipped-grant error, got {message}"
+        );
+    }
+
+    #[test]
+    fn parse_all_slivers_have_activated_ability_as_static_grant() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Sliver Activated Grant Variant")
+            .parse_text("All Slivers have \"{2}, Sacrifice this permanent: Draw a card.\"")
+            .expect("parse sliver activated grant line");
+
+        assert!(
+            def.spell_effect.is_none(),
+            "sliver activated grant must not compile as one-shot spell effects"
+        );
+        let has_filter_grant = def.abilities.iter().any(|ability| {
+            matches!(
+                &ability.kind,
+                AbilityKind::Static(static_ability)
+                    if static_ability.id()
+                        == crate::static_abilities::StaticAbilityId::GrantObjectAbilityForFilter
+            )
+        });
+        assert!(
+            has_filter_grant,
+            "expected filter-based object ability grant static ability, got {:?}",
+            def.abilities
+        );
+    }
+
+    #[test]
+    fn parse_all_slivers_have_triggered_ability_as_static_grant() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Sliver Triggered Grant Variant")
+            .parse_text("All Slivers have \"When this permanent enters, draw a card.\"")
+            .expect("parse sliver triggered grant line");
+
+        assert!(
+            def.spell_effect.is_none(),
+            "sliver triggered grant must not compile as one-shot spell effects"
+        );
+        let has_filter_grant = def.abilities.iter().any(|ability| {
+            matches!(
+                &ability.kind,
+                AbilityKind::Static(static_ability)
+                    if static_ability.id()
+                        == crate::static_abilities::StaticAbilityId::GrantObjectAbilityForFilter
+            )
+        });
+        assert!(
+            has_filter_grant,
+            "expected filter-based object ability grant static ability, got {:?}",
+            def.abilities
+        );
+    }
+
+    #[test]
+    fn parse_prevent_all_combat_damage_global_clause() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Fog Variant")
+            .parse_text("Prevent all combat damage that would be dealt this turn.")
+            .expect("parse basic prevent-all combat clause");
+
+        let effects = def.spell_effect.expect("expected spell effects");
+        let debug = format!("{effects:?}");
+        assert!(
+            debug.contains("PreventAllDamageEffect"),
+            "expected prevent-all damage runtime effect, got {debug}"
+        );
+        assert!(
+            debug.contains("combat_only: true"),
+            "expected combat-only prevention filter, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_prevent_all_combat_damage_by_target_source_clause() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Targeted Fog Variant")
+            .parse_text("Prevent all combat damage that would be dealt by target creature this turn.")
+            .expect("parse source-scoped prevent-all combat clause");
+
+        let effects = def.spell_effect.expect("expected spell effects");
+        let debug = format!("{effects:?}");
+        assert!(
+            debug.contains("PreventAllCombatDamageFromEffect"),
+            "expected source-scoped combat prevention runtime effect, got {debug}"
+        );
+        assert!(
+            debug.contains("Target(") && debug.contains("Creature"),
+            "expected target creature choice for source-scoped prevention, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_prevent_all_combat_damage_to_players_clause() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Player Fog Variant")
+            .parse_text("Prevent all combat damage that would be dealt to players this turn.")
+            .expect("parse players-scoped prevent-all combat clause");
+
+        let effects = def.spell_effect.expect("expected spell effects");
+        let debug = format!("{effects:?}");
+        assert!(
+            debug.contains("target: Players"),
+            "expected prevention target scope to players, got {debug}"
+        );
+        assert!(
+            debug.contains("combat_only: true"),
+            "expected combat-only prevention filter, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_prevent_all_combat_damage_requires_supported_tail() {
+        let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Unsupported Fog Tail Variant")
+            .parse_text("Prevent all combat damage that would be dealt this turn by creatures with power 4 or less.")
+            .expect_err("unsupported prevent-all tail must fail parse");
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("unsupported prevent-all-combat-damage clause tail")
+                || message.contains("unsupported prevent-all source target"),
+            "expected strict prevent-all tail error, got {message}"
         );
     }
 }

@@ -38,6 +38,9 @@ pub enum PreventionTarget {
     /// Protects all permanents matching a filter (e.g., "creatures you control")
     PermanentsMatching(ObjectFilter),
 
+    /// Protects all players.
+    Players,
+
     /// Protects "you" (the shield's controller)
     You,
 
@@ -342,6 +345,7 @@ impl PreventionEffectManager {
             .filter(|s| s.has_prevention_remaining())
             .filter(|s| match &s.protected {
                 PreventionTarget::Player(p) => *p == player,
+                PreventionTarget::Players => true,
                 PreventionTarget::You => s.controller == player,
                 PreventionTarget::YouAndPermanentsYouControl => s.controller == player,
                 PreventionTarget::All => true,

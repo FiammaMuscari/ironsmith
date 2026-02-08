@@ -68,7 +68,8 @@ pub use cards::{
 pub use combat::{
     EnterAttackingEffect, FightEffect, GrantAbilitiesAllEffect, GrantAbilitiesTargetEffect,
     ModifyPowerToughnessAllEffect, ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect,
-    PreventAllDamageEffect, PreventDamageEffect, SetBasePowerToughnessEffect,
+    PreventAllCombatDamageFromEffect, PreventAllDamageEffect, PreventDamageEffect,
+    SetBasePowerToughnessEffect,
 };
 pub use composition::{
     ChooseModeEffect, ChooseObjectsEffect, ConditionalEffect, ForEachControllerOfTaggedEffect,

@@ -1132,6 +1132,55 @@ impl StaticAbilityKind for AttachedAbilityGrant {
     }
 }
 
+/// Permanents matching a filter have an activated or triggered ability.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GrantObjectAbilityForFilter {
+    pub filter: ObjectFilter,
+    pub ability: Ability,
+    pub display: String,
+}
+
+impl GrantObjectAbilityForFilter {
+    pub fn new(filter: ObjectFilter, ability: Ability, display: String) -> Self {
+        Self {
+            filter,
+            ability,
+            display,
+        }
+    }
+}
+
+impl StaticAbilityKind for GrantObjectAbilityForFilter {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::GrantObjectAbilityForFilter
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn generate_effects(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+        _game: &GameState,
+    ) -> Vec<ContinuousEffect> {
+        vec![
+            ContinuousEffect::new(
+                source,
+                controller,
+                EffectTarget::Filter(self.filter.clone()),
+                Modification::AddAbilityGeneric(self.ability.clone()),
+            )
+            .with_source_type(EffectSourceType::StaticAbility),
+        ]
+    }
+}
+
 /// Blood Moon: "Nonbasic lands are Mountains"
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BloodMoon;
