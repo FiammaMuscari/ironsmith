@@ -62,6 +62,11 @@ pub fn steps_from_pip_actions(actions: &[ManaPipPaymentAction]) -> Vec<CostStep>
                 source: GameObjectId(source_id.0),
                 ability_index: (*ability_index).min(u32::MAX as usize) as u32,
             })),
+            ManaPipPaymentAction::PayViaAlternative { permanent_id, .. } => {
+                steps.push(CostStep::Payment(CostPayment::Tap {
+                    objects: vec![GameObjectId(permanent_id.0)],
+                }))
+            }
         }
     }
 

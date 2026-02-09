@@ -1491,7 +1491,11 @@ fn compile_effect(
         EffectAst::GainControl { target, duration } => {
             let spec = choose_spec_for_target(target);
             let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
-            let mut effect = Effect::gain_control_with_duration(spec.clone(), duration.clone());
+            let mut effect = Effect::new(crate::effects::ApplyContinuousEffect::with_spec_runtime(
+                spec.clone(),
+                crate::effects::continuous::RuntimeModification::ChangeControllerToEffectController,
+                duration.clone(),
+            ));
             let mut choices = Vec::new();
             if spec.is_target() {
                 let tag = ctx.next_tag("controlled");
@@ -1686,6 +1690,17 @@ fn compile_effect(
             }
             Ok((vec![effect], choices))
         }
+        EffectAst::Connive { target } => {
+            let spec = choose_spec_for_target(target);
+            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let effect = Effect::connive(spec.clone());
+            let mut choices = Vec::new();
+            if spec.is_target() {
+                choices.push(spec);
+            }
+            Ok((vec![effect], choices))
+        }
+        EffectAst::ConniveIterated => Ok((vec![Effect::connive(ChooseSpec::Iterated)], Vec::new())),
         EffectAst::ReturnToHand { target } => {
             let spec = choose_spec_for_target(target);
             let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
@@ -2385,11 +2400,16 @@ fn compile_effect(
             let spec = choose_spec_for_target(target);
             let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
             let effect = tag_object_target_effect(
-                Effect::pump(
-                    power.clone(),
-                    toughness.clone(),
-                    spec.clone(),
-                    duration.clone(),
+                Effect::new(
+                    crate::effects::ApplyContinuousEffect::with_spec_runtime(
+                        spec.clone(),
+                        crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
+                            power: power.clone(),
+                            toughness: toughness.clone(),
+                        },
+                        duration.clone(),
+                    )
+                    .require_creature_target(),
                 ),
                 &spec,
                 ctx,
@@ -2410,11 +2430,18 @@ fn compile_effect(
             let spec = choose_spec_for_target(target);
             let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
             let effect = tag_object_target_effect(
-                Effect::set_base_power_toughness(
-                    power.clone(),
-                    toughness.clone(),
-                    spec.clone(),
-                    duration.clone(),
+                Effect::new(
+                    crate::effects::ApplyContinuousEffect::with_spec(
+                        spec.clone(),
+                        crate::continuous::Modification::SetPowerToughness {
+                            power: power.clone(),
+                            toughness: toughness.clone(),
+                            sublayer: crate::continuous::PtSublayer::Setting,
+                        },
+                        duration.clone(),
+                    )
+                    .require_creature_target()
+                    .resolve_set_pt_values_at_resolution(),
                 ),
                 &spec,
                 ctx,
@@ -2462,12 +2489,15 @@ fn compile_effect(
         } => {
             let resolved_filter = resolve_it_tag(filter, ctx)?;
             let tag = ctx.next_tag("pumped");
-            let effect = Effect::pump_all(
-                resolved_filter.clone(),
-                power.clone(),
-                toughness.clone(),
+            let effect = Effect::new(crate::effects::ApplyContinuousEffect::new_runtime(
+                crate::continuous::EffectTarget::Filter(resolved_filter.clone()),
+                crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
+                    power: power.clone(),
+                    toughness: toughness.clone(),
+                },
                 duration.clone(),
             )
+            .lock_filter_at_resolution())
             .tag_all(tag.clone());
             ctx.last_object_tag = Some(tag);
             Ok((vec![effect], Vec::new()))
@@ -2488,11 +2518,16 @@ fn compile_effect(
                 Value::Fixed(*power)
             };
             let effect = tag_object_target_effect(
-                Effect::pump(
-                    power_value,
-                    Value::Fixed(*toughness),
-                    spec.clone(),
-                    duration.clone(),
+                Effect::new(
+                    crate::effects::ApplyContinuousEffect::with_spec_runtime(
+                        spec.clone(),
+                        crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
+                            power: power_value,
+                            toughness: Value::Fixed(*toughness),
+                        },
+                        duration.clone(),
+                    )
+                    .require_creature_target(),
                 ),
                 &spec,
                 ctx,
@@ -2508,14 +2543,27 @@ fn compile_effect(
             filter,
             abilities,
             duration,
-        } => Ok((
-            vec![Effect::grant_abilities_all(
-                filter.clone(),
-                abilities.clone(),
+        } => {
+            if abilities.is_empty() {
+                return Ok((Vec::new(), Vec::new()));
+            }
+
+            let resolved_filter = resolve_it_tag(filter, ctx)?;
+            let mut apply = crate::effects::ApplyContinuousEffect::new(
+                crate::continuous::EffectTarget::Filter(resolved_filter),
+                crate::continuous::Modification::AddAbility(abilities[0].clone()),
                 duration.clone(),
-            )],
-            Vec::new(),
-        )),
+            )
+            .lock_filter_at_resolution();
+
+            for ability in abilities.iter().skip(1) {
+                apply = apply.with_additional_modification(
+                    crate::continuous::Modification::AddAbility(ability.clone()),
+                );
+            }
+
+            Ok((vec![Effect::new(apply)], Vec::new()))
+        }
         EffectAst::GrantAbilitiesToTarget {
             target,
             abilities,
@@ -2523,12 +2571,34 @@ fn compile_effect(
         } => {
             let spec = choose_spec_for_target(target);
             let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let Some(first_ability) = abilities.first() else {
+                let effect = tag_object_target_effect(
+                    Effect::new(crate::effects::TargetOnlyEffect::new(spec.clone())),
+                    &spec,
+                    ctx,
+                    "granted",
+                );
+                let mut choices = Vec::new();
+                if spec.is_target() {
+                    choices.push(spec);
+                }
+                return Ok((vec![effect], choices));
+            };
+
+            let mut apply = crate::effects::ApplyContinuousEffect::with_spec(
+                spec.clone(),
+                crate::continuous::Modification::AddAbility(first_ability.clone()),
+                duration.clone(),
+            );
+
+            for ability in abilities.iter().skip(1) {
+                apply = apply.with_additional_modification(
+                    crate::continuous::Modification::AddAbility(ability.clone()),
+                );
+            }
+
             let effect = tag_object_target_effect(
-                Effect::new(crate::effects::GrantAbilitiesTargetEffect::new(
-                    spec.clone(),
-                    abilities.clone(),
-                    duration.clone(),
-                )),
+                Effect::new(apply),
                 &spec,
                 ctx,
                 "granted",

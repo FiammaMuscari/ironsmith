@@ -1,5 +1,7 @@
 //! "Whenever an ability of [filter] is activated" trigger.
 
+use crate::events::EventKind;
+use crate::events::spells::AbilityActivatedEvent;
 use crate::target::ObjectFilter;
 use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
@@ -16,10 +18,22 @@ impl AbilityActivatedTrigger {
 }
 
 impl TriggerMatcher for AbilityActivatedTrigger {
-    fn matches(&self, _event: &TriggerEvent, _ctx: &TriggerContext) -> bool {
-        // We don't have an AbilityActivated event currently.
-        // This would need to be added for full implementation.
-        false
+    fn matches(&self, event: &TriggerEvent, ctx: &TriggerContext) -> bool {
+        if event.kind() != EventKind::AbilityActivated {
+            return false;
+        }
+        let Some(e) = event.downcast::<AbilityActivatedEvent>() else {
+            return false;
+        };
+
+        if let Some(obj) = ctx.game.object(e.source) {
+            self.filter.matches(obj, &ctx.filter_ctx, ctx.game)
+        } else if let Some(snapshot) = e.snapshot.as_ref() {
+            self.filter
+                .matches_snapshot(snapshot, &ctx.filter_ctx, ctx.game)
+        } else {
+            false
+        }
     }
 
     fn display(&self) -> String {

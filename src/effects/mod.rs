@@ -62,7 +62,7 @@ pub use executor_trait::{CostValidationError, EffectExecutor, ModalSpec};
 
 // Re-export effect implementations
 pub use cards::{
-    DiscardEffect, DiscardHandEffect, DrawCardsEffect, LookAtHandEffect, MillEffect,
+    ConniveEffect, DiscardEffect, DiscardHandEffect, DrawCardsEffect, LookAtHandEffect, MillEffect,
     RevealTopEffect, ScryEffect, SearchLibraryEffect, ShuffleLibraryEffect, SurveilEffect,
 };
 pub use combat::{
@@ -73,8 +73,8 @@ pub use combat::{
 };
 pub use composition::{
     ChooseModeEffect, ChooseObjectsEffect, ConditionalEffect, ForEachControllerOfTaggedEffect,
-    ForEachObject, ForEachOpponentEffect, ForEachTaggedEffect, ForEachTaggedPlayerEffect,
-    ForPlayersEffect, IfEffect, MayEffect, SequenceEffect, TagAllEffect, TagAttachedToSourceEffect,
+    ForEachObject, ForEachTaggedEffect, ForEachTaggedPlayerEffect, ForPlayersEffect, IfEffect,
+    MayEffect, SequenceEffect, TagAllEffect, TagAttachedToSourceEffect,
     TagTriggeringDamageTargetEffect, TagTriggeringObjectEffect, TaggedEffect, TargetOnlyEffect,
     UnlessActionEffect, UnlessPaysEffect, VoteEffect, VoteOption, WithIdEffect,
 };
@@ -103,7 +103,7 @@ pub use player::{
 };
 pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};
 pub use restrictions::CantEffect;
-pub use stack::{ChooseNewTargetsEffect, CopySpellEffect, CounterEffect, CounterUnlessPaysEffect};
+pub use stack::{ChooseNewTargetsEffect, CopySpellEffect, CounterEffect};
 pub use tokens::{CreateTokenCopyEffect, CreateTokenEffect, InvestigateEffect};
 pub use zones::{
     DestroyEffect, ExileEffect, ExileFromHandAsCostEffect, MoveToZoneEffect,

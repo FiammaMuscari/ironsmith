@@ -6,4 +6,4 @@
 
 mod apply_continuous;
 
-pub use apply_continuous::ApplyContinuousEffect;
+pub use apply_continuous::{ApplyContinuousEffect, RuntimeModification};

@@ -9,8 +9,11 @@ use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
 use crate::event_processor::{EventOutcome, execute_discard, process_zone_change};
 use crate::events::cause::EventCause;
+use crate::events::permanents::SacrificeEvent;
 use crate::game_state::{GameState, Phase, Step};
 use crate::ids::{ObjectId, PlayerId};
+use crate::snapshot::ObjectSnapshot;
+use crate::triggers::TriggerEvent;
 use crate::types::CardType;
 use crate::zone::Zone;
 
@@ -685,7 +688,20 @@ fn resolve_cost_choice(
                     Err(CostPaymentError::NoValidSacrificeTarget)
                 }
                 EventOutcome::Proceed(final_zone) => {
+                    let snapshot = game
+                        .object(target_id)
+                        .map(|obj| ObjectSnapshot::from_object(obj, game));
+                    let sacrificing_player = snapshot
+                        .as_ref()
+                        .map(|snap| snap.controller)
+                        .or(Some(ctx.payer));
                     game.move_object(target_id, final_zone);
+                    if final_zone == Zone::Graveyard {
+                        game.queue_trigger_event(TriggerEvent::new(
+                            SacrificeEvent::new(target_id, Some(ctx.source))
+                                .with_snapshot(snapshot, sacrificing_player),
+                        ));
+                    }
                     Ok(())
                 }
                 EventOutcome::Replaced => Ok(()),

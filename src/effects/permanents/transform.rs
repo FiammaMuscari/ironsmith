@@ -3,9 +3,11 @@
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::find_target_object;
+use crate::events::other::TransformedEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
+use crate::triggers::TriggerEvent;
 
 /// Effect that transforms a double-faced permanent.
 ///
@@ -68,7 +70,8 @@ impl EffectExecutor for TransformEffect {
             game.set_face_down(target_id);
         }
 
-        Ok(EffectOutcome::resolved())
+        Ok(EffectOutcome::resolved()
+            .with_event(TriggerEvent::new(TransformedEvent::new(target_id))))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {

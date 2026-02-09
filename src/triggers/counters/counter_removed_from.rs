@@ -1,5 +1,7 @@
 //! "Whenever a counter is removed from [filter]" trigger.
 
+use crate::events::EventKind;
+use crate::events::other::MarkersChangedEvent;
 use crate::target::ObjectFilter;
 use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
@@ -16,9 +18,26 @@ impl CounterRemovedFromTrigger {
 }
 
 impl TriggerMatcher for CounterRemovedFromTrigger {
-    fn matches(&self, _event: &TriggerEvent, _ctx: &TriggerContext) -> bool {
-        // We don't have a CounterRemoved event currently.
-        false
+    fn matches(&self, event: &TriggerEvent, ctx: &TriggerContext) -> bool {
+        if event.kind() != EventKind::MarkersChanged {
+            return false;
+        }
+        let Some(e) = event.downcast::<MarkersChangedEvent>() else {
+            return false;
+        };
+        if !e.is_removed() {
+            return false;
+        }
+
+        let Some(object_id) = e.object() else {
+            return false;
+        };
+
+        if let Some(obj) = ctx.game.object(object_id) {
+            self.filter.matches(obj, &ctx.filter_ctx, ctx.game)
+        } else {
+            false
+        }
     }
 
     fn display(&self) -> String {

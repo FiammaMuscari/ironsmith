@@ -289,6 +289,27 @@ pub enum ManaPipPaymentAction {
     },
     /// Pay life (for Phyrexian mana).
     PayLife(u32),
+    /// Pay this pip using a non-mana alternative (e.g., Convoke/Improvise).
+    PayViaAlternative {
+        /// The permanent used to pay the pip.
+        permanent_id: ObjectId,
+        /// Which alternative payment effect is being used.
+        effect: AlternativePaymentEffect,
+    },
+}
+
+/// Pip-level alternative payment effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlternativePaymentEffect {
+    Convoke,
+    Improvise,
+}
+
+/// Tracks a keyword ability payment contribution made while casting a spell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeywordPaymentContribution {
+    pub permanent_id: ObjectId,
+    pub effect: AlternativePaymentEffect,
 }
 
 // ============================================================================
@@ -1184,6 +1205,43 @@ pub fn calculate_effective_mana_cost_with_targets(
     base_cost: &crate::mana::ManaCost,
     chosen_target_count: usize,
 ) -> crate::mana::ManaCost {
+    calculate_effective_mana_cost_with_targets_internal(
+        game,
+        player,
+        spell,
+        base_cost,
+        chosen_target_count,
+        true,
+    )
+}
+
+/// Calculate effective cost for payment stage where Convoke/Improvise are handled
+/// as pip alternatives instead of up-front reductions.
+pub fn calculate_effective_mana_cost_for_payment_with_targets(
+    game: &GameState,
+    player: PlayerId,
+    spell: &crate::object::Object,
+    base_cost: &crate::mana::ManaCost,
+    chosen_target_count: usize,
+) -> crate::mana::ManaCost {
+    calculate_effective_mana_cost_with_targets_internal(
+        game,
+        player,
+        spell,
+        base_cost,
+        chosen_target_count,
+        false,
+    )
+}
+
+fn calculate_effective_mana_cost_with_targets_internal(
+    game: &GameState,
+    player: PlayerId,
+    spell: &crate::object::Object,
+    base_cost: &crate::mana::ManaCost,
+    chosen_target_count: usize,
+    include_convoke_improvise_reductions: bool,
+) -> crate::mana::ManaCost {
     use crate::ability::AbilityKind;
 
     let mut current_cost = base_cost.clone();
@@ -1216,22 +1274,22 @@ pub fn calculate_effective_mana_cost_with_targets(
         current_cost = current_cost.reduce_generic(graveyard_count);
     }
 
-    // Check for Convoke
-    let has_convoke_ability = has_convoke(spell);
+    if include_convoke_improvise_reductions {
+        // Check for Convoke
+        let has_convoke_ability = has_convoke(spell);
+        if has_convoke_ability {
+            // For Convoke, calculate the optimal creature tapping
+            let (_, convoked_cost) = calculate_convoke_cost(game, player, &current_cost);
+            current_cost = convoked_cost;
+        }
 
-    if has_convoke_ability {
-        // For Convoke, calculate the optimal creature tapping
-        let (_, convoked_cost) = calculate_convoke_cost(game, player, &current_cost);
-        current_cost = convoked_cost;
-    }
-
-    // Check for Improvise
-    let has_improvise_ability = has_improvise(spell);
-
-    if has_improvise_ability {
-        // For Improvise, calculate the optimal artifact tapping
-        let (_, improvised_cost) = calculate_improvise_cost(game, player, &current_cost);
-        current_cost = improvised_cost;
+        // Check for Improvise
+        let has_improvise_ability = has_improvise(spell);
+        if has_improvise_ability {
+            // For Improvise, calculate the optimal artifact tapping
+            let (_, improvised_cost) = calculate_improvise_cost(game, player, &current_cost);
+            current_cost = improvised_cost;
+        }
     }
 
     current_cost

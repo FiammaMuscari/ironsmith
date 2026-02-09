@@ -1689,20 +1689,25 @@ fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(counter_spell) = effect.downcast_ref::<crate::effects::CounterEffect>() {
         return format!("Counter {}", describe_choose_spec(&counter_spell.target));
     }
-    if let Some(counter_unless) = effect.downcast_ref::<crate::effects::CounterUnlessPaysEffect>() {
-        return format!(
-            "Counter {} unless its controller pays {}",
-            describe_choose_spec(&counter_unless.target),
-            counter_unless
-                .mana
-                .iter()
-                .copied()
-                .map(describe_mana_symbol)
-                .collect::<Vec<_>>()
-                .join("")
-        );
-    }
     if let Some(unless_pays) = effect.downcast_ref::<crate::effects::UnlessPaysEffect>() {
+        if unless_pays.effects.len() == 1
+            && let Some(counter) =
+                unless_pays.effects[0].downcast_ref::<crate::effects::CounterEffect>()
+        {
+            return format!(
+                "Counter {} unless {} pays {}",
+                describe_choose_spec(&counter.target),
+                describe_player_filter(&unless_pays.player),
+                unless_pays
+                    .mana
+                    .iter()
+                    .copied()
+                    .map(describe_mana_symbol)
+                    .collect::<Vec<_>>()
+                    .join("")
+            );
+        }
+
         let inner_text = describe_effect_list(&unless_pays.effects);
         let mana_text = unless_pays
             .mana

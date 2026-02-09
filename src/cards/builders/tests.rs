@@ -1220,9 +1220,9 @@ fn parse_same_name_target_gets_fans_out_to_tagged_filter() {
     let effects = def.spell_effect.expect("expected spell effects");
     let debug = format!("{effects:?}");
     assert!(
-        debug.contains("ModifyPowerToughnessEffect")
-            && debug.contains("ModifyPowerToughnessAllEffect"),
-        "expected target pump and fanout pump-all effects, got {debug}"
+        debug.matches("ApplyContinuousEffect").count() >= 2
+            && debug.contains("runtime_modifications: [ModifyPowerToughness"),
+        "expected target and fanout continuous runtime modifications, got {debug}"
     );
     assert!(
         debug.contains("SameNameAsTagged") && debug.contains("IsNotTaggedObject"),
@@ -2366,6 +2366,24 @@ fn parse_growth_spasm_style_spawn_reminder_stays_statement_not_static() {
     assert!(
         def.abilities.is_empty(),
         "statement text must not be misclassified as static ability"
+    );
+}
+
+#[test]
+fn parse_convoked_connive_clause_compiles_to_tagged_connive_iteration() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Lethal Scheme Variant")
+        .parse_text("Destroy target creature or planeswalker. Each creature that convoked this spell connives.")
+        .expect("parse convoked connive clause");
+
+    let effects = def.spell_effect.as_ref().expect("expected spell effects");
+    let debug = format!("{effects:?}");
+    assert!(
+        debug.contains("convoked_this_spell"),
+        "expected convoked tag reference, got {debug}"
+    );
+    assert!(
+        debug.contains("ConniveEffect"),
+        "expected connive effect in compiled spell effects, got {debug}"
     );
 }
 

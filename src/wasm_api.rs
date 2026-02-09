@@ -3301,13 +3301,6 @@ fn describe_effect_core_expanded(
             describe_effects_inline(&for_each_object.effects, tagged_subjects)
         ));
     }
-    if let Some(for_each_opponent) = effect.downcast_ref::<crate::effects::ForEachOpponentEffect>()
-    {
-        return Some(format!(
-            "For each opponent, {}.",
-            describe_effects_inline(for_each_opponent.effects(), tagged_subjects)
-        ));
-    }
     if let Some(for_players) = effect.downcast_ref::<crate::effects::ForPlayersEffect>() {
         if let Some(compact) = describe_for_players_choose_then_sacrifice(for_players) {
             return Some(compact);
@@ -3677,21 +3670,52 @@ fn describe_effect_core_expanded(
             describe_choose_spec(&counter.target, tagged_subjects)
         ));
     }
-    if let Some(counter_unless) = effect.downcast_ref::<crate::effects::CounterUnlessPaysEffect>() {
-        let mana = counter_unless
+    if let Some(unless_pays) = effect.downcast_ref::<crate::effects::UnlessPaysEffect>() {
+        if unless_pays.effects.len() == 1
+            && let Some(counter) =
+                unless_pays.effects[0].downcast_ref::<crate::effects::CounterEffect>()
+        {
+            let mana = unless_pays
+                .mana
+                .iter()
+                .map(|symbol| mana_symbol_to_oracle(*symbol))
+                .collect::<Vec<_>>()
+                .join("");
+            let payer = if matches!(
+                unless_pays.player,
+                crate::target::PlayerFilter::ControllerOf(crate::target::ObjectRef::Target)
+            ) {
+                "its controller".to_string()
+            } else {
+                describe_player_filter(&unless_pays.player, tagged_subjects).to_ascii_lowercase()
+            };
+            return Some(format!(
+                "Counter {} unless {} pays {}.",
+                describe_choose_spec(&counter.target, tagged_subjects),
+                payer,
+                if mana.is_empty() {
+                    "{0}".to_string()
+                } else {
+                    mana
+                }
+            ));
+        }
+
+        let mana = unless_pays
             .mana
             .iter()
             .map(|symbol| mana_symbol_to_oracle(*symbol))
             .collect::<Vec<_>>()
             .join("");
         return Some(format!(
-            "Counter {} unless its controller pays {}.",
-            describe_choose_spec(&counter_unless.target, tagged_subjects),
+            "Unless {} pays {}, {}.",
+            describe_player_filter(&unless_pays.player, tagged_subjects).to_ascii_lowercase(),
             if mana.is_empty() {
                 "{0}".to_string()
             } else {
                 mana
-            }
+            },
+            describe_effects_inline(&unless_pays.effects, tagged_subjects)
         ));
     }
     if let Some(copy_spell) = effect.downcast_ref::<crate::effects::CopySpellEffect>() {

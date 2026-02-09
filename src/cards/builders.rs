@@ -476,6 +476,10 @@ enum EffectAst {
         player: PlayerAst,
         random: bool,
     },
+    Connive {
+        target: TargetAst,
+    },
+    ConniveIterated,
     Transform {
         target: TargetAst,
     },

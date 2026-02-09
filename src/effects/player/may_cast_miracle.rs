@@ -144,6 +144,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
                 source_name: Some(card_name),
                 triggering_event: None,
                 intervening_if: None,
+                keyword_payment_contributions: vec![],
                 chosen_modes: None,
             };
 

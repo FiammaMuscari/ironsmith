@@ -13,8 +13,11 @@ use crate::tag::TagKey;
 /// Keyword actions that can be observed by triggers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeywordActionKind {
+    Convoke,
     Earthbend,
+    Improvise,
     Investigate,
+    Connive,
     Proliferate,
     Scry,
     Surveil,
@@ -25,8 +28,11 @@ impl KeywordActionKind {
     /// Parse the inflected trigger verb form.
     pub fn from_trigger_word(word: &str) -> Option<Self> {
         match word {
+            "convoke" | "convokes" | "convoked" => Some(Self::Convoke),
             "earthbend" | "earthbends" => Some(Self::Earthbend),
+            "improvise" | "improvises" | "improvised" => Some(Self::Improvise),
             "investigate" | "investigates" => Some(Self::Investigate),
+            "connive" | "connives" | "connived" => Some(Self::Connive),
             "proliferate" | "proliferates" => Some(Self::Proliferate),
             "scry" | "scries" => Some(Self::Scry),
             "surveil" | "surveils" => Some(Self::Surveil),
@@ -37,8 +43,11 @@ impl KeywordActionKind {
 
     pub fn infinitive(self) -> &'static str {
         match self {
+            Self::Convoke => "convoke",
             Self::Earthbend => "earthbend",
+            Self::Improvise => "improvise",
             Self::Investigate => "investigate",
+            Self::Connive => "connive",
             Self::Proliferate => "proliferate",
             Self::Scry => "scry",
             Self::Surveil => "surveil",
@@ -48,8 +57,11 @@ impl KeywordActionKind {
 
     pub fn third_person(self) -> &'static str {
         match self {
+            Self::Convoke => "convokes",
             Self::Earthbend => "earthbends",
+            Self::Improvise => "improvises",
             Self::Investigate => "investigates",
+            Self::Connive => "connives",
             Self::Proliferate => "proliferates",
             Self::Scry => "scries",
             Self::Surveil => "surveils",

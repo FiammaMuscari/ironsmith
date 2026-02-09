@@ -102,13 +102,14 @@ pub use other::{
     BecameMonstrousEvent, CardDiscardedEvent, CardsDrawnEvent, CounterPlacedEvent,
     KeywordActionEvent, KeywordActionKind, MarkerChangeType, MarkersChangedEvent,
     PermanentTappedEvent, PermanentUntappedEvent, PlayerVote, PlayersFinishedVotingEvent,
+    TransformedEvent,
 };
 pub use phase::{
     BeginningOfCombatEvent, BeginningOfDrawStepEvent, BeginningOfEndStepEvent,
     BeginningOfPostcombatMainPhaseEvent, BeginningOfPrecombatMainPhaseEvent,
     BeginningOfUpkeepEvent, EndOfCombatEvent,
 };
-pub use spells::{SpellCastEvent, SpellCopiedEvent};
+pub use spells::{AbilityActivatedEvent, BecomesTargetedEvent, SpellCastEvent, SpellCopiedEvent};
 
 // Re-export matchers
 pub use cards::matchers::*;
@@ -306,7 +307,7 @@ impl Event {
 
     /// Create a sacrifice event.
     pub fn sacrifice(permanent: ObjectId, source: Option<ObjectId>) -> Self {
-        Self::new(SacrificeEvent { permanent, source })
+        Self::new(SacrificeEvent::new(permanent, source))
     }
 }
 

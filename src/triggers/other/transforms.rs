@@ -1,5 +1,7 @@
 //! "When this permanent transforms" trigger.
 
+use crate::events::EventKind;
+use crate::events::other::TransformedEvent;
 use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
 
@@ -7,9 +9,14 @@ use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
 pub struct TransformsTrigger;
 
 impl TriggerMatcher for TransformsTrigger {
-    fn matches(&self, _event: &TriggerEvent, _ctx: &TriggerContext) -> bool {
-        // We don't have a Transform event currently.
-        false
+    fn matches(&self, event: &TriggerEvent, ctx: &TriggerContext) -> bool {
+        if event.kind() != EventKind::Transformed {
+            return false;
+        }
+        let Some(e) = event.downcast::<TransformedEvent>() else {
+            return false;
+        };
+        e.permanent == ctx.source_id
     }
 
     fn display(&self) -> String {

@@ -16,10 +16,11 @@ use crate::combat_state::{
 use crate::cost::{OptionalCostsPaid, PermanentFilter};
 use crate::costs::CostContext;
 use crate::decision::{
-    AttackerDeclaration, BlockerDeclaration, DecisionMaker, GameProgress, GameResult, LegalAction,
-    ManaPaymentOption, ManaPipPaymentAction, ManaPipPaymentOption, OptionalCostOption,
-    ReplacementOption, ResponseError, TargetRequirement, compute_commander_actions,
-    compute_legal_actions, compute_legal_attackers, compute_legal_blockers, compute_potential_mana,
+    AlternativePaymentEffect, AttackerDeclaration, BlockerDeclaration, DecisionMaker, GameProgress,
+    GameResult, KeywordPaymentContribution, LegalAction, ManaPaymentOption, ManaPipPaymentAction,
+    ManaPipPaymentOption, OptionalCostOption, ReplacementOption, ResponseError, TargetRequirement,
+    compute_commander_actions, compute_legal_actions, compute_legal_attackers,
+    compute_legal_blockers, compute_potential_mana,
 };
 use crate::effect::Effect;
 use crate::events::cause::EventCause;
@@ -27,8 +28,10 @@ use crate::events::combat::{
     CreatureAttackedEvent, CreatureBecameBlockedEvent, CreatureBlockedEvent,
 };
 use crate::events::damage::DamageEvent;
-use crate::events::spells::SpellCastEvent;
+use crate::events::permanents::SacrificeEvent;
+use crate::events::spells::{AbilityActivatedEvent, BecomesTargetedEvent, SpellCastEvent};
 use crate::events::zones::EnterBattlefieldEvent;
+use crate::events::{KeywordActionEvent, KeywordActionKind};
 use crate::executor::{ExecutionContext, ResolvedTarget, execute_effect};
 use crate::game_event::DamageTarget as EventDamageTarget;
 use crate::game_state::{GameState, Phase, StackEntry, Step, Target};
@@ -46,6 +49,7 @@ use crate::rules::damage::{
     DamageResult, DamageTarget, calculate_damage, distribute_trample_damage,
 };
 use crate::rules::state_based::{apply_state_based_actions_with, check_state_based_actions};
+use crate::snapshot::ObjectSnapshot;
 use crate::target::{ChooseSpec, ObjectFilter};
 use crate::triggers::{
     DamageEventTarget, TriggerEvent, TriggerQueue, TriggeredAbilityEntry, check_triggers,
@@ -204,6 +208,139 @@ fn queue_triggers_for_events(
 ) {
     for event in events {
         queue_triggers_for_event(game, trigger_queue, event);
+    }
+}
+
+fn target_events_from_targets(
+    targets: &[Target],
+    source: ObjectId,
+    source_controller: PlayerId,
+    by_ability: bool,
+) -> Vec<TriggerEvent> {
+    targets
+        .iter()
+        .filter_map(|target| {
+            let Target::Object(target_id) = target else {
+                return None;
+            };
+            Some(TriggerEvent::new(BecomesTargetedEvent::new(
+                *target_id,
+                source,
+                source_controller,
+                by_ability,
+            )))
+        })
+        .collect()
+}
+
+fn queue_becomes_targeted_events(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    targets: &[Target],
+    source: ObjectId,
+    source_controller: PlayerId,
+    by_ability: bool,
+) {
+    for event in target_events_from_targets(targets, source, source_controller, by_ability) {
+        queue_triggers_from_event(game, trigger_queue, event, true);
+    }
+}
+
+fn queue_ability_activated_event(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    source: ObjectId,
+    activator: PlayerId,
+    is_mana_ability: bool,
+    source_stable_id: Option<StableId>,
+) {
+    let snapshot = if let Some(obj) = game.object(source) {
+        Some(ObjectSnapshot::from_object(obj, game))
+    } else if let Some(stable_id) = source_stable_id {
+        game.find_object_by_stable_id(stable_id)
+            .and_then(|id| game.object(id))
+            .map(|obj| ObjectSnapshot::from_object(obj, game))
+    } else {
+        None
+    };
+    let event = TriggerEvent::new(
+        AbilityActivatedEvent::new(source, activator, is_mana_ability).with_snapshot(snapshot),
+    );
+    queue_triggers_from_event(game, trigger_queue, event, true);
+}
+
+fn queue_mana_ability_event_for_action(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    action: &ManaPipPaymentAction,
+    activator: PlayerId,
+) {
+    if let ManaPipPaymentAction::ActivateManaAbility { source_id, .. } = action {
+        queue_ability_activated_event(game, trigger_queue, *source_id, activator, true, None);
+    }
+}
+
+fn tap_permanent_with_trigger(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    permanent: ObjectId,
+) {
+    if game.object(permanent).is_some() && !game.is_tapped(permanent) {
+        game.tap(permanent);
+        queue_triggers_from_event(
+            game,
+            trigger_queue,
+            TriggerEvent::new(crate::events::PermanentTappedEvent::new(permanent)),
+            true,
+        );
+    }
+}
+
+fn keyword_action_from_alternative_effect(effect: AlternativePaymentEffect) -> KeywordActionKind {
+    match effect {
+        AlternativePaymentEffect::Convoke => KeywordActionKind::Convoke,
+        AlternativePaymentEffect::Improvise => KeywordActionKind::Improvise,
+    }
+}
+
+fn payment_contribution_tag(effect: AlternativePaymentEffect) -> &'static str {
+    match effect {
+        AlternativePaymentEffect::Convoke => "convoked_this_spell",
+        AlternativePaymentEffect::Improvise => "improvised_this_spell",
+    }
+}
+
+fn record_keyword_payment_contribution(
+    contributions: &mut Vec<KeywordPaymentContribution>,
+    action: &ManaPipPaymentAction,
+) {
+    let ManaPipPaymentAction::PayViaAlternative {
+        permanent_id,
+        effect,
+    } = action
+    else {
+        return;
+    };
+
+    let contribution = KeywordPaymentContribution {
+        permanent_id: *permanent_id,
+        effect: *effect,
+    };
+    if !contributions.contains(&contribution) {
+        contributions.push(contribution);
+    }
+}
+
+fn apply_keyword_payment_tags_for_resolution(
+    game: &GameState,
+    entry: &StackEntry,
+    ctx: &mut ExecutionContext,
+) {
+    for contribution in &entry.keyword_payment_contributions {
+        if let Some(obj) = game.object(contribution.permanent_id) {
+            let snapshot = ObjectSnapshot::from_object(obj, game);
+            ctx.tag_object(payment_contribution_tag(contribution.effect), snapshot);
+        }
     }
 }
 
@@ -783,6 +920,7 @@ fn resolve_stack_entry_full(
     if let Some(ref modes) = entry.chosen_modes {
         ctx = ctx.with_chosen_modes(Some(modes.clone()));
     }
+    apply_keyword_payment_tags_for_resolution(game, &entry, &mut ctx);
 
     // Convert targets and validate them
     // Per MTG Rule 608.2b, if ALL targets are now illegal, the spell/ability fizzles
@@ -1723,6 +1861,8 @@ pub struct PendingCast {
     pub pending_hybrid_pips: Vec<(usize, Vec<crate::mana::ManaSymbol>)>,
     /// The spell's ObjectId on the stack (after being moved per 601.2a).
     pub stack_id: ObjectId,
+    /// Permanents that contributed keyword-ability alternative payments while casting this spell.
+    pub keyword_payment_contributions: Vec<KeywordPaymentContribution>,
 }
 
 /// Stage of the ability activation process.
@@ -2404,6 +2544,7 @@ pub fn apply_priority_response_with_dm(
                     hybrid_choices: Vec::new(),
                     pending_hybrid_pips: Vec::new(),
                     stack_id,
+                    keyword_payment_contributions: Vec::new(),
                 });
 
                 let ctx = crate::decisions::context::NumberContext::x_value(
@@ -2443,6 +2584,7 @@ pub fn apply_priority_response_with_dm(
                     hybrid_choices: Vec::new(),
                     pending_hybrid_pips: Vec::new(),
                     stack_id,
+                    keyword_payment_contributions: Vec::new(),
                 };
 
                 check_modes_or_continue(game, trigger_queue, state, pending, &mut *decision_maker)
@@ -2518,7 +2660,18 @@ pub fn apply_priority_response_with_dm(
                     CostProcessingMode::InlineWithTriggers => {
                         // Sacrifice self - handle inline for trigger detection
                         if game.object(*source).is_some() {
+                            let snapshot = game
+                                .object(*source)
+                                .map(|obj| ObjectSnapshot::from_object(obj, game));
+                            let sacrificing_player = snapshot
+                                .as_ref()
+                                .map(|snap| snap.controller)
+                                .or(Some(player));
                             game.move_object(*source, Zone::Graveyard);
+                            game.queue_trigger_event(TriggerEvent::new(
+                                SacrificeEvent::new(*source, Some(*source))
+                                    .with_snapshot(snapshot, sacrificing_player),
+                            ));
                             drain_pending_trigger_events(game, trigger_queue);
 
                             #[cfg(feature = "net")]
@@ -2558,6 +2711,7 @@ pub fn apply_priority_response_with_dm(
                     }
                 }
             }
+            drain_pending_trigger_events(game, trigger_queue);
 
             // Extract target requirements from the ability effects
             let target_requirements =
@@ -2627,6 +2781,14 @@ pub fn apply_priority_response_with_dm(
                 let entry = StackEntry::ability(*source, player, effects.to_vec())
                     .with_source_info(source_stable_id, source_name);
                 game.push_to_stack(entry);
+                queue_ability_activated_event(
+                    game,
+                    trigger_queue,
+                    *source,
+                    player,
+                    false,
+                    Some(source_stable_id),
+                );
 
                 reset_priority(game, &mut state.tracker);
                 advance_priority_with_dm(game, trigger_queue, decision_maker)
@@ -2693,6 +2855,7 @@ pub fn apply_priority_response_with_dm(
                             GameLoopError::InvalidState(format!("Failed to pay cost: {:?}", e))
                         })?;
                     }
+                    drain_pending_trigger_events(game, trigger_queue);
 
                     // Execute the mana ability effects
                     if let Some(effects) = effects_to_run {
@@ -2714,6 +2877,8 @@ pub fn apply_priority_response_with_dm(
                             }
                         }
                     }
+
+                    queue_ability_activated_event(game, trigger_queue, *source, player, true, None);
 
                     // Player retains priority after activating mana ability
                     return advance_priority_with_dm(game, trigger_queue, decision_maker);
@@ -2796,6 +2961,20 @@ pub fn apply_priority_response_with_dm(
                 .map_err(|e| {
                     GameLoopError::InvalidState(format!("Failed special action: {:?}", e))
                 })?;
+                if let crate::special_actions::SpecialAction::ActivateManaAbility {
+                    permanent_id,
+                    ..
+                } = special
+                {
+                    queue_ability_activated_event(
+                        game,
+                        trigger_queue,
+                        *permanent_id,
+                        player,
+                        true,
+                        None,
+                    );
+                }
             }
 
             // Player retains priority after special actions
@@ -3697,7 +3876,7 @@ fn continue_to_mana_payment(
     targets: Vec<Target>,
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<GameProgress, GameLoopError> {
-    use crate::decision::calculate_effective_mana_cost_with_targets;
+    use crate::decision::calculate_effective_mana_cost_for_payment_with_targets;
 
     let mut pending = pending;
     pending.chosen_targets = targets;
@@ -3752,7 +3931,7 @@ fn continue_to_mana_payment(
 
         // Apply cost reductions (affinity, delve, convoke, improvise)
         base_cost.map(|bc| {
-            calculate_effective_mana_cost_with_targets(
+            calculate_effective_mana_cost_for_payment_with_targets(
                 game,
                 pending.caster,
                 obj,
@@ -3928,6 +4107,7 @@ fn continue_spell_cast_mana_payment(
             pending.chosen_modes,
             pending.cards_to_exile,
             mana_spent_to_cast,
+            pending.keyword_payment_contributions,
             &mut pending.payment_trace,
             true, // mana_already_paid via pip-by-pip
             pending.stack_id,
@@ -3960,8 +4140,14 @@ fn continue_spell_cast_mana_payment(
         .unwrap_or_else(|| "spell".to_string());
 
     let allow_any_color = game.can_spend_mana_as_any_color(player_id, Some(source));
-    let options =
-        build_pip_payment_options(game, player_id, &pip, allow_any_color, &mut *decision_maker);
+    let options = build_pip_payment_options(
+        game,
+        player_id,
+        &pip,
+        allow_any_color,
+        Some(source),
+        &mut *decision_maker,
+    );
 
     // If no options available (shouldn't happen if we validated correctly), error
     if options.is_empty() {
@@ -3970,18 +4156,26 @@ fn continue_spell_cast_mana_payment(
         ));
     }
 
-    // If only one option, auto-select it
-    if state.auto_choose_single_pip_payment && options.len() == 1 {
-        let action = options[0].action.clone();
+    // Auto-select deterministic pip choices when possible.
+    if let Some(auto_choice) = preferred_auto_pip_choice(state, &options) {
+        let action = options[auto_choice].action.clone();
         let pip_paid = execute_pip_payment_action(
             game,
+            trigger_queue,
             player_id,
+            Some(source),
             &action,
             &mut *decision_maker,
             &mut pending.payment_trace,
             Some(&mut pending.mana_spent_to_cast),
         )?;
+        queue_mana_ability_event_for_action(game, trigger_queue, &action, player_id);
+        drain_pending_trigger_events(game, trigger_queue);
         if pip_paid {
+            record_keyword_payment_contribution(
+                &mut pending.keyword_payment_contributions,
+                &action,
+            );
             pending.remaining_mana_pips.remove(0);
         }
         return continue_spell_cast_mana_payment(
@@ -4546,6 +4740,7 @@ fn continue_activation(
                 player_id,
                 &pip,
                 allow_any_color,
+                None,
                 &mut *decision_maker,
             );
 
@@ -4556,17 +4751,21 @@ fn continue_activation(
                 ));
             }
 
-            // If only one option, auto-select it
-            if state.auto_choose_single_pip_payment && options.len() == 1 {
-                let action = options[0].action.clone();
+            // Auto-select deterministic pip choices when possible.
+            if let Some(auto_choice) = preferred_auto_pip_choice(state, &options) {
+                let action = options[auto_choice].action.clone();
                 let pip_paid = execute_pip_payment_action(
                     game,
+                    trigger_queue,
                     player_id,
+                    Some(source),
                     &action,
                     &mut *decision_maker,
                     &mut pending.payment_trace,
                     None,
                 )?;
+                queue_mana_ability_event_for_action(game, trigger_queue, &action, player_id);
+                drain_pending_trigger_events(game, trigger_queue);
                 if pip_paid {
                     pending.remaining_mana_pips.remove(0);
                 }
@@ -4615,6 +4814,22 @@ fn continue_activation(
             }
 
             game.push_to_stack(entry);
+            queue_becomes_targeted_events(
+                game,
+                trigger_queue,
+                &pending.chosen_targets,
+                pending.source,
+                pending.activator,
+                true,
+            );
+            queue_ability_activated_event(
+                game,
+                trigger_queue,
+                pending.source,
+                pending.activator,
+                false,
+                Some(pending.source_stable_id),
+            );
 
             // Clear pending state and checkpoint - action completed successfully
             state.pending_activation = None;
@@ -4686,12 +4901,35 @@ fn expand_mana_cost_to_pips(
     colored_pips
 }
 
+fn preferred_auto_pip_choice(
+    state: &PriorityLoopState,
+    options: &[ManaPipPaymentOption],
+) -> Option<usize> {
+    if options.is_empty() {
+        return None;
+    }
+
+    if state.auto_choose_single_pip_payment && options.len() == 1 {
+        return Some(0);
+    }
+
+    if options
+        .iter()
+        .all(|opt| matches!(opt.action, ManaPipPaymentAction::PayViaAlternative { .. }))
+    {
+        return Some(0);
+    }
+
+    None
+}
+
 /// Build payment options for a single mana pip.
 fn build_pip_payment_options(
     game: &GameState,
     player: PlayerId,
     pip: &[crate::mana::ManaSymbol],
     allow_any_color: bool,
+    source_for_pip_alternatives: Option<ObjectId>,
     decision_maker: &mut impl DecisionMaker,
 ) -> Vec<ManaPipPaymentOption> {
     use crate::mana::ManaSymbol;
@@ -4834,6 +5072,15 @@ fn build_pip_payment_options(
         }
     }
 
+    add_pip_alternative_payment_options(
+        game,
+        player,
+        pip,
+        source_for_pip_alternatives,
+        &mut options,
+        &mut index,
+    );
+
     // Check if this is a Phyrexian pip (has a Life alternative)
     let is_phyrexian = pip.iter().any(|s| matches!(s, ManaSymbol::Life(_)));
 
@@ -4868,6 +5115,78 @@ fn build_pip_payment_options(
     }
 
     options
+}
+
+fn add_pip_alternative_payment_options(
+    game: &GameState,
+    player: PlayerId,
+    pip: &[crate::mana::ManaSymbol],
+    source_for_pip_alternatives: Option<ObjectId>,
+    options: &mut Vec<ManaPipPaymentOption>,
+    index: &mut usize,
+) {
+    let Some(source) = source_for_pip_alternatives else {
+        return;
+    };
+    let Some(spell) = game.object(source) else {
+        return;
+    };
+
+    if crate::decision::has_convoke(spell) {
+        for (creature_id, colors) in crate::decision::get_convoke_creatures(game, player) {
+            if convoke_can_pay_pip(colors, pip) {
+                options.push(ManaPipPaymentOption {
+                    index: *index,
+                    description: format!(
+                        "Tap {} to pay this pip (Convoke)",
+                        describe_permanent(game, creature_id)
+                    ),
+                    action: ManaPipPaymentAction::PayViaAlternative {
+                        permanent_id: creature_id,
+                        effect: AlternativePaymentEffect::Convoke,
+                    },
+                });
+                *index += 1;
+            }
+        }
+    }
+
+    if crate::decision::has_improvise(spell) && improvise_can_pay_pip(pip) {
+        for artifact_id in crate::decision::get_improvise_artifacts(game, player) {
+            options.push(ManaPipPaymentOption {
+                index: *index,
+                description: format!(
+                    "Tap {} to pay this pip (Improvise)",
+                    describe_permanent(game, artifact_id)
+                ),
+                action: ManaPipPaymentAction::PayViaAlternative {
+                    permanent_id: artifact_id,
+                    effect: AlternativePaymentEffect::Improvise,
+                },
+            });
+            *index += 1;
+        }
+    }
+}
+
+fn convoke_can_pay_pip(colors: crate::color::ColorSet, pip: &[crate::mana::ManaSymbol]) -> bool {
+    pip.iter().any(|symbol| match symbol {
+        crate::mana::ManaSymbol::Generic(_) => true,
+        crate::mana::ManaSymbol::White => colors.contains(crate::color::Color::White),
+        crate::mana::ManaSymbol::Blue => colors.contains(crate::color::Color::Blue),
+        crate::mana::ManaSymbol::Black => colors.contains(crate::color::Color::Black),
+        crate::mana::ManaSymbol::Red => colors.contains(crate::color::Color::Red),
+        crate::mana::ManaSymbol::Green => colors.contains(crate::color::Color::Green),
+        crate::mana::ManaSymbol::Colorless
+        | crate::mana::ManaSymbol::Life(_)
+        | crate::mana::ManaSymbol::Snow
+        | crate::mana::ManaSymbol::X => false,
+    })
+}
+
+fn improvise_can_pay_pip(pip: &[crate::mana::ManaSymbol]) -> bool {
+    pip.iter()
+        .any(|symbol| matches!(symbol, crate::mana::ManaSymbol::Generic(_)))
 }
 
 fn add_any_color_pool_options(
@@ -5006,6 +5325,11 @@ fn record_pip_payment_action(trace: &mut Vec<CostStep>, action: &ManaPipPaymentA
                 ability_index: (*ability_index).min(u32::MAX as usize) as u32,
             }));
         }
+        ManaPipPaymentAction::PayViaAlternative { permanent_id, .. } => {
+            trace.push(CostStep::Payment(CostPayment::Tap {
+                objects: vec![GameObjectId(permanent_id.0)],
+            }));
+        }
     }
 }
 
@@ -5113,7 +5437,9 @@ fn record_activation_mana_ability_payment(
 /// false if we only generated mana (need to continue processing this pip).
 fn execute_pip_payment_action(
     game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
     player: PlayerId,
+    source: Option<ObjectId>,
     action: &ManaPipPaymentAction,
     decision_maker: &mut impl DecisionMaker,
     payment_trace: &mut Vec<CostStep>,
@@ -5154,6 +5480,23 @@ fn execute_pip_payment_action(
         ManaPipPaymentAction::PayLife(amount) => {
             if let Some(player_obj) = game.player_mut(player) {
                 player_obj.life -= *amount as i32;
+            }
+            record_pip_payment_action(payment_trace, action);
+            Ok(true) // Pip was paid
+        }
+        ManaPipPaymentAction::PayViaAlternative {
+            permanent_id,
+            effect,
+        } => {
+            tap_permanent_with_trigger(game, trigger_queue, *permanent_id);
+            if let Some(source_id) = source {
+                let event = TriggerEvent::new(KeywordActionEvent::new(
+                    keyword_action_from_alternative_effect(*effect),
+                    player,
+                    source_id,
+                    1,
+                ));
+                queue_triggers_from_event(game, trigger_queue, event, true);
             }
             record_pip_payment_action(payment_trace, action);
             Ok(true) // Pip was paid
@@ -5375,6 +5718,9 @@ fn apply_mana_payment_response(
                 e
             )));
         }
+        drain_pending_trigger_events(game, trigger_queue);
+
+        queue_ability_activated_event(game, trigger_queue, perm_id, pending.caster, true, None);
 
         // Record the mana ability activation in the payment trace.
         record_cast_mana_ability_payment(&mut pending, perm_id, ability_index);
@@ -5451,6 +5797,9 @@ fn apply_mana_payment_response_mana_ability(
                 e
             )));
         }
+        drain_pending_trigger_events(game, trigger_queue);
+
+        queue_ability_activated_event(game, trigger_queue, perm_id, pending.activator, true, None);
 
         // Check if player can now pay
         let can_pay_now = game.can_pay_mana_cost(
@@ -5548,6 +5897,7 @@ fn execute_pending_mana_ability(
         crate::special_actions::pay_cost_component_with_choice(game, c, &mut cost_ctx)
             .map_err(|e| GameLoopError::InvalidState(format!("Failed to pay cost: {:?}", e)))?;
     }
+    drain_pending_trigger_events(game, trigger_queue);
 
     // Execute the mana ability effects
     if let Some(ref effects) = pending.effects {
@@ -5569,6 +5919,15 @@ fn execute_pending_mana_ability(
             }
         }
     }
+
+    queue_ability_activated_event(
+        game,
+        trigger_queue,
+        pending.source,
+        pending.activator,
+        true,
+        None,
+    );
 
     Ok(())
 }
@@ -5605,6 +5964,9 @@ fn apply_mana_payment_response_activation(
                 e
             )));
         }
+        drain_pending_trigger_events(game, trigger_queue);
+
+        queue_ability_activated_event(game, trigger_queue, perm_id, pending.activator, true, None);
 
         // Record the mana ability activation in the payment trace.
         record_activation_mana_ability_payment(&mut pending, perm_id, ability_index);
@@ -5674,6 +6036,7 @@ fn apply_pip_payment_response_activation(
         pending.activator,
         &pip,
         allow_any_color,
+        None,
         &mut *decision_maker,
     );
 
@@ -5690,12 +6053,16 @@ fn apply_pip_payment_response_activation(
     // Execute the payment action
     let pip_paid = execute_pip_payment_action(
         game,
+        trigger_queue,
         pending.activator,
+        Some(pending.source),
         action,
         &mut *decision_maker,
         &mut pending.payment_trace,
         None,
     )?;
+    queue_mana_ability_event_for_action(game, trigger_queue, action, pending.activator);
+    drain_pending_trigger_events(game, trigger_queue);
 
     // Only remove the pip if it was actually paid (not just mana generated)
     if pip_paid {
@@ -5734,6 +6101,7 @@ fn apply_pip_payment_response_cast(
         pending.caster,
         &pip,
         allow_any_color,
+        Some(pending.spell_id),
         &mut *decision_maker,
     );
 
@@ -5750,15 +6118,20 @@ fn apply_pip_payment_response_cast(
     // Execute the payment action
     let pip_paid = execute_pip_payment_action(
         game,
+        trigger_queue,
         pending.caster,
+        Some(pending.spell_id),
         action,
         &mut *decision_maker,
         &mut pending.payment_trace,
         Some(&mut pending.mana_spent_to_cast),
     )?;
+    queue_mana_ability_event_for_action(game, trigger_queue, action, pending.caster);
+    drain_pending_trigger_events(game, trigger_queue);
 
     // Only remove the pip if it was actually paid (not just mana generated)
     if pip_paid {
+        record_keyword_payment_contribution(&mut pending.keyword_payment_contributions, action);
         pending.remaining_mana_pips.remove(0);
     }
 
@@ -5780,7 +6153,18 @@ fn apply_sacrifice_target_response(
 
     // Sacrifice the chosen permanent
     if game.object(target_id).is_some() {
+        let snapshot = game
+            .object(target_id)
+            .map(|obj| ObjectSnapshot::from_object(obj, game));
+        let sacrificing_player = snapshot
+            .as_ref()
+            .map(|snap| snap.controller)
+            .or(Some(pending.activator));
         game.move_object(target_id, Zone::Graveyard);
+        game.queue_trigger_event(TriggerEvent::new(
+            SacrificeEvent::new(target_id, Some(pending.source))
+                .with_snapshot(snapshot, sacrificing_player),
+        ));
 
         #[cfg(feature = "net")]
         {
@@ -5820,7 +6204,7 @@ fn apply_card_to_exile_response(
 
     // Continue with mana payment (or finalize if no mana needed)
     // We need to re-run the logic from continue_to_mana_payment
-    use crate::decision::calculate_effective_mana_cost_with_targets;
+    use crate::decision::calculate_effective_mana_cost_for_payment_with_targets;
 
     // Compute the effective mana cost for this spell
     let effective_cost = if let Some(obj) = game.object(pending.spell_id) {
@@ -5869,7 +6253,7 @@ fn apply_card_to_exile_response(
             }
         };
         base_cost.map(|bc| {
-            calculate_effective_mana_cost_with_targets(
+            calculate_effective_mana_cost_for_payment_with_targets(
                 game,
                 pending.caster,
                 obj,
@@ -6009,6 +6393,7 @@ fn apply_casting_method_choice_response(
             hybrid_choices: Vec::new(),
             pending_hybrid_pips: Vec::new(),
             stack_id,
+            keyword_payment_contributions: Vec::new(),
         });
 
         let ctx = crate::decisions::context::NumberContext::x_value(
@@ -6047,6 +6432,7 @@ fn apply_casting_method_choice_response(
             hybrid_choices: Vec::new(),
             pending_hybrid_pips: Vec::new(),
             stack_id,
+            keyword_payment_contributions: Vec::new(),
         };
 
         check_modes_or_continue(game, trigger_queue, state, new_pending, decision_maker)
@@ -6108,12 +6494,15 @@ fn finalize_spell_cast(
     chosen_modes: Option<Vec<usize>>,
     pre_chosen_exile_cards: Vec<ObjectId>,
     mut mana_spent_to_cast: ManaPool,
-    _payment_trace: &mut Vec<CostStep>,
+    keyword_payment_contributions: Vec<KeywordPaymentContribution>,
+    payment_trace: &mut Vec<CostStep>,
     mana_already_paid: bool,
     stack_id: ObjectId,
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<SpellCastResult, GameLoopError> {
     use crate::decision::calculate_effective_mana_cost_with_targets;
+    #[cfg(not(feature = "net"))]
+    let _ = payment_trace;
 
     // Get the mana cost, alternative cost effects, and exile count based on casting method
     let (base_mana_cost, alternative_cost_effects, granted_escape_exile_count) =
@@ -6345,60 +6734,6 @@ fn finalize_spell_cast(
         }
     }
 
-    // Pay Convoke cost (tap creatures)
-    let convoke_creatures = if let Some(ref base_cost) = base_mana_cost {
-        if let Some(obj) = game.object(spell_id) {
-            crate::decision::calculate_convoke_creatures_to_tap(game, caster, obj, base_cost)
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    #[cfg(feature = "net")]
-    {
-        if !convoke_creatures.is_empty() {
-            payment_trace.push(CostStep::Payment(CostPayment::Tap {
-                objects: convoke_creatures
-                    .iter()
-                    .map(|id| GameObjectId(id.0))
-                    .collect(),
-            }));
-        }
-    }
-
-    for creature_id in convoke_creatures {
-        game.tap(creature_id);
-    }
-
-    // Pay Improvise cost (tap artifacts)
-    let improvise_artifacts = if let Some(ref base_cost) = base_mana_cost {
-        if let Some(obj) = game.object(spell_id) {
-            crate::decision::calculate_improvise_artifacts_to_tap(game, caster, obj, base_cost)
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    #[cfg(feature = "net")]
-    {
-        if !improvise_artifacts.is_empty() {
-            payment_trace.push(CostStep::Payment(CostPayment::Tap {
-                objects: improvise_artifacts
-                    .iter()
-                    .map(|id| GameObjectId(id.0))
-                    .collect(),
-            }));
-        }
-    }
-
-    for artifact_id in improvise_artifacts {
-        game.tap(artifact_id);
-    }
-
     // Pay the mana cost (using effective cost with reductions applied)
     // Skip if mana was already paid via pip-by-pip payment
     if !mana_already_paid && let Some(cost) = effective_cost {
@@ -6522,14 +6857,16 @@ fn finalize_spell_cast(
 
     // Create stack entry with targets, X value, casting method, optional costs, and chosen modes
     let mut entry = StackEntry::new(new_id, caster)
-        .with_targets(targets)
+        .with_targets(targets.clone())
         .with_casting_method(casting_method)
         .with_optional_costs_paid(optional_costs_paid)
-        .with_chosen_modes(chosen_modes);
+        .with_chosen_modes(chosen_modes)
+        .with_keyword_payment_contributions(keyword_payment_contributions);
     if let Some(x) = x_value {
         entry = entry.with_x(x);
     }
     game.push_to_stack(entry);
+    queue_becomes_targeted_events(game, trigger_queue, &targets, new_id, caster, false);
 
     // Track that a spell was cast this turn (per-caster)
     *game.spells_cast_this_turn.entry(caster).or_insert(0) += 1;
@@ -7184,7 +7521,7 @@ pub fn apply_attacker_declarations(
 
         // Tap the creature (unless it has vigilance)
         if !crate::rules::combat::has_vigilance(creature) {
-            game.tap(decl.creature);
+            tap_permanent_with_trigger(game, trigger_queue, decl.creature);
         }
 
         // Generate attack trigger
@@ -7641,6 +7978,10 @@ mod tests {
                 ability_index: 1,
             },
             ManaPipPaymentAction::UseFromPool(ManaSymbol::Blue),
+            ManaPipPaymentAction::PayViaAlternative {
+                permanent_id: ObjectId::from_raw(6),
+                effect: crate::decision::AlternativePaymentEffect::Convoke,
+            },
             ManaPipPaymentAction::PayLife(2),
         ];
 
@@ -7648,7 +7989,7 @@ mod tests {
             record_pip_payment_action(&mut trace, action);
         }
 
-        assert_eq!(trace.len(), 3);
+        assert_eq!(trace.len(), 4);
         assert!(matches!(
             trace[0],
             CostStep::Payment(CostPayment::ActivateManaAbility { .. })
@@ -7662,6 +8003,10 @@ mod tests {
         ));
         assert!(matches!(
             trace[2],
+            CostStep::Payment(CostPayment::Tap { .. })
+        ));
+        assert!(matches!(
+            trace[3],
             CostStep::Mana(ManaSymbolSpec {
                 symbol: ManaSymbolCode::Life,
                 value: 2,
@@ -12696,11 +13041,8 @@ mod tests {
 
     #[cfg(feature = "net")]
     #[test]
-    fn test_cost_trace_order_delve_convoke_improvise() {
+    fn test_direct_finalize_trace_includes_delve_exile() {
         use crate::cards::CardDefinitionBuilder;
-        use crate::decision::{
-            calculate_convoke_creatures_to_tap, calculate_improvise_artifacts_to_tap,
-        };
         use crate::mana::{ManaCost, ManaSymbol};
 
         let mut game = setup_game();
@@ -12744,13 +13086,6 @@ mod tests {
             game.create_object_from_card(&card, alice, Zone::Graveyard);
         }
 
-        let spell_obj = game.object(spell_id).unwrap();
-        let base_cost = spell_obj.mana_cost.as_ref().unwrap();
-
-        let expected_convoke =
-            calculate_convoke_creatures_to_tap(&game, alice, spell_obj, base_cost);
-        let expected_improvise =
-            calculate_improvise_artifacts_to_tap(&game, alice, spell_obj, base_cost);
         let expected_delve: Vec<GameObjectId> = game
             .player(alice)
             .unwrap()
@@ -12779,12 +13114,14 @@ mod tests {
             ManaPool::default(),
             &mut payment_trace,
             false,
-            None,
+            spell_id,
             &mut dm,
         )
         .unwrap();
 
-        assert_eq!(payment_trace.len(), 3);
+        // finalize_spell_cast no longer applies Convoke/Improvise fallback taps directly.
+        // Those are now represented as pip-payment alternatives before finalize.
+        assert_eq!(payment_trace.len(), 1);
 
         match &payment_trace[0] {
             CostStep::Payment(CostPayment::Exile { objects, from_zone }) => {
@@ -12792,28 +13129,6 @@ mod tests {
                 assert_eq!(objects, &expected_delve);
             }
             other => panic!("Expected delve exile step first, got {:?}", other),
-        }
-
-        match &payment_trace[1] {
-            CostStep::Payment(CostPayment::Tap { objects }) => {
-                let expected: Vec<GameObjectId> = expected_convoke
-                    .iter()
-                    .map(|id| GameObjectId(id.0))
-                    .collect();
-                assert_eq!(objects, &expected);
-            }
-            other => panic!("Expected convoke tap step second, got {:?}", other),
-        }
-
-        match &payment_trace[2] {
-            CostStep::Payment(CostPayment::Tap { objects }) => {
-                let expected: Vec<GameObjectId> = expected_improvise
-                    .iter()
-                    .map(|id| GameObjectId(id.0))
-                    .collect();
-                assert_eq!(objects, &expected);
-            }
-            other => panic!("Expected improvise tap step third, got {:?}", other),
         }
     }
 

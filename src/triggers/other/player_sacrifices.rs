@@ -1,5 +1,7 @@
 //! "Whenever [player] sacrifices [filter]" trigger.
 
+use crate::events::EventKind;
+use crate::events::permanents::SacrificeEvent;
 use crate::target::{ObjectFilter, PlayerFilter};
 use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
@@ -17,10 +19,42 @@ impl PlayerSacrificesTrigger {
 }
 
 impl TriggerMatcher for PlayerSacrificesTrigger {
-    fn matches(&self, _event: &TriggerEvent, _ctx: &TriggerContext) -> bool {
-        // We don't have a Sacrifice event currently.
-        // This would need to be added for full implementation.
-        false
+    fn matches(&self, event: &TriggerEvent, ctx: &TriggerContext) -> bool {
+        if event.kind() != EventKind::Sacrifice {
+            return false;
+        }
+        let Some(e) = event.downcast::<SacrificeEvent>() else {
+            return false;
+        };
+
+        let sacrificing_player = e
+            .sacrificing_player
+            .or_else(|| e.snapshot.as_ref().map(|s| s.controller))
+            .or_else(|| ctx.game.object(e.permanent).map(|o| o.controller));
+
+        let player_matches = match (&self.player, sacrificing_player) {
+            (PlayerFilter::You, Some(player)) => player == ctx.controller,
+            (PlayerFilter::Opponent, Some(player)) => player != ctx.controller,
+            (PlayerFilter::Any, Some(_)) => true,
+            (PlayerFilter::Specific(expected), Some(player)) => player == *expected,
+            (PlayerFilter::You, None)
+            | (PlayerFilter::Opponent, None)
+            | (PlayerFilter::Any, None)
+            | (PlayerFilter::Specific(_), None) => false,
+            _ => true,
+        };
+        if !player_matches {
+            return false;
+        }
+
+        if let Some(obj) = ctx.game.object(e.permanent) {
+            self.filter.matches(obj, &ctx.filter_ctx, ctx.game)
+        } else if let Some(snapshot) = e.snapshot.as_ref() {
+            self.filter
+                .matches_snapshot(snapshot, &ctx.filter_ctx, ctx.game)
+        } else {
+            false
+        }
     }
 
     fn display(&self) -> String {

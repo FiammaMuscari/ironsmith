@@ -152,6 +152,7 @@ mod tests {
             source_name: Some(name.to_string()),
             triggering_event: None,
             intervening_if: None,
+            keyword_payment_contributions: vec![],
             chosen_modes: None,
         });
         id

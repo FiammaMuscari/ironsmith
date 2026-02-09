@@ -6,7 +6,6 @@
 //! - `If` - Conditional branching based on prior effect results
 //! - `ForEachObject` - Iterate over objects
 //! - `ForPlayers` - Iterate over players (generalizes ForEachOpponent)
-//! - `ForEachOpponent` - Iterate over opponents (convenience wrapper)
 //! - `ForEachTagged` - Iterate over tagged objects
 //! - `ForEachControllerOfTagged` - Group tagged objects by controller and iterate
 //! - `ForEachTaggedPlayer` - Iterate over tagged players
@@ -20,7 +19,6 @@ mod choose_mode;
 mod choose_objects;
 mod conditional;
 mod for_each_object;
-mod for_each_opponent;
 mod for_each_tagged;
 mod for_players;
 mod if_effect;
@@ -40,7 +38,6 @@ pub use choose_mode::ChooseModeEffect;
 pub use choose_objects::ChooseObjectsEffect;
 pub use conditional::ConditionalEffect;
 pub use for_each_object::ForEachObject;
-pub use for_each_opponent::ForEachOpponentEffect;
 pub use for_each_tagged::{
     ForEachControllerOfTaggedEffect, ForEachTaggedEffect, ForEachTaggedPlayerEffect,
 };

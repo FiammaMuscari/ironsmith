@@ -2,8 +2,11 @@
 
 use crate::cost::{CostPaymentError, PermanentFilter};
 use crate::costs::{CostContext, CostPayer, CostPaymentResult};
+use crate::events::permanents::SacrificeEvent;
 use crate::game_state::GameState;
 use crate::object::ObjectKind;
+use crate::snapshot::ObjectSnapshot;
+use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
 
 /// A sacrifice self cost.
@@ -47,8 +50,20 @@ impl CostPayer for SacrificeSelfCost {
         // Verify we can still pay
         self.can_pay(game, ctx)?;
 
+        let snapshot = game
+            .object(ctx.source)
+            .map(|obj| ObjectSnapshot::from_object(obj, game));
+        let sacrificing_player = snapshot
+            .as_ref()
+            .map(|snap| snap.controller)
+            .or(Some(ctx.payer));
+
         // Move to graveyard
         game.move_object(ctx.source, Zone::Graveyard);
+        game.queue_trigger_event(TriggerEvent::new(
+            SacrificeEvent::new(ctx.source, Some(ctx.source))
+                .with_snapshot(snapshot, sacrificing_player),
+        ));
 
         Ok(CostPaymentResult::Paid)
     }

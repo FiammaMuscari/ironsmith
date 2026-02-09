@@ -4,6 +4,7 @@ use crate::alternative_cast::CastingMethod;
 use crate::card::Card;
 use crate::continuous::ContinuousEffectManager;
 use crate::cost::OptionalCostsPaid;
+use crate::decision::KeywordPaymentContribution;
 use crate::events::{Event, EventKind};
 use crate::ids::{ObjectId, PlayerId, StableId};
 use crate::object::Object;
@@ -575,6 +576,8 @@ pub struct StackEntry {
     /// Pre-chosen modes for modal spells (chosen during casting per rule 601.2b).
     /// If Some, resolution should use these instead of prompting.
     pub chosen_modes: Option<Vec<usize>>,
+    /// Permanents that contributed keyword-ability alternative payments to this spell cast.
+    pub keyword_payment_contributions: Vec<KeywordPaymentContribution>,
 }
 
 impl StackEntry {
@@ -595,6 +598,7 @@ impl StackEntry {
             triggering_event: None,
             intervening_if: None,
             chosen_modes: None,
+            keyword_payment_contributions: Vec::new(),
         }
     }
 
@@ -620,6 +624,7 @@ impl StackEntry {
             triggering_event: None,
             intervening_if: None,
             chosen_modes: None,
+            keyword_payment_contributions: Vec::new(),
         }
     }
 
@@ -691,6 +696,15 @@ impl StackEntry {
     /// Set pre-chosen modes for modal spells (per MTG rule 601.2b).
     pub fn with_chosen_modes(mut self, modes: Option<Vec<usize>>) -> Self {
         self.chosen_modes = modes;
+        self
+    }
+
+    /// Set keyword-ability payment contributors for this stack entry.
+    pub fn with_keyword_payment_contributions(
+        mut self,
+        contributions: Vec<KeywordPaymentContribution>,
+    ) -> Self {
+        self.keyword_payment_contributions = contributions;
         self
     }
 }

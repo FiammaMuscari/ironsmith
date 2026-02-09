@@ -10348,6 +10348,9 @@ fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardText
             parser: parse_prevent_next_damage_clause,
         },
         ClausePrimitive {
+            parser: parse_connive_clause,
+        },
+        ClausePrimitive {
             parser: parse_verb_first_clause,
         },
     ];
@@ -11261,6 +11264,39 @@ fn parse_verb_first_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTe
 
     let effect = parse_effect_with_verb(verb, None, &tokens[1..])?;
     Ok(Some(effect))
+}
+
+fn parse_connive_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+    let Some(connive_idx) = tokens
+        .iter()
+        .rposition(|token| token.is_word("connive") || token.is_word("connives"))
+    else {
+        return Ok(None);
+    };
+
+    // We currently only support trailing "connive/connives" clauses.
+    if tokens[connive_idx + 1..]
+        .iter()
+        .any(|token| token.as_word().is_some())
+    {
+        return Ok(None);
+    }
+
+    let subject_tokens = &tokens[..connive_idx];
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let subject_words = words(subject_tokens);
+    if subject_words == ["each", "creature", "that", "convoked", "this", "spell"] {
+        return Ok(Some(EffectAst::ForEachTagged {
+            tag: TagKey::from("convoked_this_spell"),
+            effects: vec![EffectAst::ConniveIterated],
+        }));
+    }
+
+    let target = parse_target_phrase(subject_tokens)?;
+    Ok(Some(EffectAst::Connive { target }))
 }
 
 fn find_verb(tokens: &[Token]) -> Option<(Verb, usize)> {
@@ -13623,6 +13659,16 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         filter.tagged_constraints.push(TaggedObjectConstraint {
             tag: IT_TAG.into(),
             relation: TaggedOpbjectRelation::SharesCardType,
+        });
+    }
+
+    if all_words
+        .windows(4)
+        .any(|window| window == ["that", "convoked", "this", "spell"])
+    {
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag: TagKey::from("convoked_this_spell"),
+            relation: TaggedOpbjectRelation::IsTaggedObject,
         });
     }
 

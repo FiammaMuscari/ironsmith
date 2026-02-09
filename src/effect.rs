@@ -21,7 +21,7 @@ use crate::ids::ObjectId;
 use crate::mana::ManaSymbol;
 use crate::object::CounterType;
 use crate::tag::TagKey;
-use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
+use crate::target::{ChooseSpec, ObjectFilter, ObjectRef, PlayerFilter};
 use crate::zone::Zone;
 
 // ============================================================================
@@ -1176,6 +1176,12 @@ impl Effect {
         Self::new(DrawCardsEffect::new(count, player))
     }
 
+    /// Create a "target creature connives" effect.
+    pub fn connive(target: ChooseSpec) -> Self {
+        use crate::effects::ConniveEffect;
+        Self::new(ConniveEffect::new(target))
+    }
+
     /// Create a "gain N life" effect.
     pub fn gain_life(amount: impl Into<Value>) -> Self {
         use crate::effects::GainLifeEffect;
@@ -1353,8 +1359,12 @@ impl Effect {
 
     /// Create a "counter unless pays" effect.
     pub fn counter_unless_pays(target: ChooseSpec, mana: Vec<ManaSymbol>) -> Self {
-        use crate::effects::CounterUnlessPaysEffect;
-        Self::new(CounterUnlessPaysEffect::new(target, mana))
+        let player = match target.base() {
+            ChooseSpec::SpecificObject(id) => PlayerFilter::ControllerOf(ObjectRef::Specific(*id)),
+            ChooseSpec::Tagged(tag) => PlayerFilter::ControllerOf(ObjectRef::Tagged(tag.clone())),
+            _ => PlayerFilter::ControllerOf(ObjectRef::Target),
+        };
+        Self::unless_pays(vec![Self::counter(target)], player, mana)
     }
 
     /// Create a "copy target spell" effect.

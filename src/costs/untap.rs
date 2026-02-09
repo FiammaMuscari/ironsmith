@@ -2,7 +2,9 @@
 
 use crate::cost::CostPaymentError;
 use crate::costs::{CostContext, CostPayer, CostPaymentResult};
+use crate::events::PermanentUntappedEvent;
 use crate::game_state::GameState;
+use crate::triggers::TriggerEvent;
 
 /// An untap cost ({Q}).
 ///
@@ -48,6 +50,7 @@ impl CostPayer for UntapCost {
 
         // Untap the permanent
         game.untap(ctx.source);
+        game.queue_trigger_event(TriggerEvent::new(PermanentUntappedEvent::new(ctx.source)));
 
         Ok(CostPaymentResult::Paid)
     }
@@ -145,6 +148,30 @@ mod tests {
         let result = cost.pay(&mut game, &mut ctx);
         assert_eq!(result, Ok(CostPaymentResult::Paid));
         assert!(!game.is_tapped(land_id));
+    }
+
+    #[test]
+    fn test_untap_cost_queues_untapped_trigger_event() {
+        let mut game = create_test_game();
+        let alice = PlayerId::from_index(0);
+
+        let land = basic_land();
+        let land_id = game.create_object_from_card(&land, alice, Zone::Battlefield);
+        game.tap(land_id);
+
+        let cost = UntapCost::new();
+        let mut dm = crate::decision::AutoPassDecisionMaker;
+        let mut ctx = CostContext::new(land_id, alice, &mut dm);
+
+        let result = cost.pay(&mut game, &mut ctx);
+        assert_eq!(result, Ok(CostPaymentResult::Paid));
+
+        let events = game.take_pending_trigger_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].kind(),
+            crate::events::EventKind::PermanentUntapped
+        );
     }
 
     #[test]

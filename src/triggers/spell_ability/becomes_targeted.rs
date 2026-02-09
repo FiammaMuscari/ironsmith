@@ -1,5 +1,7 @@
 //! "Whenever this permanent becomes the target of a spell or ability" trigger.
 
+use crate::events::EventKind;
+use crate::events::spells::BecomesTargetedEvent;
 use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
 
@@ -7,10 +9,14 @@ use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
 pub struct BecomesTargetedTrigger;
 
 impl TriggerMatcher for BecomesTargetedTrigger {
-    fn matches(&self, _event: &TriggerEvent, _ctx: &TriggerContext) -> bool {
-        // We don't have a BecomesTargeted event currently.
-        // Ward abilities use this trigger type.
-        false
+    fn matches(&self, event: &TriggerEvent, ctx: &TriggerContext) -> bool {
+        if event.kind() != EventKind::BecomesTargeted {
+            return false;
+        }
+        let Some(e) = event.downcast::<BecomesTargetedEvent>() else {
+            return false;
+        };
+        e.target == ctx.source_id
     }
 
     fn display(&self) -> String {

@@ -7,10 +7,12 @@ use crate::decisions::context::{BooleanContext, TargetRequirementContext, Target
 use crate::effect::{ChoiceCount, EffectId, EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
+use crate::events::spells::BecomesTargetedEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry, Target};
 use crate::target::{ChooseSpec, PlayerFilter};
 use crate::targeting::compute_legal_targets;
+use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
 
 /// Effect that lets a player choose new targets for stack object(s).
@@ -172,6 +174,7 @@ impl EffectExecutor for ChooseNewTargetsEffect {
         };
 
         let mut changed = 0;
+        let mut events = Vec::new();
 
         for object_id in object_ids {
             let Some(stack_idx) = game.stack.iter().position(|e| e.object_id == object_id) else {
@@ -234,10 +237,20 @@ impl EffectExecutor for ChooseNewTargetsEffect {
             if game.stack[stack_idx].targets != new_targets {
                 game.stack[stack_idx].targets = new_targets;
                 changed += 1;
+                for target in &game.stack[stack_idx].targets {
+                    if let Target::Object(target_id) = target {
+                        events.push(TriggerEvent::new(BecomesTargetedEvent::new(
+                            *target_id,
+                            object_id,
+                            entry.controller,
+                            entry.is_ability,
+                        )));
+                    }
+                }
             }
         }
 
-        Ok(EffectOutcome::from_result(EffectResult::Count(changed)))
+        Ok(EffectOutcome::from_result(EffectResult::Count(changed)).with_events(events))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {

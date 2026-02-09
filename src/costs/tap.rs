@@ -3,7 +3,9 @@
 use crate::ability::AbilityKind;
 use crate::cost::CostPaymentError;
 use crate::costs::{CostContext, CostPayer, CostPaymentResult};
+use crate::events::PermanentTappedEvent;
 use crate::game_state::GameState;
+use crate::triggers::TriggerEvent;
 
 /// A tap cost ({T}).
 ///
@@ -63,6 +65,7 @@ impl CostPayer for TapCost {
 
         // Tap the permanent
         game.tap(ctx.source);
+        game.queue_trigger_event(TriggerEvent::new(PermanentTappedEvent::new(ctx.source)));
 
         Ok(CostPaymentResult::Paid)
     }
@@ -169,6 +172,26 @@ mod tests {
         let result = cost.pay(&mut game, &mut ctx);
         assert_eq!(result, Ok(CostPaymentResult::Paid));
         assert!(game.is_tapped(land_id));
+    }
+
+    #[test]
+    fn test_tap_cost_queues_tapped_trigger_event() {
+        let mut game = create_test_game();
+        let alice = PlayerId::from_index(0);
+
+        let land = basic_land();
+        let land_id = game.create_object_from_card(&land, alice, Zone::Battlefield);
+
+        let cost = TapCost::new();
+        let mut dm = crate::decision::AutoPassDecisionMaker;
+        let mut ctx = CostContext::new(land_id, alice, &mut dm);
+
+        let result = cost.pay(&mut game, &mut ctx);
+        assert_eq!(result, Ok(CostPaymentResult::Paid));
+
+        let events = game.take_pending_trigger_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind(), crate::events::EventKind::PermanentTapped);
     }
 
     #[test]

@@ -4,10 +4,13 @@ use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::event_processor::{EventOutcome, process_zone_change};
+use crate::events::permanents::SacrificeEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::ids::ObjectId;
+use crate::snapshot::ObjectSnapshot;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
+use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
 
 /// Effect that makes a player sacrifice permanents.
@@ -115,8 +118,14 @@ impl EffectExecutor for SacrificeEffect {
             normalize_selection(chosen, &matching, required)
         };
         let mut sacrificed_count = 0;
+        let mut sacrifice_events = Vec::new();
 
         for id in to_sacrifice {
+            let pre_snapshot = game
+                .object(id)
+                .map(|obj| ObjectSnapshot::from_object(obj, game));
+            let sacrificing_player = pre_snapshot.as_ref().map(|snapshot| snapshot.controller);
+
             // Process each sacrifice through replacement effects with decision maker
             let result = process_zone_change(
                 game,
@@ -134,6 +143,12 @@ impl EffectExecutor for SacrificeEffect {
                 EventOutcome::Proceed(final_zone) => {
                     game.move_object(id, final_zone);
                     sacrificed_count += 1;
+                    if final_zone == Zone::Graveyard {
+                        sacrifice_events.push(TriggerEvent::new(
+                            SacrificeEvent::new(id, Some(ctx.source))
+                                .with_snapshot(pre_snapshot, sacrificing_player),
+                        ));
+                    }
                 }
                 EventOutcome::Replaced => {
                     // Replacement effects already executed by process_zone_change
@@ -146,7 +161,7 @@ impl EffectExecutor for SacrificeEffect {
             }
         }
 
-        Ok(EffectOutcome::count(sacrificed_count))
+        Ok(EffectOutcome::count(sacrificed_count).with_events(sacrifice_events))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
@@ -217,16 +232,21 @@ impl SacrificeTargetEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
         object_id: ObjectId,
-    ) -> Result<bool, ExecutionError> {
+    ) -> Result<(bool, Option<TriggerEvent>), ExecutionError> {
         // Verify the object can be sacrificed
         if !game.can_be_sacrificed(object_id) {
-            return Ok(false);
+            return Ok((false, None));
         }
 
         // Verify it's on the battlefield
         if !game.battlefield.contains(&object_id) {
-            return Ok(false);
+            return Ok((false, None));
         }
+
+        let pre_snapshot = game
+            .object(object_id)
+            .map(|obj| ObjectSnapshot::from_object(obj, game));
+        let sacrificing_player = pre_snapshot.as_ref().map(|snapshot| snapshot.controller);
 
         // Process sacrifice through replacement effects
         let result = process_zone_change(
@@ -238,13 +258,21 @@ impl SacrificeTargetEffect {
         );
 
         match result {
-            EventOutcome::Prevented => Ok(false),
+            EventOutcome::Prevented => Ok((false, None)),
             EventOutcome::Proceed(final_zone) => {
                 game.move_object(object_id, final_zone);
-                Ok(true)
+                let event = if final_zone == Zone::Graveyard {
+                    Some(TriggerEvent::new(
+                        SacrificeEvent::new(object_id, Some(ctx.source))
+                            .with_snapshot(pre_snapshot, sacrificing_player),
+                    ))
+                } else {
+                    None
+                };
+                Ok((true, event))
             }
-            EventOutcome::Replaced => Ok(true),
-            EventOutcome::NotApplicable => Ok(false),
+            EventOutcome::Replaced => Ok((true, None)),
+            EventOutcome::NotApplicable => Ok((false, None)),
         }
     }
 }
@@ -282,8 +310,12 @@ impl EffectExecutor for SacrificeTargetEffect {
             return Ok(EffectOutcome::count(0));
         };
 
-        let sacrificed = Self::sacrifice_object(game, ctx, object_id)?;
-        Ok(EffectOutcome::count(if sacrificed { 1 } else { 0 }))
+        let (sacrificed, event) = Self::sacrifice_object(game, ctx, object_id)?;
+        let mut outcome = EffectOutcome::count(if sacrificed { 1 } else { 0 });
+        if let Some(event) = event {
+            outcome = outcome.with_event(event);
+        }
+        Ok(outcome)
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {

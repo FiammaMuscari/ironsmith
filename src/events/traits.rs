@@ -55,6 +55,10 @@ pub enum EventKind {
     SpellCast,
     /// A spell was copied
     SpellCopied,
+    /// An activated or mana ability was activated
+    AbilityActivated,
+    /// A permanent became the target of a spell or ability
+    BecomesTargeted,
     /// A creature attacked
     CreatureAttacked,
     /// A creature blocked
@@ -91,6 +95,8 @@ pub enum EventKind {
     KeywordAction,
     /// Players finished voting (for council's dilemma, etc.)
     PlayersFinishedVoting,
+    /// A permanent transformed
+    Transformed,
 }
 
 /// A target within an event that can potentially be redirected.
