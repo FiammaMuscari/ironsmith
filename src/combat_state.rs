@@ -12,7 +12,7 @@ use crate::ability::AbilityKind;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::object::Object;
-use crate::rules::combat::{can_attack, can_block, has_vigilance, minimum_blockers};
+use crate::rules::combat::{can_attack_defending_player, can_block, has_vigilance, minimum_blockers};
 use crate::static_abilities::StaticAbilityId;
 use crate::types::CardType;
 use crate::zone::Zone;
@@ -254,14 +254,8 @@ pub fn declare_attackers(
             return Err(CombatError::CreatureTapped(*creature_id));
         }
 
-        // Must be able to attack (no defender, no summoning sickness unless haste, etc.)
-        // Check both rules-based restrictions and effect-based restrictions
-        if !can_attack(creature, game) || !game.can_attack(*creature_id) {
-            return Err(CombatError::CreatureCannotAttack(*creature_id));
-        }
-
         // Validate attack target
-        match target {
+        let defending_player = match target {
             AttackTarget::Player(player_id) => {
                 let player = game
                     .player(*player_id)
@@ -269,6 +263,7 @@ pub fn declare_attackers(
                 if !player.is_in_game() {
                     return Err(CombatError::InvalidAttackTarget(target.clone()));
                 }
+                *player_id
             }
             AttackTarget::Planeswalker(pw_id) => {
                 let pw = game
@@ -277,7 +272,21 @@ pub fn declare_attackers(
                 if pw.zone != Zone::Battlefield || !pw.has_card_type(CardType::Planeswalker) {
                     return Err(CombatError::InvalidAttackTarget(target.clone()));
                 }
+                pw.controller
             }
+        };
+
+        // Must be able to attack (no defender, no summoning sickness unless haste, etc.)
+        // Check both rules-based restrictions and effect-based restrictions.
+        if !can_attack_defending_player(creature, defending_player, game)
+            || !game.can_attack(*creature_id)
+        {
+            return Err(CombatError::CreatureCannotAttack(*creature_id));
+        }
+
+        // Validate attack target
+        match target {
+            AttackTarget::Player(_) | AttackTarget::Planeswalker(_) => {}
         }
     }
 

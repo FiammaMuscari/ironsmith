@@ -34,6 +34,8 @@ pub struct AddManaOfAnyColorEffect {
     pub amount: Value,
     /// Which player receives the mana.
     pub player: PlayerFilter,
+    /// Optional restriction on which colors can be chosen.
+    pub available_colors: Option<Vec<Color>>,
 }
 
 impl AddManaOfAnyColorEffect {
@@ -42,12 +44,31 @@ impl AddManaOfAnyColorEffect {
         Self {
             amount: amount.into(),
             player,
+            available_colors: None,
+        }
+    }
+
+    /// Create a new add mana effect restricted to specific colors.
+    pub fn restricted(
+        amount: impl Into<Value>,
+        player: PlayerFilter,
+        available_colors: Vec<Color>,
+    ) -> Self {
+        Self {
+            amount: amount.into(),
+            player,
+            available_colors: Some(available_colors),
         }
     }
 
     /// Create an effect where you add mana of any color.
     pub fn you(amount: impl Into<Value>) -> Self {
         Self::new(amount, PlayerFilter::You)
+    }
+
+    /// Create a restricted-color effect where you add mana.
+    pub fn you_restricted(amount: impl Into<Value>, available_colors: Vec<Color>) -> Self {
+        Self::restricted(amount, PlayerFilter::You, available_colors)
     }
 }
 
@@ -65,7 +86,11 @@ impl EffectExecutor for AddManaOfAnyColorEffect {
         }
 
         // Ask player to choose colors using the new spec-based system
-        let spec = ManaColorsSpec::any_color(ctx.source, amount, false);
+        let spec = if let Some(colors) = &self.available_colors {
+            ManaColorsSpec::restricted(ctx.source, amount, false, colors.clone())
+        } else {
+            ManaColorsSpec::any_color(ctx.source, amount, false)
+        };
         let mut colors = make_decision(
             game,
             &mut ctx.decision_maker,
@@ -175,5 +200,20 @@ mod tests {
         let effect = AddManaOfAnyColorEffect::you(1);
         let cloned = effect.clone_box();
         assert!(format!("{:?}", cloned).contains("AddManaOfAnyColorEffect"));
+    }
+
+    #[test]
+    fn test_add_mana_of_any_color_restricted_defaults_to_allowed_color() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let effect = AddManaOfAnyColorEffect::you_restricted(2, vec![Color::Red, Color::Green]);
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(game.player(alice).unwrap().mana_pool.red, 2);
+        assert_eq!(game.player(alice).unwrap().mana_pool.green, 0);
     }
 }

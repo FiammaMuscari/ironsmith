@@ -154,9 +154,21 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
         false
     }
 
+    /// Returns the threshold for "can't be blocked by creatures with power N or less".
+    fn cant_be_blocked_by_power_or_less(&self) -> Option<i32> {
+        None
+    }
+
     /// Returns true if this ability prevents blocking (Unblockable, etc.)
     fn is_unblockable(&self) -> bool {
         false
+    }
+
+    /// Returns required land subtype for "can't attack unless defending player controls ...".
+    fn required_defending_player_land_subtype_for_attack(
+        &self,
+    ) -> Option<crate::types::Subtype> {
+        None
     }
 
     /// Returns true if this is a first/double strike ability.
@@ -426,8 +438,19 @@ impl StaticAbility {
         self.0.grants_evasion()
     }
 
+    pub fn blocked_by_power_or_less_threshold(&self) -> Option<i32> {
+        self.0.cant_be_blocked_by_power_or_less()
+    }
+
     pub fn is_unblockable(&self) -> bool {
         self.0.is_unblockable()
+    }
+
+    pub fn required_defending_player_land_subtype_for_attack(
+        &self,
+    ) -> Option<crate::types::Subtype> {
+        self.0
+            .required_defending_player_land_subtype_for_attack()
     }
 
     pub fn has_first_strike(&self) -> bool {
@@ -703,6 +726,14 @@ impl StaticAbility {
         Self::new(MustAttack)
     }
 
+    pub fn cant_attack_unless_defending_player_controls_land_subtype(
+        subtype: crate::types::Subtype,
+    ) -> Self {
+        Self::new(CantAttackUnlessDefendingPlayerControlsLandSubtype::new(
+            subtype,
+        ))
+    }
+
     pub fn must_block() -> Self {
         Self::new(MustBlock)
     }
@@ -713,6 +744,14 @@ impl StaticAbility {
 
     pub fn can_block_flying() -> Self {
         Self::new(CanBlockFlying)
+    }
+
+    pub fn can_block_only_flying() -> Self {
+        Self::new(CanBlockOnlyFlying)
+    }
+
+    pub fn cant_be_blocked_by_power_or_less(threshold: i32) -> Self {
+        Self::new(CantBeBlockedByPowerOrLess::new(threshold))
     }
 
     pub fn can_attack_as_though_no_defender() -> Self {
@@ -729,6 +768,18 @@ impl StaticAbility {
 
     pub fn enters_tapped_unless_control_two_or_more_other_lands() -> Self {
         Self::new(EntersTappedUnlessControlTwoOrMoreOtherLands)
+    }
+
+    pub fn enters_tapped_unless_control_two_or_fewer_other_lands() -> Self {
+        Self::new(EntersTappedUnlessControlTwoOrFewerOtherLands)
+    }
+
+    pub fn enters_tapped_unless_control_two_or_more_basic_lands() -> Self {
+        Self::new(EntersTappedUnlessControlTwoOrMoreBasicLands)
+    }
+
+    pub fn enters_tapped_unless_a_player_has_13_or_less_life() -> Self {
+        Self::new(EntersTappedUnlessAPlayerHas13OrLessLife)
     }
 
     pub fn enters_tapped_unless_two_or_more_opponents() -> Self {

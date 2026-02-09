@@ -5,6 +5,7 @@
 //! - mutate a bit of state
 //! - read a serializable snapshot
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 use rand::seq::SliceRandom;
@@ -31,6 +32,23 @@ use crate::mana::ManaSymbol;
 use crate::target::ObjectFilter;
 use crate::triggers::{TriggerQueue, check_triggers};
 use crate::zone::Zone;
+
+thread_local! {
+    static EFFECT_RENDER_DEPTH_UI: Cell<usize> = const { Cell::new(0) };
+}
+
+fn with_effect_render_depth_ui<F: FnOnce() -> String>(render: F) -> String {
+    EFFECT_RENDER_DEPTH_UI.with(|depth| {
+        let current = depth.get();
+        if current >= 128 {
+            return "<render recursion limit>".to_string();
+        }
+        depth.set(current + 1);
+        let rendered = render();
+        depth.set(current);
+        rendered
+    })
+}
 
 #[derive(Debug, Clone, Serialize)]
 struct PermanentSnapshot {
@@ -1681,7 +1699,13 @@ fn describe_keyword_ability(ability: &Ability) -> Option<String> {
         return Some("Equip".to_string());
     }
     if words.len() >= 2 && words[0] == "level" && words[1] == "up" {
-        return Some("Level up".to_string());
+        return Some(raw_text.to_string());
+    }
+    if text == "storm" {
+        return Some("Storm".to_string());
+    }
+    if text == "toxic" || text.starts_with("toxic ") {
+        return Some(raw_text.to_string());
     }
     let cycling_words = words
         .iter()
@@ -1896,12 +1920,30 @@ fn collect_effect_descriptions(effects: &[crate::effect::Effect]) -> Vec<String>
                 .get(idx + 2)
                 .and_then(|effect| effect.downcast_ref::<crate::effects::ShuffleLibraryEffect>());
             if let Some(line) =
-                describe_search_choose_for_each(choose, for_each, shuffle, &tagged_subjects)
+                describe_search_choose_for_each(choose, for_each, shuffle, false, &tagged_subjects)
             {
                 descriptions.push(line);
                 idx += if shuffle.is_some() { 3 } else { 2 };
                 continue;
             }
+        }
+        if idx + 2 < effects.len()
+            && let Some(choose) = effects[idx].downcast_ref::<crate::effects::ChooseObjectsEffect>()
+            && let Some(shuffle) =
+                effects[idx + 1].downcast_ref::<crate::effects::ShuffleLibraryEffect>()
+            && let Some(for_each) =
+                effects[idx + 2].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+            && let Some(line) = describe_search_choose_for_each(
+                choose,
+                for_each,
+                Some(shuffle),
+                true,
+                &tagged_subjects,
+            )
+        {
+            descriptions.push(line);
+            idx += 3;
+            continue;
         }
 
         if idx + 1 < effects.len()
@@ -2058,12 +2100,31 @@ fn describe_effects_inline(
                 .get(idx + 2)
                 .and_then(|effect| effect.downcast_ref::<crate::effects::ShuffleLibraryEffect>());
             if let Some(compact) =
-                describe_search_choose_for_each(choose, for_each, shuffle, &local_tags)
+                describe_search_choose_for_each(choose, for_each, shuffle, false, &local_tags)
             {
                 parts.push(compact.trim_end_matches('.').to_string());
                 idx += if shuffle.is_some() { 3 } else { 2 };
                 continue;
             }
+        }
+        if idx + 2 < effects.len()
+            && let Some(choose) =
+                effects[idx].downcast_ref::<crate::effects::ChooseObjectsEffect>()
+            && let Some(shuffle) =
+                effects[idx + 1].downcast_ref::<crate::effects::ShuffleLibraryEffect>()
+            && let Some(for_each) =
+                effects[idx + 2].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+            && let Some(compact) = describe_search_choose_for_each(
+                choose,
+                for_each,
+                Some(shuffle),
+                true,
+                &local_tags,
+            )
+        {
+            parts.push(compact.trim_end_matches('.').to_string());
+            idx += 3;
+            continue;
         }
         if idx + 1 < effects.len()
             && let Some(choose) =
@@ -2266,6 +2327,9 @@ fn describe_condition(
         crate::effect::Condition::YourTurn => "it is your turn".to_string(),
         crate::effect::Condition::CreatureDiedThisTurn => "a creature died this turn".to_string(),
         crate::effect::Condition::CastSpellThisTurn => "you cast a spell this turn".to_string(),
+        crate::effect::Condition::NoSpellsWereCastLastTurn => {
+            "no spells were cast last turn".to_string()
+        }
         crate::effect::Condition::TargetIsTapped => "the target is tapped".to_string(),
         crate::effect::Condition::SourceIsTapped => "this source is tapped".to_string(),
         crate::effect::Condition::TargetIsAttacking => "the target is attacking".to_string(),
@@ -2630,6 +2694,13 @@ fn describe_effect_core(
     effect: &crate::effect::Effect,
     tagged_subjects: &HashMap<String, String>,
 ) -> String {
+    with_effect_render_depth_ui(|| describe_effect_core_impl(effect, tagged_subjects))
+}
+
+fn describe_effect_core_impl(
+    effect: &crate::effect::Effect,
+    tagged_subjects: &HashMap<String, String>,
+) -> String {
     if let Some(text) = describe_effect_core_expanded(effect, tagged_subjects) {
         return text;
     }
@@ -2854,6 +2925,7 @@ fn describe_exile_then_return(
 enum SearchDestination {
     Battlefield { tapped: bool },
     Hand,
+    Graveyard,
     LibraryTop,
 }
 
@@ -2861,9 +2933,13 @@ fn describe_search_choose_for_each(
     choose: &crate::effects::ChooseObjectsEffect,
     for_each: &crate::effects::ForEachTaggedEffect,
     shuffle: Option<&crate::effects::ShuffleLibraryEffect>,
+    shuffle_before_move: bool,
     tagged_subjects: &HashMap<String, String>,
 ) -> Option<String> {
-    if !choose.is_search || choose.zone != crate::zone::Zone::Library {
+    let search_like = choose.is_search
+        || (choose.zone == crate::zone::Zone::Library
+            && choose.tag.as_str().starts_with("searched_"));
+    if !search_like || choose.zone != crate::zone::Zone::Library {
         return None;
     }
     if for_each.tag != choose.tag || for_each.effects.len() != 1 {
@@ -2890,8 +2966,12 @@ fn describe_search_choose_for_each(
         if !matches!(move_to_zone.target, crate::target::ChooseSpec::Iterated) {
             return None;
         }
-        if move_to_zone.zone == crate::zone::Zone::Hand {
+        if move_to_zone.zone == crate::zone::Zone::Battlefield {
+            SearchDestination::Battlefield { tapped: false }
+        } else if move_to_zone.zone == crate::zone::Zone::Hand {
             SearchDestination::Hand
+        } else if move_to_zone.zone == crate::zone::Zone::Graveyard {
+            SearchDestination::Graveyard
         } else if move_to_zone.zone == crate::zone::Zone::Library && move_to_zone.to_top {
             SearchDestination::LibraryTop
         } else {
@@ -2929,22 +3009,55 @@ fn describe_search_choose_for_each(
     };
     let mut text = match destination {
         SearchDestination::Battlefield { tapped } => {
-            let mut text = format!(
-                "Search {library_owner} library for {selection_text}, put {pronoun} onto the battlefield"
-            );
+            let mut text = if shuffle.is_some() && shuffle_before_move {
+                format!(
+                    "Search {library_owner} library for {selection_text}, shuffle, then put {pronoun} onto the battlefield"
+                )
+            } else {
+                format!(
+                    "Search {library_owner} library for {selection_text}, put {pronoun} onto the battlefield"
+                )
+            };
             if tapped {
                 text.push_str(" tapped");
             }
             text
         }
         SearchDestination::Hand => {
-            format!("Search {library_owner} library for {selection_text}, put {pronoun} into hand")
+            if shuffle.is_some() && shuffle_before_move {
+                format!(
+                    "Search {library_owner} library for {selection_text}, shuffle, then put {pronoun} into {library_owner} hand"
+                )
+            } else {
+                format!(
+                    "Search {library_owner} library for {selection_text}, put {pronoun} into {library_owner} hand"
+                )
+            }
         }
-        SearchDestination::LibraryTop => format!(
-            "Search {library_owner} library for {selection_text}, put {pronoun} on top of library"
-        ),
+        SearchDestination::Graveyard => {
+            if shuffle.is_some() && shuffle_before_move {
+                format!(
+                    "Search {library_owner} library for {selection_text}, shuffle, then put {pronoun} into {library_owner} graveyard"
+                )
+            } else {
+                format!(
+                    "Search {library_owner} library for {selection_text}, put {pronoun} into {library_owner} graveyard"
+                )
+            }
+        }
+        SearchDestination::LibraryTop => {
+            if shuffle.is_some() && shuffle_before_move {
+                format!(
+                    "Search {library_owner} library for {selection_text}, shuffle, then put {pronoun} on top of {library_owner} library"
+                )
+            } else {
+                format!(
+                    "Search {library_owner} library for {selection_text}, put {pronoun} on top of {library_owner} library"
+                )
+            }
+        }
     };
-    if shuffle.is_some() {
+    if shuffle.is_some() && !shuffle_before_move {
         text.push_str(", then shuffle");
     }
     text.push('.');
@@ -2959,13 +3072,29 @@ fn describe_search_sequence(
         return None;
     }
     let choose = sequence.effects[0].downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
-    let for_each = sequence.effects[1].downcast_ref::<crate::effects::ForEachTaggedEffect>()?;
-    let shuffle = if sequence.effects.len() == 3 {
-        Some(sequence.effects[2].downcast_ref::<crate::effects::ShuffleLibraryEffect>()?)
-    } else {
-        None
-    };
-    describe_search_choose_for_each(choose, for_each, shuffle, tagged_subjects)
+    if let Some(for_each) = sequence.effects[1].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+    {
+        let shuffle = if sequence.effects.len() == 3 {
+            Some(sequence.effects[2].downcast_ref::<crate::effects::ShuffleLibraryEffect>()?)
+        } else {
+            None
+        };
+        return describe_search_choose_for_each(choose, for_each, shuffle, false, tagged_subjects);
+    }
+    if sequence.effects.len() == 3
+        && let Some(shuffle) = sequence.effects[1].downcast_ref::<crate::effects::ShuffleLibraryEffect>()
+        && let Some(for_each) =
+            sequence.effects[2].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+    {
+        return describe_search_choose_for_each(
+            choose,
+            for_each,
+            Some(shuffle),
+            true,
+            tagged_subjects,
+        );
+    }
+    None
 }
 
 fn describe_for_players_choose_then_sacrifice(
@@ -3094,13 +3223,18 @@ fn describe_effect_core_expanded(
         return Some(format!("{header} {modes}"));
     }
     if let Some(choose_objects) = effect.downcast_ref::<crate::effects::ChooseObjectsEffect>() {
+        let chooser = describe_player_filter(&choose_objects.chooser, tagged_subjects);
+        let choose_verb = if chooser == "You" { "choose" } else { "chooses" };
+        let search_like = choose_objects.is_search
+            || (choose_objects.zone == crate::zone::Zone::Library
+                && choose_objects.tag.as_str().starts_with("searched_"));
         return Some(format!(
             "{} {} {} {} in {} and tag as '{}'.",
-            describe_player_filter(&choose_objects.chooser, tagged_subjects),
-            if choose_objects.is_search {
+            chooser,
+            if search_like {
                 "searches for"
             } else {
-                "chooses"
+                choose_verb
             },
             describe_choice_count(&choose_objects.count),
             pluralize_noun_phrase(&choose_objects.filter.description()),
@@ -3177,6 +3311,14 @@ fn describe_effect_core_expanded(
         return Some(format!(
             "Tag the triggering object as '{}'.",
             tag_trigger.tag.as_str()
+        ));
+    }
+    if let Some(tag_damage_target) =
+        effect.downcast_ref::<crate::effects::TagTriggeringDamageTargetEffect>()
+    {
+        return Some(format!(
+            "Tag the triggering damaged object as '{}'.",
+            tag_damage_target.tag.as_str()
         ));
     }
     if let Some(tag_attached) = effect.downcast_ref::<crate::effects::TagAttachedToSourceEffect>() {
@@ -3393,15 +3535,26 @@ fn describe_effect_core_expanded(
         ));
     }
     if let Some(look_at_hand) = effect.downcast_ref::<crate::effects::LookAtHandEffect>() {
+        let owner = if let crate::target::ChooseSpec::Player(filter) = look_at_hand.target.base() {
+            describe_player_filter_possessive(filter, tagged_subjects)
+        } else {
+            let who = describe_choose_spec(&look_at_hand.target, tagged_subjects);
+            if who == "You" {
+                "your".to_string()
+            } else if who.ends_with('s') {
+                format!("{who}'")
+            } else {
+                format!("{who}'s")
+            }
+        };
         return Some(format!(
-            "Look at {} hand.",
-            describe_choose_spec(&look_at_hand.target, tagged_subjects)
+            "Look at {owner} hand."
         ));
     }
     if let Some(reveal_top) = effect.downcast_ref::<crate::effects::RevealTopEffect>() {
+        let owner = describe_player_filter_possessive(&reveal_top.player, tagged_subjects);
         let mut text = format!(
-            "Reveal the top card of {} library",
-            describe_player_filter(&reveal_top.player, tagged_subjects)
+            "Reveal the top card of {owner} library"
         );
         if let Some(tag) = &reveal_top.tag {
             text.push_str(&format!(" and tag it as '{}'", tag.as_str()));
@@ -3635,6 +3788,21 @@ fn describe_effect_core_expanded(
         ));
     }
     if let Some(add_any_color) = effect.downcast_ref::<crate::effects::AddManaOfAnyColorEffect>() {
+        if let Some(colors) = &add_any_color.available_colors {
+            let options = colors
+                .iter()
+                .copied()
+                .map(crate::mana::ManaSymbol::from_color)
+                .map(mana_symbol_text)
+                .collect::<Vec<_>>()
+                .join(" and/or ");
+            return Some(format!(
+                "Add {} mana in any combination of {} to {} mana pool.",
+                describe_value(&add_any_color.amount, tagged_subjects),
+                options,
+                describe_player_filter(&add_any_color.player, tagged_subjects)
+            ));
+        }
         return Some(format!(
             "Add {} mana of any color to {} mana pool.",
             describe_value(&add_any_color.amount, tagged_subjects),
@@ -4143,10 +4311,12 @@ fn describe_player_filter(
         crate::target::PlayerFilter::Opponent => "An opponent".to_string(),
         crate::target::PlayerFilter::Any => "A player".to_string(),
         crate::target::PlayerFilter::Target(inner) => {
-            format!(
-                "Target {}",
-                strip_leading_article(&describe_player_filter(inner, tagged_subjects))
-            )
+            let inner_text = describe_player_filter(inner, tagged_subjects);
+            if inner_text == "You" {
+                "You".to_string()
+            } else {
+                format!("Target {}", strip_leading_article(&inner_text))
+            }
         }
         crate::target::PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag)) => {
             if tagged_subjects.contains_key(tag.as_str()) {
@@ -4179,8 +4349,10 @@ fn describe_player_filter_possessive(
     tagged_subjects: &HashMap<String, String>,
 ) -> String {
     let player = describe_player_filter(filter, tagged_subjects);
-    if player == "You" {
+    if player == "You" || player == "Target You" {
         "your".to_string()
+    } else if player.ends_with('s') {
+        format!("{player}'")
     } else {
         format!("{player}'s")
     }

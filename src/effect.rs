@@ -1014,6 +1014,12 @@ impl Effect {
         Self::new(TagTriggeringObjectEffect::new(tag.into()))
     }
 
+    /// Tag the damaged object from the triggering damage event.
+    pub fn tag_triggering_damage_target(tag: impl Into<TagKey>) -> Self {
+        use crate::effects::TagTriggeringDamageTargetEffect;
+        Self::new(TagTriggeringDamageTargetEffect::new(tag.into()))
+    }
+
     /// Tag the object attached to the source (equipment/aura) for later reference.
     pub fn tag_attached_to_source(tag: impl Into<TagKey>) -> Self {
         use crate::effects::TagAttachedToSourceEffect;
@@ -1086,6 +1092,9 @@ pub enum Condition {
 
     /// You cast a spell this turn
     CastSpellThisTurn,
+
+    /// No spells were cast last turn
+    NoSpellsWereCastLastTurn,
 
     /// Target is tapped
     TargetIsTapped,
@@ -1657,6 +1666,25 @@ impl Effect {
     pub fn add_mana_of_any_color_player(amount: impl Into<Value>, player: PlayerFilter) -> Self {
         use crate::effects::AddManaOfAnyColorEffect;
         Self::new(AddManaOfAnyColorEffect::new(amount, player))
+    }
+
+    /// Create an "add mana of restricted colors" effect (can choose different colors).
+    pub fn add_mana_of_any_color_restricted(
+        amount: impl Into<Value>,
+        colors: Vec<crate::color::Color>,
+    ) -> Self {
+        use crate::effects::AddManaOfAnyColorEffect;
+        Self::new(AddManaOfAnyColorEffect::you_restricted(amount, colors))
+    }
+
+    /// Create an "add mana of restricted colors" effect for a specific player.
+    pub fn add_mana_of_any_color_restricted_player(
+        amount: impl Into<Value>,
+        player: PlayerFilter,
+        colors: Vec<crate::color::Color>,
+    ) -> Self {
+        use crate::effects::AddManaOfAnyColorEffect;
+        Self::new(AddManaOfAnyColorEffect::restricted(amount, player, colors))
     }
 
     /// Create an "add mana of any one color" effect (all must be same color).

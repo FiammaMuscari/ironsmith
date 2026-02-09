@@ -104,6 +104,61 @@ impl StaticAbilityKind for CanBlockFlying {
     }
 }
 
+/// Can block only creatures with flying.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CanBlockOnlyFlying;
+
+impl StaticAbilityKind for CanBlockOnlyFlying {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CanBlockOnlyFlying
+    }
+
+    fn display(&self) -> String {
+        "Can block only creatures with flying".to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+}
+
+/// Can't be blocked by creatures with power N or less.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CantBeBlockedByPowerOrLess {
+    pub threshold: i32,
+}
+
+impl CantBeBlockedByPowerOrLess {
+    pub const fn new(threshold: i32) -> Self {
+        Self { threshold }
+    }
+}
+
+impl StaticAbilityKind for CantBeBlockedByPowerOrLess {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantBeBlockedByPowerOrLess
+    }
+
+    fn display(&self) -> String {
+        format!(
+            "Can't be blocked by creatures with power {} or less",
+            self.threshold
+        )
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn grants_evasion(&self) -> bool {
+        true
+    }
+
+    fn cant_be_blocked_by_power_or_less(&self) -> Option<i32> {
+        Some(self.threshold)
+    }
+}
+
 // Can attack as though it didn't have defender.
 define_combat_ability!(
     CanAttackAsThoughNoDefender,
@@ -130,6 +185,41 @@ impl StaticAbilityKind for MustAttack {
 
     // Note: Must attack checking is done in the combat rules engine
     // by checking if creatures have this ability, rather than using a tracker.
+}
+
+/// Can't attack unless defending player controls a land with the specified subtype.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CantAttackUnlessDefendingPlayerControlsLandSubtype {
+    pub land_subtype: crate::types::Subtype,
+}
+
+impl CantAttackUnlessDefendingPlayerControlsLandSubtype {
+    pub const fn new(land_subtype: crate::types::Subtype) -> Self {
+        Self { land_subtype }
+    }
+}
+
+impl StaticAbilityKind for CantAttackUnlessDefendingPlayerControlsLandSubtype {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantAttackUnlessDefendingPlayerControlsLandSubtype
+    }
+
+    fn display(&self) -> String {
+        format!(
+            "Can't attack unless defending player controls {}",
+            format!("{:?}", self.land_subtype).to_ascii_lowercase()
+        )
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn required_defending_player_land_subtype_for_attack(
+        &self,
+    ) -> Option<crate::types::Subtype> {
+        Some(self.land_subtype)
+    }
 }
 
 /// Must block if able.

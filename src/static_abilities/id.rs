@@ -42,10 +42,13 @@ pub enum StaticAbilityId {
     Unblockable,
     FlyingRestriction,
     CanBlockFlying,
+    CanBlockOnlyFlying,
+    CantBeBlockedByPowerOrLess,
     CanAttackAsThoughNoDefender,
     MustAttack,
     MustBlock,
     CantAttack,
+    CantAttackUnlessDefendingPlayerControlsLandSubtype,
     CantBlock,
     MayAssignDamageAsUnblocked,
 
@@ -103,6 +106,9 @@ pub enum StaticAbilityId {
     DoesntUntap,
     EntersTapped,
     EntersTappedUnlessControlTwoOrMoreOtherLands,
+    EntersTappedUnlessControlTwoOrFewerOtherLands,
+    EntersTappedUnlessControlTwoOrMoreBasicLands,
+    EntersTappedUnlessAPlayerHas13OrLessLife,
     EntersTappedUnlessTwoOrMoreOpponents,
     EnterWithCounters,
     ShuffleIntoLibraryFromGraveyard,
@@ -177,7 +183,13 @@ impl StaticAbilityId {
         use StaticAbilityId::*;
         matches!(
             self,
-            Flying | Shadow | Horsemanship | Fear | Intimidate | FlyingRestriction
+            Flying
+                | Shadow
+                | Horsemanship
+                | Fear
+                | Intimidate
+                | FlyingRestriction
+                | CantBeBlockedByPowerOrLess
         )
     }
 
@@ -203,10 +215,13 @@ impl StaticAbilityId {
                 | Unblockable
                 | FlyingRestriction
                 | CanBlockFlying
+                | CanBlockOnlyFlying
+                | CantBeBlockedByPowerOrLess
                 | CanAttackAsThoughNoDefender
                 | MustAttack
                 | MustBlock
                 | CantAttack
+                | CantAttackUnlessDefendingPlayerControlsLandSubtype
                 | CantBlock
                 | MayAssignDamageAsUnblocked
         )

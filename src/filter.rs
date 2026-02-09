@@ -448,6 +448,9 @@ pub struct ObjectFilter {
 
     /// If set, only match this specific object ID.
     pub specific: Option<ObjectId>,
+
+    /// If true, only match the source object from the current filter context.
+    pub source: bool,
 }
 
 impl ObjectFilter {
@@ -852,6 +855,14 @@ impl ObjectFilter {
         }
     }
 
+    /// Create a filter matching only the source object.
+    pub fn source() -> Self {
+        Self {
+            source: true,
+            ..Default::default()
+        }
+    }
+
     /// Check if an object matches this filter, with access to game state.
     ///
     /// # Arguments
@@ -867,6 +878,12 @@ impl ObjectFilter {
         // Specific object check
         if let Some(id) = self.specific
             && object.id != id
+        {
+            return false;
+        }
+
+        if self.source
+            && ctx.source.is_none_or(|source_id| object.id != source_id)
         {
             return false;
         }
@@ -1239,6 +1256,14 @@ impl ObjectFilter {
             return false;
         }
 
+        if self.source
+            && ctx
+                .source
+                .is_none_or(|source_id| snapshot.object_id != source_id)
+        {
+            return false;
+        }
+
         // Zone check
         if let Some(zone) = &self.zone
             && snapshot.zone != *zone
@@ -1591,10 +1616,14 @@ impl ObjectFilter {
     /// Used primarily for trigger display text.
     pub fn description(&self) -> String {
         let mut parts = Vec::new();
+        let mut controller_suffix: Option<String> = None;
 
         // Handle "other" modifier
         if self.other {
             parts.push("another".to_string());
+        }
+        if self.source {
+            parts.push("this".to_string());
         }
 
         // Handle controller
@@ -1604,6 +1633,7 @@ impl ObjectFilter {
                     if !self.other {
                         parts.push("a".to_string());
                     }
+                    controller_suffix = Some("you control".to_string());
                 }
                 PlayerFilter::Opponent => parts.push("an opponent's".to_string()),
                 PlayerFilter::Any => {}
@@ -1617,6 +1647,7 @@ impl ObjectFilter {
                     if !self.other {
                         parts.push("a".to_string());
                     }
+                    controller_suffix = Some("that player controls".to_string())
                 }
                 PlayerFilter::Target(_) => parts.push("target player's".to_string()),
                 PlayerFilter::ControllerOf(_) => parts.push("a controller's".to_string()),
@@ -1743,14 +1774,18 @@ impl ObjectFilter {
             parts.push(types_str);
         } else if !self.token {
             // Default noun depends on zone context.
-            let default_noun = match self.zone {
-                Some(Zone::Battlefield) | None => "permanent",
-                Some(Zone::Stack) => "spell",
-                Some(Zone::Graveyard)
-                | Some(Zone::Hand)
-                | Some(Zone::Library)
-                | Some(Zone::Exile)
-                | Some(Zone::Command) => "card",
+            let default_noun = if self.source {
+                "source"
+            } else {
+                match self.zone {
+                    Some(Zone::Battlefield) | None => "permanent",
+                    Some(Zone::Stack) => "spell",
+                    Some(Zone::Graveyard)
+                    | Some(Zone::Hand)
+                    | Some(Zone::Library)
+                    | Some(Zone::Exile)
+                    | Some(Zone::Command) => "card",
+                }
             };
             parts.push(default_noun.to_string());
         }
@@ -1826,6 +1861,9 @@ impl ObjectFilter {
             } else if zone == Zone::Stack {
                 parts.push("on stack".to_string());
             }
+        }
+        if let Some(suffix) = controller_suffix {
+            parts.push(suffix);
         }
 
         parts.join(" ")

@@ -14,8 +14,10 @@ mod deals_damage;
 mod this_attacks;
 mod this_becomes_blocked;
 mod this_blocks;
+mod this_blocks_object;
 mod this_deals_combat_damage_to_player;
 mod this_deals_damage;
+mod this_deals_damage_to;
 
 pub use attacks::AttacksTrigger;
 pub use attacks_alone::AttacksAloneTrigger;
@@ -28,5 +30,7 @@ pub use deals_damage::DealsDamageTrigger;
 pub use this_attacks::ThisAttacksTrigger;
 pub use this_becomes_blocked::ThisBecomesBlockedTrigger;
 pub use this_blocks::ThisBlocksTrigger;
+pub use this_blocks_object::ThisBlocksObjectTrigger;
 pub use this_deals_combat_damage_to_player::ThisDealsCombatDamageToPlayerTrigger;
 pub use this_deals_damage::ThisDealsDamageTrigger;
+pub use this_deals_damage_to::ThisDealsDamageToTrigger;

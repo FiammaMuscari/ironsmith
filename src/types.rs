@@ -58,6 +58,7 @@ pub enum Subtype {
     Crocodile,
     Dauthi,
     Demon,
+    Devil,
     Dinosaur,
     Djinn,
     Efreet,
@@ -308,6 +309,7 @@ impl Subtype {
                 | Subtype::Crab
                 | Subtype::Crocodile
                 | Subtype::Demon
+                | Subtype::Devil
                 | Subtype::Dinosaur
                 | Subtype::Djinn
                 | Subtype::Efreet

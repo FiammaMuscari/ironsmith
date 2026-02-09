@@ -212,6 +212,10 @@ impl RestrictionEffectInstance {
         }
 
         match self.duration {
+            crate::effect::Until::YourNextTurn => {
+                !(current_turn > self.expires_end_of_turn
+                    && game.turn.active_player == self.controller)
+            }
             crate::effect::Until::ThisLeavesTheBattlefield => game
                 .object(self.source)
                 .is_some_and(|obj| obj.zone == Zone::Battlefield),
@@ -784,6 +788,10 @@ pub struct GameState {
     /// Reset at the start of each turn.
     pub spells_cast_this_turn: HashMap<PlayerId, u32>,
 
+    /// Total number of spells cast during the immediately previous turn.
+    /// Updated when turn advances.
+    pub spells_cast_last_turn_total: u32,
+
     /// Players who searched their library this turn.
     /// Used for trap conditions like Archive Trap.
     pub library_searches_this_turn: HashSet<PlayerId>,
@@ -887,6 +895,7 @@ impl GameState {
             triggers_fired_this_turn: HashMap::new(),
             turn_counters: TurnCounterTracker::default(),
             spells_cast_this_turn: HashMap::new(),
+            spells_cast_last_turn_total: 0,
             library_searches_this_turn: HashSet::new(),
             creatures_entered_this_turn: HashMap::new(),
             creature_damage_to_players_this_turn: HashMap::new(),
@@ -2134,6 +2143,7 @@ impl GameState {
         self.creatures_died_this_turn = 0;
         self.triggers_fired_this_turn.clear();
         self.turn_counters.clear();
+        self.spells_cast_last_turn_total = self.spells_cast_this_turn.values().sum();
         self.spells_cast_this_turn.clear();
         self.library_searches_this_turn.clear();
         self.creatures_entered_this_turn.clear();
@@ -3188,6 +3198,41 @@ mod tests {
         assert!(
             !tracker.damage_cant_be_prevented,
             "damage_cant_be_prevented should be cleared"
+        );
+    }
+
+    #[test]
+    fn your_next_turn_restrictions_expire_on_controllers_next_turn() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let source = game.create_object_from_card(&grizzly_bears(), alice, Zone::Battlefield);
+        let target = game.create_object_from_card(&grizzly_bears(), alice, Zone::Battlefield);
+
+        game.add_restriction_effect(
+            crate::effect::Restriction::untap(crate::target::ObjectFilter::specific(target)),
+            crate::effect::Until::YourNextTurn,
+            source,
+            alice,
+        );
+        game.update_cant_effects();
+        assert!(
+            !game.can_untap(target),
+            "restriction should apply immediately"
+        );
+
+        game.next_turn();
+        game.update_cant_effects();
+        assert!(
+            !game.can_untap(target),
+            "restriction should still apply before controller's next turn"
+        );
+
+        game.next_turn();
+        game.update_cant_effects();
+        assert!(
+            game.can_untap(target),
+            "restriction should expire on controller's next turn"
         );
     }
 }

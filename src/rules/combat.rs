@@ -103,9 +103,19 @@ pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::
     if attacker_has(StaticAbilityId::Flying) {
         let blocker_has_flying = blocker_has(StaticAbilityId::Flying);
         let blocker_has_reach = blocker_has(StaticAbilityId::Reach);
-        let blocker_can_block_flying = blocker_has(StaticAbilityId::CanBlockFlying);
+        let blocker_can_block_flying = blocker_has(StaticAbilityId::CanBlockFlying)
+            || blocker_has(StaticAbilityId::CanBlockOnlyFlying);
 
         if !blocker_has_flying && !blocker_has_reach && !blocker_can_block_flying {
+            return false;
+        }
+    }
+
+    // "Can't be blocked except by creatures with flying or reach" (without requiring flying)
+    if attacker_has(StaticAbilityId::FlyingRestriction) {
+        let blocker_has_flying = blocker_has(StaticAbilityId::Flying);
+        let blocker_has_reach = blocker_has(StaticAbilityId::Reach);
+        if !blocker_has_flying && !blocker_has_reach {
             return false;
         }
     }
@@ -157,6 +167,25 @@ pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::
 
     // "Can't block" ability
     if blocker_has(StaticAbilityId::CantBlock) {
+        return false;
+    }
+
+    // "Can't be blocked by creatures with power N or less"
+    if let Some(max_blocker_power) = attacker_abilities
+        .iter()
+        .filter_map(|ability| ability.blocked_by_power_or_less_threshold())
+        .max()
+    {
+        let blocker_power = game
+            .calculated_power(blocker.id)
+            .or_else(|| blocker.power());
+        if blocker_power.is_some_and(|power| power <= max_blocker_power) {
+            return false;
+        }
+    }
+
+    // "Can block only creatures with flying"
+    if blocker_has(StaticAbilityId::CanBlockOnlyFlying) && !attacker_has(StaticAbilityId::Flying) {
         return false;
     }
 
@@ -229,6 +258,44 @@ pub fn can_attack(creature: &Object, game: &crate::game_state::GameState) -> boo
     // "Can't attack" ability
     if has_ability_id(creature, StaticAbilityId::CantAttack) {
         return false;
+    }
+
+    true
+}
+
+/// Check if a creature can attack a specific defending player.
+///
+/// Includes all regular attack legality plus defender-dependent requirements like
+/// "can't attack unless defending player controls an Island."
+pub fn can_attack_defending_player(
+    creature: &Object,
+    defending_player: crate::ids::PlayerId,
+    game: &crate::game_state::GameState,
+) -> bool {
+    if !can_attack(creature, game) {
+        return false;
+    }
+
+    let abilities = game
+        .calculated_characteristics(creature.id)
+        .map(|c| c.static_abilities)
+        .unwrap_or_else(|| get_static_abilities(creature));
+
+    for required_land_subtype in abilities.iter().filter_map(|ability| {
+        ability.required_defending_player_land_subtype_for_attack()
+    }) {
+        let defending_has_required_land = game
+            .battlefield
+            .iter()
+            .filter_map(|&id| game.object(id))
+            .any(|obj| {
+                obj.controller == defending_player
+                    && obj.has_card_type(CardType::Land)
+                    && obj.subtypes.contains(&required_land_subtype)
+            });
+        if !defending_has_required_land {
+            return false;
+        }
     }
 
     true
@@ -398,6 +465,36 @@ mod tests {
     }
 
     #[test]
+    fn test_can_block_only_flying_restriction() {
+        let game = test_game_state();
+        let attacker = make_creature("Ground", 2, 2);
+        let mut blocker = make_creature("Sky Guard", 2, 2);
+        add_ability(&mut blocker, StaticAbility::can_block_only_flying());
+
+        assert!(!can_block(&attacker, &blocker, &game));
+
+        let mut flying_attacker = make_creature("Flyer", 2, 2);
+        add_ability(&mut flying_attacker, StaticAbility::flying());
+        assert!(can_block(&flying_attacker, &blocker, &game));
+    }
+
+    #[test]
+    fn test_cant_be_blocked_by_creatures_with_power_or_less() {
+        let game = test_game_state();
+        let mut attacker = make_creature("Evasive", 3, 3);
+        add_ability(
+            &mut attacker,
+            StaticAbility::cant_be_blocked_by_power_or_less(2),
+        );
+
+        let small_blocker = make_creature("Small", 2, 2);
+        let big_blocker = make_creature("Big", 3, 3);
+
+        assert!(!can_block(&attacker, &small_blocker, &game));
+        assert!(can_block(&attacker, &big_blocker, &game));
+    }
+
+    #[test]
     fn test_shadow_only_blocks_shadow() {
         let game = test_game_state();
         let mut shadow_attacker = make_creature("Shadow Attacker", 2, 2);
@@ -481,6 +578,35 @@ mod tests {
         let mut menace = make_creature("Menace", 2, 2);
         add_ability(&mut menace, StaticAbility::menace());
         assert_eq!(minimum_blockers(&menace), 2);
+    }
+
+    #[test]
+    fn test_cant_attack_unless_defending_player_controls_island() {
+        let mut game = test_game_state();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let mut attacker = make_creature("Serpent", 5, 5);
+        attacker.controller = alice;
+        add_ability(
+            &mut attacker,
+            StaticAbility::cant_attack_unless_defending_player_controls_land_subtype(
+                crate::types::Subtype::Island,
+            ),
+        );
+
+        // Bob controls no Island yet.
+        assert!(!can_attack_defending_player(&attacker, bob, &game));
+
+        // Add an Island under Bob's control.
+        let mut island = make_creature("Island", 0, 0);
+        island.id = ObjectId::from_raw(99);
+        island.controller = bob;
+        island.card_types = vec![CardType::Land];
+        island.subtypes = vec![crate::types::Subtype::Island];
+        game.add_object(island);
+
+        assert!(can_attack_defending_player(&attacker, bob, &game));
     }
 
     #[test]

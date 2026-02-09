@@ -83,6 +83,25 @@ fn subject_text(filter: &ObjectFilter) -> String {
     attached_subject(filter).unwrap_or_else(|| filter.description())
 }
 
+fn grant_subject_text(filter: &ObjectFilter) -> String {
+    if let Some(subject) = attached_subject(filter) {
+        return subject;
+    }
+
+    let creature_like = filter.card_types.contains(&CardType::Creature)
+        || filter.subtypes.iter().any(|subtype| subtype.is_creature_type());
+    if creature_like {
+        return "Affected creatures".to_string();
+    }
+
+    if filter.card_types.len() == 1 {
+        let noun = format!("{:?}", filter.card_types[0]).to_ascii_lowercase();
+        return format!("Affected {noun}s");
+    }
+
+    "Affected permanents".to_string()
+}
+
 fn subject_verb_and_possessive(subject: &str) -> (&'static str, &'static str) {
     let singular = subject.starts_with("enchanted ")
         || subject.starts_with("equipped ")
@@ -351,16 +370,17 @@ impl StaticAbilityKind for Anthem {
     fn display(&self) -> String {
         let subject = if self.source_only {
             "this creature".to_string()
-        } else if let Some(subject) = attached_subject(&self.filter) {
-            subject
         } else {
-            "Affected creatures".to_string()
+            subject_text(&self.filter)
         };
-        let verb = if subject == "Affected creatures" {
-            "get"
-        } else {
-            "gets"
-        };
+        let singular = self.source_only
+            || subject.starts_with("a ")
+            || subject.starts_with("an ")
+            || subject.starts_with("this ")
+            || subject.starts_with("that ")
+            || subject.starts_with("enchanted ")
+            || subject.starts_with("equipped ");
+        let verb = if singular { "gets" } else { "get" };
 
         let signed = |value: i32| {
             if value >= 0 {
@@ -523,10 +543,14 @@ impl StaticAbilityKind for GrantAbility {
     fn display(&self) -> String {
         let mut text = if self.source_only {
             format!("this creature has {}", self.ability.display())
-        } else if let Some(subject) = attached_subject(&self.filter) {
-            format!("{subject} has {}", self.ability.display())
         } else {
-            format!("Affected permanents have {}", self.ability.display())
+            let subject = grant_subject_text(&self.filter);
+            let verb = if subject.starts_with("Affected ") {
+                "have"
+            } else {
+                "has"
+            };
+            format!("{subject} {verb} {}", self.ability.display())
         };
         if let Some(condition) = &self.condition {
             text.push(' ');
@@ -1460,7 +1484,7 @@ mod tests {
         let anthem = Anthem::creatures_you_control(1, 1);
         assert_eq!(anthem.id(), StaticAbilityId::Anthem);
         assert!(anthem.is_anthem());
-        assert_eq!(anthem.display(), "Affected creatures get +1/+1");
+        assert_eq!(anthem.display(), "a creature you control gets +1/+1");
     }
 
     #[test]

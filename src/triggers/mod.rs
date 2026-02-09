@@ -278,6 +278,11 @@ impl Trigger {
         Self::new(ThisBlocksTrigger)
     }
 
+    /// Create a "when this creature blocks [filter]" trigger.
+    pub fn this_blocks_object(filter: ObjectFilter) -> Self {
+        Self::new(ThisBlocksObjectTrigger::new(filter))
+    }
+
     /// Create a "when [filter] blocks" trigger.
     pub fn blocks(filter: ObjectFilter) -> Self {
         Self::new(BlocksTrigger::new(filter))
@@ -316,6 +321,11 @@ impl Trigger {
     /// Create a "when this permanent deals damage" trigger.
     pub fn this_deals_damage() -> Self {
         Self::new(ThisDealsDamageTrigger)
+    }
+
+    /// Create a "when this permanent deals damage to [filter]" trigger.
+    pub fn this_deals_damage_to(filter: ObjectFilter) -> Self {
+        Self::new(ThisDealsDamageToTrigger::new(filter))
     }
 
     /// Create a "when [filter] deals damage" trigger.

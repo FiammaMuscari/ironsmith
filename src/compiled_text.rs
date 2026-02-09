@@ -1,15 +1,41 @@
+use std::cell::Cell;
+
 use crate::ability::{Ability, AbilityKind, ActivationTiming};
 use crate::alternative_cast::AlternativeCastingMethod;
 use crate::effect::{ChoiceCount, Comparison, Condition, EffectPredicate, Until, Value};
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::{CardDefinition, Effect, ManaSymbol, Zone};
 
+thread_local! {
+    static EFFECT_RENDER_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+fn with_effect_render_depth<F: FnOnce() -> String>(render: F) -> String {
+    EFFECT_RENDER_DEPTH.with(|depth| {
+        let current = depth.get();
+        if current >= 128 {
+            return "<render recursion limit>".to_string();
+        }
+        depth.set(current + 1);
+        let rendered = render();
+        depth.set(current);
+        rendered
+    })
+}
+
 fn describe_player_filter(filter: &PlayerFilter) -> String {
     match filter {
         PlayerFilter::You => "you".to_string(),
         PlayerFilter::Opponent => "an opponent".to_string(),
         PlayerFilter::Any => "a player".to_string(),
-        PlayerFilter::Target(inner) => format!("target {}", describe_player_filter(inner)),
+        PlayerFilter::Target(inner) => {
+            let inner_text = describe_player_filter(inner);
+            if inner_text == "you" {
+                "you".to_string()
+            } else {
+                format!("target {}", strip_leading_article(&inner_text))
+            }
+        }
         PlayerFilter::Specific(_) => "that player".to_string(),
         PlayerFilter::Active => "the active player".to_string(),
         PlayerFilter::Defending => "the defending player".to_string(),
@@ -31,8 +57,10 @@ fn strip_leading_article(text: &str) -> &str {
 
 fn describe_mana_pool_owner(filter: &PlayerFilter) -> String {
     let player = describe_player_filter(filter);
-    if player == "you" {
+    if player == "you" || player == "target you" {
         "your mana pool".to_string()
+    } else if player.ends_with('s') {
+        format!("{player}' mana pool")
     } else {
         format!("{player}'s mana pool")
     }
@@ -40,8 +68,10 @@ fn describe_mana_pool_owner(filter: &PlayerFilter) -> String {
 
 fn describe_possessive_player_filter(filter: &PlayerFilter) -> String {
     let player = describe_player_filter(filter);
-    if player == "you" {
+    if player == "you" || player == "target you" {
         "your".to_string()
+    } else if player.ends_with('s') {
+        format!("{player}'")
     } else {
         format!("{player}'s")
     }
@@ -161,6 +191,27 @@ fn player_verb(subject: &str, you_form: &'static str, other_form: &'static str) 
     } else {
         other_form
     }
+}
+
+fn normalize_you_verb_phrase(text: &str) -> String {
+    let replacements = [
+        ("pays ", "pay "),
+        ("loses ", "lose "),
+        ("gains ", "gain "),
+        ("draws ", "draw "),
+        ("discards ", "discard "),
+        ("sacrifices ", "sacrifice "),
+        ("chooses ", "choose "),
+        ("mills ", "mill "),
+        ("scries ", "scry "),
+        ("surveils ", "surveil "),
+    ];
+    for (from, to) in replacements {
+        if text.starts_with(from) {
+            return format!("{to}{}", &text[from.len()..]);
+        }
+    }
+    text.to_string()
 }
 
 fn describe_card_count(value: &Value) -> String {
@@ -623,6 +674,7 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::YourTurn => "it is your turn".to_string(),
         Condition::CreatureDiedThisTurn => "a creature died this turn".to_string(),
         Condition::CastSpellThisTurn => "a spell was cast this turn".to_string(),
+        Condition::NoSpellsWereCastLastTurn => "no spells were cast last turn".to_string(),
         Condition::TargetIsTapped => "the target is tapped".to_string(),
         Condition::SourceIsTapped => "this source is tapped".to_string(),
         Condition::TargetIsAttacking => "the target is attacking".to_string(),
@@ -690,6 +742,25 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             continue;
         }
         if idx + 1 < filtered.len()
+            && let Some(with_id) = filtered[idx].downcast_ref::<crate::effects::WithIdEffect>()
+            && let Some(choose_new) = filtered[idx + 1]
+                .downcast_ref::<crate::effects::ChooseNewTargetsEffect>()
+            && let Some(compact) = describe_with_id_then_choose_new_targets(with_id, choose_new)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < filtered.len()
+            && let Some(with_id) = filtered[idx].downcast_ref::<crate::effects::WithIdEffect>()
+            && let Some(if_effect) = filtered[idx + 1].downcast_ref::<crate::effects::IfEffect>()
+            && let Some(compact) = describe_with_id_then_if(with_id, if_effect)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < filtered.len()
             && let Some(choose) =
                 filtered[idx].downcast_ref::<crate::effects::ChooseObjectsEffect>()
             && let Some(for_each) =
@@ -698,11 +769,27 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             let shuffle = filtered
                 .get(idx + 2)
                 .and_then(|effect| effect.downcast_ref::<crate::effects::ShuffleLibraryEffect>());
-            if let Some(compact) = describe_search_choose_for_each(choose, for_each, shuffle) {
+            if let Some(compact) =
+                describe_search_choose_for_each(choose, for_each, shuffle, false)
+            {
                 parts.push(compact);
                 idx += if shuffle.is_some() { 3 } else { 2 };
                 continue;
             }
+        }
+        if idx + 2 < filtered.len()
+            && let Some(choose) =
+                filtered[idx].downcast_ref::<crate::effects::ChooseObjectsEffect>()
+            && let Some(shuffle) =
+                filtered[idx + 1].downcast_ref::<crate::effects::ShuffleLibraryEffect>()
+            && let Some(for_each) =
+                filtered[idx + 2].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+            && let Some(compact) =
+                describe_search_choose_for_each(choose, for_each, Some(shuffle), true)
+        {
+            parts.push(compact);
+            idx += 3;
+            continue;
         }
         if idx + 1 < filtered.len()
             && let Some(choose) =
@@ -831,6 +918,19 @@ fn describe_cost_list(costs: &[crate::costs::Cost]) -> String {
             && let Some(choose) = costs[idx]
                 .effect_ref()
                 .and_then(|effect| effect.downcast_ref::<crate::effects::ChooseObjectsEffect>())
+            && let Some(tap) = costs[idx + 1]
+                .effect_ref()
+                .and_then(|effect| effect.downcast_ref::<crate::effects::TapEffect>())
+            && let Some(compact) = describe_choose_then_tap_cost(choose, tap)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < costs.len()
+            && let Some(choose) = costs[idx]
+                .effect_ref()
+                .and_then(|effect| effect.downcast_ref::<crate::effects::ChooseObjectsEffect>())
             && let Some(sacrifice) = costs[idx + 1]
                 .effect_ref()
                 .and_then(|effect| effect.downcast_ref::<crate::effects::SacrificeEffect>())
@@ -886,6 +986,17 @@ fn strip_indefinite_article(text: &str) -> &str {
 
 fn pluralize_noun_phrase(phrase: &str) -> String {
     let base = strip_indefinite_article(phrase);
+    for suffix in [" you control", " that player controls"] {
+        if let Some(head) = base.strip_suffix(suffix) {
+            let head = head.trim_end();
+            let head_plural = if head.ends_with('s') {
+                head.to_string()
+            } else {
+                format!("{head}s")
+            };
+            return format!("{head_plural}{suffix}");
+        }
+    }
     if base.ends_with('s') {
         base.to_string()
     } else {
@@ -962,6 +1073,39 @@ fn describe_choose_then_sacrifice(
         let chosen = pluralize_noun_phrase(&chosen);
         Some(format!("{player} {verb} {count_text} {chosen}"))
     }
+}
+
+fn tap_uses_chosen_tag(spec: &ChooseSpec, tag: &str) -> bool {
+    matches!(spec.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
+}
+
+fn describe_choose_then_tap_cost(
+    choose: &crate::effects::ChooseObjectsEffect,
+    tap: &crate::effects::TapEffect,
+) -> Option<String> {
+    if choose.zone != Zone::Battlefield || choose.is_search {
+        return None;
+    }
+    if !tap_uses_chosen_tag(&tap.spec, choose.tag.as_str()) {
+        return None;
+    }
+
+    if choose.count.is_single() {
+        return Some(format!(
+            "Tap {}",
+            with_indefinite_article(&choose.filter.description())
+        ));
+    }
+
+    let exact = choose.count.max.filter(|max| *max == choose.count.min)?;
+    let count_text = number_word(exact as i32)
+        .map(str::to_string)
+        .unwrap_or_else(|| exact.to_string());
+    Some(format!(
+        "Tap {} {}",
+        count_text,
+        pluralize_noun_phrase(&choose.filter.description())
+    ))
 }
 
 fn exile_uses_chosen_tag(spec: &ChooseSpec, tag: &str) -> bool {
@@ -1114,9 +1258,79 @@ fn describe_draw_then_discard(
     Some(text)
 }
 
+fn describe_with_id_then_if(
+    with_id: &crate::effects::WithIdEffect,
+    if_effect: &crate::effects::IfEffect,
+) -> Option<String> {
+    if if_effect.condition != with_id.id {
+        return None;
+    }
+
+    let setup = describe_effect(&with_id.effect);
+    let then_text = describe_effect_list(&if_effect.then);
+    let else_text = describe_effect_list(&if_effect.else_);
+
+    let condition = if let Some(may) = with_id.effect.downcast_ref::<crate::effects::MayEffect>() {
+        if let Some(decider) = may.decider.as_ref() {
+            let who = describe_player_filter(decider);
+            if who == "you" {
+                "If you do".to_string()
+            } else {
+                format!("If {who} does")
+            }
+        } else {
+            "If you do".to_string()
+        }
+    } else {
+        match if_effect.predicate {
+            EffectPredicate::Happened => "If it happened".to_string(),
+            EffectPredicate::HappenedNotReplaced => "If it happened and wasn't replaced".to_string(),
+            _ => format!("If {}", describe_effect_predicate(&if_effect.predicate)),
+        }
+    };
+
+    if else_text.is_empty() {
+        Some(format!("{setup}. {condition}, {then_text}"))
+    } else {
+        Some(format!(
+            "{setup}. {condition}, {then_text}. Otherwise, {else_text}"
+        ))
+    }
+}
+
+fn describe_with_id_then_choose_new_targets(
+    with_id: &crate::effects::WithIdEffect,
+    choose_new: &crate::effects::ChooseNewTargetsEffect,
+) -> Option<String> {
+    if choose_new.from_effect != with_id.id {
+        return None;
+    }
+
+    let base = describe_effect(&with_id.effect);
+    let chooser = choose_new
+        .chooser
+        .as_ref()
+        .map(describe_player_filter)
+        .unwrap_or_else(|| "you".to_string());
+    let choose_phrase = if choose_new.may {
+        if chooser == "you" {
+            "You may choose new targets for the copy".to_string()
+        } else {
+            format!("{chooser} may choose new targets for the copy")
+        }
+    } else if chooser == "you" {
+        "You choose new targets for the copy".to_string()
+    } else {
+        format!("{chooser} chooses new targets for the copy")
+    };
+
+    Some(format!("{base}. {choose_phrase}"))
+}
+
 enum SearchDestination {
     Battlefield { tapped: bool },
     Hand,
+    Graveyard,
     LibraryTop,
 }
 
@@ -1124,8 +1338,11 @@ fn describe_search_choose_for_each(
     choose: &crate::effects::ChooseObjectsEffect,
     for_each: &crate::effects::ForEachTaggedEffect,
     shuffle: Option<&crate::effects::ShuffleLibraryEffect>,
+    shuffle_before_move: bool,
 ) -> Option<String> {
-    if !choose.is_search || choose.zone != Zone::Library {
+    let search_like =
+        choose.is_search || (choose.zone == Zone::Library && choose.tag.as_str().starts_with("searched_"));
+    if !search_like || choose.zone != Zone::Library {
         return None;
     }
     if for_each.tag != choose.tag || for_each.effects.len() != 1 {
@@ -1152,8 +1369,12 @@ fn describe_search_choose_for_each(
         if !matches!(move_to_zone.target, ChooseSpec::Iterated) {
             return None;
         }
-        if move_to_zone.zone == Zone::Hand {
+        if move_to_zone.zone == Zone::Battlefield {
+            SearchDestination::Battlefield { tapped: false }
+        } else if move_to_zone.zone == Zone::Hand {
             SearchDestination::Hand
+        } else if move_to_zone.zone == Zone::Graveyard {
+            SearchDestination::Graveyard
         } else if move_to_zone.zone == Zone::Library && move_to_zone.to_top {
             SearchDestination::LibraryTop
         } else {
@@ -1184,34 +1405,84 @@ fn describe_search_choose_for_each(
     let mut text;
     match destination {
         SearchDestination::Battlefield { tapped } => {
-            text = format!(
-                "Search {} library for {}, put {} onto the battlefield",
-                describe_possessive_player_filter(&choose.chooser),
-                selection_text,
-                pronoun
-            );
+            text = if shuffle.is_some() && shuffle_before_move {
+                format!(
+                    "Search {} library for {}, shuffle, then put {} onto the battlefield",
+                    describe_possessive_player_filter(&choose.chooser),
+                    selection_text,
+                    pronoun
+                )
+            } else {
+                format!(
+                    "Search {} library for {}, put {} onto the battlefield",
+                    describe_possessive_player_filter(&choose.chooser),
+                    selection_text,
+                    pronoun
+                )
+            };
             if tapped {
                 text.push_str(" tapped");
             }
         }
         SearchDestination::Hand => {
-            text = format!(
-                "Search {} library for {}, put {} into hand",
-                describe_possessive_player_filter(&choose.chooser),
-                selection_text,
-                pronoun
-            );
+            text = if shuffle.is_some() && shuffle_before_move {
+                format!(
+                    "Search {} library for {}, shuffle, then put {} into {} hand",
+                    describe_possessive_player_filter(&choose.chooser),
+                    selection_text,
+                    pronoun,
+                    describe_possessive_player_filter(&choose.chooser)
+                )
+            } else {
+                format!(
+                    "Search {} library for {}, put {} into {} hand",
+                    describe_possessive_player_filter(&choose.chooser),
+                    selection_text,
+                    pronoun,
+                    describe_possessive_player_filter(&choose.chooser)
+                )
+            };
+        }
+        SearchDestination::Graveyard => {
+            text = if shuffle.is_some() && shuffle_before_move {
+                format!(
+                    "Search {} library for {}, shuffle, then put {} into {} graveyard",
+                    describe_possessive_player_filter(&choose.chooser),
+                    selection_text,
+                    pronoun,
+                    describe_possessive_player_filter(&choose.chooser)
+                )
+            } else {
+                format!(
+                    "Search {} library for {}, put {} into {} graveyard",
+                    describe_possessive_player_filter(&choose.chooser),
+                    selection_text,
+                    pronoun,
+                    describe_possessive_player_filter(&choose.chooser)
+                )
+            };
         }
         SearchDestination::LibraryTop => {
-            text = format!(
-                "Search {} library for {}, put {} on top of library",
-                describe_possessive_player_filter(&choose.chooser),
-                selection_text,
-                pronoun
-            );
+            text = if shuffle.is_some() && shuffle_before_move {
+                format!(
+                    "Search {} library for {}, shuffle, then put {} on top of {} library",
+                    describe_possessive_player_filter(&choose.chooser),
+                    selection_text,
+                    pronoun,
+                    describe_possessive_player_filter(&choose.chooser)
+                )
+            } else {
+                format!(
+                    "Search {} library for {}, put {} on top of {} library",
+                    describe_possessive_player_filter(&choose.chooser),
+                    selection_text,
+                    pronoun,
+                    describe_possessive_player_filter(&choose.chooser)
+                )
+            };
         }
     }
-    if shuffle.is_some() {
+    if shuffle.is_some() && !shuffle_before_move {
         text.push_str(", then shuffle");
     }
     Some(text)
@@ -1222,16 +1493,30 @@ fn describe_search_sequence(sequence: &crate::effects::SequenceEffect) -> Option
         return None;
     }
     let choose = sequence.effects[0].downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
-    let for_each = sequence.effects[1].downcast_ref::<crate::effects::ForEachTaggedEffect>()?;
-    let shuffle = if sequence.effects.len() == 3 {
-        Some(sequence.effects[2].downcast_ref::<crate::effects::ShuffleLibraryEffect>()?)
-    } else {
-        None
-    };
-    describe_search_choose_for_each(choose, for_each, shuffle)
+    if let Some(for_each) = sequence.effects[1].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+    {
+        let shuffle = if sequence.effects.len() == 3 {
+            Some(sequence.effects[2].downcast_ref::<crate::effects::ShuffleLibraryEffect>()?)
+        } else {
+            None
+        };
+        return describe_search_choose_for_each(choose, for_each, shuffle, false);
+    }
+    if sequence.effects.len() == 3
+        && let Some(shuffle) = sequence.effects[1].downcast_ref::<crate::effects::ShuffleLibraryEffect>()
+        && let Some(for_each) =
+            sequence.effects[2].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+    {
+        return describe_search_choose_for_each(choose, for_each, Some(shuffle), true);
+    }
+    None
 }
 
 fn describe_effect(effect: &Effect) -> String {
+    with_effect_render_depth(|| describe_effect_impl(effect))
+}
+
+fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(sequence) = effect.downcast_ref::<crate::effects::SequenceEffect>() {
         if let Some(compact) = describe_search_sequence(sequence) {
             return compact;
@@ -1265,9 +1550,14 @@ fn describe_effect(effect: &Effect) -> String {
         );
     }
     if let Some(choose) = effect.downcast_ref::<crate::effects::ChooseObjectsEffect>() {
+        let chooser = describe_player_filter(&choose.chooser);
+        let choose_verb = player_verb(&chooser, "choose", "chooses");
+        let search_like =
+            choose.is_search || (choose.zone == Zone::Library && choose.tag.as_str().starts_with("searched_"));
         return format!(
-            "{} chooses {} {} in {} and tags it as '{}'",
-            describe_player_filter(&choose.chooser),
+            "{} {} {} {} in {} and tags it as '{}'",
+            chooser,
+            if search_like { "searches for" } else { choose_verb },
             describe_choice_count(&choose.count),
             choose.filter.description(),
             match choose.zone {
@@ -1598,9 +1888,9 @@ fn describe_effect(effect: &Effect) -> String {
         );
     }
     if let Some(reveal_top) = effect.downcast_ref::<crate::effects::RevealTopEffect>() {
+        let owner = describe_possessive_player_filter(&reveal_top.player);
         let mut text = format!(
-            "Reveal the top card of {}'s library",
-            describe_player_filter(&reveal_top.player)
+            "Reveal the top card of {owner} library"
         );
         if let Some(tag) = &reveal_top.tag {
             text.push_str(&format!(" and tag it as '{}'", tag.as_str()));
@@ -1608,9 +1898,20 @@ fn describe_effect(effect: &Effect) -> String {
         return text;
     }
     if let Some(look_at_hand) = effect.downcast_ref::<crate::effects::LookAtHandEffect>() {
+        let owner = if let ChooseSpec::Player(filter) = look_at_hand.target.base() {
+            describe_possessive_player_filter(filter)
+        } else {
+            let who = describe_choose_spec(&look_at_hand.target);
+            if who == "you" {
+                "your".to_string()
+            } else if who.ends_with('s') {
+                format!("{who}'")
+            } else {
+                format!("{who}'s")
+            }
+        };
         return format!(
-            "Look at {}'s hand",
-            describe_choose_spec(&look_at_hand.target)
+            "Look at {owner} hand"
         );
     }
     if let Some(grant_all) = effect.downcast_ref::<crate::effects::GrantAbilitiesAllEffect>() {
@@ -1727,6 +2028,14 @@ fn describe_effect(effect: &Effect) -> String {
             tag_triggering.tag.as_str()
         );
     }
+    if let Some(tag_damage_target) =
+        effect.downcast_ref::<crate::effects::TagTriggeringDamageTargetEffect>()
+    {
+        return format!(
+            "Tag the triggering damaged object as '{}'",
+            tag_damage_target.tag.as_str()
+        );
+    }
     if let Some(tag_attached) = effect.downcast_ref::<crate::effects::TagAttachedToSourceEffect>() {
         return format!(
             "Tag the object attached to this source as '{}'",
@@ -1734,11 +2043,7 @@ fn describe_effect(effect: &Effect) -> String {
         );
     }
     if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
-        return format!(
-            "Execute and store result as effect #{}: {}",
-            with_id.id.0,
-            describe_effect(&with_id.effect)
-        );
+        return describe_effect(&with_id.effect);
     }
     if let Some(conditional) = effect.downcast_ref::<crate::effects::ConditionalEffect>() {
         let true_branch = describe_effect_list(&conditional.if_true);
@@ -1779,9 +2084,24 @@ fn describe_effect(effect: &Effect) -> String {
     if let Some(may) = effect.downcast_ref::<crate::effects::MayEffect>() {
         if let Some(decider) = may.decider.as_ref() {
             let who = describe_player_filter(decider);
-            return format!("{who} may {}", describe_effect_list(&may.effects));
+            let mut inner = describe_effect_list(&may.effects);
+            let prefix = format!("{who} ");
+            if inner.starts_with(&prefix) {
+                inner = inner[prefix.len()..].to_string();
+            } else if who == "you" && inner.starts_with("you ") {
+                inner = inner["you ".len()..].to_string();
+            }
+            if who == "you" {
+                inner = normalize_you_verb_phrase(&inner);
+            }
+            return format!("{who} may {inner}");
         }
-        return format!("You may {}", describe_effect_list(&may.effects));
+        let mut inner = describe_effect_list(&may.effects);
+        if inner.starts_with("you ") {
+            inner = inner["you ".len()..].to_string();
+        }
+        inner = normalize_you_verb_phrase(&inner);
+        return format!("You may {inner}");
     }
     if let Some(target_only) = effect.downcast_ref::<crate::effects::TargetOnlyEffect>() {
         return format!("Choose {}", describe_choose_spec(&target_only.target));
@@ -1961,6 +2281,19 @@ fn describe_effect(effect: &Effect) -> String {
         return format!("Monstrosity {}", describe_value(&monstrosity.n));
     }
     if let Some(copy_spell) = effect.downcast_ref::<crate::effects::CopySpellEffect>() {
+        if matches!(copy_spell.target, ChooseSpec::Source)
+            && matches!(
+                copy_spell.count,
+                Value::SpellsCastBeforeThisTurn(PlayerFilter::You)
+            )
+        {
+            return "Copy this spell for each spell cast before it this turn".to_string();
+        }
+        if matches!(copy_spell.target, ChooseSpec::Source)
+            && matches!(copy_spell.count, Value::Fixed(1))
+        {
+            return "Copy this spell".to_string();
+        }
         return format!(
             "Copy {} {} time(s)",
             describe_choose_spec(&copy_spell.target),
@@ -1974,10 +2307,9 @@ fn describe_effect(effect: &Effect) -> String {
             .map(describe_player_filter)
             .unwrap_or_else(|| "you".to_string());
         return format!(
-            "{} {} new targets for effect #{}",
+            "{} {} new targets for the copy",
             chooser_text,
             if choose_new.may { "may choose" } else { "chooses" },
-            choose_new.from_effect.0,
         );
     }
     if let Some(set_life) = effect.downcast_ref::<crate::effects::SetLifeTotalEffect>() {
@@ -1995,6 +2327,21 @@ fn describe_effect(effect: &Effect) -> String {
         );
     }
     if let Some(add_any) = effect.downcast_ref::<crate::effects::AddManaOfAnyColorEffect>() {
+        if let Some(colors) = &add_any.available_colors {
+            let options = colors
+                .iter()
+                .copied()
+                .map(crate::mana::ManaSymbol::from_color)
+                .map(describe_mana_symbol)
+                .collect::<Vec<_>>()
+                .join(" and/or ");
+            return format!(
+                "Add {} mana in any combination of {} to {}",
+                describe_value(&add_any.amount),
+                options,
+                describe_mana_pool_owner(&add_any.player)
+            );
+        }
         return format!(
             "Add {} mana of any color to {}",
             describe_value(&add_any.amount),
@@ -2037,6 +2384,15 @@ fn describe_effect(effect: &Effect) -> String {
             "Add {} mana of commander's color identity to {}",
             describe_value(&add_commander.amount),
             describe_mana_pool_owner(&add_commander.player)
+        );
+    }
+    if let Some(prevent_damage) = effect.downcast_ref::<crate::effects::PreventDamageEffect>() {
+        return format!(
+            "Prevent the next {} {} to {} {}",
+            describe_value(&prevent_damage.amount),
+            describe_damage_filter(&prevent_damage.damage_filter),
+            describe_choose_spec(&prevent_damage.target),
+            describe_until(&prevent_damage.duration)
         );
     }
     if let Some(prevent_from) =
@@ -2135,7 +2491,13 @@ fn describe_keyword_ability(ability: &Ability) -> Option<String> {
         return Some("Equip".to_string());
     }
     if words.len() >= 2 && words[0] == "level" && words[1] == "up" {
-        return Some("Level up".to_string());
+        return Some(raw_text.to_string());
+    }
+    if text == "storm" {
+        return Some("Storm".to_string());
+    }
+    if text == "toxic" || text.starts_with("toxic ") {
+        return Some(raw_text.to_string());
     }
     let cycling_words = words
         .iter()
@@ -2181,6 +2543,26 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
     }
     match &ability.kind {
         AbilityKind::Static(static_ability) => {
+            if let Some(levels) = static_ability.level_abilities()
+                && !levels.is_empty()
+            {
+                let mut lines = Vec::new();
+                for level in levels {
+                    let range = match level.max_level {
+                        Some(max) if max == level.min_level => format!("Level {}", level.min_level),
+                        Some(max) => format!("Level {}-{}", level.min_level, max),
+                        None => format!("Level {}+", level.min_level),
+                    };
+                    lines.push(format!("Static ability {index}: {range}"));
+                    if let Some((power, toughness)) = level.power_toughness {
+                        lines.push(format!("Static ability {index}: {power}/{toughness}"));
+                    }
+                    for granted in &level.abilities {
+                        lines.push(format!("Static ability {index}: {}", granted.display()));
+                    }
+                }
+                return lines;
+            }
             vec![format!(
                 "Static ability {index}: {}",
                 static_ability.display()

@@ -121,6 +121,109 @@ impl StaticAbilityKind for EntersTappedUnlessControlTwoOrMoreOtherLands {
     }
 }
 
+/// "This enters the battlefield tapped unless you control two or fewer other lands."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EntersTappedUnlessControlTwoOrFewerOtherLands;
+
+impl StaticAbilityKind for EntersTappedUnlessControlTwoOrFewerOtherLands {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::EntersTappedUnlessControlTwoOrFewerOtherLands
+    }
+
+    fn display(&self) -> String {
+        "This enters the battlefield tapped unless you control two or fewer other lands"
+            .to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(
+            ReplacementEffect::with_matcher(
+                source,
+                controller,
+                ThisWouldEnterTappedUnlessControlTwoOrFewerOtherLandsMatcher,
+                ReplacementAction::EnterTapped,
+            )
+            .self_replacing(),
+        )
+    }
+}
+
+/// "This enters the battlefield tapped unless you control two or more basic lands."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EntersTappedUnlessControlTwoOrMoreBasicLands;
+
+impl StaticAbilityKind for EntersTappedUnlessControlTwoOrMoreBasicLands {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::EntersTappedUnlessControlTwoOrMoreBasicLands
+    }
+
+    fn display(&self) -> String {
+        "This enters the battlefield tapped unless you control two or more basic lands".to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(
+            ReplacementEffect::with_matcher(
+                source,
+                controller,
+                ThisWouldEnterTappedUnlessControlTwoOrMoreBasicLandsMatcher,
+                ReplacementAction::EnterTapped,
+            )
+            .self_replacing(),
+        )
+    }
+}
+
+/// "This enters the battlefield tapped unless a player has 13 or less life."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EntersTappedUnlessAPlayerHas13OrLessLife;
+
+impl StaticAbilityKind for EntersTappedUnlessAPlayerHas13OrLessLife {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::EntersTappedUnlessAPlayerHas13OrLessLife
+    }
+
+    fn display(&self) -> String {
+        "This enters the battlefield tapped unless a player has 13 or less life".to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(
+            ReplacementEffect::with_matcher(
+                source,
+                controller,
+                ThisWouldEnterTappedUnlessAPlayerHas13OrLessLifeMatcher,
+                ReplacementAction::EnterTapped,
+            )
+            .self_replacing(),
+        )
+    }
+}
+
 /// "This enters tapped unless you have two or more opponents."
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EntersTappedUnlessTwoOrMoreOpponents;
@@ -188,6 +291,114 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLands
 
     fn display(&self) -> String {
         "When this would enter tapped unless you control two or more other lands".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct ThisWouldEnterTappedUnlessControlTwoOrFewerOtherLandsMatcher;
+
+impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrFewerOtherLandsMatcher {
+    fn matches_event(
+        &self,
+        event: &dyn crate::events::traits::GameEventType,
+        ctx: &crate::events::EventContext,
+    ) -> bool {
+        if !matches_this_would_enter_battlefield(event, ctx) {
+            return false;
+        }
+
+        let land_count = ctx
+            .game
+            .battlefield
+            .iter()
+            .filter_map(|&id| ctx.game.object(id))
+            .filter(|obj| obj.controller == ctx.controller && obj.is_land())
+            .count();
+        land_count > 2
+    }
+
+    fn priority(&self) -> ReplacementPriority {
+        ReplacementPriority::SelfReplacement
+    }
+
+    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
+        Box::new(*self)
+    }
+
+    fn display(&self) -> String {
+        "When this would enter tapped unless you control two or fewer other lands".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct ThisWouldEnterTappedUnlessControlTwoOrMoreBasicLandsMatcher;
+
+impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreBasicLandsMatcher {
+    fn matches_event(
+        &self,
+        event: &dyn crate::events::traits::GameEventType,
+        ctx: &crate::events::EventContext,
+    ) -> bool {
+        if !matches_this_would_enter_battlefield(event, ctx) {
+            return false;
+        }
+
+        let basic_land_count = ctx
+            .game
+            .battlefield
+            .iter()
+            .filter_map(|&id| ctx.game.object(id))
+            .filter(|obj| {
+                obj.controller == ctx.controller
+                    && obj.is_land()
+                    && obj.supertypes.contains(&crate::types::Supertype::Basic)
+            })
+            .count();
+        basic_land_count < 2
+    }
+
+    fn priority(&self) -> ReplacementPriority {
+        ReplacementPriority::SelfReplacement
+    }
+
+    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
+        Box::new(*self)
+    }
+
+    fn display(&self) -> String {
+        "When this would enter tapped unless you control two or more basic lands".to_string()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct ThisWouldEnterTappedUnlessAPlayerHas13OrLessLifeMatcher;
+
+impl ReplacementMatcher for ThisWouldEnterTappedUnlessAPlayerHas13OrLessLifeMatcher {
+    fn matches_event(
+        &self,
+        event: &dyn crate::events::traits::GameEventType,
+        ctx: &crate::events::EventContext,
+    ) -> bool {
+        if !matches_this_would_enter_battlefield(event, ctx) {
+            return false;
+        }
+
+        !ctx.game
+            .players
+            .iter()
+            .any(|player| player.is_in_game() && player.life <= 13)
+    }
+
+    fn priority(&self) -> ReplacementPriority {
+        ReplacementPriority::SelfReplacement
+    }
+
+    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
+        Box::new(*self)
+    }
+
+    fn display(&self) -> String {
+        "When this would enter tapped unless a player has 13 or less life".to_string()
     }
 }
 
@@ -727,7 +938,34 @@ impl StaticAbilityKind for LevelAbilities {
     }
 
     fn display(&self) -> String {
-        "Level up abilities".to_string()
+        if self.levels.is_empty() {
+            return "Level up abilities".to_string();
+        }
+
+        let rendered_levels = self
+            .levels
+            .iter()
+            .map(|level| {
+                let range = match level.max_level {
+                    Some(max) if max == level.min_level => format!("Level {}", level.min_level),
+                    Some(max) => format!("Level {}-{}", level.min_level, max),
+                    None => format!("Level {}+", level.min_level),
+                };
+                let mut details = Vec::new();
+                if let Some((power, toughness)) = level.power_toughness {
+                    details.push(format!("{power}/{toughness}"));
+                }
+                details.extend(level.abilities.iter().map(|ability| ability.display()));
+                if details.is_empty() {
+                    range
+                } else {
+                    format!("{range}: {}", details.join(", "))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        format!("Level up abilities ({rendered_levels})")
     }
 
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
