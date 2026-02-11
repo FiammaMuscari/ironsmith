@@ -54,6 +54,7 @@ pub(super) fn parse_text_with_annotations(
 
                 let tokens = tokenize_line(normalized_line, next.line_index);
                 if let Some(actions) = parse_ability_line(&tokens) {
+                    reject_unimplemented_keyword_actions(&actions, next.raw_line.as_str())?;
                     for action in actions {
                         if let Some(ability) = keyword_action_to_static_ability(action) {
                             level.abilities.push(ability);
@@ -162,8 +163,11 @@ pub(super) fn parse_text_with_annotations(
                 }
                 Ok(None) => {}
                 Err(err) if allow_unsupported => {
-                    builder =
-                        push_unsupported_marker(builder, info.raw_line.as_str(), format!("{err:?}"));
+                    builder = push_unsupported_marker(
+                        builder,
+                        info.raw_line.as_str(),
+                        format!("{err:?}"),
+                    );
                     idx += 1;
                     continue;
                 }

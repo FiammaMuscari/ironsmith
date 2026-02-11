@@ -52,6 +52,7 @@ pub enum Subtype {
     Boar,
     Cat,
     Centaur,
+    Citizen,
     Changeling,
     Cleric,
     Construct,
@@ -64,6 +65,7 @@ pub enum Subtype {
     Djinn,
     Efreet,
     Dog,
+    Drone,
     Dragon,
     Drake,
     Druid,
@@ -87,12 +89,15 @@ pub enum Subtype {
     God,
     Golem,
     Gorgon,
+    Gremlin,
+    Germ,
     Griffin,
     Hag,
     Halfling,
     Harpy,
     Hippo,
     Horror,
+    Homunculus,
     Horse,
     Hound,
     Human,
@@ -149,10 +154,12 @@ pub enum Subtype {
     Rogue,
     Robot,
     Salamander,
+    Saproling,
     Samurai,
     Satyr,
     Scarecrow,
     Scout,
+    Servo,
     Serpent,
     Shade,
     Shaman,
@@ -305,6 +312,7 @@ impl Subtype {
                 | Subtype::Boar
                 | Subtype::Cat
                 | Subtype::Centaur
+                | Subtype::Citizen
                 | Subtype::Changeling
                 | Subtype::Cleric
                 | Subtype::Construct
@@ -316,6 +324,7 @@ impl Subtype {
                 | Subtype::Djinn
                 | Subtype::Efreet
                 | Subtype::Dog
+                | Subtype::Drone
                 | Subtype::Dragon
                 | Subtype::Drake
                 | Subtype::Druid
@@ -339,12 +348,15 @@ impl Subtype {
                 | Subtype::God
                 | Subtype::Golem
                 | Subtype::Gorgon
+                | Subtype::Gremlin
+                | Subtype::Germ
                 | Subtype::Griffin
                 | Subtype::Hag
                 | Subtype::Halfling
                 | Subtype::Harpy
                 | Subtype::Hippo
                 | Subtype::Horror
+                | Subtype::Homunculus
                 | Subtype::Horse
                 | Subtype::Hound
                 | Subtype::Human
@@ -401,10 +413,12 @@ impl Subtype {
                 | Subtype::Rogue
                 | Subtype::Robot
                 | Subtype::Salamander
+                | Subtype::Saproling
                 | Subtype::Samurai
                 | Subtype::Satyr
                 | Subtype::Scarecrow
                 | Subtype::Scout
+                | Subtype::Servo
                 | Subtype::Serpent
                 | Subtype::Shade
                 | Subtype::Shaman

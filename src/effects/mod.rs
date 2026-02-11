@@ -107,7 +107,7 @@ pub use stack::{ChooseNewTargetsEffect, CopySpellEffect, CounterEffect};
 pub use tokens::{CreateTokenCopyEffect, CreateTokenEffect, InvestigateEffect};
 pub use zones::{
     DestroyEffect, ExileEffect, ExileFromHandAsCostEffect, MoveToZoneEffect,
-    PutOntoBattlefieldEffect, ReturnFromGraveyardOrExileToBattlefieldEffect,
-    ReturnFromGraveyardToBattlefieldEffect, ReturnFromGraveyardToHandEffect,
-    ReturnAllToBattlefieldEffect, ReturnToHandEffect, SacrificeEffect, SacrificeTargetEffect,
+    PutOntoBattlefieldEffect, ReturnAllToBattlefieldEffect,
+    ReturnFromGraveyardOrExileToBattlefieldEffect, ReturnFromGraveyardToBattlefieldEffect,
+    ReturnFromGraveyardToHandEffect, ReturnToHandEffect, SacrificeEffect, SacrificeTargetEffect,
 };

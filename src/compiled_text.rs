@@ -272,6 +272,82 @@ fn normalize_you_verb_phrase(text: &str) -> String {
     text.to_string()
 }
 
+fn mana_word_to_symbol(word: &str) -> Option<&'static str> {
+    match word {
+        "w" => Some("{W}"),
+        "u" => Some("{U}"),
+        "b" => Some("{B}"),
+        "r" => Some("{R}"),
+        "g" => Some("{G}"),
+        "c" => Some("{C}"),
+        _ => None,
+    }
+}
+
+fn normalize_sliver_grant_clause(rest: &str) -> Option<String> {
+    let words = rest.split_whitespace().collect::<Vec<_>>();
+    if words.is_empty() {
+        return None;
+    }
+
+    let mut idx = 0usize;
+    let mut costs = Vec::new();
+    while idx < words.len() {
+        let word = words[idx];
+        if word.chars().all(|ch| ch.is_ascii_digit()) {
+            costs.push(format!("{{{word}}}"));
+            idx += 1;
+            continue;
+        }
+        if word == "t" {
+            costs.push("{T}".to_string());
+            idx += 1;
+            continue;
+        }
+        break;
+    }
+    if idx + 2 < words.len()
+        && words[idx] == "sacrifice"
+        && words[idx + 1] == "this"
+        && words[idx + 2] == "permanent"
+    {
+        costs.push("Sacrifice this permanent".to_string());
+        idx += 3;
+    }
+
+    let mut effect_words = words[idx..].to_vec();
+    if effect_words.is_empty() {
+        return None;
+    }
+
+    let effect = if effect_words[0] == "add" && effect_words.len() > 1 {
+        let mana = effect_words[1..]
+            .iter()
+            .filter_map(|word| mana_word_to_symbol(word))
+            .collect::<Vec<_>>()
+            .join("");
+        if mana.is_empty() {
+            capitalize_first(&effect_words.join(" "))
+        } else {
+            format!("Add {mana}")
+        }
+    } else {
+        if effect_words.len() >= 2 && effect_words[0] == "target" && effect_words[1] == "sliver" {
+            effect_words[1] = "Sliver";
+        }
+        capitalize_first(&effect_words.join(" "))
+    };
+
+    if costs.is_empty() {
+        Some(format!("All Slivers have \"{effect}.\""))
+    } else {
+        Some(format!(
+            "All Slivers have \"{}: {effect}.\"",
+            costs.join(", ")
+        ))
+    }
+}
+
 fn describe_card_count(value: &Value) -> String {
     match value {
         Value::Fixed(1) => "a card".to_string(),
@@ -387,6 +463,15 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
     }
 }
 
+fn describe_transform_target(spec: &ChooseSpec) -> String {
+    match spec {
+        // Oracle text overwhelmingly uses "this creature" for source transforms
+        // and this keeps compiled wording aligned with parser normalization.
+        ChooseSpec::Source => "this creature".to_string(),
+        _ => describe_choose_spec(spec),
+    }
+}
+
 fn graveyard_owner_from_spec(spec: &ChooseSpec) -> Option<Option<PlayerFilter>> {
     match spec {
         ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
@@ -400,6 +485,31 @@ fn graveyard_owner_from_spec(spec: &ChooseSpec) -> Option<Option<PlayerFilter>> 
             }
         }
         _ => None,
+    }
+}
+
+fn hand_owner_from_spec(spec: &ChooseSpec) -> Option<Option<PlayerFilter>> {
+    match spec {
+        ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => hand_owner_from_spec(inner),
+        ChooseSpec::Object(filter) | ChooseSpec::All(filter) => {
+            if filter.zone == Some(Zone::Hand) {
+                Some(filter.owner.clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn describe_card_choice_count(count: ChoiceCount) -> String {
+    match (count.min, count.max) {
+        (1, Some(1)) => "a card".to_string(),
+        (min, Some(max)) if min == max => format!("{min} cards"),
+        (0, Some(max)) => format!("up to {max} cards"),
+        (0, None) => "any number of cards".to_string(),
+        (min, None) => format!("at least {min} cards"),
+        (min, Some(max)) => format!("{min} to {max} cards"),
     }
 }
 
@@ -428,7 +538,9 @@ fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
             if filter.zone == Some(Zone::Graveyard) {
                 let text = filter.description();
                 let suffix = match &filter.owner {
-                    Some(owner) => format!(" in {} graveyard", describe_possessive_player_filter(owner)),
+                    Some(owner) => {
+                        format!(" in {} graveyard", describe_possessive_player_filter(owner))
+                    }
                     None => " in graveyard".to_string(),
                 };
                 if let Some(stripped) = text.strip_suffix(&suffix) {
@@ -442,7 +554,9 @@ fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
             if filter.zone == Some(Zone::Graveyard) {
                 let text = filter.description();
                 let suffix = match &filter.owner {
-                    Some(owner) => format!(" in {} graveyard", describe_possessive_player_filter(owner)),
+                    Some(owner) => {
+                        format!(" in {} graveyard", describe_possessive_player_filter(owner))
+                    }
                     None => " in graveyard".to_string(),
                 };
                 if let Some(stripped) = text.strip_suffix(&suffix) {
@@ -731,6 +845,14 @@ fn describe_signed_value(value: &Value) -> String {
     }
 }
 
+fn describe_toughness_delta_with_power_context(power: &Value, toughness: &Value) -> String {
+    if matches!(power, Value::Fixed(n) if *n < 0) && matches!(toughness, Value::Fixed(0)) {
+        "-0".to_string()
+    } else {
+        describe_signed_value(toughness)
+    }
+}
+
 fn describe_signed_i32(value: i32) -> String {
     if value >= 0 {
         format!("+{value}")
@@ -781,10 +903,15 @@ fn describe_apply_continuous_clauses(
     let mut push_modification = |modification: &crate::continuous::Modification| match modification
     {
         crate::continuous::Modification::ModifyPowerToughness { power, toughness } => {
+            let toughness_text = if *power < 0 && *toughness == 0 {
+                "-0".to_string()
+            } else {
+                describe_signed_i32(*toughness)
+            };
             clauses.push(format!(
                 "{gets} {}/{}",
                 describe_signed_i32(*power),
-                describe_signed_i32(*toughness)
+                toughness_text
             ));
         }
         crate::continuous::Modification::ModifyPower(value) => {
@@ -832,7 +959,7 @@ fn describe_apply_continuous_clauses(
                 clauses.push(format!(
                     "{gets} {}/{}",
                     describe_signed_value(power),
-                    describe_signed_value(toughness)
+                    describe_toughness_delta_with_power_context(power, toughness)
                 ));
             }
             crate::effects::continuous::RuntimeModification::ModifyPower { value } => {
@@ -906,6 +1033,40 @@ fn describe_compact_apply_continuous_pair(
         text.push_str(&describe_until(&first.until));
     }
     Some(text)
+}
+
+fn choose_spec_references_tag(spec: &ChooseSpec, tag: &str) -> bool {
+    match spec {
+        ChooseSpec::Tagged(candidate) => candidate.as_str() == tag,
+        ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
+            choose_spec_references_tag(inner, tag)
+        }
+        _ => false,
+    }
+}
+
+fn describe_tag_attached_then_tap_or_untap(
+    tag_attached: &crate::effects::TagAttachedToSourceEffect,
+    next: &Effect,
+) -> Option<String> {
+    let tag = tag_attached.tag.as_str();
+    let attached_object = match tag {
+        "enchanted" => "enchanted permanent",
+        "equipped" => "equipped creature",
+        _ => return None,
+    };
+
+    if let Some(tap) = next.downcast_ref::<crate::effects::TapEffect>()
+        && choose_spec_references_tag(&tap.spec, tag)
+    {
+        return Some(format!("Tap {attached_object}"));
+    }
+    if let Some(untap) = next.downcast_ref::<crate::effects::UntapEffect>()
+        && choose_spec_references_tag(&untap.spec, tag)
+    {
+        return Some(format!("Untap {attached_object}"));
+    }
+    None
 }
 
 fn is_generated_internal_tag(tag: &str) -> bool {
@@ -1152,6 +1313,16 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             continue;
         }
         if idx + 1 < filtered.len()
+            && let Some(tag_attached) =
+                filtered[idx].downcast_ref::<crate::effects::TagAttachedToSourceEffect>()
+            && let Some(compact) =
+                describe_tag_attached_then_tap_or_untap(tag_attached, filtered[idx + 1])
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < filtered.len()
             && let Some(tagged) = filtered[idx].downcast_ref::<crate::effects::TaggedEffect>()
             && let Some(move_back) =
                 filtered[idx + 1].downcast_ref::<crate::effects::MoveToZoneEffect>()
@@ -1223,7 +1394,7 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             && let Some(choose) =
                 filtered[idx].downcast_ref::<crate::effects::ChooseObjectsEffect>()
             && let Some(exile) = filtered[idx + 1].downcast_ref::<crate::effects::ExileEffect>()
-            && let Some(compact) = describe_choose_then_exile_from_hand(choose, exile)
+            && let Some(compact) = describe_choose_then_exile(choose, exile)
         {
             parts.push(compact);
             idx += 2;
@@ -1423,6 +1594,19 @@ fn describe_cost_list(costs: &[crate::costs::Cost]) -> String {
             && let Some(compact) = describe_choose_then_tap_cost(choose, tap)
         {
             parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < costs.len()
+            && let Some(choose) = costs[idx]
+                .effect_ref()
+                .and_then(|effect| effect.downcast_ref::<crate::effects::ChooseObjectsEffect>())
+            && let Some(exile) = costs[idx + 1]
+                .effect_ref()
+                .and_then(|effect| effect.downcast_ref::<crate::effects::ExileEffect>())
+            && let Some(compact) = describe_choose_then_exile(choose, exile)
+        {
+            parts.push(normalize_cost_phrase(&compact));
             idx += 2;
             continue;
         }
@@ -1641,14 +1825,6 @@ fn exile_uses_chosen_tag(spec: &ChooseSpec, tag: &str) -> bool {
     matches!(spec.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
 }
 
-fn describe_hand_possessive(filter: &PlayerFilter) -> &'static str {
-    if matches!(filter, PlayerFilter::You) {
-        "your"
-    } else {
-        "their"
-    }
-}
-
 fn describe_for_each_filter(filter: &ObjectFilter) -> String {
     let mut base_filter = filter.clone();
     base_filter.controller = None;
@@ -1804,51 +1980,79 @@ fn describe_compact_create_token(
     }
 }
 
-fn describe_choose_then_exile_from_hand(
+fn choose_exact_count(choose: &crate::effects::ChooseObjectsEffect) -> Option<usize> {
+    choose.count.max.filter(|max| *max == choose.count.min)
+}
+
+fn describe_choose_selection(choose: &crate::effects::ChooseObjectsEffect) -> String {
+    if choose.top_only {
+        if let Some(exact) = choose_exact_count(choose) {
+            if exact > 1 {
+                let count_text = number_word(exact as i32)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| exact.to_string());
+                return format!("the top {count_text} cards");
+            }
+        }
+        return "the top card".to_string();
+    }
+
+    let filter_text = choose.filter.description();
+    let mut card_desc = filter_text
+        .split(" in ")
+        .next()
+        .unwrap_or(filter_text.as_str())
+        .trim()
+        .to_string();
+    if let Some(rest) = card_desc.strip_prefix("card ") {
+        card_desc = format!("{rest} card");
+    }
+
+    if choose.count.is_single() {
+        return with_indefinite_article(&card_desc);
+    }
+    if let Some(exact) = choose_exact_count(choose) {
+        let count_text = number_word(exact as i32)
+            .map(str::to_string)
+            .unwrap_or_else(|| exact.to_string());
+        return format!("{count_text} {}", pluralize_noun_phrase(&card_desc));
+    }
+    format!(
+        "{} {}",
+        describe_choice_count(&choose.count),
+        pluralize_noun_phrase(&card_desc)
+    )
+}
+
+fn describe_choose_then_exile(
     choose: &crate::effects::ChooseObjectsEffect,
     exile: &crate::effects::ExileEffect,
 ) -> Option<String> {
-    if choose.zone != Zone::Hand
-        || choose.is_search
-        || !exile_uses_chosen_tag(&exile.spec, choose.tag.as_str())
-    {
+    if choose.is_search || !exile_uses_chosen_tag(&exile.spec, choose.tag.as_str()) {
         return None;
     }
 
+    let zone_text = match choose.zone {
+        Zone::Hand => "hand",
+        Zone::Graveyard => "graveyard",
+        Zone::Library => "library",
+        _ => return None,
+    };
     let chooser = describe_player_filter(&choose.chooser);
     let verb = player_verb(&chooser, "exile", "exiles");
-    let filter_text = choose.filter.description();
-    let card_desc = filter_text
-        .split(" in ")
-        .next()
-        .unwrap_or(filter_text.as_str());
-    let chosen = if choose.count.is_single() {
-        with_indefinite_article(card_desc)
-    } else if let Some(max) = choose.count.max {
-        if choose.count.min == max {
-            let count_text = number_word(max as i32)
-                .map(str::to_string)
-                .unwrap_or_else(|| max.to_string());
-            format!("{count_text} {}", pluralize_noun_phrase(card_desc))
-        } else {
-            format!(
-                "{} {}",
-                describe_choice_count(&choose.count),
-                pluralize_noun_phrase(card_desc)
-            )
-        }
+    let chosen = describe_choose_selection(choose);
+    let origin = if choose.zone == Zone::Library && choose.top_only {
+        format!(
+            "of {} {zone_text}",
+            describe_possessive_player_filter(&choose.chooser)
+        )
     } else {
         format!(
-            "{} {}",
-            describe_choice_count(&choose.count),
-            pluralize_noun_phrase(card_desc)
+            "from {} {zone_text}",
+            describe_possessive_player_filter(&choose.chooser)
         )
     };
-
-    Some(format!(
-        "{chooser} {verb} {chosen} from {} hand",
-        describe_hand_possessive(&choose.chooser)
-    ))
+    Some(format!("{chooser} {verb} {chosen} {origin}"))
 }
 
 fn describe_draw_then_discard(
@@ -2134,9 +2338,7 @@ fn describe_effect(effect: &Effect) -> String {
     with_effect_render_depth(|| describe_effect_impl(effect))
 }
 
-fn describe_tap_or_untap_mode(
-    choose_mode: &crate::effects::ChooseModeEffect,
-) -> Option<String> {
+fn describe_tap_or_untap_mode(choose_mode: &crate::effects::ChooseModeEffect) -> Option<String> {
     if choose_mode.modes.len() != 2 {
         return None;
     }
@@ -2218,14 +2420,25 @@ fn describe_effect_impl(effect: &Effect) -> String {
         let choose_verb = player_verb(&chooser, "choose", "chooses");
         let search_like = choose.is_search
             || (choose.zone == Zone::Library && choose.tag.as_str().starts_with("searched_"));
+        let filter_text = choose.filter.description();
         let choice_text = if choose.top_only {
-            format!("the top {}", choose.filter.description())
+            if let Some(exact) = choose_exact_count(choose) {
+                if exact > 1 {
+                    let count_text = number_word(exact as i32)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| exact.to_string());
+                    format!(
+                        "the top {count_text} {}",
+                        pluralize_noun_phrase(&filter_text)
+                    )
+                } else {
+                    format!("the top {filter_text}")
+                }
+            } else {
+                format!("the top {filter_text}")
+            }
         } else {
-            format!(
-                "{} {}",
-                describe_choice_count(&choose.count),
-                choose.filter.description()
-            )
+            format!("{} {}", describe_choice_count(&choose.count), filter_text)
         };
         return format!(
             "{} {} {} in {} and tags it as '{}'",
@@ -2255,6 +2468,25 @@ fn describe_effect_impl(effect: &Effect) -> String {
             Zone::Graveyard => format!("Put {target} into its owner's graveyard"),
             Zone::Hand => format!("Return {target} to its owner's hand"),
             Zone::Library => {
+                if let Some(owner) = hand_owner_from_spec(&move_to_zone.target) {
+                    let cards = describe_card_choice_count(move_to_zone.target.count());
+                    let hand = match &owner {
+                        Some(owner) => {
+                            format!("{} hand", describe_possessive_player_filter(owner))
+                        }
+                        None => "a hand".to_string(),
+                    };
+                    let library = match &owner {
+                        Some(owner) => {
+                            format!("{} library", describe_possessive_player_filter(owner))
+                        }
+                        None => "its owner's library".to_string(),
+                    };
+                    if move_to_zone.to_top {
+                        return format!("Put {cards} from {hand} on top of {library}");
+                    }
+                    return format!("Put {cards} from {hand} on the bottom of {library}");
+                }
                 if move_to_zone.to_top {
                     format!("Put {target} on top of its owner's library")
                 } else {
@@ -2314,9 +2546,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
             } else {
                 "power"
             };
-            return format!(
-                "{subject} {verb} damage equal to its {stat} to {target}"
-            );
+            return format!("{subject} {verb} damage equal to its {stat} to {target}");
         }
         return format!(
             "Deal {} damage to {}",
@@ -2697,7 +2927,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
             "{} gets {}/{} {}",
             describe_choose_spec(&modify_pt.target),
             describe_signed_value(&modify_pt.power),
-            describe_signed_value(&modify_pt.toughness),
+            describe_toughness_delta_with_power_context(&modify_pt.power, &modify_pt.toughness),
             describe_until(&modify_pt.duration)
         );
     }
@@ -2718,7 +2948,10 @@ fn describe_effect_impl(effect: &Effect) -> String {
             "{} get {}/{} {}",
             modify_pt_all.filter.description(),
             describe_signed_value(&modify_pt_all.power),
-            describe_signed_value(&modify_pt_all.toughness),
+            describe_toughness_delta_with_power_context(
+                &modify_pt_all.power,
+                &modify_pt_all.toughness,
+            ),
             describe_until(&modify_pt_all.duration)
         );
     }
@@ -2749,7 +2982,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
         );
     }
     if let Some(transform) = effect.downcast_ref::<crate::effects::TransformEffect>() {
-        return format!("Transform {}", describe_choose_spec(&transform.target));
+        return format!("Transform {}", describe_transform_target(&transform.target));
     }
     if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
         if is_implicit_reference_tag(tagged.tag.as_str()) {
@@ -3149,8 +3382,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
         let pool = describe_mana_pool_owner(&add_chosen.player);
         let amount = describe_value(&add_chosen.amount);
         if let Some(fixed) = add_chosen.fixed_option {
-            let fixed_symbol =
-                describe_mana_symbol(crate::mana::ManaSymbol::from_color(fixed));
+            let fixed_symbol = describe_mana_symbol(crate::mana::ManaSymbol::from_color(fixed));
             if matches!(add_chosen.amount, Value::Fixed(1)) {
                 return format!(
                     "Add {} or one mana of the chosen color to {}",
@@ -3312,14 +3544,14 @@ fn describe_effect_impl(effect: &Effect) -> String {
     format!("{effect:?}")
 }
 
-fn describe_timing(timing: &ActivationTiming) -> &'static str {
+fn describe_activation_timing_clause(timing: &ActivationTiming) -> Option<&'static str> {
     match timing {
-        ActivationTiming::AnyTime => "any time",
-        ActivationTiming::SorcerySpeed => "sorcery speed",
-        ActivationTiming::DuringCombat => "during combat",
-        ActivationTiming::OncePerTurn => "once per turn",
-        ActivationTiming::DuringYourTurn => "during your turn",
-        ActivationTiming::DuringOpponentsTurn => "during opponents turn",
+        ActivationTiming::AnyTime => None,
+        ActivationTiming::SorcerySpeed => Some("Activate only as a sorcery"),
+        ActivationTiming::DuringCombat => Some("Activate only during combat"),
+        ActivationTiming::OncePerTurn => Some("Activate only once each turn"),
+        ActivationTiming::DuringYourTurn => Some("Activate only during your turn"),
+        ActivationTiming::DuringOpponentsTurn => Some("Activate only during an opponent's turn"),
     }
 }
 
@@ -3408,9 +3640,9 @@ fn is_cycling_cost_word(word: &str) -> bool {
 }
 
 fn choices_are_simple_targets(choices: &[ChooseSpec]) -> bool {
-    choices.iter().all(|choice| {
-        matches!(choice, ChooseSpec::Target(_) | ChooseSpec::AnyTarget)
-    })
+    choices
+        .iter()
+        .all(|choice| matches!(choice, ChooseSpec::Target(_) | ChooseSpec::AnyTarget))
 }
 
 fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
@@ -3448,7 +3680,7 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
             let mut line = format!("Triggered ability {index}: {}", triggered.trigger.display());
             let mut clauses = Vec::new();
             if !triggered.choices.is_empty()
-                && !( !triggered.effects.is_empty()
+                && !(!triggered.effects.is_empty()
                     && choices_are_simple_targets(&triggered.choices))
             {
                 let choices = triggered
@@ -3470,15 +3702,12 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
         }
         AbilityKind::Activated(activated) => {
             let mut line = format!("Activated ability {index}");
-            if !matches!(activated.timing, ActivationTiming::AnyTime) {
-                line.push_str(&format!(" (timing {})", describe_timing(&activated.timing)));
-            }
             let mut pre = Vec::new();
             if !activated.mana_cost.costs().is_empty() {
                 pre.push(describe_cost_list(activated.mana_cost.costs()));
             }
             if !activated.choices.is_empty()
-                && !( !activated.effects.is_empty()
+                && !(!activated.effects.is_empty()
                     && choices_are_simple_targets(&activated.choices))
             {
                 pre.push(format!(
@@ -3498,6 +3727,10 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
             if !activated.effects.is_empty() {
                 line.push_str(": ");
                 line.push_str(&describe_effect_list(&activated.effects));
+            }
+            if let Some(timing_clause) = describe_activation_timing_clause(&activated.timing) {
+                line.push_str(". ");
+                line.push_str(timing_clause);
             }
             vec![line]
         }
@@ -3552,7 +3785,10 @@ fn describe_mana_activation_condition(condition: &crate::ability::ManaAbilityCon
             match names.len() {
                 0 => "Activate only if you control a land of the required subtype".to_string(),
                 1 => format!("Activate only if you control a {}", names[0]),
-                2 => format!("Activate only if you control a {} or a {}", names[0], names[1]),
+                2 => format!(
+                    "Activate only if you control a {} or a {}",
+                    names[0], names[1]
+                ),
                 _ => {
                     let mut list = names[..names.len() - 1]
                         .iter()
@@ -3759,12 +3995,270 @@ fn join_oracle_list(items: &[String]) -> String {
     }
 }
 
+fn card_self_subject_for_oracle_lines(def: &CardDefinition) -> &'static str {
+    use crate::types::CardType;
+
+    let card_types = &def.card.card_types;
+    if card_types.contains(&CardType::Creature) {
+        return "creature";
+    }
+    if card_types.len() == 1 {
+        return match card_types[0] {
+            CardType::Land => "land",
+            CardType::Artifact => "artifact",
+            CardType::Enchantment => "enchantment",
+            CardType::Planeswalker => "planeswalker",
+            CardType::Battle => "battle",
+            CardType::Kindred => "kindred",
+            CardType::Instant | CardType::Sorcery | CardType::Creature => "permanent",
+        };
+    }
+    "permanent"
+}
+
+fn card_has_graveyard_activated_ability(def: &CardDefinition) -> bool {
+    def.abilities.iter().any(|ability| {
+        ability.functional_zones.contains(&Zone::Graveyard)
+            && matches!(
+                ability.kind,
+                AbilityKind::Activated(_) | AbilityKind::Mana(_)
+            )
+    })
+}
+
+fn enchanted_subject_for_oracle_lines(def: &CardDefinition) -> Option<&'static str> {
+    for ability in &def.abilities {
+        let AbilityKind::Static(static_ability) = &ability.kind else {
+            continue;
+        };
+        let Some(rest) = static_ability
+            .display()
+            .to_ascii_lowercase()
+            .strip_prefix("enchant ")
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        if rest.starts_with("creature") {
+            return Some("creature");
+        }
+        if rest.starts_with("land") {
+            return Some("land");
+        }
+        if rest.starts_with("artifact") {
+            return Some("artifact");
+        }
+        if rest.starts_with("permanent") {
+            return Some("permanent");
+        }
+    }
+    None
+}
+
+fn normalize_create_under_control_clause(text: &str) -> Option<String> {
+    let (prefix, rest) = text.split_once("Create ")?;
+    let (created, suffix) = rest.split_once(" under your control")?;
+    let created = if let Some(single) = created.strip_prefix("1 ") {
+        format!("a {single}")
+    } else {
+        created.to_string()
+    };
+    Some(format!("{prefix}Create {created}{suffix}"))
+}
+
+fn normalize_oracle_line_segment(segment: &str) -> String {
+    let trimmed = segment.trim();
+    if let Some(normalized) = normalize_create_under_control_clause(trimmed) {
+        return normalized;
+    }
+    if let Some(rest) = trimmed.strip_prefix("all slivers have ")
+        && let Some(normalized) = normalize_sliver_grant_clause(rest)
+    {
+        return normalized;
+    }
+    if trimmed == "creatures have Can't block" {
+        return "Creatures can't block".to_string();
+    }
+    if let Some(rest) = trimmed.strip_prefix("For each player, Deal ")
+        && let Some((amount, per_player_tail)) =
+            rest.split_once(" damage to that player. For each ")
+        && let Some((per_player_filter, repeated_damage)) = per_player_tail.split_once(", Deal ")
+        && repeated_damage == format!("{amount} damage to that object")
+    {
+        let per_player_filter = per_player_filter
+            .strip_suffix(" that player controls")
+            .unwrap_or(per_player_filter);
+        return format!("Deal {amount} damage to each player and each {per_player_filter}");
+    }
+    if trimmed.contains("For each opponent, Deal ") && trimmed.contains(" damage to that player") {
+        return trimmed
+            .replacen("For each opponent, Deal ", "Deal ", 1)
+            .replace(" damage to that player", " damage to each opponent");
+    }
+    if let Some((choice, rest)) = trimmed.split_once(". ")
+        && let Some(chosen) = choice.strip_prefix("Choose ")
+        && rest
+            .to_ascii_lowercase()
+            .starts_with(&chosen.to_ascii_lowercase())
+    {
+        return rest.to_string();
+    }
+    if let Some(rest) = trimmed.strip_prefix("For each ")
+        && let Some((who, tail)) = rest.split_once(", that player ")
+    {
+        return format!("each {who} {tail}");
+    }
+    if let Some(rest) = trimmed.strip_prefix("opponent's ")
+        && let Some((objects, predicate)) = rest.split_once(" get ")
+    {
+        return format!("{objects} your opponents control get {predicate}");
+    }
+    if let Some(rest) = trimmed.strip_prefix("opponent's ")
+        && let Some((objects, predicate)) = rest.split_once(" gets ")
+    {
+        return format!("{objects} your opponents control gets {predicate}");
+    }
+    if let Some(rest) = trimmed.strip_prefix("you ") {
+        let normalized = normalize_you_verb_phrase(rest);
+        if normalized != rest {
+            return normalized;
+        }
+    }
+    if let Some(prefix) = trimmed.strip_suffix(" can't block until end of turn") {
+        return format!("{prefix} can't block this turn");
+    }
+    if let Some(prefix) = trimmed.strip_suffix(" can't block until end of turn.") {
+        return format!("{prefix} can't block this turn");
+    }
+    if let Some(prefix) = trimmed.strip_suffix(" can't be blocked until end of turn") {
+        return format!("{prefix} can't be blocked this turn");
+    }
+    if let Some(prefix) = trimmed.strip_suffix(" can't be blocked until end of turn.") {
+        return format!("{prefix} can't be blocked this turn");
+    }
+    if trimmed.starts_with("Prevent the next ")
+        && trimmed.contains(" damage to ")
+        && trimmed.contains(" until end of turn")
+    {
+        return trimmed
+            .replace(" damage to ", " damage that would be dealt to ")
+            .replace(" until end of turn", " this turn");
+    }
+    if let Some((subject, mana_tail)) = trimmed.split_once(" have t add ") {
+        return format!("{subject} have \"{{T}}: Add {mana_tail}\"");
+    }
+    if let Some((subject, mana_tail)) = trimmed.split_once(" has t add ") {
+        return format!("{subject} has \"{{T}}: Add {mana_tail}\"");
+    }
+    if trimmed
+        == "For each player, Put target card in target player's hand on top of its owner's library"
+    {
+        return "Each player puts a card from their hand on top of their library".to_string();
+    }
+    if let Some(prefix) =
+        trimmed.strip_suffix(" target card in your hand on top of its owner's library")
+    {
+        if prefix == "Put" {
+            return "Put a card from your hand on top of your library".to_string();
+        }
+        if let Some(count_text) = prefix.strip_prefix("Put ") {
+            return format!("Put {count_text} cards from your hand on top of your library");
+        }
+    }
+    if trimmed.contains(" in your graveyard to its owner's hand") {
+        return trimmed.replace(
+            " in your graveyard to its owner's hand",
+            " from your graveyard to your hand",
+        );
+    }
+    if trimmed.starts_with("Whenever you cast creature") {
+        return trimmed.replacen(
+            "Whenever you cast creature",
+            "When you cast a creature spell",
+            1,
+        );
+    }
+    trimmed.to_string()
+}
+
+fn normalize_oracle_line_for_card(def: &CardDefinition, line: &str) -> String {
+    let mut normalized = line.trim().to_string();
+    normalized = normalized
+        .replace(" can't block until end of turn.", " can't block this turn")
+        .replace(" can't block until end of turn", " can't block this turn")
+        .replace(
+            " can't be blocked until end of turn.",
+            " can't be blocked this turn",
+        )
+        .replace(
+            " can't be blocked until end of turn",
+            " can't be blocked this turn",
+        );
+
+    let subject = card_self_subject_for_oracle_lines(def);
+    if subject != "permanent" {
+        normalized = normalized.replace("this source's", &format!("this {subject}'s"));
+        normalized = normalized.replace("this source", &format!("this {subject}"));
+        normalized = normalized.replace(
+            "Enters the battlefield with ",
+            &format!("This {subject} enters with "),
+        );
+        normalized = normalized.replace(
+            "When this permanent enters the battlefield",
+            &format!("When this {subject} enters"),
+        );
+        normalized = normalized.replace(
+            "Whenever this permanent enters the battlefield",
+            &format!("Whenever this {subject} enters"),
+        );
+        normalized = normalized.replace(
+            "When this permanent leaves the battlefield",
+            &format!("When this {subject} leaves the battlefield"),
+        );
+        normalized = normalized.replace(
+            "Whenever this permanent leaves the battlefield",
+            &format!("Whenever this {subject} leaves the battlefield"),
+        );
+    }
+    if card_has_graveyard_activated_ability(def) {
+        normalized = normalized.replace(
+            "Return this source to its owner's hand",
+            "Return this card from your graveyard to your hand",
+        );
+        normalized = normalized.replace(
+            &format!("Return this {subject} to its owner's hand"),
+            "Return this card from your graveyard to your hand",
+        );
+    }
+    if let Some(enchanted_subject) = enchanted_subject_for_oracle_lines(def) {
+        normalized = normalized.replace(
+            "Tap enchanted permanent",
+            &format!("Tap enchanted {enchanted_subject}"),
+        );
+        normalized = normalized.replace(
+            "Untap enchanted permanent",
+            &format!("Untap enchanted {enchanted_subject}"),
+        );
+    }
+    normalized = normalized.replace(
+        "choose target card in target player's hand: For each player, Put target card in target player's hand on top of its owner's library",
+        "Each player puts a card from their hand on top of their library",
+    );
+
+    normalized
+        .split(": ")
+        .map(normalize_oracle_line_segment)
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
 /// Render compiled output in a near-oracle style for semantic diffing.
 pub fn oracle_like_lines(def: &CardDefinition) -> Vec<String> {
     let base_lines = compiled_lines(def);
     let stripped = base_lines
         .iter()
         .map(|line| strip_render_heading(line))
+        .map(|line| normalize_oracle_line_for_card(def, &line))
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
 

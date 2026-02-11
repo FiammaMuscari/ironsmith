@@ -28,6 +28,7 @@ use crate::events::combat::{
     CreatureAttackedEvent, CreatureBecameBlockedEvent, CreatureBlockedEvent,
 };
 use crate::events::damage::DamageEvent;
+use crate::events::life::LifeLossEvent;
 use crate::events::permanents::SacrificeEvent;
 use crate::events::spells::{AbilityActivatedEvent, BecomesTargetedEvent, SpellCastEvent};
 use crate::events::zones::EnterBattlefieldEvent;
@@ -916,6 +917,9 @@ fn resolve_stack_entry_full(
     if let Some(triggering_event) = entry.triggering_event.clone() {
         ctx = ctx.with_triggering_event(triggering_event);
     }
+    if let Some(source_snapshot) = entry.source_snapshot.clone() {
+        ctx = ctx.with_source_snapshot(source_snapshot);
+    }
     // Pass pre-chosen modes from casting (per MTG rule 601.2b)
     if let Some(ref modes) = entry.chosen_modes {
         ctx = ctx.with_chosen_modes(Some(modes.clone()));
@@ -1327,6 +1331,8 @@ pub struct CombatDamageEvent {
     pub target: DamageEventTarget,
     /// Amount of damage dealt.
     pub amount: u32,
+    /// Amount of life actually lost from this damage (0 for non-player targets, infect, or life-locked players).
+    pub life_lost: u32,
     /// The damage result with lifelink/infect info.
     pub result: DamageResult,
 }
@@ -1394,8 +1400,7 @@ pub fn execute_combat_damage_step(
 
     // Process blockers dealing damage to attackers
     // First, collect all blocker damage info
-    let mut blocker_damage_info: Vec<(ObjectId, ObjectId, u32, PlayerId, DamageResult)> =
-        Vec::new();
+    let mut blocker_damage_info: Vec<(ObjectId, ObjectId, PlayerId, DamageResult)> = Vec::new();
 
     for (attacker_id, blocker_ids) in &combat.blockers {
         for &blocker_id in blocker_ids {
@@ -1432,27 +1437,21 @@ pub fn execute_combat_damage_step(
 
             let damage_result =
                 calculate_damage(blocker, DamageTarget::Permanent, power as u32, true);
-            blocker_damage_info.push((
-                blocker_id,
-                *attacker_id,
-                power as u32,
-                controller,
-                damage_result,
-            ));
+            blocker_damage_info.push((blocker_id, *attacker_id, controller, damage_result));
         }
     }
 
     // Now apply all blocker damage
-    for (blocker_id, attacker_id, power, controller, damage_result) in blocker_damage_info {
+    for (blocker_id, attacker_id, controller, damage_result) in blocker_damage_info {
         // Apply damage (blocker is dealing damage to attacker)
-        apply_damage_to_permanent(game, attacker_id, blocker_id, &damage_result);
+        let dealt_damage = apply_damage_to_permanent(game, attacker_id, blocker_id, &damage_result);
 
         // Apply lifelink (through event processing)
-        if damage_result.has_lifelink {
+        if damage_result.has_lifelink && dealt_damage > 0 {
             let life_to_gain = crate::event_processor::process_life_gain_with_event(
                 game,
                 controller,
-                damage_result.life_gained,
+                dealt_damage,
             );
             if life_to_gain > 0
                 && let Some(player) = game.player_mut(controller)
@@ -1464,7 +1463,8 @@ pub fn execute_combat_damage_step(
         damage_events.push(CombatDamageEvent {
             source: blocker_id,
             target: DamageEventTarget::Object(attacker_id),
-            amount: power,
+            amount: dealt_damage,
+            life_lost: 0,
             result: damage_result,
         });
     }
@@ -1504,14 +1504,14 @@ fn deal_damage_to_blockers(
     let attack_target = get_attack_target(combat, attacker_id).cloned();
 
     // Collect damage results first (while we still have the immutable borrow)
-    let mut blocker_damages: Vec<(ObjectId, u32, DamageResult)> = Vec::new();
+    let mut blocker_damages: Vec<(ObjectId, DamageResult)> = Vec::new();
     for (i, (damage, _is_lethal)) in distribution.iter().enumerate() {
         if *damage == 0 {
             continue;
         }
         let blocker_id = blocker_ids[i];
         let damage_result = calculate_damage(attacker, DamageTarget::Permanent, *damage, true);
-        blocker_damages.push((blocker_id, *damage, damage_result));
+        blocker_damages.push((blocker_id, damage_result));
     }
 
     // Calculate excess damage result
@@ -1529,15 +1529,15 @@ fn deal_damage_to_blockers(
     };
 
     // Now apply all damage (borrow of attacker is dropped)
-    for (blocker_id, damage, damage_result) in blocker_damages {
-        apply_damage_to_permanent(game, blocker_id, attacker_id, &damage_result);
+    for (blocker_id, damage_result) in blocker_damages {
+        let dealt_damage = apply_damage_to_permanent(game, blocker_id, attacker_id, &damage_result);
 
         // Apply lifelink (through event processing)
-        if damage_result.has_lifelink {
+        if damage_result.has_lifelink && dealt_damage > 0 {
             let life_to_gain = crate::event_processor::process_life_gain_with_event(
                 game,
                 controller,
-                damage_result.life_gained,
+                dealt_damage,
             );
             if life_to_gain > 0
                 && let Some(player) = game.player_mut(controller)
@@ -1549,21 +1549,22 @@ fn deal_damage_to_blockers(
         events.push(CombatDamageEvent {
             source: attacker_id,
             target: DamageEventTarget::Object(blocker_id),
-            amount: damage,
+            amount: dealt_damage,
+            life_lost: 0,
             result: damage_result,
         });
     }
 
     // Apply excess damage to defending player (trample)
     if let Some((player_id, damage_result)) = excess_damage_result {
-        apply_damage_to_player(game, player_id, attacker_id, &damage_result);
+        let applied = apply_damage_to_player(game, player_id, attacker_id, &damage_result);
 
         // Apply lifelink (through event processing)
-        if damage_result.has_lifelink {
+        if damage_result.has_lifelink && applied.damage_dealt > 0 {
             let life_to_gain = crate::event_processor::process_life_gain_with_event(
                 game,
                 controller,
-                damage_result.life_gained,
+                applied.damage_dealt,
             );
             if life_to_gain > 0
                 && let Some(player) = game.player_mut(controller)
@@ -1575,7 +1576,8 @@ fn deal_damage_to_blockers(
         events.push(CombatDamageEvent {
             source: attacker_id,
             target: DamageEventTarget::Player(player_id),
-            amount: excess,
+            amount: applied.damage_dealt,
+            life_lost: applied.life_lost,
             result: damage_result,
         });
     }
@@ -1598,14 +1600,14 @@ fn deal_damage_to_defender(
             let damage_result =
                 calculate_damage(attacker, DamageTarget::Player(*player_id), damage, true);
 
-            apply_damage_to_player(game, *player_id, attacker_id, &damage_result);
+            let applied = apply_damage_to_player(game, *player_id, attacker_id, &damage_result);
 
             // Apply lifelink (through event processing)
-            if damage_result.has_lifelink {
+            if damage_result.has_lifelink && applied.damage_dealt > 0 {
                 let life_to_gain = crate::event_processor::process_life_gain_with_event(
                     game,
                     controller,
-                    damage_result.life_gained,
+                    applied.damage_dealt,
                 );
                 if life_to_gain > 0
                     && let Some(player) = game.player_mut(controller)
@@ -1617,7 +1619,8 @@ fn deal_damage_to_defender(
             Some(CombatDamageEvent {
                 source: attacker_id,
                 target: DamageEventTarget::Player(*player_id),
-                amount: damage,
+                amount: applied.damage_dealt,
+                life_lost: applied.life_lost,
                 result: damage_result,
             })
         }
@@ -1668,6 +1671,7 @@ fn deal_damage_to_defender(
                 source: attacker_id,
                 target: DamageEventTarget::Object(*pw_id),
                 amount: final_damage,
+                life_lost: 0,
                 result: damage_result,
             })
         }
@@ -1682,7 +1686,7 @@ fn apply_damage_to_permanent(
     permanent_id: ObjectId,
     source_id: ObjectId,
     result: &DamageResult,
-) {
+) -> u32 {
     use crate::event_processor::process_damage_with_event;
     use crate::game_event::DamageTarget;
 
@@ -1696,7 +1700,7 @@ fn apply_damage_to_permanent(
     );
 
     if was_prevented || final_damage == 0 {
-        return;
+        return 0;
     }
 
     if result.has_infect || result.has_wither {
@@ -1717,6 +1721,14 @@ fn apply_damage_to_permanent(
         // Normal damage
         game.mark_damage(permanent_id, final_damage);
     }
+
+    final_damage
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AppliedPlayerDamage {
+    damage_dealt: u32,
+    life_lost: u32,
 }
 
 /// Apply damage to a player.
@@ -1727,7 +1739,7 @@ fn apply_damage_to_player(
     player_id: PlayerId,
     source_id: ObjectId,
     result: &DamageResult,
-) {
+) -> AppliedPlayerDamage {
     use crate::event_processor::process_damage_with_event;
     use crate::game_event::DamageTarget;
 
@@ -1741,14 +1753,22 @@ fn apply_damage_to_player(
     );
 
     if was_prevented || final_damage == 0 {
-        return;
+        return AppliedPlayerDamage {
+            damage_dealt: 0,
+            life_lost: 0,
+        };
     }
 
-    let Some(player) = game.player_mut(player_id) else {
-        return;
-    };
+    let mut life_lost = 0;
 
     if result.has_infect {
+        let Some(player) = game.player_mut(player_id) else {
+            return AppliedPlayerDamage {
+                damage_dealt: 0,
+                life_lost: 0,
+            };
+        };
+
         // Infect: give poison counters
         // Scale counters based on final damage vs original damage
         let counter_amount = if result.damage_dealt > 0 {
@@ -1758,9 +1778,17 @@ fn apply_damage_to_player(
             0
         };
         player.poison_counters += counter_amount;
-    } else {
-        // Normal damage reduces life
+    } else if game.can_change_life_total(player_id)
+        && let Some(player) = game.player_mut(player_id)
+    {
+        // Damage is still dealt even if life total cannot change; life loss tracks only actual life reduction.
         player.life -= final_damage as i32;
+        life_lost = final_damage;
+    }
+
+    AppliedPlayerDamage {
+        damage_dealt: final_damage,
+        life_lost,
     }
 }
 
@@ -1912,6 +1940,8 @@ pub struct PendingActivation {
     pub is_once_per_turn: bool,
     /// Stable instance ID of the source (persists across zone changes).
     pub source_stable_id: StableId,
+    /// Last known information for the source at activation time.
+    pub source_snapshot: ObjectSnapshot,
     /// Name of the source for display purposes.
     pub source_name: String,
     /// The chosen X value for abilities with X in cost.
@@ -2599,10 +2629,12 @@ pub fn apply_priority_response_with_dm(
             state.save_checkpoint(game);
 
             // Get the ability cost, effects, timing info, and source info for the stack entry
-            let (cost, effects, is_once_per_turn, source_stable_id, source_name) =
+            let (cost, effects, is_once_per_turn, source_stable_id, source_name, source_snapshot) =
                 if let Some(obj) = game.object(*source) {
                     let stable_id = obj.stable_id;
                     let name = obj.name.clone();
+                    let snapshot =
+                        ObjectSnapshot::from_object_with_calculated_characteristics(obj, game);
                     if let Some(ability) = obj.abilities.get(*ability_index) {
                         if let AbilityKind::Activated(activated) = &ability.kind {
                             let once_per_turn = matches!(
@@ -2615,6 +2647,7 @@ pub fn apply_priority_response_with_dm(
                                 once_per_turn,
                                 stable_id,
                                 name,
+                                snapshot,
                             )
                         } else {
                             (
@@ -2623,6 +2656,7 @@ pub fn apply_priority_response_with_dm(
                                 false,
                                 stable_id,
                                 name,
+                                snapshot,
                             )
                         }
                     } else {
@@ -2632,6 +2666,7 @@ pub fn apply_priority_response_with_dm(
                             false,
                             stable_id,
                             name,
+                            snapshot,
                         )
                     }
                 } else {
@@ -2766,6 +2801,7 @@ pub fn apply_priority_response_with_dm(
                     is_once_per_turn,
                     source_stable_id,
                     source_name,
+                    source_snapshot,
                     x_value: None,
                     hybrid_choices: Vec::new(),
                     pending_hybrid_pips: pips_to_announce,
@@ -2779,7 +2815,8 @@ pub fn apply_priority_response_with_dm(
                 }
 
                 let entry = StackEntry::ability(*source, player, effects.to_vec())
-                    .with_source_info(source_stable_id, source_name);
+                    .with_source_info(source_stable_id, source_name)
+                    .with_source_snapshot(source_snapshot);
                 game.push_to_stack(entry);
                 queue_ability_activated_event(
                     game,
@@ -4805,7 +4842,8 @@ fn continue_activation(
             // Create ability stack entry with targets
             let mut entry =
                 StackEntry::ability(pending.source, pending.activator, pending.effects.clone())
-                    .with_source_info(pending.source_stable_id, pending.source_name.clone());
+                    .with_source_info(pending.source_stable_id, pending.source_name.clone())
+                    .with_source_snapshot(pending.source_snapshot.clone());
             entry.targets = pending.chosen_targets.clone();
 
             // Pass X value to stack entry so it's available during resolution
@@ -7396,7 +7434,26 @@ fn create_triggered_stack_entry_with_targets(
 fn triggered_to_stack_entry(game: &GameState, trigger: &TriggeredAbilityEntry) -> StackEntry {
     use crate::events::EventKind;
     use crate::events::combat::CreatureAttackedEvent;
+    use crate::events::zones::ZoneChangeEvent;
     use crate::triggers::AttackEventTarget;
+
+    // Capture source LKI at trigger-to-stack time. If the source no longer exists,
+    // fall back to snapshot data from the triggering event (e.g. dies triggers).
+    let source_snapshot = game
+        .object(trigger.source)
+        .map(|obj| ObjectSnapshot::from_object_with_calculated_characteristics(obj, game))
+        .or_else(|| {
+            trigger
+                .triggering_event
+                .downcast::<ZoneChangeEvent>()
+                .and_then(|zc| zc.snapshot.clone())
+                .filter(|snapshot| snapshot.object_id == trigger.source)
+        })
+        .or_else(|| {
+            game.find_object_by_stable_id(trigger.source_stable_id)
+                .and_then(|id| game.object(id))
+                .map(|obj| ObjectSnapshot::from_object_with_calculated_characteristics(obj, game))
+        });
 
     // Create an ability stack entry with the effects from the triggered ability
     let mut entry = StackEntry::ability(
@@ -7406,6 +7463,9 @@ fn triggered_to_stack_entry(game: &GameState, trigger: &TriggeredAbilityEntry) -
     )
     .with_source_info(trigger.source_stable_id, trigger.source_name.clone())
     .with_triggering_event(trigger.triggering_event.clone());
+    if let Some(snapshot) = source_snapshot {
+        entry = entry.with_source_snapshot(snapshot);
+    }
 
     // Copy intervening-if condition if present (must be rechecked at resolution time)
     if let Some(ref condition) = trigger.ability.intervening_if {
@@ -7941,6 +8001,14 @@ fn generate_damage_triggers(
             true, // is_combat
         ));
         queue_triggers_from_event(game, trigger_queue, trigger_event, false);
+
+        if let DamageEventTarget::Player(player_id) = event.target
+            && event.life_lost > 0
+        {
+            let life_loss_event =
+                TriggerEvent::new(LifeLossEvent::new(player_id, event.life_lost, true));
+            queue_triggers_from_event(game, trigger_queue, life_loss_event, false);
+        }
     }
 }
 
@@ -7956,12 +8024,38 @@ mod tests {
     use crate::combat_state::AttackTarget;
     use crate::decision::AutoPassDecisionMaker;
     use crate::effect::{Effect, Value};
+    use crate::events::EventKind;
     use crate::ids::CardId;
     use crate::triggers::Trigger;
     use crate::types::CardType;
 
     fn setup_game() -> GameState {
         GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+    }
+
+    #[test]
+    fn test_generate_damage_triggers_emits_life_loss_for_player_damage() {
+        let mut game = setup_game();
+        let mut trigger_queue = TriggerQueue::new();
+
+        let events = vec![CombatDamageEvent {
+            source: ObjectId::from_raw(99),
+            target: DamageEventTarget::Player(PlayerId::from_index(1)),
+            amount: 3,
+            life_lost: 3,
+            result: DamageResult::default(),
+        }];
+
+        generate_damage_triggers(&mut game, &events, &mut trigger_queue);
+
+        assert_eq!(
+            game.trigger_event_kind_count_this_turn(EventKind::Damage),
+            1
+        );
+        assert_eq!(
+            game.trigger_event_kind_count_this_turn(EventKind::LifeLoss),
+            1
+        );
     }
 
     // === Target Extraction Tests ===

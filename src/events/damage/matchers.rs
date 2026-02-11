@@ -153,8 +153,7 @@ impl ReplacementMatcher for DamageToPlayerOrObjectMatcher {
                 .matches_player(player_id, &ctx.filter_ctx),
             DamageTarget::Object(object_id) => {
                 if let Some(obj) = ctx.game.object(object_id) {
-                    self.object_filter
-                        .matches(obj, &ctx.filter_ctx, ctx.game)
+                    self.object_filter.matches(obj, &ctx.filter_ctx, ctx.game)
                 } else {
                     false
                 }

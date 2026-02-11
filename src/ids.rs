@@ -7,6 +7,14 @@ static OBJECT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// Global counter for auto-incrementing card definition IDs (starts at 1, 0 is reserved).
 static CARD_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
+/// Snapshot of global ID counters so deterministic replays can restore identity space.
+#[derive(Debug, Clone, Copy)]
+pub struct IdCountersSnapshot {
+    pub player: u8,
+    pub object: u64,
+    pub card: u32,
+}
+
 /// Player identifier, index-based for efficiency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PlayerId(pub u8);
@@ -103,6 +111,22 @@ impl CardId {
     pub fn from_raw(id: u32) -> Self {
         Self(id)
     }
+}
+
+/// Capture current global ID counters.
+pub fn snapshot_id_counters() -> IdCountersSnapshot {
+    IdCountersSnapshot {
+        player: PLAYER_ID_COUNTER.load(Ordering::SeqCst),
+        object: OBJECT_ID_COUNTER.load(Ordering::SeqCst),
+        card: CARD_ID_COUNTER.load(Ordering::SeqCst),
+    }
+}
+
+/// Restore global ID counters from a snapshot.
+pub fn restore_id_counters(snapshot: IdCountersSnapshot) {
+    PLAYER_ID_COUNTER.store(snapshot.player, Ordering::SeqCst);
+    OBJECT_ID_COUNTER.store(snapshot.object, Ordering::SeqCst);
+    CARD_ID_COUNTER.store(snapshot.card, Ordering::SeqCst);
 }
 
 /// Reset all ID counters to their initial state (for testing).

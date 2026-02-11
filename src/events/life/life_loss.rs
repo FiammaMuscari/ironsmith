@@ -8,8 +8,8 @@ use crate::ids::{ObjectId, PlayerId};
 
 /// A life loss event that can be processed through the replacement effect system.
 ///
-/// Note: Life loss from damage is handled separately through the damage event system.
-/// This event is for life loss from effects like "lose 2 life" or payments.
+/// This event is emitted for life loss from both direct effects/payments and damage
+/// that actually reduces a player's life total.
 #[derive(Debug, Clone)]
 pub struct LifeLossEvent {
     /// The player losing life

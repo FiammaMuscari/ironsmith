@@ -176,10 +176,7 @@ fn pluralized_subject_text(filter: &ObjectFilter) -> String {
         && filter.controller.is_none()
         && filter.owner.is_none()
         && !filter.other;
-    if should_preserve_singular
-        || subject.starts_with("this ")
-        || subject.starts_with("that ")
-    {
+    if should_preserve_singular || subject.starts_with("this ") || subject.starts_with("that ") {
         return subject;
     }
 
@@ -218,8 +215,7 @@ fn pluralized_subject_text(filter: &ObjectFilter) -> String {
         && !matches!(
             lower.chars().nth(lower.len() - 2),
             Some('a' | 'e' | 'i' | 'o' | 'u')
-        )
-    {
+        ) {
         format!("{}ies", &base[..base.len() - 1])
     } else if lower.ends_with('s')
         || lower.ends_with('x')
@@ -558,10 +554,21 @@ impl StaticAbilityKind for Anthem {
                 value.to_string()
             }
         };
+        let signed_toughness = |power: i32, toughness: i32| {
+            if power < 0 && toughness == 0 {
+                "-0".to_string()
+            } else {
+                signed(toughness)
+            }
+        };
 
         let mut text = match (&self.power, &self.toughness) {
             (AnthemValue::Fixed(power), AnthemValue::Fixed(toughness)) => {
-                format!("{subject} {verb} {}/{}", signed(*power), signed(*toughness),)
+                format!(
+                    "{subject} {verb} {}/{}",
+                    signed(*power),
+                    signed_toughness(*power, *toughness),
+                )
             }
             (
                 AnthemValue::PerCount {
@@ -576,7 +583,7 @@ impl StaticAbilityKind for Anthem {
                 format!(
                     "{subject} {verb} {}/{} for each {}",
                     signed(*power),
-                    signed(*toughness),
+                    signed_toughness(*power, *toughness),
                     describe_anthem_count_expression(power_count),
                 )
             }
@@ -589,7 +596,7 @@ impl StaticAbilityKind for Anthem {
             ) => format!(
                 "{subject} {verb} {}/{} for each {}",
                 signed(*power),
-                signed(*toughness),
+                signed_toughness(*power, *toughness),
                 describe_anthem_count_expression(count),
             ),
             (
@@ -601,7 +608,7 @@ impl StaticAbilityKind for Anthem {
             ) => format!(
                 "{subject} {verb} {}/{} for each {}",
                 signed(*power),
-                signed(*toughness),
+                signed_toughness(*power, *toughness),
                 describe_anthem_count_expression(count),
             ),
             _ => format!("{subject} {verb} dynamic power/toughness"),

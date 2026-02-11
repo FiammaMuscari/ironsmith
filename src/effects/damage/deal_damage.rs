@@ -6,8 +6,9 @@
 use crate::effect::{EffectOutcome, EffectResult, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_value;
-use crate::event_processor::process_damage_with_event;
+use crate::event_processor::process_damage_with_event_with_source_snapshot;
 use crate::events::DamageEvent;
+use crate::events::LifeLossEvent;
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
 use crate::game_event::DamageTarget;
 use crate::game_state::GameState;
@@ -67,17 +68,40 @@ impl EffectExecutor for DealDamageEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         let amount = resolve_value(game, &self.amount, ctx)?.max(0) as u32;
-        let make_outcome = |final_damage: u32, target: DamageTarget| {
-            let mut outcome = EffectOutcome::count(final_damage as i32);
-            if final_damage > 0 {
+        let make_outcome = |dealt_damage: u32, target: DamageTarget, life_loss_from_damage: u32| {
+            let mut outcome = EffectOutcome::count(dealt_damage as i32);
+            if dealt_damage > 0 {
                 outcome = outcome.with_event(TriggerEvent::new(DamageEvent::new(
                     ctx.source,
                     target,
-                    final_damage,
+                    dealt_damage,
                     self.source_is_combat,
                 )));
             }
+
+            if life_loss_from_damage > 0
+                && let DamageTarget::Player(player_id) = target
+            {
+                outcome = outcome.with_event(TriggerEvent::new(LifeLossEvent::new(
+                    player_id,
+                    life_loss_from_damage,
+                    true,
+                )));
+            }
+
             outcome
+        };
+
+        let apply_player_life_change = |game: &mut GameState, player_id, dealt_damage| {
+            if dealt_damage == 0 || !game.can_change_life_total(player_id) {
+                return 0;
+            }
+
+            let Some(player) = game.player_mut(player_id) else {
+                return 0;
+            };
+
+            player.deal_damage(dealt_damage)
         };
 
         // Check if this is targeting IteratedPlayer (used in ForEachOpponent)
@@ -85,24 +109,25 @@ impl EffectExecutor for DealDamageEffect {
         if let ChooseSpec::Player(PlayerFilter::IteratedPlayer) = &self.target {
             if let Some(player_id) = ctx.iterated_player {
                 // Process through replacement/prevention effects
-                let (final_damage, was_prevented) = process_damage_with_event(
+                let (final_damage, was_prevented) = process_damage_with_event_with_source_snapshot(
                     game,
                     ctx.source,
                     DamageTarget::Player(player_id),
                     amount,
                     self.source_is_combat,
+                    ctx.source_snapshot.as_ref(),
                 );
 
                 if was_prevented {
                     return Ok(EffectOutcome::from_result(EffectResult::Prevented));
                 }
 
-                if final_damage > 0
-                    && let Some(player) = game.player_mut(player_id)
-                {
-                    player.deal_damage(final_damage);
-                }
-                return Ok(make_outcome(final_damage, DamageTarget::Player(player_id)));
+                let life_loss = apply_player_life_change(game, player_id, final_damage);
+                return Ok(make_outcome(
+                    final_damage,
+                    DamageTarget::Player(player_id),
+                    life_loss,
+                ));
             }
             return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
         }
@@ -113,13 +138,15 @@ impl EffectExecutor for DealDamageEffect {
                     && (obj.has_card_type(CardType::Creature)
                         || obj.has_card_type(CardType::Planeswalker))
                 {
-                    let (final_damage, was_prevented) = process_damage_with_event(
-                        game,
-                        ctx.source,
-                        DamageTarget::Object(object_id),
-                        amount,
-                        self.source_is_combat,
-                    );
+                    let (final_damage, was_prevented) =
+                        process_damage_with_event_with_source_snapshot(
+                            game,
+                            ctx.source,
+                            DamageTarget::Object(object_id),
+                            amount,
+                            self.source_is_combat,
+                            ctx.source_snapshot.as_ref(),
+                        );
 
                     if was_prevented {
                         return Ok(EffectOutcome::from_result(EffectResult::Prevented));
@@ -128,7 +155,11 @@ impl EffectExecutor for DealDamageEffect {
                     if final_damage > 0 {
                         game.mark_damage(object_id, final_damage);
                     }
-                    return Ok(make_outcome(final_damage, DamageTarget::Object(object_id)));
+                    return Ok(make_outcome(
+                        final_damage,
+                        DamageTarget::Object(object_id),
+                        0,
+                    ));
                 }
                 return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
             }
@@ -139,24 +170,25 @@ impl EffectExecutor for DealDamageEffect {
         if let ChooseSpec::SourceController = &self.target {
             let controller = ctx.controller;
             // Process through replacement/prevention effects
-            let (final_damage, was_prevented) = process_damage_with_event(
+            let (final_damage, was_prevented) = process_damage_with_event_with_source_snapshot(
                 game,
                 ctx.source,
                 DamageTarget::Player(controller),
                 amount,
                 self.source_is_combat,
+                ctx.source_snapshot.as_ref(),
             );
 
             if was_prevented {
                 return Ok(EffectOutcome::from_result(EffectResult::Prevented));
             }
 
-            if final_damage > 0
-                && let Some(player) = game.player_mut(controller)
-            {
-                player.deal_damage(final_damage);
-            }
-            return Ok(make_outcome(final_damage, DamageTarget::Player(controller)));
+            let life_loss = apply_player_life_change(game, controller, final_damage);
+            return Ok(make_outcome(
+                final_damage,
+                DamageTarget::Player(controller),
+                life_loss,
+            ));
         }
 
         // Otherwise, use pre-resolved targets from ctx.targets
@@ -164,24 +196,26 @@ impl EffectExecutor for DealDamageEffect {
             match target {
                 ResolvedTarget::Player(player_id) => {
                     // Process through replacement/prevention effects
-                    let (final_damage, was_prevented) = process_damage_with_event(
-                        game,
-                        ctx.source,
-                        DamageTarget::Player(*player_id),
-                        amount,
-                        self.source_is_combat,
-                    );
+                    let (final_damage, was_prevented) =
+                        process_damage_with_event_with_source_snapshot(
+                            game,
+                            ctx.source,
+                            DamageTarget::Player(*player_id),
+                            amount,
+                            self.source_is_combat,
+                            ctx.source_snapshot.as_ref(),
+                        );
 
                     if was_prevented {
                         return Ok(EffectOutcome::from_result(EffectResult::Prevented));
                     }
 
-                    if final_damage > 0
-                        && let Some(player) = game.player_mut(*player_id)
-                    {
-                        player.deal_damage(final_damage);
-                    }
-                    return Ok(make_outcome(final_damage, DamageTarget::Player(*player_id)));
+                    let life_loss = apply_player_life_change(game, *player_id, final_damage);
+                    return Ok(make_outcome(
+                        final_damage,
+                        DamageTarget::Player(*player_id),
+                        life_loss,
+                    ));
                 }
                 ResolvedTarget::Object(object_id) => {
                     if let Some(obj) = game.object(*object_id)
@@ -189,13 +223,15 @@ impl EffectExecutor for DealDamageEffect {
                             || obj.has_card_type(CardType::Planeswalker))
                     {
                         // Process through replacement/prevention effects
-                        let (final_damage, was_prevented) = process_damage_with_event(
-                            game,
-                            ctx.source,
-                            DamageTarget::Object(*object_id),
-                            amount,
-                            self.source_is_combat,
-                        );
+                        let (final_damage, was_prevented) =
+                            process_damage_with_event_with_source_snapshot(
+                                game,
+                                ctx.source,
+                                DamageTarget::Object(*object_id),
+                                amount,
+                                self.source_is_combat,
+                                ctx.source_snapshot.as_ref(),
+                            );
 
                         if was_prevented {
                             return Ok(EffectOutcome::from_result(EffectResult::Prevented));
@@ -204,7 +240,11 @@ impl EffectExecutor for DealDamageEffect {
                         if final_damage > 0 {
                             game.mark_damage(*object_id, final_damage);
                         }
-                        return Ok(make_outcome(final_damage, DamageTarget::Object(*object_id)));
+                        return Ok(make_outcome(
+                            final_damage,
+                            DamageTarget::Object(*object_id),
+                            0,
+                        ));
                     }
                 }
             }
@@ -230,6 +270,7 @@ impl EffectExecutor for DealDamageEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::events::EventKind;
     use crate::ids::{CardId, ObjectId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
@@ -323,6 +364,59 @@ mod tests {
 
         assert_eq!(result.result, EffectResult::Count(3));
         assert_eq!(game.player(player2_id).unwrap().life, initial_life - 3);
+    }
+
+    #[test]
+    fn test_deal_damage_to_player_emits_life_loss_event() {
+        let mut game = new_test_game();
+        let player1_id = game.players[0].id;
+        let player2_id = game.players[1].id;
+
+        let source_id = game.new_object_id();
+        let source_card = make_source_card();
+        let source_obj = Object::from_card(source_id, &source_card, player1_id, Zone::Stack);
+        game.add_object(source_obj);
+
+        let effect = DealDamageEffect::new(3, ChooseSpec::AnyTarget);
+        let mut ctx = ExecutionContext::new_default(source_id, player1_id)
+            .with_targets(vec![ResolvedTarget::Player(player2_id)]);
+
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.events.len(), 2);
+        assert_eq!(result.events[0].kind(), EventKind::Damage);
+        assert_eq!(result.events[1].kind(), EventKind::LifeLoss);
+
+        let life_loss = result.events[1].downcast::<LifeLossEvent>().unwrap();
+        assert_eq!(life_loss.player, player2_id);
+        assert_eq!(life_loss.amount, 3);
+        assert!(life_loss.from_damage);
+    }
+
+    #[test]
+    fn test_deal_damage_to_player_life_locked_emits_no_life_loss_event() {
+        let mut game = new_test_game();
+        let player1_id = game.players[0].id;
+        let player2_id = game.players[1].id;
+
+        game.cant_effects.life_total_cant_change.insert(player2_id);
+
+        let source_id = game.new_object_id();
+        let source_card = make_source_card();
+        let source_obj = Object::from_card(source_id, &source_card, player1_id, Zone::Stack);
+        game.add_object(source_obj);
+
+        let initial_life = game.player(player2_id).unwrap().life;
+
+        let effect = DealDamageEffect::new(3, ChooseSpec::AnyTarget);
+        let mut ctx = ExecutionContext::new_default(source_id, player1_id)
+            .with_targets(vec![ResolvedTarget::Player(player2_id)]);
+
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].kind(), EventKind::Damage);
+        assert_eq!(game.player(player2_id).unwrap().life, initial_life);
     }
 
     #[test]

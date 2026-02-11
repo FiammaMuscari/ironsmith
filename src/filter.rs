@@ -364,6 +364,10 @@ pub struct ObjectFilter {
     /// Required subtypes (object must have at least one if non-empty)
     pub subtypes: Vec<Subtype>,
 
+    /// If true, `card_types` and `subtypes` are matched as an OR-union
+    /// instead of the default AND behavior.
+    pub type_or_subtype_union: bool,
+
     /// Excluded subtypes (object must have none of these)
     pub excluded_subtypes: Vec<Subtype>,
 
@@ -916,8 +920,20 @@ impl ObjectFilter {
             return false;
         }
 
-        // Card types (must have at least one if specified)
-        if !self.card_types.is_empty()
+        if self.type_or_subtype_union {
+            let type_match = !self.card_types.is_empty()
+                && self
+                    .card_types
+                    .iter()
+                    .any(|t| object.card_types.contains(t));
+            let subtype_match = !self.subtypes.is_empty()
+                && self.subtypes.iter().any(|t| object.subtypes.contains(t));
+            if (!self.card_types.is_empty() || !self.subtypes.is_empty())
+                && !(type_match || subtype_match)
+            {
+                return false;
+            }
+        } else if !self.card_types.is_empty()
             && !self
                 .card_types
                 .iter()
@@ -946,7 +962,10 @@ impl ObjectFilter {
         }
 
         // Subtypes (must have at least one if specified)
-        if !self.subtypes.is_empty() && !self.subtypes.iter().any(|t| object.subtypes.contains(t)) {
+        if !self.type_or_subtype_union
+            && !self.subtypes.is_empty()
+            && !self.subtypes.iter().any(|t| object.subtypes.contains(t))
+        {
             return false;
         }
 
@@ -1891,18 +1910,29 @@ impl ObjectFilter {
         let creature_only = self.all_card_types.is_empty()
             && self.card_types.len() == 1
             && self.card_types[0] == CardType::Creature;
-        match (type_phrase, subtype_phrase) {
-            (Some((_, type_phrase)), Some(subtype_phrase)) if creature_only => {
-                parts.push(subtype_phrase);
-                parts.push(type_phrase);
+        if self.type_or_subtype_union {
+            match (type_phrase, subtype_phrase) {
+                (Some((_, type_phrase)), Some(subtype_phrase)) => {
+                    parts.push(format!("{type_phrase} or {subtype_phrase}"));
+                }
+                (Some((_, type_phrase)), None) => parts.push(type_phrase),
+                (None, Some(subtype_phrase)) => parts.push(subtype_phrase),
+                (None, None) => {}
             }
-            (Some((_, type_phrase)), Some(subtype_phrase)) => {
-                parts.push(type_phrase);
-                parts.push(subtype_phrase);
+        } else {
+            match (type_phrase, subtype_phrase) {
+                (Some((_, type_phrase)), Some(subtype_phrase)) if creature_only => {
+                    parts.push(subtype_phrase);
+                    parts.push(type_phrase);
+                }
+                (Some((_, type_phrase)), Some(subtype_phrase)) => {
+                    parts.push(type_phrase);
+                    parts.push(subtype_phrase);
+                }
+                (Some((_, type_phrase)), None) => parts.push(type_phrase),
+                (None, Some(subtype_phrase)) => parts.push(subtype_phrase),
+                (None, None) => {}
             }
-            (Some((_, type_phrase)), None) => parts.push(type_phrase),
-            (None, Some(subtype_phrase)) => parts.push(subtype_phrase),
-            (None, None) => {}
         }
 
         // Handle name
@@ -2174,19 +2204,22 @@ fn snapshot_has_custom_static_marker(
 
 fn snapshot_has_tap_activated_ability(snapshot: &crate::snapshot::ObjectSnapshot) -> bool {
     use crate::ability::AbilityKind;
-    snapshot.abilities.iter().any(|ability| match &ability.kind {
-        AbilityKind::Activated(activated) => activated
-            .mana_cost
-            .costs()
-            .iter()
-            .any(|cost| cost.requires_tap()),
-        AbilityKind::Mana(mana) => mana
-            .mana_cost
-            .costs()
-            .iter()
-            .any(|cost| cost.requires_tap()),
-        _ => false,
-    })
+    snapshot
+        .abilities
+        .iter()
+        .any(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) => activated
+                .mana_cost
+                .costs()
+                .iter()
+                .any(|cost| cost.requires_tap()),
+            AbilityKind::Mana(mana) => mana
+                .mana_cost
+                .costs()
+                .iter()
+                .any(|cost| cost.requires_tap()),
+            _ => false,
+        })
 }
 
 fn describe_alternative_cast_kind(kind: AlternativeCastKind) -> &'static str {

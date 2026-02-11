@@ -2440,7 +2440,10 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .find_map(|effect| effect.downcast_ref::<ExileEffect>())
             .expect("expected exile effect");
         let ChooseSpec::All(filter) = &exile.spec else {
-            panic!("expected non-targeted all-filter exile, got {:?}", exile.spec);
+            panic!(
+                "expected non-targeted all-filter exile, got {:?}",
+                exile.spec
+            );
         };
         assert_eq!(filter.zone, Some(Zone::Graveyard));
         assert_eq!(
@@ -5337,7 +5340,9 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     fn reject_counter_ability_target_clause() {
         let err = CardDefinitionBuilder::new(CardId::new(), "Tales End Variant")
             .parse_text("Counter target activated ability, triggered ability, or legendary spell.")
-            .expect_err("countering abilities should fail until ability-target semantics are implemented");
+            .expect_err(
+                "countering abilities should fail until ability-target semantics are implemented",
+            );
 
         let message = format!("{err:?}");
         assert!(

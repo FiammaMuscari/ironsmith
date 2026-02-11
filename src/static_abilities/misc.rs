@@ -17,7 +17,7 @@ use crate::game_state::GameState;
 use crate::grant::GrantSpec;
 use crate::ids::{ObjectId, PlayerId};
 use crate::object::CounterType;
-use crate::replacement::{ReplacementAction, ReplacementEffect, RedirectTarget, RedirectWhich};
+use crate::replacement::{RedirectTarget, RedirectWhich, ReplacementAction, ReplacementEffect};
 use crate::target::{ObjectFilter, PlayerFilter};
 use crate::zone::Zone;
 

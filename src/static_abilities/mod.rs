@@ -959,10 +959,7 @@ impl StaticAbility {
         Self::new(DamageNotRemovedDuringCleanup)
     }
 
-    pub fn choose_color_as_enters(
-        excluded: Option<crate::color::Color>,
-        display: String,
-    ) -> Self {
+    pub fn choose_color_as_enters(excluded: Option<crate::color::Color>, display: String) -> Self {
         Self::new(ChooseColorAsEnters::new(excluded, display))
     }
 

@@ -1818,6 +1818,22 @@ pub fn process_damage_with_event(
     amount: u32,
     is_combat: bool,
 ) -> (u32, bool) {
+    process_damage_with_event_with_source_snapshot(game, source, target, amount, is_combat, None)
+}
+
+/// Process a damage event using the Event type, with optional source LKI.
+///
+/// When `source_snapshot` is provided and the source object is no longer present
+/// in game state, source-dependent checks (like prevention based on source color/type)
+/// use the snapshot as last known information.
+pub fn process_damage_with_event_with_source_snapshot(
+    game: &mut GameState,
+    source: crate::ids::ObjectId,
+    target: DamageTarget,
+    amount: u32,
+    is_combat: bool,
+    source_snapshot: Option<&crate::snapshot::ObjectSnapshot>,
+) -> (u32, bool) {
     use crate::events::{DamageEvent, downcast_event};
 
     // Check if damage can be prevented
@@ -1855,10 +1871,13 @@ pub fn process_damage_with_event(
     }
 
     // Apply prevention shields
-    let (source_colors, source_card_types) = game
-        .object(source)
-        .map(|obj| (obj.colors(), obj.card_types.clone()))
-        .unwrap_or_else(|| (crate::color::ColorSet::COLORLESS, Vec::new()));
+    let (source_colors, source_card_types) = if let Some(obj) = game.object(source) {
+        (obj.colors(), obj.card_types.clone())
+    } else if let Some(snapshot) = source_snapshot {
+        (snapshot.colors, snapshot.card_types.clone())
+    } else {
+        (crate::color::ColorSet::COLORLESS, Vec::new())
+    };
 
     let final_damage = match target {
         DamageTarget::Player(player_id) => game.prevention_effects.apply_prevention_to_player(
@@ -2603,6 +2622,68 @@ mod tests {
         assert_eq!(
             noncombat_damage, 3,
             "Noncombat damage should not be doubled"
+        );
+    }
+
+    #[test]
+    fn test_damage_prevention_uses_source_snapshot_when_source_missing() {
+        use crate::color::{Color, ColorSet};
+        use crate::prevention::PreventionShield;
+        use crate::snapshot::ObjectSnapshot;
+        use crate::types::CardType;
+
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(42);
+
+        let shield =
+            PreventionShield::circle_of_protection(ObjectId::from_raw(1), alice, Color::Red);
+        game.prevention_effects.add_shield(shield);
+
+        let source_snapshot = ObjectSnapshot::for_testing(source, alice, "Former Red Source")
+            .with_colors(ColorSet::RED)
+            .with_card_types(vec![CardType::Creature]);
+
+        let (final_damage, _prevented) = process_damage_with_event_with_source_snapshot(
+            &mut game,
+            source,
+            DamageTarget::Player(alice),
+            3,
+            false,
+            Some(&source_snapshot),
+        );
+
+        assert_eq!(
+            final_damage, 0,
+            "Prevention should apply using source snapshot colors when source is gone"
+        );
+    }
+
+    #[test]
+    fn test_damage_prevention_without_snapshot_treats_missing_source_as_colorless() {
+        use crate::color::Color;
+        use crate::prevention::PreventionShield;
+
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(42);
+
+        let shield =
+            PreventionShield::circle_of_protection(ObjectId::from_raw(1), alice, Color::Red);
+        game.prevention_effects.add_shield(shield);
+
+        let (final_damage, _prevented) = process_damage_with_event_with_source_snapshot(
+            &mut game,
+            source,
+            DamageTarget::Player(alice),
+            3,
+            false,
+            None,
+        );
+
+        assert_eq!(
+            final_damage, 3,
+            "Without snapshot, missing source defaults to colorless and should not match red-only prevention"
         );
     }
 }

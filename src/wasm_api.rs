@@ -6,7 +6,7 @@
 //! - read a serializable snapshot
 
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::StdRng};
@@ -17,8 +17,7 @@ use crate::ability::{Ability, AbilityKind};
 use crate::cards::{CardDefinition, CardRegistry};
 use crate::combat_state::AttackTarget;
 use crate::decision::{
-    AttackerDeclaration, BlockerDeclaration, GameProgress, GameResult, LegalAction,
-    SelectFirstDecisionMaker,
+    AttackerDeclaration, BlockerDeclaration, DecisionMaker, GameProgress, GameResult, LegalAction,
 };
 use crate::decisions::context::DecisionContext;
 use crate::game_loop::{
@@ -27,10 +26,11 @@ use crate::game_loop::{
     get_declare_attackers_decision, get_declare_blockers_decision,
 };
 use crate::game_state::{GameState, Phase, Step, Target};
-use crate::ids::{ObjectId, PlayerId};
+use crate::ids::{ObjectId, PlayerId, restore_id_counters, snapshot_id_counters};
 use crate::mana::ManaSymbol;
 use crate::target::ObjectFilter;
 use crate::triggers::{TriggerQueue, check_triggers};
+use crate::types::CardType;
 use crate::zone::Zone;
 
 thread_local! {
@@ -50,11 +50,244 @@ fn with_effect_render_depth_ui<F: FnOnce() -> String>(render: F) -> String {
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum BattlefieldLane {
+    Lands,
+    Creatures,
+    Planeswalkers,
+    Battles,
+    Artifacts,
+    Enchantments,
+    Other,
+}
+
+impl BattlefieldLane {
+    fn as_str(self) -> &'static str {
+        match self {
+            BattlefieldLane::Lands => "lands",
+            BattlefieldLane::Creatures => "creatures",
+            BattlefieldLane::Planeswalkers => "planeswalkers",
+            BattlefieldLane::Battles => "battles",
+            BattlefieldLane::Artifacts => "artifacts",
+            BattlefieldLane::Enchantments => "enchantments",
+            BattlefieldLane::Other => "other",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct BattlefieldGroupKey {
+    lane: BattlefieldLane,
+    name: String,
+    tapped: bool,
+    counter_signature: String,
+    power_toughness_signature: String,
+    token: bool,
+    force_single_object: Option<u64>,
+}
+
+fn battlefield_lane_for_object(obj: &crate::object::Object) -> BattlefieldLane {
+    if obj.has_card_type(CardType::Land) {
+        return BattlefieldLane::Lands;
+    }
+    if obj.has_card_type(CardType::Creature) {
+        return BattlefieldLane::Creatures;
+    }
+    if obj.has_card_type(CardType::Planeswalker) {
+        return BattlefieldLane::Planeswalkers;
+    }
+    if obj.has_card_type(CardType::Battle) {
+        return BattlefieldLane::Battles;
+    }
+    if obj.has_card_type(CardType::Artifact) {
+        return BattlefieldLane::Artifacts;
+    }
+    if obj.has_card_type(CardType::Enchantment) {
+        return BattlefieldLane::Enchantments;
+    }
+    BattlefieldLane::Other
+}
+
+fn counter_signature_for_group(obj: &crate::object::Object) -> String {
+    let mut parts: Vec<(String, u32)> = obj
+        .counters
+        .iter()
+        .map(|(counter_type, amount)| (format!("{counter_type:?}"), *amount))
+        .collect();
+    parts.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    if parts.is_empty() {
+        return "-".to_string();
+    }
+    parts
+        .into_iter()
+        .map(|(kind, amount)| format!("{kind}:{amount}"))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn power_toughness_signature_for_group(obj: &crate::object::Object) -> String {
+    match (obj.power(), obj.toughness()) {
+        (Some(power), Some(toughness)) => format!("{power}/{toughness}"),
+        _ => "-".to_string(),
+    }
+}
+
+fn protected_object_ids_for_decision(decision: Option<&DecisionContext>) -> HashSet<ObjectId> {
+    let mut ids = HashSet::new();
+    let Some(decision) = decision else {
+        return ids;
+    };
+
+    match decision {
+        DecisionContext::Priority(priority) => {
+            for action in &priority.legal_actions {
+                match action {
+                    LegalAction::CastSpell { spell_id, .. } => {
+                        ids.insert(*spell_id);
+                    }
+                    LegalAction::ActivateAbility { source, .. }
+                    | LegalAction::ActivateManaAbility { source, .. } => {
+                        ids.insert(*source);
+                    }
+                    LegalAction::PlayLand { land_id } => {
+                        ids.insert(*land_id);
+                    }
+                    LegalAction::TurnFaceUp { creature_id } => {
+                        ids.insert(*creature_id);
+                    }
+                    LegalAction::SpecialAction(_) | LegalAction::PassPriority => {}
+                }
+            }
+        }
+        DecisionContext::Targets(targets) => {
+            for requirement in &targets.requirements {
+                for target in &requirement.legal_targets {
+                    if let Target::Object(object_id) = target {
+                        ids.insert(*object_id);
+                    }
+                }
+            }
+        }
+        DecisionContext::SelectObjects(objects) => {
+            for candidate in &objects.candidates {
+                if candidate.legal {
+                    ids.insert(candidate.id);
+                }
+            }
+        }
+        DecisionContext::Attackers(attackers) => {
+            for option in &attackers.attacker_options {
+                ids.insert(option.creature);
+                for target in &option.valid_targets {
+                    if let AttackTarget::Planeswalker(object_id) = target {
+                        ids.insert(*object_id);
+                    }
+                }
+            }
+        }
+        DecisionContext::Blockers(blockers) => {
+            for option in &blockers.blocker_options {
+                ids.insert(option.attacker);
+                for (blocker, _) in &option.valid_blockers {
+                    ids.insert(*blocker);
+                }
+            }
+        }
+        DecisionContext::Modes(_)
+        | DecisionContext::HybridChoice(_)
+        | DecisionContext::SelectOptions(_)
+        | DecisionContext::Boolean(_)
+        | DecisionContext::Number(_)
+        | DecisionContext::Order(_)
+        | DecisionContext::Distribute(_)
+        | DecisionContext::Colors(_)
+        | DecisionContext::Counters(_)
+        | DecisionContext::Partition(_)
+        | DecisionContext::Proliferate(_) => {}
+    }
+
+    ids
+}
+
+fn grouped_battlefield_for_player(
+    game: &GameState,
+    player: PlayerId,
+    protected_ids: &HashSet<ObjectId>,
+) -> (Vec<PermanentSnapshot>, usize) {
+    let mut grouped: HashMap<BattlefieldGroupKey, Vec<&crate::object::Object>> = HashMap::new();
+    let mut total = 0usize;
+
+    for object_id in &game.battlefield {
+        let Some(obj) = game.object(*object_id) else {
+            continue;
+        };
+        if obj.controller != player {
+            continue;
+        }
+        total += 1;
+
+        let force_single = protected_ids.contains(&obj.id).then_some(obj.id.0);
+        let key = BattlefieldGroupKey {
+            lane: battlefield_lane_for_object(obj),
+            name: obj.name.clone(),
+            tapped: game.is_tapped(obj.id),
+            counter_signature: counter_signature_for_group(obj),
+            power_toughness_signature: power_toughness_signature_for_group(obj),
+            token: matches!(obj.kind, crate::object::ObjectKind::Token),
+            force_single_object: force_single,
+        };
+        grouped.entry(key).or_default().push(obj);
+    }
+
+    let mut groups: Vec<(BattlefieldGroupKey, Vec<&crate::object::Object>)> =
+        grouped.into_iter().collect();
+    groups.sort_unstable_by(|(left_key, left_members), (right_key, right_members)| {
+        left_key
+            .lane
+            .cmp(&right_key.lane)
+            .then_with(|| left_key.name.cmp(&right_key.name))
+            .then_with(|| left_key.tapped.cmp(&right_key.tapped))
+            .then_with(|| left_key.token.cmp(&right_key.token))
+            .then_with(|| {
+                left_members
+                    .first()
+                    .map(|obj| obj.id.0)
+                    .cmp(&right_members.first().map(|obj| obj.id.0))
+            })
+    });
+
+    let snapshots = groups
+        .into_iter()
+        .map(|(key, mut members)| {
+            members.sort_unstable_by_key(|obj| obj.id.0);
+            let representative = members.first().copied();
+            let member_ids: Vec<u64> = members.iter().map(|obj| obj.id.0).collect();
+            let id = representative.map(|obj| obj.id.0).unwrap_or_default();
+            let name = representative
+                .map(|obj| obj.name.clone())
+                .unwrap_or_else(|| key.name.clone());
+            PermanentSnapshot {
+                id,
+                name,
+                tapped: key.tapped,
+                count: member_ids.len().max(1),
+                member_ids,
+                lane: key.lane.as_str().to_string(),
+            }
+        })
+        .collect();
+
+    (snapshots, total)
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct PermanentSnapshot {
     id: u64,
     name: String,
     tapped: bool,
+    count: usize,
+    member_ids: Vec<u64>,
+    lane: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,6 +305,7 @@ struct PlayerSnapshot {
     library_top: Option<String>,
     graveyard_top: Option<String>,
     battlefield: Vec<PermanentSnapshot>,
+    battlefield_total: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -137,73 +371,69 @@ impl GameSnapshot {
         game_over: Option<&GameResult>,
         pending_cast_stack_id: Option<ObjectId>,
     ) -> Self {
+        let protected_ids = protected_object_ids_for_decision(decision);
         let players = game
             .players
             .iter()
-            .map(|p| PlayerSnapshot {
-                can_view_hand: p.id == perspective,
-                hand_cards: if p.id == perspective {
-                    p.hand
+            .map(|p| {
+                let (battlefield, battlefield_total) =
+                    grouped_battlefield_for_player(game, p.id, &protected_ids);
+                PlayerSnapshot {
+                    can_view_hand: p.id == perspective,
+                    hand_cards: if p.id == perspective {
+                        p.hand
+                            .iter()
+                            .rev()
+                            .take(12)
+                            .filter_map(|id| game.object(*id))
+                            .map(|o| HandCardSnapshot {
+                                id: o.id.0,
+                                name: o.name.clone(),
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
+                    graveyard_cards: p
+                        .graveyard
                         .iter()
                         .rev()
-                        .take(12)
                         .filter_map(|id| game.object(*id))
-                        .map(|o| HandCardSnapshot {
+                        .map(|o| ZoneCardSnapshot {
                             id: o.id.0,
                             name: o.name.clone(),
                         })
-                        .collect()
-                } else {
-                    Vec::new()
-                },
-                graveyard_cards: p
-                    .graveyard
-                    .iter()
-                    .rev()
-                    .filter_map(|id| game.object(*id))
-                    .map(|o| ZoneCardSnapshot {
-                        id: o.id.0,
-                        name: o.name.clone(),
-                    })
-                    .collect(),
-                exile_cards: game
-                    .exile
-                    .iter()
-                    .rev()
-                    .filter_map(|id| game.object(*id))
-                    .filter(|o| o.owner == p.id)
-                    .map(|o| ZoneCardSnapshot {
-                        id: o.id.0,
-                        name: o.name.clone(),
-                    })
-                    .collect(),
-                library_top: p
-                    .library
-                    .last()
-                    .and_then(|id| game.object(*id))
-                    .map(|o| o.name.clone()),
-                graveyard_top: p
-                    .graveyard
-                    .last()
-                    .and_then(|id| game.object(*id))
-                    .map(|o| o.name.clone()),
-                battlefield: game
-                    .battlefield
-                    .iter()
-                    .filter_map(|id| game.object(*id))
-                    .filter(|obj| obj.controller == p.id)
-                    .map(|obj| PermanentSnapshot {
-                        id: obj.id.0,
-                        name: obj.name.clone(),
-                        tapped: game.is_tapped(obj.id),
-                    })
-                    .collect(),
-                id: p.id.0,
-                name: p.name.clone(),
-                life: p.life,
-                hand_size: p.hand.len(),
-                library_size: p.library.len(),
-                graveyard_size: p.graveyard.len(),
+                        .collect(),
+                    exile_cards: game
+                        .exile
+                        .iter()
+                        .rev()
+                        .filter_map(|id| game.object(*id))
+                        .filter(|o| o.owner == p.id)
+                        .map(|o| ZoneCardSnapshot {
+                            id: o.id.0,
+                            name: o.name.clone(),
+                        })
+                        .collect(),
+                    library_top: p
+                        .library
+                        .last()
+                        .and_then(|id| game.object(*id))
+                        .map(|o| o.name.clone()),
+                    graveyard_top: p
+                        .graveyard
+                        .last()
+                        .and_then(|id| game.object(*id))
+                        .map(|o| o.name.clone()),
+                    battlefield,
+                    battlefield_total,
+                    id: p.id.0,
+                    name: p.name.clone(),
+                    life: p.life,
+                    hand_size: p.hand.len(),
+                    library_size: p.library.len(),
+                    graveyard_size: p.graveyard.len(),
+                }
             })
             .collect();
 
@@ -363,6 +593,24 @@ enum DecisionView {
 impl DecisionView {
     fn from_context(game: &GameState, ctx: &DecisionContext) -> Self {
         match ctx {
+            DecisionContext::Boolean(boolean) => DecisionView::SelectOptions {
+                player: boolean.player.0,
+                description: boolean.description.clone(),
+                min: 1,
+                max: 1,
+                options: vec![
+                    OptionView {
+                        index: 1,
+                        description: "Yes".to_string(),
+                        legal: true,
+                    },
+                    OptionView {
+                        index: 0,
+                        description: "No".to_string(),
+                        legal: true,
+                    },
+                ],
+            },
             DecisionContext::Priority(priority) => DecisionView::Priority {
                 player: priority.player.0,
                 actions: priority
@@ -505,8 +753,11 @@ impl DecisionView {
                     .collect(),
             },
             _ => DecisionView::SelectOptions {
-                player: game.turn.active_player.0,
-                description: "Unsupported decision context for web UI".to_string(),
+                player: decision_context_player(ctx).0,
+                description: format!(
+                    "Decision type is not yet supported in web UI: {}",
+                    decision_context_kind(ctx)
+                ),
                 min: 0,
                 max: 0,
                 options: Vec::new(),
@@ -593,6 +844,294 @@ struct BlockerDeclarationInput {
     blocking: u64,
 }
 
+#[derive(Debug, Clone)]
+enum ReplayDecisionAnswer {
+    Boolean(bool),
+    Number(u32),
+    Options(Vec<usize>),
+    Objects(Vec<ObjectId>),
+    Targets(Vec<Target>),
+    Priority(LegalAction),
+    Attackers(Vec<crate::decisions::spec::AttackerDeclaration>),
+    Blockers(Vec<crate::decisions::spec::BlockerDeclaration>),
+}
+
+#[derive(Debug, Clone)]
+struct ReplayCheckpoint {
+    game: GameState,
+    trigger_queue: TriggerQueue,
+    priority_state: PriorityLoopState,
+    game_over: Option<GameResult>,
+    attackers_declared_this_step: bool,
+    blockers_declared_this_step: bool,
+    id_counters: crate::ids::IdCountersSnapshot,
+}
+
+#[derive(Debug, Clone)]
+struct PendingReplayAction {
+    checkpoint: ReplayCheckpoint,
+    root_response: PriorityResponse,
+    nested_answers: Vec<ReplayDecisionAnswer>,
+}
+
+#[derive(Debug, Clone)]
+enum ReplayOutcome {
+    NeedsDecision(DecisionContext),
+    Complete(GameProgress),
+}
+
+#[derive(Debug)]
+struct WasmReplayDecisionMaker {
+    answers: VecDeque<ReplayDecisionAnswer>,
+    pending_context: Option<DecisionContext>,
+}
+
+impl WasmReplayDecisionMaker {
+    fn new(answers: &[ReplayDecisionAnswer]) -> Self {
+        Self {
+            answers: answers.iter().cloned().collect(),
+            pending_context: None,
+        }
+    }
+
+    fn capture_once(&mut self, ctx: DecisionContext) {
+        if self.pending_context.is_none() {
+            self.pending_context = Some(ctx);
+        }
+    }
+
+    fn take_pending_context(self) -> Option<DecisionContext> {
+        self.pending_context
+    }
+}
+
+impl DecisionMaker for WasmReplayDecisionMaker {
+    fn decide_boolean(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::BooleanContext,
+    ) -> bool {
+        match self.answers.front() {
+            Some(ReplayDecisionAnswer::Boolean(value)) => {
+                let value = *value;
+                self.answers.pop_front();
+                value
+            }
+            _ => {
+                self.capture_once(DecisionContext::Boolean(ctx.clone()));
+                false
+            }
+        }
+    }
+
+    fn decide_number(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::NumberContext,
+    ) -> u32 {
+        match self.answers.front() {
+            Some(ReplayDecisionAnswer::Number(value)) => {
+                let value = *value;
+                self.answers.pop_front();
+                value
+            }
+            _ => {
+                self.capture_once(DecisionContext::Number(ctx.clone()));
+                ctx.min
+            }
+        }
+    }
+
+    fn decide_objects(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::SelectObjectsContext,
+    ) -> Vec<ObjectId> {
+        match self.answers.front() {
+            Some(ReplayDecisionAnswer::Objects(ids)) => {
+                let ids = ids.clone();
+                self.answers.pop_front();
+                ids
+            }
+            _ => {
+                self.capture_once(DecisionContext::SelectObjects(ctx.clone()));
+                ctx.candidates
+                    .iter()
+                    .filter(|candidate| candidate.legal)
+                    .map(|candidate| candidate.id)
+                    .take(ctx.min)
+                    .collect()
+            }
+        }
+    }
+
+    fn decide_options(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::SelectOptionsContext,
+    ) -> Vec<usize> {
+        match self.answers.front() {
+            Some(ReplayDecisionAnswer::Options(indices)) => {
+                let indices = indices.clone();
+                self.answers.pop_front();
+                indices
+            }
+            _ => {
+                self.capture_once(DecisionContext::SelectOptions(ctx.clone()));
+                ctx.options
+                    .iter()
+                    .filter(|option| option.legal)
+                    .map(|option| option.index)
+                    .take(ctx.min)
+                    .collect()
+            }
+        }
+    }
+
+    fn decide_priority(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::PriorityContext,
+    ) -> LegalAction {
+        match self.answers.front() {
+            Some(ReplayDecisionAnswer::Priority(action)) => {
+                let action = action.clone();
+                self.answers.pop_front();
+                action
+            }
+            _ => ctx
+                .legal_actions
+                .iter()
+                .find(|action| matches!(action, LegalAction::PassPriority))
+                .cloned()
+                .unwrap_or_else(|| {
+                    ctx.legal_actions
+                        .first()
+                        .cloned()
+                        .unwrap_or(LegalAction::PassPriority)
+                }),
+        }
+    }
+
+    fn decide_targets(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::TargetsContext,
+    ) -> Vec<Target> {
+        match self.answers.front() {
+            Some(ReplayDecisionAnswer::Targets(targets)) => {
+                let targets = targets.clone();
+                self.answers.pop_front();
+                targets
+            }
+            _ => {
+                self.capture_once(DecisionContext::Targets(ctx.clone()));
+                ctx.requirements
+                    .iter()
+                    .filter(|requirement| requirement.min_targets > 0)
+                    .filter_map(|requirement| requirement.legal_targets.first().cloned())
+                    .collect()
+            }
+        }
+    }
+
+    fn decide_attackers(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::AttackersContext,
+    ) -> Vec<crate::decisions::spec::AttackerDeclaration> {
+        match self.answers.front() {
+            Some(ReplayDecisionAnswer::Attackers(declarations)) => {
+                let declarations = declarations.clone();
+                self.answers.pop_front();
+                declarations
+            }
+            _ => ctx
+                .attacker_options
+                .iter()
+                .filter(|option| option.must_attack)
+                .filter_map(|option| {
+                    option.valid_targets.first().map(|target| {
+                        crate::decisions::spec::AttackerDeclaration {
+                            creature: option.creature,
+                            target: target.clone(),
+                        }
+                    })
+                })
+                .collect(),
+        }
+    }
+
+    fn decide_blockers(
+        &mut self,
+        _game: &GameState,
+        _ctx: &crate::decisions::context::BlockersContext,
+    ) -> Vec<crate::decisions::spec::BlockerDeclaration> {
+        match self.answers.front() {
+            Some(ReplayDecisionAnswer::Blockers(declarations)) => {
+                let declarations = declarations.clone();
+                self.answers.pop_front();
+                declarations
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn decide_order(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::OrderContext,
+    ) -> Vec<ObjectId> {
+        self.capture_once(DecisionContext::Order(ctx.clone()));
+        ctx.items.iter().map(|(id, _)| *id).collect()
+    }
+
+    fn decide_distribute(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::DistributeContext,
+    ) -> Vec<(Target, u32)> {
+        self.capture_once(DecisionContext::Distribute(ctx.clone()));
+        Vec::new()
+    }
+
+    fn decide_colors(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::ColorsContext,
+    ) -> Vec<crate::color::Color> {
+        self.capture_once(DecisionContext::Colors(ctx.clone()));
+        vec![crate::color::Color::Green; ctx.count as usize]
+    }
+
+    fn decide_counters(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::CountersContext,
+    ) -> Vec<(crate::object::CounterType, u32)> {
+        self.capture_once(DecisionContext::Counters(ctx.clone()));
+        Vec::new()
+    }
+
+    fn decide_partition(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::PartitionContext,
+    ) -> Vec<ObjectId> {
+        self.capture_once(DecisionContext::Partition(ctx.clone()));
+        Vec::new()
+    }
+
+    fn decide_proliferate(
+        &mut self,
+        _game: &GameState,
+        ctx: &crate::decisions::context::ProliferateContext,
+    ) -> crate::decisions::specs::ProliferateResponse {
+        self.capture_once(DecisionContext::Proliferate(ctx.clone()));
+        crate::decisions::specs::ProliferateResponse::default()
+    }
+}
+
 /// Browser-exposed game handle.
 #[wasm_bindgen]
 pub struct WasmGame {
@@ -601,6 +1140,7 @@ pub struct WasmGame {
     trigger_queue: TriggerQueue,
     priority_state: PriorityLoopState,
     pending_decision: Option<DecisionContext>,
+    pending_replay_action: Option<PendingReplayAction>,
     game_over: Option<GameResult>,
     perspective: PlayerId,
     attackers_declared_this_step: bool,
@@ -627,6 +1167,7 @@ impl WasmGame {
             trigger_queue: TriggerQueue::new(),
             priority_state,
             pending_decision: None,
+            pending_replay_action: None,
             game_over: None,
             perspective: PlayerId::from_index(0),
             attackers_declared_this_step: false,
@@ -888,66 +1429,81 @@ impl WasmGame {
         let command: UiCommand = serde_wasm_bindgen::from_value(command)
             .map_err(|e| JsValue::from_str(&format!("invalid command payload: {e}")))?;
 
-        let ctx = self
+        let pending_ctx = self
             .pending_decision
             .take()
             .ok_or_else(|| JsValue::from_str("no pending decision to dispatch"))?;
-        let response = match self.command_to_response(&ctx, command) {
-            Ok(response) => response,
-            Err(err) => {
-                // Validation/shape errors should not consume the current decision.
-                self.pending_decision = Some(ctx);
-                return Err(err);
-            }
-        };
-        let ctx_for_restore = ctx.clone();
-        let prev_attackers_declared = self.attackers_declared_this_step;
-        let prev_blockers_declared = self.blockers_declared_this_step;
-        match &response {
-            PriorityResponse::Attackers(_) => {
-                self.attackers_declared_this_step = true;
-            }
-            PriorityResponse::Blockers { .. } => {
-                self.blockers_declared_this_step = true;
-            }
-            _ => {}
-        }
-
-        // Always route through the DM-aware path so nested decisions during
-        // resolution (ETB choices, mana-color picks, etc.) never fall back to CLI stdin.
-        let mut wasm_dm = SelectFirstDecisionMaker;
-        let progress = match apply_priority_response_with_dm(
-            &mut self.game,
-            &mut self.trigger_queue,
-            &mut self.priority_state,
-            &response,
-            &mut wasm_dm,
-        ) {
-            Ok(progress) => progress,
-            Err(e) => {
-                // Mirror CLI rollback behavior for partially-executed action chains.
-                if let Some(checkpoint) = self.priority_state.checkpoint.take() {
-                    self.game = checkpoint;
-                    self.priority_state.pending_cast = None;
-                    self.priority_state.pending_activation = None;
-                    self.priority_state.pending_method_selection = None;
-                    self.priority_state.pending_mana_ability = None;
-                    self.pending_decision = None;
-                    self.game_over = None;
-                    let _ = self.recompute_ui_decision();
-                } else {
-                    // No action-chain checkpoint means this was a pure validation failure;
-                    // keep the current decision visible in UI.
-                    self.pending_decision = Some(ctx_for_restore);
+        if let Some(mut replay) = self.pending_replay_action.take() {
+            let answer = match self.command_to_replay_answer(&pending_ctx, command) {
+                Ok(answer) => answer,
+                Err(err) => {
+                    self.pending_decision = Some(pending_ctx);
+                    self.pending_replay_action = Some(replay);
+                    return Err(err);
                 }
-                self.attackers_declared_this_step = prev_attackers_declared;
-                self.blockers_declared_this_step = prev_blockers_declared;
-                return Err(JsValue::from_str(&format!("dispatch failed: {e}")));
-            }
-        };
+            };
+            replay.nested_answers.push(answer);
 
-        self.apply_progress(progress)?;
-        self.snapshot()
+            let outcome = match self.execute_with_replay(
+                &replay.checkpoint,
+                &replay.root_response,
+                &replay.nested_answers,
+            ) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    self.pending_decision = Some(pending_ctx);
+                    self.pending_replay_action = Some(replay);
+                    return Err(err);
+                }
+            };
+
+            match outcome {
+                ReplayOutcome::NeedsDecision(next_ctx) => {
+                    self.pending_decision = Some(next_ctx);
+                    self.pending_replay_action = Some(replay);
+                    self.snapshot()
+                }
+                ReplayOutcome::Complete(progress) => {
+                    self.pending_replay_action = None;
+                    self.apply_progress(progress)?;
+                    self.snapshot()
+                }
+            }
+        } else {
+            let response = match self.command_to_response(&pending_ctx, command) {
+                Ok(response) => response,
+                Err(err) => {
+                    self.pending_decision = Some(pending_ctx);
+                    return Err(err);
+                }
+            };
+
+            let checkpoint = self.capture_replay_checkpoint();
+            let outcome = match self.execute_with_replay(&checkpoint, &response, &[]) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    self.pending_decision = Some(pending_ctx);
+                    self.pending_replay_action = None;
+                    return Err(err);
+                }
+            };
+            match outcome {
+                ReplayOutcome::NeedsDecision(next_ctx) => {
+                    self.pending_decision = Some(next_ctx);
+                    self.pending_replay_action = Some(PendingReplayAction {
+                        checkpoint,
+                        root_response: response,
+                        nested_answers: Vec::new(),
+                    });
+                    self.snapshot()
+                }
+                ReplayOutcome::Complete(progress) => {
+                    self.pending_replay_action = None;
+                    self.apply_progress(progress)?;
+                    self.snapshot()
+                }
+            }
+        }
     }
 }
 
@@ -1170,6 +1726,7 @@ impl WasmGame {
         self.priority_state
             .set_auto_choose_single_pip_payment(false);
         self.pending_decision = None;
+        self.pending_replay_action = None;
         self.game_over = None;
         self.attackers_declared_this_step = false;
         self.blockers_declared_this_step = false;
@@ -1183,6 +1740,7 @@ impl WasmGame {
 
     fn recompute_ui_decision(&mut self) -> Result<(), JsValue> {
         self.pending_decision = None;
+        self.pending_replay_action = None;
         if self.game_over.is_some() {
             return Ok(());
         }
@@ -1356,6 +1914,202 @@ impl WasmGame {
             .find(|p| p.id != self.game.turn.active_player && p.is_in_game())
             .map(|p| p.id)
             .unwrap_or(self.game.turn.active_player)
+    }
+
+    fn capture_replay_checkpoint(&self) -> ReplayCheckpoint {
+        ReplayCheckpoint {
+            game: self.game.clone(),
+            trigger_queue: self.trigger_queue.clone(),
+            priority_state: self.priority_state.clone(),
+            game_over: self.game_over.clone(),
+            attackers_declared_this_step: self.attackers_declared_this_step,
+            blockers_declared_this_step: self.blockers_declared_this_step,
+            id_counters: snapshot_id_counters(),
+        }
+    }
+
+    fn restore_replay_checkpoint(&mut self, checkpoint: &ReplayCheckpoint) {
+        restore_id_counters(checkpoint.id_counters);
+        self.game = checkpoint.game.clone();
+        self.trigger_queue = checkpoint.trigger_queue.clone();
+        self.priority_state = checkpoint.priority_state.clone();
+        self.game_over = checkpoint.game_over.clone();
+        self.attackers_declared_this_step = checkpoint.attackers_declared_this_step;
+        self.blockers_declared_this_step = checkpoint.blockers_declared_this_step;
+    }
+
+    fn apply_response_combat_flags(&mut self, response: &PriorityResponse) {
+        match response {
+            PriorityResponse::Attackers(_) => {
+                self.attackers_declared_this_step = true;
+            }
+            PriorityResponse::Blockers { .. } => {
+                self.blockers_declared_this_step = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn execute_with_replay(
+        &mut self,
+        checkpoint: &ReplayCheckpoint,
+        response: &PriorityResponse,
+        nested_answers: &[ReplayDecisionAnswer],
+    ) -> Result<ReplayOutcome, JsValue> {
+        self.restore_replay_checkpoint(checkpoint);
+        self.apply_response_combat_flags(response);
+
+        let mut replay_dm = WasmReplayDecisionMaker::new(nested_answers);
+        let result = apply_priority_response_with_dm(
+            &mut self.game,
+            &mut self.trigger_queue,
+            &mut self.priority_state,
+            response,
+            &mut replay_dm,
+        );
+
+        if let Some(next_ctx) = replay_dm.take_pending_context() {
+            self.restore_replay_checkpoint(checkpoint);
+            return Ok(ReplayOutcome::NeedsDecision(next_ctx));
+        }
+
+        match result {
+            Ok(progress) => Ok(ReplayOutcome::Complete(progress)),
+            Err(e) => {
+                self.restore_replay_checkpoint(checkpoint);
+                Err(JsValue::from_str(&format!("dispatch failed: {e}")))
+            }
+        }
+    }
+
+    fn command_to_replay_answer(
+        &self,
+        ctx: &DecisionContext,
+        command: UiCommand,
+    ) -> Result<ReplayDecisionAnswer, JsValue> {
+        match (ctx, command) {
+            (DecisionContext::Boolean(_), UiCommand::SelectOptions { option_indices }) => {
+                validate_option_selection(1, Some(1), &option_indices, &[0usize, 1usize])?;
+                let choice = option_indices
+                    .first()
+                    .copied()
+                    .ok_or_else(|| JsValue::from_str("boolean choice requires one option"))?;
+                Ok(ReplayDecisionAnswer::Boolean(choice == 1))
+            }
+            (DecisionContext::Number(number), UiCommand::NumberChoice { value }) => {
+                if value < number.min || value > number.max {
+                    return Err(JsValue::from_str(&format!(
+                        "number out of range: expected {}..={}, got {}",
+                        number.min, number.max, value
+                    )));
+                }
+                Ok(ReplayDecisionAnswer::Number(value))
+            }
+            (
+                DecisionContext::SelectOptions(options),
+                UiCommand::SelectOptions { option_indices },
+            ) => {
+                let legal_indices: Vec<usize> = options
+                    .options
+                    .iter()
+                    .filter(|o| o.legal)
+                    .map(|o| o.index)
+                    .collect();
+                validate_option_selection(
+                    options.min,
+                    Some(options.max),
+                    &option_indices,
+                    &legal_indices,
+                )?;
+                Ok(ReplayDecisionAnswer::Options(option_indices))
+            }
+            (DecisionContext::Priority(priority), UiCommand::PriorityAction { action_index }) => {
+                let action = priority.legal_actions.get(action_index).ok_or_else(|| {
+                    JsValue::from_str(&format!("invalid priority action index: {action_index}"))
+                })?;
+                Ok(ReplayDecisionAnswer::Priority(action.clone()))
+            }
+            (DecisionContext::SelectObjects(objects), UiCommand::SelectObjects { object_ids }) => {
+                let legal_ids: Vec<u64> = objects
+                    .candidates
+                    .iter()
+                    .filter(|obj| obj.legal)
+                    .map(|obj| obj.id.0)
+                    .collect();
+                validate_object_selection(objects.min, objects.max, &object_ids, &legal_ids)?;
+                Ok(ReplayDecisionAnswer::Objects(
+                    object_ids
+                        .into_iter()
+                        .map(ObjectId::from_raw)
+                        .collect::<Vec<_>>(),
+                ))
+            }
+            (DecisionContext::Targets(_), UiCommand::SelectTargets { targets }) => {
+                let converted: Vec<Target> = targets
+                    .into_iter()
+                    .map(|target| match target {
+                        TargetInput::Player { player } => {
+                            Target::Player(PlayerId::from_index(player))
+                        }
+                        TargetInput::Object { object } => {
+                            Target::Object(ObjectId::from_raw(object))
+                        }
+                    })
+                    .collect();
+                Ok(ReplayDecisionAnswer::Targets(converted))
+            }
+            (
+                DecisionContext::Attackers(attackers),
+                UiCommand::DeclareAttackers { declarations },
+            ) => {
+                let converted = validate_attacker_declarations(attackers, &declarations)?
+                    .into_iter()
+                    .map(|declaration| crate::decisions::spec::AttackerDeclaration {
+                        creature: declaration.creature,
+                        target: declaration.target,
+                    })
+                    .collect();
+                Ok(ReplayDecisionAnswer::Attackers(converted))
+            }
+            (DecisionContext::Blockers(blockers), UiCommand::DeclareBlockers { declarations }) => {
+                let converted = validate_blocker_declarations(blockers, &declarations)?
+                    .into_iter()
+                    .map(|declaration| crate::decisions::spec::BlockerDeclaration {
+                        blocker: declaration.blocker,
+                        blocking: declaration.blocking,
+                    })
+                    .collect();
+                Ok(ReplayDecisionAnswer::Blockers(converted))
+            }
+            (DecisionContext::Modes(modes), UiCommand::SelectOptions { option_indices }) => {
+                let legal: Vec<usize> = modes
+                    .spec
+                    .modes
+                    .iter()
+                    .filter(|mode| mode.legal)
+                    .map(|mode| mode.index)
+                    .collect();
+                validate_option_selection(
+                    modes.spec.min_modes,
+                    Some(modes.spec.max_modes),
+                    &option_indices,
+                    &legal,
+                )?;
+                Ok(ReplayDecisionAnswer::Options(option_indices))
+            }
+            (
+                DecisionContext::HybridChoice(hybrid),
+                UiCommand::SelectOptions { option_indices },
+            ) => {
+                let legal: Vec<usize> = hybrid.options.iter().map(|opt| opt.index).collect();
+                validate_option_selection(1, Some(1), &option_indices, &legal)?;
+                Ok(ReplayDecisionAnswer::Options(option_indices))
+            }
+            (unsupported_ctx, _) => Err(JsValue::from_str(&format!(
+                "pending replay decision is not yet interactive in WASM UI: {}",
+                decision_context_kind(unsupported_ctx)
+            ))),
+        }
     }
 
     fn command_to_response(
@@ -4707,6 +5461,9 @@ fn describe_value(
             )
         }
         crate::effect::Value::EffectValue(_) => "a prior effect value".to_string(),
+        crate::effect::Value::EventValue(crate::effect::EventValueSpec::LifeAmount) => {
+            "that much".to_string()
+        }
         crate::effect::Value::WasKicked => "1 if kicked, else 0".to_string(),
         crate::effect::Value::WasBoughtBack => "1 if buyback was paid, else 0".to_string(),
         crate::effect::Value::WasEntwined => "1 if entwined, else 0".to_string(),
@@ -5026,6 +5783,48 @@ fn attack_target_from_input(input: &AttackTargetInput) -> AttackTarget {
         AttackTargetInput::Planeswalker { object } => {
             AttackTarget::Planeswalker(ObjectId::from_raw(*object))
         }
+    }
+}
+
+fn decision_context_player(ctx: &DecisionContext) -> PlayerId {
+    match ctx {
+        DecisionContext::Boolean(context) => context.player,
+        DecisionContext::Number(context) => context.player,
+        DecisionContext::SelectObjects(context) => context.player,
+        DecisionContext::SelectOptions(context) => context.player,
+        DecisionContext::Modes(context) => context.player,
+        DecisionContext::HybridChoice(context) => context.player,
+        DecisionContext::Order(context) => context.player,
+        DecisionContext::Attackers(context) => context.player,
+        DecisionContext::Blockers(context) => context.player,
+        DecisionContext::Distribute(context) => context.player,
+        DecisionContext::Colors(context) => context.player,
+        DecisionContext::Counters(context) => context.player,
+        DecisionContext::Partition(context) => context.player,
+        DecisionContext::Proliferate(context) => context.player,
+        DecisionContext::Priority(context) => context.player,
+        DecisionContext::Targets(context) => context.player,
+    }
+}
+
+fn decision_context_kind(ctx: &DecisionContext) -> &'static str {
+    match ctx {
+        DecisionContext::Boolean(_) => "boolean",
+        DecisionContext::Number(_) => "number",
+        DecisionContext::SelectObjects(_) => "select_objects",
+        DecisionContext::SelectOptions(_) => "select_options",
+        DecisionContext::Modes(_) => "modes",
+        DecisionContext::HybridChoice(_) => "hybrid_choice",
+        DecisionContext::Order(_) => "order",
+        DecisionContext::Attackers(_) => "attackers",
+        DecisionContext::Blockers(_) => "blockers",
+        DecisionContext::Distribute(_) => "distribute",
+        DecisionContext::Colors(_) => "colors",
+        DecisionContext::Counters(_) => "counters",
+        DecisionContext::Partition(_) => "partition",
+        DecisionContext::Proliferate(_) => "proliferate",
+        DecisionContext::Priority(_) => "priority",
+        DecisionContext::Targets(_) => "targets",
     }
 }
 

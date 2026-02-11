@@ -12,9 +12,9 @@ use crate::decision::DecisionMaker;
 use crate::effect::{Effect, EffectId, EffectOutcome, EffectResult, EventValueSpec, Value};
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::events::DamageEvent;
+use crate::events::cause::EventCause;
 use crate::events::life::LifeGainEvent;
 use crate::events::life::LifeLossEvent;
-use crate::events::cause::EventCause;
 use crate::filter::ObjectRef;
 use crate::game_event::DamageTarget;
 use crate::game_state::GameState;
@@ -115,6 +115,9 @@ pub struct ExecutionContext<'a> {
     pub attacking_player: Option<PlayerId>,
     /// Last known information for target objects (for when they leave the battlefield).
     pub target_snapshots: HashMap<ObjectId, ObjectSnapshot>,
+    /// Last known information for the source object.
+    /// Used when source-dependent effects resolve after the source has left the battlefield.
+    pub source_snapshot: Option<ObjectSnapshot>,
     /// Tagged object snapshots for cross-effect references.
     ///
     /// Effects can tag their targets using `Effect::tag("name")`, and subsequent effects
@@ -160,6 +163,7 @@ impl std::fmt::Debug for ExecutionContext<'_> {
             .field("optional_costs_paid", &self.optional_costs_paid)
             .field("defending_player", &self.defending_player)
             .field("target_snapshots", &self.target_snapshots)
+            .field("source_snapshot", &self.source_snapshot)
             .field(
                 "tagged_objects",
                 &self.tagged_objects.keys().collect::<Vec<_>>(),
@@ -194,6 +198,7 @@ impl<'a> ExecutionContext<'a> {
             defending_player: None,
             attacking_player: None,
             target_snapshots: HashMap::new(),
+            source_snapshot: None,
             tagged_objects: HashMap::new(),
             tagged_players: HashMap::new(),
             triggering_event: None,
@@ -228,6 +233,7 @@ impl<'a> ExecutionContext<'a> {
             defending_player: None,
             attacking_player: None,
             target_snapshots: HashMap::new(),
+            source_snapshot: None,
             tagged_objects: HashMap::new(),
             tagged_players: HashMap::new(),
             triggering_event: None,
@@ -252,6 +258,7 @@ impl<'a> ExecutionContext<'a> {
             defending_player: self.defending_player,
             attacking_player: self.attacking_player,
             target_snapshots: self.target_snapshots,
+            source_snapshot: self.source_snapshot,
             tagged_objects: self.tagged_objects,
             tagged_players: self.tagged_players,
             triggering_event: self.triggering_event,
@@ -288,6 +295,12 @@ impl<'a> ExecutionContext<'a> {
     /// Set resolved targets.
     pub fn with_targets(mut self, targets: Vec<ResolvedTarget>) -> Self {
         self.targets = targets;
+        self
+    }
+
+    /// Set source snapshot for source-LKI lookups.
+    pub fn with_source_snapshot(mut self, snapshot: ObjectSnapshot) -> Self {
+        self.source_snapshot = Some(snapshot);
         self
     }
 

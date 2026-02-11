@@ -89,6 +89,7 @@ mod tests {
             defending_player: None,
             saga_final_chapter_source: None,
             source_stable_id: None,
+            source_snapshot: None,
             source_name: Some(name.to_string()),
             triggering_event: None,
             intervening_if: None,

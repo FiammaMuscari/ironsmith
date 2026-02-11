@@ -141,6 +141,7 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
                 defending_player: None,
                 saga_final_chapter_source: None,
                 source_stable_id: stable_id,
+                source_snapshot: None,
                 source_name: Some(card_name),
                 triggering_event: None,
                 intervening_if: None,

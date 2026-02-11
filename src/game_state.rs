@@ -564,6 +564,9 @@ pub struct StackEntry {
     /// The stable instance ID of the source (persists across zone changes).
     /// Used to track the source even after it leaves the battlefield.
     pub source_stable_id: Option<StableId>,
+    /// Last known snapshot of the source at the time this stack entry was created.
+    /// Used for source-dependent checks when the source object no longer exists.
+    pub source_snapshot: Option<crate::snapshot::ObjectSnapshot>,
     /// The name of the source card/permanent for display purposes.
     /// Captured at the time the ability is put on the stack.
     pub source_name: Option<String>,
@@ -594,6 +597,7 @@ impl StackEntry {
             defending_player: None,
             saga_final_chapter_source: None,
             source_stable_id: None,
+            source_snapshot: None,
             source_name: None,
             triggering_event: None,
             intervening_if: None,
@@ -620,6 +624,7 @@ impl StackEntry {
             defending_player: None,
             saga_final_chapter_source: None,
             source_stable_id: None,
+            source_snapshot: None,
             source_name: None,
             triggering_event: None,
             intervening_if: None,
@@ -662,6 +667,12 @@ impl StackEntry {
     /// Set the source instance ID (stable identifier across zone changes).
     pub fn with_source_stable_id(mut self, stable_id: StableId) -> Self {
         self.source_stable_id = Some(stable_id);
+        self
+    }
+
+    /// Set the source snapshot for source-LKI lookups during resolution.
+    pub fn with_source_snapshot(mut self, snapshot: crate::snapshot::ObjectSnapshot) -> Self {
+        self.source_snapshot = Some(snapshot);
         self
     }
 

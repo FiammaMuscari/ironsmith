@@ -742,6 +742,88 @@ fn compile_if_do_with_opponent_doesnt(
     Ok(Some((effects, choices)))
 }
 
+#[derive(Debug, Clone)]
+struct CompileContextState {
+    iterated_player: bool,
+    last_effect_id: Option<EffectId>,
+    last_object_tag: Option<String>,
+    last_player_filter: Option<PlayerFilter>,
+}
+
+impl CompileContextState {
+    fn capture(ctx: &CompileContext) -> Self {
+        Self {
+            iterated_player: ctx.iterated_player,
+            last_effect_id: ctx.last_effect_id,
+            last_object_tag: ctx.last_object_tag.clone(),
+            last_player_filter: ctx.last_player_filter.clone(),
+        }
+    }
+
+    fn restore(self, ctx: &mut CompileContext) {
+        ctx.iterated_player = self.iterated_player;
+        ctx.last_effect_id = self.last_effect_id;
+        ctx.last_object_tag = self.last_object_tag;
+        ctx.last_player_filter = self.last_player_filter;
+    }
+}
+
+fn with_preserved_compile_context<T, Configure, Run>(
+    ctx: &mut CompileContext,
+    configure: Configure,
+    run: Run,
+) -> Result<T, CardTextError>
+where
+    Configure: FnOnce(&mut CompileContext),
+    Run: FnOnce(&mut CompileContext) -> Result<T, CardTextError>,
+{
+    let saved = CompileContextState::capture(ctx);
+    configure(ctx);
+    let result = run(ctx);
+    saved.restore(ctx);
+    result
+}
+
+fn compile_effects_preserving_last_effect(
+    effects: &[EffectAst],
+    ctx: &mut CompileContext,
+) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
+    let saved_last_effect = ctx.last_effect_id;
+    let result = compile_effects(effects, ctx);
+    ctx.last_effect_id = saved_last_effect;
+    result
+}
+
+fn compile_effects_with_temporary_last_effect(
+    effects: &[EffectAst],
+    ctx: &mut CompileContext,
+    last_effect_id: Option<EffectId>,
+) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
+    let saved_last_effect = ctx.last_effect_id;
+    ctx.last_effect_id = last_effect_id;
+    let result = compile_effects(effects, ctx);
+    ctx.last_effect_id = saved_last_effect;
+    result
+}
+
+fn compile_effects_in_iterated_player_context(
+    effects: &[EffectAst],
+    ctx: &mut CompileContext,
+    tagged_object: Option<String>,
+) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
+    with_preserved_compile_context(
+        ctx,
+        |ctx| {
+            ctx.iterated_player = true;
+            ctx.last_effect_id = None;
+            if let Some(tag) = tagged_object {
+                ctx.last_object_tag = Some(tag);
+            }
+        },
+        |ctx| compile_effects(effects, ctx),
+    )
+}
+
 fn compile_vote_sequence(
     effects: &[EffectAst],
     ctx: &mut CompileContext,
@@ -780,32 +862,30 @@ fn compile_vote_sequence(
         }
     }
 
-    let saved_iterated = ctx.iterated_player;
-    let saved_last_effect = ctx.last_effect_id;
-    let saved_last_tag = ctx.last_object_tag.clone();
-    let saved_last_player = ctx.last_player_filter.clone();
-    ctx.iterated_player = true;
-
-    let mut vote_options = Vec::new();
-    let mut choices = Vec::new();
-    for option in options {
-        let option_effects_ast = option_effects.get(option).ok_or_else(|| {
-            CardTextError::ParseError(format!("missing effects for vote option '{option}'"))
-        })?;
-        ctx.last_effect_id = None;
-        ctx.last_object_tag = None;
-        ctx.last_player_filter = None;
-        let (compiled, option_choices) = compile_effects(option_effects_ast, ctx)?;
-        for choice in option_choices {
-            push_choice(&mut choices, choice);
-        }
-        vote_options.push(VoteOption::new(option.clone(), compiled));
-    }
-
-    ctx.iterated_player = saved_iterated;
-    ctx.last_effect_id = saved_last_effect;
-    ctx.last_object_tag = saved_last_tag;
-    ctx.last_player_filter = saved_last_player;
+    let (vote_options, choices) = with_preserved_compile_context(
+        ctx,
+        |ctx| {
+            ctx.iterated_player = true;
+        },
+        |ctx| {
+            let mut vote_options = Vec::new();
+            let mut choices = Vec::new();
+            for option in options {
+                let option_effects_ast = option_effects.get(option).ok_or_else(|| {
+                    CardTextError::ParseError(format!("missing effects for vote option '{option}'"))
+                })?;
+                ctx.last_effect_id = None;
+                ctx.last_object_tag = None;
+                ctx.last_player_filter = None;
+                let (compiled, option_choices) = compile_effects(option_effects_ast, ctx)?;
+                for choice in option_choices {
+                    push_choice(&mut choices, choice);
+                }
+                vote_options.push(VoteOption::new(option.clone(), compiled));
+            }
+            Ok((vote_options, choices))
+        },
+    )?;
 
     let effect = if extra_optional > 0 {
         Effect::vote_with_optional_extra(vote_options, extra_mandatory, extra_optional)
@@ -924,33 +1004,28 @@ fn compile_effect(
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
     match effect {
         EffectAst::DealDamage { amount, target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
-            let effect = tag_object_target_effect(
-                Effect::deal_damage(amount.clone(), spec.clone()),
-                &spec,
-                ctx,
-                "damaged",
-            );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
+            let (effects, choices) =
+                compile_tagged_effect_for_target(target, ctx, "damaged", |spec| {
+                    Effect::deal_damage(amount.clone(), spec)
+                })?;
             if let TargetAst::Player(filter, _) = target {
                 ctx.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
             }
-            Ok((vec![effect], choices))
+            Ok((effects, choices))
         }
         EffectAst::DealDamageEqualToPower { source, target } => {
-            let source_spec = resolve_choose_spec_it_tag(&choose_spec_for_target(source), ctx)?;
+            let (source_spec, mut choices) = resolve_target_spec_with_choices(source, ctx)?;
             let mut damage_target_spec = if source == target {
                 source_spec.clone()
             } else {
-                resolve_choose_spec_it_tag(&choose_spec_for_target(target), ctx)?
+                let (target_spec, target_choices) = resolve_target_spec_with_choices(target, ctx)?;
+                for choice in target_choices {
+                    push_choice(&mut choices, choice);
+                }
+                target_spec
             };
 
             let mut effects = Vec::new();
-            let mut choices = Vec::new();
             let mut amount_source_spec = source_spec.clone();
 
             if source_spec.is_target() {
@@ -963,7 +1038,6 @@ fn compile_effect(
                 if source == target {
                     damage_target_spec = ChooseSpec::Tagged(source_tag.as_str().into());
                 }
-                choices.push(source_spec.clone());
             }
 
             let damage_effect = tag_object_target_effect(
@@ -977,13 +1051,6 @@ fn compile_effect(
             );
             effects.push(damage_effect);
 
-            if source != target
-                && damage_target_spec.is_target()
-                && !choices.contains(&damage_target_spec)
-            {
-                choices.push(damage_target_spec.clone());
-            }
-
             if let TargetAst::Player(filter, _) = target {
                 ctx.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
             }
@@ -994,16 +1061,12 @@ fn compile_effect(
             creature1,
             creature2,
         } => {
-            let spec1 = resolve_choose_spec_it_tag(&choose_spec_for_target(creature1), ctx)?;
-            let spec2 = resolve_choose_spec_it_tag(&choose_spec_for_target(creature2), ctx)?;
+            let (spec1, mut choices) = resolve_target_spec_with_choices(creature1, ctx)?;
+            let (spec2, other_choices) = resolve_target_spec_with_choices(creature2, ctx)?;
+            for choice in other_choices {
+                push_choice(&mut choices, choice);
+            }
             let effect = Effect::fight(spec1.clone(), spec2.clone());
-            let mut choices = Vec::new();
-            if spec1.is_target() {
-                choices.push(spec1);
-            }
-            if spec2.is_target() {
-                choices.push(spec2);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::DealDamageEach { amount, filter } => {
@@ -1019,8 +1082,8 @@ fn compile_effect(
             target,
             target_count,
         } => {
-            let mut spec = choose_spec_for_target(target);
-            spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (base_spec, _) = resolve_target_spec_with_choices(target, ctx)?;
+            let mut spec = base_spec;
             if let Some(target_count) = target_count {
                 spec = spec.with_count(*target_count);
             }
@@ -1031,10 +1094,11 @@ fn compile_effect(
             }
             let effect =
                 tag_object_target_effect(Effect::new(put_counters), &spec, ctx, "counters");
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
+            let choices = if spec.is_target() {
+                vec![spec.clone()]
+            } else {
+                Vec::new()
+            };
             Ok((vec![effect], choices))
         }
         EffectAst::PutCountersAll {
@@ -1066,18 +1130,13 @@ fn compile_effect(
         }
         EffectAst::Proliferate => Ok((vec![Effect::proliferate()], Vec::new())),
         EffectAst::Tap { target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let base_effect = if spec.is_target() {
                 Effect::tap(spec.clone())
             } else {
                 Effect::new(crate::effects::TapEffect::with_spec(spec.clone()))
             };
             let effect = tag_object_target_effect(base_effect, &spec, ctx, "tapped");
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::TapAll { filter } => {
@@ -1087,23 +1146,17 @@ fn compile_effect(
             Ok((prelude, choices))
         }
         EffectAst::Untap { target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let base_effect = if spec.is_target() {
                 Effect::untap(spec.clone())
             } else {
                 Effect::new(crate::effects::UntapEffect::with_spec(spec.clone()))
             };
             let effect = tag_object_target_effect(base_effect, &spec, ctx, "untapped");
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::TapOrUntap { target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let tap_effect = Effect::tap(spec.clone());
             let untap_effect = Effect::untap(spec.clone());
             use crate::effect::EffectMode;
@@ -1118,10 +1171,6 @@ fn compile_effect(
                 },
             ];
             let effect = Effect::choose_one(modes);
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::UntapAll { filter } => {
@@ -1134,7 +1183,7 @@ fn compile_effect(
             target,
             allow_colorless,
         } => {
-            let spec = choose_spec_for_target(target);
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let mut modes = Vec::new();
             if *allow_colorless {
                 let ability = StaticAbility::protection(crate::ability::ProtectionFrom::Colorless);
@@ -1175,10 +1224,6 @@ fn compile_effect(
             }
 
             let effect = Effect::choose_one(modes);
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::Earthbend { counters } => {
@@ -1189,141 +1234,57 @@ fn compile_effect(
             ));
             Ok((vec![effect], vec![spec]))
         }
-        EffectAst::Draw { count, player } => match player {
-            PlayerAst::Target => {
-                let effect = Effect::target_draws(count.clone(), PlayerFilter::target_player());
-                ctx.last_player_filter = Some(PlayerFilter::target_player());
-                Ok((vec![effect], vec![ChooseSpec::target_player()]))
-            }
-            _ => {
-                let filter = resolve_non_target_player_filter(*player, ctx)?;
-                let effect = if matches!(&filter, PlayerFilter::You) {
-                    Effect::draw(count.clone())
-                } else {
-                    Effect::target_draws(count.clone(), filter.clone())
-                };
-                if !matches!(*player, PlayerAst::Implicit) {
-                    ctx.last_player_filter = Some(filter);
-                }
-                Ok((vec![effect], Vec::new()))
-            }
-        },
+        EffectAst::Draw { count, player } => compile_player_effect(
+            *player,
+            ctx,
+            true,
+            || Effect::draw(count.clone()),
+            |filter| Effect::target_draws(count.clone(), filter),
+        ),
         EffectAst::Counter { target } => {
-            let spec = choose_spec_for_target(target);
-            let effect =
-                tag_object_target_effect(Effect::counter(spec.clone()), &spec, ctx, "countered");
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
+            compile_tagged_effect_for_target(target, ctx, "countered", Effect::counter)
         }
-        EffectAst::CounterUnlessPays { target, mana } => {
-            let spec = choose_spec_for_target(target);
-            let effect = tag_object_target_effect(
-                Effect::counter_unless_pays(spec.clone(), mana.clone()),
-                &spec,
-                ctx,
-                "countered",
-            );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
-        }
+        EffectAst::CounterUnlessPays { target, mana } => compile_tagged_effect_for_target(
+            target,
+            ctx,
+            "countered",
+            |spec| Effect::counter_unless_pays(spec, mana.clone()),
+        ),
         EffectAst::LoseLife { amount, player } => {
             let amount = resolve_value_it_tag(amount, ctx)?;
-            match player {
-            PlayerAst::Target => Ok((vec![Effect::lose_life_target(amount.clone())], {
-                ctx.last_player_filter = Some(PlayerFilter::target_player());
-                vec![ChooseSpec::target_player()]
-            })),
-            PlayerAst::TargetOpponent => Ok((
-                vec![Effect::lose_life_player(
-                    amount.clone(),
-                    PlayerFilter::Target(Box::new(PlayerFilter::Opponent)),
-                )],
-                {
-                    let filter = PlayerFilter::Target(Box::new(PlayerFilter::Opponent));
-                    ctx.last_player_filter = Some(filter.clone());
-                    vec![ChooseSpec::target(ChooseSpec::Player(
-                        PlayerFilter::Opponent,
-                    ))]
-                },
-            )),
-            _ => {
-                let filter = resolve_non_target_player_filter(*player, ctx)?;
-                let effect = if matches!(&filter, PlayerFilter::You) {
-                    Effect::lose_life(amount.clone())
-                } else {
-                    Effect::lose_life_player(amount.clone(), filter.clone())
-                };
-                if !matches!(*player, PlayerAst::Implicit) {
-                    ctx.last_player_filter = Some(filter);
-                }
-                Ok((vec![effect], Vec::new()))
-            }
+            compile_player_effect(
+                *player,
+                ctx,
+                true,
+                || Effect::lose_life(amount.clone()),
+                |filter| Effect::lose_life_player(amount.clone(), filter),
+            )
         }
-        },
         EffectAst::GainLife { amount, player } => {
             let amount = resolve_value_it_tag(amount, ctx)?;
-            match player {
-                PlayerAst::Target => Ok((vec![Effect::gain_life_target(amount.clone())], {
-                    ctx.last_player_filter = Some(PlayerFilter::target_player());
-                    vec![ChooseSpec::target_player()]
-                })),
-                PlayerAst::TargetOpponent => Ok((
-                    vec![Effect::gain_life_player(
-                        amount.clone(),
-                        ChooseSpec::Player(PlayerFilter::Target(Box::new(PlayerFilter::Opponent))),
-                    )],
-                    {
-                        let filter = PlayerFilter::Target(Box::new(PlayerFilter::Opponent));
-                        ctx.last_player_filter = Some(filter.clone());
-                        vec![ChooseSpec::target(ChooseSpec::Player(
-                            PlayerFilter::Opponent,
-                        ))]
-                    },
-                )),
-                _ => {
-                    let filter = resolve_non_target_player_filter(*player, ctx)?;
-                    let effect = if matches!(&filter, PlayerFilter::You) {
-                        Effect::gain_life(amount.clone())
-                    } else {
-                        Effect::gain_life_player(amount.clone(), ChooseSpec::Player(filter.clone()))
-                    };
-                    if !matches!(*player, PlayerAst::Implicit) {
-                        ctx.last_player_filter = Some(filter);
-                    }
-                    Ok((vec![effect], Vec::new()))
-                }
-            }
+            compile_player_effect(
+                *player,
+                ctx,
+                true,
+                || Effect::gain_life(amount.clone()),
+                |filter| Effect::gain_life_player(amount.clone(), ChooseSpec::Player(filter)),
+            )
         }
-        EffectAst::LoseGame { player } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::lose_the_game()
-            } else {
-                Effect::lose_the_game_player(filter.clone())
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
+        EffectAst::LoseGame { player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            Effect::lose_the_game,
+            Effect::lose_the_game_player,
+        ),
         EffectAst::PreventAllCombatDamage { duration } => Ok((
             vec![Effect::prevent_all_combat_damage(duration.clone())],
             Vec::new(),
         )),
         EffectAst::PreventAllCombatDamageFromSource { duration, source } => {
-            let spec = choose_spec_for_target(source);
-            let effect = Effect::prevent_all_combat_damage_from(spec.clone(), duration.clone());
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
+            compile_effect_for_target(source, ctx, |spec| {
+                Effect::prevent_all_combat_damage_from(spec, duration.clone())
+            })
         }
         EffectAst::PreventAllCombatDamageToPlayers { duration } => Ok((
             vec![Effect::prevent_all_combat_damage_to_players(
@@ -1341,180 +1302,127 @@ fn compile_effect(
             duration,
         } => {
             let amount = resolve_value_it_tag(amount, ctx)?;
-            let spec = choose_spec_for_target(target);
-            let effect = Effect::prevent_damage(amount, spec.clone(), duration.clone());
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
+            compile_effect_for_target(target, ctx, |spec| {
+                Effect::prevent_damage(amount.clone(), spec, duration.clone())
+            })
         }
-        EffectAst::AddMana { mana, player } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::add_mana(mana.clone())
-            } else {
-                Effect::add_mana_player(mana.clone(), filter.clone())
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
+        EffectAst::AddMana { mana, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::add_mana(mana.clone()),
+            |filter| Effect::add_mana_player(mana.clone(), filter),
+        ),
         EffectAst::AddManaScaled {
             mana,
             amount,
             player,
-        } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = Effect::new(crate::effects::mana::AddScaledManaEffect::new(
+        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
+            Effect::new(crate::effects::mana::AddScaledManaEffect::new(
                 mana.clone(),
                 amount.clone(),
-                filter.clone(),
-            ));
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
+                filter,
+            ))
+        }),
         EffectAst::AddManaAnyColor {
             amount,
             player,
             available_colors,
-        } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = if let Some(colors) = available_colors.clone() {
-                if matches!(&filter, PlayerFilter::You) {
+        } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || {
+                if let Some(colors) = available_colors.clone() {
                     Effect::add_mana_of_any_color_restricted(amount.clone(), colors)
                 } else {
-                    Effect::add_mana_of_any_color_restricted_player(
-                        amount.clone(),
-                        filter.clone(),
-                        colors,
-                    )
+                    Effect::add_mana_of_any_color(amount.clone())
                 }
-            } else if matches!(&filter, PlayerFilter::You) {
-                Effect::add_mana_of_any_color(amount.clone())
-            } else {
-                Effect::add_mana_of_any_color_player(amount.clone(), filter.clone())
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::AddManaAnyOneColor { amount, player } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::add_mana_of_any_one_color(amount.clone())
-            } else {
-                Effect::add_mana_of_any_one_color_player(amount.clone(), filter.clone())
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
+            },
+            |filter| {
+                if let Some(colors) = available_colors.clone() {
+                    Effect::add_mana_of_any_color_restricted_player(amount.clone(), filter, colors)
+                } else {
+                    Effect::add_mana_of_any_color_player(amount.clone(), filter)
+                }
+            },
+        ),
+        EffectAst::AddManaAnyOneColor { amount, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::add_mana_of_any_one_color(amount.clone()),
+            |filter| Effect::add_mana_of_any_one_color_player(amount.clone(), filter),
+        ),
         EffectAst::AddManaChosenColor {
             amount,
             player,
             fixed_option,
-        } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = if let Some(fixed) = fixed_option {
+        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
+            if let Some(fixed) = fixed_option {
                 Effect::new(
                     crate::effects::mana::AddManaOfChosenColorEffect::with_fixed_option(
                         amount.clone(),
-                        filter.clone(),
+                        filter,
                         *fixed,
                     ),
                 )
             } else {
                 Effect::new(crate::effects::mana::AddManaOfChosenColorEffect::new(
                     amount.clone(),
-                    filter.clone(),
+                    filter,
                 ))
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
             }
-            Ok((vec![effect], Vec::new()))
-        }
+        }),
         EffectAst::AddManaFromLandCouldProduce {
             amount,
             player,
             land_filter,
             allow_colorless,
             same_type,
-        } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = Effect::add_mana_of_land_produced_types_player(
+        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
+            Effect::add_mana_of_land_produced_types_player(
                 amount.clone(),
-                filter.clone(),
+                filter,
                 land_filter.clone(),
                 *allow_colorless,
                 *same_type,
-            );
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::AddManaCommanderIdentity { amount, player } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::add_mana_from_commander_color_identity(amount.clone())
-            } else {
-                Effect::add_mana_from_commander_color_identity_player(
-                    amount.clone(),
-                    filter.clone(),
-                )
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
+            )
+        }),
+        EffectAst::AddManaCommanderIdentity { amount, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::add_mana_from_commander_color_identity(amount.clone()),
+            |filter| Effect::add_mana_from_commander_color_identity_player(amount.clone(), filter),
+        ),
         EffectAst::AddManaImprintedColors => Ok((
             vec![Effect::new(
                 crate::effects::mana::AddManaOfImprintedColorsEffect::new(),
             )],
             Vec::new(),
         )),
-        EffectAst::Scry { count, player } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::scry(count.clone())
-            } else {
-                Effect::scry_player(count.clone(), filter.clone())
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::Surveil { count, player } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::surveil(count.clone())
-            } else {
-                Effect::surveil_player(count.clone(), filter.clone())
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
+        EffectAst::Scry { count, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::scry(count.clone()),
+            |filter| Effect::scry_player(count.clone(), filter),
+        ),
+        EffectAst::Surveil { count, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::surveil(count.clone()),
+            |filter| Effect::surveil_player(count.clone(), filter),
+        ),
         EffectAst::PayMana { cost, player } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = Effect::new(crate::effects::PayManaEffect::new(
-                cost.clone(),
-                ChooseSpec::Player(filter.clone()),
-            ));
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
+            compile_player_effect_from_filter(*player, ctx, false, |filter| {
+                Effect::new(crate::effects::PayManaEffect::new(
+                    cost.clone(),
+                    ChooseSpec::Player(filter),
+                ))
+            })
         }
         EffectAst::Cant {
             restriction,
@@ -1537,21 +1445,13 @@ fn compile_effect(
             Ok((vec![effect], Vec::new()))
         }
         EffectAst::GainControl { target, duration } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
-            let mut effect = Effect::new(crate::effects::ApplyContinuousEffect::with_spec_runtime(
-                spec.clone(),
-                crate::effects::continuous::RuntimeModification::ChangeControllerToEffectController,
-                duration.clone(),
-            ));
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                let tag = ctx.next_tag("controlled");
-                effect = effect.tag(tag.clone());
-                ctx.last_object_tag = Some(tag);
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
+            compile_tagged_effect_for_target(target, ctx, "controlled", |spec| {
+                Effect::new(crate::effects::ApplyContinuousEffect::with_spec_runtime(
+                    spec,
+                    crate::effects::continuous::RuntimeModification::ChangeControllerToEffectController,
+                    duration.clone(),
+                ))
+            })
         }
         EffectAst::ControlPlayer { player, duration } => {
             let (start, duration) = match duration {
@@ -1586,16 +1486,8 @@ fn compile_effect(
             Ok((vec![effect], choices))
         }
         EffectAst::ExtraTurnAfterTurn { player } => {
-            let (player_filter, choices) = match player {
-                PlayerAst::Target => (
-                    PlayerFilter::target_player(),
-                    vec![ChooseSpec::target_player()],
-                ),
-                _ => (resolve_non_target_player_filter(*player, ctx)?, Vec::new()),
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(player_filter.clone());
-            }
+            let (player_filter, choices) =
+                resolve_effect_player_filter(*player, ctx, true, false, true)?;
             let effect = Effect::new(crate::effects::ScheduleDelayedTriggerEffect::new(
                 Trigger::beginning_of_end_step(player_filter.clone()),
                 vec![Effect::extra_turn_player(player_filter.clone())],
@@ -1611,19 +1503,7 @@ fn compile_effect(
             player,
             tag,
         } => {
-            let (chooser, choices) = match player {
-                PlayerAst::Target => (
-                    PlayerFilter::target_player(),
-                    vec![ChooseSpec::target_player()],
-                ),
-                PlayerAst::TargetOpponent => (
-                    PlayerFilter::target_opponent(),
-                    vec![ChooseSpec::target(ChooseSpec::Player(
-                        PlayerFilter::Opponent,
-                    ))],
-                ),
-                _ => (resolve_non_target_player_filter(*player, ctx)?, Vec::new()),
-            };
+            let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let mut resolved_filter = resolve_it_tag(filter, ctx)?;
             if resolved_filter.controller.is_none() {
                 resolved_filter.controller = Some(chooser.clone());
@@ -1631,9 +1511,6 @@ fn compile_effect(
             let effect =
                 Effect::choose_objects(resolved_filter, *count, chooser.clone(), tag.clone());
             ctx.last_object_tag = Some(tag.as_str().to_string());
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(chooser);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::Sacrifice {
@@ -1641,19 +1518,7 @@ fn compile_effect(
             player,
             count,
         } => {
-            let (chooser, choices) = match player {
-                PlayerAst::Target => (
-                    PlayerFilter::target_player(),
-                    vec![ChooseSpec::target_player()],
-                ),
-                PlayerAst::TargetOpponent => (
-                    PlayerFilter::target_opponent(),
-                    vec![ChooseSpec::target(ChooseSpec::Player(
-                        PlayerFilter::Opponent,
-                    ))],
-                ),
-                _ => (resolve_non_target_player_filter(*player, ctx)?, Vec::new()),
-            };
+            let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let mut resolved_filter = resolve_it_tag(filter, ctx)?;
             if resolved_filter.controller.is_none() {
                 resolved_filter.controller = Some(chooser.clone());
@@ -1670,9 +1535,6 @@ fn compile_effect(
                         "source sacrifice requires source controller chooser".to_string(),
                     ));
                 }
-                if !matches!(*player, PlayerAst::Implicit) {
-                    ctx.last_player_filter = Some(chooser);
-                }
                 return Ok((vec![Effect::sacrifice_source()], choices));
             }
 
@@ -1686,87 +1548,55 @@ fn compile_effect(
             );
             let sacrifice =
                 Effect::sacrifice_player(ObjectFilter::tagged(tag), *count, chooser.clone());
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(chooser);
-            }
             Ok((vec![choose, sacrifice], choices))
         }
         EffectAst::SacrificeAll { filter, player } => {
-            let (chooser, choices) = match player {
-                PlayerAst::Target => (
-                    PlayerFilter::target_player(),
-                    vec![ChooseSpec::target_player()],
-                ),
-                _ => (resolve_non_target_player_filter(*player, ctx)?, Vec::new()),
-            };
+            let (chooser, choices) =
+                resolve_effect_player_filter(*player, ctx, true, false, true)?;
             let mut resolved_filter = resolve_it_tag(filter, ctx)?;
             if resolved_filter.controller.is_none() {
                 resolved_filter.controller = Some(chooser.clone());
             }
             let count = Value::Count(resolved_filter.clone());
             let effect = Effect::sacrifice_player(resolved_filter, count, chooser.clone());
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(chooser);
-            }
             Ok((vec![effect], choices))
         }
-        EffectAst::DiscardHand { player } => {
-            let (filter, choices) = resolve_player_filter_with_target(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::discard_hand()
-            } else {
-                Effect::discard_hand_player(filter.clone())
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], choices))
-        }
+        EffectAst::DiscardHand { player } => compile_player_effect(
+            *player,
+            ctx,
+            true,
+            Effect::discard_hand,
+            Effect::discard_hand_player,
+        ),
         EffectAst::Discard {
             count,
             player,
             random,
-        } => {
-            let (filter, choices) = resolve_player_filter_with_target(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::discard_player(count.clone(), PlayerFilter::You, *random)
-            } else {
-                Effect::discard_player(count.clone(), filter.clone(), *random)
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], choices))
-        }
+        } => compile_player_effect(
+            *player,
+            ctx,
+            true,
+            || Effect::discard_player(count.clone(), PlayerFilter::You, *random),
+            |filter| Effect::discard_player(count.clone(), filter, *random),
+        ),
         EffectAst::Connive { target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let effect = Effect::connive(spec.clone());
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::ConniveIterated => Ok((vec![Effect::connive(ChooseSpec::Iterated)], Vec::new())),
         EffectAst::ReturnToHand { target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let effect = tag_object_target_effect(
                 Effect::new(crate::effects::ReturnToHandEffect::with_spec(spec.clone())),
                 &spec,
                 ctx,
                 "returned",
             );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::ReturnToBattlefield { target, tapped } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let from_exile_tag = matches!(
                 target,
                 TargetAst::Tagged(tag, _) if tag.as_str() == "exiled_0"
@@ -1783,10 +1613,6 @@ fn compile_effect(
                 ctx,
                 "returned",
             );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec.clone());
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::MoveToZone {
@@ -1794,18 +1620,13 @@ fn compile_effect(
             zone,
             to_top,
         } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let effect = tag_object_target_effect(
                 Effect::move_to_zone(spec.clone(), *zone, *to_top),
                 &spec,
                 ctx,
                 "moved",
             );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::ReturnAllToHand { filter } => {
@@ -1825,92 +1646,64 @@ fn compile_effect(
                 .with_count(ChoiceCount::exactly(*count as usize));
             Ok((vec![effect], vec![target_spec]))
         }
-        EffectAst::SetLifeTotal { amount, player } => {
-            let (filter, choices) = resolve_player_filter_with_target(*player, ctx)?;
-            let effect = Effect::set_life_total_player(amount.clone(), filter.clone());
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], choices))
-        }
-        EffectAst::SkipTurn { player } => {
-            let (filter, choices) = resolve_player_filter_with_target(*player, ctx)?;
-            let effect = Effect::skip_turn_player(filter.clone());
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], choices))
-        }
-        EffectAst::SkipDrawStep { player } => {
-            let (filter, choices) = resolve_player_filter_with_target(*player, ctx)?;
-            let effect = Effect::skip_draw_step_player(filter.clone());
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], choices))
-        }
+        EffectAst::SetLifeTotal { amount, player } => compile_player_effect_from_filter(
+            *player,
+            ctx,
+            true,
+            |filter| Effect::set_life_total_player(amount.clone(), filter),
+        ),
+        EffectAst::SkipTurn { player } => compile_player_effect_from_filter(
+            *player,
+            ctx,
+            true,
+            Effect::skip_turn_player,
+        ),
+        EffectAst::SkipDrawStep { player } => compile_player_effect_from_filter(
+            *player,
+            ctx,
+            true,
+            Effect::skip_draw_step_player,
+        ),
         EffectAst::Regenerate { target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let effect = tag_object_target_effect(
                 Effect::regenerate(spec.clone(), crate::effect::Until::EndOfTurn),
                 &spec,
                 ctx,
                 "regenerated",
             );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
             Ok((vec![effect], choices))
         }
-        EffectAst::Mill { count, player } => {
-            let (filter, choices) = resolve_player_filter_with_target(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::mill(count.clone())
-            } else {
-                Effect::mill_player(count.clone(), filter.clone())
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], choices))
-        }
-        EffectAst::PoisonCounters { count, player } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::poison_counters(count.clone())
-            } else {
-                Effect::poison_counters_player(count.clone(), filter.clone())
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::EnergyCounters { count, player } => {
-            let filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = if matches!(&filter, PlayerFilter::You) {
-                Effect::energy_counters(count.clone())
-            } else {
-                Effect::energy_counters_player(count.clone(), filter.clone())
-            };
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(filter);
-            }
-            Ok((vec![effect], Vec::new()))
-        }
+        EffectAst::Mill { count, player } => compile_player_effect(
+            *player,
+            ctx,
+            true,
+            || Effect::mill(count.clone()),
+            |filter| Effect::mill_player(count.clone(), filter),
+        ),
+        EffectAst::PoisonCounters { count, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::poison_counters(count.clone()),
+            |filter| Effect::poison_counters_player(count.clone(), filter),
+        ),
+        EffectAst::EnergyCounters { count, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::energy_counters(count.clone()),
+            |filter| Effect::energy_counters_player(count.clone(), filter),
+        ),
         EffectAst::May { effects } => {
-            let saved_last_effect = ctx.last_effect_id;
-            let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
-            ctx.last_effect_id = saved_last_effect;
+            let (inner_effects, inner_choices) =
+                compile_effects_preserving_last_effect(effects, ctx)?;
             let effect = Effect::may(inner_effects);
             Ok((vec![effect], inner_choices))
         }
         EffectAst::MayByPlayer { player, effects } => {
-            let saved_last_effect = ctx.last_effect_id;
-            let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
-            ctx.last_effect_id = saved_last_effect;
+            let (inner_effects, inner_choices) =
+                compile_effects_preserving_last_effect(effects, ctx)?;
             let player_filter = resolve_non_target_player_filter(*player, ctx)?;
             if !matches!(*player, PlayerAst::Implicit) {
                 ctx.last_player_filter = Some(player_filter.clone());
@@ -1942,9 +1735,8 @@ fn compile_effect(
             Ok((vec![effect], choices))
         }
         EffectAst::MayByTaggedController { tag, effects } => {
-            let saved_last_effect = ctx.last_effect_id;
-            let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
-            ctx.last_effect_id = saved_last_effect;
+            let (inner_effects, inner_choices) =
+                compile_effects_preserving_last_effect(effects, ctx)?;
             let effect = Effect::for_each_controller_of_tagged(
                 tag.clone(),
                 vec![Effect::may(inner_effects)],
@@ -1955,10 +1747,8 @@ fn compile_effect(
             let condition = ctx.last_effect_id.ok_or_else(|| {
                 CardTextError::ParseError("missing prior effect for if clause".to_string())
             })?;
-            let saved_last_effect = ctx.last_effect_id;
-            ctx.last_effect_id = None;
-            let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
-            ctx.last_effect_id = saved_last_effect;
+            let (inner_effects, inner_choices) =
+                compile_effects_with_temporary_last_effect(effects, ctx, None)?;
             let predicate = match predicate {
                 IfResultPredicate::Did => EffectPredicate::Happened,
                 IfResultPredicate::DidNot => EffectPredicate::DidNotHappen,
@@ -1968,32 +1758,14 @@ fn compile_effect(
             Ok((vec![effect], inner_choices))
         }
         EffectAst::ForEachOpponent { effects } => {
-            let saved_iterated = ctx.iterated_player;
-            let saved_last_effect = ctx.last_effect_id;
-            let saved_last_tag = ctx.last_object_tag.clone();
-            let saved_last_player = ctx.last_player_filter.clone();
-            ctx.iterated_player = true;
-            ctx.last_effect_id = None;
-            let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
-            ctx.iterated_player = saved_iterated;
-            ctx.last_effect_id = saved_last_effect;
-            ctx.last_object_tag = saved_last_tag;
-            ctx.last_player_filter = saved_last_player;
+            let (inner_effects, inner_choices) =
+                compile_effects_in_iterated_player_context(effects, ctx, None)?;
             let effect = Effect::for_each_opponent(inner_effects);
             Ok((vec![effect], inner_choices))
         }
         EffectAst::ForEachPlayer { effects } => {
-            let saved_iterated = ctx.iterated_player;
-            let saved_last_effect = ctx.last_effect_id;
-            let saved_last_tag = ctx.last_object_tag.clone();
-            let saved_last_player = ctx.last_player_filter.clone();
-            ctx.iterated_player = true;
-            ctx.last_effect_id = None;
-            let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
-            ctx.iterated_player = saved_iterated;
-            ctx.last_effect_id = saved_last_effect;
-            ctx.last_object_tag = saved_last_tag;
-            ctx.last_player_filter = saved_last_player;
+            let (inner_effects, inner_choices) =
+                compile_effects_in_iterated_player_context(effects, ctx, None)?;
             let effect = Effect::for_players(PlayerFilter::Any, inner_effects);
             Ok((vec![effect], inner_choices))
         }
@@ -2008,33 +1780,17 @@ fn compile_effect(
                 tag.as_str().to_string()
             };
 
-            let saved_iterated = ctx.iterated_player;
-            let saved_last_effect = ctx.last_effect_id;
-            let saved_last_tag = ctx.last_object_tag.clone();
-            let saved_last_player = ctx.last_player_filter.clone();
-            ctx.iterated_player = true;
-            ctx.last_effect_id = None;
-            ctx.last_object_tag = Some(effective_tag.clone());
-            let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
-            ctx.iterated_player = saved_iterated;
-            ctx.last_effect_id = saved_last_effect;
-            ctx.last_object_tag = saved_last_tag;
-            ctx.last_player_filter = saved_last_player;
+            let (inner_effects, inner_choices) = compile_effects_in_iterated_player_context(
+                effects,
+                ctx,
+                Some(effective_tag.clone()),
+            )?;
             let effect = Effect::for_each_tagged(effective_tag, inner_effects);
             Ok((vec![effect], inner_choices))
         }
         EffectAst::ForEachTaggedPlayer { tag, effects } => {
-            let saved_iterated = ctx.iterated_player;
-            let saved_last_effect = ctx.last_effect_id;
-            let saved_last_tag = ctx.last_object_tag.clone();
-            let saved_last_player = ctx.last_player_filter.clone();
-            ctx.iterated_player = true;
-            ctx.last_effect_id = None;
-            let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
-            ctx.iterated_player = saved_iterated;
-            ctx.last_effect_id = saved_last_effect;
-            ctx.last_object_tag = saved_last_tag;
-            ctx.last_player_filter = saved_last_player;
+            let (inner_effects, inner_choices) =
+                compile_effects_in_iterated_player_context(effects, ctx, None)?;
             let effect = Effect::for_each_tagged_player(tag.clone(), inner_effects);
             Ok((vec![effect], inner_choices))
         }
@@ -2042,19 +1798,7 @@ fn compile_effect(
             "for each opponent who doesn't must follow an opponent clause".to_string(),
         )),
         EffectAst::Destroy { target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
-            let mut effect = Effect::destroy(spec.clone());
-            if spec.is_target() {
-                let tag = ctx.next_tag("destroyed");
-                effect = effect.tag(tag.clone());
-                ctx.last_object_tag = Some(tag);
-            }
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
+            compile_tagged_effect_for_target(target, ctx, "destroyed", Effect::destroy)
         }
         EffectAst::DestroyAll { filter } => {
             let (mut prelude, choices) = target_context_prelude_for_filter(filter);
@@ -2070,8 +1814,7 @@ fn compile_effect(
             if let Some(compiled) = lower_hand_exile_target(target, ctx)? {
                 return Ok(compiled);
             }
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let mut effect = if spec.count().is_single() {
                 Effect::move_to_zone(spec.clone(), Zone::Exile, true)
             } else {
@@ -2082,76 +1825,39 @@ fn compile_effect(
                 effect = effect.tag(tag.clone());
                 ctx.last_object_tag = Some(tag);
             }
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::LookAtHand { target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
-            let effect = Effect::new(crate::effects::LookAtHandEffect::new(spec.clone()));
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
+            let (effects, choices) = compile_effect_for_target(target, ctx, |spec| {
+                Effect::new(crate::effects::LookAtHandEffect::new(spec))
+            })?;
             if let TargetAst::Player(filter, _) = target {
                 ctx.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
             }
-            Ok((vec![effect], choices))
+            Ok((effects, choices))
         }
-        EffectAst::TargetOnly { target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
-            let effect = tag_object_target_effect(
-                Effect::new(crate::effects::TargetOnlyEffect::new(spec.clone())),
-                &spec,
-                ctx,
-                "targeted",
-            );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
-        }
+        EffectAst::TargetOnly { target } => compile_tagged_effect_for_target(
+            target,
+            ctx,
+            "targeted",
+            |spec| Effect::new(crate::effects::TargetOnlyEffect::new(spec)),
+        ),
         EffectAst::RevealTop { player } => {
-            let mut choices = Vec::new();
-            let player_filter = match player {
-                PlayerAst::Target => {
-                    choices.push(ChooseSpec::target_player());
-                    PlayerFilter::target_player()
-                }
-                _ => resolve_non_target_player_filter(*player, ctx)?,
-            };
+            let (player_filter, choices) =
+                resolve_effect_player_filter(*player, ctx, true, false, true)?;
             let tag = ctx.next_tag("revealed");
             ctx.last_object_tag = Some(tag.clone());
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(player_filter.clone());
-            }
             let effect = Effect::reveal_top(player_filter, tag);
             Ok((vec![effect], choices))
         }
         EffectAst::RevealHand { player } => {
-            let mut choices = Vec::new();
-            let spec = match player {
-                PlayerAst::Target => {
-                    choices.push(ChooseSpec::target_player());
-                    ChooseSpec::target_player()
-                }
-                _ => {
-                    let filter = resolve_non_target_player_filter(*player, ctx)?;
-                    ChooseSpec::Player(filter)
-                }
+            let (player_filter, choices) =
+                resolve_effect_player_filter(*player, ctx, true, false, true)?;
+            let spec = if choices.is_empty() {
+                ChooseSpec::Player(player_filter)
+            } else {
+                ChooseSpec::target_player()
             };
-            if !matches!(*player, PlayerAst::Implicit) {
-                if let ChooseSpec::Player(filter) = &spec {
-                    ctx.last_player_filter = Some(filter.clone());
-                } else if matches!(*player, PlayerAst::Target) {
-                    ctx.last_player_filter = Some(PlayerFilter::target_player());
-                }
-            }
             let effect = Effect::new(crate::effects::LookAtHandEffect::new(spec));
             Ok((vec![effect], choices))
         }
@@ -2163,14 +1869,7 @@ fn compile_effect(
                     )
                 })?,
             };
-            let mut choices = Vec::new();
-            if matches!(player, PlayerAst::Target) {
-                choices.push(ChooseSpec::target_player());
-                ctx.last_player_filter = Some(PlayerFilter::target_player());
-            } else if !matches!(*player, PlayerAst::Implicit) {
-                let resolved = resolve_non_target_player_filter(*player, ctx)?;
-                ctx.last_player_filter = Some(resolved);
-            }
+            let (_, choices) = resolve_effect_player_filter(*player, ctx, true, false, true)?;
             let effect = Effect::move_to_zone(ChooseSpec::tagged(tag), Zone::Hand, false);
             Ok((vec![effect], choices))
         }
@@ -2180,8 +1879,7 @@ fn compile_effect(
             player,
             may_choose_new_targets,
         } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let player_filter = resolve_non_target_player_filter(*player, ctx)?;
             if !matches!(*player, PlayerAst::Implicit) {
                 ctx.last_player_filter = Some(player_filter.clone());
@@ -2207,10 +1905,6 @@ fn compile_effect(
             let mut compiled = vec![copy_effect];
             if let Some(retarget) = retarget_effect {
                 compiled.push(retarget);
-            }
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
             }
             Ok((compiled, choices))
         }
@@ -2370,28 +2064,21 @@ fn compile_effect(
             has_haste,
             sacrifice_at_next_end_step,
         } => {
-            let source_spec = choose_spec_for_target(source);
-            let source_spec = resolve_choose_spec_it_tag(&source_spec, ctx)?;
             let player_filter = resolve_non_target_player_filter(*player, ctx)?;
-            let mut effect = crate::effects::CreateTokenCopyEffect::new(
-                source_spec.clone(),
-                *count,
-                player_filter,
-            );
-            if *half_power_toughness_round_up {
-                effect = effect.half_power_toughness_round_up();
-            }
-            if *has_haste {
-                effect = effect.haste(true);
-            }
-            if *sacrifice_at_next_end_step {
-                effect = effect.sacrifice_at_next_end_step(true);
-            }
-            let mut choices = Vec::new();
-            if source_spec.is_target() {
-                choices.push(source_spec);
-            }
-            Ok((vec![Effect::new(effect)], choices))
+            compile_effect_for_target(source, ctx, |source_spec| {
+                let mut effect =
+                    crate::effects::CreateTokenCopyEffect::new(source_spec, *count, player_filter);
+                if *half_power_toughness_round_up {
+                    effect = effect.half_power_toughness_round_up();
+                }
+                if *has_haste {
+                    effect = effect.haste(true);
+                }
+                if *sacrifice_at_next_end_step {
+                    effect = effect.sacrifice_at_next_end_step(true);
+                }
+                Effect::new(effect)
+            })
         }
         EffectAst::ExileThatTokenAtEndOfCombat => Ok((Vec::new(), Vec::new())),
         EffectAst::TokenCopyGainHasteUntilEot | EffectAst::TokenCopySacrificeAtNextEndStep => {
@@ -2401,30 +2088,21 @@ fn compile_effect(
             Ok((vec![Effect::monstrosity(amount.clone())], Vec::new()))
         }
         EffectAst::RemoveUpToAnyCounters { amount, target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
             let id = ctx.next_effect_id();
             ctx.last_effect_id = Some(id);
-            let effect = tag_object_target_effect(
+            compile_tagged_effect_for_target(target, ctx, "counters", |spec| {
                 Effect::with_id(
                     id.0,
-                    Effect::remove_up_to_any_counters(amount.clone(), spec.clone()),
-                ),
-                &spec,
-                ctx,
-                "counters",
-            );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
+                    Effect::remove_up_to_any_counters(amount.clone(), spec),
+                )
+            })
         }
         EffectAst::MoveAllCounters { from, to } => {
-            let from_spec = choose_spec_for_target(from);
-            let from_spec = resolve_choose_spec_it_tag(&from_spec, ctx)?;
-            let to_spec = choose_spec_for_target(to);
-            let to_spec = resolve_choose_spec_it_tag(&to_spec, ctx)?;
+            let (from_spec, mut choices) = resolve_target_spec_with_choices(from, ctx)?;
+            let (to_spec, to_choices) = resolve_target_spec_with_choices(to, ctx)?;
+            for choice in to_choices {
+                push_choice(&mut choices, choice);
+            }
             let effect = tag_object_target_effect(
                 tag_object_target_effect(
                     Effect::move_all_counters(from_spec.clone(), to_spec.clone()),
@@ -2436,13 +2114,6 @@ fn compile_effect(
                 ctx,
                 "to",
             );
-            let mut choices = Vec::new();
-            if from_spec.is_target() {
-                choices.push(from_spec);
-            }
-            if to_spec.is_target() {
-                choices.push(to_spec);
-            }
             Ok((vec![effect], choices))
         }
         EffectAst::Pump {
@@ -2450,63 +2121,39 @@ fn compile_effect(
             toughness,
             target,
             duration,
-        } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
-            let effect = tag_object_target_effect(
-                Effect::new(
-                    crate::effects::ApplyContinuousEffect::with_spec_runtime(
-                        spec.clone(),
-                        crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
-                            power: power.clone(),
-                            toughness: toughness.clone(),
-                        },
-                        duration.clone(),
-                    )
-                    .require_creature_target(),
-                ),
-                &spec,
-                ctx,
-                "pumped",
-            );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
-        }
+        } => compile_tagged_effect_for_target(target, ctx, "pumped", |spec| {
+            Effect::new(
+                crate::effects::ApplyContinuousEffect::with_spec_runtime(
+                    spec,
+                    crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
+                        power: power.clone(),
+                        toughness: toughness.clone(),
+                    },
+                    duration.clone(),
+                )
+                .require_creature_target(),
+            )
+        }),
         EffectAst::SetBasePowerToughness {
             power,
             toughness,
             target,
             duration,
-        } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
-            let effect = tag_object_target_effect(
-                Effect::new(
-                    crate::effects::ApplyContinuousEffect::with_spec(
-                        spec.clone(),
-                        crate::continuous::Modification::SetPowerToughness {
-                            power: power.clone(),
-                            toughness: toughness.clone(),
-                            sublayer: crate::continuous::PtSublayer::Setting,
-                        },
-                        duration.clone(),
-                    )
-                    .require_creature_target()
-                    .resolve_set_pt_values_at_resolution(),
-                ),
-                &spec,
-                ctx,
-                "set_base_pt",
-            );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
-        }
+        } => compile_tagged_effect_for_target(target, ctx, "set_base_pt", |spec| {
+            Effect::new(
+                crate::effects::ApplyContinuousEffect::with_spec(
+                    spec,
+                    crate::continuous::Modification::SetPowerToughness {
+                        power: power.clone(),
+                        toughness: toughness.clone(),
+                        sublayer: crate::continuous::PtSublayer::Setting,
+                    },
+                    duration.clone(),
+                )
+                .require_creature_target()
+                .resolve_set_pt_values_at_resolution(),
+            )
+        }),
         EffectAst::PumpForEach {
             power_per,
             toughness_per,
@@ -2514,26 +2161,16 @@ fn compile_effect(
             count_filter,
             duration,
         } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
             let resolved_count_filter = resolve_it_tag(count_filter, ctx)?;
-            let effect = tag_object_target_effect(
+            compile_tagged_effect_for_target(target, ctx, "pumped", |spec| {
                 Effect::pump_for_each(
-                    spec.clone(),
+                    spec,
                     *power_per,
                     *toughness_per,
-                    Value::Count(resolved_count_filter),
+                    Value::Count(resolved_count_filter.clone()),
                     duration.clone(),
-                ),
-                &spec,
-                ctx,
-                "pumped",
-            );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
+                )
+            })
         }
         EffectAst::PumpAll {
             filter,
@@ -2562,7 +2199,6 @@ fn compile_effect(
             target,
             duration,
         } => {
-            let spec = choose_spec_for_target(target);
             let id = ctx.last_effect_id.ok_or_else(|| {
                 CardTextError::ParseError("missing prior effect for pump clause".to_string())
             })?;
@@ -2571,27 +2207,19 @@ fn compile_effect(
             } else {
                 Value::Fixed(*power)
             };
-            let effect = tag_object_target_effect(
+            compile_tagged_effect_for_target(target, ctx, "pumped", |spec| {
                 Effect::new(
                     crate::effects::ApplyContinuousEffect::with_spec_runtime(
-                        spec.clone(),
+                        spec,
                         crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
-                            power: power_value,
+                            power: power_value.clone(),
                             toughness: Value::Fixed(*toughness),
                         },
                         duration.clone(),
                     )
                     .require_creature_target(),
-                ),
-                &spec,
-                ctx,
-                "pumped",
-            );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
+                )
+            })
         }
         EffectAst::GrantAbilitiesAll {
             filter,
@@ -2623,60 +2251,30 @@ fn compile_effect(
             abilities,
             duration,
         } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
             let Some(first_ability) = abilities.first() else {
-                let effect = tag_object_target_effect(
-                    Effect::new(crate::effects::TargetOnlyEffect::new(spec.clone())),
-                    &spec,
-                    ctx,
-                    "granted",
-                );
-                let mut choices = Vec::new();
-                if spec.is_target() {
-                    choices.push(spec);
-                }
-                return Ok((vec![effect], choices));
+                return compile_tagged_effect_for_target(target, ctx, "granted", |spec| {
+                    Effect::new(crate::effects::TargetOnlyEffect::new(spec))
+                });
             };
 
-            let mut apply = crate::effects::ApplyContinuousEffect::with_spec(
-                spec.clone(),
-                crate::continuous::Modification::AddAbility(first_ability.clone()),
-                duration.clone(),
-            );
-
-            for ability in abilities.iter().skip(1) {
-                apply = apply.with_additional_modification(
-                    crate::continuous::Modification::AddAbility(ability.clone()),
+            compile_tagged_effect_for_target(target, ctx, "granted", |spec| {
+                let mut apply = crate::effects::ApplyContinuousEffect::with_spec(
+                    spec,
+                    crate::continuous::Modification::AddAbility(first_ability.clone()),
+                    duration.clone(),
                 );
-            }
 
-            let effect = tag_object_target_effect(
-                Effect::new(apply),
-                &spec,
-                ctx,
-                "granted",
-            );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
+                for ability in abilities.iter().skip(1) {
+                    apply = apply.with_additional_modification(
+                        crate::continuous::Modification::AddAbility(ability.clone()),
+                    );
+                }
+
+                Effect::new(apply)
+            })
         }
         EffectAst::Transform { target } => {
-            let spec = choose_spec_for_target(target);
-            let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
-            let effect = tag_object_target_effect(
-                Effect::transform(spec.clone()),
-                &spec,
-                ctx,
-                "transformed",
-            );
-            let mut choices = Vec::new();
-            if spec.is_target() {
-                choices.push(spec);
-            }
-            Ok((vec![effect], choices))
+            compile_tagged_effect_for_target(target, ctx, "transformed", Effect::transform)
         }
         EffectAst::GrantAbilityToSource { ability } => Ok((
             vec![Effect::grant_object_ability_to_source(ability.clone())],
@@ -2755,6 +2353,77 @@ fn compile_effect(
     }
 }
 
+fn resolve_effect_player_filter(
+    player: PlayerAst,
+    ctx: &mut CompileContext,
+    allow_target: bool,
+    allow_target_opponent: bool,
+    track_last_player_filter: bool,
+) -> Result<(PlayerFilter, Vec<ChooseSpec>), CardTextError> {
+    let (filter, choices) = match player {
+        PlayerAst::Target if allow_target => {
+            (PlayerFilter::target_player(), vec![ChooseSpec::target_player()])
+        }
+        PlayerAst::TargetOpponent if allow_target_opponent => (
+            PlayerFilter::Target(Box::new(PlayerFilter::Opponent)),
+            vec![ChooseSpec::target(ChooseSpec::Player(
+                PlayerFilter::Opponent,
+            ))],
+        ),
+        _ => (resolve_non_target_player_filter(player, ctx)?, Vec::new()),
+    };
+
+    if track_last_player_filter && !matches!(player, PlayerAst::Implicit) {
+        ctx.last_player_filter = Some(filter.clone());
+    }
+    Ok((filter, choices))
+}
+
+fn compile_player_effect<YouBuilder, OtherBuilder>(
+    player: PlayerAst,
+    ctx: &mut CompileContext,
+    allow_target: bool,
+    build_you: YouBuilder,
+    build_other: OtherBuilder,
+) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError>
+where
+    YouBuilder: FnOnce() -> Effect,
+    OtherBuilder: FnOnce(PlayerFilter) -> Effect,
+{
+    let (filter, choices) = resolve_effect_player_filter(
+        player,
+        ctx,
+        allow_target,
+        allow_target,
+        true,
+    )?;
+    let effect = if matches!(&filter, PlayerFilter::You) {
+        build_you()
+    } else {
+        build_other(filter)
+    };
+    Ok((vec![effect], choices))
+}
+
+fn compile_player_effect_from_filter<Builder>(
+    player: PlayerAst,
+    ctx: &mut CompileContext,
+    allow_target: bool,
+    build: Builder,
+) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError>
+where
+    Builder: FnOnce(PlayerFilter) -> Effect,
+{
+    let (filter, choices) = resolve_effect_player_filter(
+        player,
+        ctx,
+        allow_target,
+        allow_target,
+        true,
+    )?;
+    Ok((vec![build(filter)], choices))
+}
+
 fn resolve_non_target_player_filter(
     player: PlayerAst,
     ctx: &CompileContext,
@@ -2791,25 +2460,6 @@ fn resolve_non_target_player_filter(
                 Ok(PlayerFilter::You)
             }
         }
-    }
-}
-
-fn resolve_player_filter_with_target(
-    player: PlayerAst,
-    ctx: &CompileContext,
-) -> Result<(PlayerFilter, Vec<ChooseSpec>), CardTextError> {
-    match player {
-        PlayerAst::Target => Ok((
-            PlayerFilter::target_player(),
-            vec![ChooseSpec::target_player()],
-        )),
-        PlayerAst::TargetOpponent => Ok((
-            PlayerFilter::Target(Box::new(PlayerFilter::Opponent)),
-            vec![ChooseSpec::target(ChooseSpec::Player(
-                PlayerFilter::Opponent,
-            ))],
-        )),
-        _ => Ok((resolve_non_target_player_filter(player, ctx)?, Vec::new())),
     }
 }
 
@@ -3290,6 +2940,46 @@ fn choose_spec_for_target(target: &TargetAst) -> ChooseSpec {
         TargetAst::Tagged(tag, _) => ChooseSpec::Tagged(tag.clone()),
         TargetAst::WithCount(inner, count) => choose_spec_for_target(inner).with_count(*count),
     }
+}
+
+fn resolve_target_spec_with_choices(
+    target: &TargetAst,
+    ctx: &CompileContext,
+) -> Result<(ChooseSpec, Vec<ChooseSpec>), CardTextError> {
+    let spec = choose_spec_for_target(target);
+    let spec = resolve_choose_spec_it_tag(&spec, ctx)?;
+    let choices = if spec.is_target() {
+        vec![spec.clone()]
+    } else {
+        Vec::new()
+    };
+    Ok((spec, choices))
+}
+
+fn compile_effect_for_target<Builder>(
+    target: &TargetAst,
+    ctx: &CompileContext,
+    build: Builder,
+) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError>
+where
+    Builder: FnOnce(ChooseSpec) -> Effect,
+{
+    let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+    Ok((vec![build(spec)], choices))
+}
+
+fn compile_tagged_effect_for_target<Builder>(
+    target: &TargetAst,
+    ctx: &mut CompileContext,
+    tag_prefix: &str,
+    build: Builder,
+) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError>
+where
+    Builder: FnOnce(ChooseSpec) -> Effect,
+{
+    let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+    let effect = tag_object_target_effect(build(spec.clone()), &spec, ctx, tag_prefix);
+    Ok((vec![effect], choices))
 }
 
 fn push_choice(choices: &mut Vec<ChooseSpec>, choice: ChooseSpec) {

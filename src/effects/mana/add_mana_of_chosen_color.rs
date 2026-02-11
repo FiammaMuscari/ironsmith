@@ -56,9 +56,7 @@ impl EffectExecutor for AddManaOfChosenColorEffect {
             return Ok(EffectOutcome::count(0));
         }
 
-        let chosen = game
-            .chosen_color(ctx.source)
-            .unwrap_or(Color::Green);
+        let chosen = game.chosen_color(ctx.source).unwrap_or(Color::Green);
 
         let selected = if let Some(fixed) = self.fixed_option {
             if fixed == chosen {
@@ -98,4 +96,3 @@ impl EffectExecutor for AddManaOfChosenColorEffect {
         Box::new(self.clone())
     }
 }
-

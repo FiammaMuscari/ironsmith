@@ -749,100 +749,70 @@ fn test_parse_storm_keyword_line() {
 }
 
 #[test]
-fn test_parse_additional_keyword_marker_lines_without_fallback() {
-    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Marker Keywords")
+fn test_parse_unimplemented_keyword_marker_line_errors() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Marker Keywords")
         .card_types(vec![CardType::Creature])
-        .parse_text(
-            "Unleash\n\
-Extort\n\
-Mentor\n\
-Riot\n\
-Dethrone\n\
-Enlist\n\
-Evolve\n\
-Myriad\n\
-Populate\n\
-Provoke\n\
-Skulk\n\
-Sunburst\n\
-Ravenous\n\
-Undaunted\n\
-Assist\n\
-Cipher\n\
-Partner\n\
-Ingest\n\
-Devoid\n\
-Phasing",
-        )
-        .expect("parse standalone marker-style keywords");
-
-    let rendered = compiled_lines(&def).join(" | ").to_ascii_lowercase();
-    for keyword in [
-        "unleash",
-        "extort",
-        "mentor",
-        "riot",
-        "dethrone",
-        "enlist",
-        "evolve",
-        "myriad",
-        "populate",
-        "provoke",
-        "skulk",
-        "sunburst",
-        "ravenous",
-        "undaunted",
-        "assist",
-        "cipher",
-        "partner",
-        "ingest",
-        "devoid",
-        "phasing",
-    ] {
-        assert!(
-            rendered.contains(keyword),
-            "expected compiled text to include '{keyword}', got {rendered}"
-        );
-    }
-
+        .parse_text("Unleash\nPhasing")
+        .expect_err("unimplemented marker keyword should fail parsing");
+    let message = format!("{err:?}").to_ascii_lowercase();
     assert!(
-        !rendered.contains("unsupported parser line fallback"),
-        "standalone keyword markers should not hit fallback, got {rendered}"
-    );
-
-    let has_phasing = def.abilities.iter().any(|ability| match &ability.kind {
-        AbilityKind::Static(static_ability) => static_ability.id() == StaticAbilityId::Phasing,
-        _ => false,
-    });
-    assert!(
-        has_phasing,
-        "expected explicit Phasing static ability, got {:?}",
-        def.abilities
+        message.contains("unsupported keyword mechanic 'unleash'"),
+        "expected explicit unsupported-marker error, got {message}"
     );
 }
 
 #[test]
-fn test_parse_unearth_keyword_line_without_fallback() {
-    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Unearth Probe")
+fn test_parse_unearth_keyword_line_errors() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Unearth Probe")
         .card_types(vec![CardType::Creature])
         .parse_text(
             "{T}: You may tap or untap another target permanent.\n\
 Unearth {U} ({U}: Return this card from your graveyard to the battlefield. It gains haste. Exile it at the beginning of the next end step or if it would leave the battlefield. Unearth only as a sorcery.)",
         )
-        .expect("parse unearth keyword line");
+        .expect_err("unearth keyword line should fail parsing");
+    let message = format!("{err:?}").to_ascii_lowercase();
+    assert!(
+        message.contains("unsupported keyword mechanic 'unearth'"),
+        "expected explicit unsupported unearth error, got {message}"
+    );
+}
 
-    let rendered = compiled_lines(&def).join(" | ").to_ascii_lowercase();
+#[test]
+fn test_parse_escape_keyword_line_errors() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Escape Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Escape—{3}{B}{B}, exile four other cards from your graveyard.")
+        .expect_err("escape keyword line should fail parsing");
+    let message = format!("{err:?}").to_ascii_lowercase();
     assert!(
-        rendered.contains("unearth"),
-        "expected unearth marker in compiled text, got {rendered}"
+        message.contains("unsupported keyword mechanic 'escape'"),
+        "expected explicit unsupported escape error, got {message}"
     );
+}
+
+#[test]
+fn test_parse_first_spell_cost_modifier_marker_errors() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "First Spell Cost Probe")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("The first creature spell you cast each turn costs {2} less to cast.")
+        .expect_err("first-spell cost marker should fail parsing");
+    let message = format!("{err:?}").to_ascii_lowercase();
     assert!(
-        rendered.contains("unearth {u}"),
-        "expected unearth cost in compiled text, got {rendered}"
+        message.contains("unsupported first-spell cost modifier mechanic"),
+        "expected explicit unsupported first-spell marker error, got {message}"
     );
+}
+
+#[test]
+fn test_parse_quoted_granted_ability_marker_errors() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Quoted Grant Probe")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("Other permanents you control have \"{T}: Add one mana of any color.\"")
+        .expect_err("quoted granted-ability marker should fail parsing");
+    let message = format!("{err:?}").to_ascii_lowercase();
     assert!(
-        !rendered.contains("unsupported parser line fallback"),
-        "unearth keyword line should not hit fallback, got {rendered}"
+        message.contains("unsupported quoted granted-ability clause"),
+        "expected explicit unsupported quoted-grant marker error, got {message}"
     );
 }
 
@@ -951,7 +921,8 @@ fn test_prevent_all_combat_damage_from_target_rendering() {
 
     let rendered = compiled_lines(&def).join(" | ").to_ascii_lowercase();
     assert!(
-        rendered.contains("prevent all combat damage that would be dealt by target creature this turn"),
+        rendered
+            .contains("prevent all combat damage that would be dealt by target creature this turn"),
         "expected prevent combat damage text, got {rendered}"
     );
 }
@@ -1446,6 +1417,18 @@ fn parse_equipped_activated_grant_with_unsupported_cost_errors_instead_of_partia
         message.contains("unsupported equipped activated-ability grant")
             || message.contains("unsupported activation cost segment"),
         "expected actionable equipped-grant error, got {message}"
+    );
+}
+
+#[test]
+fn parse_equip_cost_reduction_line_does_not_silently_compile_as_equip_keyword() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Equip Cost Reduction Variant")
+        .parse_text("Equip costs you pay cost {1} less.")
+        .expect_err("equip-cost-reduction line should not compile as keyword equip");
+    let message = format!("{err:?}");
+    assert!(
+        !message.to_ascii_lowercase().contains("equip"),
+        "expected non-equip parse error for unsupported equip-cost-reduction form, got {message}"
     );
 }
 
@@ -2200,28 +2183,41 @@ fn parse_cant_attack_unless_defending_player_controls_island_line() {
 }
 
 #[test]
-fn parse_morph_keyword_line_as_marker() {
-    let def = CardDefinitionBuilder::new(CardId::new(), "Morph Variant")
+fn parse_morph_keyword_line_errors() {
+    let err = CardDefinitionBuilder::new(CardId::new(), "Morph Variant")
         .card_types(vec![CardType::Creature])
         .parse_text("Morph {3}{R}")
-        .expect("morph keyword line should parse as marker");
-    let compiled = crate::compiled_text::compiled_lines(&def).join("\n");
+        .expect_err("morph keyword line should fail parsing");
+    let compiled = format!("{err:?}").to_ascii_lowercase();
     assert!(
-        compiled.to_ascii_lowercase().contains("morph"),
-        "expected compiled text to retain morph marker, got {compiled}"
+        compiled.contains("unsupported keyword mechanic 'morph'"),
+        "expected explicit unsupported morph error, got {compiled}"
     );
 }
 
 #[test]
-fn parse_banding_keyword_line_as_marker() {
-    let def = CardDefinitionBuilder::new(CardId::new(), "Banding Variant")
+fn parse_banding_keyword_line_errors() {
+    let err = CardDefinitionBuilder::new(CardId::new(), "Banding Variant")
         .card_types(vec![CardType::Creature])
         .parse_text("Banding")
-        .expect("banding keyword line should parse as marker");
-    let compiled = crate::compiled_text::compiled_lines(&def).join("\n");
+        .expect_err("banding keyword line should fail parsing");
+    let compiled = format!("{err:?}").to_ascii_lowercase();
     assert!(
-        compiled.to_ascii_lowercase().contains("banding"),
-        "expected compiled text to retain banding marker, got {compiled}"
+        compiled.contains("unsupported keyword mechanic 'banding'"),
+        "expected explicit unsupported banding error, got {compiled}"
+    );
+}
+
+#[test]
+fn parse_haunt_keyword_line_errors() {
+    let err = CardDefinitionBuilder::new(CardId::new(), "Haunt Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Haunt")
+        .expect_err("haunt keyword line should fail parsing");
+    let message = format!("{err:?}").to_ascii_lowercase();
+    assert!(
+        message.contains("unsupported keyword mechanic 'haunt'"),
+        "expected explicit unsupported haunt error, got {message}"
     );
 }
 
@@ -2688,6 +2684,190 @@ fn render_create_token_copy_uses_oracle_like_wording() {
 }
 
 #[test]
+fn render_transform_source_uses_this_creature_wording() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Phyrexian Werewolf Variant")
+        .parse_text("{3}{G/P}: Transform this creature. Activate only as a sorcery.")
+        .expect("source transform with sorcery-speed rider should parse");
+    let lines = crate::compiled_text::compiled_lines(&def);
+    let joined = lines.join("\n");
+    assert!(
+        joined.contains("Transform this creature"),
+        "expected transform wording to use 'this creature', got {joined}"
+    );
+    assert!(
+        joined.contains("Activate only as a sorcery"),
+        "expected sorcery-speed rider to remain present, got {joined}"
+    );
+}
+
+#[test]
+fn oracle_like_lines_compact_each_opponent_discard() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Burglar Rat Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("When this creature enters, each opponent discards a card.")
+        .expect("etb discard should parse");
+    let lines = crate::compiled_text::oracle_like_lines(&def);
+    let joined = lines.join("\n").to_ascii_lowercase();
+    assert!(
+        joined.contains("when this creature enters"),
+        "expected source subject to stay creature-like, got {joined}"
+    );
+    assert!(
+        joined.contains("each opponent discards a card"),
+        "expected compact each-opponent discard wording, got {joined}"
+    );
+}
+
+#[test]
+fn oracle_like_lines_compact_you_mill_clause() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Armored Skaab Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("When this creature enters, mill four cards.")
+        .expect("etb mill should parse");
+    let lines = crate::compiled_text::oracle_like_lines(&def);
+    let joined = lines.join("\n").to_ascii_lowercase();
+    assert!(
+        joined.contains("when this creature enters"),
+        "expected source subject to stay creature-like, got {joined}"
+    );
+    assert!(
+        joined.contains("mill 4 cards"),
+        "expected compact mill wording without explicit 'you', got {joined}"
+    );
+}
+
+#[test]
+fn oracle_like_lines_compact_cant_block_this_turn() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Lambholt Harrier Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{3}{R}: Target creature can't block this turn.")
+        .expect("can't-block activated ability should parse");
+    let lines = crate::compiled_text::oracle_like_lines(&def);
+    let joined = lines.join("\n").to_ascii_lowercase();
+    assert!(
+        joined.contains("target creature can't block this turn"),
+        "expected oracle-like can't-block wording, got {joined}"
+    );
+    assert!(
+        !joined.contains("choose target creature"),
+        "target-only preface should be compacted away, got {joined}"
+    );
+}
+
+#[test]
+fn oracle_like_lines_compact_prevent_damage_source_wording() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Ordruun Commando Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "{W}: Prevent the next 1 damage that would be dealt to this creature this turn.",
+        )
+        .expect("prevent damage activated ability should parse");
+    let lines = crate::compiled_text::oracle_like_lines(&def);
+    let joined = lines.join("\n").to_ascii_lowercase();
+    assert!(
+        joined.contains("prevent the next 1 damage that would be dealt to this creature this turn"),
+        "expected oracle-like prevention wording, got {joined}"
+    );
+}
+
+#[test]
+fn oracle_like_lines_compact_lands_have_tap_for_any_color() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Joiner Adept Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Lands you control have \"{T}: Add one mana of any color.\"")
+        .expect("mana-grant static ability should parse");
+    let lines = crate::compiled_text::oracle_like_lines(&def);
+    let joined = lines.join("\n").to_ascii_lowercase();
+    assert!(
+        joined.contains("lands you control have \"{t}: add one mana of any color\""),
+        "expected quoted tap-mana grant wording, got {joined}"
+    );
+}
+
+#[test]
+fn oracle_like_lines_compact_when_you_cast_creature_spell() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Skittering Horror Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("When you cast a creature spell, sacrifice this creature.")
+        .expect("cast-trigger sacrifice clause should parse");
+    let lines = crate::compiled_text::oracle_like_lines(&def);
+    let joined = lines.join("\n").to_ascii_lowercase();
+    assert!(
+        joined.contains("when you cast a creature spell"),
+        "expected cast trigger phrase to include creature spell, got {joined}"
+    );
+    assert!(
+        joined.contains("sacrifice this creature"),
+        "expected source wording to normalize to creature, got {joined}"
+    );
+}
+
+#[test]
+fn oracle_like_lines_preserve_negative_zero_toughness_delta() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Cumber Stone Variant")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("Creatures your opponents control get -1/-0.")
+        .expect("static debuff should parse");
+    let lines = crate::compiled_text::oracle_like_lines(&def);
+    let joined = lines.join("\n").to_ascii_lowercase();
+    assert!(
+        joined.contains("get -1/-0"),
+        "expected oracle-like -1/-0 rendering, got {joined}"
+    );
+    assert!(
+        joined.contains("creatures your opponents control get -1/-0"),
+        "expected oracle-like opponent-controller wording, got {joined}"
+    );
+}
+
+#[test]
+fn parse_destroy_target_creature_or_vehicle_uses_union_filter() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Daring Demolition Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Destroy target creature or Vehicle.")
+        .expect("creature-or-vehicle targeting should parse");
+
+    let spell_effects = def.spell_effect.as_ref().expect("expected spell effects");
+    let destroy = spell_effects
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<crate::effects::DestroyEffect>())
+        .expect("expected destroy effect");
+
+    let target_filter = match &destroy.spec {
+        ChooseSpec::Target(inner) => match inner.as_ref() {
+            ChooseSpec::Target(inner_again) => match inner_again.as_ref() {
+                ChooseSpec::Object(filter) => filter,
+                other => panic!("expected object target for destroy effect, got {:?}", other),
+            },
+            ChooseSpec::Object(filter) => filter,
+            other => panic!("expected object target for destroy effect, got {:?}", other),
+        },
+        other => panic!("expected targeted destroy effect, got {:?}", other),
+    };
+
+    assert!(
+        target_filter.type_or_subtype_union,
+        "expected type/subtype union for creature-or-vehicle targeting"
+    );
+    assert!(
+        target_filter.card_types.contains(&CardType::Creature),
+        "expected creature card type selector, got {:?}",
+        target_filter.card_types
+    );
+    assert!(
+        target_filter.subtypes.contains(&Subtype::Vehicle),
+        "expected Vehicle subtype selector, got {:?}",
+        target_filter.subtypes
+    );
+
+    let joined = crate::compiled_text::oracle_like_lines(&def).join("\n");
+    assert!(
+        joined.contains("Destroy target creature or Vehicle"),
+        "expected oracle-like creature-or-Vehicle rendering, got {joined}"
+    );
+}
+
+#[test]
 fn render_multi_sacrifice_cost_uses_compact_filter_text() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Keldon Arsonist Variant")
         .parse_text("{1}, Sacrifice two lands: Destroy target land.")
@@ -2739,6 +2919,132 @@ fn render_return_from_graveyard_uses_from_your_graveyard() {
     assert!(
         spell_line.contains("Return target creature card from your graveyard to the battlefield"),
         "expected oracle-like return text, got {spell_line}"
+    );
+}
+
+#[test]
+fn render_return_to_hand_from_your_graveyard_uses_oracle_wording() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Raise Dead Variant")
+        .parse_text("Return target creature card from your graveyard to your hand.")
+        .expect("return-to-hand-from-graveyard spell should parse");
+    let joined = crate::compiled_text::oracle_like_lines(&def).join("\n");
+    assert!(
+        joined.contains("Return target creature card from your graveyard to your hand"),
+        "expected oracle-like return-to-hand wording, got {joined}"
+    );
+}
+
+#[test]
+fn render_graveyard_self_return_activated_uses_this_card_wording() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Sanitarium Skeleton Variant")
+        .parse_text("{2}{B}: Return this card from your graveyard to your hand.")
+        .expect("graveyard self-return activated ability should parse");
+    let joined = crate::compiled_text::oracle_like_lines(&def).join("\n");
+    assert!(
+        joined.contains("{2}{B}: Return this card from your graveyard to your hand"),
+        "expected oracle-like graveyard self-return wording, got {joined}"
+    );
+}
+
+#[test]
+fn render_enchanted_tap_untap_compacts_tag_prelude() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Freed from the Real Variant")
+        .parse_text(
+            "Enchant creature\n{U}: Tap enchanted creature.\n{U}: Untap enchanted creature.",
+        )
+        .expect("enchanted tap/untap aura should parse");
+    let joined = crate::compiled_text::oracle_like_lines(&def).join("\n");
+    let lower = joined.to_ascii_lowercase();
+    assert!(
+        lower.contains("tap enchanted creature") && lower.contains("untap enchanted creature"),
+        "expected compact enchanted tap/untap wording, got {joined}"
+    );
+    assert!(
+        !lower.contains("tag the object attached to this source")
+            && !lower.contains("the tagged object 'enchanted'"),
+        "internal enchanted tag prelude should not leak into oracle-like lines: {joined}"
+    );
+}
+
+#[test]
+fn parse_draw_then_put_two_cards_from_hand_on_top_preserves_count() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Brainstorm Variant")
+        .parse_text("Draw three cards, then put two cards from your hand on top of your library in any order.")
+        .expect("draw-then-put-two-cards clause should parse");
+
+    let spell_effects = def.spell_effect.as_ref().expect("expected spell effects");
+    let move_to_library = spell_effects
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<crate::effects::MoveToZoneEffect>())
+        .expect("expected move-to-library effect");
+
+    assert_eq!(
+        move_to_library.zone,
+        crate::zone::Zone::Library,
+        "expected move destination to be library"
+    );
+    assert!(
+        move_to_library.to_top,
+        "expected move destination to be top of library"
+    );
+    assert_eq!(
+        move_to_library.target.count(),
+        crate::effect::ChoiceCount::exactly(2),
+        "expected exactly two cards to be moved"
+    );
+    let base = move_to_library.target.base();
+    let filter = match base {
+        ChooseSpec::Object(filter) => filter,
+        other => panic!(
+            "expected object filter target for move-to-library, got {:?}",
+            other
+        ),
+    };
+    assert_eq!(
+        filter.zone,
+        Some(crate::zone::Zone::Hand),
+        "expected cards to be selected from hand"
+    );
+    assert_eq!(
+        filter.owner,
+        Some(crate::target::PlayerFilter::You),
+        "expected selected cards to be from your hand"
+    );
+}
+
+#[test]
+fn render_each_player_puts_card_from_hand_on_top_normalizes_for_each_form() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Sadistic Augermage Variant")
+        .parse_text("When this creature dies, each player puts a card from their hand on top of their library.")
+        .expect("each-player hand-to-library clause should parse");
+    let joined = crate::compiled_text::oracle_like_lines(&def).join("\n");
+    assert!(
+        joined.contains("each player puts a card from their hand on top of their library"),
+        "expected normalized each-player hand-to-library wording, got {joined}"
+    );
+}
+
+#[test]
+fn render_all_slivers_have_regenerate_uses_quoted_ability_text() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Poultice Sliver Variant")
+        .parse_text("All Slivers have \"{2}, {T}: Regenerate target Sliver.\"")
+        .expect("all-slivers-regenerate line should parse");
+    let joined = crate::compiled_text::oracle_like_lines(&def).join("\n");
+    assert!(
+        joined.contains("All Slivers have \"{2}, {T}: Regenerate target Sliver.\""),
+        "expected quoted Sliver granted ability wording, got {joined}"
+    );
+}
+
+#[test]
+fn render_all_slivers_have_sacrifice_add_mana_uses_quoted_ability_text() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Basal Sliver Variant")
+        .parse_text("All Slivers have \"Sacrifice this permanent: Add {B}{B}.\"")
+        .expect("all-slivers-sacrifice-mana line should parse");
+    let joined = crate::compiled_text::oracle_like_lines(&def).join("\n");
+    assert!(
+        joined.contains("All Slivers have \"Sacrifice this permanent: Add {B}{B}.\""),
+        "expected quoted Sliver sacrifice-mana wording, got {joined}"
     );
 }
 
@@ -2827,9 +3133,40 @@ fn render_for_each_object_strips_article() {
         .expect("end the festivities spell should parse");
     let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        joined.contains("deal 1 damage to each opponent and each creature and planeswalker they control")
-            || joined.contains("deal 1 damage to each opponent and each creature or planeswalker they control"),
+        joined.contains(
+            "deal 1 damage to each opponent and each creature and planeswalker they control"
+        ) || joined.contains(
+            "deal 1 damage to each opponent and each creature or planeswalker they control"
+        ),
         "expected compact damage rendering, got {joined}"
+    );
+}
+
+#[test]
+fn render_damage_each_creature_and_each_player_keeps_both_targets() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Steam Blast Variant")
+        .parse_text("This spell deals 2 damage to each creature and each player.")
+        .expect("damage each creature and each player should parse");
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("each player"),
+        "expected player damage target in rendering, got {joined}"
+    );
+    assert!(
+        joined.contains("each creature"),
+        "expected creature damage target in rendering, got {joined}"
+    );
+}
+
+#[test]
+fn render_create_saproling_token_keeps_subtype() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Sprout Variant")
+        .parse_text("Create a 1/1 green Saproling creature token.")
+        .expect("saproling token text should parse");
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("saproling"),
+        "expected Saproling subtype in rendering, got {joined}"
     );
 }
 
@@ -2848,7 +3185,9 @@ fn render_mount_or_vehicle_target() {
 #[test]
 fn render_tap_cost_ability_filter_phrase() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Magewright Stone Variant")
-        .parse_text("{1}, {T}: Untap target creature that has an activated ability with {T} in its cost.")
+        .parse_text(
+            "{1}, {T}: Untap target creature that has an activated ability with {T} in its cost.",
+        )
         .expect("tap-cost activated-ability filter should parse");
     let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
@@ -2960,8 +3299,7 @@ fn render_equipped_gets_and_has_line_as_static() {
         .expect("equipped creature gets/has line should parse");
     let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        joined.contains("equipped creature gets +1/+0")
-            && joined.contains("equipped creature has"),
+        joined.contains("equipped creature gets +1/+0") && joined.contains("equipped creature has"),
         "expected equipped gets/has rendering, got {joined}"
     );
 }
@@ -2982,7 +3320,9 @@ fn assert_partial_parse_rejected(name: &str, text: &str) {
 #[test]
 fn render_search_library_for_card_uses_card_noun() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Search Variant")
-        .parse_text("Search your library for a card, reveal it, put it into your hand, then shuffle.")
+        .parse_text(
+            "Search your library for a card, reveal it, put it into your hand, then shuffle.",
+        )
         .expect("search clause should parse");
     let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
@@ -3225,10 +3565,7 @@ fn reject_singleton_partial_parse_clauses_030() {
         "Skrelv's Hive Variant",
         "At the beginning of your upkeep, you lose 1 life and create a 1/1 colorless Phyrexian Mite artifact creature token with toxic 1 and \"This token can't block.\"",
     );
-    assert_partial_parse_rejected(
-        "Constant Mists Variant",
-        "Buyback—Sacrifice a land.",
-    );
+    assert_partial_parse_rejected("Constant Mists Variant", "Buyback—Sacrifice a land.");
     assert_partial_parse_rejected(
         "Dig Up the Body Variant",
         "Casualty 1 (As you cast this spell, you may sacrifice a creature with power 1 or greater. When you do, copy this spell.)",

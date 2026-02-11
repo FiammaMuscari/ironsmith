@@ -3,16 +3,18 @@ use std::fs;
 
 use serde_json::Value;
 
-use ironsmith::ids::CardId;
 use ironsmith::CardDefinitionBuilder;
 use ironsmith::compiled_text::compiled_lines;
+use ironsmith::ids::CardId;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
         eprintln!(
             "Usage: {} <names-file> <cards.json> <out-file>",
-            args.get(0).map(|s| s.as_str()).unwrap_or("dump_false_positive_texts")
+            args.get(0)
+                .map(|s| s.as_str())
+                .unwrap_or("dump_false_positive_texts")
         );
         std::process::exit(2);
     }
@@ -46,8 +48,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             missing.push(name);
             continue;
         };
-        let parse_result =
-            CardDefinitionBuilder::new(CardId::new(), &input.name).parse_text(input.parse_input.clone());
+        let parse_result = CardDefinitionBuilder::new(CardId::new(), &input.name)
+            .parse_text(input.parse_input.clone());
         out.push_str(&format!("Name: {}\n", input.name));
         out.push_str("Oracle:\n");
         out.push_str(&input.oracle_text);
