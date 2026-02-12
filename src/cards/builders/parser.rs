@@ -14,6 +14,50 @@ struct PendingModal {
     modes: Vec<EffectMode>,
 }
 
+fn parser_semantic_guard_enabled() -> bool {
+    std::env::var("IRONSMITH_PARSER_SEMANTIC_GUARD")
+        .map(|value| {
+            !matches!(
+                value.as_str(),
+                "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF"
+            )
+        })
+        .unwrap_or_else(|_| {
+            option_env!("IRONSMITH_PARSER_SEMANTIC_GUARD_DEFAULT")
+                .map(|value| {
+                    !matches!(
+                        value,
+                        "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF"
+                    )
+                })
+                .unwrap_or(false)
+        })
+}
+
+fn parser_semantic_embedding_dims() -> usize {
+    std::env::var("IRONSMITH_PARSER_SEMANTIC_DIMS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .filter(|dims| *dims > 0)
+        .or_else(|| {
+            option_env!("IRONSMITH_PARSER_SEMANTIC_DIMS_DEFAULT")
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .filter(|dims| *dims > 0)
+        })
+        .unwrap_or(384)
+}
+
+fn parser_semantic_embedding_threshold() -> f32 {
+    std::env::var("IRONSMITH_PARSER_SEMANTIC_THRESHOLD")
+        .ok()
+        .and_then(|raw| raw.parse::<f32>().ok())
+        .or_else(|| {
+            option_env!("IRONSMITH_PARSER_SEMANTIC_THRESHOLD_DEFAULT")
+                .and_then(|raw| raw.parse::<f32>().ok())
+        })
+        .unwrap_or(0.9)
+}
+
 pub(super) fn parse_text_with_annotations(
     builder: CardDefinitionBuilder,
     text: String,
@@ -212,7 +256,30 @@ pub(super) fn parse_text_with_annotations(
         builder = builder.with_level_abilities(level_abilities);
     }
 
-    Ok((builder.build(), annotations))
+    let definition = builder.build();
+    if !allow_unsupported && parser_semantic_guard_enabled() {
+        let oracle_text = definition.card.oracle_text.trim();
+        if !oracle_text.is_empty() {
+            let compiled_lines = crate::compiled_text::compiled_lines(&definition);
+            let embedding = crate::semantic_compare::EmbeddingConfig {
+                dims: parser_semantic_embedding_dims(),
+                mismatch_threshold: parser_semantic_embedding_threshold(),
+            };
+            let (oracle_coverage, compiled_coverage, line_delta, mismatch) =
+                crate::semantic_compare::compare_semantics(
+                    oracle_text,
+                    &compiled_lines,
+                    Some(embedding),
+                );
+            if mismatch {
+                return Err(CardTextError::ParseError(format!(
+                    "semantic round-trip mismatch (coverage o->{oracle_coverage:.2}, c->{compiled_coverage:.2}, delta={line_delta})"
+                )));
+            }
+        }
+    }
+
+    Ok((definition, annotations))
 }
 
 fn collect_line_infos(
@@ -264,6 +331,15 @@ fn collect_line_infos(
             raw_line: line.to_string(),
             normalized,
         });
+    }
+
+    if !line_infos.is_empty() {
+        let oracle_text = line_infos
+            .iter()
+            .map(|info| info.raw_line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        builder = builder.oracle_text(oracle_text);
     }
 
     Ok((builder, annotations, line_infos))

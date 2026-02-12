@@ -33,6 +33,7 @@ pub mod prevention;
 pub mod replacement;
 pub mod replacement_ability_processor;
 pub mod rules;
+pub mod semantic_compare;
 pub mod snapshot;
 pub mod special_actions;
 pub mod static_abilities;

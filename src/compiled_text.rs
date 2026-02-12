@@ -7667,6 +7667,7 @@ fn normalize_each_player_then_for_each_damage_clause(line: &str) -> Option<Strin
     ))
 }
 
+#[allow(dead_code)]
 fn normalize_oracle_line_for_card(def: &CardDefinition, line: &str) -> String {
     let mut normalized = line.trim().to_string();
     normalized = normalized.replace("{{", "{").replace("}}", "}");
@@ -9082,12 +9083,13 @@ fn normalize_oracle_line_for_card(def: &CardDefinition, line: &str) -> String {
 
 /// Render compiled output in a near-oracle style for semantic diffing.
 pub fn oracle_like_lines(def: &CardDefinition) -> Vec<String> {
+    let _ = def;
     let base_lines = compiled_lines(def);
     let normalized = base_lines
         .iter()
         .map(|line| strip_render_heading(line))
-        .map(|line| normalize_oracle_line_for_card(def, &line))
         .filter(|line| !line.is_empty())
+        .map(|line| normalize_common_semantic_phrasing(&line))
         .collect::<Vec<_>>();
     let merged_predicates = merge_adjacent_subject_predicate_lines(normalized);
     let merged_mana = merge_adjacent_simple_mana_add_lines(merged_predicates);

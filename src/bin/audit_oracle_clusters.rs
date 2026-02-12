@@ -5,7 +5,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 
 use ironsmith::cards::CardDefinitionBuilder;
-use ironsmith::compiled_text::oracle_like_lines;
+use ironsmith::compiled_text::compiled_lines;
 use ironsmith::ids::CardId;
 use serde::Serialize;
 use serde_json::Value;
@@ -1029,11 +1029,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let original_trace = env::var("IRONSMITH_PARSER_TRACE").ok();
     let original_allow_unsupported = env::var("IRONSMITH_PARSER_ALLOW_UNSUPPORTED").ok();
+    let original_semantic_guard = env::var("IRONSMITH_PARSER_SEMANTIC_GUARD").ok();
+    let original_semantic_dims = env::var("IRONSMITH_PARSER_SEMANTIC_DIMS").ok();
+    let original_semantic_threshold = env::var("IRONSMITH_PARSER_SEMANTIC_THRESHOLD").ok();
     if args.parser_trace {
         set_parser_trace(true);
     }
     if args.allow_unsupported {
         set_allow_unsupported(true);
+    } else {
+        unsafe {
+            env::set_var("IRONSMITH_PARSER_SEMANTIC_GUARD", "1");
+            env::set_var("IRONSMITH_PARSER_SEMANTIC_DIMS", args.embedding_dims.to_string());
+            env::set_var(
+                "IRONSMITH_PARSER_SEMANTIC_THRESHOLD",
+                args.embedding_threshold.to_string(),
+            );
+        }
     }
 
     let embedding_cfg = if args.use_embeddings {
@@ -1077,7 +1089,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let audit = match parse_result {
             Ok(definition) => {
-                let compiled = oracle_like_lines(&definition);
+                let compiled = compiled_lines(&definition);
                 let (oracle_coverage, compiled_coverage, line_delta, semantic_mismatch) =
                     compare_semantics(&card_input.oracle_text, &compiled, embedding_cfg);
                 CardAudit {
@@ -1130,6 +1142,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             env::set_var("IRONSMITH_PARSER_ALLOW_UNSUPPORTED", value);
         },
         None => set_allow_unsupported(false),
+    }
+    match original_semantic_guard {
+        Some(value) => unsafe {
+            env::set_var("IRONSMITH_PARSER_SEMANTIC_GUARD", value);
+        },
+        None => unsafe {
+            env::remove_var("IRONSMITH_PARSER_SEMANTIC_GUARD");
+        },
+    }
+    match original_semantic_dims {
+        Some(value) => unsafe {
+            env::set_var("IRONSMITH_PARSER_SEMANTIC_DIMS", value);
+        },
+        None => unsafe {
+            env::remove_var("IRONSMITH_PARSER_SEMANTIC_DIMS");
+        },
+    }
+    match original_semantic_threshold {
+        Some(value) => unsafe {
+            env::set_var("IRONSMITH_PARSER_SEMANTIC_THRESHOLD", value);
+        },
+        None => unsafe {
+            env::remove_var("IRONSMITH_PARSER_SEMANTIC_THRESHOLD");
+        },
     }
 
     let mut clusters: HashMap<String, Vec<CardAudit>> = HashMap::new();

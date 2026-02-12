@@ -5447,3 +5447,64 @@ fn render_nonsnow_filter_keeps_non_supertype() {
         "expected nonsnow target filter wording, got {joined}"
     );
 }
+
+#[test]
+fn parse_semantic_guard_is_disabled_by_default() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Dogged Hunter Variant")
+        .card_types(vec![CardType::Artifact])
+        .parse_text("{T}: Destroy target creature token.")
+        .expect("semantic guard should be opt-in by env var");
+
+    let joined = oracle_like_lines(&def).join(" ");
+    assert!(
+        joined.contains("Destroy target"),
+        "expected parsed output while semantic guard is disabled, got {joined}"
+    );
+}
+
+#[test]
+fn parse_semantic_guard_rejects_round_trip_drift_when_enabled() {
+    let prev_guard = std::env::var("IRONSMITH_PARSER_SEMANTIC_GUARD").ok();
+    let prev_dims = std::env::var("IRONSMITH_PARSER_SEMANTIC_DIMS").ok();
+    let prev_threshold = std::env::var("IRONSMITH_PARSER_SEMANTIC_THRESHOLD").ok();
+    unsafe {
+        std::env::set_var("IRONSMITH_PARSER_SEMANTIC_GUARD", "1");
+        std::env::set_var("IRONSMITH_PARSER_SEMANTIC_DIMS", "384");
+        std::env::set_var("IRONSMITH_PARSER_SEMANTIC_THRESHOLD", "0.9");
+    }
+
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Dogged Hunter Variant")
+        .card_types(vec![CardType::Artifact])
+        .parse_text("{T}: Destroy target creature token.")
+        .expect_err("semantic round-trip mismatch should fail parse");
+
+    match prev_guard {
+        Some(value) => unsafe {
+            std::env::set_var("IRONSMITH_PARSER_SEMANTIC_GUARD", value);
+        },
+        None => unsafe {
+            std::env::remove_var("IRONSMITH_PARSER_SEMANTIC_GUARD");
+        },
+    }
+    match prev_dims {
+        Some(value) => unsafe {
+            std::env::set_var("IRONSMITH_PARSER_SEMANTIC_DIMS", value);
+        },
+        None => unsafe {
+            std::env::remove_var("IRONSMITH_PARSER_SEMANTIC_DIMS");
+        },
+    }
+    match prev_threshold {
+        Some(value) => unsafe {
+            std::env::set_var("IRONSMITH_PARSER_SEMANTIC_THRESHOLD", value);
+        },
+        None => unsafe {
+            std::env::remove_var("IRONSMITH_PARSER_SEMANTIC_THRESHOLD");
+        },
+    }
+
+    assert!(
+        format!("{err:?}").contains("semantic round-trip mismatch"),
+        "expected semantic round-trip guard error, got {err:?}"
+    );
+}
