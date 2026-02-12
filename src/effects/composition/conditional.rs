@@ -5,6 +5,7 @@ use crate::effects::{EffectExecutor, ModalSpec};
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId, StableId};
+use crate::target::PlayerFilter;
 
 /// Effect that branches based on game state conditions.
 ///
@@ -149,6 +150,38 @@ fn evaluate_condition_simple(
             .filter_map(|&id| game.object(id))
             .filter(|obj| opponents.contains(&obj.controller))
             .any(|obj| filter.matches(obj, &filter_ctx, game)),
+        Condition::PlayerControls { player, filter } => {
+            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
+                return false;
+            };
+            let opponents: Vec<PlayerId> = game
+                .players
+                .iter()
+                .filter(|p| p.id != player_id)
+                .map(|p| p.id)
+                .collect();
+            let mut ctx = crate::filter::FilterContext::new(player_id).with_opponents(opponents);
+            if *player == PlayerFilter::IteratedPlayer {
+                ctx = ctx.with_iterated_player(Some(player_id));
+            }
+            game.battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| obj.controller == player_id)
+                .any(|obj| filter.matches(obj, &ctx, game))
+        }
+        Condition::PlayerHasLessLifeThanYou { player } => {
+            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
+                return false;
+            };
+            let Some(you_life) = game.player(controller).map(|p| p.life) else {
+                return false;
+            };
+            let Some(other_life) = game.player(player_id).map(|p| p.life) else {
+                return false;
+            };
+            other_life < you_life
+        }
         Condition::LifeTotalOrLess(threshold) => {
             let life = game.player(controller).map(|p| p.life).unwrap_or(0);
             life <= *threshold
@@ -220,6 +253,34 @@ fn evaluate_condition_simple(
     }
 }
 
+fn resolve_condition_player_simple(
+    game: &GameState,
+    controller: PlayerId,
+    player: &PlayerFilter,
+) -> Option<PlayerId> {
+    match player {
+        PlayerFilter::You => Some(controller),
+        PlayerFilter::Specific(id) => Some(*id),
+        PlayerFilter::Active => Some(game.turn.active_player),
+        PlayerFilter::Opponent => game.players.iter().find_map(|p| {
+            if p.id != controller && p.is_in_game() {
+                Some(p.id)
+            } else {
+                None
+            }
+        }),
+        PlayerFilter::Any
+        | PlayerFilter::Target(_)
+        | PlayerFilter::Teammate
+        | PlayerFilter::Attacking
+        | PlayerFilter::Defending
+        | PlayerFilter::DamagedPlayer
+        | PlayerFilter::IteratedPlayer
+        | PlayerFilter::ControllerOf(_)
+        | PlayerFilter::OwnerOf(_) => None,
+    }
+}
+
 /// Evaluate a condition.
 fn evaluate_condition(
     game: &GameState,
@@ -251,6 +312,24 @@ fn evaluate_condition(
                 .any(|obj| filter.matches(obj, &filter_ctx, game));
 
             Ok(has_matching)
+        }
+        Condition::PlayerControls { player, filter } => {
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            let mut filter_ctx = ctx.filter_context(game);
+            filter_ctx.iterated_player = Some(player_id);
+            let has_matching = game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| obj.controller == player_id)
+                .any(|obj| filter.matches(obj, &filter_ctx, game));
+            Ok(has_matching)
+        }
+        Condition::PlayerHasLessLifeThanYou { player } => {
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            let you_life = game.player(ctx.controller).map(|p| p.life).unwrap_or(0);
+            let other_life = game.player(player_id).map(|p| p.life).unwrap_or(0);
+            Ok(other_life < you_life)
         }
         Condition::LifeTotalOrLess(threshold) => {
             let life = game.player(ctx.controller).map(|p| p.life).unwrap_or(0);

@@ -1560,6 +1560,29 @@ fn resolve_value_direct(
                 .filter(|obj| filter.matches(obj, &filter_ctx, game))
                 .count() as i32
         }
+        Value::CountScaled(filter, multiplier) => {
+            let filter_ctx = FilterContext {
+                you: Some(controller),
+                source: Some(source),
+                active_player: None,
+                opponents: Vec::new(),
+                teammates: Vec::new(),
+                defending_player: None,
+                attacking_player: None,
+                your_commanders: Vec::new(),
+                iterated_player: None,
+                target_players: Vec::new(),
+                tagged_objects: HashMap::new(),
+            };
+
+            let count = battlefield
+                .iter()
+                .filter_map(|&id| objects.get(&id))
+                .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                .count() as i32;
+            count * *multiplier
+        }
+        Value::CreaturesDiedThisTurn => game.creatures_died_this_turn as i32,
 
         Value::SourcePower => objects
             .get(&source)
@@ -1587,6 +1610,23 @@ fn resolve_value_direct(
                 .map(|pid| game.devotion_to_color(pid, *color) as i32)
                 .unwrap_or(0)
         }
+
+        Value::ColorsOfManaSpentToCastThisSpell => objects
+            .get(&source)
+            .map(|obj| {
+                let spent = &obj.mana_spent_to_cast;
+                [
+                    spent.white > 0,
+                    spent.blue > 0,
+                    spent.black > 0,
+                    spent.red > 0,
+                    spent.green > 0,
+                ]
+                .into_iter()
+                .filter(|present| *present)
+                .count() as i32
+            })
+            .unwrap_or(0),
 
         Value::PowerOf(_target_spec) => {
             // PowerOf requires target resolution which isn't available here
@@ -2354,6 +2394,37 @@ fn resolve_value_with_context(
                 .filter(|obj| filter.matches(obj, &filter_ctx, ctx.game))
                 .count() as i32
         }
+        Value::CountScaled(filter, multiplier) => {
+            // Build a minimal filter context for the source's controller
+            let controller = ctx
+                .objects
+                .get(&source)
+                .map(|o| o.controller)
+                .unwrap_or(crate::ids::PlayerId::from_index(0));
+
+            let filter_ctx = FilterContext {
+                you: Some(controller),
+                source: Some(source),
+                active_player: None,
+                opponents: Vec::new(),
+                teammates: Vec::new(),
+                defending_player: None,
+                attacking_player: None,
+                your_commanders: Vec::new(),
+                iterated_player: None,
+                target_players: Vec::new(),
+                tagged_objects: std::collections::HashMap::new(),
+            };
+
+            let count = ctx
+                .battlefield
+                .iter()
+                .filter_map(|&id| ctx.objects.get(&id))
+                .filter(|obj| filter.matches(obj, &filter_ctx, ctx.game))
+                .count() as i32;
+            count * *multiplier
+        }
+        Value::CreaturesDiedThisTurn => ctx.game.creatures_died_this_turn as i32,
 
         Value::SourcePower => ctx
             .objects
@@ -2378,6 +2449,7 @@ fn resolve_value_with_context(
         Value::XTimes(_)
         | Value::CountPlayers(_)
         | Value::Devotion { .. }
+        | Value::ColorsOfManaSpentToCastThisSpell
         | Value::CountersOn(_, _)
         | Value::PowerOf(_)
         | Value::ToughnessOf(_)

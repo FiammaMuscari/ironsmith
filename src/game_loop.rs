@@ -166,7 +166,10 @@ pub fn requires_target_selection(spec: &ChooseSpec) -> bool {
             requires_target_selection(inner)
         }
         // These require target selection during casting
-        ChooseSpec::AnyTarget | ChooseSpec::Player(_) | ChooseSpec::Object(_) => true,
+        ChooseSpec::AnyTarget
+        | ChooseSpec::PlayerOrPlaneswalker(_)
+        | ChooseSpec::Player(_)
+        | ChooseSpec::Object(_) => true,
         // These don't require selection - they're resolved at execution time
         _ => false,
     }
@@ -496,6 +499,27 @@ pub fn compute_legal_targets(
                         continue;
                     }
 
+                    targets.push(Target::Object(obj_id));
+                }
+            }
+            targets
+        }
+        ChooseSpec::PlayerOrPlaneswalker(filter) => {
+            let mut targets = Vec::new();
+            for player in &game.players {
+                if player.is_in_game() && player_matches_filter(player.id, filter, game, caster) {
+                    targets.push(Target::Player(player.id));
+                }
+            }
+            for &obj_id in &game.battlefield {
+                if let Some(obj) = game.object(obj_id)
+                    && obj.has_card_type(crate::types::CardType::Planeswalker)
+                {
+                    let is_untargetable = game.is_untargetable(obj_id);
+                    let is_controlled_by_caster = obj.controller == caster;
+                    if is_untargetable && !is_controlled_by_caster {
+                        continue;
+                    }
                     targets.push(Target::Object(obj_id));
                 }
             }

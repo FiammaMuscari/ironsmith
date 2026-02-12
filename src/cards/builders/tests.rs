@@ -3,7 +3,7 @@ use crate::ability::AbilityKind;
 use crate::color::Color;
 use crate::compiled_text::{compiled_lines, oracle_like_lines};
 use crate::static_abilities::StaticAbilityId;
-use crate::target::ChooseSpec;
+use crate::target::{ChooseSpec, ObjectRef, PlayerFilter};
 
 #[test]
 fn test_creature_with_keywords() {
@@ -2129,6 +2129,225 @@ fn parse_equip_cost_reduction_line_does_not_silently_compile_as_equip_keyword() 
 }
 
 #[test]
+fn parse_flashback_cost_modifiers_render_with_controller_scope() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Catalyst Stone Variant")
+        .parse_text(
+            "Flashback costs you pay cost {2} less.\nFlashback costs your opponents pay cost {2} more.",
+        )
+        .expect("flashback cost-modifier lines should parse");
+    let rendered = compiled_lines(&def).join("\n").to_ascii_lowercase();
+    assert!(
+        rendered.contains("flashback costs you pay cost {2} less"),
+        "expected self flashback cost reduction rendering, got {rendered}"
+    );
+    assert!(
+        rendered.contains("flashback costs your opponents pay cost {2} more"),
+        "expected opponent flashback cost increase rendering, got {rendered}"
+    );
+}
+
+#[test]
+fn render_during_turn_flashback_grant_keeps_mana_cost_clause() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Return the Past Variant")
+        .parse_text(
+            "During your turn, each instant and sorcery card in your graveyard has flashback. Its flashback cost is equal to its mana cost.",
+        )
+        .expect("during-turn flashback grant should parse");
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered
+            .to_ascii_lowercase()
+            .contains("flashback cost is equal to its mana cost"),
+        "expected flashback-cost sentence in rendering, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_flashback_with_life_cost_stays_keyword_not_spell_effect() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Deep Analysis Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "Target player draws two cards.\nFlashback—{1}{U}, Pay 3 life.",
+        )
+        .expect("flashback line with life cost should parse as keyword marker");
+    let rendered = compiled_lines(&def).join("\n").to_ascii_lowercase();
+    assert!(
+        rendered.contains("keyword ability") && rendered.contains("flashback {1}{u}, pay 3 life"),
+        "expected flashback keyword ability line with life payment, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("you lose 3 life"),
+        "flashback cost should not compile as unconditional life-loss effect: {rendered}"
+    );
+}
+
+#[test]
+fn parse_mana_spend_trigger_clause_is_split_from_mana_production() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Scaled Nurturer Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "{T}: Add {G}. When you spend this mana to cast a Dragon creature spell, you gain 2 life.",
+        )
+        .expect("mana-spend rider line should parse without unconditional life gain");
+    let rendered = compiled_lines(&def).join("\n").to_ascii_lowercase();
+    assert!(
+        rendered.contains("mana ability") && rendered.contains("{t}: add {g}"),
+        "expected base mana ability text, got {rendered}"
+    );
+    assert!(
+        rendered.contains("you spend this mana to cast a dragon creature spell"),
+        "expected separate mana-spend trigger clause text, got {rendered}"
+    );
+}
+
+#[test]
+fn render_gain_life_equal_to_its_power_uses_possessive_wording() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Infernal Reckoning Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Exile target colorless creature. You gain life equal to its power.")
+        .expect("gain-life-equal-to-power line should parse");
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("gain life equal to its power"),
+        "expected possessive power wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_its_owner_gains_life_uses_owner_of_target_player_filter() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Misfortune's Gain Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Destroy target creature. Its owner gains 4 life.")
+        .expect("its-owner gain clause should parse");
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Its owner gains 4 life"),
+        "expected owner-scoped life gain wording, got {rendered}"
+    );
+    let effects = def
+        .spell_effect
+        .as_ref()
+        .expect("spell should have compiled spell effects");
+    let gain = effects
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<crate::effects::GainLifeEffect>())
+        .expect("expected a gain life effect");
+    assert_eq!(
+        gain.player,
+        ChooseSpec::Player(PlayerFilter::OwnerOf(ObjectRef::Target))
+    );
+}
+
+#[test]
+fn render_instant_and_sorcery_self_reference_as_this_spell() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Self Exile Spell Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Exile this spell.")
+        .expect("spell self-reference should parse");
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Exile this spell"),
+        "expected spell self-reference wording, got {rendered}"
+    );
+}
+
+#[test]
+fn render_artifact_land_self_reference_prefers_land() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Artifact Land Variant")
+        .card_types(vec![CardType::Artifact, CardType::Land])
+        .parse_text("This land enters tapped.")
+        .expect("artifact land line should parse");
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("This land enters tapped"),
+        "expected land self-reference wording, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("This artifact enters tapped"),
+        "artifact land should not render as artifact-only self-reference: {rendered}"
+    );
+}
+
+#[test]
+fn parse_mana_value_or_less_keeps_comparison_and_type_conjunction() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Technomancer Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "When this creature enters, mill three cards, then return any number of artifact creature cards with total mana value 6 or less from your graveyard to the battlefield.",
+        )
+        .expect("technomancer line should parse");
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        !rendered.contains("artifact or creature card"),
+        "type conjunction should not degrade to union wording: {rendered}"
+    );
+    assert!(
+        !rendered.contains("mana value 6s"),
+        "comparison tokenization should not pluralize numeric threshold: {rendered}"
+    );
+}
+
+#[test]
+fn render_exile_from_graveyard_uses_from_preposition() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Grave Robbers Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{B}, {T}: Exile target artifact card from a graveyard. You gain 2 life.")
+        .expect("graveyard exile clause should parse");
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Exile target artifact card from a graveyard"),
+        "expected from-a-graveyard wording, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("in graveyard"),
+        "graveyard wording should not use in-graveyard phrasing: {rendered}"
+    );
+}
+
+#[test]
+fn parse_lose_life_for_each_with_multiplier_uses_scaled_count_value() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Rain of Daggers Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "Destroy all creatures target opponent controls. You lose 2 life for each creature destroyed this way.",
+        )
+        .expect("scaled for-each life loss should parse");
+    let effects = def
+        .spell_effect
+        .as_ref()
+        .expect("spell should have compiled effects");
+    let lose = effects
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<crate::effects::LoseLifeEffect>())
+        .expect("expected lose-life effect");
+    match &lose.amount {
+        Value::CountScaled(filter, multiplier) => {
+            assert_eq!(*multiplier, 2, "expected fixed multiplier of two");
+            assert!(
+                filter.card_types.contains(&CardType::Creature),
+                "expected creature count filter, got {:?}",
+                filter.card_types
+            );
+        }
+        other => panic!("expected scaled count value, got {other:?}"),
+    }
+}
+
+#[test]
+fn render_tap_x_artifacts_creatures_and_lands_preserves_and_or_list() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Malicious Advice Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Tap X target artifacts, creatures, and/or lands. You lose X life.")
+        .expect("mixed target-type tap line should parse");
+    let rendered = compiled_lines(&def).join(" ");
+    let lower = rendered.to_ascii_lowercase();
+    assert!(
+        lower.contains("x target artifacts, creatures, and/or lands"),
+        "expected artifacts/creatures/lands and-or wording, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_destroy_then_populate_requires_supported_followup_clause() {
     let err = CardDefinitionBuilder::new(CardId::new(), "Sundering Growth Variant")
         .parse_text("Destroy target artifact or enchantment, then populate.")
@@ -2283,6 +2502,21 @@ fn parse_sacrifice_then_lose_life_carries_target_player_to_second_clause() {
     assert!(
         joined.contains("target player loses 1 life"),
         "expected carried target player for lose-life clause, got {joined}"
+    );
+}
+
+#[test]
+fn parse_sacrifice_all_lands_clause_as_sacrifice_all() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Overlaid Terrain Variant")
+        .parse_text("As this enchantment enters, sacrifice all lands you control.")
+        .expect("sacrifice-all lands clause should parse");
+    let compiled = crate::compiled_text::compiled_lines(&def)
+        .join(" ")
+        .to_ascii_lowercase();
+    assert!(
+        compiled.contains("sacrifice all lands")
+            || compiled.contains("sacrifices all lands"),
+        "expected sacrifice-all lands wording, got {compiled}"
     );
 }
 
@@ -2866,6 +3100,157 @@ fn parse_add_mana_or_colors_preserves_choice() {
     assert!(
         !mana_line.contains("{R}{G}"),
         "expected not to add both colors, got {mana_line}"
+    );
+}
+
+#[test]
+fn parse_metalcraft_mana_activation_condition() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Mox Opal Variant")
+        .card_types(vec![CardType::Artifact])
+        .parse_text("{T}: Add one mana of any color. Activate only if you control three or more artifacts.")
+        .expect("metalcraft mana activation condition should parse");
+
+    let lines = compiled_lines(&def);
+    let mana_line = lines
+        .iter()
+        .find(|line| line.contains("Mana ability"))
+        .expect("expected mana ability line");
+    assert!(
+        mana_line.contains("Activate only if you control 3 or more artifacts"),
+        "expected metalcraft activation condition in compiled text, got {mana_line}"
+    );
+}
+
+#[test]
+fn parse_land_count_mana_activation_condition() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Temple Variant")
+        .card_types(vec![CardType::Land])
+        .parse_text("{T}: Add {C}{C}. Activate only if you control five or more lands.")
+        .expect("land-count mana activation condition should parse");
+
+    let lines = compiled_lines(&def);
+    let mana_line = lines
+        .iter()
+        .find(|line| line.contains("Mana ability"))
+        .expect("expected mana ability line");
+    assert!(
+        mana_line.contains("Activate only if you control 5 or more lands"),
+        "expected land-count activation condition in compiled text, got {mana_line}"
+    );
+}
+
+#[test]
+fn parse_rejects_marker_keyword_with_non_keyword_tail() {
+    let err = CardDefinitionBuilder::new(CardId::new(), "Ninjutsu Tail Variant")
+        .parse_text("Ninjutsu abilities you activate cost {1} less to activate.")
+        .expect_err("non-keyword ninjutsu tail should not parse as a bare keyword");
+    let message = format!("{err:?}");
+    assert!(
+        message.contains("could not find verb")
+            || message.contains("unsupported")
+            || message.contains("parse"),
+        "expected parse failure for non-keyword tail, got {message}"
+    );
+}
+
+#[test]
+fn parse_each_player_discard_then_draw_keeps_each_player_scope() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Wheel Variant")
+        .parse_text("Each player discards their hand, then draws seven cards.")
+        .expect("each-player discard-then-draw should parse");
+
+    let compiled = compiled_lines(&def).join(" ");
+    assert!(
+        compiled.contains("Each player discards their hand, then draws 7 cards"),
+        "expected each-player scope to carry into draw clause, got {compiled}"
+    );
+}
+
+#[test]
+fn parse_non_outlaw_creature_filter_excludes_outlaw_subtypes() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Shoot Variant")
+        .parse_text("Destroy target non-outlaw creature.")
+        .expect("non-outlaw target filter should parse");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("excluded_subtypes: [Assassin, Mercenary, Pirate, Rogue, Warlock]")
+            || debug.contains("excluded_subtypes: [Assassin, Mercenary, Pirate, Rogue, Warlock,"),
+        "expected outlaw subtype exclusions in parsed filter, got {debug}"
+    );
+}
+
+#[test]
+fn parse_for_each_object_subject_wraps_create_effect() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Predation Variant")
+        .parse_text("For each creature your opponents control, create a 4/4 green Beast creature token.")
+        .expect("for-each object create clause should parse");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("ForEachObject"),
+        "expected ForEachObject lowering, got {debug}"
+    );
+}
+
+#[test]
+fn parse_create_for_each_tail_wraps_create_effect() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Pack Variant")
+        .parse_text("Create a 1/1 white Soldier creature token for each creature you control.")
+        .expect("create-for-each tail should parse");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("ForEachObject"),
+        "expected ForEachObject lowering, got {debug}"
+    );
+}
+
+#[test]
+fn parse_regenerate_each_creature_lowers_to_all_filter() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Wrap Variant")
+        .parse_text("Regenerate each creature you control.")
+        .expect("regenerate each creature should parse");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("RegenerateEffect") && debug.contains("All("),
+        "expected regenerate-all lowering, got {debug}"
+    );
+    let compiled = compiled_lines(&def).join(" ");
+    assert!(
+        compiled.contains("Regenerate each creature you control"),
+        "expected each-creature regenerate rendering, got {compiled}"
+    );
+}
+
+#[test]
+fn parse_earthbend_then_untap_keeps_tail_effect() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Earthbend Variant")
+        .parse_text("Earthbend 8, then untap that land.")
+        .expect("earthbend with tail clause should parse");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("EarthbendEffect") && debug.contains("UntapEffect"),
+        "expected earthbend and untap effects, got {debug}"
+    );
+}
+
+#[test]
+fn mana_ability_render_uses_colon_separator() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Mana Separator Variant")
+        .card_types(vec![CardType::Land])
+        .parse_text("{T}: Add {W}.")
+        .expect("basic mana ability should parse");
+
+    let line = compiled_lines(&def)
+        .into_iter()
+        .find(|line| line.contains("Mana ability"))
+        .expect("expected mana ability line");
+    assert!(
+        line.contains("{T}: Add {W}") && !line.contains("{T}, Add {W}"),
+        "expected colon-separated mana text, got {line}"
     );
 }
 
@@ -4244,6 +4629,41 @@ fn render_subject_with_counters_cant_be_blocked_preserves_subject_filter() {
 }
 
 #[test]
+fn render_granted_counter_subject_preserves_counter_clause() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Hagra Variant")
+        .parse_text(
+            "This creature enters with two +1/+1 counters on it.\nEach creature you control with a +1/+1 counter on it has menace.",
+        )
+        .expect("counter-qualified grant line should parse");
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("with a +1/+1 counter on it") && rendered.contains("menace"),
+        "expected counter-qualified menace grant rendering, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("permanents have menace"),
+        "rendering regressed to broad permanent grant: {rendered}"
+    );
+}
+
+#[test]
+fn render_or_tribe_creature_subject_uses_each_creature_phrasing() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Lovisa Variant")
+        .parse_text("Each creature that's a Barbarian, a Warrior, or a Berserker gets +2/+2 and has haste.")
+        .expect("tribe anthem line should parse");
+    let rendered = compiled_lines(&def).join(" ");
+    let lower = rendered.to_ascii_lowercase();
+    assert!(
+        lower.contains("each creature that's a barbarian, a warrior, or a berserker gets +2/+2"),
+        "expected normalized tribe subject in rendering, got {rendered}"
+    );
+    assert!(
+        lower.contains("has haste"),
+        "expected haste clause in rendering, got {rendered}"
+    );
+}
+
+#[test]
 fn render_subject_with_power_or_toughness_cant_be_blocked_preserves_filter() {
     let err = CardDefinitionBuilder::new(CardId::new(), "Tetsuko Variant")
         .parse_text("Creatures you control with power or toughness 1 or less can't be blocked.")
@@ -4454,6 +4874,22 @@ fn assert_partial_parse_rejected(name: &str, text: &str) {
 }
 
 #[test]
+fn parse_rejects_sacrifice_any_number_of_artifacts_creatures_lands_clause() {
+    assert_partial_parse_rejected(
+        "Reprocess Variant",
+        "Sacrifice any number of artifacts, creatures, and/or lands. Draw a card for each permanent sacrificed this way.",
+    );
+}
+
+#[test]
+fn parse_rejects_counter_all_other_spells_clause() {
+    assert_partial_parse_rejected(
+        "Swift Silence Variant",
+        "Counter all other spells. Draw a card for each spell countered this way.",
+    );
+}
+
+#[test]
 fn render_search_library_for_card_uses_card_noun() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Search Variant")
         .parse_text(
@@ -4576,8 +5012,20 @@ fn parse_damage_to_target_player_or_planeswalker() {
         .expect("player-or-planeswalker damage target should parse");
     let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        joined.contains("deals 1 damage"),
+        joined.contains("deals 1 damage to target player or planeswalker"),
         "expected compiled damage text, got {joined}"
+    );
+}
+
+#[test]
+fn parse_damage_to_target_opponent_or_planeswalker() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Searing Flesh Variant")
+        .parse_text("This spell deals 7 damage to target opponent or planeswalker.")
+        .expect("opponent-or-planeswalker damage target should parse");
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("deals 7 damage to target opponent or planeswalker"),
+        "expected opponent-or-planeswalker targeting in compiled text, got {joined}"
     );
 }
 
@@ -4622,6 +5070,73 @@ fn parse_mill_cost_activation_line() {
     assert!(
         rendered.to_ascii_lowercase().contains("mill a card"),
         "expected mill cost to be preserved in rendering, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_return_cost_activation_line() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Return Cost Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Return a Forest you control to its owner's hand: Untap target creature. Activate only once each turn.")
+        .expect("return-cost activation line should parse");
+    let compiled = compiled_lines(&def).join(" ");
+    assert!(
+        compiled.to_ascii_lowercase().contains("activated ability"),
+        "expected activated ability rendering, got {compiled}"
+    );
+    assert!(
+        compiled.to_ascii_lowercase().contains("untap target creature"),
+        "expected untap effect in activated ability, got {compiled}"
+    );
+}
+
+#[test]
+fn parse_return_elf_cost_activation_line() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Return Elf Cost Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Return an Elf you control to its owner's hand: Untap target creature. Activate only once each turn.")
+        .expect("return-elf-cost activation line should parse");
+    let compiled = compiled_lines(&def).join(" ");
+    assert!(
+        compiled.to_ascii_lowercase().contains("activated ability"),
+        "expected activated ability rendering, got {compiled}"
+    );
+    assert!(
+        compiled.to_ascii_lowercase().contains("untap target creature"),
+        "expected untap effect in activated ability, got {compiled}"
+    );
+}
+
+#[test]
+fn parse_monocolored_cant_block_clause() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Monocolored Block Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Monocolored creatures can't block this turn.")
+        .expect("monocolored block restriction should parse");
+    let compiled = compiled_lines(&def).join(" ");
+    assert!(
+        compiled
+            .to_ascii_lowercase()
+            .contains("monocolored creatures can't block this turn"),
+        "expected monocolored block restriction rendering, got {compiled}"
+    );
+}
+
+#[test]
+fn parse_mercenary_token_with_tap_pump_ability() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Mercenary Token Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("When this creature enters, create a 1/1 red Mercenary creature token with \"{T}: Target creature you control gets +1/+0 until end of turn. Activate only as a sorcery.\"")
+        .expect("mercenary token with tap-pump ability should parse");
+    let compiled = compiled_lines(&def).join(" ");
+    let lower = compiled.to_ascii_lowercase();
+    assert!(
+        lower.contains("mercenary creature token"),
+        "expected mercenary token creation in compiled text, got {compiled}"
+    );
+    assert!(
+        lower.contains("activate only as a sorcery"),
+        "expected token activated ability reminder in compiled text, got {compiled}"
     );
 }
 
@@ -5450,14 +5965,14 @@ fn render_nonsnow_filter_keeps_non_supertype() {
 
 #[test]
 fn parse_semantic_guard_is_disabled_by_default() {
-    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Dogged Hunter Variant")
-        .card_types(vec![CardType::Artifact])
-        .parse_text("{T}: Destroy target creature token.")
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Semantic Guard Baseline Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Flying")
         .expect("semantic guard should be opt-in by env var");
 
     let joined = oracle_like_lines(&def).join(" ");
     assert!(
-        joined.contains("Destroy target"),
+        joined.contains("Flying"),
         "expected parsed output while semantic guard is disabled, got {joined}"
     );
 }
@@ -5506,5 +6021,750 @@ fn parse_semantic_guard_rejects_round_trip_drift_when_enabled() {
     assert!(
         format!("{err:?}").contains("semantic round-trip mismatch"),
         "expected semantic round-trip guard error, got {err:?}"
+    );
+}
+
+#[test]
+fn parse_shared_color_destroy_fanout_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Radiance Destroy Variant")
+        .parse_text("Destroy target enchantment and each other enchantment that shares a color with it.")
+        .expect("shared-color destroy fanout should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("destroy target enchantment"),
+        "expected primary destroy target clause, got {rendered}"
+    );
+    assert!(
+        rendered.contains("shares a color with that object"),
+        "expected shared-color fanout clause, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_shared_color_prevent_fanout_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Radiance Prevent Variant")
+        .parse_text(
+            "Prevent the next 1 damage that would be dealt to target creature and each other creature that shares a color with it this turn.",
+        )
+        .expect("shared-color prevent fanout should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("prevent the next 1 damage to target creature"),
+        "expected primary prevent target clause, got {rendered}"
+    );
+    assert!(
+        rendered.contains("for each") && rendered.contains("shares a color with that object"),
+        "expected shared-color prevent fanout loop, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_delayed_next_end_step_sentence_schedules_trigger() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Planebound Variant")
+        .parse_text("{R}: You may put a planeswalker card from your hand onto the battlefield. Sacrifice it at the beginning of the next end step.")
+        .expect("next-end-step delayed sacrifice should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("beginning of the next end step"),
+        "expected delayed next-end-step wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_nonhistoric_filter_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Historic Filter Variant")
+        .parse_text("Return each nonland permanent that's not historic to its owner's hand.")
+        .expect("nonhistoric filter should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("not historic"),
+        "expected nonhistoric clause wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_same_name_damage_fanout_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Homing Lightning")
+        .parse_text(
+            "Homing Lightning deals 4 damage to target creature and each other creature with the same name as that creature.",
+        )
+        .expect("same-name damage fanout should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("deal 4 damage to target creature"),
+        "expected primary targeted damage clause, got {rendered}"
+    );
+    assert!(
+        rendered.contains("with the same name as that object"),
+        "expected same-name fanout wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_same_name_return_from_graveyard_fanout_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Echoing Return")
+        .parse_text(
+            "Return target creature card and all other cards with the same name as that card from your graveyard to your hand.",
+        )
+        .expect("same-name return fanout from graveyard should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("from your graveyard to your hand"),
+        "expected graveyard-to-hand return destination, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("to its owner's hand"),
+        "expected graveyard return wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_each_of_up_to_target_damage_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Wrap in Flames")
+        .parse_text(
+            "Wrap in Flames deals 1 damage to each of up to three target creatures. Those creatures can't block this turn.",
+        )
+        .expect("each-of-up-to-target damage clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("up to three target creatures"),
+        "expected targeted damage count wording, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("for each creature"),
+        "expected targeted (not global each-creature) damage wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_target_player_sacrifices_artifact_and_land_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Structural Collapse")
+        .parse_text(
+            "Target player sacrifices an artifact and a land of their choice. Structural Collapse deals 2 damage to that player.",
+        )
+        .expect("artifact-and-land sacrifice clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("artifact") && rendered.contains("land"),
+        "expected both artifact and land sacrifice wording, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("artifact or land"),
+        "expected split sacrifice effects rather than artifact-or-land, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_demonstrative_reference_keeps_that_subject() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Demonstrative Variant")
+        .parse_text("Target creature gets +1/+1 until end of turn. That creature can't block this turn.")
+        .expect("demonstrative target reference should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("that creature"),
+        "expected demonstrative tagged subject wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_each_player_create_uses_each_player_controller() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Each Player Cat Variant")
+        .parse_text("Each player creates a Food token.")
+        .expect("each-player token creation should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    let rendered_lower = rendered.to_ascii_lowercase();
+    assert!(
+        rendered_lower.contains("each player creates"),
+        "expected each-player create phrasing, got {rendered}"
+    );
+    assert!(
+        rendered_lower.contains("that player's control"),
+        "expected iterated-player token controller, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_create_for_each_tail_does_not_pollute_token_name() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Tail Token Name Variant")
+        .parse_text("Create a Food token for each untapped artifact you control.")
+        .expect("create-for-each tail should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        !rendered.contains("food untapped artifact"),
+        "expected token name to remain Food, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_ward_pay_life_line_as_static_marker() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Ward Life Variant")
+        .parse_text("Ward—Pay 3 life.")
+        .expect("ward-pay-life line should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Ward—Pay 3 life"),
+        "expected ward-pay-life marker text, got {rendered}"
+    );
+    assert!(
+        !rendered.to_ascii_lowercase().contains("you lose 3 life"),
+        "ward-pay-life should not lower as a standalone lose-life spell effect, got {rendered}"
+    );
+}
+
+#[test]
+fn render_if_they_dont_uses_negative_may_condition() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Umbilicus Variant")
+        .parse_text(
+            "At the beginning of each player's upkeep, that player may pay 2 life. If they don't, they return a permanent they control to its owner's hand.",
+        )
+        .expect("if-they-dont sentence should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    let lower = rendered.to_ascii_lowercase();
+    assert!(
+        lower.contains("doesn't"),
+        "expected negative may/if phrasing, got {rendered}"
+    );
+    assert!(
+        !lower.contains("if that player does,"),
+        "did-not branch should not be rendered as affirmative branch, got {rendered}"
+    );
+}
+
+#[test]
+fn render_cost_prefixed_each_player_draw_discard_compacts() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Lore Broker Variant")
+        .parse_text("{T}: Each player draws a card, then discards a card.")
+        .expect("draw-then-discard should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("{T}: Each player draws a card, then discards a card."),
+        "expected compact each-player draw/discard wording, got {rendered}"
+    );
+}
+
+#[test]
+fn render_attack_skip_untap_uses_controller_next_untap_step() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Apes Variant")
+        .parse_text(
+            "Whenever this creature attacks, it doesn't untap during its controller's next untap step.",
+        )
+        .expect("attack untap-skip line should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("doesn't untap during its controller's next untap step"),
+        "expected controller-next-untap-step wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_rejects_three_dog_aura_copy_attachment_clause() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Three Dog Variant")
+        .parse_text(
+            "Whenever you attack, you may pay {2} and sacrifice an Aura attached to this creature. When you sacrifice an Aura this way, for each other attacking creature you control, create a token that's a copy of that Aura attached to that creature.",
+        )
+        .expect_err("unsupported aura-copy attachment fanout should not partially parse");
+
+    let message = format!("{err:?}").to_ascii_lowercase();
+    assert!(
+        message.contains("unsupported parser line")
+            || message.contains("unsupported known partial parse pattern"),
+        "expected explicit unsupported rejection, got {message}"
+    );
+}
+
+#[test]
+fn parse_rejects_if_no_mana_was_spent_counter_clause() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Nix Variant")
+        .parse_text("Counter target spell if no mana was spent to cast it.")
+        .expect_err("no-mana-spent counter clause should not partially parse");
+
+    let message = format!("{err:?}").to_ascii_lowercase();
+    assert!(
+        message.contains("unsupported parser line")
+            || message.contains("unsupported known partial parse pattern"),
+        "expected explicit unsupported rejection, got {message}"
+    );
+}
+
+#[test]
+fn parse_rejects_first_spell_during_each_opponents_turn_clause() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Wavebreak Variant")
+        .parse_text("Whenever you cast your first spell during each opponent's turn, draw a card.")
+        .expect_err("first-spell-during-opponents-turn trigger should not partially parse");
+
+    let message = format!("{err:?}").to_ascii_lowercase();
+    assert!(
+        message.contains("unsupported parser line")
+            || message.contains("unsupported known partial parse pattern"),
+        "expected explicit unsupported rejection, got {message}"
+    );
+}
+
+#[test]
+fn render_rain_of_daggers_uses_destroyed_this_way_life_loss_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Rain of Daggers Variant")
+        .parse_text(
+            "Destroy all creatures target opponent controls. You lose 2 life for each creature destroyed this way.",
+        )
+        .expect("rain-of-daggers style text should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    let lower = rendered.to_ascii_lowercase();
+    assert!(
+        lower.contains("destroy all creatures target opponent controls"),
+        "expected opponent-controls destroy-all clause, got {rendered}"
+    );
+    assert!(
+        lower.contains("lose 2 life for each creature destroyed this way"),
+        "expected destroyed-this-way life-loss clause, got {rendered}"
+    );
+}
+
+#[test]
+fn render_artifact_or_tapped_creature_does_not_require_tapped_artifacts() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Radiant Strike Variant")
+        .parse_text("Destroy target artifact or tapped creature. You gain 3 life.")
+        .expect("artifact-or-tapped-creature line should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    let lower = rendered.to_ascii_lowercase();
+    assert!(
+        !lower.contains("tapped artifact or creature"),
+        "expected tapped to apply only to creature side of disjunction, got {rendered}"
+    );
+}
+
+#[test]
+fn render_named_angel_token_keeps_explicit_pt_and_keywords() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Battle at the Helvault Variant")
+        .parse_text(
+            "Create Avacyn, a legendary 8/8 white Angel creature token with flying, vigilance, and indestructible.",
+        )
+        .expect("named angel token line should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("8/8 white angel creature token"),
+        "expected explicit 8/8 angel token, got {rendered}"
+    );
+    assert!(
+        rendered.contains("vigilance") && rendered.contains("indestructible"),
+        "expected explicit vigilance and indestructible keywords, got {rendered}"
+    );
+}
+
+#[test]
+fn render_exile_until_clause_keeps_target_filter_without_until_tail() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Liminal Hold Variant")
+        .parse_text(
+            "When this enchantment enters, exile up to one target nonland permanent an opponent controls until this enchantment leaves the battlefield.",
+        )
+        .expect("exile-until line should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("target nonland permanent an opponent controls"),
+        "expected nonland-permanent target filter, got {rendered}"
+    );
+}
+
+#[test]
+fn render_spell_self_exile_uses_card_name() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Vivid Revival")
+        .parse_text("Return up to three target multicolored cards from your graveyard to your hand. Exile this spell.")
+        .expect("self-exile spell line should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Exile Vivid Revival."),
+        "expected card-name self-exile wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_enchanted_creature_granted_trigger_keeps_static_grant() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Commander's Authority Variant")
+        .parse_text(
+            "Enchant creature\nEnchanted creature has \"At the beginning of your upkeep, create a 1/1 white Human creature token.\"",
+        )
+        .expect("enchanted granted trigger should parse as static grant");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("enchanted creature has at the beginning of your upkeep"),
+        "expected attached granted trigger wording, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("spell effects: attach this permanent to target creature. create"),
+        "granted trigger should not collapse into immediate spell create effect, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_enchanted_creature_keyword_plus_granted_trigger_splits_correctly() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Cathar's Call Variant")
+        .parse_text(
+            "Enchant creature\nEnchanted creature has vigilance and \"At the beginning of your end step, create a 1/1 white Human creature token.\"",
+        )
+        .expect("keyword-plus-trigger grant should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("enchanted creature has vigilance"),
+        "expected vigilance grant to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("enchanted creature has at the beginning of your end step"),
+        "expected granted trigger clause to remain, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_look_at_target_players_hand_keeps_targeting() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Glasses Variant")
+        .parse_text("{T}: Look at target player's hand.")
+        .expect("target-hand look clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Look at target player's hand."),
+        "expected explicit target player hand wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_each_player_who_controls_condition_wraps_conditional() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Shatter Variant")
+        .parse_text(
+            "Each player who controls a creature with power 4 or greater draws a card. Then destroy all creatures.",
+        )
+        .expect("each-player conditional clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("if that player controls creature with power 4 or greater"),
+        "expected per-player control condition, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_each_opponent_who_has_less_life_uses_conditional_you_create() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Great Unclean One Variant")
+        .parse_text(
+            "At the beginning of your end step, each opponent loses 2 life. Then for each opponent who has less life than you, create a 1/3 black Demon creature token.",
+        )
+        .expect("for-each-opponent life comparison clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("if that player has less life than you"),
+        "expected life-comparison conditional, got {rendered}"
+    );
+    assert!(
+        rendered.contains("under your control"),
+        "expected created token controller to remain you, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_burn_away_delayed_dies_this_turn_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Burn Away Variant")
+        .parse_text(
+            "Burn Away deals 6 damage to target creature. When that creature dies this turn, exile its controller's graveyard.",
+        )
+        .expect("burn-away delayed dies clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("when that creature dies this turn"),
+        "expected delayed dies-this-turn trigger, got {rendered}"
+    );
+    assert!(
+        rendered.contains("its controller's graveyard"),
+        "expected graveyard exile to remain tied to that creature's controller, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_manabond_reveal_hand_put_lands_from_it() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Manabond Variant")
+        .parse_text(
+            "At the beginning of your end step, you may reveal your hand and put all land cards from it onto the battlefield. If you do, discard your hand.",
+        )
+        .expect("manabond reveal/put-from-it clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("reveal your hand"),
+        "expected reveal-hand rendering, got {rendered}"
+    );
+    assert!(
+        rendered.contains("from your hand") || rendered.contains("your hand to the battlefield"),
+        "expected lands to be moved from hand, got {rendered}"
+    );
+}
+
+#[test]
+fn render_each_player_who_controls_creates() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Fade Variant")
+        .parse_text(
+            "Each player who controls an artifact or enchantment creates a 2/2 green Bear creature token. Then destroy all artifacts and enchantments.",
+        )
+        .expect("fade-style each-player creates clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains(
+            "each player who controls an artifact or enchantment creates a 2/2 green bear creature token"
+        ),
+        "expected compact each-player conditional create wording, got {rendered}"
+    );
+}
+
+#[test]
+fn render_each_player_puts_card_from_hand_on_top() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Sadistic Variant")
+        .parse_text(
+            "When this creature dies, each player puts a card from their hand on top of their library.",
+        )
+        .expect("sadistic-augermage style clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("each player puts a card from their hand on top of their library"),
+        "expected compact each-player puts wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_conditional_doesnt_untap_static_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Alirios Variant")
+        .parse_text("This creature doesn't untap during your untap step if you control a Reflection.")
+        .expect("conditional doesn't-untap line should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("doesn't untap during your untap step if you control a reflection")
+            || rendered.contains("doesnt untap during your untap step if you control a reflection"),
+        "expected untap condition to be preserved, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_create_token_for_each_color_of_mana_spent() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Sweep Variant")
+        .parse_text(
+            "Create a 1/1 colorless Thopter artifact creature token with flying for each color of mana spent to cast this spell.",
+        )
+        .expect("for-each-color converge token clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("for each color of mana spent to cast this spell"),
+        "expected for-each-color token count wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_for_each_destroyed_this_way_uses_destroyed_tagged_context() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Rampage Variant")
+        .parse_text(
+            "Destroy all artifacts and enchantments. For each permanent destroyed this way, its controller creates a 3/3 green Centaur creature token.",
+        )
+        .expect("for-each destroyed-this-way clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("its controller creates")
+            || rendered.contains("that object's controller creates"),
+        "expected created token controller to track destroyed permanent controller, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("tagged ''")
+            && !rendered.contains("for each tagged object"),
+        "expected destroyed-this-way loop to resolve to a concrete prior tag, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_then_if_conditional_sentence_is_preserved() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Then If Variant")
+        .parse_text(
+            "Target creature gets +1/+1 until end of turn. Then if you control a creature with power 4 or greater, draw a card.",
+        )
+        .expect("then-if conditional sentence should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("if you control a creature with power 4 or greater")
+            && rendered.contains("draw a card"),
+        "expected then-if conditional to remain in compiled output, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_you_and_target_opponent_each_draw_sentence() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Shared Draw Variant")
+        .parse_text("You and target opponent each draw three cards.")
+        .expect("shared draw sentence should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("you draw three cards")
+            && rendered.contains("target opponent draws three cards"),
+        "expected both players to draw, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_additional_cost_and_trigger_when_on_same_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Additional Cost Split Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "As an additional cost to cast this spell, sacrifice a creature. When this creature enters, each opponent loses 4 life.",
+        )
+        .expect("additional-cost line with trailing trigger sentence should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("as an additional cost to cast this spell")
+            && rendered.contains("when this creature enters"),
+        "expected both additional-cost and trigger clauses, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("whenever as an additional cost"),
+        "expected additional-cost clause to stay out of triggered text, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_distribute_counters_among_any_number_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Invoke Variant")
+        .parse_text(
+            "Return target permanent card from your graveyard to the battlefield, then distribute four +1/+1 counters among any number of creatures and/or Vehicles target player controls.",
+        )
+        .expect("distribute-counters clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("return target")
+            && rendered.contains("+1/+1")
+            && rendered.contains("vehicle"),
+        "expected return and distributed counters clause, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_distribute_counters_one_or_two_targets() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Elven Rite Variant")
+        .parse_text("Distribute two +1/+1 counters among one or two target creatures.")
+        .expect("one-or-two distributed counters clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("one or two")
+            && rendered.contains("+1/+1")
+            && rendered.contains("target creatures"),
+        "expected one-or-two target distribute wording, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_distribute_counters_one_two_or_three_targets() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Biogenic Variant")
+        .parse_text("Distribute three +1/+1 counters among one, two, or three target creatures.")
+        .expect("one-two-or-three distributed counters clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("one, two, or three")
+            || rendered.contains("one or two or three")
+            || rendered.contains("up to three"),
+        "expected plural distributed target count, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_distribute_then_double_counters_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Biogenic Upgrade Variant")
+        .parse_text(
+            "Distribute three +1/+1 counters among one, two, or three target creatures, then double the number of +1/+1 counters on each of those creatures.",
+        )
+        .expect("distribute-then-double counters clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("one, two, or three")
+            || rendered.contains("one or two or three")
+            || rendered.contains("up to three"),
+        "expected distributed target count to remain plural, got {rendered}"
+    );
+    assert!(
+        rendered.contains("double the number of +1/+1 counters"),
+        "expected trailing double-counters clause, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_then_that_player_discards_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Recoil Variant")
+        .parse_text("Return target permanent to its owner's hand. Then that player discards a card.")
+        .expect("then-that-player discard clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("that player discards a card")
+            || rendered.contains("target player discards a card"),
+        "expected discard to remain bound to the returned permanent's player, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_then_exile_that_players_graveyard_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Go Blank Variant")
+        .parse_text("Target player discards two cards. Then exile that player's graveyard.")
+        .expect("then-that-player graveyard exile clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("that player's graveyard")
+            || rendered.contains("target player's graveyard"),
+        "expected graveyard exile to remain tied to the targeted player, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_put_counter_sequence_with_and_chain() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Trygon Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "When this creature attacks, put a +1/+1 counter on it and a +1/+1 counter on up to one other target attacking creature. That creature can't be blocked this turn.",
+        )
+        .expect("put-counter and-chain should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("up to one other target attacking creature")
+            || rendered.contains("another attacking creature"),
+        "expected second counter target to remain in trigger, got {rendered}"
+    );
+    assert!(
+        rendered.contains("can't be blocked") || rendered.contains("cant be blocked"),
+        "expected trailing block restriction to remain, got {rendered}"
     );
 }

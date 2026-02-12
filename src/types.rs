@@ -59,6 +59,7 @@ pub enum Subtype {
     Crab,
     Crocodile,
     Dauthi,
+    Detective,
     Demon,
     Devil,
     Dinosaur,
@@ -149,6 +150,7 @@ pub enum Subtype {
     Raccoon,
     Rabbit,
     Rat,
+    Reflection,
     Rebel,
     Rhino,
     Rogue,
@@ -318,6 +320,7 @@ impl Subtype {
                 | Subtype::Construct
                 | Subtype::Crab
                 | Subtype::Crocodile
+                | Subtype::Detective
                 | Subtype::Demon
                 | Subtype::Devil
                 | Subtype::Dinosaur
@@ -408,6 +411,7 @@ impl Subtype {
                 | Subtype::Raccoon
                 | Subtype::Rabbit
                 | Subtype::Rat
+                | Subtype::Reflection
                 | Subtype::Rebel
                 | Subtype::Rhino
                 | Subtype::Rogue

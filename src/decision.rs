@@ -1574,6 +1574,29 @@ fn check_mana_ability_condition_for_potential(
                 }
             })
         }
+        crate::ability::ManaAbilityCondition::ControlAtLeastArtifacts(required_count) => {
+            let controlled_artifacts = game
+                .battlefield
+                .iter()
+                .filter_map(|&perm_id| game.object(perm_id))
+                .filter(|perm| {
+                    perm.controller == player
+                        && perm
+                            .card_types
+                            .contains(&crate::types::CardType::Artifact)
+                })
+                .count() as u32;
+            controlled_artifacts >= *required_count
+        }
+        crate::ability::ManaAbilityCondition::ControlAtLeastLands(required_count) => {
+            let controlled_lands = game
+                .battlefield
+                .iter()
+                .filter_map(|&perm_id| game.object(perm_id))
+                .filter(|perm| perm.controller == player && perm.is_land())
+                .count() as u32;
+            controlled_lands >= *required_count
+        }
         crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
             crate::ability::ActivationTiming::AnyTime => true,
             crate::ability::ActivationTiming::DuringCombat => {

@@ -11,7 +11,7 @@
 
 use crate::color::ColorSet;
 use crate::ids::{ObjectId, PlayerId};
-use crate::object::{Object, ObjectKind};
+use crate::object::{CounterType, Object, ObjectKind};
 use crate::static_abilities::StaticAbilityId;
 use crate::tag::TagKey;
 use crate::types::{CardType, Subtype, Supertype};
@@ -300,6 +300,8 @@ pub enum TaggedOpbjectRelation {
     IsTaggedObject,
     /// The object must share at least one card type with any tagged object.
     SharesCardType,
+    /// The object must share at least one color with any tagged object.
+    SharesColorWithTagged,
     /// The object must share the same stable_id with a tagged object.
     SameStableId,
     /// The object must have the same name as a tagged object.
@@ -318,6 +320,15 @@ pub enum AlternativeCastKind {
     Escape,
     Madness,
     Miracle,
+}
+
+/// Counter-state qualifier for object filters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CounterConstraint {
+    /// At least one counter of any type.
+    Any,
+    /// At least one counter of the given type.
+    Typed(CounterType),
 }
 
 /// A tagged-object constraint used by `ObjectFilter`.
@@ -389,6 +400,15 @@ pub struct ObjectFilter {
     /// If true, must be multicolored (2+ colors)
     pub multicolored: bool,
 
+    /// If true, must be monocolored (exactly 1 color)
+    pub monocolored: bool,
+
+    /// If true, must be historic (artifact, legendary, or Saga)
+    pub historic: bool,
+
+    /// If true, must be nonhistoric
+    pub nonhistoric: bool,
+
     /// If true, must be a token
     pub token: bool,
 
@@ -428,6 +448,12 @@ pub struct ObjectFilter {
 
     /// If true, the mana cost must not contain X
     pub no_x_in_cost: bool,
+
+    /// Counter-state requirements such as "with a +1/+1 counter on it".
+    pub with_counter: Option<CounterConstraint>,
+
+    /// Counter-state exclusions such as "without a +1/+1 counter on it".
+    pub without_counter: Option<CounterConstraint>,
 
     /// Name must match (for cards like "Rat Colony")
     pub name: Option<String>,
@@ -743,6 +769,24 @@ impl ObjectFilter {
         self
     }
 
+    /// Require the object to be monocolored.
+    pub fn monocolored(mut self) -> Self {
+        self.monocolored = true;
+        self
+    }
+
+    /// Require the object to be historic (artifact, legendary, or Saga).
+    pub fn historic(mut self) -> Self {
+        self.historic = true;
+        self
+    }
+
+    /// Require the object to be nonhistoric.
+    pub fn nonhistoric(mut self) -> Self {
+        self.nonhistoric = true;
+        self
+    }
+
     /// Require a specific name.
     pub fn named(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
@@ -758,6 +802,30 @@ impl ObjectFilter {
     /// Require a specific alternative casting capability.
     pub fn with_alternative_cast(mut self, kind: AlternativeCastKind) -> Self {
         self.alternative_cast = Some(kind);
+        self
+    }
+
+    /// Require the object to have at least one counter.
+    pub fn with_any_counter(mut self) -> Self {
+        self.with_counter = Some(CounterConstraint::Any);
+        self
+    }
+
+    /// Require the object to have at least one counter of the given type.
+    pub fn with_counter_type(mut self, counter_type: CounterType) -> Self {
+        self.with_counter = Some(CounterConstraint::Typed(counter_type));
+        self
+    }
+
+    /// Require the object to have no counters.
+    pub fn without_any_counter(mut self) -> Self {
+        self.without_counter = Some(CounterConstraint::Any);
+        self
+    }
+
+    /// Require the object to have no counters of the given type.
+    pub fn without_counter_type(mut self, counter_type: CounterType) -> Self {
+        self.without_counter = Some(CounterConstraint::Typed(counter_type));
         self
     }
 
@@ -824,6 +892,11 @@ impl ObjectFilter {
     /// `match_tagged(tag, TaggedObjectMatch::SharesCardType)`.
     pub fn shares_card_type_with_tagged(self, tag: impl Into<TagKey>) -> Self {
         self.match_tagged(tag, TaggedOpbjectRelation::SharesCardType)
+    }
+
+    /// Require the object to share at least one color with tagged objects.
+    pub fn shares_color_with_tagged(self, tag: impl Into<TagKey>) -> Self {
+        self.match_tagged(tag, TaggedOpbjectRelation::SharesColorWithTagged)
     }
 
     /// Filter to only match objects that share the same stable_id with a tagged object.
@@ -1025,6 +1098,21 @@ impl ObjectFilter {
             return false;
         }
 
+        // Monocolored check
+        if self.monocolored && object.colors().count() != 1 {
+            return false;
+        }
+
+        let is_historic = object.card_types.contains(&CardType::Artifact)
+            || object.supertypes.contains(&Supertype::Legendary)
+            || object.subtypes.contains(&Subtype::Saga);
+        if self.historic && !is_historic {
+            return false;
+        }
+        if self.nonhistoric && is_historic {
+            return false;
+        }
+
         // Token/nontoken check
         if self.token && object.kind != ObjectKind::Token {
             return false;
@@ -1122,6 +1210,35 @@ impl ObjectFilter {
             return false;
         }
 
+        if let Some(counter_requirement) = self.with_counter {
+            let has_counter = match counter_requirement {
+                CounterConstraint::Any => object.counters.values().any(|count| *count > 0),
+                CounterConstraint::Typed(counter_type) => object
+                    .counters
+                    .get(&counter_type)
+                    .copied()
+                    .unwrap_or(0)
+                    > 0,
+            };
+            if !has_counter {
+                return false;
+            }
+        }
+        if let Some(counter_exclusion) = self.without_counter {
+            let has_excluded_counter = match counter_exclusion {
+                CounterConstraint::Any => object.counters.values().any(|count| *count > 0),
+                CounterConstraint::Typed(counter_type) => object
+                    .counters
+                    .get(&counter_type)
+                    .copied()
+                    .unwrap_or(0)
+                    > 0,
+            };
+            if has_excluded_counter {
+                return false;
+            }
+        }
+
         if let Some(kind) = self.alternative_cast
             && !object_has_alternative_cast_kind(object, kind, game, ctx)
         {
@@ -1195,6 +1312,14 @@ impl ObjectFilter {
                         .flat_map(|s| s.card_types.iter().cloned())
                         .collect();
                     if !object.card_types.iter().any(|t| tagged_types.contains(t)) {
+                        return false;
+                    }
+                }
+                TaggedOpbjectRelation::SharesColorWithTagged => {
+                    if !tagged_snapshots
+                        .iter()
+                        .any(|s| !object.colors().intersection(s.colors).is_empty())
+                    {
                         return false;
                     }
                 }
@@ -1405,6 +1530,21 @@ impl ObjectFilter {
             return false;
         }
 
+        // Monocolored check
+        if self.monocolored && snapshot.colors.count() != 1 {
+            return false;
+        }
+
+        let is_historic = snapshot.card_types.contains(&CardType::Artifact)
+            || snapshot.supertypes.contains(&Supertype::Legendary)
+            || snapshot.subtypes.contains(&Subtype::Saga);
+        if self.historic && !is_historic {
+            return false;
+        }
+        if self.nonhistoric && is_historic {
+            return false;
+        }
+
         // Token/nontoken check
         if self.token && !snapshot.is_token {
             return false;
@@ -1485,6 +1625,35 @@ impl ObjectFilter {
             return false;
         }
 
+        if let Some(counter_requirement) = self.with_counter {
+            let has_counter = match counter_requirement {
+                CounterConstraint::Any => snapshot.counters.values().any(|count| *count > 0),
+                CounterConstraint::Typed(counter_type) => snapshot
+                    .counters
+                    .get(&counter_type)
+                    .copied()
+                    .unwrap_or(0)
+                    > 0,
+            };
+            if !has_counter {
+                return false;
+            }
+        }
+        if let Some(counter_exclusion) = self.without_counter {
+            let has_excluded_counter = match counter_exclusion {
+                CounterConstraint::Any => snapshot.counters.values().any(|count| *count > 0),
+                CounterConstraint::Typed(counter_type) => snapshot
+                    .counters
+                    .get(&counter_type)
+                    .copied()
+                    .unwrap_or(0)
+                    > 0,
+            };
+            if has_excluded_counter {
+                return false;
+            }
+        }
+
         if let Some(kind) = self.alternative_cast {
             let has_kind = game
                 .object(snapshot.object_id)
@@ -1542,6 +1711,7 @@ impl ObjectFilter {
                 if matches!(
                     constraint.relation,
                     TaggedOpbjectRelation::IsTaggedObject
+                        | TaggedOpbjectRelation::SharesColorWithTagged
                         | TaggedOpbjectRelation::SameStableId
                         | TaggedOpbjectRelation::SameNameAsTagged
                         | TaggedOpbjectRelation::SameControllerAsTagged
@@ -1566,6 +1736,14 @@ impl ObjectFilter {
                         .flat_map(|s| s.card_types.iter().cloned())
                         .collect();
                     if !snapshot.card_types.iter().any(|t| tagged_types.contains(t)) {
+                        return false;
+                    }
+                }
+                TaggedOpbjectRelation::SharesColorWithTagged => {
+                    if !tagged_snapshots
+                        .iter()
+                        .any(|s| !snapshot.colors.intersection(s.colors).is_empty())
+                    {
                         return false;
                     }
                 }
@@ -1650,6 +1828,8 @@ impl ObjectFilter {
     /// Used primarily for trigger display text.
     pub fn description(&self) -> String {
         let mut parts = Vec::new();
+        let mut post_noun_qualifiers: Vec<String> = Vec::new();
+        let append_token_after_type = self.token;
         let mut controller_suffix: Option<String> = None;
         let mut owner_suffix: Option<String> = None;
 
@@ -1731,9 +1911,6 @@ impl ObjectFilter {
         }
 
         // Handle token/nontoken
-        if self.token {
-            parts.push("token".to_string());
-        }
         if self.nontoken {
             parts.push("nontoken".to_string());
         }
@@ -1761,6 +1938,7 @@ impl ObjectFilter {
         for constraint in &self.tagged_constraints {
             match constraint.relation {
                 TaggedOpbjectRelation::IsTaggedObject => match constraint.tag.as_str() {
+                    "it" => parts.push("that".to_string()),
                     "enchanted" => parts.push("enchanted".to_string()),
                     "equipped" => parts.push("equipped".to_string()),
                     _ => {}
@@ -1769,10 +1947,14 @@ impl ObjectFilter {
                     parts.push("other".to_string());
                 }
                 TaggedOpbjectRelation::SameNameAsTagged => {
-                    parts.push("with the same name as that object".to_string());
+                    post_noun_qualifiers.push("with the same name as that object".to_string());
                 }
                 TaggedOpbjectRelation::SameControllerAsTagged => {
-                    parts.push("controlled by that object's controller".to_string());
+                    post_noun_qualifiers
+                        .push("controlled by that object's controller".to_string());
+                }
+                TaggedOpbjectRelation::SharesColorWithTagged => {
+                    post_noun_qualifiers.push("that shares a color with that object".to_string());
                 }
                 TaggedOpbjectRelation::SharesCardType | TaggedOpbjectRelation::SameStableId => {}
             }
@@ -1796,7 +1978,22 @@ impl ObjectFilter {
             }
         }
         if !self.excluded_subtypes.is_empty() {
-            for subtype in &self.excluded_subtypes {
+            let mut remaining = self.excluded_subtypes.clone();
+            let outlaw_pack = [
+                Subtype::Assassin,
+                Subtype::Mercenary,
+                Subtype::Pirate,
+                Subtype::Rogue,
+                Subtype::Warlock,
+            ];
+            if outlaw_pack
+                .iter()
+                .all(|subtype| remaining.contains(subtype))
+            {
+                parts.push("non-outlaw".to_string());
+                remaining.retain(|subtype| !outlaw_pack.contains(subtype));
+            }
+            for subtype in &remaining {
                 parts.push(format!("non-{subtype:?}"));
             }
         }
@@ -1823,6 +2020,15 @@ impl ObjectFilter {
         if self.multicolored {
             parts.push("multicolored".to_string());
         }
+        if self.monocolored {
+            parts.push("monocolored".to_string());
+        }
+        if self.historic {
+            parts.push("historic".to_string());
+        }
+        if self.nonhistoric {
+            post_noun_qualifiers.push("that's not historic".to_string());
+        }
         if self.is_commander {
             parts.push("commander".to_string());
         }
@@ -1846,6 +2052,21 @@ impl ObjectFilter {
             && self.all_card_types.is_empty()
             && self.card_types.is_empty();
 
+        let has_all_permanent_types = {
+            let required = [
+                CardType::Artifact,
+                CardType::Creature,
+                CardType::Enchantment,
+                CardType::Land,
+                CardType::Planeswalker,
+                CardType::Battle,
+            ];
+            self.card_types.len() == required.len()
+                && required
+                    .iter()
+                    .all(|card_type| self.card_types.contains(card_type))
+        };
+
         let mut type_phrase = if !self.all_card_types.is_empty() {
             Some((
                 true,
@@ -1856,14 +2077,18 @@ impl ObjectFilter {
                     .join(" "),
             ))
         } else if !self.card_types.is_empty() {
-            Some((
-                true,
-                self.card_types
-                    .iter()
-                    .map(|t| format!("{:?}", t).to_lowercase())
-                    .collect::<Vec<_>>()
-                    .join(" or "),
-            ))
+            if has_all_permanent_types {
+                Some((true, "permanent".to_string()))
+            } else {
+                Some((
+                    true,
+                    self.card_types
+                        .iter()
+                        .map(|t| format!("{:?}", t).to_lowercase())
+                        .collect::<Vec<_>>()
+                        .join(" or "),
+                ))
+            }
         } else if !self.token && !subtype_implies_type {
             // Default noun depends on zone context.
             let default_noun = if self.source {
@@ -1934,6 +2159,12 @@ impl ObjectFilter {
                 (None, None) => {}
             }
         }
+        if append_token_after_type {
+            parts.push("token".to_string());
+        }
+        if !post_noun_qualifiers.is_empty() {
+            parts.extend(post_noun_qualifiers);
+        }
 
         // Handle name
         if let Some(ref name) = self.name {
@@ -1967,6 +2198,18 @@ impl ObjectFilter {
         }
         for marker in &self.excluded_custom_static_markers {
             parts.push(format!("without {}", marker.to_ascii_lowercase()));
+        }
+        if let Some(counter_requirement) = self.with_counter {
+            parts.push(format!(
+                "with {} on it",
+                describe_counter_constraint(counter_requirement)
+            ));
+        }
+        if let Some(counter_exclusion) = self.without_counter {
+            parts.push(format!(
+                "without {} on it",
+                describe_counter_constraint(counter_exclusion)
+            ));
         }
         if let Some(kind) = self.alternative_cast {
             parts.push(format!("with {}", describe_alternative_cast_kind(kind)));
@@ -2220,6 +2463,23 @@ fn snapshot_has_tap_activated_ability(snapshot: &crate::snapshot::ObjectSnapshot
                 .any(|cost| cost.requires_tap()),
             _ => false,
         })
+}
+
+fn describe_counter_constraint(constraint: CounterConstraint) -> String {
+    match constraint {
+        CounterConstraint::Any => "a counter".to_string(),
+        CounterConstraint::Typed(counter_type) => {
+            format!("a {} counter", describe_counter_type(counter_type))
+        }
+    }
+}
+
+fn describe_counter_type(counter_type: CounterType) -> String {
+    match counter_type {
+        CounterType::PlusOnePlusOne => "+1/+1".to_string(),
+        CounterType::MinusOneMinusOne => "-1/-1".to_string(),
+        other => format!("{other:?}").to_ascii_lowercase(),
+    }
 }
 
 fn describe_alternative_cast_kind(kind: AlternativeCastKind) -> &'static str {
@@ -2565,5 +2825,91 @@ mod tests {
             filter.matches(&commander_obj, &ctx, &game),
             "commander filter should rely on game commander identity, not ctx.your_commanders"
         );
+    }
+
+    #[test]
+    fn test_historic_and_nonhistoric_filters_match_correctly() {
+        use crate::card::CardBuilder;
+        use crate::game_state::GameState;
+        use crate::ids::{CardId, ObjectId};
+        use crate::object::Object;
+
+        let you = PlayerId::from_index(0);
+        let mut game = GameState::new(vec!["You".to_string()], 20);
+
+        let artifact_card = CardBuilder::new(CardId::from_raw(1), "Mox")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        let artifact_obj = Object::from_card(
+            ObjectId::from_raw(1),
+            &artifact_card,
+            you,
+            Zone::Battlefield,
+        );
+        game.add_object(artifact_obj.clone());
+
+        let creature_card = CardBuilder::new(CardId::from_raw(2), "Bear")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let creature_obj = Object::from_card(
+            ObjectId::from_raw(2),
+            &creature_card,
+            you,
+            Zone::Battlefield,
+        );
+        game.add_object(creature_obj.clone());
+
+        let ctx = FilterContext::new(you);
+        assert!(ObjectFilter::permanent().historic().matches(&artifact_obj, &ctx, &game));
+        assert!(!ObjectFilter::permanent().historic().matches(&creature_obj, &ctx, &game));
+        assert!(ObjectFilter::permanent()
+            .nonhistoric()
+            .matches(&creature_obj, &ctx, &game));
+        assert!(!ObjectFilter::permanent()
+            .nonhistoric()
+            .matches(&artifact_obj, &ctx, &game));
+    }
+
+    #[test]
+    fn test_shares_color_with_tagged_constraint() {
+        use crate::card::CardBuilder;
+        use crate::game_state::GameState;
+        use crate::ids::{CardId, ObjectId};
+        use crate::object::Object;
+        use crate::snapshot::ObjectSnapshot;
+        use crate::tag::TagKey;
+
+        let you = PlayerId::from_index(0);
+        let mut game = GameState::new(vec!["You".to_string()], 20);
+
+        let red_card = CardBuilder::new(CardId::from_raw(10), "Red Creature")
+            .card_types(vec![CardType::Creature])
+            .mana_cost(crate::mana::ManaCost::from_pips(vec![vec![
+                crate::mana::ManaSymbol::Red,
+            ]]))
+            .build();
+        let red_obj = Object::from_card(ObjectId::from_raw(10), &red_card, you, Zone::Battlefield);
+        game.add_object(red_obj.clone());
+
+        let blue_card = CardBuilder::new(CardId::from_raw(11), "Blue Creature")
+            .card_types(vec![CardType::Creature])
+            .mana_cost(crate::mana::ManaCost::from_pips(vec![vec![
+                crate::mana::ManaSymbol::Blue,
+            ]]))
+            .build();
+        let blue_obj =
+            Object::from_card(ObjectId::from_raw(11), &blue_card, you, Zone::Battlefield);
+        game.add_object(blue_obj.clone());
+
+        let mut tagged = std::collections::HashMap::new();
+        tagged.insert(
+            TagKey::from("it"),
+            vec![ObjectSnapshot::from_object(&red_obj, &game)],
+        );
+        let ctx = FilterContext::new(you).with_tagged_objects(&tagged);
+        let filter = ObjectFilter::creature().shares_color_with_tagged("it");
+
+        assert!(filter.matches(&red_obj, &ctx, &game));
+        assert!(!filter.matches(&blue_obj, &ctx, &game));
     }
 }

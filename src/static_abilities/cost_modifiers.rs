@@ -6,6 +6,7 @@ use super::{StaticAbilityId, StaticAbilityKind};
 use crate::ability::SpellFilter;
 use crate::effect::Value;
 use crate::filter::ObjectFilter;
+use crate::filter::AlternativeCastKind;
 use crate::target::PlayerFilter;
 
 fn strip_indefinite_article(text: &str) -> &str {
@@ -65,9 +66,28 @@ fn describe_spell_filter(filter: &SpellFilter) -> String {
     object_filter.subtypes = filter.subtypes.clone();
     object_filter.colors = filter.colors;
     object_filter.controller = filter.controller.clone();
+    object_filter.alternative_cast = filter.alternative_cast;
     object_filter.targets_player = filter.targets_player.clone();
     object_filter.targets_object = filter.targets_object.clone().map(Box::new);
     pluralize_spell_filter_text(&object_filter.description())
+}
+
+fn describe_flashback_cost_subject(filter: &SpellFilter) -> Option<&'static str> {
+    if filter.alternative_cast != Some(AlternativeCastKind::Flashback)
+        || !filter.card_types.is_empty()
+        || !filter.subtypes.is_empty()
+        || filter.colors.is_some()
+        || filter.targets_player.is_some()
+        || filter.targets_object.is_some()
+    {
+        return None;
+    }
+    match filter.controller.as_ref() {
+        Some(PlayerFilter::You) => Some("Flashback costs you pay"),
+        Some(PlayerFilter::Opponent) => Some("Flashback costs your opponents pay"),
+        None | Some(PlayerFilter::Any) => Some("Flashback costs"),
+        _ => None,
+    }
 }
 
 /// Affinity for artifacts - This spell costs {1} less to cast for each artifact you control.
@@ -194,6 +214,14 @@ impl StaticAbilityKind for CostReduction {
 
     fn display(&self) -> String {
         let (amount_text, tail) = describe_cost_modifier_amount(&self.reduction);
+        if let Some(subject) = describe_flashback_cost_subject(&self.filter) {
+            let mut line = format!("{subject} cost {amount_text} less");
+            if let Some(tail) = tail {
+                line.push(' ');
+                line.push_str(&tail);
+            }
+            return line;
+        }
         let mut line = format!(
             "{} cost {} less to cast",
             describe_spell_filter(&self.filter),
@@ -239,6 +267,14 @@ impl StaticAbilityKind for CostIncrease {
 
     fn display(&self) -> String {
         let (amount_text, tail) = describe_cost_modifier_amount(&self.increase);
+        if let Some(subject) = describe_flashback_cost_subject(&self.filter) {
+            let mut line = format!("{subject} cost {amount_text} more");
+            if let Some(tail) = tail {
+                line.push(' ');
+                line.push_str(&tail);
+            }
+            return line;
+        }
         let mut line = format!(
             "{} cost {} more to cast",
             describe_spell_filter(&self.filter),

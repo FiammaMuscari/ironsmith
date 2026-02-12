@@ -642,6 +642,29 @@ fn check_mana_ability_condition(
                 }
             })
         }
+        crate::ability::ManaAbilityCondition::ControlAtLeastArtifacts(required_count) => {
+            let controlled_artifacts = game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| {
+                    obj.controller == player
+                        && obj
+                            .card_types
+                            .contains(&crate::types::CardType::Artifact)
+                })
+                .count() as u32;
+            controlled_artifacts >= *required_count
+        }
+        crate::ability::ManaAbilityCondition::ControlAtLeastLands(required_count) => {
+            let controlled_lands = game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| obj.controller == player && obj.is_land())
+                .count() as u32;
+            controlled_lands >= *required_count
+        }
         crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
             crate::ability::ActivationTiming::AnyTime => true,
             crate::ability::ActivationTiming::DuringCombat => {

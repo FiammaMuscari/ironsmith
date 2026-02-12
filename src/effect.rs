@@ -524,6 +524,12 @@ pub enum Value {
     /// The number of objects matching a filter
     Count(ObjectFilter),
 
+    /// A scaled count of objects matching a filter (factor * count(filter)).
+    CountScaled(ObjectFilter, i32),
+
+    /// Number of creatures that have died this turn.
+    CreaturesDiedThisTurn,
+
     /// The number of players matching a filter
     CountPlayers(PlayerFilter),
 
@@ -567,6 +573,11 @@ pub enum Value {
         player: PlayerFilter,
         color: crate::color::Color,
     },
+
+    /// Number of distinct colors of mana spent to cast this spell.
+    ///
+    /// Colorless mana does not count toward this value.
+    ColorsOfManaSpentToCastThisSpell,
 
     /// The value from a prior effect's result.
     ///
@@ -1114,6 +1125,17 @@ pub enum Condition {
 
     /// An opponent controls an object matching filter
     OpponentControls(ObjectFilter),
+
+    /// A specific player controls an object matching filter.
+    PlayerControls {
+        player: PlayerFilter,
+        filter: ObjectFilter,
+    },
+
+    /// A specific player has less life than you.
+    PlayerHasLessLifeThanYou {
+        player: PlayerFilter,
+    },
 
     /// Your life total is N or less
     LifeTotalOrLess(i32),

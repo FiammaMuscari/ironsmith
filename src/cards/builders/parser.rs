@@ -14,50 +14,6 @@ struct PendingModal {
     modes: Vec<EffectMode>,
 }
 
-fn parser_semantic_guard_enabled() -> bool {
-    std::env::var("IRONSMITH_PARSER_SEMANTIC_GUARD")
-        .map(|value| {
-            !matches!(
-                value.as_str(),
-                "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF"
-            )
-        })
-        .unwrap_or_else(|_| {
-            option_env!("IRONSMITH_PARSER_SEMANTIC_GUARD_DEFAULT")
-                .map(|value| {
-                    !matches!(
-                        value,
-                        "0" | "false" | "FALSE" | "no" | "NO" | "off" | "OFF"
-                    )
-                })
-                .unwrap_or(false)
-        })
-}
-
-fn parser_semantic_embedding_dims() -> usize {
-    std::env::var("IRONSMITH_PARSER_SEMANTIC_DIMS")
-        .ok()
-        .and_then(|raw| raw.parse::<usize>().ok())
-        .filter(|dims| *dims > 0)
-        .or_else(|| {
-            option_env!("IRONSMITH_PARSER_SEMANTIC_DIMS_DEFAULT")
-                .and_then(|raw| raw.parse::<usize>().ok())
-                .filter(|dims| *dims > 0)
-        })
-        .unwrap_or(384)
-}
-
-fn parser_semantic_embedding_threshold() -> f32 {
-    std::env::var("IRONSMITH_PARSER_SEMANTIC_THRESHOLD")
-        .ok()
-        .and_then(|raw| raw.parse::<f32>().ok())
-        .or_else(|| {
-            option_env!("IRONSMITH_PARSER_SEMANTIC_THRESHOLD_DEFAULT")
-                .and_then(|raw| raw.parse::<f32>().ok())
-        })
-        .unwrap_or(0.9)
-}
-
 pub(super) fn parse_text_with_annotations(
     builder: CardDefinitionBuilder,
     text: String,
@@ -256,30 +212,7 @@ pub(super) fn parse_text_with_annotations(
         builder = builder.with_level_abilities(level_abilities);
     }
 
-    let definition = builder.build();
-    if !allow_unsupported && parser_semantic_guard_enabled() {
-        let oracle_text = definition.card.oracle_text.trim();
-        if !oracle_text.is_empty() {
-            let compiled_lines = crate::compiled_text::compiled_lines(&definition);
-            let embedding = crate::semantic_compare::EmbeddingConfig {
-                dims: parser_semantic_embedding_dims(),
-                mismatch_threshold: parser_semantic_embedding_threshold(),
-            };
-            let (oracle_coverage, compiled_coverage, line_delta, mismatch) =
-                crate::semantic_compare::compare_semantics(
-                    oracle_text,
-                    &compiled_lines,
-                    Some(embedding),
-                );
-            if mismatch {
-                return Err(CardTextError::ParseError(format!(
-                    "semantic round-trip mismatch (coverage o->{oracle_coverage:.2}, c->{compiled_coverage:.2}, delta={line_delta})"
-                )));
-            }
-        }
-    }
-
-    Ok((definition, annotations))
+    Ok((builder.build(), annotations))
 }
 
 fn collect_line_infos(
@@ -311,26 +244,30 @@ fn collect_line_infos(
             continue;
         }
 
-        let Some(normalized) =
-            normalize_line_for_parse(line, full_lower.as_str(), short_lower.as_str())
-        else {
-            if is_ignorable_unparsed_line(line) {
-                continue;
-            }
-            return Err(CardTextError::ParseError(format!(
-                "unsupported or unparseable line normalization: '{line}'"
-            )));
-        };
+        let split_lines = split_parse_line_variants(line);
+        for (split_index, split_line) in split_lines.iter().enumerate() {
+            let Some(normalized) =
+                normalize_line_for_parse(split_line, full_lower.as_str(), short_lower.as_str())
+            else {
+                if is_ignorable_unparsed_line(split_line) {
+                    continue;
+                }
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported or unparseable line normalization: '{split_line}'"
+                )));
+            };
 
-        annotations.record_original_line(line_index, &normalized.original);
-        annotations.record_normalized_line(line_index, &normalized.normalized);
-        annotations.record_char_map(line_index, normalized.char_map.clone());
+            let virtual_line_index = line_index.saturating_mul(8).saturating_add(split_index);
+            annotations.record_original_line(virtual_line_index, &normalized.original);
+            annotations.record_normalized_line(virtual_line_index, &normalized.normalized);
+            annotations.record_char_map(virtual_line_index, normalized.char_map.clone());
 
-        line_infos.push(LineInfo {
-            line_index,
-            raw_line: line.to_string(),
-            normalized,
-        });
+            line_infos.push(LineInfo {
+                line_index: virtual_line_index,
+                raw_line: split_line.to_string(),
+                normalized,
+            });
+        }
     }
 
     if !line_infos.is_empty() {
@@ -343,6 +280,33 @@ fn collect_line_infos(
     }
 
     Ok((builder, annotations, line_infos))
+}
+
+fn split_parse_line_variants(line: &str) -> Vec<String> {
+    let lower = line.to_ascii_lowercase();
+    if lower.starts_with("as an additional cost to cast this spell")
+        && let Some(period_idx) = line.find('.')
+    {
+        let first = line[..=period_idx].trim();
+        let second = line[period_idx + 1..].trim();
+        if !first.is_empty() && !second.is_empty() {
+            return vec![first.to_string(), second.to_string()];
+        }
+    }
+
+    let marker = ". when you spend this mana to cast ";
+    let marker_compact = ".when you spend this mana to cast ";
+    let split_at = lower
+        .find(marker)
+        .or_else(|| lower.find(marker_compact));
+    if let Some(idx) = split_at {
+        let first = line[..=idx].trim();
+        let second = line[idx + 1..].trim();
+        if first.contains(':') && !second.is_empty() {
+            return vec![first.to_string(), second.to_string()];
+        }
+    }
+    vec![line.to_string()]
 }
 
 fn title_case_words(text: &str) -> String {

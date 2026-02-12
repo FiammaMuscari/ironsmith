@@ -6,8 +6,10 @@ use crate::effects::helpers::{resolve_objects_from_spec, resolve_value};
 use crate::event_processor::process_put_counters_with_event;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
+use crate::ids::ObjectId;
 use crate::object::CounterType;
 use crate::target::ChooseSpec;
+use std::collections::HashMap;
 
 /// Effect that puts counters on a target permanent.
 ///
@@ -19,6 +21,7 @@ use crate::target::ChooseSpec;
 /// * `count` - How many counters to put
 /// * `target` - Which permanent to target
 /// * `target_count` - How many targets (for "up to" effects)
+/// * `distributed` - If true, distribute total counters among chosen targets
 ///
 /// # Example
 ///
@@ -40,6 +43,8 @@ pub struct PutCountersEffect {
     pub target: ChooseSpec,
     /// How many targets. None defaults to exactly 1.
     pub target_count: Option<ChoiceCount>,
+    /// Whether to distribute the total counter amount among chosen targets.
+    pub distributed: bool,
 }
 
 impl PutCountersEffect {
@@ -50,12 +55,19 @@ impl PutCountersEffect {
             count: count.into(),
             target,
             target_count: None,
+            distributed: false,
         }
     }
 
     /// Create a put counters effect with target count specification.
     pub fn with_target_count(mut self, target_count: ChoiceCount) -> Self {
         self.target_count = Some(target_count);
+        self
+    }
+
+    /// Mark this as a distributed-counters effect.
+    pub fn with_distributed(mut self, distributed: bool) -> Self {
+        self.distributed = distributed;
         self
     }
 
@@ -98,11 +110,32 @@ impl EffectExecutor for PutCountersEffect {
             return Ok(EffectOutcome::count(0));
         }
 
+        let distributed_counts: Option<HashMap<ObjectId, u32>> = if self.distributed {
+            let mut allocations: HashMap<ObjectId, u32> = HashMap::new();
+            let target_len = target_ids.len();
+            if target_len > 0 {
+                for idx in 0..count {
+                    let target = target_ids[(idx as usize) % target_len];
+                    *allocations.entry(target).or_insert(0) += 1;
+                }
+            }
+            Some(allocations)
+        } else {
+            None
+        };
+
         let mut outcomes = Vec::with_capacity(target_ids.len());
         for target_id in target_ids {
+            let assigned_count = distributed_counts
+                .as_ref()
+                .and_then(|allocations| allocations.get(&target_id).copied())
+                .unwrap_or(count);
+            if assigned_count == 0 {
+                continue;
+            }
             // Process through replacement effects (e.g., Melira, Doubling Season).
             let final_count =
-                process_put_counters_with_event(game, target_id, self.counter_type, count);
+                process_put_counters_with_event(game, target_id, self.counter_type, assigned_count);
             if final_count == 0 {
                 outcomes.push(EffectOutcome::from_result(EffectResult::Prevented));
                 continue;
@@ -301,6 +334,66 @@ mod tests {
                 .get(&CounterType::PlusOnePlusOne),
             Some(&1)
         );
+    }
+
+    #[test]
+    fn test_distributed_counters_single_target_uses_full_amount() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let creature_id = create_creature(&mut game, "Solo", alice);
+        let source = game.new_object_id();
+
+        let mut ctx = ExecutionContext::new_default(source, alice)
+            .with_targets(vec![ResolvedTarget::Object(creature_id)]);
+
+        let effect = PutCountersEffect::plus_one_counters(3, ChooseSpec::creature())
+            .with_target_count(ChoiceCount::any_number())
+            .with_distributed(true);
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.result, EffectResult::Count(3));
+        assert_eq!(
+            game.object(creature_id)
+                .unwrap()
+                .counters
+                .get(&CounterType::PlusOnePlusOne),
+            Some(&3)
+        );
+    }
+
+    #[test]
+    fn test_distributed_counters_multiple_targets_splits_total() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let first = create_creature(&mut game, "First", alice);
+        let second = create_creature(&mut game, "Second", alice);
+        let source = game.new_object_id();
+
+        let mut ctx = ExecutionContext::new_default(source, alice).with_targets(vec![
+            ResolvedTarget::Object(first),
+            ResolvedTarget::Object(second),
+        ]);
+
+        let effect = PutCountersEffect::plus_one_counters(3, ChooseSpec::creature())
+            .with_target_count(ChoiceCount::any_number())
+            .with_distributed(true);
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.result, EffectResult::Count(3));
+        let first_count = *game
+            .object(first)
+            .unwrap()
+            .counters
+            .get(&CounterType::PlusOnePlusOne)
+            .unwrap_or(&0);
+        let second_count = *game
+            .object(second)
+            .unwrap()
+            .counters
+            .get(&CounterType::PlusOnePlusOne)
+            .unwrap_or(&0);
+        assert_eq!(first_count + second_count, 3);
+        assert!(first_count >= 1 && second_count >= 1);
     }
 
     #[test]

@@ -413,6 +413,19 @@ fn evaluate_value(
                 .count() as i32;
             ValueEval::Scalar(count)
         }
+        Value::CountScaled(filter, multiplier) => {
+            let count = baseline
+                .iter()
+                .filter(|(id, chars)| {
+                    let Some(obj) = objects.get(id) else {
+                        return false;
+                    };
+                    object_matches_filter_with_chars(filter, obj, chars, game, effect_controller)
+                })
+                .count() as i32;
+            ValueEval::Scalar(count * *multiplier)
+        }
+        Value::CreaturesDiedThisTurn => ValueEval::Scalar(game.creatures_died_this_turn as i32),
         Value::PowerOf(target) | Value::ToughnessOf(target) => {
             use crate::target::ChooseSpec;
             let mut values = Vec::new();
@@ -915,8 +928,11 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::X
         | Value::XTimes(_)
         | Value::Count(_)
+        | Value::CountScaled(_, _)
+        | Value::CreaturesDiedThisTurn
         | Value::CountPlayers(_)
         | Value::Devotion { .. }
+        | Value::ColorsOfManaSpentToCastThisSpell
         | Value::LifeTotal(_)
         | Value::CardsInHand(_)
         | Value::CardsInGraveyard(_)

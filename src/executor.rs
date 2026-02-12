@@ -332,6 +332,12 @@ impl<'a> ExecutionContext<'a> {
     /// When Model of Unity triggers, "voted_with_you" should contain players who
     /// voted with Bob, not players who voted with Alice.
     pub fn with_triggering_event(mut self, event: crate::triggers::TriggerEvent) -> Self {
+        if let Some(snapshot) = event.snapshot() {
+            let snapshots = vec![snapshot.clone()];
+            self.set_tagged_objects("triggering", snapshots.clone());
+            self.set_tagged_objects("it", snapshots);
+        }
+
         // If the event is vote-related, compute tags from THIS ability controller's perspective.
         if let Some(voting_event) = event.downcast::<crate::events::PlayersFinishedVotingEvent>() {
             self.apply_voting_tags(&voting_event.votes, &voting_event.player_tags);
@@ -600,6 +606,17 @@ pub fn resolve_value(
                 .count();
             Ok(count as i32)
         }
+        Value::CountScaled(filter, multiplier) => {
+            let filter_ctx = ctx.filter_context(game);
+            let count = game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                .count() as i32;
+            Ok(count * *multiplier)
+        }
+        Value::CreaturesDiedThisTurn => Ok(game.creatures_died_this_turn as i32),
 
         Value::CountPlayers(player_filter) => {
             let filter_ctx = ctx.filter_context(game);
@@ -736,6 +753,24 @@ pub fn resolve_value(
                 .map(|pid| game.devotion_to_color(*pid, *color))
                 .sum();
             Ok(devotion as i32)
+        }
+
+        Value::ColorsOfManaSpentToCastThisSpell => {
+            let Some(source_obj) = game.object(ctx.source) else {
+                return Ok(0);
+            };
+            let spent = &source_obj.mana_spent_to_cast;
+            let distinct_colors = [
+                spent.white > 0,
+                spent.blue > 0,
+                spent.black > 0,
+                spent.red > 0,
+                spent.green > 0,
+            ]
+            .into_iter()
+            .filter(|present| *present)
+            .count();
+            Ok(distinct_colors as i32)
         }
 
         Value::EffectValue(effect_id) => {
@@ -1149,6 +1184,12 @@ pub fn validate_target(
         (ResolvedTarget::Player(id), ChooseSpec::Player(filter)) => {
             filter.matches_player(*id, &filter_ctx)
         }
+        (ResolvedTarget::Player(id), ChooseSpec::PlayerOrPlaneswalker(filter)) => {
+            filter.matches_player(*id, &filter_ctx)
+        }
+        (ResolvedTarget::Object(id), ChooseSpec::PlayerOrPlaneswalker(_)) => game
+            .object(*id)
+            .is_some_and(|obj| obj.has_card_type(crate::types::CardType::Planeswalker)),
         (ResolvedTarget::Object(id), ChooseSpec::AnyTarget) => game.object(*id).is_some(),
         (ResolvedTarget::Player(id), ChooseSpec::AnyTarget) => {
             game.player(*id).is_some_and(|p| p.is_in_game())

@@ -58,6 +58,12 @@ pub enum ChooseSpec {
     /// Note: This is inherently a target, so it doesn't need Target wrapper
     AnyTarget,
 
+    /// Target player matching `PlayerFilter` or any planeswalker.
+    ///
+    /// Used for phrases like "target opponent or planeswalker" and
+    /// "target player or planeswalker".
+    PlayerOrPlaneswalker(PlayerFilter),
+
     /// The source of this ability/effect ("this permanent", "this spell")
     Source,
 
@@ -126,7 +132,7 @@ impl ChooseSpec {
     /// Returns true if this spec represents a target (can fizzle, checks hexproof).
     pub fn is_target(&self) -> bool {
         match self {
-            Self::Target(_) | Self::AnyTarget => true,
+            Self::Target(_) | Self::AnyTarget | Self::PlayerOrPlaneswalker(_) => true,
             Self::WithCount(inner, _) => inner.is_target(),
             _ => false,
         }

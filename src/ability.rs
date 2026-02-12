@@ -9,6 +9,7 @@
 use crate::color::ColorSet;
 use crate::cost::TotalCost;
 use crate::effect::Effect;
+use crate::filter::AlternativeCastKind;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaSymbol;
 use crate::static_abilities::StaticAbility as NewStaticAbility;
@@ -283,6 +284,9 @@ pub struct SpellFilter {
 
     /// Controller filter
     pub controller: Option<PlayerFilter>,
+
+    /// Restrict to spells cast with a specific alternative casting method.
+    pub alternative_cast: Option<AlternativeCastKind>,
 }
 
 impl SpellFilter {
@@ -293,6 +297,7 @@ impl SpellFilter {
         filter.subtypes = self.subtypes.clone();
         filter.colors = self.colors;
         filter.controller = self.controller.clone();
+        filter.alternative_cast = self.alternative_cast;
         filter.targets_player = self.targets_player.clone();
         filter.targets_object = self.targets_object.clone().map(Box::new);
         filter.description()
@@ -496,6 +501,14 @@ pub enum ManaAbilityCondition {
     /// Controller must control a land with at least one of these subtypes.
     /// Used for verge lands (e.g., "Activate only if you control a Plains or a Swamp").
     ControlLandWithSubtype(Vec<crate::types::Subtype>),
+
+    /// Controller must control at least N artifacts.
+    /// Used for metalcraft-style mana abilities (e.g., Mox Opal).
+    ControlAtLeastArtifacts(u32),
+
+    /// Controller must control at least N lands.
+    /// Used for conditions like "Activate only if you control five or more lands."
+    ControlAtLeastLands(u32),
 
     /// Activation timing restriction for mana abilities.
     Timing(ActivationTiming),

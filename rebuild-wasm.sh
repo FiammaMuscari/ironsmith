@@ -19,7 +19,8 @@ Examples:
   IRONSMITH_WASM_SEMANTIC_THRESHOLD=0.85 ./rebuild-wasm.sh
 
 Notes:
-  - With --threshold, parser-backed cards are semantically gated at parse time.
+  - --threshold is accepted for workflow compatibility but does not gate parsing.
+  - Use audit_oracle_clusters for semantic gating and mismatch reports.
   - Default features are "wasm,generated-registry".
 USAGE
 }
@@ -56,13 +57,10 @@ done
 cd "$ROOT_DIR"
 
 if [[ -n "$THRESHOLD" ]]; then
-  IRONSMITH_PARSER_SEMANTIC_GUARD_DEFAULT=1 \
-  IRONSMITH_PARSER_SEMANTIC_THRESHOLD_DEFAULT="$THRESHOLD" \
-  IRONSMITH_PARSER_SEMANTIC_DIMS_DEFAULT="$DIMS" \
-  wasm-pack build --release --target web --features "$FEATURES"
-else
-  wasm-pack build --release --target web --features "$FEATURES"
+  echo "[INFO] --threshold=${THRESHOLD} (dims=${DIMS}) is advisory only; parser semantic guard is disabled."
 fi
+
+wasm-pack build --release --target web --features "$FEATURES"
 
 mkdir -p "$DEMO_PKG_DIR"
 cp -f \

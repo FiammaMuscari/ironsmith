@@ -72,57 +72,49 @@ impl EffectExecutor for RegenerateEffect {
             ));
         }
 
-        // Resolve the target creature
-        let mut targets =
-            crate::effects::helpers::resolve_objects_from_spec(game, &self.target, ctx)
-                .map_err(|_| ExecutionError::InvalidTarget)?;
-        let Some(target_id) = targets.pop() else {
+        // Resolve all matching targets. This supports both traditional
+        // "target creature" regeneration and "regenerate each/all ..." forms.
+        let targets = crate::effects::helpers::resolve_objects_from_spec(game, &self.target, ctx)
+            .map_err(|_| ExecutionError::InvalidTarget)?;
+        if targets.is_empty() {
             return Err(ExecutionError::InvalidTarget);
-        };
-
-        // Verify target is a creature on the battlefield
-        let obj = game
-            .object(target_id)
-            .ok_or(ExecutionError::ObjectNotFound(target_id))?;
-
-        if obj.zone != Zone::Battlefield {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
         }
 
-        if !obj.is_creature() {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+        let mut outcomes = Vec::new();
+        for target_id in targets {
+            // Regeneration only applies to creatures currently on the battlefield.
+            let Some(obj) = game.object(target_id) else {
+                continue;
+            };
+            if obj.zone != Zone::Battlefield || !obj.is_creature() {
+                continue;
+            }
+            let controller = obj.controller;
+
+            let replacement_effects = vec![
+                Effect::tap(ChooseSpec::SpecificObject(target_id)),
+                Effect::clear_damage(ChooseSpec::SpecificObject(target_id)),
+                // Removing from combat is intentionally omitted until combat-state
+                // tracking for regenerated permanents is wired in.
+            ];
+
+            let matcher = RegenerationShieldMatcher::new(target_id);
+            let replacement_effect = ReplacementEffect::with_matcher(
+                target_id, // source is the creature itself
+                controller,
+                matcher,
+                ReplacementAction::Instead(replacement_effects),
+            )
+            .self_replacing();
+
+            let apply = ApplyReplacementEffect::one_shot(replacement_effect);
+            outcomes.push(execute_effect(game, &Effect::new(apply), ctx)?);
         }
 
-        let controller = obj.controller;
-
-        // Create the replacement effects that will happen instead of destruction.
-        // Per MTG rules, regeneration:
-        // 1. Taps the creature
-        // 2. Removes all damage from it
-        // 3. Removes it from combat (if applicable)
-        // We use ChooseSpec::SpecificObject to target the creature being regenerated.
-        let replacement_effects = vec![
-            // Tap the creature
-            Effect::tap(ChooseSpec::SpecificObject(target_id)),
-            // Remove all damage
-            Effect::clear_damage(ChooseSpec::SpecificObject(target_id)),
-            // Removing from combat is intentionally omitted until combat-state
-            // tracking for regenerated permanents is wired in.
-        ];
-
-        // Create a regeneration shield as a one-shot replacement effect
-        let matcher = RegenerationShieldMatcher::new(target_id);
-        let replacement_effect = ReplacementEffect::with_matcher(
-            target_id, // source is the creature itself
-            controller,
-            matcher,
-            ReplacementAction::Instead(replacement_effects),
-        )
-        .self_replacing();
-
-        let apply = ApplyReplacementEffect::one_shot(replacement_effect);
-
-        execute_effect(game, &Effect::new(apply), ctx)
+        if outcomes.is_empty() {
+            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+        }
+        Ok(EffectOutcome::aggregate(outcomes))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {

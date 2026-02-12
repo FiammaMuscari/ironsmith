@@ -172,6 +172,29 @@ fn mana_ability_condition_met(
                         && required_subtypes.iter().any(|st| perm.has_subtype(*st))
                 })
             }
+            ManaAbilityCondition::ControlAtLeastArtifacts(required_count) => {
+                let count = game
+                    .battlefield
+                    .iter()
+                    .filter_map(|&perm_id| game.object(perm_id))
+                    .filter(|perm| {
+                        perm.controller == source.controller
+                            && perm
+                                .card_types
+                                .contains(&crate::types::CardType::Artifact)
+                    })
+                    .count() as u32;
+                count >= *required_count
+            }
+            ManaAbilityCondition::ControlAtLeastLands(required_count) => {
+                let count = game
+                    .battlefield
+                    .iter()
+                    .filter_map(|&perm_id| game.object(perm_id))
+                    .filter(|perm| perm.controller == source.controller && perm.is_land())
+                    .count() as u32;
+                count >= *required_count
+            }
             // For mana-production inference we only care about what colors can be
             // produced, not whether the ability is currently activatable by timing.
             ManaAbilityCondition::Timing(_) => true,

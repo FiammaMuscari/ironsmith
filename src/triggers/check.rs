@@ -274,20 +274,41 @@ pub fn check_delayed_triggers(
     let mut to_remove = Vec::new();
 
     for (idx, delayed) in game.delayed_triggers.iter().enumerate() {
-        let ctx = TriggerContext::for_source(ObjectId::from_raw(0), delayed.controller, game);
-        if delayed.trigger.matches(trigger_event, &ctx) {
-            let source = delayed
-                .target_objects
-                .first()
-                .copied()
-                .unwrap_or(ObjectId::from_raw(0));
+        let candidate_sources = if delayed.target_objects.is_empty() {
+            vec![ObjectId::from_raw(0)]
+        } else {
+            delayed.target_objects.clone()
+        };
+
+        let mut fired = false;
+        for source in candidate_sources {
+            let ctx = TriggerContext::for_source(source, delayed.controller, game);
+            if !delayed.trigger.matches(trigger_event, &ctx) {
+                continue;
+            }
+
+            fired = true;
             let source_stable_id = game
                 .object(source)
                 .map(|o| o.stable_id)
+                .or_else(|| {
+                    if trigger_event.object_id() == Some(source) {
+                        trigger_event.snapshot().map(|snapshot| snapshot.stable_id)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_else(|| StableId::from(source));
             let source_name = game
                 .object(source)
                 .map(|o| o.name.clone())
+                .or_else(|| {
+                    if trigger_event.object_id() == Some(source) {
+                        trigger_event.snapshot().map(|snapshot| snapshot.name.clone())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_else(|| "Delayed Trigger".to_string());
 
             triggered.push(TriggeredAbilityEntry {
@@ -307,8 +328,12 @@ pub fn check_delayed_triggers(
             });
 
             if delayed.one_shot {
-                to_remove.push(idx);
+                break;
             }
+        }
+
+        if fired && delayed.one_shot {
+            to_remove.push(idx);
         }
     }
 

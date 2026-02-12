@@ -134,6 +134,12 @@ fn display_value(value: &Value) -> String {
             }
             format!("the number of {phrase}")
         }
+        Value::CountScaled(filter, multiplier) => {
+            let desc = strip_article(&filter.description());
+            let phrase = pluralize_phrase(&desc);
+            format!("{multiplier} times the number of {phrase}")
+        }
+        Value::CreaturesDiedThisTurn => "the number of creatures that died this turn".to_string(),
         Value::CountPlayers(_) => "the number of players".to_string(),
         _ => format!("{:?}", value),
     }

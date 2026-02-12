@@ -26,6 +26,7 @@ struct Args {
     embedding_threshold: f32,
     mismatch_names_out: Option<String>,
     false_positive_names: Option<String>,
+    failures_out: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +45,7 @@ struct CardAudit {
     compiled_lines: Vec<String>,
     oracle_coverage: f32,
     compiled_coverage: f32,
+    similarity_score: f32,
     line_delta: isize,
     semantic_mismatch: bool,
     semantic_false_positive: bool,
@@ -85,10 +87,32 @@ struct JsonExample {
     parse_error: Option<String>,
     oracle_coverage: f32,
     compiled_coverage: f32,
+    similarity_score: f32,
     line_delta: isize,
     oracle_excerpt: String,
     compiled_excerpt: String,
     oracle_text: String,
+    compiled_lines: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonFailureReport {
+    threshold: f32,
+    cards_processed: usize,
+    failures: usize,
+    entries: Vec<JsonFailureEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonFailureEntry {
+    name: String,
+    parse_error: Option<String>,
+    oracle_coverage: f32,
+    compiled_coverage: f32,
+    similarity_score: f32,
+    line_delta: isize,
+    oracle_text: String,
+    compiled_text: String,
     compiled_lines: Vec<String>,
 }
 
@@ -107,6 +131,7 @@ fn parse_args() -> Result<Args, String> {
     let mut embedding_threshold = 0.17f32;
     let mut mismatch_names_out = None;
     let mut false_positive_names = None;
+    let mut failures_out = None;
 
     let mut iter = env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -199,9 +224,15 @@ fn parse_args() -> Result<Args, String> {
                         .ok_or_else(|| "--false-positive-names requires a path".to_string())?,
                 );
             }
+            "--failures-out" => {
+                failures_out = Some(
+                    iter.next()
+                        .ok_or_else(|| "--failures-out requires a path".to_string())?,
+                );
+            }
             _ => {
                 return Err(format!(
-                    "unknown argument '{arg}'. supported: --cards <path> --limit <n> --min-cluster-size <n> --top-clusters <n> --examples <n> --json-out <path> --parser-trace --trace-name <substring> --allow-unsupported --use-embeddings --embedding-dims <n> --embedding-threshold <f32> --mismatch-names-out <path> --false-positive-names <path>"
+                    "unknown argument '{arg}'. supported: --cards <path> --limit <n> --min-cluster-size <n> --top-clusters <n> --examples <n> --json-out <path> --parser-trace --trace-name <substring> --allow-unsupported --use-embeddings --embedding-dims <n> --embedding-threshold <f32> --mismatch-names-out <path> --false-positive-names <path> --failures-out <path>"
                 ));
             }
         }
@@ -222,6 +253,7 @@ fn parse_args() -> Result<Args, String> {
         embedding_threshold,
         mismatch_names_out,
         false_positive_names,
+        failures_out,
     })
 }
 
@@ -738,7 +770,7 @@ fn compare_semantics(
     oracle_text: &str,
     compiled_lines: &[String],
     embedding: Option<EmbeddingConfig>,
-) -> (f32, f32, isize, bool) {
+) -> (f32, f32, f32, isize, bool) {
     let oracle_clauses = semantic_clauses(oracle_text);
     let compiled_clauses = compiled_lines
         .iter()
@@ -759,7 +791,7 @@ fn compare_semantics(
     // Parenthetical-only oracle text (typically reminder text) carries no
     // semantic clauses after normalization, so don't flag as mismatch.
     if oracle_tokens.is_empty() {
-        return (1.0, 1.0, 0, false);
+        return (1.0, 1.0, 1.0, 0, false);
     }
 
     let oracle_coverage = directional_coverage(&oracle_tokens, &compiled_tokens);
@@ -771,6 +803,7 @@ fn compare_semantics(
     let line_gap = line_delta.abs() >= 3 && min_coverage < 0.50;
     let empty_gap = !oracle_tokens.is_empty() && compiled_tokens.is_empty();
 
+    let mut similarity_score = min_coverage;
     let mut mismatch = semantic_gap || line_gap || empty_gap;
 
     if let Some(cfg) = embedding {
@@ -785,12 +818,13 @@ fn compare_semantics(
         let emb_oracle = directional_embedding_coverage(&oracle_emb, &compiled_emb);
         let emb_compiled = directional_embedding_coverage(&compiled_emb, &oracle_emb);
         let emb_min = emb_oracle.min(emb_compiled);
+        similarity_score = emb_min;
         if emb_min < cfg.mismatch_threshold {
             mismatch = true;
         }
     }
 
-    (oracle_coverage, compiled_coverage, line_delta, mismatch)
+    (oracle_coverage, compiled_coverage, similarity_score, line_delta, mismatch)
 }
 
 fn normalize_parse_error(error: &str) -> String {
@@ -1038,14 +1072,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.allow_unsupported {
         set_allow_unsupported(true);
     } else {
-        unsafe {
-            env::set_var("IRONSMITH_PARSER_SEMANTIC_GUARD", "1");
-            env::set_var("IRONSMITH_PARSER_SEMANTIC_DIMS", args.embedding_dims.to_string());
-            env::set_var(
-                "IRONSMITH_PARSER_SEMANTIC_THRESHOLD",
-                args.embedding_threshold.to_string(),
-            );
-        }
+        set_allow_unsupported(false);
     }
 
     let embedding_cfg = if args.use_embeddings {
@@ -1090,8 +1117,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let audit = match parse_result {
             Ok(definition) => {
                 let compiled = compiled_lines(&definition);
-                let (oracle_coverage, compiled_coverage, line_delta, semantic_mismatch) =
-                    compare_semantics(&card_input.oracle_text, &compiled, embedding_cfg);
+                let (
+                    oracle_coverage,
+                    compiled_coverage,
+                    similarity_score,
+                    line_delta,
+                    semantic_mismatch,
+                ) = compare_semantics(&card_input.oracle_text, &compiled, embedding_cfg);
                 CardAudit {
                     name: card_input.name,
                     oracle_text: card_input.oracle_text,
@@ -1100,6 +1132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     compiled_lines: compiled,
                     oracle_coverage,
                     compiled_coverage,
+                    similarity_score,
                     line_delta,
                     semantic_mismatch,
                     semantic_false_positive: false,
@@ -1113,6 +1146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 compiled_lines: Vec::new(),
                 oracle_coverage: 0.0,
                 compiled_coverage: 0.0,
+                similarity_score: 0.0,
                 line_delta: 0,
                 semantic_mismatch: false,
                 semantic_false_positive: false,
@@ -1204,6 +1238,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         names.dedup();
         fs::write(path, names.join("\n"))?;
         println!("Wrote mismatch names to {path} ({} names)", names.len());
+    }
+
+    if let Some(path) = args.failures_out.as_ref() {
+        let mut entries = clusters
+            .values()
+            .flatten()
+            .filter(|audit| audit.parse_error.is_none() && audit.semantic_mismatch)
+            .map(|audit| JsonFailureEntry {
+                name: audit.name.clone(),
+                parse_error: audit.parse_error.clone(),
+                oracle_coverage: audit.oracle_coverage,
+                compiled_coverage: audit.compiled_coverage,
+                similarity_score: audit.similarity_score,
+                line_delta: audit.line_delta,
+                oracle_text: audit.oracle_text.clone(),
+                compiled_text: audit.compiled_lines.join("\n"),
+                compiled_lines: audit.compiled_lines.clone(),
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|a, b| {
+            a.similarity_score
+                .partial_cmp(&b.similarity_score)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        let report = JsonFailureReport {
+            threshold: args.embedding_threshold,
+            cards_processed,
+            failures: entries.len(),
+            entries,
+        };
+        let payload = serde_json::to_string_pretty(&report)?;
+        fs::write(path, payload)?;
+        println!(
+            "Wrote threshold failure report to {path} ({} cards)",
+            report.failures
+        );
     }
 
     let mut ranked: Vec<(String, Vec<CardAudit>)> = clusters
@@ -1367,8 +1438,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             } else {
                 println!(
-                    "  - {} [coverage o->{:.2}, c->{:.2}, delta={}]",
-                    entry.name, entry.oracle_coverage, entry.compiled_coverage, entry.line_delta
+                    "  - {} [score={:.2}, coverage o->{:.2}, c->{:.2}, delta={}]",
+                    entry.name,
+                    entry.similarity_score,
+                    entry.oracle_coverage,
+                    entry.compiled_coverage,
+                    entry.line_delta
                 );
             }
             println!("    oracle: {}", first_oracle_excerpt(&entry.oracle_text));
@@ -1392,6 +1467,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 parse_error: entry.parse_error.clone(),
                 oracle_coverage: entry.oracle_coverage,
                 compiled_coverage: entry.compiled_coverage,
+                similarity_score: entry.similarity_score,
                 line_delta: entry.line_delta,
                 oracle_excerpt: first_oracle_excerpt(&entry.oracle_text),
                 compiled_excerpt: first_compiled_excerpt(&entry.compiled_lines),
@@ -1446,7 +1522,7 @@ mod tests {
     fn test_compare_semantics_detects_drop() {
         let oracle = "Draw a card. Target player discards a card.";
         let compiled = vec!["you gain 2 life".to_string()];
-        let (oracle_coverage, compiled_coverage, line_delta, mismatch) =
+        let (oracle_coverage, compiled_coverage, _similarity_score, line_delta, mismatch) =
             compare_semantics(oracle, &compiled, None);
         assert!(mismatch);
         assert!(oracle_coverage < 0.75);
@@ -1458,7 +1534,7 @@ mod tests {
     fn test_compare_semantics_ignores_parenthetical_only_oracle() {
         let oracle = "({T}: Add {B} or {R}.)";
         let compiled = vec!["Mana ability 1: Tap this source, Add {B} or {R}".to_string()];
-        let (_oracle_coverage, _compiled_coverage, _line_delta, mismatch) =
+        let (_oracle_coverage, _compiled_coverage, _similarity_score, _line_delta, mismatch) =
             compare_semantics(oracle, &compiled, None);
         assert!(
             !mismatch,
@@ -1470,7 +1546,8 @@ mod tests {
     fn test_embedding_mode_catches_dropped_where_plus_semantics() {
         let oracle = "Hobbit's Sting deals X damage to target creature, where X is the number of creatures you control plus the number of Foods you control.";
         let compiled = vec!["Deal X damage to target creature Food".to_string()];
-        let (_oracle_coverage, _compiled_coverage, _line_delta, mismatch) = compare_semantics(
+        let (_oracle_coverage, _compiled_coverage, _similarity_score, _line_delta, mismatch) =
+            compare_semantics(
             oracle,
             &compiled,
             Some(EmbeddingConfig {

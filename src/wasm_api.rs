@@ -3100,6 +3100,20 @@ fn describe_mana_condition(condition: &crate::ability::ManaAbilityCondition) -> 
                 format!("you control a land with subtype {names}")
             }
         }
+        crate::ability::ManaAbilityCondition::ControlAtLeastArtifacts(count) => {
+            if *count == 1 {
+                "you control an artifact".to_string()
+            } else {
+                format!("you control {count} or more artifacts")
+            }
+        }
+        crate::ability::ManaAbilityCondition::ControlAtLeastLands(count) => {
+            if *count == 1 {
+                "you control a land".to_string()
+            } else {
+                format!("you control {count} or more lands")
+            }
+        }
         crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
             crate::ability::ActivationTiming::AnyTime => {
                 "you may activate any time you could cast an instant".to_string()
@@ -3159,6 +3173,19 @@ fn describe_condition(
             format!(
                 "an opponent controls {}",
                 strip_leading_article(&filter.description())
+            )
+        }
+        crate::effect::Condition::PlayerControls { player, filter } => {
+            format!(
+                "{} controls {}",
+                describe_player_filter(player, tagged_subjects),
+                strip_leading_article(&filter.description())
+            )
+        }
+        crate::effect::Condition::PlayerHasLessLifeThanYou { player } => {
+            format!(
+                "{} has less life than you",
+                describe_player_filter(player, tagged_subjects)
             )
         }
         crate::effect::Condition::LifeTotalOrLess(value) => {
@@ -5371,6 +5398,14 @@ fn describe_choose_spec(
         crate::target::ChooseSpec::Player(filter) => {
             strip_leading_article(&describe_player_filter(filter, tagged_subjects)).to_string()
         }
+        crate::target::ChooseSpec::PlayerOrPlaneswalker(filter) => match filter {
+            crate::target::PlayerFilter::Opponent => "target opponent or planeswalker".to_string(),
+            crate::target::PlayerFilter::Any => "target player or planeswalker".to_string(),
+            _ => format!(
+                "target {} or planeswalker",
+                strip_leading_article(&describe_player_filter(filter, tagged_subjects))
+            ),
+        },
         crate::target::ChooseSpec::AnyTarget => "any target".to_string(),
         crate::target::ChooseSpec::Source => "this source".to_string(),
         crate::target::ChooseSpec::SourceController => "you".to_string(),
@@ -5448,6 +5483,15 @@ fn describe_value(
                 pluralize_noun_phrase(&filter.description())
             )
         }
+        crate::effect::Value::CountScaled(filter, multiplier) => {
+            format!(
+                "{multiplier} times the number of {}",
+                pluralize_noun_phrase(&filter.description())
+            )
+        }
+        crate::effect::Value::CreaturesDiedThisTurn => {
+            "the number of creatures that died this turn".to_string()
+        }
         crate::effect::Value::CountPlayers(filter) => format!(
             "the number of {}",
             pluralize_noun_phrase(&describe_player_filter(filter, tagged_subjects))
@@ -5485,6 +5529,9 @@ fn describe_value(
                 "{possessive} devotion to {}",
                 format!("{color:?}").to_ascii_lowercase()
             )
+        }
+        crate::effect::Value::ColorsOfManaSpentToCastThisSpell => {
+            "the number of colors of mana spent to cast this spell".to_string()
         }
         crate::effect::Value::EffectValue(_) => "a prior effect value".to_string(),
         crate::effect::Value::EventValue(crate::effect::EventValueSpec::Amount)

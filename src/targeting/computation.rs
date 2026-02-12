@@ -205,6 +205,9 @@ pub fn compute_legal_targets(
         // WithCount wrapper - recursively compute targets from inner spec
         ChooseSpec::WithCount(inner, _) => compute_legal_targets(game, inner, caster, source_id),
         ChooseSpec::AnyTarget => compute_any_targets(game, caster, source_id),
+        ChooseSpec::PlayerOrPlaneswalker(filter) => {
+            compute_player_or_planeswalker_targets(game, filter, caster, source_id)
+        }
         ChooseSpec::Player(filter) => compute_player_targets(game, filter, caster),
         ChooseSpec::Object(filter) => compute_object_targets(game, filter, caster, source_id),
         // These don't require selection - they're resolved at execution time
@@ -218,6 +221,40 @@ pub fn compute_legal_targets(
         | ChooseSpec::EachPlayer(_)
         | ChooseSpec::Iterated => Vec::new(),
     }
+}
+
+/// Compute legal targets for "target player or planeswalker" style specs.
+fn compute_player_or_planeswalker_targets(
+    game: &GameState,
+    player_filter: &PlayerFilter,
+    caster: PlayerId,
+    source_id: Option<ObjectId>,
+) -> Vec<Target> {
+    let mut targets = compute_player_targets(game, player_filter, caster);
+
+    for &obj_id in &game.battlefield {
+        let Some(obj) = game.object(obj_id) else {
+            continue;
+        };
+        if !obj.has_card_type(CardType::Planeswalker) {
+            continue;
+        }
+
+        if let Some(src_id) = source_id {
+            match can_target_object(game, obj_id, src_id, caster) {
+                TargetingResult::Legal { .. } => targets.push(Target::Object(obj_id)),
+                TargetingResult::Invalid(_) => {}
+            }
+        } else {
+            let is_untargetable = game.is_untargetable(obj_id);
+            let is_controlled_by_caster = obj.controller == caster;
+            if !is_untargetable || is_controlled_by_caster {
+                targets.push(Target::Object(obj_id));
+            }
+        }
+    }
+
+    targets
 }
 
 /// Compute legal targets for "any target" (player or creature/planeswalker).

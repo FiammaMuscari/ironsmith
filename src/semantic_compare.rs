@@ -371,11 +371,11 @@ fn strip_compiled_prefix(line: &str) -> &str {
     }
 }
 
-pub fn compare_semantics(
+pub fn compare_semantics_scored(
     oracle_text: &str,
     compiled_lines: &[String],
     embedding: Option<EmbeddingConfig>,
-) -> (f32, f32, isize, bool) {
+) -> (f32, f32, f32, isize, bool) {
     let oracle_clauses = semantic_clauses(oracle_text);
     let compiled_clauses = compiled_lines
         .iter()
@@ -396,7 +396,7 @@ pub fn compare_semantics(
     // Parenthetical-only oracle text (typically reminder text) carries no
     // semantic clauses after normalization, so don't flag as mismatch.
     if oracle_tokens.is_empty() {
-        return (1.0, 1.0, 0, false);
+        return (1.0, 1.0, 1.0, 0, false);
     }
 
     let oracle_coverage = directional_coverage(&oracle_tokens, &compiled_tokens);
@@ -408,6 +408,7 @@ pub fn compare_semantics(
     let line_gap = line_delta.abs() >= 3 && min_coverage < 0.50;
     let empty_gap = !oracle_tokens.is_empty() && compiled_tokens.is_empty();
 
+    let mut similarity_score = min_coverage;
     let mut mismatch = semantic_gap || line_gap || empty_gap;
 
     if let Some(cfg) = embedding {
@@ -422,10 +423,27 @@ pub fn compare_semantics(
         let emb_oracle = directional_embedding_coverage(&oracle_emb, &compiled_emb);
         let emb_compiled = directional_embedding_coverage(&compiled_emb, &oracle_emb);
         let emb_min = emb_oracle.min(emb_compiled);
+        similarity_score = emb_min;
         if emb_min < cfg.mismatch_threshold {
             mismatch = true;
         }
     }
 
+    (
+        oracle_coverage,
+        compiled_coverage,
+        similarity_score,
+        line_delta,
+        mismatch,
+    )
+}
+
+pub fn compare_semantics(
+    oracle_text: &str,
+    compiled_lines: &[String],
+    embedding: Option<EmbeddingConfig>,
+) -> (f32, f32, isize, bool) {
+    let (oracle_coverage, compiled_coverage, _similarity_score, line_delta, mismatch) =
+        compare_semantics_scored(oracle_text, compiled_lines, embedding);
     (oracle_coverage, compiled_coverage, line_delta, mismatch)
 }

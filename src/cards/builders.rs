@@ -235,6 +235,7 @@ enum PlayerAst {
     Opponent,
     That,
     ItsController,
+    ItsOwner,
     Implicit,
 }
 
@@ -242,6 +243,7 @@ enum PlayerAst {
 enum TargetAst {
     Source(Option<TextSpan>),
     AnyTarget(Option<TextSpan>),
+    PlayerOrPlaneswalker(PlayerFilter, Option<TextSpan>),
     Spell(Option<TextSpan>),
     Player(PlayerFilter, Option<TextSpan>),
     Object(ObjectFilter, Option<TextSpan>, Option<TextSpan>),
@@ -259,6 +261,13 @@ enum PredicateAst {
     ItIsLandCard,
     ItMatches(ObjectFilter),
     TaggedMatches(TagKey, ObjectFilter),
+    PlayerControls {
+        player: PlayerAst,
+        filter: ObjectFilter,
+    },
+    PlayerHasLessLifeThanYou {
+        player: PlayerAst,
+    },
     SourceIsTapped,
     YouAttackedThisTurn,
     NoSpellsWereCastLastTurn,
@@ -288,6 +297,9 @@ enum EffectAst {
     },
     Fight {
         creature1: TargetAst,
+        creature2: TargetAst,
+    },
+    FightIterated {
         creature2: TargetAst,
     },
     DealDamageEach {
@@ -320,6 +332,7 @@ enum EffectAst {
         count: Value,
         target: TargetAst,
         target_count: Option<ChoiceCount>,
+        distributed: bool,
     },
     PutCountersAll {
         counter_type: CounterType,
@@ -373,6 +386,11 @@ enum EffectAst {
     PreventDamage {
         amount: Value,
         target: TargetAst,
+        duration: Until,
+    },
+    PreventDamageEach {
+        amount: Value,
+        filter: ObjectFilter,
         duration: Until,
     },
     GrantProtectionChoice {
@@ -465,6 +483,13 @@ enum EffectAst {
     ExtraTurnAfterTurn {
         player: PlayerAst,
     },
+    DelayedUntilNextEndStep {
+        player: PlayerFilter,
+        effects: Vec<EffectAst>,
+    },
+    DelayedWhenLastObjectDiesThisTurn {
+        effects: Vec<EffectAst>,
+    },
     RevealTop {
         player: PlayerAst,
     },
@@ -518,6 +543,9 @@ enum EffectAst {
     },
     Regenerate {
         target: TargetAst,
+    },
+    RegenerateAll {
+        filter: ObjectFilter,
     },
     Mill {
         count: Value,
@@ -585,6 +613,10 @@ enum EffectAst {
     ForEachPlayer {
         effects: Vec<EffectAst>,
     },
+    ForEachObject {
+        filter: ObjectFilter,
+        effects: Vec<EffectAst>,
+    },
     ForEachTagged {
         tag: TagKey,
         effects: Vec<EffectAst>,
@@ -621,7 +653,7 @@ enum EffectAst {
     #[allow(dead_code)]
     CreateToken {
         name: String,
-        count: u32,
+        count: Value,
         player: PlayerAst,
     },
     CreateTokenCopy {
@@ -642,7 +674,7 @@ enum EffectAst {
     },
     CreateTokenWithMods {
         name: String,
-        count: u32,
+        count: Value,
         player: PlayerAst,
         tapped: bool,
         attacking: bool,
@@ -5486,6 +5518,34 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             debug.contains("Boar") && !debug.contains("name: \"Food\""),
             "expected creature token to remain Boar rather than Food, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_for_each_player_put_from_graveyard_keeps_choice_non_targeted() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Exhume Variant")
+            .parse_text("Each player puts a creature card from their graveyard onto the battlefield.")
+            .expect("for-each player put-from-graveyard should parse");
+
+        let joined = crate::compiled_text::compiled_lines(&def).join(" ");
+        assert!(
+            !joined.contains("target creature card in that player's graveyard"),
+            "for-each choice should not become a target selection: {joined}"
+        );
+    }
+
+    #[test]
+    fn parse_for_each_player_may_put_from_hand_keeps_choice_non_targeted() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Show and Tell Variant")
+            .parse_text(
+                "Each player may put an artifact, creature, enchantment, or land card from their hand onto the battlefield.",
+            )
+            .expect("for-each player may-put-from-hand should parse");
+
+        let joined = crate::compiled_text::compiled_lines(&def).join(" ");
+        assert!(
+            !joined.contains("target artifact or creature or enchantment or land card"),
+            "for-each choice should not force target wording: {joined}"
         );
     }
 }
