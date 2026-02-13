@@ -11,8 +11,8 @@ use crate::tag::TagKey;
 
 // Re-export all filter types
 pub use crate::filter::{
-    Comparison, FilterContext, ObjectFilter, ObjectRef, PlayerFilter, TaggedObjectConstraint,
-    TaggedOpbjectRelation,
+    Comparison, FilterContext, ObjectFilter, ObjectRef, PlayerFilter, PtReference,
+    TaggedObjectConstraint, TaggedOpbjectRelation,
 };
 
 /// Specifies what can be chosen or targeted by an effect.

@@ -12,7 +12,7 @@ use crate::object::{CounterType, Object};
 use crate::snapshot::ObjectSnapshot;
 use crate::static_abilities::StaticAbilityId;
 use crate::targeting::has_protection_from_source;
-use crate::types::{CardType, Supertype};
+use crate::types::{CardType, Subtype, Supertype};
 use crate::zone::Zone;
 
 /// A state-based action that needs to be performed.
@@ -83,6 +83,16 @@ fn has_ability_id(object: &Object, ability_id: StaticAbilityId) -> bool {
     })
 }
 
+fn has_ability_id_with_game(
+    object: &Object,
+    game: &GameState,
+    ability_id: StaticAbilityId,
+) -> bool {
+    game.calculated_characteristics(object.id)
+        .map(|c| c.static_abilities.iter().any(|a| a.id() == ability_id))
+        .unwrap_or_else(|| has_ability_id(object, ability_id))
+}
+
 /// Check state-based actions and return a list of actions that need to be performed.
 ///
 /// This should be called whenever a player would receive priority.
@@ -146,15 +156,16 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
         let Some(obj) = game.object(obj_id) else {
             continue;
         };
+        let calculated_subtypes = game.calculated_subtypes(obj_id);
 
         // Creature with 0 or less toughness dies (unless indestructible)
         // Check both:
         // 1. CantEffectTracker (catches indestructibility from external sources)
         // 2. Direct ability check (in case tracker hasn't been refreshed)
         // IMPORTANT: Use calculated_toughness to account for counters and effects!
-        if obj.has_card_type(CardType::Creature) {
+        if game.object_has_card_type(obj_id, CardType::Creature) {
             let is_indestructible = !game.can_be_destroyed(obj_id)
-                || has_ability_id(obj, StaticAbilityId::Indestructible);
+                || has_ability_id_with_game(obj, game, StaticAbilityId::Indestructible);
 
             // Use calculated toughness to include -1/-1 counters, pump effects, etc.
             if let Some(toughness) = game.calculated_toughness(obj_id)
@@ -167,14 +178,18 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
 
             // Creature with lethal damage dies (unless indestructible)
             let damage_marked = game.damage_on(obj_id);
-            if obj.has_lethal_damage(damage_marked) && !is_indestructible {
+            let toughness_for_lethal = game.calculated_toughness(obj_id).or_else(|| obj.toughness());
+            if toughness_for_lethal.is_some_and(|toughness| {
+                toughness > 0 && damage_marked >= toughness as u32
+            }) && !is_indestructible
+            {
                 actions.push(StateBasedAction::ObjectDies(obj_id));
                 continue;
             }
         }
 
         // Planeswalker with 0 or less loyalty
-        if obj.has_card_type(CardType::Planeswalker) {
+        if game.object_has_card_type(obj_id, CardType::Planeswalker) {
             let loyalty_counters = obj
                 .counters
                 .get(&CounterType::Loyalty)
@@ -187,8 +202,8 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
         }
 
         // Aura not attached to anything or attached to illegal permanent
-        if obj.has_card_type(CardType::Enchantment)
-            && obj.subtypes.contains(&crate::types::Subtype::Aura)
+        if game.object_has_card_type(obj_id, CardType::Enchantment)
+            && calculated_subtypes.contains(&Subtype::Aura)
         {
             if obj.attached_to.is_none() {
                 actions.push(StateBasedAction::AuraFallsOff(obj_id));
@@ -211,12 +226,12 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
         }
 
         // Equipment not attached to a creature
-        if obj.has_card_type(CardType::Artifact)
-            && obj.subtypes.contains(&crate::types::Subtype::Equipment)
+        if game.object_has_card_type(obj_id, CardType::Artifact)
+            && calculated_subtypes.contains(&Subtype::Equipment)
             && let Some(attached_id) = obj.attached_to
         {
-            if let Some(attached) = game.object(attached_id) {
-                if !attached.has_card_type(CardType::Creature) {
+            if game.object(attached_id).is_some() {
+                if !game.object_has_card_type(attached_id, CardType::Creature) {
                     actions.push(StateBasedAction::EquipmentFallsOff(obj_id));
                 }
             } else {
@@ -226,7 +241,7 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
 
         // Saga with final chapter resolved AND still at max lore counters
         // (If lore counters are removed after final chapter triggers, the saga survives)
-        if obj.subtypes.contains(&crate::types::Subtype::Saga)
+        if calculated_subtypes.contains(&Subtype::Saga)
             && game.is_saga_final_chapter_resolved(obj_id)
         {
             let max_chapter = obj.max_saga_chapter.unwrap_or(0);

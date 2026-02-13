@@ -1891,7 +1891,9 @@ pub fn get_convoke_creatures(
         .filter_map(|&id| {
             let obj = game.object(id)?;
             // Must be a creature controlled by player
-            if obj.controller != player || !obj.is_creature() {
+            if obj.controller != player
+                || !game.object_has_card_type(id, crate::types::CardType::Creature)
+            {
                 return None;
             }
             // Must be untapped
@@ -2016,7 +2018,7 @@ pub fn compute_legal_attackers(game: &GameState, _combat: &CombatState) -> Vec<A
             continue;
         }
 
-        if !perm.is_creature() {
+        if !game.object_has_card_type(perm_id, crate::types::CardType::Creature) {
             continue;
         }
 
@@ -2039,13 +2041,13 @@ pub fn compute_legal_attackers(game: &GameState, _combat: &CombatState) -> Vec<A
         for &other_perm_id in &game.battlefield {
             if let Some(other_perm) = game.object(other_perm_id)
                 && other_perm.controller != active_player
-                && other_perm.has_card_type(crate::types::CardType::Planeswalker)
+                && game.object_has_card_type(other_perm_id, crate::types::CardType::Planeswalker)
             {
                 valid_targets.push(AttackTarget::Planeswalker(other_perm_id));
             }
         }
 
-        let must_attack = crate::rules::combat::must_attack(perm);
+        let must_attack = crate::rules::combat::must_attack_with_game(perm, game);
 
         if !valid_targets.is_empty() {
             options.push(AttackerOption {
@@ -2086,7 +2088,7 @@ pub fn compute_legal_blockers(
                 continue;
             }
 
-            if !blocker.is_creature() {
+            if !game.object_has_card_type(perm_id, crate::types::CardType::Creature) {
                 continue;
             }
 
@@ -2096,7 +2098,7 @@ pub fn compute_legal_blockers(
             }
         }
 
-        let min_blockers = crate::rules::combat::minimum_blockers(attacker);
+        let min_blockers = crate::rules::combat::minimum_blockers_with_game(attacker, game);
 
         options.push(BlockerOption {
             attacker: attacker_id,

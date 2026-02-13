@@ -12224,6 +12224,14 @@ fn merge_filters(base: &ObjectFilter, specific: &ObjectFilter) -> ObjectFilter {
     if let Some(mv) = &specific.mana_value {
         merged.mana_value = Some(mv.clone());
     }
+    if let Some(power) = &specific.power {
+        merged.power = Some(power.clone());
+        merged.power_reference = specific.power_reference;
+    }
+    if let Some(toughness) = &specific.toughness {
+        merged.toughness = Some(toughness.clone());
+        merged.toughness_reference = specific.toughness_reference;
+    }
     if specific.has_mana_cost {
         merged.has_mana_cost = true;
     }
@@ -21219,6 +21227,7 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
             idx += 1;
             continue;
         };
+        let is_base_reference = idx > 0 && all_words[idx - 1] == "base";
 
         let axis_word_count = usize::from(axis == "mana value") + 1;
         let value_tokens = if idx + axis_word_count < all_words.len() {
@@ -21234,8 +21243,22 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         };
 
         match axis {
-            "power" => filter.power = Some(cmp),
-            "toughness" => filter.toughness = Some(cmp),
+            "power" => {
+                filter.power = Some(cmp);
+                filter.power_reference = if is_base_reference {
+                    crate::filter::PtReference::Base
+                } else {
+                    crate::filter::PtReference::Effective
+                };
+            }
+            "toughness" => {
+                filter.toughness = Some(cmp);
+                filter.toughness_reference = if is_base_reference {
+                    crate::filter::PtReference::Base
+                } else {
+                    crate::filter::PtReference::Effective
+                };
+            }
             "mana value" => filter.mana_value = Some(cmp),
             _ => {}
         }

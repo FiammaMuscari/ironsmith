@@ -36,6 +36,18 @@ fn has_ability_id(object: &Object, ability_id: StaticAbilityId) -> bool {
     })
 }
 
+fn has_ability_id_with_game(
+    object: &Object,
+    game: &crate::game_state::GameState,
+    ability_id: StaticAbilityId,
+) -> bool {
+    game.calculated_characteristics(object.id)
+        .map(|c| c.static_abilities)
+        .unwrap_or_else(|| get_static_abilities(object))
+        .iter()
+        .any(|a| a.id() == ability_id)
+}
+
 /// Check if an object has any of the specified static abilities.
 #[allow(dead_code)]
 fn has_any_ability_id(object: &Object, ability_ids: &[StaticAbilityId]) -> bool {
@@ -81,14 +93,29 @@ fn get_static_abilities(object: &Object) -> Vec<crate::static_abilities::StaticA
 pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::GameState) -> bool {
     // Get calculated abilities for both creatures (includes continuous effects)
     // Fall back to the object's base abilities if not in game state (for unit tests)
-    let attacker_abilities = game
-        .calculated_characteristics(attacker.id)
-        .map(|c| c.static_abilities)
+    let attacker_chars = game.calculated_characteristics(attacker.id);
+    let blocker_chars = game.calculated_characteristics(blocker.id);
+
+    let attacker_abilities = attacker_chars
+        .as_ref()
+        .map(|c| c.static_abilities.clone())
         .unwrap_or_else(|| get_static_abilities(attacker));
-    let blocker_abilities = game
-        .calculated_characteristics(blocker.id)
-        .map(|c| c.static_abilities)
+    let blocker_abilities = blocker_chars
+        .as_ref()
+        .map(|c| c.static_abilities.clone())
         .unwrap_or_else(|| get_static_abilities(blocker));
+    let attacker_colors = attacker_chars
+        .as_ref()
+        .map(|c| c.colors.clone())
+        .unwrap_or_else(|| attacker.colors());
+    let blocker_colors = blocker_chars
+        .as_ref()
+        .map(|c| c.colors.clone())
+        .unwrap_or_else(|| blocker.colors());
+    let blocker_is_artifact = blocker_chars
+        .as_ref()
+        .map(|c| c.card_types.contains(&CardType::Artifact))
+        .unwrap_or_else(|| blocker.has_card_type(CardType::Artifact));
 
     // Helper to check if abilities contain a specific ability ID
     let attacker_has = |id: StaticAbilityId| attacker_abilities.iter().any(|a| a.id() == id);
@@ -136,8 +163,7 @@ pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::
 
     // Fear: can only be blocked by artifact or black creatures
     if attacker_has(StaticAbilityId::Fear) {
-        let blocker_is_artifact = blocker.has_card_type(CardType::Artifact);
-        let blocker_is_black = blocker.colors().contains(Color::Black);
+        let blocker_is_black = blocker_colors.contains(Color::Black);
         if !blocker_is_artifact && !blocker_is_black {
             return false;
         }
@@ -145,9 +171,6 @@ pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::
 
     // Intimidate: can only be blocked by artifact or creatures sharing a color
     if attacker_has(StaticAbilityId::Intimidate) {
-        let blocker_is_artifact = blocker.has_card_type(CardType::Artifact);
-        let attacker_colors = attacker.colors();
-        let blocker_colors = blocker.colors();
         let shares_color = !attacker_colors.intersection(blocker_colors).is_empty();
 
         if !blocker_is_artifact && !shares_color {
@@ -195,8 +218,8 @@ pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::
             .filter_map(|&id| game.object(id))
             .any(|obj| {
                 obj.controller == blocker.controller
-                    && obj.has_card_type(CardType::Land)
-                    && obj.subtypes.contains(&required_land_subtype)
+                    && game.object_has_card_type(obj.id, CardType::Land)
+                    && game.calculated_subtypes(obj.id).contains(&required_land_subtype)
             });
         if defending_has_required_land {
             return false;
@@ -218,14 +241,23 @@ fn protection_prevents_blocking(
     attacker: &Object,
     game: &crate::game_state::GameState,
 ) -> bool {
+    let blocker_chars = game.calculated_characteristics(blocker.id);
+    let blocker_colors = blocker_chars
+        .as_ref()
+        .map(|c| c.colors.clone())
+        .unwrap_or_else(|| blocker.colors());
+    let blocker_card_types = blocker_chars
+        .as_ref()
+        .map(|c| c.card_types.clone())
+        .unwrap_or_else(|| blocker.card_types.clone());
+
     match protection {
         ProtectionFrom::Color(colors) => {
-            let blocker_colors = blocker.colors();
             !colors.intersection(blocker_colors).is_empty()
         }
-        ProtectionFrom::AllColors => !blocker.colors().is_empty(),
-        ProtectionFrom::Creatures => blocker.has_card_type(CardType::Creature),
-        ProtectionFrom::CardType(card_type) => blocker.has_card_type(*card_type),
+        ProtectionFrom::AllColors => !blocker_colors.is_empty(),
+        ProtectionFrom::Creatures => blocker_card_types.contains(&CardType::Creature),
+        ProtectionFrom::CardType(card_type) => blocker_card_types.contains(card_type),
         ProtectionFrom::Permanents(filter) => {
             // Create a filter context for the attacker (who has the protection)
             // "You" is the controller of the attacker, source is the attacker
@@ -233,7 +265,7 @@ fn protection_prevents_blocking(
             filter.matches(blocker, &ctx, game)
         }
         ProtectionFrom::Everything => true,
-        ProtectionFrom::Colorless => blocker.colors().is_empty(),
+        ProtectionFrom::Colorless => blocker_colors.is_empty(),
     }
 }
 
@@ -242,6 +274,19 @@ fn protection_prevents_blocking(
 /// Most creatures require 1 blocker. Creatures with menace require 2.
 pub fn minimum_blockers(attacker: &Object) -> usize {
     if has_ability_id(attacker, StaticAbilityId::Menace) {
+        2
+    } else {
+        1
+    }
+}
+
+/// Returns the minimum number of blockers required to block an attacker,
+/// accounting for granted abilities from continuous effects.
+pub fn minimum_blockers_with_game(
+    attacker: &Object,
+    game: &crate::game_state::GameState,
+) -> usize {
+    if has_ability_id_with_game(attacker, game, StaticAbilityId::Menace) {
         2
     } else {
         1
@@ -272,20 +317,22 @@ pub fn can_attack(creature: &Object, game: &crate::game_state::GameState) -> boo
     }
 
     // Defender prevents attacking
-    if has_ability_id(creature, StaticAbilityId::Defender) {
+    if has_ability_id_with_game(creature, game, StaticAbilityId::Defender) {
         // Unless it has "can attack as though it didn't have defender"
-        if !has_ability_id(creature, StaticAbilityId::CanAttackAsThoughNoDefender) {
+        if !has_ability_id_with_game(creature, game, StaticAbilityId::CanAttackAsThoughNoDefender) {
             return false;
         }
     }
 
     // Summoning sickness prevents attacking (unless haste)
-    if game.is_summoning_sick(creature.id) && !has_ability_id(creature, StaticAbilityId::Haste) {
+    if game.is_summoning_sick(creature.id)
+        && !has_ability_id_with_game(creature, game, StaticAbilityId::Haste)
+    {
         return false;
     }
 
     // "Can't attack" ability
-    if has_ability_id(creature, StaticAbilityId::CantAttack) {
+    if has_ability_id_with_game(creature, game, StaticAbilityId::CantAttack) {
         return false;
     }
 
@@ -320,8 +367,8 @@ pub fn can_attack_defending_player(
             .filter_map(|&id| game.object(id))
             .any(|obj| {
                 obj.controller == defending_player
-                    && obj.has_card_type(CardType::Land)
-                    && obj.subtypes.contains(&required_land_subtype)
+                    && game.object_has_card_type(obj.id, CardType::Land)
+                    && game.calculated_subtypes(obj.id).contains(&required_land_subtype)
             });
         if !defending_has_required_land {
             return false;
@@ -338,14 +385,29 @@ pub fn must_attack(creature: &Object) -> bool {
     has_ability_id(creature, StaticAbilityId::MustAttack)
 }
 
+/// Check if a creature must attack this turn if able, with continuous effects applied.
+pub fn must_attack_with_game(creature: &Object, game: &crate::game_state::GameState) -> bool {
+    has_ability_id_with_game(creature, game, StaticAbilityId::MustAttack)
+}
+
 /// Check if a creature must block this turn if able.
 pub fn must_block(creature: &Object) -> bool {
     has_ability_id(creature, StaticAbilityId::MustBlock)
 }
 
+/// Check if a creature must block this turn if able, with continuous effects applied.
+pub fn must_block_with_game(creature: &Object, game: &crate::game_state::GameState) -> bool {
+    has_ability_id_with_game(creature, game, StaticAbilityId::MustBlock)
+}
+
 /// Check if a creature has vigilance (doesn't tap to attack).
 pub fn has_vigilance(creature: &Object) -> bool {
     has_ability_id(creature, StaticAbilityId::Vigilance)
+}
+
+/// Check if a creature has vigilance (doesn't tap to attack), with continuous effects applied.
+pub fn has_vigilance_with_game(creature: &Object, game: &crate::game_state::GameState) -> bool {
+    has_ability_id_with_game(creature, game, StaticAbilityId::Vigilance)
 }
 
 /// Check if a creature has first strike.

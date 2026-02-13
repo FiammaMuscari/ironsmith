@@ -45,10 +45,10 @@ use crate::object::CounterType;
 use crate::player::ManaPool;
 use crate::rules::combat::{
     deals_first_strike_damage_with_game, deals_regular_combat_damage_with_game, maximum_blockers,
-    minimum_blockers,
+    minimum_blockers_with_game,
 };
 use crate::rules::damage::{
-    DamageResult, DamageTarget, calculate_damage, distribute_trample_damage,
+    DamageResult, DamageTarget, calculate_damage_with_game, distribute_trample_damage,
 };
 use crate::rules::state_based::{apply_state_based_actions_with, check_state_based_actions};
 use crate::snapshot::ObjectSnapshot;
@@ -204,7 +204,7 @@ fn queue_triggers_from_event(
 
         if game
             .object(damage_event.source)
-            .map(|o| o.is_creature())
+            .map(|o| game.object_has_card_type(o.id, CardType::Creature))
             .unwrap_or(false)
         {
             *game
@@ -1418,8 +1418,8 @@ pub fn execute_combat_damage_step(
             continue;
         }
 
-        // Get attacker's power
-        let Some(power) = attacker.power() else {
+        // Get attacker's effective power (includes continuous effects).
+        let Some(power) = game.calculated_power(attacker_id).or_else(|| attacker.power()) else {
             continue;
         };
         if power <= 0 {
@@ -1465,8 +1465,8 @@ pub fn execute_combat_damage_step(
                 continue;
             }
 
-            // Get blocker's power
-            let Some(power) = blocker.power() else {
+            // Get blocker's effective power (includes continuous effects).
+            let Some(power) = game.calculated_power(blocker_id).or_else(|| blocker.power()) else {
                 continue;
             };
             if power <= 0 {
@@ -1481,7 +1481,7 @@ pub fn execute_combat_damage_step(
             }
 
             let damage_result =
-                calculate_damage(blocker, DamageTarget::Permanent, power as u32, true);
+                calculate_damage_with_game(game, blocker, DamageTarget::Permanent, power as u32, true);
             blocker_damage_info.push((blocker_id, *attacker_id, controller, damage_result));
         }
     }
@@ -1555,7 +1555,8 @@ fn deal_damage_to_blockers(
             continue;
         }
         let blocker_id = blocker_ids[i];
-        let damage_result = calculate_damage(attacker, DamageTarget::Permanent, *damage, true);
+        let damage_result =
+            calculate_damage_with_game(game, attacker, DamageTarget::Permanent, *damage, true);
         blocker_damages.push((blocker_id, damage_result));
     }
 
@@ -1564,7 +1565,7 @@ fn deal_damage_to_blockers(
         if let Some(AttackTarget::Player(player_id)) = attack_target {
             Some((
                 player_id,
-                calculate_damage(attacker, DamageTarget::Player(player_id), excess, true),
+                calculate_damage_with_game(game, attacker, DamageTarget::Player(player_id), excess, true),
             ))
         } else {
             None
@@ -1643,7 +1644,7 @@ fn deal_damage_to_defender(
     match target {
         AttackTarget::Player(player_id) => {
             let damage_result =
-                calculate_damage(attacker, DamageTarget::Player(*player_id), damage, true);
+                calculate_damage_with_game(game, attacker, DamageTarget::Player(*player_id), damage, true);
 
             let applied = apply_damage_to_player(game, *player_id, attacker_id, &damage_result);
 
@@ -1673,7 +1674,8 @@ fn deal_damage_to_defender(
             use crate::event_processor::process_damage_with_event;
             use crate::game_event::DamageTarget as EventDamageTarget;
 
-            let damage_result = calculate_damage(attacker, DamageTarget::Permanent, damage, true);
+            let damage_result =
+                calculate_damage_with_game(game, attacker, DamageTarget::Permanent, damage, true);
 
             // Process through replacement/prevention effects
             let (final_damage, was_prevented) = process_damage_with_event(
@@ -2076,6 +2078,12 @@ impl PriorityLoopState {
     /// Configure whether single-option pip payments should be auto-selected.
     pub fn set_auto_choose_single_pip_payment(&mut self, enabled: bool) {
         self.auto_choose_single_pip_payment = enabled;
+    }
+
+    /// Reset pass tracking and assign priority to the active player for a fresh priority window.
+    pub fn reset_for_new_priority_window(&mut self, game: &mut GameState) {
+        self.tracker.set_players_in_game(game.players_in_game());
+        reset_priority(game, &mut self.tracker);
     }
 }
 
@@ -7647,7 +7655,7 @@ pub fn apply_attacker_declarations(
             .into());
         }
 
-        if !creature.is_creature() {
+        if !game.object_has_card_type(decl.creature, CardType::Creature) {
             return Err(ResponseError::InvalidAttackers("Not a creature".to_string()).into());
         }
 
@@ -7658,7 +7666,7 @@ pub fn apply_attacker_declarations(
         });
 
         // Tap the creature (unless it has vigilance)
-        if !crate::rules::combat::has_vigilance(creature) {
+        if !crate::rules::combat::has_vigilance_with_game(creature, game) {
             tap_permanent_with_trigger(game, trigger_queue, decl.creature);
         }
 
@@ -7759,7 +7767,7 @@ pub fn apply_blocker_declarations(
             .into());
         }
 
-        if !blocker.is_creature() {
+        if !game.object_has_card_type(decl.blocker, CardType::Creature) {
             return Err(ResponseError::InvalidBlockers("Not a creature".to_string()).into());
         }
 
@@ -7818,7 +7826,7 @@ pub fn apply_blocker_declarations(
             .into());
         };
 
-        let min = minimum_blockers(attacker);
+        let min = minimum_blockers_with_game(attacker, game);
         if !blockers.is_empty() && blockers.len() < min {
             return Err(ResponseError::InvalidBlockers(format!(
                 "{:?} needs at least {} blockers",
@@ -8130,6 +8138,19 @@ fn generate_damage_triggers(
             queue_triggers_from_event(game, trigger_queue, life_loss_event, false);
         }
     }
+}
+
+/// Queue combat-damage and life-loss triggers for a batch of combat damage events.
+///
+/// This is shared by different runtime frontends (CLI/WASM) so they can execute
+/// combat damage in step actions while keeping trigger emission consistent.
+#[cfg_attr(not(feature = "wasm"), allow(dead_code))]
+pub(crate) fn queue_combat_damage_triggers(
+    game: &mut GameState,
+    events: &[CombatDamageEvent],
+    trigger_queue: &mut TriggerQueue,
+) {
+    generate_damage_triggers(game, events, trigger_queue);
 }
 
 // ============================================================================
@@ -8505,6 +8526,53 @@ mod tests {
 
         // Bob should have taken 3 damage
         assert_eq!(game.player(bob).unwrap().life, 17);
+    }
+
+    #[test]
+    fn test_unblocked_attacker_uses_calculated_power_from_conditional_anthem() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let attacker_id = create_creature(&mut game, "Tek Test", alice, 2, 2);
+
+        if let Some(attacker) = game.object_mut(attacker_id) {
+            let swamp_condition =
+                crate::static_abilities::StaticCondition::CountComparison {
+                    count: crate::static_abilities::AnthemCountExpression::MatchingFilter(
+                        crate::filter::ObjectFilter::land()
+                            .with_subtype(crate::types::Subtype::Swamp)
+                            .you_control(),
+                    ),
+                    comparison: crate::filter::Comparison::GreaterThanOrEqual(1),
+                    display: Some("you control a Swamp".to_string()),
+                };
+            let anthem = crate::static_abilities::Anthem::for_source(2, 0)
+                .with_condition(swamp_condition);
+            attacker
+                .abilities
+                .push(Ability::static_ability(crate::static_abilities::StaticAbility::new(
+                    anthem,
+                )));
+        }
+
+        let swamp = CardBuilder::new(CardId::new(), "Swamp")
+            .card_types(vec![CardType::Land])
+            .subtypes(vec![crate::types::Subtype::Swamp])
+            .build();
+        game.create_object_from_card(&swamp, alice, Zone::Battlefield);
+
+        let mut combat = CombatState::default();
+        combat.attackers.push(crate::combat_state::AttackerInfo {
+            creature: attacker_id,
+            target: AttackTarget::Player(bob),
+        });
+        combat.blockers.insert(attacker_id, Vec::new());
+
+        let events = execute_combat_damage_step(&mut game, &combat, false);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].amount, 4);
+        assert_eq!(game.player(bob).unwrap().life, 16);
     }
 
     #[test]

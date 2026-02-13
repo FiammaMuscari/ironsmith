@@ -8,15 +8,13 @@
 
 use std::collections::HashMap;
 
-use crate::ability::AbilityKind;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
-use crate::object::Object;
 use crate::rules::combat::{
-    can_attack_defending_player, can_block, has_vigilance, maximum_blockers, minimum_blockers,
+    can_attack_defending_player, can_block, has_vigilance_with_game, maximum_blockers,
+    minimum_blockers_with_game,
 };
-use crate::static_abilities::StaticAbilityId;
-use crate::types::CardType;
+use crate::static_abilities::StaticAbility;
 use crate::zone::Zone;
 
 /// Combat state tracking.
@@ -207,17 +205,6 @@ pub fn end_combat(combat: &mut CombatState) {
     combat.damage_assignment_order.clear();
 }
 
-/// Check if an object has a static ability with the given ID.
-fn has_ability_id(object: &Object, ability_id: StaticAbilityId) -> bool {
-    object.abilities.iter().any(|a| {
-        if let AbilityKind::Static(s) = &a.kind {
-            s.id() == ability_id
-        } else {
-            false
-        }
-    })
-}
-
 /// Declares attackers for combat.
 ///
 /// This function validates all attackers and taps those without vigilance.
@@ -256,7 +243,7 @@ pub fn declare_attackers(
         }
 
         // Must be a creature
-        if !creature.has_card_type(CardType::Creature) {
+        if !game.object_has_card_type(*creature_id, crate::types::CardType::Creature) {
             return Err(CombatError::NotACreature(*creature_id));
         }
 
@@ -288,7 +275,9 @@ pub fn declare_attackers(
                 let pw = game
                     .object(*pw_id)
                     .ok_or_else(|| CombatError::InvalidAttackTarget(target.clone()))?;
-                if pw.zone != Zone::Battlefield || !pw.has_card_type(CardType::Planeswalker) {
+                if pw.zone != Zone::Battlefield
+                    || !game.object_has_card_type(*pw_id, crate::types::CardType::Planeswalker)
+                {
                     return Err(CombatError::InvalidAttackTarget(target.clone()));
                 }
                 pw.controller
@@ -322,7 +311,7 @@ pub fn declare_attackers(
 
         // Tap the creature unless it has vigilance
         let creature = game.object(creature_id).unwrap();
-        if !has_vigilance(creature) {
+        if !has_vigilance_with_game(creature, game) {
             game.tap(creature_id);
         }
     }
@@ -369,7 +358,7 @@ pub fn declare_blockers(
         }
 
         // Must be a creature
-        if !blocker.has_card_type(CardType::Creature) {
+        if !game.object_has_card_type(*blocker_id, crate::types::CardType::Creature) {
             return Err(CombatError::NotACreature(*blocker_id));
         }
 
@@ -396,7 +385,9 @@ pub fn declare_blockers(
         }
 
         // Check if blocker has "can't block" from abilities or effects
-        if has_ability_id(blocker, StaticAbilityId::CantBlock) || !game.can_block(*blocker_id) {
+        if game.object_has_ability(*blocker_id, &StaticAbility::cant_block())
+            || !game.can_block(*blocker_id)
+        {
             return Err(CombatError::CreatureCannotBlock {
                 blocker: *blocker_id,
                 attacker: *attacker_id,
@@ -420,7 +411,7 @@ pub fn declare_blockers(
     // Second pass: validate minimum/maximum blockers.
     for (attacker_id, blocker_list) in &blockers_by_attacker {
         let attacker = game.object(*attacker_id).unwrap();
-        let min_blockers = minimum_blockers(attacker);
+        let min_blockers = minimum_blockers_with_game(attacker, game);
 
         // If any blockers were assigned, must meet minimum
         if !blocker_list.is_empty() && blocker_list.len() < min_blockers {

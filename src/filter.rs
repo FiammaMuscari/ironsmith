@@ -186,6 +186,16 @@ impl Comparison {
     }
 }
 
+/// Which power/toughness reference a filter should use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PtReference {
+    /// "Power"/"toughness" (effective values, with continuous effects applied).
+    #[default]
+    Effective,
+    /// "Base power"/"base toughness" (without counters/modifiers).
+    Base,
+}
+
 /// Filter for selecting players.
 ///
 /// This enum handles both filtering/matching players and specifying
@@ -438,9 +448,13 @@ pub struct ObjectFilter {
 
     /// Power comparison (creature must satisfy)
     pub power: Option<Comparison>,
+    /// Whether `power` is checked against effective or base power.
+    pub power_reference: PtReference,
 
     /// Toughness comparison (creature must satisfy)
     pub toughness: Option<Comparison>,
+    /// Whether `toughness` is checked against effective or base toughness.
+    pub toughness_reference: PtReference,
 
     /// Mana value comparison
     pub mana_value: Option<Comparison>,
@@ -736,12 +750,28 @@ impl ObjectFilter {
     /// Require power to satisfy a comparison.
     pub fn with_power(mut self, cmp: Comparison) -> Self {
         self.power = Some(cmp);
+        self.power_reference = PtReference::Effective;
+        self
+    }
+
+    /// Require base power to satisfy a comparison.
+    pub fn with_base_power(mut self, cmp: Comparison) -> Self {
+        self.power = Some(cmp);
+        self.power_reference = PtReference::Base;
         self
     }
 
     /// Require toughness to satisfy a comparison.
     pub fn with_toughness(mut self, cmp: Comparison) -> Self {
         self.toughness = Some(cmp);
+        self.toughness_reference = PtReference::Effective;
+        self
+    }
+
+    /// Require base toughness to satisfy a comparison.
+    pub fn with_base_toughness(mut self, cmp: Comparison) -> Self {
+        self.toughness = Some(cmp);
+        self.toughness_reference = PtReference::Base;
         self
     }
 
@@ -972,6 +1002,29 @@ impl ObjectFilter {
         ctx: &FilterContext,
         game: &crate::game_state::GameState,
     ) -> bool {
+        self.matches_internal(object, ctx, game, true)
+    }
+
+    /// Check if an object matches this filter without consulting calculated characteristics.
+    ///
+    /// This is used by layer-calculation paths that must avoid recursively
+    /// re-entering characteristic computation.
+    pub fn matches_non_recursive(
+        &self,
+        object: &Object,
+        ctx: &FilterContext,
+        game: &crate::game_state::GameState,
+    ) -> bool {
+        self.matches_internal(object, ctx, game, false)
+    }
+
+    fn matches_internal(
+        &self,
+        object: &Object,
+        ctx: &FilterContext,
+        game: &crate::game_state::GameState,
+        allow_calculated_pt: bool,
+    ) -> bool {
         // Specific object check
         if let Some(id) = self.specific
             && object.id != id
@@ -1170,7 +1223,12 @@ impl ObjectFilter {
 
         // Power check
         if let Some(power_cmp) = &self.power {
-            if let Some(power) = object.power() {
+            if let Some(power) = resolve_object_power_for_filter(
+                object,
+                game,
+                self.power_reference,
+                allow_calculated_pt,
+            ) {
                 if !power_cmp.satisfies(power) {
                     return false;
                 }
@@ -1181,7 +1239,12 @@ impl ObjectFilter {
 
         // Toughness check
         if let Some(toughness_cmp) = &self.toughness {
-            if let Some(toughness) = object.toughness() {
+            if let Some(toughness) = resolve_object_toughness_for_filter(
+                object,
+                game,
+                self.toughness_reference,
+                allow_calculated_pt,
+            ) {
                 if !toughness_cmp.satisfies(toughness) {
                     return false;
                 }
@@ -1594,7 +1657,7 @@ impl ObjectFilter {
 
         // Power check
         if let Some(power_cmp) = &self.power {
-            if let Some(power) = snapshot.power {
+            if let Some(power) = resolve_snapshot_power_for_filter(snapshot, self.power_reference) {
                 if !power_cmp.satisfies(power) {
                     return false;
                 }
@@ -1605,7 +1668,9 @@ impl ObjectFilter {
 
         // Toughness check
         if let Some(toughness_cmp) = &self.toughness {
-            if let Some(toughness) = snapshot.toughness {
+            if let Some(toughness) =
+                resolve_snapshot_toughness_for_filter(snapshot, self.toughness_reference)
+            {
                 if !toughness_cmp.satisfies(toughness) {
                     return false;
                 }
@@ -2210,10 +2275,18 @@ impl ObjectFilter {
         }
 
         if let Some(ref power) = self.power {
-            parts.push(format!("with power {}", describe_comparison(power)));
+            let label = match self.power_reference {
+                PtReference::Effective => "power",
+                PtReference::Base => "base power",
+            };
+            parts.push(format!("with {label} {}", describe_comparison(power)));
         }
         if let Some(ref toughness) = self.toughness {
-            parts.push(format!("with toughness {}", describe_comparison(toughness)));
+            let label = match self.toughness_reference {
+                PtReference::Effective => "toughness",
+                PtReference::Base => "base toughness",
+            };
+            parts.push(format!("with {label} {}", describe_comparison(toughness)));
         }
         if let Some(ref mana_value) = self.mana_value {
             parts.push(format!(
@@ -2305,6 +2378,103 @@ impl ObjectFilter {
         }
 
         parts.join(" ")
+    }
+}
+
+fn plus_minus_counter_delta(counters: &std::collections::HashMap<CounterType, u32>) -> i32 {
+    let plus = counters
+        .get(&CounterType::PlusOnePlusOne)
+        .copied()
+        .unwrap_or(0) as i32;
+    let minus = counters
+        .get(&CounterType::MinusOneMinusOne)
+        .copied()
+        .unwrap_or(0) as i32;
+    plus - minus
+}
+
+fn object_base_power_for_filter(object: &Object) -> Option<i32> {
+    if let Some(power) = object.power() {
+        return Some(power - plus_minus_counter_delta(&object.counters));
+    }
+    object.base_power.as_ref().map(|pt| pt.base_value())
+}
+
+fn object_base_toughness_for_filter(object: &Object) -> Option<i32> {
+    if let Some(toughness) = object.toughness() {
+        return Some(toughness - plus_minus_counter_delta(&object.counters));
+    }
+    object.base_toughness.as_ref().map(|pt| pt.base_value())
+}
+
+fn resolve_object_power_for_filter(
+    object: &Object,
+    game: &crate::game_state::GameState,
+    reference: PtReference,
+    allow_calculated_pt: bool,
+) -> Option<i32> {
+    match reference {
+        PtReference::Base => object_base_power_for_filter(object),
+        PtReference::Effective => {
+            if allow_calculated_pt {
+                game.calculated_power(object.id).or_else(|| object.power())
+            } else {
+                object.power()
+            }
+        }
+    }
+}
+
+fn resolve_object_toughness_for_filter(
+    object: &Object,
+    game: &crate::game_state::GameState,
+    reference: PtReference,
+    allow_calculated_pt: bool,
+) -> Option<i32> {
+    match reference {
+        PtReference::Base => object_base_toughness_for_filter(object),
+        PtReference::Effective => {
+            if allow_calculated_pt {
+                game.calculated_toughness(object.id)
+                    .or_else(|| object.toughness())
+            } else {
+                object.toughness()
+            }
+        }
+    }
+}
+
+fn snapshot_base_power_for_filter(snapshot: &crate::snapshot::ObjectSnapshot) -> Option<i32> {
+    if let Some(power) = snapshot.power {
+        return Some(power - plus_minus_counter_delta(&snapshot.counters));
+    }
+    snapshot.base_power
+}
+
+fn snapshot_base_toughness_for_filter(snapshot: &crate::snapshot::ObjectSnapshot) -> Option<i32> {
+    if let Some(toughness) = snapshot.toughness {
+        return Some(toughness - plus_minus_counter_delta(&snapshot.counters));
+    }
+    snapshot.base_toughness
+}
+
+fn resolve_snapshot_power_for_filter(
+    snapshot: &crate::snapshot::ObjectSnapshot,
+    reference: PtReference,
+) -> Option<i32> {
+    match reference {
+        PtReference::Effective => snapshot.power,
+        PtReference::Base => snapshot_base_power_for_filter(snapshot),
+    }
+}
+
+fn resolve_snapshot_toughness_for_filter(
+    snapshot: &crate::snapshot::ObjectSnapshot,
+    reference: PtReference,
+) -> Option<i32> {
+    match reference {
+        PtReference::Effective => snapshot.toughness,
+        PtReference::Base => snapshot_base_toughness_for_filter(snapshot),
     }
 }
 
@@ -2974,5 +3144,89 @@ mod tests {
 
         assert!(filter.matches(&red_obj, &ctx, &game));
         assert!(!filter.matches(&blue_obj, &ctx, &game));
+    }
+
+    #[test]
+    fn test_base_power_builder_sets_reference() {
+        let filter = ObjectFilter::creature().with_base_power(Comparison::LessThanOrEqual(2));
+        assert_eq!(filter.power, Some(Comparison::LessThanOrEqual(2)));
+        assert_eq!(filter.power_reference, PtReference::Base);
+        assert_eq!(
+            filter.description(),
+            "creature with base power 2 or less"
+        );
+    }
+
+    #[test]
+    fn test_filter_can_match_base_vs_effective_power() {
+        use crate::card::{CardBuilder, PowerToughness};
+        use crate::game_state::GameState;
+        use crate::ids::CardId;
+        use crate::object::CounterType;
+
+        let you = PlayerId::from_index(0);
+        let mut game = GameState::new(vec!["You".to_string()], 20);
+
+        let card = CardBuilder::new(CardId::from_raw(30), "Counter Bear")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let object_id = game.create_object_from_card(&card, you, Zone::Battlefield);
+        if let Some(obj) = game.object_mut(object_id) {
+            obj.counters.insert(CounterType::PlusOnePlusOne, 1);
+        }
+
+        let obj = game.object(object_id).expect("object should exist");
+        let ctx = FilterContext::new(you);
+
+        let effective_filter = ObjectFilter::creature().with_power(Comparison::GreaterThanOrEqual(3));
+        let base_filter = ObjectFilter::creature().with_base_power(Comparison::GreaterThanOrEqual(3));
+
+        assert!(
+            effective_filter.matches(obj, &ctx, &game),
+            "effective power should include +1/+1 counters"
+        );
+        assert!(
+            !base_filter.matches(obj, &ctx, &game),
+            "base power should ignore +1/+1 counters"
+        );
+    }
+
+    #[test]
+    fn test_non_recursive_match_avoids_calculated_power() {
+        use crate::ability::Ability;
+        use crate::card::{CardBuilder, PowerToughness};
+        use crate::game_state::GameState;
+        use crate::ids::CardId;
+        use crate::static_abilities::StaticAbility;
+
+        let you = PlayerId::from_index(0);
+        let mut game = GameState::new(vec!["You".to_string()], 20);
+
+        let card = CardBuilder::new(CardId::from_raw(31), "Anthem Bear")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let object_id = game.create_object_from_card(&card, you, Zone::Battlefield);
+        if let Some(obj) = game.object_mut(object_id) {
+            obj.abilities.push(Ability::static_ability(StaticAbility::anthem(
+                ObjectFilter::source(),
+                2,
+                0,
+            )));
+        }
+
+        let obj = game.object(object_id).expect("object should exist");
+        let ctx = FilterContext::new(you);
+        let filter = ObjectFilter::creature().with_power(Comparison::GreaterThanOrEqual(4));
+
+        assert!(
+            filter.matches(obj, &ctx, &game),
+            "regular matching should use calculated power"
+        );
+        assert!(
+            !filter.matches_non_recursive(obj, &ctx, &game),
+            "non-recursive matching should avoid layer-calculated power"
+        );
     }
 }

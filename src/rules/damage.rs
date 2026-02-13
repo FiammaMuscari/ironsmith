@@ -8,8 +8,10 @@
 //! - Trample (excess damage goes to defending player)
 
 use crate::ability::AbilityKind;
+use crate::game_state::GameState;
 use crate::ids::PlayerId;
 use crate::object::Object;
+use crate::static_abilities::StaticAbility;
 use crate::static_abilities::StaticAbilityId;
 
 /// The target of damage.
@@ -63,6 +65,68 @@ fn has_ability_id(source: &Object, ability_id: StaticAbilityId) -> bool {
     })
 }
 
+fn get_static_abilities(source: &Object) -> Vec<StaticAbility> {
+    source
+        .abilities
+        .iter()
+        .filter_map(|a| {
+            if let AbilityKind::Static(s) = &a.kind {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn has_ability_id_with_game(source: &Object, game: &GameState, ability_id: StaticAbilityId) -> bool {
+    let abilities = game
+        .calculated_characteristics(source.id)
+        .map(|c| c.static_abilities)
+        .unwrap_or_else(|| get_static_abilities(source));
+    abilities.iter().any(|a| a.id() == ability_id)
+}
+
+fn build_damage_result(
+    target: DamageTarget,
+    amount: u32,
+    has_deathtouch: bool,
+    has_infect: bool,
+    has_wither: bool,
+    has_lifelink: bool,
+) -> DamageResult {
+    let mut result = DamageResult {
+        has_deathtouch,
+        has_infect,
+        has_wither,
+        has_lifelink,
+        ..Default::default()
+    };
+
+    match target {
+        DamageTarget::Permanent => {
+            if has_infect || has_wither {
+                result.minus_counters = amount;
+            } else {
+                result.damage_dealt = amount;
+            }
+        }
+        DamageTarget::Player(_) => {
+            if has_infect {
+                result.poison_counters = amount;
+            } else {
+                result.damage_dealt = amount;
+            }
+        }
+    }
+
+    if has_lifelink {
+        result.life_gained = amount;
+    }
+
+    result
+}
+
 /// Calculate the result of dealing damage.
 ///
 /// # Arguments
@@ -88,46 +152,41 @@ pub fn calculate_damage(
     let has_wither = has_ability_id(source, StaticAbilityId::Wither);
     let has_lifelink = has_ability_id(source, StaticAbilityId::Lifelink);
 
-    let mut result = DamageResult {
+    build_damage_result(
+        target,
+        amount,
         has_deathtouch,
         has_infect,
         has_wither,
         has_lifelink,
-        ..Default::default()
-    };
+    )
+}
 
-    match target {
-        DamageTarget::Permanent => {
-            // Damage to a creature or planeswalker
-            if has_infect || has_wither {
-                // Infect/wither: damage is dealt as -1/-1 counters to creatures
-                result.minus_counters = amount;
-            } else {
-                // Normal damage
-                result.damage_dealt = amount;
-            }
-        }
-        DamageTarget::Player(_) => {
-            // Damage to a player
-            if has_infect {
-                // Infect: damage to players is dealt as poison counters
-                result.poison_counters = amount;
-            } else {
-                // Normal damage (or wither, which only affects creatures)
-                result.damage_dealt = amount;
-            }
-        }
+/// Calculate damage using calculated characteristics (continuous effects included).
+pub fn calculate_damage_with_game(
+    game: &GameState,
+    source: &Object,
+    target: DamageTarget,
+    amount: u32,
+    _is_combat: bool,
+) -> DamageResult {
+    if amount == 0 {
+        return DamageResult::default();
     }
 
-    // Lifelink: controller gains life equal to damage dealt
-    if has_lifelink {
-        // Life is gained based on the total "damage dealt" equivalent
-        // For infect to creatures: the -1/-1 counters count as damage dealt
-        // For infect to players: the poison counters count as damage dealt
-        result.life_gained = amount;
-    }
+    let has_deathtouch = has_ability_id_with_game(source, game, StaticAbilityId::Deathtouch);
+    let has_infect = has_ability_id_with_game(source, game, StaticAbilityId::Infect);
+    let has_wither = has_ability_id_with_game(source, game, StaticAbilityId::Wither);
+    let has_lifelink = has_ability_id_with_game(source, game, StaticAbilityId::Lifelink);
 
-    result
+    build_damage_result(
+        target,
+        amount,
+        has_deathtouch,
+        has_infect,
+        has_wither,
+        has_lifelink,
+    )
 }
 
 /// Check if damage is lethal to a creature.
@@ -155,12 +214,15 @@ pub fn is_lethal(
     }
 
     // Deathtouch: any damage is lethal
-    if has_ability_id(source, StaticAbilityId::Deathtouch) {
+    if has_ability_id_with_game(source, game, StaticAbilityId::Deathtouch) {
         return true;
     }
 
     // Normal lethal check: damage >= toughness - existing damage
-    let Some(toughness) = creature.toughness() else {
+    let Some(toughness) = game
+        .calculated_toughness(creature.id)
+        .or_else(|| creature.toughness())
+    else {
         return false;
     };
 
@@ -190,11 +252,11 @@ pub fn calculate_trample_excess(
     game: &crate::game_state::GameState,
 ) -> u32 {
     // Must have trample
-    if !has_ability_id(attacker, StaticAbilityId::Trample) {
+    if !has_ability_id_with_game(attacker, game, StaticAbilityId::Trample) {
         return 0;
     }
 
-    let has_deathtouch = has_ability_id(attacker, StaticAbilityId::Deathtouch);
+    let has_deathtouch = has_ability_id_with_game(attacker, game, StaticAbilityId::Deathtouch);
 
     // Calculate minimum damage needed to kill each blocker
     let mut damage_needed: u32 = 0;
@@ -205,7 +267,10 @@ pub fn calculate_trample_excess(
             damage_needed += 1;
         } else {
             // Need to deal lethal damage (toughness - existing damage)
-            if let Some(toughness) = blocker.toughness() {
+            if let Some(toughness) = game
+                .calculated_toughness(blocker.id)
+                .or_else(|| blocker.toughness())
+            {
                 let existing_damage = game.damage_on(blocker.id);
                 let remaining = (toughness - existing_damage as i32).max(0) as u32;
                 damage_needed += remaining;
@@ -232,8 +297,8 @@ pub fn distribute_trample_damage(
         return (vec![], total_damage);
     }
 
-    let has_deathtouch = has_ability_id(attacker, StaticAbilityId::Deathtouch);
-    let has_trample = has_ability_id(attacker, StaticAbilityId::Trample);
+    let has_deathtouch = has_ability_id_with_game(attacker, game, StaticAbilityId::Deathtouch);
+    let has_trample = has_ability_id_with_game(attacker, game, StaticAbilityId::Trample);
 
     let mut distribution = Vec::with_capacity(blockers.len());
     let mut remaining_damage = total_damage;
@@ -242,7 +307,10 @@ pub fn distribute_trample_damage(
         let existing_damage = game.damage_on(blocker.id);
         let lethal = if has_deathtouch {
             1
-        } else if let Some(toughness) = blocker.toughness() {
+        } else if let Some(toughness) = game
+            .calculated_toughness(blocker.id)
+            .or_else(|| blocker.toughness())
+        {
             (toughness - existing_damage as i32).max(0) as u32
         } else {
             0

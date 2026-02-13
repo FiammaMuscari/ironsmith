@@ -403,18 +403,19 @@ fn evaluate_condition(
             let Some(target_obj) = game.object(target_id) else {
                 return Ok(false);
             };
-            if !target_obj.is_creature() {
+            if !game.object_has_card_type(target_id, crate::types::CardType::Creature) {
                 return Ok(false);
             }
-            let Some(target_power) = target_obj.power() else {
+            let Some(target_power) = game.calculated_power(target_id).or_else(|| target_obj.power())
+            else {
                 return Ok(false);
             };
             let max_power = game
                 .battlefield
                 .iter()
                 .filter_map(|&id| game.object(id))
-                .filter(|obj| obj.is_creature())
-                .filter_map(|obj| obj.power())
+                .filter(|obj| game.object_has_card_type(obj.id, crate::types::CardType::Creature))
+                .filter_map(|obj| game.calculated_power(obj.id).or_else(|| obj.power()))
                 .max();
             Ok(max_power.is_some_and(|max| target_power >= max))
         }
@@ -427,7 +428,10 @@ fn evaluate_condition(
                 // Simplified: check if it's a creature that's tapped (attackers are usually tapped)
                 // Full implementation would need access to combat state from game loop
                 if let Some(obj) = game.object(*id) {
-                    return Ok(obj.is_creature() && game.is_tapped(*id));
+                    return Ok(
+                        game.object_has_card_type(obj.id, crate::types::CardType::Creature)
+                            && game.is_tapped(*id),
+                    );
                 }
             }
             Ok(false)

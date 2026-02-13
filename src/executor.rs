@@ -633,7 +633,7 @@ pub fn resolve_value(
             let obj = game
                 .object(ctx.source)
                 .ok_or(ExecutionError::ObjectNotFound(ctx.source))?;
-            obj.power()
+            game.calculated_power(ctx.source).or_else(|| obj.power())
                 .ok_or_else(|| ExecutionError::UnresolvableValue("Source has no power".to_string()))
         }
 
@@ -641,18 +641,22 @@ pub fn resolve_value(
             let obj = game
                 .object(ctx.source)
                 .ok_or(ExecutionError::ObjectNotFound(ctx.source))?;
-            obj.toughness().ok_or_else(|| {
+            game.calculated_toughness(ctx.source)
+                .or_else(|| obj.toughness())
+                .ok_or_else(|| {
                 ExecutionError::UnresolvableValue("Source has no toughness".to_string())
-            })
+                })
         }
 
         Value::PowerOf(_target_spec) => {
             let target_id = find_target_object(&ctx.targets)?;
             // Try to get current object, fall back to LKI snapshot
             if let Some(obj) = game.object(target_id) {
-                obj.power().ok_or_else(|| {
+                game.calculated_power(target_id)
+                    .or_else(|| obj.power())
+                    .ok_or_else(|| {
                     ExecutionError::UnresolvableValue("Target has no power".to_string())
-                })
+                    })
             } else if let Some(snapshot) = ctx.target_snapshots.get(&target_id) {
                 snapshot.power.ok_or_else(|| {
                     ExecutionError::UnresolvableValue("Target had no power".to_string())
@@ -666,9 +670,11 @@ pub fn resolve_value(
             let target_id = find_target_object(&ctx.targets)?;
             // Try to get current object, fall back to LKI snapshot
             if let Some(obj) = game.object(target_id) {
-                obj.toughness().ok_or_else(|| {
+                game.calculated_toughness(target_id)
+                    .or_else(|| obj.toughness())
+                    .ok_or_else(|| {
                     ExecutionError::UnresolvableValue("Target has no toughness".to_string())
-                })
+                    })
             } else if let Some(snapshot) = ctx.target_snapshots.get(&target_id) {
                 snapshot.toughness.ok_or_else(|| {
                     ExecutionError::UnresolvableValue("Target had no toughness".to_string())

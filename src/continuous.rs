@@ -1177,6 +1177,58 @@ fn filter_matches_direct(
         return false;
     }
 
+    if let Some(power_cmp) = &filter.power {
+        let power = match filter.power_reference {
+            crate::filter::PtReference::Effective => chars.power,
+            crate::filter::PtReference::Base => {
+                let plus = object
+                    .counters
+                    .get(&crate::object::CounterType::PlusOnePlusOne)
+                    .copied()
+                    .unwrap_or(0) as i32;
+                let minus = object
+                    .counters
+                    .get(&crate::object::CounterType::MinusOneMinusOne)
+                    .copied()
+                    .unwrap_or(0) as i32;
+                object.power().map(|value| value - plus + minus)
+            }
+        };
+        if let Some(power) = power {
+            if !power_cmp.satisfies(power) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    if let Some(toughness_cmp) = &filter.toughness {
+        let toughness = match filter.toughness_reference {
+            crate::filter::PtReference::Effective => chars.toughness,
+            crate::filter::PtReference::Base => {
+                let plus = object
+                    .counters
+                    .get(&crate::object::CounterType::PlusOnePlusOne)
+                    .copied()
+                    .unwrap_or(0) as i32;
+                let minus = object
+                    .counters
+                    .get(&crate::object::CounterType::MinusOneMinusOne)
+                    .copied()
+                    .unwrap_or(0) as i32;
+                object.toughness().map(|value| value - plus + minus)
+            }
+        };
+        if let Some(toughness) = toughness {
+            if !toughness_cmp.satisfies(toughness) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
     // Check if must be a commander
     if filter.is_commander
         && !commanders.contains(&object.id)
@@ -1557,7 +1609,7 @@ fn resolve_value_direct(
             battlefield
                 .iter()
                 .filter_map(|&id| objects.get(&id))
-                .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, game))
                 .count() as i32
         }
         Value::CountScaled(filter, multiplier) => {
@@ -1578,7 +1630,7 @@ fn resolve_value_direct(
             let count = battlefield
                 .iter()
                 .filter_map(|&id| objects.get(&id))
-                .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, game))
                 .count() as i32;
             count * *multiplier
         }
@@ -2293,7 +2345,23 @@ fn filter_matches_with_controller(
     }
 
     if let Some(power_cmp) = &filter.power {
-        if let Some(power) = chars.power {
+        let power = match filter.power_reference {
+            crate::filter::PtReference::Effective => chars.power,
+            crate::filter::PtReference::Base => {
+                let plus = object
+                    .counters
+                    .get(&crate::object::CounterType::PlusOnePlusOne)
+                    .copied()
+                    .unwrap_or(0) as i32;
+                let minus = object
+                    .counters
+                    .get(&crate::object::CounterType::MinusOneMinusOne)
+                    .copied()
+                    .unwrap_or(0) as i32;
+                object.power().map(|value| value - plus + minus)
+            }
+        };
+        if let Some(power) = power {
             if !power_cmp.satisfies(power) {
                 return false;
             }
@@ -2303,7 +2371,23 @@ fn filter_matches_with_controller(
     }
 
     if let Some(toughness_cmp) = &filter.toughness {
-        if let Some(toughness) = chars.toughness {
+        let toughness = match filter.toughness_reference {
+            crate::filter::PtReference::Effective => chars.toughness,
+            crate::filter::PtReference::Base => {
+                let plus = object
+                    .counters
+                    .get(&crate::object::CounterType::PlusOnePlusOne)
+                    .copied()
+                    .unwrap_or(0) as i32;
+                let minus = object
+                    .counters
+                    .get(&crate::object::CounterType::MinusOneMinusOne)
+                    .copied()
+                    .unwrap_or(0) as i32;
+                object.toughness().map(|value| value - plus + minus)
+            }
+        };
+        if let Some(toughness) = toughness {
             if !toughness_cmp.satisfies(toughness) {
                 return false;
             }
@@ -2391,7 +2475,7 @@ fn resolve_value_with_context(
             ctx.battlefield
                 .iter()
                 .filter_map(|&id| ctx.objects.get(&id))
-                .filter(|obj| filter.matches(obj, &filter_ctx, ctx.game))
+                .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, ctx.game))
                 .count() as i32
         }
         Value::CountScaled(filter, multiplier) => {
@@ -2420,7 +2504,7 @@ fn resolve_value_with_context(
                 .battlefield
                 .iter()
                 .filter_map(|&id| ctx.objects.get(&id))
-                .filter(|obj| filter.matches(obj, &filter_ctx, ctx.game))
+                .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, ctx.game))
                 .count() as i32;
             count * *multiplier
         }
