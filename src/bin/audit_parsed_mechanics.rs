@@ -119,7 +119,6 @@ fn has_digital_only_oracle_marker(oracle_text: &str) -> bool {
         "incorporate",
         "intensity",
         "intensify",
-        "not the starting player",
         "perpetually",
         "seek",
         "specialize",

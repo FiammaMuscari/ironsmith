@@ -25,7 +25,6 @@ DIGITAL_ONLY_ORACLE_MARKERS = (
     "incorporate",
     "intensity",
     "intensify",
-    "not the starting player",
     "perpetually",
     "seek",
     "specialize",
