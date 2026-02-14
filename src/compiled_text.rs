@@ -10965,6 +10965,43 @@ fn normalize_sentence_surface_style(line: &str) -> String {
             "{prefix}, each player puts a card from their hand on top of their library."
         );
     }
+    if let Some((lose_clause, put_clause)) = normalized.split_once(". ")
+        && lose_clause
+            .to_ascii_lowercase()
+            .starts_with("target opponent loses ")
+        && (put_clause
+            == "Put a card from that player's hand on top of that player's library."
+            || put_clause
+                == "Put a card from that player's hand on top of that player's library")
+    {
+        return format!("{lose_clause} and puts a card from their hand on top of their library.");
+    }
+    if let Some(rest) = normalized.strip_prefix("Other ")
+        && let Some((kind, tail)) = rest.split_once(" you control get ")
+        && let Some(buff) = tail
+            .strip_suffix(" and have ward 1.")
+            .or_else(|| tail.strip_suffix(" and have ward 1"))
+            .or_else(|| tail.strip_suffix(" and have ward {1}."))
+            .or_else(|| tail.strip_suffix(" and have ward {1}"))
+    {
+        return format!("Each other {kind} you control gets {buff} and has ward {{1}}.");
+    }
+    if let Some(rest) = normalized.strip_prefix("Protection from ")
+        && !rest.contains(' ')
+        && !matches!(
+            rest.to_ascii_lowercase().as_str(),
+            "white"
+                | "blue"
+                | "black"
+                | "red"
+                | "green"
+                | "colorless"
+                | "everything"
+        )
+        && !rest.ends_with('s')
+    {
+        return format!("Protection from {}", pluralize_noun_phrase(rest));
+    }
     if !is_keyword_style_line(&normalized)
         && !normalized.ends_with('.')
         && !normalized.ends_with('!')
