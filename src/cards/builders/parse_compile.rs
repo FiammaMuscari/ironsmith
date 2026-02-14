@@ -382,6 +382,65 @@ fn effects_reference_its_controller(effects: &[EffectAst]) -> bool {
     effects.iter().any(effect_references_its_controller)
 }
 
+fn value_references_event_derived_amount(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::EventValue(EventValueSpec::Amount)
+            | Value::EventValue(EventValueSpec::LifeAmount)
+            | Value::EventValueOffset(EventValueSpec::Amount, _)
+            | Value::EventValueOffset(EventValueSpec::LifeAmount, _)
+    )
+}
+
+fn effect_references_event_derived_amount(effect: &EffectAst) -> bool {
+    match effect {
+        EffectAst::DealDamage { amount, .. }
+        | EffectAst::DealDamageEach { amount, .. }
+        | EffectAst::Draw { count: amount, .. }
+        | EffectAst::LoseLife { amount, .. }
+        | EffectAst::GainLife { amount, .. }
+        | EffectAst::CreateToken { count: amount, .. }
+        | EffectAst::CreateTokenWithMods { count: amount, .. } => {
+            value_references_event_derived_amount(amount)
+        }
+        EffectAst::May { effects }
+        | EffectAst::MayByPlayer { effects, .. }
+        | EffectAst::MayByTaggedController { effects, .. }
+        | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndOfCombat { effects }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+        | EffectAst::IfResult { effects, .. }
+        | EffectAst::ForEachOpponent { effects }
+        | EffectAst::ForEachPlayer { effects }
+        | EffectAst::ForEachObject { effects, .. }
+        | EffectAst::ForEachTagged { effects, .. }
+        | EffectAst::ForEachTaggedPlayer { effects, .. }
+        | EffectAst::ForEachOpponentDoesNot { effects }
+        | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::UnlessPays { effects, .. }
+        | EffectAst::VoteOption { effects, .. } => {
+            effects.iter().any(effect_references_event_derived_amount)
+        }
+        EffectAst::UnlessAction {
+            effects,
+            alternative,
+            ..
+        } => {
+            effects.iter().any(effect_references_event_derived_amount)
+                || alternative
+                    .iter()
+                    .any(effect_references_event_derived_amount)
+        }
+        EffectAst::Conditional {
+            if_true, if_false, ..
+        } => {
+            if_true.iter().any(effect_references_event_derived_amount)
+                || if_false.iter().any(effect_references_event_derived_amount)
+        }
+        _ => false,
+    }
+}
+
 fn effect_references_its_controller(effect: &EffectAst) -> bool {
     match effect {
         EffectAst::Draw { player, .. }
@@ -729,12 +788,18 @@ fn compile_effects(
             continue;
         }
 
+        let next_needs_event_derived_amount = idx + 1 < effects.len()
+            && effect_references_event_derived_amount(&effects[idx + 1]);
         let (mut effect_list, effect_choices) = compile_effect(&effects[idx], ctx)?;
-        if !effect_list.is_empty() {
-            let id = ctx.next_effect_id();
-            let last = effect_list.pop().expect("non-empty effect list");
-            effect_list.push(Effect::with_id(id.0, last));
-            ctx.last_effect_id = Some(id);
+        if next_needs_event_derived_amount {
+            if !effect_list.is_empty() {
+                let id = ctx.next_effect_id();
+                let last = effect_list.pop().expect("non-empty effect list");
+                effect_list.push(Effect::with_id(id.0, last));
+                ctx.last_effect_id = Some(id);
+            } else {
+                ctx.last_effect_id = None;
+            }
         }
         compiled.extend(effect_list);
         for choice in effect_choices {
@@ -1954,7 +2019,7 @@ fn compile_effect(
                 }
                 Err(err) => return Err(err),
             };
-            if resolved_filter.controller.is_none() {
+            if resolved_filter.controller.is_none() && resolved_filter.tagged_constraints.is_empty() {
                 resolved_filter.controller = Some(chooser.clone());
             }
             if resolved_filter.source {
@@ -1970,6 +2035,16 @@ fn compile_effect(
                     ));
                 }
                 return Ok((vec![Effect::sacrifice_source()], choices));
+            }
+            if *count == 1
+                && let Some(tag) = object_filter_as_tagged_reference(&resolved_filter)
+            {
+                return Ok((
+                    vec![Effect::new(crate::effects::SacrificeTargetEffect::new(
+                        ChooseSpec::tagged(tag),
+                    ))],
+                    choices,
+                ));
             }
 
             let tag = ctx.next_tag("sacrificed");

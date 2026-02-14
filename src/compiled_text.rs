@@ -1263,6 +1263,22 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     {
         return "Each player draws a card, then discards a card".to_string();
     }
+    if let Some(tail) = normalized.strip_prefix("You discard your hand. you draw ") {
+        let draw_tail = tail.trim_end_matches('.');
+        return format!("Discard your hand, then draw {draw_tail}");
+    }
+    if let Some(tail) = normalized.strip_prefix("Each player discards their hand. Create ")
+        && let Some(token_clause) = tail
+            .strip_suffix(" under that player's control")
+            .or_else(|| tail.strip_suffix(" under that player's control."))
+    {
+        let normalized_clause = if token_clause.ends_with(" token") {
+            format!("{} tokens", token_clause.trim_end_matches(" token"))
+        } else {
+            token_clause.to_string()
+        };
+        return format!("Each player discards their hand, then creates {normalized_clause}");
+    }
     if let Some(rest) = normalized.strip_prefix("For each player, that player sacrifices ")
         && let Some((lands, damage_tail)) =
             rest.split_once(" lands that player controls. For each creature, Deal ")
@@ -2974,7 +2990,31 @@ fn describe_card_count(value: &Value) -> String {
     match value {
         Value::Fixed(1) => "a card".to_string(),
         Value::Fixed(n) => format!("{n} cards"),
-        _ => format!("{} cards", describe_value(value)),
+        _ => {
+            if let Some(backref) = describe_effect_count_backref(value) {
+                format!("{backref} cards")
+            } else {
+                format!("{} cards", describe_value(value))
+            }
+        }
+    }
+}
+
+fn describe_effect_count_backref(value: &Value) -> Option<String> {
+    match value {
+        Value::EffectValue(_) => Some("that many".to_string()),
+        Value::EffectValueOffset(_, offset) => {
+            if *offset == 0 {
+                Some("that many".to_string())
+            } else if *offset > 0 {
+                Some(format!("that many plus {}", offset))
+            } else if *offset == -1 {
+                Some("that many minus one".to_string())
+            } else {
+                Some(format!("that many minus {}", -offset))
+            }
+        }
+        _ => None,
     }
 }
 
@@ -7037,9 +7077,11 @@ fn describe_effect_impl(effect: &Effect) -> String {
             return text;
         }
         let token_blueprint = describe_token_blueprint(&create_token.token);
+        let count_text = describe_effect_count_backref(&create_token.count)
+            .unwrap_or_else(|| describe_value(&create_token.count));
         let mut text = format!(
             "Create {} {} under {} control",
-            describe_value(&create_token.count),
+            count_text,
             token_blueprint,
             describe_possessive_player_filter(&create_token.controller)
         );

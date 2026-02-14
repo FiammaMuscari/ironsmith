@@ -1485,6 +1485,15 @@ fn test_parse_trigger_becomes_targeted_clause() {
         "expected becomes-targeted trigger display, got {}",
         triggered.trigger.display()
     );
+    let debug = format!("{:#?}", triggered.effects);
+    assert!(
+        debug.contains("SacrificeTargetEffect"),
+        "expected direct sacrifice-target lowering for 'sacrifice it', got {debug}"
+    );
+    assert!(
+        !debug.contains("ChooseObjectsEffect"),
+        "unexpected chooser scaffolding for 'sacrifice it': {debug}"
+    );
 }
 
 #[test]
