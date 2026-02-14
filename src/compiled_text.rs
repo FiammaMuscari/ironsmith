@@ -8888,6 +8888,41 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     {
         return format!("Whenever you cast a Spirit or Arcane spell, {effect_text}.");
     }
+    if let Some(amount) = strip_prefix_ascii_ci(&normalized, "Counter target spell. Deal ")
+        .and_then(|tail| {
+            strip_suffix_ascii_ci(tail, " damage to that object's controller.")
+                .or_else(|| strip_suffix_ascii_ci(tail, " damage to that object's controller"))
+        })
+    {
+        return format!("Counter target spell. This spell deals {amount} damage to that spell's controller.");
+    }
+    if let Some((prefix, _)) = split_once_ascii_ci(
+        &normalized,
+        ". Return it to the battlefield under its owner's control.",
+    )
+    .or_else(|| {
+        split_once_ascii_ci(
+            &normalized,
+            ". Return it to the battlefield under its owner's control",
+        )
+    }) && prefix.to_ascii_lowercase().contains("exile ")
+    {
+        return format!("{prefix}, then return it to the battlefield under its owner's control.");
+    }
+    if let Some((prefix, _)) =
+        split_once_ascii_ci(&normalized, ". Return it from graveyard to the battlefield tapped.")
+            .or_else(|| {
+                split_once_ascii_ci(&normalized, ". Return it from graveyard to the battlefield tapped")
+            })
+        && prefix.to_ascii_lowercase().contains("exile ")
+    {
+        return format!("{prefix}, then return it to the battlefield tapped.");
+    }
+    if normalized.eq_ignore_ascii_case("Draw two cards and you lose 2 life. you mill 2 cards.")
+        || normalized.eq_ignore_ascii_case("Draw two cards and you lose 2 life. you mill 2 cards")
+    {
+        return "Draw two cards, lose 2 life, then mill two cards.".to_string();
+    }
     normalized = normalized.replace(
         "For each opponent, you may that player sacrifices ",
         "Each opponent may sacrifice ",
@@ -9157,7 +9192,9 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         .strip_prefix("Choose up to two target creatures. ")
         .or_else(|| normalized.strip_prefix("choose up to two target creatures. "))
         && (rest.eq_ignore_ascii_case("target creature can't be blocked until end of turn.")
-            || rest.eq_ignore_ascii_case("target creature can't be blocked until end of turn"))
+            || rest.eq_ignore_ascii_case("target creature can't be blocked until end of turn")
+            || rest.eq_ignore_ascii_case("target creature can't be blocked this turn.")
+            || rest.eq_ignore_ascii_case("target creature can't be blocked this turn"))
     {
         return "Up to two target creatures can't be blocked this turn.".to_string();
     }
@@ -9379,6 +9416,8 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         .replace("choose one - ", "choose one — ")
         .replace("Choose one or both - ", "Choose one or both — ")
         .replace("choose one or both - ", "choose one or both — ")
+        .replace("Choose one or more - ", "Choose one or more — ")
+        .replace("choose one or more - ", "choose one or more — ")
         .replace(
             "target an opponent's creature can't untap until your next turn",
             "target creature an opponent controls doesn't untap during its controller's next untap step",
@@ -9794,10 +9833,16 @@ fn normalize_for_each_opponent_clause_chain(text: &str) -> Option<String> {
 }
 
 fn normalize_for_each_player_draw_discard_chain(text: &str) -> Option<String> {
-    let marker = "for each player, that player draws ";
-    let idx = text.to_ascii_lowercase().find(marker)?;
-    let prefix = &text[..idx];
-    let tail = &text[idx + marker.len()..];
+    let lower = text.to_ascii_lowercase();
+    let for_each_marker = "for each player, that player draws ";
+    let plain_marker = "each player draws ";
+    let (prefix, tail) = if let Some(idx) = lower.find(for_each_marker) {
+        (&text[..idx], &text[idx + for_each_marker.len()..])
+    } else if let Some(idx) = lower.find(plain_marker) {
+        (&text[..idx], &text[idx + plain_marker.len()..])
+    } else {
+        return None;
+    };
     let (draw_count_raw, draw_rest) = parse_card_count_with_rest(tail)?;
     let discard_marker = ". for each player, that player discards ";
     let discard_tail = strip_prefix_ascii_ci(draw_rest, discard_marker)?;
@@ -10000,7 +10045,9 @@ fn normalize_choose_exact_tagged_it_clause(text: &str) -> Option<String> {
         } else {
             "that permanent"
         };
-        return Some(format!("{chooser} chooses {chosen}. Destroy {target_ref}{tail}"));
+        return Some(format!(
+            "{chooser} chooses {chosen}. Destroy {target_ref}{tail}"
+        ));
     }
     if let Some((head, tail)) = text.split_once(" and tags it as '__it__'")
         && let Some((chooser, count, descriptor)) = parse_choose_exact_tail(head)
@@ -10614,6 +10661,20 @@ fn normalize_sentence_surface_style(line: &str) -> String {
         Some(rewritten)
     };
     if !normalized.contains('\n') {
+        if let Some((head, tail)) = normalized.split_once(" choose one or more - ")
+            && tail.contains(" • ")
+            && let Some(rewritten) =
+                format_choose_modes(head, " choose one or more —", tail)
+        {
+            return rewritten;
+        }
+        if let Some((head, tail)) = normalized.split_once(" Choose one or more - ")
+            && tail.contains(" • ")
+            && let Some(rewritten) =
+                format_choose_modes(head, " Choose one or more —", tail)
+        {
+            return rewritten;
+        }
         if let Some((head, tail)) = normalized.split_once(" choose one or both - ")
             && tail.contains(" • ")
             && let Some(rewritten) =
@@ -10663,6 +10724,20 @@ fn normalize_sentence_surface_style(line: &str) -> String {
         if let Some((head, tail)) = normalized.split_once(" Choose one — ")
             && tail.contains(" • ")
             && let Some(rewritten) = format_choose_modes(head, " Choose one —", tail)
+        {
+            return rewritten;
+        }
+        if let Some((head, tail)) = normalized.split_once(" choose one or more — ")
+            && tail.contains(" • ")
+            && let Some(rewritten) =
+                format_choose_modes(head, " choose one or more —", tail)
+        {
+            return rewritten;
+        }
+        if let Some((head, tail)) = normalized.split_once(" Choose one or more — ")
+            && tail.contains(" • ")
+            && let Some(rewritten) =
+                format_choose_modes(head, " Choose one or more —", tail)
         {
             return rewritten;
         }
@@ -10888,10 +10963,8 @@ fn normalize_sentence_surface_style(line: &str) -> String {
         && lose_clause
             .to_ascii_lowercase()
             .starts_with("target opponent loses ")
-        && (put_clause
-            == "Put a card from that player's hand on top of that player's library."
-            || put_clause
-                == "Put a card from that player's hand on top of that player's library")
+        && (put_clause == "Put a card from that player's hand on top of that player's library."
+            || put_clause == "Put a card from that player's hand on top of that player's library")
     {
         return format!("{lose_clause} and puts a card from their hand on top of their library.");
     }
@@ -10909,13 +10982,7 @@ fn normalize_sentence_surface_style(line: &str) -> String {
         && !rest.contains(' ')
         && !matches!(
             rest.to_ascii_lowercase().as_str(),
-            "white"
-                | "blue"
-                | "black"
-                | "red"
-                | "green"
-                | "colorless"
-                | "everything"
+            "white" | "blue" | "black" | "red" | "green" | "colorless" | "everything"
         )
         && !rest.ends_with('s')
     {
@@ -11928,6 +11995,18 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             "This spell"
         );
     }
+    if let Some(amount) = trimmed
+        .strip_prefix("Counter target spell. Deal ")
+        .and_then(|rest| rest.strip_suffix(" damage to that object's controller."))
+    {
+        return format!("Counter target spell. This spell deals {amount} damage to that spell's controller.");
+    }
+    if let Some(amount) = trimmed
+        .strip_prefix("Counter target spell. Deal ")
+        .and_then(|rest| rest.strip_suffix(" damage to that object's controller"))
+    {
+        return format!("Counter target spell. This spell deals {amount} damage to that spell's controller");
+    }
     if let Some(rest) = trimmed.strip_prefix("Choose one - ") {
         return format!("Choose one — {}", rest.trim());
     }
@@ -11939,6 +12018,12 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
     }
     if let Some(rest) = trimmed.strip_prefix("Choose one or both — ") {
         return format!("Choose one or both — {}", rest.trim());
+    }
+    if let Some(rest) = trimmed.strip_prefix("Choose one or more - ") {
+        return format!("Choose one or more — {}", rest.trim());
+    }
+    if let Some(rest) = trimmed.strip_prefix("Choose one or more — ") {
+        return format!("Choose one or more — {}", rest.trim());
     }
     if let Some((subject, keyword)) = split_have_clause(trimmed) {
         if keyword.eq_ignore_ascii_case("can't be blocked") {
@@ -12597,6 +12682,30 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
         );
     }
     if let Some((left, right)) = trimmed.split_once(". ")
+        && left.to_ascii_lowercase().contains("exile ")
+        && right.eq_ignore_ascii_case("Return it to the battlefield under its owner's control.")
+    {
+        return format!("{left}, then return it to the battlefield under its owner's control.");
+    }
+    if let Some((left, right)) = trimmed.split_once(". ")
+        && left.to_ascii_lowercase().contains("exile ")
+        && right.eq_ignore_ascii_case("Return it to the battlefield under its owner's control")
+    {
+        return format!("{left}, then return it to the battlefield under its owner's control");
+    }
+    if let Some((left, right)) = trimmed.split_once(". ")
+        && left.to_ascii_lowercase().contains("exile ")
+        && right.eq_ignore_ascii_case("Return it from graveyard to the battlefield tapped.")
+    {
+        return format!("{left}, then return it to the battlefield tapped.");
+    }
+    if let Some((left, right)) = trimmed.split_once(". ")
+        && left.to_ascii_lowercase().contains("exile ")
+        && right.eq_ignore_ascii_case("Return it from graveyard to the battlefield tapped")
+    {
+        return format!("{left}, then return it to the battlefield tapped");
+    }
+    if let Some((left, right)) = trimmed.split_once(". ")
         && left
             .to_ascii_lowercase()
             .starts_with("target player discards ")
@@ -12796,7 +12905,10 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             "Whenever this creature blocks or Whenever this creature becomes blocked",
             "Whenever this creature blocks or becomes blocked",
         )
-        .replace("target attacking/blocking creature", "target attacking or blocking creature")
+        .replace(
+            "target attacking/blocking creature",
+            "target attacking or blocking creature",
+        )
         .replace("a another ", "another ")
         .replace("each another ", "each other ")
         .replace("each another creature", "each other creature")
@@ -12815,7 +12927,10 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             "other creature you control with flying get ",
             "other creatures you control with flying get ",
         )
-        .replace("token creatures you control get ", "creature tokens you control get ")
+        .replace(
+            "token creatures you control get ",
+            "creature tokens you control get ",
+        )
         .replace("token creatures get ", "creature tokens get ")
         .replace(
             "Destroy target artifact or enchantment or land",
@@ -12842,7 +12957,10 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             "target artifact, creature, enchantment, or land",
         )
         .replace("Destroy all enchantment", "Destroy all enchantments")
-        .replace("Exile target card in graveyard", "Exile target card from a graveyard")
+        .replace(
+            "Exile target card in graveyard",
+            "Exile target card from a graveyard",
+        )
         .replace(
             "Exile target artifact card in graveyard",
             "Exile target artifact card from a graveyard",
@@ -12876,10 +12994,22 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
         .replace(", then you draw ", ", then draw ")
         .replace(". you draw ", ". Draw ")
         .replace(", then you mill ", ", then mill ")
-        .replace("Discard a card, then you draw ", "Discard a card, then draw ")
-        .replace("discard a card, then you draw ", "Discard a card, then draw ")
-        .replace("Sacrifice this creature: this creature deals ", "Sacrifice this creature: It deals ")
-        .replace("Sacrifice this creature: This creature deals ", "Sacrifice this creature: It deals ")
+        .replace(
+            "Discard a card, then you draw ",
+            "Discard a card, then draw ",
+        )
+        .replace(
+            "discard a card, then you draw ",
+            "Discard a card, then draw ",
+        )
+        .replace(
+            "Sacrifice this creature: this creature deals ",
+            "Sacrifice this creature: It deals ",
+        )
+        .replace(
+            "Sacrifice this creature: This creature deals ",
+            "Sacrifice this creature: It deals ",
+        )
         .replace(
             "Prevent combat damage until end of turn",
             "Prevent all combat damage that would be dealt this turn",
@@ -12901,7 +13031,10 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             "target creature you don't control or planeswalker",
             "target creature or planeswalker you don't control",
         )
-        .replace("target opponent's creature", "target creature an opponent controls")
+        .replace(
+            "target opponent's creature",
+            "target creature an opponent controls",
+        )
         .replace("enters the battlefield", "enters")
         .replace(
             "target opponent's nonland enchantment",
@@ -12936,7 +13069,10 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             "When this creature enters or Whenever another Ally you control enters,",
             "Whenever this creature or another Ally you control enters,",
         )
-        .replace("Untap all a creature you control", "Untap all creatures you control")
+        .replace(
+            "Untap all a creature you control",
+            "Untap all creatures you control",
+        )
         .replace(", May ", ", you may ")
         .replace("you pays ", "you pay ")
         .replace("Add 1 mana of any color", "Add one mana of any color")
@@ -12951,7 +13087,10 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
         .replace("instants or sorcery cards", "instant and/or sorcery cards")
         .replace("you control you control", "you control")
         .replace("put it into hand", "put it into your hand")
-        .replace("reveal it, put it into hand", "reveal it, put it into your hand");
+        .replace(
+            "reveal it, put it into hand",
+            "reveal it, put it into your hand",
+        );
     normalized = normalize_common_semantic_phrasing(&normalized);
     normalized = normalize_zero_pt_prefix(&normalized);
     if normalized.ends_with(" as long as it's your turn")
@@ -13734,6 +13873,17 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_ability_scoped_choose_one_or_more_into_bullets() {
+        let normalized = normalize_sentence_surface_style(
+            "Triggered ability 1: When this creature dies, choose one or more - Target opponent sacrifices a creature of their choice. • Target opponent discards two cards. • Target opponent loses 5 life.",
+        );
+        assert_eq!(
+            normalized,
+            "Triggered ability 1: When this creature dies, choose one or more —\n• Target opponent sacrifices a creature of their choice.\n• Target opponent discards two cards.\n• Target opponent loses 5 life."
+        );
+    }
+
+    #[test]
     fn normalizes_ognis_treasure_trigger_sentence() {
         let normalized = normalize_sentence_surface_style(
             "Whenever a creature with haste you control attacks, create 1 Treasure artifact token with {T}, Sacrifice this artifact: Add one mana of any color. under your control, tapped.",
@@ -13763,6 +13913,14 @@ mod tests {
         assert_eq!(
             normalized,
             "Each player draws three cards, then discards three cards at random."
+        );
+
+        let normalized_plain = normalize_compiled_post_pass_effect(
+            "When this creature enters, each player draws 2 cards. For each player, that player discards a card at random.",
+        );
+        assert_eq!(
+            normalized_plain,
+            "When this creature enters, each player draws two cards, then discards a card at random."
         );
     }
 
@@ -14066,6 +14224,14 @@ mod tests {
         );
         assert_eq!(
             normalized,
+            "Up to two target creatures can't be blocked this turn."
+        );
+
+        let normalized_this_turn = normalize_compiled_post_pass_effect(
+            "Choose up to two target creatures. target creature can't be blocked this turn.",
+        );
+        assert_eq!(
+            normalized_this_turn,
             "Up to two target creatures can't be blocked this turn."
         );
     }
@@ -14399,6 +14565,30 @@ mod tests {
         assert_eq!(
             normalized,
             "At the beginning of each player's upkeep: that player sacrifices a green or white permanent."
+        );
+
+        let normalized = normalize_compiled_post_pass_effect(
+            "Counter target spell. Deal 2 damage to that object's controller.",
+        );
+        assert_eq!(
+            normalized,
+            "Counter target spell. This spell deals 2 damage to that spell's controller."
+        );
+
+        let normalized = normalize_compiled_post_pass_effect(
+            "Exile up to one target non-Warrior creature you control. Return it to the battlefield under its owner's control.",
+        );
+        assert_eq!(
+            normalized,
+            "Exile up to one target non-Warrior creature you control, then return it to the battlefield under its owner's control."
+        );
+
+        let normalized = normalize_compiled_post_pass_effect(
+            "Exile another target creature. Return it from graveyard to the battlefield tapped.",
+        );
+        assert_eq!(
+            normalized,
+            "Exile another target creature, then return it to the battlefield tapped."
         );
     }
 
