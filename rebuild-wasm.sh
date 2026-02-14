@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="$ROOT_DIR/pkg"
 DEMO_PKG_DIR="$ROOT_DIR/web/wasm_demo/pkg"
+FALSE_POSITIVES_FILE="$ROOT_DIR/scripts/semantic_false_positives.txt"
 
 THRESHOLD="${IRONSMITH_WASM_SEMANTIC_THRESHOLD:-}"
 DIMS="${IRONSMITH_WASM_SEMANTIC_DIMS:-384}"
@@ -19,15 +20,17 @@ Examples:
   IRONSMITH_WASM_SEMANTIC_THRESHOLD=0.85 ./rebuild-wasm.sh
 
 Notes:
-  - --threshold is accepted for workflow compatibility but does not gate parsing.
-  - Use audit_oracle_clusters for semantic gating and mismatch reports.
+  - --threshold enables semantic gating for generated-registry builds.
+    Cards below the threshold are excluded from the generated registry.
+  - Parse failures are still excluded independently of threshold gating.
+  - Use the same threshold in audit_oracle_clusters to compare counts.
   - Default features are "wasm,generated-registry".
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --threshold)
+    --threshold|--threhsold)
       [[ $# -ge 2 ]] || { echo "missing value for --threshold" >&2; exit 1; }
       THRESHOLD="$2"
       shift 2
@@ -57,7 +60,34 @@ done
 cd "$ROOT_DIR"
 
 if [[ -n "$THRESHOLD" ]]; then
-  echo "[INFO] --threshold=${THRESHOLD} (dims=${DIMS}) is advisory only; parser semantic guard is disabled."
+  SAFE_THRESHOLD="${THRESHOLD//./_}"
+  MISMATCH_NAMES_FILE="${TMPDIR:-/tmp}/ironsmith_wasm_mismatch_names_${SAFE_THRESHOLD}_${DIMS}.txt"
+  FAILURES_REPORT="${TMPDIR:-/tmp}/ironsmith_wasm_threshold_failures_${SAFE_THRESHOLD}_${DIMS}.json"
+
+  echo "[INFO] computing semantic threshold failures (threshold=${THRESHOLD}, dims=${DIMS})..."
+  AUDIT_CMD=(
+    cargo run --quiet --bin audit_oracle_clusters --
+    --cards "$ROOT_DIR/cards.json"
+    --use-embeddings
+    --embedding-dims "$DIMS"
+    --embedding-threshold "$THRESHOLD"
+    --min-cluster-size 2
+    --top-clusters 0
+    --examples 1
+    --mismatch-names-out "$MISMATCH_NAMES_FILE"
+    --failures-out "$FAILURES_REPORT"
+  )
+  if [[ -f "$FALSE_POSITIVES_FILE" ]]; then
+    AUDIT_CMD+=(--false-positive-names "$FALSE_POSITIVES_FILE")
+  fi
+  "${AUDIT_CMD[@]}"
+
+  EXCLUDED_COUNT="$(rg -cve '^\\s*$' "$MISMATCH_NAMES_FILE" 2>/dev/null || true)"
+  export IRONSMITH_GENERATED_REGISTRY_SKIP_NAMES_FILE="$MISMATCH_NAMES_FILE"
+  echo "[INFO] semantic gating active: excluding ${EXCLUDED_COUNT} below-threshold card(s)"
+  echo "[INFO] failure report: $FAILURES_REPORT"
+else
+  unset IRONSMITH_GENERATED_REGISTRY_SKIP_NAMES_FILE
 fi
 
 wasm-pack build --release --target web --features "$FEATURES"

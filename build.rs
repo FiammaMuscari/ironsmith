@@ -7,6 +7,12 @@ fn main() {
     println!("cargo:rerun-if-changed=cards.json");
     println!("cargo:rerun-if-changed=scripts/generate_baked_registry.py");
     println!("cargo:rerun-if-changed=scripts/stream_scryfall_blocks.py");
+    println!("cargo:rerun-if-env-changed=IRONSMITH_GENERATED_REGISTRY_SKIP_NAMES_FILE");
+
+    if let Some(skip_file) = env::var_os("IRONSMITH_GENERATED_REGISTRY_SKIP_NAMES_FILE") {
+        let skip_file = PathBuf::from(skip_file);
+        println!("cargo:rerun-if-changed={}", skip_file.display());
+    }
 
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is not set");
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is not set"));
