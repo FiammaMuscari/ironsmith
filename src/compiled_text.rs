@@ -10557,6 +10557,76 @@ fn normalize_sentence_surface_style(line: &str) -> String {
     normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
     normalized = normalized.replace("controlss", "controls");
     let lower_normalized = normalized.to_ascii_lowercase();
+    let format_choose_modes = |head: &str, marker: &str, tail: &str| {
+        let modes: Vec<String> = tail
+            .split(" • ")
+            .map(|mode| mode.trim().trim_start_matches('•').trim().to_string())
+            .filter(|mode| !mode.is_empty())
+            .collect();
+        if modes.len() < 2 {
+            return None;
+        }
+        let mut rewritten = format!("{head}{marker}");
+        for mode in modes {
+            rewritten.push_str("\n• ");
+            rewritten.push_str(&mode);
+        }
+        Some(rewritten)
+    };
+    if !normalized.contains('\n') {
+        if let Some((head, tail)) = normalized.split_once(" choose one or both - ")
+            && tail.contains(" • ")
+            && let Some(rewritten) =
+                format_choose_modes(head, " choose one or both —", tail)
+        {
+            return rewritten;
+        }
+        if let Some((head, tail)) = normalized.split_once(" Choose one or both - ")
+            && tail.contains(" • ")
+            && let Some(rewritten) =
+                format_choose_modes(head, " Choose one or both —", tail)
+        {
+            return rewritten;
+        }
+        if let Some((head, tail)) = normalized.split_once(" choose one - ")
+            && tail.contains(" • ")
+            && let Some(rewritten) = format_choose_modes(head, " choose one —", tail)
+        {
+            return rewritten;
+        }
+        if let Some((head, tail)) = normalized.split_once(" Choose one - ")
+            && tail.contains(" • ")
+            && let Some(rewritten) = format_choose_modes(head, " Choose one —", tail)
+        {
+            return rewritten;
+        }
+        if let Some((head, tail)) = normalized.split_once(" choose one or both — ")
+            && tail.contains(" • ")
+            && let Some(rewritten) =
+                format_choose_modes(head, " choose one or both —", tail)
+        {
+            return rewritten;
+        }
+        if let Some((head, tail)) = normalized.split_once(" Choose one or both — ")
+            && tail.contains(" • ")
+            && let Some(rewritten) =
+                format_choose_modes(head, " Choose one or both —", tail)
+        {
+            return rewritten;
+        }
+        if let Some((head, tail)) = normalized.split_once(" choose one — ")
+            && tail.contains(" • ")
+            && let Some(rewritten) = format_choose_modes(head, " choose one —", tail)
+        {
+            return rewritten;
+        }
+        if let Some((head, tail)) = normalized.split_once(" Choose one — ")
+            && tail.contains(" • ")
+            && let Some(rewritten) = format_choose_modes(head, " Choose one —", tail)
+        {
+            return rewritten;
+        }
+    }
 
     if lower_normalized.contains(
         "treasure artifact token with {t}, sacrifice this artifact: add one mana of any color. tapped under your control",
@@ -13595,6 +13665,17 @@ mod tests {
         assert_eq!(
             normalized,
             "Choose one — Tap X target permanents. • Untap X target permanents."
+        );
+    }
+
+    #[test]
+    fn normalizes_ability_scoped_choose_one_into_bullets() {
+        let normalized = normalize_sentence_surface_style(
+            "Triggered ability 1: When this creature enters, choose one — Target creature gets +2/+0 until end of turn. • Target creature gets -0/-2 until end of turn.",
+        );
+        assert_eq!(
+            normalized,
+            "Triggered ability 1: When this creature enters, choose one —\n• Target creature gets +2/+0 until end of turn.\n• Target creature gets -0/-2 until end of turn."
         );
     }
 
