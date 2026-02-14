@@ -179,6 +179,110 @@ fn test_parse_double_cant_clause_from_text() {
 }
 
 #[test]
+fn test_parse_characteristic_pt_constant_plus_count() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Aysen Crusader")
+        .parse_text(
+            "Aysen Crusader's power and toughness are each equal to 2 plus the number of Soldiers and Warriors you control.",
+        )
+        .expect("parse characteristic P/T constant plus count");
+
+    let static_ability = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability)
+                if static_ability.id() == StaticAbilityId::CharacteristicDefiningPT =>
+            {
+                Some(static_ability)
+            }
+            _ => None,
+        })
+        .expect("expected characteristic-defining P/T ability");
+
+    let game = crate::game_state::GameState::new(vec!["Alice".to_string()], 20);
+    let effects = static_ability.generate_effects(
+        crate::ids::ObjectId::from_raw(1),
+        crate::ids::PlayerId::from_index(0),
+        &game,
+    );
+
+    let crate::continuous::Modification::SetPowerToughness {
+        power,
+        toughness,
+        sublayer: _,
+    } = &effects[0].modification
+    else {
+        panic!("expected SetPowerToughness modification");
+    };
+
+    let crate::effect::Value::Add(left, right) = power else {
+        panic!("expected additive power value");
+    };
+    assert!(matches!(&**left, crate::effect::Value::Fixed(2)));
+    let crate::effect::Value::Count(filter) = &**right else {
+        panic!("expected count term in additive power value");
+    };
+    assert!(filter.subtypes.contains(&Subtype::Soldier));
+    assert!(filter.subtypes.contains(&Subtype::Warrior));
+    assert_eq!(filter.controller, Some(PlayerFilter::You));
+    assert_eq!(power, toughness);
+}
+
+#[test]
+fn test_parse_characteristic_pt_count_plus_count() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Soulless One")
+        .parse_text(
+            "Soulless One's power and toughness are each equal to the number of Zombies on the battlefield plus the number of Zombie cards in all graveyards.",
+        )
+        .expect("parse characteristic P/T count plus count");
+
+    let static_ability = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability)
+                if static_ability.id() == StaticAbilityId::CharacteristicDefiningPT =>
+            {
+                Some(static_ability)
+            }
+            _ => None,
+        })
+        .expect("expected characteristic-defining P/T ability");
+
+    let game = crate::game_state::GameState::new(vec!["Alice".to_string()], 20);
+    let effects = static_ability.generate_effects(
+        crate::ids::ObjectId::from_raw(1),
+        crate::ids::PlayerId::from_index(0),
+        &game,
+    );
+
+    let crate::continuous::Modification::SetPowerToughness {
+        power,
+        toughness,
+        sublayer: _,
+    } = &effects[0].modification
+    else {
+        panic!("expected SetPowerToughness modification");
+    };
+
+    let crate::effect::Value::Add(left, right) = power else {
+        panic!("expected additive power value");
+    };
+    let crate::effect::Value::Count(first_filter) = &**left else {
+        panic!("expected first count term");
+    };
+    let crate::effect::Value::Count(second_filter) = &**right else {
+        panic!("expected second count term");
+    };
+
+    assert!(first_filter.subtypes.contains(&Subtype::Zombie));
+    assert_eq!(first_filter.zone, Some(crate::zone::Zone::Battlefield));
+    assert!(second_filter.subtypes.contains(&Subtype::Zombie));
+    assert_eq!(second_filter.zone, Some(crate::zone::Zone::Graveyard));
+    assert_eq!(power, toughness);
+}
+
+#[test]
 fn test_parse_keyword_action_trigger_you_earthbend() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Earthbend Watcher")
         .card_types(vec![CardType::Creature])

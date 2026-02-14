@@ -391,6 +391,15 @@ fn evaluate_value(
 ) -> ValueEval {
     match value {
         Value::Fixed(n) => ValueEval::Scalar(*n),
+        Value::Add(left, right) => {
+            match (
+                evaluate_value(left, source, effect_controller, baseline, objects, game),
+                evaluate_value(right, source, effect_controller, baseline, objects, game),
+            ) {
+                (ValueEval::Scalar(a), ValueEval::Scalar(b)) => ValueEval::Scalar(a + b),
+                _ => ValueEval::Unknown,
+            }
+        }
         Value::SourcePower => baseline
             .get(&source)
             .and_then(|c| c.power)
@@ -895,6 +904,13 @@ fn apply_modification_to_chars_for_dependency(
 fn evaluate_value_simple(value: &Value, chars: &CalculatedCharacteristics) -> ValueEval {
     match value {
         Value::Fixed(n) => ValueEval::Scalar(*n),
+        Value::Add(left, right) => match (
+            evaluate_value_simple(left, chars),
+            evaluate_value_simple(right, chars),
+        ) {
+            (ValueEval::Scalar(a), ValueEval::Scalar(b)) => ValueEval::Scalar(a + b),
+            _ => ValueEval::Unknown,
+        },
         Value::SourcePower => chars
             .power
             .map(ValueEval::Scalar)
@@ -919,6 +935,7 @@ fn value_references_pt(value: &Value) -> bool {
         // These directly reference P/T of objects
         Value::SourcePower | Value::SourceToughness => true,
         Value::PowerOf(_) | Value::ToughnessOf(_) => true,
+        Value::Add(left, right) => value_references_pt(left) || value_references_pt(right),
 
         // EffectValue could reference P/T from a prior effect
         Value::EffectValue(_) | Value::EffectValueOffset(_, _) => true,

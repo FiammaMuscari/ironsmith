@@ -3610,6 +3610,7 @@ fn describe_counter_type(counter_type: crate::object::CounterType) -> String {
 fn describe_value(value: &Value) -> String {
     match value {
         Value::Fixed(n) => n.to_string(),
+        Value::Add(left, right) => format!("{} plus {}", describe_value(left), describe_value(right)),
         Value::X => "X".to_string(),
         Value::XTimes(factor) => {
             if *factor == 1 {

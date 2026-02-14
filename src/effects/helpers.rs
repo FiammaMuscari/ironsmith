@@ -49,6 +49,9 @@ pub fn resolve_value(
 ) -> Result<i32, ExecutionError> {
     match value {
         Value::Fixed(n) => Ok(*n),
+        Value::Add(left, right) => {
+            Ok(resolve_value(game, left, ctx)? + resolve_value(game, right, ctx)?)
+        }
 
         Value::X => ctx
             .x_value

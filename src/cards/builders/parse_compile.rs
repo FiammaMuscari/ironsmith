@@ -306,6 +306,7 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
 
 fn value_references_tag(value: &Value, tag: &str) -> bool {
     match value {
+        Value::Add(left, right) => value_references_tag(left, tag) || value_references_tag(right, tag),
         Value::Count(filter) | Value::CountScaled(filter, _) => filter
             .tagged_constraints
             .iter()
@@ -3414,6 +3415,10 @@ fn resolve_choose_spec_it_tag(
 
 fn resolve_value_it_tag(value: &Value, ctx: &CompileContext) -> Result<Value, CardTextError> {
     match value {
+        Value::Add(left, right) => Ok(Value::Add(
+            Box::new(resolve_value_it_tag(left, ctx)?),
+            Box::new(resolve_value_it_tag(right, ctx)?),
+        )),
         Value::Count(filter) => Ok(Value::Count(resolve_it_tag(filter, ctx)?)),
         Value::CountScaled(filter, multiplier) => {
             Ok(Value::CountScaled(resolve_it_tag(filter, ctx)?, *multiplier))

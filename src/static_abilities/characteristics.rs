@@ -109,6 +109,7 @@ fn display_value(value: &Value) -> String {
 
     match value {
         Value::Fixed(n) => n.to_string(),
+        Value::Add(left, right) => format!("{} plus {}", display_value(left), display_value(right)),
         Value::X => "X".to_string(),
         Value::XTimes(k) => {
             if *k == 1 {
@@ -180,6 +181,19 @@ mod tests {
         assert_eq!(
             ability.display(),
             "This creature's power and toughness are each equal to the number of creatures you control"
+        );
+    }
+
+    #[test]
+    fn test_display_additive_count_value() {
+        let value = Value::Add(
+            Box::new(Value::Fixed(2)),
+            Box::new(Value::Count(ObjectFilter::creature().you_control())),
+        );
+        let ability = CharacteristicDefiningPT::new(value.clone(), value);
+        assert_eq!(
+            ability.display(),
+            "This creature's power and toughness are each equal to 2 plus the number of creatures you control"
         );
     }
 }

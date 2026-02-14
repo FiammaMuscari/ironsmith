@@ -515,6 +515,9 @@ pub enum Value {
     /// A fixed numeric value
     Fixed(i32),
 
+    /// Sum of two values.
+    Add(Box<Value>, Box<Value>),
+
     /// The X value from the cost
     X,
 

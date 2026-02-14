@@ -5550,6 +5550,11 @@ fn describe_value(
 ) -> String {
     match value {
         crate::effect::Value::Fixed(n) => n.to_string(),
+        crate::effect::Value::Add(left, right) => format!(
+            "{} plus {}",
+            describe_value(left, tagged_subjects),
+            describe_value(right, tagged_subjects)
+        ),
         crate::effect::Value::X => "X".to_string(),
         crate::effect::Value::XTimes(n) => {
             if *n == 1 {

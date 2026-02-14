@@ -2309,45 +2309,128 @@ fn parse_damage_redirect_to_source_line(
 fn parse_characteristic_defining_pt_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
-    let words = words(tokens);
-    let has_this_pt = words.windows(4).any(|window| {
+    let line_words = words(tokens);
+    let has_this_pt = line_words.windows(4).any(|window| {
         window == ["this", "power", "and", "toughness"]
             || window == ["thiss", "power", "and", "toughness"]
     });
     if !has_this_pt {
         return Ok(None);
     }
-    if !(words.contains(&"equal") && words.contains(&"number") && words.contains(&"of")) {
-        return Ok(None);
-    }
-
-    let Some(number_idx) = tokens.iter().position(|token| token.is_word("number")) else {
-        return Ok(None);
-    };
-    if !tokens
-        .get(number_idx + 1)
-        .is_some_and(|token| token.is_word("of"))
+    if !(line_words.contains(&"equal")
+        && line_words.contains(&"number")
+        && line_words.contains(&"of"))
     {
         return Ok(None);
     }
 
-    let mut filter_tokens = &tokens[number_idx + 2..];
-    while filter_tokens
+    let mut tail_tokens = tokens;
+    if let Some(equal_word_idx) = line_words
+        .windows(2)
+        .position(|window| window == ["equal", "to"])
+    {
+        let start_word_idx = equal_word_idx + 2;
+        if let Some(start_token_idx) = token_index_for_word_index(tokens, start_word_idx) {
+            tail_tokens = &tokens[start_token_idx..];
+        }
+    }
+    while tail_tokens
         .last()
         .is_some_and(|token| token.is_word("respectively") || matches!(token, Token::Period(_)))
     {
-        filter_tokens = &filter_tokens[..filter_tokens.len().saturating_sub(1)];
+        tail_tokens = &tail_tokens[..tail_tokens.len().saturating_sub(1)];
     }
-    if filter_tokens.is_empty() {
+    if tail_tokens.is_empty() {
         return Ok(None);
     }
 
-    let filter = parse_object_filter(filter_tokens, false)?;
-    let value = Value::Count(filter);
+    let value = parse_characteristic_defining_pt_value(tail_tokens).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unsupported characteristic defining P/T value (value: '{}')",
+            words(tail_tokens).join(" ")
+        ))
+    })?;
     Ok(Some(StaticAbility::characteristic_defining_pt(
         value.clone(),
         value,
     )))
+}
+
+fn parse_characteristic_defining_pt_value(tokens: &[Token]) -> Option<Value> {
+    let words = words(tokens);
+    if words.is_empty() {
+        return None;
+    }
+
+    let plus_positions: Vec<usize> = words
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, word)| (*word == "plus").then_some(idx))
+        .collect();
+    if plus_positions.is_empty() {
+        return parse_characteristic_defining_pt_term(tokens);
+    }
+
+    let mut values = Vec::new();
+    let mut start_word_idx = 0usize;
+    for plus_word_idx in plus_positions {
+        let start_token_idx = token_index_for_word_index(tokens, start_word_idx)?;
+        let end_token_idx = token_index_for_word_index(tokens, plus_word_idx)?;
+        values.push(parse_characteristic_defining_pt_term(
+            &tokens[start_token_idx..end_token_idx],
+        )?);
+        start_word_idx = plus_word_idx + 1;
+    }
+    let final_start_token_idx = token_index_for_word_index(tokens, start_word_idx)?;
+    values.push(parse_characteristic_defining_pt_term(
+        &tokens[final_start_token_idx..],
+    )?);
+
+    let mut iter = values.into_iter();
+    let mut acc = iter.next()?;
+    for value in iter {
+        acc = Value::Add(Box::new(acc), Box::new(value));
+    }
+    Some(acc)
+}
+
+fn parse_characteristic_defining_pt_term(tokens: &[Token]) -> Option<Value> {
+    if tokens.is_empty() {
+        return None;
+    }
+
+    if let Some((number, used)) = parse_number(tokens) {
+        if tokens.len() == used {
+            return Some(Value::Fixed(number as i32));
+        }
+    }
+
+    let mut start = tokens;
+    while start
+        .first()
+        .is_some_and(|token| token.as_word().is_some_and(is_article))
+    {
+        start = &start[1..];
+    }
+    if start.is_empty() {
+        return None;
+    }
+
+    if start
+        .first()
+        .is_some_and(|token| token.is_word("number"))
+        && start
+            .get(1)
+            .is_some_and(|token| token.is_word("of"))
+    {
+        start = &start[2..];
+    }
+    if start.is_empty() {
+        return None;
+    }
+
+    let filter = parse_object_filter(start, false).ok()?;
+    Some(Value::Count(filter))
 }
 
 fn parse_shuffle_into_library_from_graveyard_line(
