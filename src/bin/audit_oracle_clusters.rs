@@ -588,6 +588,39 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
         "that an opponent's lands could produce",
         "that lands an opponent controls could produce",
     );
+    for (from, to) in [
+        (
+            "Search your library for up to one basic land you own, put it onto the battlefield tapped, then shuffle",
+            "Search your library for a basic land card, put it onto the battlefield tapped, then shuffle",
+        ),
+        (
+            "Search your library for up to one basic land you own, put it onto the battlefield, then shuffle",
+            "Search your library for a basic land card, put it onto the battlefield, then shuffle",
+        ),
+        (
+            "Search your library for basic land you own, reveal it, then shuffle and put the card on top",
+            "Search your library for a basic land card, reveal it, then shuffle and put that card on top",
+        ),
+    ] {
+        normalized = normalized.replace(from, to);
+    }
+    if let Some((prefix, rest)) = normalized.split_once("Search your library for ")
+        && let Some((tribe, tail)) = rest.split_once(" with mana value ")
+        && !tribe.trim().is_empty()
+        && !tribe.contains(' ')
+    {
+        for suffix in [
+            " you own, put it onto the battlefield, then shuffle.",
+            " you own, put it onto the battlefield, then shuffle",
+        ] {
+            if let Some(mv_clause) = tail.strip_suffix(suffix) {
+                normalized = format!(
+                    "{prefix}Search your library for a {tribe} permanent card with mana value {mv_clause}, put it onto the battlefield, then shuffle"
+                );
+                break;
+            }
+        }
+    }
     if normalized.contains(", you draw ") && normalized.contains(" and lose ") {
         normalized = normalized.replace(" and lose ", " and you lose ");
     }
