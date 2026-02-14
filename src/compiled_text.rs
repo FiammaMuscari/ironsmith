@@ -620,6 +620,9 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     if let Some(rewritten) = normalize_enchanted_creature_dies_clause(&normalized) {
         normalized = rewritten;
     }
+    if let Some(rewritten) = normalize_search_you_own_clause(&normalized) {
+        normalized = rewritten;
+    }
     if let Some(rewritten) = normalize_inline_earthbend_phrasing(&normalized) {
         normalized = rewritten;
     }
@@ -14993,6 +14996,28 @@ mod tests {
         assert_eq!(
             normalized,
             "When enchanted creature dies, return this card to its owner's hand and create a 1/3 black Demon creature token under your control."
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_search_you_own_plural_card_subject() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Search your library for up to three Aura you own, put them into your hand, then shuffle.",
+        );
+        assert_eq!(
+            normalized,
+            "Search your library for up to three Aura cards, put them into your hand, then shuffle."
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_search_you_own_singular_card_subject() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Search your library for up to one basic land or Gate you own, put it onto the battlefield tapped.",
+        );
+        assert_eq!(
+            normalized,
+            "Search your library for a basic land or Gate card, put it onto the battlefield tapped."
         );
     }
 
