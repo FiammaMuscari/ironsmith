@@ -19867,14 +19867,16 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
     let mut attacking = false;
     if let Some(named_idx) = tail_words.iter().position(|word| *word == "named") {
         let range_end = for_each_idx.unwrap_or(tail_words.len());
-        let after_named = &tail_words[named_idx + 1..range_end];
-        let name_end = after_named
-            .iter()
-            .position(|word| matches!(*word, "with" | "that" | "which"))
-            .map(|offset| named_idx + 1 + offset)
-            .unwrap_or(range_end);
-        if named_idx + 1 < name_end {
-            name_words.extend(tail_words[named_idx + 1..name_end].iter().copied());
+        if named_idx + 1 < range_end {
+            let after_named = &tail_words[named_idx + 1..range_end];
+            let name_end = after_named
+                .iter()
+                .position(|word| matches!(*word, "with" | "that" | "which"))
+                .map(|offset| named_idx + 1 + offset)
+                .unwrap_or(range_end);
+            if named_idx + 1 < name_end {
+                name_words.extend(tail_words[named_idx + 1..name_end].iter().copied());
+            }
         }
     }
     name_words.retain(|word| {
