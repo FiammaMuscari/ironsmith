@@ -8455,6 +8455,7 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
                 .replace("non-Auran enchantments", "non-Aura enchantments")
                 .replace("non-Auran enchantment", "non-Aura enchantment");
         normalized_body = normalize_compiled_post_pass_phrase(&normalized_body);
+        normalized_body = normalize_stubborn_surface_chain(&normalized_body);
         normalized_body = normalize_cost_subject_for_card(def, &normalized_body);
         normalized_body = normalize_spell_self_exile(def, &normalized_body);
         normalized_body = normalize_for_each_clause_surface(normalized_body);
@@ -8467,6 +8468,7 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
             .replace("non-Auran enchantments", "non-Aura enchantments")
             .replace("non-Auran enchantment", "non-Aura enchantment");
     normalized = normalize_compiled_post_pass_phrase(&normalized);
+    normalized = normalize_stubborn_surface_chain(&normalized);
     normalized = normalize_cost_subject_for_card(def, &normalized);
     normalized = normalize_spell_self_exile(def, &normalized);
     normalized = normalize_for_each_clause_surface(normalized);
@@ -8612,6 +8614,22 @@ fn normalize_triggered_self_deals_damage_phrase(def: &CardDefinition, text: &str
 
 fn normalize_known_low_tail_phrase(text: &str) -> String {
     text.trim().to_string()
+}
+
+fn normalize_stubborn_surface_chain(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("Draw two cards and you lose 2 life. you mill 2 cards.")
+        || trimmed.eq_ignore_ascii_case("Draw two cards and you lose 2 life. you mill 2 cards")
+    {
+        return "Draw two cards, lose 2 life, then mill two cards.".to_string();
+    }
+    if let Some(counter) = strip_prefix_ascii_ci(trimmed, "Put a ").and_then(|rest| {
+        strip_suffix_ascii_ci(rest, " counter on target creature. Proliferate.")
+            .or_else(|| strip_suffix_ascii_ci(rest, " counter on target creature. Proliferate"))
+    }) {
+        return format!("Put a {counter} counter on target creature, then proliferate.");
+    }
+    trimmed.to_string()
 }
 
 fn normalize_spell_self_exile(def: &CardDefinition, text: &str) -> String {
@@ -9291,6 +9309,15 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     {
         return format!("Each player creates a {rest}.");
     }
+    if let Some((left, right)) = split_once_ascii_ci(&normalized, ". ")
+        && (left.contains("you gain ") || left.contains("You gain "))
+        && strip_prefix_ascii_ci(right, "Create ").is_some()
+    {
+        return format!(
+            "{left} and {}.",
+            lowercase_first(right.trim_end_matches('.'))
+        );
+    }
     if let Some((left, right)) = split_once_ascii_ci(&normalized, " and you gain ")
         && !left.trim().is_empty()
         && !right.trim().is_empty()
@@ -9412,6 +9439,9 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         .replace("for each player, Investigate.", "each player investigates.")
         .replace("for each player, Investigate", "each player investigates")
         .replace("Attackings ", "Attacking ")
+        .replace("Land is no longer snow", "Lands are no longer snow")
+        .replace("Land enter the battlefield tapped", "Lands enter the battlefield tapped")
+        .replace("Add 1 mana of any color", "Add one mana of any color")
         .replace("Choose one - ", "Choose one — ")
         .replace("choose one - ", "choose one — ")
         .replace("Choose one or both - ", "Choose one or both — ")
@@ -10211,6 +10241,35 @@ fn split_lose_all_abilities_clause(clause: &str) -> Option<String> {
     None
 }
 
+fn normalize_global_subject_number(subject: &str) -> String {
+    let trimmed = subject.trim();
+    if trimmed.eq_ignore_ascii_case("Creature") {
+        return "Creatures".to_string();
+    }
+    if trimmed.eq_ignore_ascii_case("Land") {
+        return "Lands".to_string();
+    }
+    if trimmed.eq_ignore_ascii_case("Artifact") {
+        return "Artifacts".to_string();
+    }
+    if trimmed.eq_ignore_ascii_case("Enchantment") {
+        return "Enchantments".to_string();
+    }
+    if trimmed.eq_ignore_ascii_case("Planeswalker") {
+        return "Planeswalkers".to_string();
+    }
+    trimmed.to_string()
+}
+
+fn subject_is_plural(subject: &str) -> bool {
+    let lower = subject.trim().to_ascii_lowercase();
+    lower.starts_with("all ")
+        || lower.starts_with("other ")
+        || lower.starts_with("each ")
+        || lower.starts_with("those ")
+        || lower.ends_with('s')
+}
+
 fn normalize_activation_cost_add_punctuation(line: &str) -> String {
     if line.contains(':') {
         return line.to_string();
@@ -10385,6 +10444,19 @@ fn merge_adjacent_subject_predicate_lines(lines: Vec<String>) -> Vec<String> {
             && let Some(left_subject) = split_lose_all_abilities_clause(lines[idx].trim())
         {
             let right_trimmed = lines[idx + 1].trim().trim_end_matches('.');
+            if let Some(pt) =
+                right_trimmed.strip_prefix("Affected permanents have base power and toughness ")
+            {
+                let subject = normalize_global_subject_number(&left_subject);
+                let plural = subject_is_plural(&subject);
+                let lose_verb = if plural { "lose" } else { "loses" };
+                let have_verb = if plural { "have" } else { "has" };
+                merged.push(format!(
+                    "{subject} {lose_verb} all abilities and {have_verb} base power and toughness {pt}"
+                ));
+                idx += 2;
+                continue;
+            }
             let expected_tail_1 =
                 format!("{left_subject} has Doesn't untap during your untap step");
             let expected_tail_2 =
@@ -12841,6 +12913,18 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
         return format!("Put a {counter} counter on target creature, then proliferate");
     }
     if let Some(counter) = trimmed
+        .strip_prefix("put a ")
+        .and_then(|rest| rest.strip_suffix(" counter on target creature. proliferate"))
+    {
+        return format!("Put a {counter} counter on target creature, then proliferate");
+    }
+    if let Some(counter) = trimmed
+        .strip_prefix("put a ")
+        .and_then(|rest| rest.strip_suffix(" counter on target creature. proliferate."))
+    {
+        return format!("Put a {counter} counter on target creature, then proliferate");
+    }
+    if let Some(counter) = trimmed
         .strip_prefix("Put 1 ")
         .and_then(|rest| rest.strip_suffix(" counter(s) on target creature. Proliferate"))
     {
@@ -12861,6 +12945,11 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
         || lower_trimmed == "put 1 +1/+1 counters on target creature. proliferate."
     {
         return "Put a +1/+1 counter on target creature, then proliferate".to_string();
+    }
+    if lower_trimmed == "draw two cards and you lose 2 life. you mill 2 cards."
+        || lower_trimmed == "draw two cards and you lose 2 life. you mill 2 cards"
+    {
+        return "Draw two cards, lose 2 life, then mill two cards.".to_string();
     }
     if let Some((first, second)) = split_once_ascii_ci(trimmed, ". ")
         && let Some(first_buff) = strip_prefix_ascii_ci(first.trim(), "target creature gets ")
@@ -13833,6 +13922,18 @@ mod tests {
             ),
             "Goblins are Zombies in addition to their other creature types."
         );
+        assert_eq!(
+            normalize_sentence_surface_style("Land is no longer snow."),
+            "Lands are no longer snow."
+        );
+        assert_eq!(
+            normalize_sentence_surface_style("Land enter the battlefield tapped."),
+            "Lands enter the battlefield tapped."
+        );
+        assert_eq!(
+            normalize_sentence_surface_style("Add 1 mana of any color."),
+            "Add one mana of any color."
+        );
     }
 
     #[test]
@@ -13921,6 +14022,17 @@ mod tests {
         assert_eq!(
             normalized_plain,
             "When this creature enters, each player draws two cards, then discards a card at random."
+        );
+    }
+
+    #[test]
+    fn post_pass_normalizes_gain_then_create_chain() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "When this enchantment enters, you gain 2 life. Create a tapped Powerstone token.",
+        );
+        assert_eq!(
+            normalized,
+            "When this enchantment enters, you gain 2 life and create a tapped Powerstone token."
         );
     }
 
@@ -14181,6 +14293,27 @@ mod tests {
         assert_eq!(
             normalized,
             "This creature gets +1/+0 and gains flying until end of turn"
+        );
+    }
+
+    #[test]
+    fn merge_adjacent_subject_lines_merges_lose_abilities_with_base_pt() {
+        assert_eq!(
+            merge_adjacent_subject_predicate_lines(vec![
+                "Creature lose all abilities.".to_string(),
+                "Affected permanents have base power and toughness 1/1.".to_string(),
+            ]),
+            vec!["Creatures lose all abilities and have base power and toughness 1/1".to_string()]
+        );
+        assert_eq!(
+            merge_adjacent_subject_predicate_lines(vec![
+                "Enchanted creature lose all abilities.".to_string(),
+                "Affected permanents have base power and toughness 1/1.".to_string(),
+            ]),
+            vec![
+                "Enchanted creature loses all abilities and has base power and toughness 1/1"
+                    .to_string()
+            ]
         );
     }
 
