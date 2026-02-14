@@ -4402,6 +4402,15 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             continue;
         }
         if idx + 1 < filtered.len()
+            && let Some(mill) = filtered[idx].downcast_ref::<crate::effects::MillEffect>()
+            && let Some(may) = filtered[idx + 1].downcast_ref::<crate::effects::MayEffect>()
+            && let Some(compact) = describe_mill_then_may_return(mill, may)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < filtered.len()
             && let Some(scry) = filtered[idx].downcast_ref::<crate::effects::ScryEffect>()
             && let Some(draw) = filtered[idx + 1].downcast_ref::<crate::effects::DrawCardsEffect>()
             && let Some(compact) = describe_scry_then_draw(scry, draw)
@@ -5571,6 +5580,39 @@ fn describe_draw_then_discard(
         text.push_str(" at random");
     }
     Some(text)
+}
+
+fn describe_mill_then_may_return(
+    mill: &crate::effects::MillEffect,
+    may: &crate::effects::MayEffect,
+) -> Option<String> {
+    if may.effects.len() != 1 {
+        return None;
+    }
+    let return_effect = may.effects.first()?;
+    let is_return_to_hand = return_effect
+        .downcast_ref::<crate::effects::ReturnToHandEffect>()
+        .is_some()
+        || return_effect
+            .downcast_ref::<crate::effects::ReturnFromGraveyardToHandEffect>()
+            .is_some();
+    if !is_return_to_hand {
+        return None;
+    }
+
+    let decider = may.decider.as_ref().unwrap_or(&mill.player);
+    if decider != &mill.player {
+        return None;
+    }
+
+    let player = describe_player_filter(&mill.player);
+    let mill_clause = format!(
+        "{player} {} {}",
+        player_verb(&player, "mill", "mills"),
+        describe_card_count(&mill.count)
+    );
+    let return_clause = lowercase_first(&describe_effect(return_effect));
+    Some(format!("{mill_clause}, then {player} may {return_clause}"))
 }
 
 fn describe_scry_then_draw(
