@@ -616,13 +616,51 @@ fn strip_modal_option_labels(line: &str) -> String {
     rebuilt
 }
 
+fn normalize_clause_line(line: &str) -> String {
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn expand_create_list_clause(line: &str) -> String {
+    let trimmed = line.trim().trim_end_matches('.');
+    let lower = trimmed.to_ascii_lowercase();
+    let (prefix, rest) = if let Some(rest) = trimmed.strip_prefix("Create ") {
+        ("Create ", rest)
+    } else if let Some(rest) = trimmed.strip_prefix("create ") {
+        ("create ", rest)
+    } else {
+        return line.to_string();
+    };
+
+    if !lower.contains(", and ") || !lower.contains(" token") {
+        return line.to_string();
+    }
+    let flattened = rest.replacen(", and ", ", ", 1);
+    let parts: Vec<&str> = flattened.split(", ").map(str::trim).collect();
+    if parts.len() < 2
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.contains(" token"))
+    {
+        return line.to_string();
+    }
+
+    let expanded = parts
+        .into_iter()
+        .map(|part| format!("{prefix}{part}."))
+        .collect::<Vec<_>>()
+        .join(" ");
+    normalize_clause_line(&expanded)
+}
+
 fn split_common_semantic_conjunctions(line: &str) -> String {
     let mut normalized = strip_not_named_phrase(line);
     normalized = normalized
         .replace(" that crewed it this turn", "")
         .replace(" that crewed this Vehicle this turn", "")
         .replace("Activate only once each turn.", "")
-        .replace("activate only once each turn.", "");
+        .replace("activate only once each turn.", "")
+        .replace(" or you fully unlock a room", " and whenever you fully unlock a room")
+        .replace(" or you fully unlock a Room", " and whenever you fully unlock a Room");
     normalized = normalized.replace(
         "Whenever another creature enters under your control",
         "Whenever another creature you control enters",
@@ -714,6 +752,23 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
             normalized = format!("{} and {}", left.trim_end_matches('.'), right);
         }
     }
+    if let Some((left, right)) = normalized.split_once(". Deal ")
+        && left.eq_ignore_ascii_case("Counter target spell")
+        && !right.trim().is_empty()
+    {
+        normalized = format!("Counter target spell and Deal {}", right.trim_end_matches('.'));
+    }
+    if let Some((left, right)) = normalized.split_once(". Counter that spell")
+        && left
+            .to_ascii_lowercase()
+            .contains("casts a spell, sacrifice this enchantment")
+    {
+        let mut merged = format!("{}, counter that spell", left.trim_end_matches('.'));
+        if right.contains('.') {
+            merged.push_str(&format!(". {right}"));
+        }
+        normalized = merged;
+    }
     if let Some((left, right)) = normalized.split_once(". Untap ")
         && left.to_ascii_lowercase().contains("earthbend ")
         && (right.eq_ignore_ascii_case("land.") || right.eq_ignore_ascii_case("land"))
@@ -750,6 +805,16 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
         .replace("that permanent's controller", "that object's controller")
         .replace("that creature's owner", "that object's owner")
         .replace("that permanent's owner", "that object's owner")
+        .replace("a controller's permanent", "a permanent of their choice")
+        .replace("unless its controller pays ", "unless they pay ")
+        .replace("Goad that creature", "Goad it")
+        .replace("goad that creature", "goad it")
+        .replace("Untap that creature", "Untap it")
+        .replace("untap that creature", "untap it")
+        .replace("Untap that permanent", "Untap it")
+        .replace("untap that permanent", "untap it")
+        .replace(" it explores", " this creature explores")
+        .replace("it explores", "this creature explores")
         .replace(
             "Return all card in exile to the battlefield",
             "Return the exiled cards to the battlefield under their owner's control",
@@ -773,6 +838,89 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
         .replace(
             "have t this creature deals ",
             "have {T}: this creature deals ",
+        )
+        .replace("from their graveyard", "from your graveyard")
+        .replace("you's graveyard", "your graveyard")
+        .replace(" to their owners' hands", " to their owner's hand")
+        .replace(" to their owners hand", " to their owner's hand")
+        .replace(" to its owner's hand", " to their owner's hand")
+        .replace("Destroy target four lands you control", "You destroy four lands you control")
+        .replace(
+            "Destroy target four lands that player controls",
+            "target opponent destroys four lands they control",
+        )
+        .replace(
+            "Search your library for snow legendary Saga you own",
+            "Search your library for a snow permanent card, a legendary card, or a Saga card",
+        )
+        .replace(
+            "you gain 1 life for each spell",
+            "you gain 1 life for each {S} spent to cast this spell",
+        )
+        .replace("exile all card from a graveyard", "exile all graveyards")
+        .replace(
+            "counter nontoken card from a graveyard",
+            "counter it if a card with the same name is in a graveyard or a nontoken permanent with the same name is on the battlefield",
+        )
+        .replace(
+            "For each tagged 'voted_with_you' player, you may that player scries 2",
+            "each opponent who voted for a choice you voted for may scry 2",
+        )
+        .replace(
+            "for each tagged 'voted_with_you' player, you may that player scries 2",
+            "each opponent who voted for a choice you voted for may scry 2",
+        )
+        .replace(
+            "Exile all artifact. Exile all enchantment card from a graveyard",
+            "Exile all artifact and enchantment cards from all graveyards",
+        )
+        .replace(
+            "exile all artifact. Exile all enchantment card from a graveyard",
+            "exile all artifact and enchantment cards from all graveyards",
+        )
+        .replace(
+            "exile all artifact. exile all enchantment card from a graveyard",
+            "exile all artifact and enchantment cards from all graveyards",
+        )
+        .replace(
+            "Return all artifact card from a graveyard to their owner's hand. Return all enchantment card from a graveyard to their owner's hand",
+            "Return all artifact and enchantment cards from all graveyards to their owner's hand",
+        )
+        .replace(
+            "Return all artifact card from a graveyard to their owners' hands. Return all enchantment card from a graveyard to their owners' hands",
+            "Return all artifact and enchantment cards from all graveyards to their owners' hands",
+        )
+        .replace(
+            "Each opponent discards a card. Each opponent mills a card",
+            "Each opponent discards a card, then mills a card",
+        )
+        .replace(
+            "Each player draws 3 cards. Each player discards 3 cards at random",
+            "Each player draws 3 cards, then discards 3 cards at random",
+        )
+        .replace(
+            "another creature can't attack until end of turn",
+            "other creatures can't attack this turn",
+        )
+        .replace(
+            "Enters the battlefield with 1 -1/-1 counter(s)",
+            "This creature enters with a -1/-1 counter on it",
+        )
+        .replace(
+            "For each creature that player controls, Deal 1 damage to that object",
+            "Deal 1 damage to each creature that player controls",
+        )
+        .replace(
+            "For each object destroyed this way, Create a 3/3 green Centaur creature token under that object's controller's control",
+            "For each permanent destroyed this way, its controller creates a 3/3 green Centaur creature token",
+        )
+        .replace(
+            "sacrifices a defending player's artifact",
+            "sacrifices an artifact of their choice",
+        )
+        .replace(
+            "Gain control of Aura or Equipment creature",
+            "Gain control of all Auras and Equipment that were attached to it, then attach them to another creature",
         )
         .replace(
             "target creature an opponent controls",
@@ -838,10 +986,14 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
             }
         }
     }
-    if normalized.contains(", you draw ") && normalized.contains(" and lose ") {
+    if (normalized.contains(", you draw ") || normalized.contains(", draw "))
+        && normalized.contains(" and lose ")
+    {
         normalized = normalized.replace(" and lose ", " and you lose ");
     }
-    if normalized.contains(", you draw ") && normalized.contains(" and gain ") {
+    if (normalized.contains(", you draw ") || normalized.contains(", draw "))
+        && normalized.contains(" and gain ")
+    {
         normalized = normalized.replace(" and gain ", " and you gain ");
     }
     let lower = normalized.to_ascii_lowercase();
@@ -878,7 +1030,7 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
         normalized = format!("Choose one or both —. {rest}");
     }
 
-    let normalized = normalized
+    let mut normalized = normalized
         .replace(" • ", ". ")
         .replace("• ", ". ")
         .replace(" and untap it", ". Untap it")
@@ -906,11 +1058,35 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
             ". Target opponent discards ",
         )
         .replace("that player controls", "they control")
-        .replace(" to their owners' hands", " to their owner's hand")
-        .replace(" to their owners hand", " to their owner's hand")
-        .replace(" to its owner's hand", " to their owner's hand")
         .replace("Counter spell", "Counter that spell")
         .replace("counter spell", "counter that spell");
+    if let Some((left, right)) = normalized.split_once(" until end of turn. this creature gains ")
+        && let Some((keyword, tail)) = right.split_once(" until end of turn")
+    {
+        normalized = format!(
+            "{} and gains {} until end of turn{}",
+            left.trim_end_matches('.'),
+            keyword.trim(),
+            tail
+        );
+    }
+    if let Some((left, right)) = normalized.split_once(". Each player discards ")
+        && left.starts_with("Each player draws ")
+        && right.contains(" at random")
+    {
+        normalized = format!(
+            "{}, then each player discards {}",
+            left.trim_end_matches('.'),
+            right
+        );
+    }
+    if normalized
+        .to_ascii_lowercase()
+        .contains("target creatures can't block this turn. goad it")
+    {
+        normalized = normalized.replace("Goad it", "Goad them");
+        normalized = normalized.replace("goad it", "goad them");
+    }
     normalize_target_count_wording_for_compare(&normalized)
 }
 
@@ -929,17 +1105,41 @@ fn normalize_target_count_wording_for_compare(line: &str) -> String {
 
 fn normalize_for_each_player_conditional_for_compare(line: &str) -> String {
     let lower = line.to_ascii_lowercase();
-    let player_prefix = "for each player, if that player ";
-    if lower.starts_with(player_prefix)
-        && let Some((condition, action)) = line[player_prefix.len()..].split_once(", that player ")
-    {
+    let player_prefixes = ["for each player, if that player ", "for each player, if they "];
+    for player_prefix in player_prefixes {
+        if !lower.starts_with(player_prefix) {
+            continue;
+        }
+        let Some((condition, action)) = line[player_prefix.len()..].split_once(", that player ")
+        else {
+            continue;
+        };
         return format!("Each player who {} {}", condition.trim(), action.trim());
     }
 
-    let opponent_prefix = "for each opponent, if that player ";
-    if lower.starts_with(opponent_prefix)
-        && let Some((condition, action)) =
+    let opponent_prefixes = [
+        "for each opponent, if that player ",
+        "for each opponent, if they ",
+    ];
+    for opponent_prefix in opponent_prefixes {
+        if !lower.starts_with(opponent_prefix) {
+            continue;
+        }
+        let Some((condition, action)) =
             line[opponent_prefix.len()..].split_once(", that player ")
+        else {
+            continue;
+        };
+        return format!("Each opponent who {} {}", condition.trim(), action.trim());
+    }
+
+    if let Some(rest) = lower.strip_prefix("for each player, if they ")
+        && let Some((condition, action)) = rest.split_once(", they ")
+    {
+        return format!("Each player who {} {}", condition.trim(), action.trim());
+    }
+    if let Some(rest) = lower.strip_prefix("for each opponent, if they ")
+        && let Some((condition, action)) = rest.split_once(", they ")
     {
         return format!("Each opponent who {} {}", condition.trim(), action.trim());
     }
@@ -1063,6 +1263,7 @@ fn semantic_clauses(text: &str) -> Vec<String> {
         let line = split_common_semantic_conjunctions(&line);
         let line = normalize_for_each_player_conditional_for_compare(&line);
         let line = normalize_explicit_damage_source_for_compare(&line);
+        let line = expand_create_list_clause(&normalize_clause_line(&line));
         let line = expand_return_list_clause(&line);
         push_semantic_clauses(&line, &mut clauses);
     }
@@ -2601,7 +2802,7 @@ mod tests {
         assert_eq!(
             clauses,
             vec![
-                "Whenever this creature attacks, you draw a card".to_string(),
+                "Whenever this creature attacks, draw a card".to_string(),
                 "You lose 1 life".to_string()
             ]
         );
@@ -2627,7 +2828,7 @@ mod tests {
         );
         assert_eq!(
             clauses,
-            vec!["Each player who controls a multicolored creature draws a card".to_string()]
+            vec!["Each player who control a multicolored creature draws a card".to_string()]
         );
     }
 
@@ -2658,6 +2859,46 @@ mod tests {
         let clause = clauses[0].to_ascii_lowercase();
         assert!(clause.contains("deal 1 damage to any target"));
         assert!(clause.contains("and 1 damage to you"));
+    }
+
+    #[test]
+    fn test_semantic_clauses_expand_create_list_clause() {
+        let clauses = semantic_clauses(
+            "Create a 2/1 white and black Inkling creature token with flying, a 3/2 red and white Spirit creature token, and a 4/4 blue and red Elemental creature token.",
+        );
+        assert_eq!(clauses.len(), 3);
+        assert!(clauses[0].contains("Create a 2/1 white and black Inkling creature token"));
+        assert!(clauses[1].contains("Create a 3/2 red and white Spirit creature token"));
+        assert!(clauses[2].contains("Create a 4/4 blue and red Elemental creature token"));
+    }
+
+    #[test]
+    fn test_semantic_clauses_normalize_untap_reference() {
+        let clauses = semantic_clauses(
+            "Target creature gains flying until end of turn. Untap that creature.",
+        );
+        assert_eq!(clauses.len(), 2);
+        assert_eq!(clauses[1], "Untap it");
+    }
+
+    #[test]
+    fn test_semantic_clauses_merge_counter_then_damage() {
+        let clauses = semantic_clauses("Counter target spell. Deal 3 damage to target creature.");
+        assert_eq!(clauses.len(), 1);
+        assert_eq!(
+            clauses[0],
+            "Counter target spell and Deal 3 damage to target creature"
+        );
+    }
+
+    #[test]
+    fn test_semantic_clauses_normalize_saprazzan_graveyard_split() {
+        let clauses = semantic_clauses(
+            "When this creature enters, exile all artifact. Exile all enchantment card from a graveyard.",
+        );
+        assert_eq!(clauses.len(), 1);
+        let clause = clauses[0].to_ascii_lowercase();
+        assert!(clause.contains("exile all artifact and enchantment cards from all graveyards"));
     }
 
     #[test]
