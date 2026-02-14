@@ -729,7 +729,13 @@ fn compile_effects(
             continue;
         }
 
-        let (effect_list, effect_choices) = compile_effect(&effects[idx], ctx)?;
+        let (mut effect_list, effect_choices) = compile_effect(&effects[idx], ctx)?;
+        if !effect_list.is_empty() {
+            let id = ctx.next_effect_id();
+            let last = effect_list.pop().expect("non-empty effect list");
+            effect_list.push(Effect::with_id(id.0, last));
+            ctx.last_effect_id = Some(id);
+        }
         compiled.extend(effect_list);
         for choice in effect_choices {
             push_choice(&mut choices, choice);
@@ -1574,13 +1580,16 @@ fn compile_effect(
             vec![Effect::counter_activated_or_triggered_ability()],
             Vec::new(),
         )),
-        EffectAst::Draw { count, player } => compile_player_effect(
-            *player,
-            ctx,
-            true,
-            || Effect::draw(count.clone()),
-            |filter| Effect::target_draws(count.clone(), filter),
-        ),
+        EffectAst::Draw { count, player } => {
+            let count = resolve_value_it_tag(count, ctx)?;
+            compile_player_effect(
+                *player,
+                ctx,
+                true,
+                || Effect::draw(count.clone()),
+                |filter| Effect::target_draws(count.clone(), filter),
+            )
+        }
         EffectAst::Counter { target } => {
             compile_tagged_effect_for_target(target, ctx, "countered", Effect::counter)
         }
@@ -3139,6 +3148,21 @@ fn resolve_value_it_tag(value: &Value, ctx: &CompileContext) -> Result<Value, Ca
         )?))),
         Value::EventValue(EventValueSpec::Amount) | Value::EventValue(EventValueSpec::LifeAmount) => {
             if !ctx.allow_life_event_value {
+                if let Some(id) = ctx.last_effect_id {
+                    return Ok(Value::EffectValue(id));
+                }
+                return Err(CardTextError::ParseError(
+                    "event-derived amount requires a compatible trigger".to_string(),
+                ));
+            }
+            Ok(value.clone())
+        }
+        Value::EventValueOffset(EventValueSpec::Amount, offset)
+        | Value::EventValueOffset(EventValueSpec::LifeAmount, offset) => {
+            if !ctx.allow_life_event_value {
+                if let Some(id) = ctx.last_effect_id {
+                    return Ok(Value::EffectValueOffset(id, *offset));
+                }
                 return Err(CardTextError::ParseError(
                     "event-derived amount requires a compatible trigger".to_string(),
                 ));

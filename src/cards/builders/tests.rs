@@ -3772,6 +3772,66 @@ fn parse_choose_not_to_untap_line_and_activated_line_without_spurious_untap_effe
 }
 
 #[test]
+fn parse_untap_during_each_other_players_untap_step_as_static_ability() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Seedborn Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Untap all permanents you control during each other player's untap step.")
+        .expect("each-other-player untap line should parse as static ability");
+
+    assert!(
+        def.spell_effect
+            .as_ref()
+            .map(|effects| effects.is_empty())
+            .unwrap_or(true),
+        "expected no spell effects for untap-during-each-other-player static line"
+    );
+
+    let compiled = compiled_lines(&def).join("\n").to_ascii_lowercase();
+    assert!(
+        compiled.contains("untap all permanents you control during each other players untap step"),
+        "expected compiled output to keep each-other-player untap wording, got {compiled}"
+    );
+    assert!(
+        !compiled.contains("spell effects: untap all another permanent you control"),
+        "unexpected statement-path untap rendering leak in compiled output: {compiled}"
+    );
+}
+
+#[test]
+fn parse_dark_deal_that_many_minus_one_keeps_prior_effect_reference() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Dark Deal Variant")
+        .parse_text("Each player discards all the cards in their hand, then draws that many cards minus one.")
+        .expect("dark deal style clause should parse");
+
+    let debug = format!("{:#?}", def.spell_effect);
+    assert!(
+        debug.contains("EffectValueOffset"),
+        "expected draw count to reference prior effect with offset, got {debug}"
+    );
+    assert!(
+        debug.contains("-1"),
+        "expected minus one offset in draw count, got {debug}"
+    );
+}
+
+#[test]
+fn parse_hellion_eruption_that_many_keeps_prior_effect_reference() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Hellion Eruption Variant")
+        .parse_text("Sacrifice all creatures you control, then create that many 4/4 red Hellion creature tokens.")
+        .expect("hellion eruption style clause should parse");
+
+    let debug = format!("{:#?}", def.spell_effect);
+    assert!(
+        debug.contains("CreateTokenEffect"),
+        "expected token creation effect, got {debug}"
+    );
+    assert!(
+        debug.contains("EffectValue"),
+        "expected token count to reference prior effect result, got {debug}"
+    );
+}
+
+#[test]
 fn parse_can_block_only_creatures_with_flying_static_line() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Cloud Djinn Variant")
         .card_types(vec![CardType::Creature])
@@ -5628,10 +5688,6 @@ fn reject_singleton_partial_parse_clauses_030() {
         "Draw three cards, then put two cards from your hand both on top of your library or both on the bottom of your library.",
     );
     assert_partial_parse_rejected(
-        "Dark Deal Variant",
-        "Each player discards all the cards in their hand, then draws that many cards minus one.",
-    );
-    assert_partial_parse_rejected(
         "Kjeldoran Home Guard Variant",
         "At end of combat, if this creature attacked or blocked this combat, put a -0/-1 counter on this creature and create a 0/1 white Deserter creature token.",
     );
@@ -5663,10 +5719,6 @@ fn reject_singleton_partial_parse_clauses_030() {
     assert_partial_parse_rejected(
         "Word of Undoing Variant",
         "Return target creature and all white Auras you own attached to it to their owners' hands.",
-    );
-    assert_partial_parse_rejected(
-        "Hellion Eruption Variant",
-        "Sacrifice all creatures you control, then create that many 4/4 red Hellion creature tokens.",
     );
     assert_partial_parse_rejected(
         "Ugin's Insight Variant",

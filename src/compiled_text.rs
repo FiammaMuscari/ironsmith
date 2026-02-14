@@ -3754,13 +3754,46 @@ fn describe_value(value: &Value) -> String {
             "the number of colors of mana spent to cast this spell".to_string()
         }
         Value::EffectValue(id) => format!("the count result of effect #{}", id.0),
+        Value::EffectValueOffset(id, offset) => {
+            if *offset == 0 {
+                format!("the count result of effect #{}", id.0)
+            } else if *offset > 0 {
+                format!("the count result of effect #{} plus {}", id.0, offset)
+            } else {
+                format!("the count result of effect #{} minus {}", id.0, -offset)
+            }
+        }
         Value::EventValue(EventValueSpec::Amount)
         | Value::EventValue(EventValueSpec::LifeAmount) => "that much".to_string(),
+        Value::EventValueOffset(EventValueSpec::Amount, offset)
+        | Value::EventValueOffset(EventValueSpec::LifeAmount, offset) => {
+            if *offset == 0 {
+                "that much".to_string()
+            } else if *offset > 0 {
+                format!("that much plus {}", offset)
+            } else {
+                format!("that much minus {}", -offset)
+            }
+        }
         Value::EventValue(EventValueSpec::BlockersBeyondFirst { multiplier }) => {
             if *multiplier == 1 {
                 "the number of blockers beyond the first".to_string()
             } else {
                 format!("{multiplier} times the number of blockers beyond the first")
+            }
+        }
+        Value::EventValueOffset(EventValueSpec::BlockersBeyondFirst { multiplier }, offset) => {
+            let base = if *multiplier == 1 {
+                "the number of blockers beyond the first".to_string()
+            } else {
+                format!("{multiplier} times the number of blockers beyond the first")
+            };
+            if *offset == 0 {
+                base
+            } else if *offset > 0 {
+                format!("{base} plus {}", offset)
+            } else {
+                format!("{base} minus {}", -offset)
             }
         }
         Value::WasKicked => "whether this spell was kicked (1 or 0)".to_string(),

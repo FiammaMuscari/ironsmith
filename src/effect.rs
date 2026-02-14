@@ -588,8 +588,16 @@ pub enum Value {
     /// References an effect that was labeled with `Effect::WithId`.
     EffectValue(EffectId),
 
+    /// The value from a prior effect's result plus or minus a fixed offset.
+    ///
+    /// Useful for patterns like "draw that many cards minus one".
+    EffectValueOffset(EffectId, i32),
+
     /// Value pulled from the triggering event payload.
     EventValue(EventValueSpec),
+
+    /// Trigger/event-derived value plus or minus a fixed offset.
+    EventValueOffset(EventValueSpec, i32),
 
     /// 1 if the spell was kicked (any "Kicker" or "Multikicker" cost was paid), 0 otherwise.
     WasKicked,

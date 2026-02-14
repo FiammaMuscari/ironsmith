@@ -793,6 +793,16 @@ fn split_segments_on_comma_then(segments: Vec<Vec<Token>>) -> Vec<Vec<Token>> {
     let back_ref_words = ["that", "it", "them", "its"];
     let mut result = Vec::new();
     for segment in segments {
+        let segment_words = words(&segment);
+        let starts_with_for_each_player_or_opponent =
+            segment_words.starts_with(&["each", "player"])
+                || segment_words.starts_with(&["each", "players"])
+                || segment_words.starts_with(&["each", "opponent"])
+                || segment_words.starts_with(&["each", "opponents"])
+                || segment_words.starts_with(&["for", "each", "player"])
+                || segment_words.starts_with(&["for", "each", "players"])
+                || segment_words.starts_with(&["for", "each", "opponent"])
+                || segment_words.starts_with(&["for", "each", "opponents"]);
         let mut split_point = None;
         for i in 0..segment.len().saturating_sub(1) {
             if matches!(segment[i], Token::Comma(_))
@@ -826,7 +836,16 @@ fn split_segments_on_comma_then(segments: Vec<Vec<Token>>) -> Vec<Vec<Token>> {
                     && after_words
                         .iter()
                         .any(|word| *word == "counter" || *word == "counters");
+                let allow_that_many_followup = !starts_with_for_each_player_or_opponent
+                    && has_back_ref
+                    && (after_words.starts_with(&["draw", "that", "many"])
+                        || after_words.starts_with(&["draws", "that", "many"])
+                        || after_words.starts_with(&["create", "that", "many"])
+                        || after_words.starts_with(&["creates", "that", "many"]));
                 if has_effect_head && (!has_back_ref || allow_backref_split) {
+                    split_point = Some(i);
+                    break;
+                } else if has_effect_head && allow_that_many_followup {
                     split_point = Some(i);
                     break;
                 }
@@ -1034,6 +1053,16 @@ fn parse_level_header(line: &str) -> Option<(u32, Option<u32>)> {
     Some((value, Some(value)))
 }
 
+fn is_untap_during_each_other_players_untap_step_words(words: &[&str]) -> bool {
+    if words.first().copied() != Some("untap") {
+        return false;
+    }
+    words.windows(6).any(|window| {
+        window == ["during", "each", "other", "player", "untap", "step"]
+            || window == ["during", "each", "other", "players", "untap", "step"]
+    })
+}
+
 fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
     parser_trace_line("parse_line:entry", line);
     let normalized = line
@@ -1239,7 +1268,10 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
         return Ok(LineAst::Statement { effects });
     }
 
+    let is_each_other_player_untap_static =
+        is_untap_during_each_other_players_untap_step_words(&line_words);
     if find_verb(&tokens).is_some_and(|(_, idx)| idx == 0)
+        && !is_each_other_player_untap_static
         && let Ok(effects) = parse_effect_sentences(&tokens)
         && !effects.is_empty()
     {
@@ -1701,6 +1733,9 @@ fn parse_static_ability_line(
         return Ok(Some(vec![ability]));
     }
     if let Some(ability) = parse_may_choose_not_to_untap_during_untap_step_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
+    if let Some(ability) = parse_untap_during_each_other_players_untap_step_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
     if let Some(ability) = parse_doesnt_untap_during_untap_step_line(tokens)? {
@@ -4636,6 +4671,19 @@ fn parse_may_choose_not_to_untap_during_untap_step_line(
     Ok(Some(StaticAbility::custom(
         "may_choose_not_to_untap_during_your_untap_step",
         text,
+    )))
+}
+
+fn parse_untap_during_each_other_players_untap_step_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let line_words = words(tokens);
+    if !is_untap_during_each_other_players_untap_step_words(&line_words) {
+        return Ok(None);
+    }
+    Ok(Some(StaticAbility::custom(
+        "untap_during_each_other_players_untap_step",
+        line_words.join(" "),
     )))
 }
 
@@ -14009,10 +14057,20 @@ fn parse_shuffle_graveyard_into_library_sentence(
     }
 
     let subject_tokens = trim_commas(&clause_tokens[..shuffle_idx]);
-    let subject = parse_subject(&subject_tokens);
+    let each_player_subject = {
+        let subject_words = words(&subject_tokens);
+        subject_words.starts_with(&["each", "player"]) || subject_words.starts_with(&["each", "players"])
+    };
+    let subject = if subject_tokens.is_empty() {
+        SubjectAst::Player(PlayerAst::You)
+    } else if each_player_subject {
+        SubjectAst::Player(PlayerAst::Implicit)
+    } else {
+        parse_subject(&subject_tokens)
+    };
     let player = match subject {
         SubjectAst::Player(player) => player,
-        _ => PlayerAst::You,
+        SubjectAst::This => return Ok(None),
     };
 
     let body_tokens = trim_commas(&clause_tokens[shuffle_idx + 1..]);
@@ -14032,6 +14090,28 @@ fn parse_shuffle_graveyard_into_library_sentence(
     if !destination_words.contains(&"library") {
         return Ok(None);
     }
+    let trailing_tokens = destination_tokens
+        .iter()
+        .position(|token| token.is_word("library") || token.is_word("libraries"))
+        .map(|idx| trim_commas(&destination_tokens[idx + 1..]).to_vec())
+        .unwrap_or_default();
+    let append_trailing = |mut effects: Vec<EffectAst>| -> Result<Option<Vec<EffectAst>>, CardTextError> {
+        if trailing_tokens.is_empty() {
+            return Ok(Some(effects));
+        }
+        let mut trailing_effects = parse_effect_chain(&trailing_tokens)?;
+        if each_player_subject {
+            for effect in &mut trailing_effects {
+                maybe_apply_carried_player(effect, CarryContext::ForEachPlayer);
+            }
+        } else {
+            for effect in &mut trailing_effects {
+                maybe_apply_carried_player(effect, CarryContext::Player(player));
+            }
+        }
+        effects.extend(trailing_effects);
+        Ok(Some(effects))
+    };
 
     let target_tokens = trim_commas(&body_tokens[..into_idx]);
     if target_tokens.is_empty() {
@@ -14044,20 +14124,35 @@ fn parse_shuffle_graveyard_into_library_sentence(
 
     let has_target_selector = target_words.contains(&"target");
     if !has_target_selector {
-        return Ok(Some(vec![EffectAst::ShuffleGraveyardIntoLibrary { player }]));
+        let mut effects = Vec::new();
+        if each_player_subject && target_words.contains(&"hand") {
+            let mut hand_filter = ObjectFilter::default();
+            hand_filter.zone = Some(Zone::Hand);
+            hand_filter.owner = Some(PlayerFilter::IteratedPlayer);
+            effects.push(EffectAst::MoveToZone {
+                target: TargetAst::Object(hand_filter, None, None),
+                zone: Zone::Library,
+                to_top: false,
+            });
+        }
+        effects.push(EffectAst::ShuffleGraveyardIntoLibrary { player });
+        if each_player_subject {
+            return append_trailing(vec![EffectAst::ForEachPlayer { effects }]);
+        }
+        return append_trailing(effects);
     }
 
     let mut target = parse_target_phrase(&target_tokens)?;
     apply_shuffle_subject_graveyard_owner_context(&mut target, subject);
 
-    Ok(Some(vec![
+    append_trailing(vec![
         EffectAst::MoveToZone {
             target,
             zone: Zone::Library,
             to_top: false,
         },
         EffectAst::ShuffleLibrary { player },
-    ]))
+    ])
 }
 
 fn parse_for_each_exiled_this_way_sentence(
@@ -18060,12 +18155,41 @@ fn parse_move(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
 }
 
 fn parse_draw(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
-    let (mut count, used) = parse_value(tokens).ok_or_else(|| {
-        CardTextError::ParseError(format!(
-            "missing draw count (clause: '{}')",
-            words(tokens).join(" ")
-        ))
-    })?;
+    let clause_words = words(tokens);
+    let mut parsed_that_many_minus_one = false;
+    let (mut count, used) = if clause_words.starts_with(&["that", "many"]) {
+        let mut value = Value::EventValue(EventValueSpec::Amount);
+        let consumed = 2usize;
+        let rest = &tokens[consumed..];
+        if rest
+            .first()
+            .is_some_and(|token| token.is_word("card") || token.is_word("cards"))
+        {
+            let trailing = trim_commas(&rest[1..]);
+            let trailing_words = words(&trailing);
+            if trailing_words.as_slice() == ["minus", "one"] {
+                value = Value::EventValueOffset(EventValueSpec::Amount, -1);
+                parsed_that_many_minus_one = true;
+            } else if !trailing_words.is_empty()
+                && !(trailing_words
+                    .windows(2)
+                    .any(|window| window[0] == "for" && window[1] == "each"))
+            {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported trailing draw clause (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+        }
+        (value, consumed)
+    } else {
+        parse_value(tokens).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing draw count (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?
+    };
 
     let rest = &tokens[used..];
     if rest
@@ -18079,30 +18203,33 @@ fn parse_draw(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst
     }
     let tail = trim_commas(&rest[1..]);
     if !tail.is_empty() {
-        let has_for_each = tail
-            .windows(2)
-            .any(|window| window[0].is_word("for") && window[1].is_word("each"));
-        if has_for_each {
-            let dynamic = parse_dynamic_cost_modifier_value(&tail)?.ok_or_else(|| {
-                CardTextError::ParseError(format!(
-                    "unsupported draw for-each clause (clause: '{}')",
-                    words(tokens).join(" ")
-                ))
-            })?;
-            match count {
-                Value::Fixed(1) => count = dynamic,
-                _ => {
-                    return Err(CardTextError::ParseError(format!(
-                        "unsupported multiplied draw count (clause: '{}')",
+        let tail_words = words(&tail);
+        if !(parsed_that_many_minus_one && tail_words.as_slice() == ["minus", "one"]) {
+            let has_for_each = tail
+                .windows(2)
+                .any(|window| window[0].is_word("for") && window[1].is_word("each"));
+            if has_for_each {
+                let dynamic = parse_dynamic_cost_modifier_value(&tail)?.ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "unsupported draw for-each clause (clause: '{}')",
                         words(tokens).join(" ")
-                    )));
+                    ))
+                })?;
+                match count {
+                    Value::Fixed(1) => count = dynamic,
+                    _ => {
+                        return Err(CardTextError::ParseError(format!(
+                            "unsupported multiplied draw count (clause: '{}')",
+                            words(tokens).join(" ")
+                        )));
+                    }
                 }
+            } else {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported trailing draw clause (clause: '{}')",
+                    clause_words.join(" ")
+                )));
             }
-        } else {
-            return Err(CardTextError::ParseError(format!(
-                "unsupported trailing draw clause (clause: '{}')",
-                words(tokens).join(" ")
-            )));
         }
     }
 
@@ -19909,11 +20036,17 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
     }
     let mut idx = 0;
     let mut count = 1u32;
-    if let Some((value, used)) = parse_number(tokens) {
-        count = value;
+    let mut count_value = Value::Fixed(1);
+    if tokens.first().is_some_and(|token| token.is_word("that"))
+        && tokens.get(1).is_some_and(|token| token.is_word("many"))
+    {
+        count_value = Value::EventValue(EventValueSpec::Amount);
+        idx = 2;
+    } else if let Some((parsed_count, used)) = parse_number(tokens) {
+        count = parsed_count;
+        count_value = Value::Fixed(parsed_count as i32);
         idx = used;
     }
-    let mut count_value = Value::Fixed(count as i32);
 
     if tokens
         .get(idx)

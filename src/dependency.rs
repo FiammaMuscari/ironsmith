@@ -921,7 +921,7 @@ fn value_references_pt(value: &Value) -> bool {
         Value::PowerOf(_) | Value::ToughnessOf(_) => true,
 
         // EffectValue could reference P/T from a prior effect
-        Value::EffectValue(_) => true,
+        Value::EffectValue(_) | Value::EffectValueOffset(_, _) => true,
 
         // These don't reference P/T
         Value::Fixed(_)
@@ -951,7 +951,8 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::WasPaidLabel(_)
         | Value::TimesPaid(_)
         | Value::TaggedCount
-        | Value::EventValue(_) => false,
+        | Value::EventValue(_)
+        | Value::EventValueOffset(_, _) => false,
     }
 }
 

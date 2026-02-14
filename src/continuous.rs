@@ -2550,6 +2550,7 @@ fn resolve_value_with_context(
         | Value::SpellsCastBeforeThisTurn(_)
         | Value::CardTypesInGraveyard(_)
         | Value::EffectValue(_)
+        | Value::EffectValueOffset(_, _)
         | Value::WasKicked
         | Value::WasBoughtBack
         | Value::WasEntwined
@@ -2559,7 +2560,8 @@ fn resolve_value_with_context(
         | Value::TimesPaid(_)
         | Value::KickCount
         | Value::TaggedCount
-        | Value::EventValue(_) => 0,
+        | Value::EventValue(_)
+        | Value::EventValueOffset(_, _) => 0,
     }
 }
 

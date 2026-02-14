@@ -808,6 +808,12 @@ pub fn resolve_value(
                 .ok_or(ExecutionError::EffectNotFound(*effect_id))?;
             Ok(result.count_or_zero())
         }
+        Value::EffectValueOffset(effect_id, offset) => {
+            let result = ctx
+                .get_result(*effect_id)
+                .ok_or(ExecutionError::EffectNotFound(*effect_id))?;
+            Ok(result.count_or_zero() + *offset)
+        }
 
         Value::EventValue(EventValueSpec::Amount)
         | Value::EventValue(EventValueSpec::LifeAmount) => {
@@ -839,6 +845,41 @@ pub fn resolve_value(
             if let Some(event) = triggering_event.downcast::<CreatureBecameBlockedEvent>() {
                 let beyond_first = event.blocker_count.saturating_sub(1) as i32;
                 return Ok(beyond_first * *multiplier);
+            }
+            Err(ExecutionError::UnresolvableValue(
+                "EventValue(BlockersBeyondFirst) requires a creature-becomes-blocked event"
+                    .to_string(),
+            ))
+        }
+        Value::EventValueOffset(EventValueSpec::Amount, offset)
+        | Value::EventValueOffset(EventValueSpec::LifeAmount, offset) => {
+            let Some(triggering_event) = &ctx.triggering_event else {
+                return Err(ExecutionError::UnresolvableValue(
+                    "EventValue(Amount) requires a triggering event".to_string(),
+                ));
+            };
+            let base = if let Some(life_loss_event) = triggering_event.downcast::<LifeLossEvent>() {
+                life_loss_event.amount as i32
+            } else if let Some(life_gain_event) = triggering_event.downcast::<LifeGainEvent>() {
+                life_gain_event.amount as i32
+            } else if let Some(damage_event) = triggering_event.downcast::<DamageEvent>() {
+                damage_event.amount as i32
+            } else {
+                return Err(ExecutionError::UnresolvableValue(
+                    "EventValue(Amount) requires a life gain/loss or damage event".to_string(),
+                ));
+            };
+            Ok(base + *offset)
+        }
+        Value::EventValueOffset(EventValueSpec::BlockersBeyondFirst { multiplier }, offset) => {
+            let Some(triggering_event) = &ctx.triggering_event else {
+                return Err(ExecutionError::UnresolvableValue(
+                    "EventValue(BlockersBeyondFirst) requires a triggering event".to_string(),
+                ));
+            };
+            if let Some(event) = triggering_event.downcast::<CreatureBecameBlockedEvent>() {
+                let beyond_first = event.blocker_count.saturating_sub(1) as i32;
+                return Ok((beyond_first * *multiplier) + *offset);
             }
             Err(ExecutionError::UnresolvableValue(
                 "EventValue(BlockersBeyondFirst) requires a creature-becomes-blocked event"
