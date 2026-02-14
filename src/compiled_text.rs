@@ -3387,6 +3387,45 @@ fn normalize_search_you_own_clause(text: &str) -> Option<String> {
     Some(format!("Search your library for {selection}{tail}"))
 }
 
+fn normalize_split_search_battlefield_then_hand_clause(text: &str) -> Option<String> {
+    let trimmed = text.trim().trim_end_matches('.');
+    let (first, second) = trimmed.split_once(". ")?;
+
+    let first = first.strip_prefix("Search your library for ")?;
+    let (first_selection, first_tail) = first.split_once(", ")?;
+    if !first_tail.eq_ignore_ascii_case("put it onto the battlefield tapped") {
+        return None;
+    }
+
+    let second = second.strip_prefix("Search your library for ")?;
+    let (second_selection, second_tail) = second.split_once(", ")?;
+    if !second_tail.eq_ignore_ascii_case("reveal it, put it into your hand, then shuffle") {
+        return None;
+    }
+
+    let normalize_selection = |raw: &str| {
+        raw.trim()
+            .trim_start_matches("up to one ")
+            .trim_start_matches("a ")
+            .trim_start_matches("an ")
+            .trim_end_matches(" you own")
+            .trim_end_matches(" card")
+            .trim_end_matches(" cards")
+            .trim()
+            .to_string()
+    };
+
+    let first_subject = normalize_selection(first_selection);
+    let second_subject = normalize_selection(second_selection);
+    if first_subject.is_empty() || second_subject.is_empty() || first_subject != second_subject {
+        return None;
+    }
+
+    Some(format!(
+        "Search your library for up to two {second_subject} cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle."
+    ))
+}
+
 fn normalize_choose_between_modes_clause(text: &str) -> Option<String> {
     let (prefix, rest) = if let Some(rest) = text.strip_prefix("Choose between ") {
         ("", rest)
@@ -8883,6 +8922,9 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     if normalized.is_empty() {
         return normalized;
     }
+    if let Some(rewritten) = normalize_split_search_battlefield_then_hand_clause(&normalized) {
+        return rewritten;
+    }
     if let Some(tail) = strip_prefix_ascii_ci(
         &normalized,
         "Whenever you cast an or copy an instant or sorcery spell, ",
@@ -14160,6 +14202,28 @@ mod tests {
         assert_eq!(
             normalized,
             "Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle."
+        );
+    }
+
+    #[test]
+    fn post_pass_normalizes_split_two_land_search_without_you_own() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Search your library for a basic land card, put it onto the battlefield tapped. Search your library for basic land, reveal it, put it into your hand, then shuffle.",
+        );
+        assert_eq!(
+            normalized,
+            "Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle."
+        );
+    }
+
+    #[test]
+    fn post_pass_normalizes_split_two_gate_or_land_search() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Search your library for up to one basic land or Gate card, put it onto the battlefield tapped. Search your library for basic land or Gate, reveal it, put it into your hand, then shuffle.",
+        );
+        assert_eq!(
+            normalized,
+            "Search your library for up to two basic land or Gate cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle."
         );
     }
 
