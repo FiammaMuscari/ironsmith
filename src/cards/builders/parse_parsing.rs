@@ -9596,6 +9596,9 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
         }
 
         let mut sentence_effects = parse_effect_sentence(&sentence_tokens)?;
+        if words(&sentence_tokens).first().copied() == Some("you") {
+            carried_context = None;
+        }
         if try_apply_token_copy_followup(&mut effects, &sentence_effects)? {
             parser_trace("parse_effect_sentences:token-copy-followup", &sentence_tokens);
             sentence_idx += 1;
