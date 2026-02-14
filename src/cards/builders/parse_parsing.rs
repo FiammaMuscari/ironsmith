@@ -17814,6 +17814,9 @@ fn parse_subject(tokens: &[Token]) -> SubjectAst {
     if slice.starts_with(&["defending", "player"]) {
         return SubjectAst::Player(PlayerAst::Defending);
     }
+    if slice.ends_with(&["defending", "player"]) {
+        return SubjectAst::Player(PlayerAst::Defending);
+    }
 
     if slice.starts_with(&["that", "player"]) {
         return SubjectAst::Player(PlayerAst::That);

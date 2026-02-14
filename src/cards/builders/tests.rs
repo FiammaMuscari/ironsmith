@@ -7193,6 +7193,21 @@ fn parse_counter_target_spell_if_controller_is_poisoned_keeps_condition() {
 }
 
 #[test]
+fn parse_defending_player_suffix_subject_keeps_player_binding() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Keeper Variant")
+        .parse_text(
+            "Whenever this creature attacks and isn't blocked, it assigns no combat damage this turn and defending player loses 2 life.",
+        )
+        .expect("parse defending-player suffix subject");
+
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("defending player loses 2 life"),
+        "expected defending-player life-loss wording, got {joined}"
+    );
+}
+
+#[test]
 fn parse_rejects_first_spell_during_each_opponents_turn_clause() {
     let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Wavebreak Variant")
         .parse_text("Whenever you cast your first spell during each opponent's turn, draw a card.")
