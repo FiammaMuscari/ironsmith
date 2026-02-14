@@ -15,6 +15,7 @@ pub struct ScheduleDelayedTriggerEffect {
     pub trigger: Trigger,
     pub effects: Vec<crate::effect::Effect>,
     pub one_shot: bool,
+    pub start_next_turn: bool,
     pub target_objects: Vec<crate::ids::ObjectId>,
     pub target_tag: Option<TagKey>,
     pub controller: PlayerFilter,
@@ -32,6 +33,7 @@ impl ScheduleDelayedTriggerEffect {
             trigger,
             effects,
             one_shot,
+            start_next_turn: false,
             target_objects,
             target_tag: None,
             controller,
@@ -49,10 +51,16 @@ impl ScheduleDelayedTriggerEffect {
             trigger,
             effects,
             one_shot,
+            start_next_turn: false,
             target_objects: Vec::new(),
             target_tag: Some(target_tag.into()),
             controller,
         }
+    }
+
+    pub fn starting_next_turn(mut self) -> Self {
+        self.start_next_turn = true;
+        self
     }
 }
 
@@ -73,6 +81,11 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
                     trigger: self.trigger.clone(),
                     effects: self.effects.clone(),
                     one_shot: self.one_shot,
+                    not_before_turn: if self.start_next_turn {
+                        Some(game.turn.turn_number.saturating_add(1))
+                    } else {
+                        None
+                    },
                     target_objects: vec![snapshot.object_id],
                     controller: controller_id,
                 };
@@ -85,6 +98,11 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
             trigger: self.trigger.clone(),
             effects: self.effects.clone(),
             one_shot: self.one_shot,
+            not_before_turn: if self.start_next_turn {
+                Some(game.turn.turn_number.saturating_add(1))
+            } else {
+                None
+            },
             target_objects: self.target_objects.clone(),
             controller: controller_id,
         };

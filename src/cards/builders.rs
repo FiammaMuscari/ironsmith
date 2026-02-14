@@ -517,6 +517,10 @@ enum EffectAst {
         player: PlayerFilter,
         effects: Vec<EffectAst>,
     },
+    DelayedUntilEndStepOfExtraTurn {
+        player: PlayerAst,
+        effects: Vec<EffectAst>,
+    },
     DelayedUntilEndOfCombat {
         effects: Vec<EffectAst>,
     },

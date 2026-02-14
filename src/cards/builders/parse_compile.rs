@@ -274,6 +274,7 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::MayByPlayer { effects, .. }
         | EffectAst::MayByTaggedController { effects, .. }
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
         | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
         | EffectAst::IfResult { effects, .. }
@@ -409,6 +410,7 @@ fn effect_references_event_derived_amount(effect: &EffectAst) -> bool {
         | EffectAst::MayByPlayer { effects, .. }
         | EffectAst::MayByTaggedController { effects, .. }
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
         | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
         | EffectAst::IfResult { effects, .. }
@@ -502,6 +504,7 @@ fn effect_references_its_controller(effect: &EffectAst) -> bool {
         EffectAst::May { effects }
         | EffectAst::MayByTaggedController { effects, .. }
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
         | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
         | EffectAst::IfResult { effects, .. }
@@ -603,6 +606,7 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::MayByPlayer { effects, .. }
         | EffectAst::MayByTaggedController { effects, .. }
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
         | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
         | EffectAst::IfResult { effects, .. }
@@ -946,6 +950,7 @@ fn collect_tag_spans_from_effect(
         | EffectAst::MayByPlayer { effects, .. }
         | EffectAst::MayByTaggedController { effects, .. }
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
         | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
         | EffectAst::IfResult { effects, .. }
@@ -1349,6 +1354,7 @@ fn force_implicit_vote_token_controller_you(effects: &mut [EffectAst]) {
             | EffectAst::ForEachPlayerDid { effects }
             | EffectAst::ForEachTaggedPlayer { effects, .. }
             | EffectAst::DelayedUntilNextEndStep { effects, .. }
+            | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
             | EffectAst::DelayedUntilEndOfCombat { effects }
             | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
             | EffectAst::UnlessPays { effects, .. }
@@ -2095,14 +2101,7 @@ fn compile_effect(
         EffectAst::ExtraTurnAfterTurn { player } => {
             let (player_filter, choices) =
                 resolve_effect_player_filter(*player, ctx, true, false, true)?;
-            let effect = Effect::new(crate::effects::ScheduleDelayedTriggerEffect::new(
-                Trigger::beginning_of_end_step(player_filter.clone()),
-                vec![Effect::extra_turn_player(player_filter.clone())],
-                true,
-                Vec::new(),
-                PlayerFilter::You,
-            ));
-            Ok((vec![effect], choices))
+            Ok((vec![Effect::extra_turn_player(player_filter)], choices))
         }
         EffectAst::DelayedUntilNextEndStep { player, effects } => {
             let (delayed_effects, choices) =
@@ -2114,6 +2113,24 @@ fn compile_effect(
                 Vec::new(),
                 PlayerFilter::You,
             ));
+            Ok((vec![effect], choices))
+        }
+        EffectAst::DelayedUntilEndStepOfExtraTurn { player, effects } => {
+            let (player_filter, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, false, true)?;
+            let (delayed_effects, nested_choices) =
+                compile_effects_preserving_last_effect(effects, ctx)?;
+            choices.extend(nested_choices);
+            let effect = Effect::new(
+                crate::effects::ScheduleDelayedTriggerEffect::new(
+                    Trigger::beginning_of_end_step(player_filter),
+                    delayed_effects,
+                    true,
+                    Vec::new(),
+                    PlayerFilter::You,
+                )
+                .starting_next_turn(),
+            );
             Ok((vec![effect], choices))
         }
         EffectAst::DelayedUntilEndOfCombat { effects } => {

@@ -9596,6 +9596,15 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
         }
 
         let mut sentence_effects = parse_effect_sentence(&sentence_tokens)?;
+        if is_that_turn_end_step_sentence(&sentence_tokens)
+            && let Some(extra_turn_player) = most_recent_extra_turn_player(&effects)
+            && !sentence_effects.is_empty()
+        {
+            sentence_effects = vec![EffectAst::DelayedUntilEndStepOfExtraTurn {
+                player: extra_turn_player,
+                effects: sentence_effects,
+            }];
+        }
         if words(&sentence_tokens).first().copied() == Some("you") {
             carried_context = None;
         }
@@ -9719,6 +9728,7 @@ fn replace_it_damage_target(effect: &mut EffectAst, target: &TargetAst) {
         | EffectAst::ForEachOpponentDid { effects, .. }
         | EffectAst::ForEachTaggedPlayer { effects, .. }
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
         | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
         | EffectAst::VoteOption { effects, .. } => {
@@ -9746,6 +9756,23 @@ fn target_references_it(target: &TargetAst) -> bool {
         TargetAst::WithCount(inner, _) => target_references_it(inner),
         _ => false,
     }
+}
+
+fn is_that_turn_end_step_sentence(tokens: &[Token]) -> bool {
+    let clause_words = words(tokens);
+    clause_words.starts_with(&["at", "the", "beginning", "of", "that", "turn", "end", "step"])
+        || clause_words
+            .starts_with(&["at", "the", "beginning", "of", "that", "turns", "end", "step"])
+}
+
+fn most_recent_extra_turn_player(effects: &[EffectAst]) -> Option<PlayerAst> {
+    effects.iter().rev().find_map(|effect| {
+        if let EffectAst::ExtraTurnAfterTurn { player } = effect {
+            Some(*player)
+        } else {
+            None
+        }
+    })
 }
 
 fn rewrite_when_you_do_clause_prefix(tokens: &[Token]) -> Vec<Token> {
@@ -16164,6 +16191,7 @@ fn bind_implicit_player_context(effect: &mut EffectAst, player: PlayerAst) {
         | EffectAst::ForEachPlayerDid { effects }
         | EffectAst::ForEachTaggedPlayer { effects, .. }
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
         | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
         | EffectAst::UnlessPays { effects, .. }
@@ -17126,6 +17154,7 @@ fn force_implicit_token_controller_you(effects: &mut [EffectAst]) {
             | EffectAst::ForEachPlayerDid { effects }
             | EffectAst::ForEachTaggedPlayer { effects, .. }
             | EffectAst::DelayedUntilNextEndStep { effects, .. }
+            | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
             | EffectAst::DelayedUntilEndOfCombat { effects }
             | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
             | EffectAst::UnlessPays { effects, .. }
