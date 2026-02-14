@@ -9094,6 +9094,55 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         }
         return normalize_compiled_post_pass_effect(&rewritten);
     }
+    if let Some((left, right)) = split_once_ascii_ci(&normalized, " and you gain ")
+        && left
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with("you gain ")
+        && let Some(base_amount) = strip_prefix_ascii_ci(left.trim(), "you gain ")
+            .and_then(|tail| strip_suffix_ascii_ci(tail.trim(), " life"))
+        && let Some(extra_amount) = strip_suffix_ascii_ci(right.trim().trim_end_matches('.'), " life")
+    {
+        return format!(
+            "You gain {} plus {} life.",
+            base_amount.trim(),
+            extra_amount.trim()
+        );
+    }
+    if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, ". If that doesn't happen, Return ")
+        && let Some((return_tail, energy_tail)) = split_once_ascii_ci(rest, ". you get ")
+    {
+        return format!(
+            "{prefix}. If you can't, return {} and you get {}.",
+            return_tail.trim(),
+            energy_tail.trim().trim_end_matches('.')
+        );
+    }
+    if let Some((prefix, _suffix)) =
+        split_once_ascii_ci(&normalized, ". If that doesn't happen, you draw a card.")
+    {
+        return format!("{prefix}. If you can't, draw a card.");
+    }
+    if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, ", creatures you control get ")
+        && let Some((pt_tail, gain_tail)) =
+            split_once_ascii_ci(rest, " until end of turn. creatures you control gain ")
+        && let Some(keyword_tail) = strip_suffix_ascii_ci(gain_tail, " until end of turn")
+    {
+        return format!(
+            "{prefix}, creatures you control get {} and gain {} until end of turn.",
+            pt_tail.trim(),
+            keyword_tail.trim().to_ascii_lowercase()
+        );
+    }
+    if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, ", you mill ")
+        && let Some((count_tail, put_tail)) = split_once_ascii_ci(rest, " cards. Put ")
+    {
+        return format!(
+            "{prefix}, mill {} cards, then put {}",
+            count_tail.trim(),
+            put_tail.trim()
+        );
+    }
     if let Some(rewritten) = normalize_split_search_battlefield_then_hand_clause(&normalized) {
         return rewritten;
     }
@@ -11160,6 +11209,32 @@ fn normalize_sentence_surface_style(line: &str) -> String {
                 "create a 1/1 colorless eldrazi scion creature token with sacrifice this creature: add {c}. under your control",
                 "create a 1/1 colorless Eldrazi Scion creature token. It has \"Sacrifice this token: Add {C}.\"",
             );
+    }
+    if let Some((left, right)) = split_once_ascii_ci(&normalized, " and you gain ")
+        && left
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("you gain ")
+        && let Some(base_amount) = strip_prefix_ascii_ci(left.trim(), "you gain ")
+            .and_then(|tail| strip_suffix_ascii_ci(tail.trim(), " life"))
+        && let Some(extra_amount) = strip_suffix_ascii_ci(right.trim().trim_end_matches('.'), " life")
+    {
+        return format!(
+            "You gain {} plus {} life.",
+            base_amount.trim(),
+            extra_amount.trim()
+        );
+    }
+    if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, ", creatures you control get ")
+        && let Some((pt_tail, gain_tail)) =
+            split_once_ascii_ci(rest, " until end of turn. creatures you control gain ")
+        && let Some(keyword_tail) = strip_suffix_ascii_ci(gain_tail, " until end of turn")
+    {
+        return format!(
+            "{prefix}, creatures you control get {} and gain {} until end of turn.",
+            pt_tail.trim(),
+            keyword_tail.trim().to_ascii_lowercase()
+        );
     }
     if let Some((left, right)) = split_once_ascii_ci(&normalized, " and you gain ")
         && {
@@ -14501,6 +14576,57 @@ mod tests {
         assert_eq!(
             normalized,
             "Exile all card in your hand. At the beginning of the next end step, return those cards to their owners' hands. Draw a card."
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_you_gain_x_and_you_gain_n() {
+        let normalized =
+            normalize_compiled_post_pass_effect("You gain X life and you gain 3 life.");
+        assert_eq!(normalized, "You gain X plus 3 life.");
+    }
+
+    #[test]
+    fn post_pass_rewrites_if_that_doesnt_happen_draw_clause() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Return a land card or Elf card from your graveyard to your hand. If that doesn't happen, you draw a card.",
+        );
+        assert_eq!(
+            normalized,
+            "Return a land card or Elf card from your graveyard to your hand. If you can't, draw a card."
+        );
+    }
+
+    #[test]
+    fn post_pass_rewrites_if_that_doesnt_happen_return_and_energy_clause() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "When this permanent enters, pay {E}{E}. If that doesn't happen, Return this permanent to its owner's hand. you get {E}.",
+        );
+        assert_eq!(
+            normalized,
+            "When this permanent enters, pay {E}{E}. If you can't, return this permanent to its owner's hand and you get {E}."
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_get_and_gain_until_eot_for_creatures_you_control() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Whenever beregond or another Human you control enters, creatures you control get +1/+1 until end of turn. creatures you control gain Vigilance until end of turn",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever beregond or another Human you control enters, creatures you control get +1/+1 and gain vigilance until end of turn."
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_mill_then_put_counter_chain() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "When this permanent enters, you mill 2 cards. Put a +1/+1 counter on this permanent for each artifact or creature card in your graveyard.",
+        );
+        assert_eq!(
+            normalized,
+            "When this permanent enters, mill 2 cards, then put a +1/+1 counter on this permanent for each artifact or creature card in your graveyard."
         );
     }
 
