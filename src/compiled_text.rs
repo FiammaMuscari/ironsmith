@@ -8920,6 +8920,18 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     {
         return format!("Counter target spell. This spell deals {amount} damage to that spell's controller.");
     }
+    if let Some((prefix, tail)) = split_once_ascii_ci(
+        &normalized,
+        ". At the beginning of the next end step, return it to the battlefield. Put ",
+    ) && prefix.to_ascii_lowercase().contains("exile ")
+        && let Some(counter_phrase) = strip_suffix_ascii_ci(tail, " on it.")
+            .or_else(|| strip_suffix_ascii_ci(tail, " on it"))
+    {
+        return format!(
+            "{prefix}. At the beginning of the next end step, return that card to the battlefield under its owner's control with {} on it.",
+            counter_phrase.trim()
+        );
+    }
     if let Some((prefix, _)) = split_once_ascii_ci(
         &normalized,
         ". Return it to the battlefield under its owner's control.",
@@ -12800,6 +12812,20 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
     }
     if let Some((left, right)) = trimmed.split_once(". ")
         && left.to_ascii_lowercase().contains("exile ")
+        && let Some(tail) = strip_prefix_ascii_ci(
+            right,
+            "At the beginning of the next end step, return it to the battlefield. Put ",
+        )
+        && let Some(counter_phrase) = strip_suffix_ascii_ci(tail, " on it.")
+            .or_else(|| strip_suffix_ascii_ci(tail, " on it"))
+    {
+        return format!(
+            "{left}. At the beginning of the next end step, return that card to the battlefield under its owner's control with {} on it.",
+            counter_phrase.trim()
+        );
+    }
+    if let Some((left, right)) = trimmed.split_once(". ")
+        && left.to_ascii_lowercase().contains("exile ")
         && right.eq_ignore_ascii_case("Return it from graveyard to the battlefield tapped.")
     {
         return format!("{left}, then return it to the battlefield tapped.");
@@ -14755,6 +14781,14 @@ mod tests {
         assert_eq!(
             normalized,
             "Exile another target creature, then return it to the battlefield tapped."
+        );
+
+        let normalized = normalize_compiled_post_pass_effect(
+            "Exile target creature. At the beginning of the next end step, return it to the battlefield. Put a +1/+1 counter on it.",
+        );
+        assert_eq!(
+            normalized,
+            "Exile target creature. At the beginning of the next end step, return that card to the battlefield under its owner's control with a +1/+1 counter on it."
         );
     }
 
