@@ -3502,6 +3502,41 @@ fn parse_earthbend_then_untap_keeps_tail_effect() {
         debug.contains("EarthbendEffect") && debug.contains("UntapEffect"),
         "expected earthbend and untap effects, got {debug}"
     );
+    assert!(
+        debug.contains("earthbend_0"),
+        "expected earthbend target tag to carry into tail untap, got {debug}"
+    );
+}
+
+#[test]
+fn parse_instead_if_control_keeps_prior_damage_target() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Steer Clear Variant")
+        .parse_text(
+            "Steer Clear deals 2 damage to target attacking or blocking creature. Steer Clear deals 4 damage to that creature instead if you controlled a Mount as you cast this spell.",
+        )
+        .expect("instead-if damage clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Deal 4 damage to target attacking or blocking creature")
+            && rendered.contains("Otherwise, Deal 2 damage to target attacking or blocking creature"),
+        "expected conditional to reuse the original creature target, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_damage_to_that_creatures_controller_targets_player() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Chandra Variant")
+        .parse_text(
+            "Chandra's Outrage deals 4 damage to target creature and 2 damage to that creature's controller.",
+        )
+        .expect("damage to that creature's controller should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("that object's controller"),
+        "expected controller-target damage wording, got {rendered}"
+    );
 }
 
 #[test]

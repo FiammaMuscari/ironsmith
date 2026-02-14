@@ -327,6 +327,35 @@ fn choose_spec_references_tag(spec: &ChooseSpec, tag: &str) -> bool {
     }
 }
 
+fn object_ref_references_tag(reference: &ObjectRef, tag: &str) -> bool {
+    matches!(reference, ObjectRef::Tagged(found) if found.as_str() == tag)
+}
+
+fn player_filter_references_tag(filter: &PlayerFilter, tag: &str) -> bool {
+    match filter {
+        PlayerFilter::Target(inner) => player_filter_references_tag(inner, tag),
+        PlayerFilter::ControllerOf(reference) | PlayerFilter::OwnerOf(reference) => {
+            object_ref_references_tag(reference, tag)
+        }
+        _ => false,
+    }
+}
+
+fn target_references_tag(target: &TargetAst, tag: &str) -> bool {
+    match target {
+        TargetAst::Tagged(found, _) => found.as_str() == tag,
+        TargetAst::Object(filter, _, _) => filter
+            .tagged_constraints
+            .iter()
+            .any(|constraint| constraint.tag.as_str() == tag),
+        TargetAst::Player(filter, _) | TargetAst::PlayerOrPlaneswalker(filter, _) => {
+            player_filter_references_tag(filter, tag)
+        }
+        TargetAst::WithCount(inner, _) => target_references_tag(inner, tag),
+        TargetAst::Source(_) | TargetAst::AnyTarget(_) | TargetAst::Spell(_) => false,
+    }
+}
+
 fn effects_reference_it_tag(effects: &[EffectAst]) -> bool {
     effects.iter().any(effect_references_it_tag)
 }
@@ -419,16 +448,10 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         EffectAst::Fight {
             creature1,
             creature2,
-        } => {
-            matches!(creature1, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
-                || matches!(creature2, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
-        }
-        EffectAst::FightIterated { creature2 } => {
-            matches!(creature2, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
-        }
+        } => target_references_tag(creature1, IT_TAG) || target_references_tag(creature2, IT_TAG),
+        EffectAst::FightIterated { creature2 } => target_references_tag(creature2, IT_TAG),
         EffectAst::DealDamageEqualToPower { source, target } => {
-            matches!(source, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
-                || matches!(target, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
+            target_references_tag(source, IT_TAG) || target_references_tag(target, IT_TAG)
         }
         EffectAst::DealDamage { target, .. }
         | EffectAst::Counter { target }
@@ -455,7 +478,7 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::PumpByLastEffect { target, .. }
         | EffectAst::GrantAbilitiesToTarget { target, .. }
         | EffectAst::CreateTokenCopyFromSource { source: target, .. } => {
-            matches!(target, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
+            target_references_tag(target, IT_TAG)
         }
         EffectAst::Conditional {
             predicate,
@@ -483,13 +506,10 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
             .iter()
             .any(|constraint| constraint.tag.as_str() == IT_TAG),
         EffectAst::MoveAllCounters { from, to } => {
-            matches!(from, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
-                || matches!(to, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
+            target_references_tag(from, IT_TAG) || target_references_tag(to, IT_TAG)
         }
         EffectAst::PutIntoHand { object, .. } => matches!(object, ObjectRefAst::It),
-        EffectAst::CopySpell { target, .. } => {
-            matches!(target, TargetAst::Tagged(t, _) if t.as_str() == IT_TAG)
-        }
+        EffectAst::CopySpell { target, .. } => target_references_tag(target, IT_TAG),
         EffectAst::CreateTokenCopy { object, .. } => matches!(object, ObjectRefAst::It),
         EffectAst::CreateToken { count, .. } | EffectAst::CreateTokenWithMods { count, .. } => {
             value_references_tag(count, IT_TAG)
@@ -1513,10 +1533,12 @@ fn compile_effect(
         }
         EffectAst::Earthbend { counters } => {
             let spec = ChooseSpec::target(ChooseSpec::Object(ObjectFilter::land().you_control()));
-            let effect = Effect::new(crate::effects::EarthbendEffect::new(
-                spec.clone(),
-                *counters,
-            ));
+            let effect = tag_object_target_effect(
+                Effect::new(crate::effects::EarthbendEffect::new(spec.clone(), *counters)),
+                &spec,
+                ctx,
+                "earthbend",
+            );
             Ok((vec![effect], vec![spec]))
         }
         EffectAst::Explore { target } => {

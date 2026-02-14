@@ -10174,12 +10174,19 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
                 Some(EffectAst::Conditional { .. })
             ) {
                 let previous = effects.pop().expect("effects length checked above");
+                let previous_target = match &previous {
+                    EffectAst::DealDamage { target, .. } => Some(target.clone()),
+                    _ => None,
+                };
                 if let Some(EffectAst::Conditional {
                     predicate,
-                    if_true,
+                    mut if_true,
                     mut if_false,
                 }) = sentence_effects.pop()
                 {
+                    if let Some(target) = previous_target {
+                        replace_it_damage_target_in_effects(&mut if_true, &target);
+                    }
                     if_false.insert(0, previous);
                     effects.push(EffectAst::Conditional {
                         predicate,
@@ -10198,6 +10205,70 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
 
     parser_trace("parse_effect_sentences:done", tokens);
     Ok(effects)
+}
+
+fn replace_it_damage_target_in_effects(effects: &mut [EffectAst], target: &TargetAst) {
+    for effect in effects {
+        replace_it_damage_target(effect, target);
+    }
+}
+
+fn replace_it_damage_target(effect: &mut EffectAst, target: &TargetAst) {
+    match effect {
+        EffectAst::DealDamage {
+            target: damage_target,
+            ..
+        } => {
+            if target_references_it(damage_target) {
+                *damage_target = target.clone();
+            }
+        }
+        EffectAst::Conditional {
+            if_true, if_false, ..
+        } => {
+            replace_it_damage_target_in_effects(if_true, target);
+            replace_it_damage_target_in_effects(if_false, target);
+        }
+        EffectAst::UnlessPays { effects, .. }
+        | EffectAst::May { effects }
+        | EffectAst::MayByPlayer { effects, .. }
+        | EffectAst::MayByTaggedController { effects, .. }
+        | EffectAst::IfResult { effects, .. }
+        | EffectAst::ForEachOpponent { effects }
+        | EffectAst::ForEachPlayer { effects }
+        | EffectAst::ForEachObject { effects, .. }
+        | EffectAst::ForEachTagged { effects, .. }
+        | EffectAst::ForEachPlayerDoesNot { effects, .. }
+        | EffectAst::ForEachOpponentDoesNot { effects, .. }
+        | EffectAst::ForEachTaggedPlayer { effects, .. }
+        | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndOfCombat { effects }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+        | EffectAst::VoteOption { effects, .. } => {
+            replace_it_damage_target_in_effects(effects, target);
+        }
+        EffectAst::UnlessAction {
+            effects,
+            alternative,
+            ..
+        } => {
+            replace_it_damage_target_in_effects(effects, target);
+            replace_it_damage_target_in_effects(alternative, target);
+        }
+        _ => {}
+    }
+}
+
+fn target_references_it(target: &TargetAst) -> bool {
+    match target {
+        TargetAst::Tagged(tag, _) => tag.as_str() == IT_TAG,
+        TargetAst::Object(filter, _, _) => filter
+            .tagged_constraints
+            .iter()
+            .any(|constraint| constraint.tag.as_str() == IT_TAG),
+        TargetAst::WithCount(inner, _) => target_references_it(inner),
+        _ => false,
+    }
 }
 
 fn rewrite_when_you_do_clause_prefix(tokens: &[Token]) -> Vec<Token> {
@@ -18179,6 +18250,30 @@ fn parse_deal_damage_with_amount(
         )));
     }
 
+    if let Some(instead_idx) = target_tokens.iter().position(|token| token.is_word("instead"))
+        && target_tokens
+            .get(instead_idx + 1)
+            .is_some_and(|token| token.is_word("if"))
+    {
+        let pre_target_tokens = trim_commas(&target_tokens[..instead_idx]);
+        let condition_tokens = trim_commas(&target_tokens[instead_idx + 2..]);
+        if let Some(predicate) = parse_instead_if_control_predicate(&condition_tokens)? {
+            let target = if pre_target_tokens.is_empty() {
+                TargetAst::PlayerOrPlaneswalker(PlayerFilter::Any, None)
+            } else {
+                parse_target_phrase(&pre_target_tokens)?
+            };
+            return Ok(EffectAst::Conditional {
+                predicate,
+                if_true: vec![EffectAst::DealDamage {
+                    amount: amount.clone(),
+                    target,
+                }],
+                if_false: Vec::new(),
+            });
+        }
+    }
+
     let target_words = words(target_tokens);
     if target_words.starts_with(&["each", "of"]) {
         let each_of_tokens = &target_tokens[2..];
@@ -18278,6 +18373,40 @@ fn parse_deal_damage_with_amount(
 
     let target = parse_target_phrase(target_tokens)?;
     Ok(EffectAst::DealDamage { amount, target })
+}
+
+fn parse_instead_if_control_predicate(
+    tokens: &[Token],
+) -> Result<Option<PredicateAst>, CardTextError> {
+    let clause_words = words(tokens);
+    let starts_with_you_control = clause_words.starts_with(&["you", "control"])
+        || clause_words.starts_with(&["you", "controlled"]);
+    if !starts_with_you_control {
+        return Ok(None);
+    }
+
+    let mut filter_tokens = &tokens[2..];
+    let cut_markers: &[&[&str]] = &[&["as", "you", "cast", "this", "spell"], &["this", "turn"]];
+    for marker in cut_markers {
+        if let Some(idx) = words(filter_tokens)
+            .windows(marker.len())
+            .position(|window| window == *marker)
+        {
+            let cut_idx = token_index_for_word_index(filter_tokens, idx).unwrap_or(filter_tokens.len());
+            filter_tokens = &filter_tokens[..cut_idx];
+            break;
+        }
+    }
+    let filter_tokens = trim_commas(filter_tokens);
+    if filter_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let filter = parse_object_filter(&filter_tokens, false)?;
+    Ok(Some(PredicateAst::PlayerControls {
+        player: PlayerAst::You,
+        filter,
+    }))
 }
 
 fn parse_move(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
@@ -21094,6 +21223,59 @@ fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
     if remaining_words.as_slice() == ["that", "opponent"] {
         return Ok(wrap_target_count(
             TargetAst::Player(PlayerFilter::target_opponent(), target_span),
+            target_count,
+        ));
+    }
+    if remaining_words.len() >= 3
+        && remaining_words[0] == "that"
+        && matches!(
+            remaining_words[1],
+            "creature"
+                | "creatures"
+                | "permanent"
+                | "permanents"
+                | "spell"
+                | "spells"
+                | "source"
+                | "sources"
+                | "card"
+                | "cards"
+        )
+        && matches!(remaining_words[2], "controller" | "controllers" | "owner" | "owners")
+    {
+        let player = if remaining_words[2].starts_with("owner") {
+            PlayerFilter::OwnerOf(crate::filter::ObjectRef::tagged(IT_TAG))
+        } else {
+            PlayerFilter::ControllerOf(crate::filter::ObjectRef::tagged(IT_TAG))
+        };
+        return Ok(wrap_target_count(
+            TargetAst::Player(player, target_span),
+            target_count,
+        ));
+    }
+    if remaining_words.starts_with(&["its", "controller"])
+        || remaining_words.starts_with(&["its", "controllers"])
+        || remaining_words.starts_with(&["their", "controller"])
+        || remaining_words.starts_with(&["their", "controllers"])
+    {
+        return Ok(wrap_target_count(
+            TargetAst::Player(
+                PlayerFilter::ControllerOf(crate::filter::ObjectRef::tagged(IT_TAG)),
+                target_span,
+            ),
+            target_count,
+        ));
+    }
+    if remaining_words.starts_with(&["its", "owner"])
+        || remaining_words.starts_with(&["its", "owners"])
+        || remaining_words.starts_with(&["their", "owner"])
+        || remaining_words.starts_with(&["their", "owners"])
+    {
+        return Ok(wrap_target_count(
+            TargetAst::Player(
+                PlayerFilter::OwnerOf(crate::filter::ObjectRef::tagged(IT_TAG)),
+                target_span,
+            ),
             target_count,
         ));
     }
