@@ -2890,6 +2890,46 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_enchanted_creature_has_base_power_toughness_as_static() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Illusory Wrappings Variant")
+            .parse_text("Enchant creature\nEnchanted creature has base power and toughness 0/2.")
+            .expect("base power/toughness Aura line should parse as static ability");
+
+        let static_ids: Vec<_> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Static(static_ability) => Some(static_ability.id()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            static_ids.contains(&StaticAbilityId::SetBasePowerToughnessForFilter),
+            "expected static SetBasePowerToughnessForFilter, got {static_ids:?}"
+        );
+
+        let spell_has_set_base = def.spell_effect.as_ref().is_some_and(|effects| {
+            effects
+                .iter()
+                .any(|effect| effect.downcast_ref::<SetBasePowerToughnessEffect>().is_some())
+        });
+        assert!(
+            !spell_has_set_base,
+            "base P/T for Aura text should not be a spell-effect duration modification"
+        );
+
+        let lines = crate::compiled_text::compiled_lines(&def);
+        let has_base_line = lines
+            .iter()
+            .find(|line| line.contains("base power and toughness 0/2"))
+            .expect("compiled text should include base P/T static wording");
+        assert!(
+            !has_base_line.contains("until end of turn"),
+            "static base P/T line must not be temporary: {has_base_line}"
+        );
+    }
+
+    #[test]
     fn parse_base_power_toughness_with_unknown_tail_errors() {
         let result = CardDefinitionBuilder::new(CardId::new(), "Bad Base PT Tail")
             .parse_text("Target creature has base power and toughness 1/1 while enchanted.");

@@ -1797,6 +1797,9 @@ fn parse_static_ability_line(
     if let Some(abilities) = parse_composed_anthem_effects_line(tokens)? {
         return Ok(Some(abilities));
     }
+    if let Some(ability) = parse_has_base_power_toughness_static_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_anthem_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -4057,6 +4060,57 @@ fn parse_anthem_line(tokens: &[Token]) -> Result<Option<StaticAbility>, CardText
     };
     let clause = parse_anthem_clause(tokens, get_idx, tokens.len())?;
     Ok(Some(build_anthem_static_ability(&clause)))
+}
+
+fn parse_has_base_power_toughness_static_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words_all = words(tokens);
+    let Some(has_idx) = words_all
+        .iter()
+        .position(|word| *word == "has" || *word == "have")
+    else {
+        return Ok(None);
+    };
+    let subject_tokens = trim_commas(&tokens[..has_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+    let subject_words = words(&subject_tokens);
+    if subject_words.contains(&"target") {
+        return Ok(None);
+    }
+    if subject_words.starts_with(&["until", "end", "of", "turn"])
+        || subject_words.starts_with(&["until", "your", "next", "turn"])
+    {
+        return Ok(None);
+    }
+
+    let rest_words = &words_all[has_idx + 1..];
+    if rest_words.len() < 5 || !rest_words.starts_with(&["base", "power", "and", "toughness"]) {
+        return Ok(None);
+    }
+    let tail = &rest_words[5..];
+    if !tail.is_empty() {
+        return Ok(None);
+    }
+
+    let (power, toughness) = parse_pt_modifier(rest_words[4]).map_err(|_| {
+        CardTextError::ParseError(format!(
+            "invalid base power/toughness value (clause: '{}')",
+            words_all.join(" ")
+        ))
+    })?;
+
+    let subject = parse_anthem_subject(&subject_tokens)?;
+    let filter = match subject {
+        AnthemSubjectAst::Source => ObjectFilter::source(),
+        AnthemSubjectAst::Filter(filter) => filter,
+    };
+
+    Ok(Some(StaticAbility::set_base_power_toughness(
+        filter, power, toughness,
+    )))
 }
 
 fn parse_enters_with_counters_line(
@@ -16976,6 +17030,7 @@ fn parse_has_base_power_toughness_clause(
     if subject_tokens.is_empty() {
         return Ok(None);
     }
+    let subject_words = words(subject_tokens);
 
     let rest_words = &words_all[has_idx + 1..];
     if rest_words.len() < 5 || !rest_words.starts_with(&["base", "power", "and", "toughness"]) {
@@ -16990,6 +17045,19 @@ fn parse_has_base_power_toughness_clause(
     })?;
 
     let tail = &rest_words[5..];
+    if tail.is_empty() {
+        let has_target_subject = subject_words.contains(&"target");
+        let has_leading_until_eot = subject_words.starts_with(&["until", "end", "of", "turn"]);
+        let has_temporal_words = words_all
+            .windows(4)
+            .any(|window| window == ["until", "end", "of", "turn"])
+            || words_all
+                .windows(2)
+                .any(|window| window == ["this", "turn"] || window == ["next", "turn"]);
+        if !has_target_subject && !has_leading_until_eot && !has_temporal_words {
+            return Ok(None);
+        }
+    }
     if !tail.is_empty() && tail != ["until", "end", "of", "turn"] {
         return Err(CardTextError::ParseError(format!(
             "unsupported trailing base power/toughness clause (clause: '{}')",
@@ -16997,7 +17065,19 @@ fn parse_has_base_power_toughness_clause(
         )));
     }
 
-    let target = parse_target_phrase(subject_tokens)?;
+    let target_tokens: Vec<Token> = if subject_words.starts_with(&["until", "end", "of", "turn"]) {
+        let mut skip_idx = 4usize;
+        if subject_tokens
+            .get(skip_idx)
+            .is_some_and(|token| matches!(token, Token::Comma(_)))
+        {
+            skip_idx += 1;
+        }
+        trim_commas(&subject_tokens[skip_idx..]).to_vec()
+    } else {
+        subject_tokens.to_vec()
+    };
+    let target = parse_target_phrase(&target_tokens)?;
     Ok(Some(EffectAst::SetBasePowerToughness {
         power: Value::Fixed(power),
         toughness: Value::Fixed(toughness),
