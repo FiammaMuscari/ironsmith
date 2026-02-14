@@ -8,6 +8,13 @@ use crate::game_state::GameState;
 use crate::target::ChooseSpec;
 use crate::zone::Zone;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BattlefieldController {
+    Preserve,
+    Owner,
+    You,
+}
+
 /// Effect that moves a target object to a specified zone.
 ///
 /// This is a generic zone change effect used for various purposes like
@@ -33,6 +40,8 @@ pub struct MoveToZoneEffect {
     pub zone: Zone,
     /// If moving to library, put on top (true) or bottom (false).
     pub to_top: bool,
+    /// Controller override when the destination is the battlefield.
+    pub battlefield_controller: BattlefieldController,
 }
 
 impl MoveToZoneEffect {
@@ -42,6 +51,7 @@ impl MoveToZoneEffect {
             target,
             zone,
             to_top,
+            battlefield_controller: BattlefieldController::Preserve,
         }
     }
 
@@ -63,6 +73,16 @@ impl MoveToZoneEffect {
     /// Create an effect to move a card to graveyard.
     pub fn to_graveyard(target: ChooseSpec) -> Self {
         Self::new(target, Zone::Graveyard, false)
+    }
+
+    pub fn under_owner_control(mut self) -> Self {
+        self.battlefield_controller = BattlefieldController::Owner;
+        self
+    }
+
+    pub fn under_you_control(mut self) -> Self {
+        self.battlefield_controller = BattlefieldController::You;
+        self
     }
 }
 
@@ -117,6 +137,17 @@ impl EffectExecutor for MoveToZoneEffect {
                             Zone::Battlefield,
                             &mut ctx.decision_maker,
                         ) {
+                            if let Some(new_obj) = game.object_mut(result.new_id) {
+                                match self.battlefield_controller {
+                                    BattlefieldController::Preserve => {}
+                                    BattlefieldController::Owner => {
+                                        new_obj.controller = new_obj.owner;
+                                    }
+                                    BattlefieldController::You => {
+                                        new_obj.controller = ctx.controller;
+                                    }
+                                }
+                            }
                             return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
                                 result.new_id,
                             ])));

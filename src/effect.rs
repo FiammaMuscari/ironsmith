@@ -2633,6 +2633,12 @@ impl Effect {
         Self::new(RevealTopEffect::tagged(player, tag))
     }
 
+    /// Create a "look at the top N cards" effect, tagging the viewed cards.
+    pub fn look_at_top_cards(player: PlayerFilter, count: usize, tag: impl Into<TagKey>) -> Self {
+        use crate::effects::LookAtTopCardsEffect;
+        Self::new(LookAtTopCardsEffect::new(player, count, tag))
+    }
+
     /// Create a "search library" effect.
     pub fn search_library(
         filter: ObjectFilter,

@@ -251,6 +251,13 @@ enum PlayerAst {
     Implicit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReturnControllerAst {
+    Preserve,
+    Owner,
+    You,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum TargetAst {
     Source(Option<TextSpan>),
@@ -516,6 +523,11 @@ enum EffectAst {
     RevealTop {
         player: PlayerAst,
     },
+    LookAtTopCards {
+        player: PlayerAst,
+        count: u32,
+        tag: TagKey,
+    },
     RevealHand {
         player: PlayerAst,
     },
@@ -583,6 +595,7 @@ enum EffectAst {
     ReturnToBattlefield {
         target: TargetAst,
         tapped: bool,
+        controller: ReturnControllerAst,
     },
     MoveToZone {
         target: TargetAst,

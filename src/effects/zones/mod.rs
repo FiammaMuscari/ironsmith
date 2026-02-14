@@ -20,7 +20,7 @@ pub use destroy::DestroyEffect;
 pub use exile::ExileEffect;
 pub use exile_from_hand_as_cost::ExileFromHandAsCostEffect;
 pub use exile_until_source_leaves::{ExileUntilDuration, ExileUntilEffect};
-pub use move_to_zone::MoveToZoneEffect;
+pub use move_to_zone::{BattlefieldController, MoveToZoneEffect};
 pub use put_onto_battlefield::PutOntoBattlefieldEffect;
 pub use return_all_to_battlefield::ReturnAllToBattlefieldEffect;
 pub use return_from_graveyard_or_exile_to_battlefield::ReturnFromGraveyardOrExileToBattlefieldEffect;

@@ -10858,6 +10858,7 @@ fn parse_return_with_counters_on_it_sentence(
     let mut effects = vec![EffectAst::ReturnToBattlefield {
         target: parse_target_phrase(&target_tokens)?,
         tapped,
+        controller: ReturnControllerAst::Preserve,
     }];
     let tagged_target = TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(tokens));
     for descriptor in descriptors {
@@ -11217,7 +11218,11 @@ fn parse_sentence_return_multiple_targets(
         } else {
             let target = parse_target_phrase(&segment)?;
             if is_battlefield {
-                effects.push(EffectAst::ReturnToBattlefield { target, tapped });
+                effects.push(EffectAst::ReturnToBattlefield {
+                    target,
+                    tapped,
+                    controller: ReturnControllerAst::Preserve,
+                });
             } else {
                 effects.push(EffectAst::ReturnToHand { target });
             }
@@ -11426,6 +11431,12 @@ fn parse_sentence_play_from_graveyard(
 
 fn parse_sentence_look_at_hand(tokens: &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     parse_look_at_hand_sentence(tokens)
+}
+
+fn parse_sentence_look_at_top_then_exile_one(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    parse_look_at_top_then_exile_one_sentence(tokens)
 }
 
 fn parse_sentence_gain_life_equal_to_age(
@@ -11872,6 +11883,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "play-from-graveyard",
         parser: parse_sentence_play_from_graveyard,
+    },
+    SentencePrimitive {
+        name: "look-at-top-then-exile-one",
+        parser: parse_sentence_look_at_top_then_exile_one,
     },
     SentencePrimitive {
         name: "look-at-hand",
@@ -13509,10 +13524,15 @@ fn parse_exile_then_return_same_object_sentence(
 
     let second_effect = parse_effect_clause(second_clause)?;
     let rewritten_second = match second_effect {
-        EffectAst::ReturnToBattlefield { target, tapped } if target_references_it_tag(&target) => {
+        EffectAst::ReturnToBattlefield {
+            target,
+            tapped,
+            controller,
+        } if target_references_it_tag(&target) => {
             EffectAst::ReturnToBattlefield {
                 target: TargetAst::Tagged(TagKey::from("exiled_0"), None),
                 tapped,
+                controller,
             }
         }
         EffectAst::ReturnToHand { target } if target_references_it_tag(&target) => {
@@ -13641,6 +13661,88 @@ fn parse_look_at_hand_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
         return Ok(Some(vec![EffectAst::LookAtHand { target }]));
     }
     Ok(None)
+}
+
+fn parse_look_at_top_then_exile_one_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let clause_words = words(tokens);
+    let starts_with_look_top = clause_words.starts_with(&["look", "at", "the", "top"])
+        || clause_words.starts_with(&["look", "at", "top"]);
+    if !starts_with_look_top {
+        return Ok(None);
+    }
+
+    let Some(top_idx) = tokens.iter().position(|token| token.is_word("top")) else {
+        return Ok(None);
+    };
+    let Some((count, used_count)) = parse_number(&tokens[top_idx + 1..]) else {
+        return Ok(None);
+    };
+    let mut idx = top_idx + 1 + used_count;
+    if tokens
+        .get(idx)
+        .is_some_and(|token| token.is_word("card") || token.is_word("cards"))
+    {
+        idx += 1;
+    }
+    if !tokens.get(idx).is_some_and(|token| token.is_word("of")) {
+        return Ok(None);
+    }
+    idx += 1;
+
+    let Some(library_idx) = tokens[idx..]
+        .iter()
+        .position(|token| token.is_word("library"))
+        .map(|offset| idx + offset)
+    else {
+        return Ok(None);
+    };
+    let owner_tokens = trim_commas(&tokens[idx..library_idx]);
+    if owner_tokens.is_empty() {
+        return Ok(None);
+    }
+    let player = match parse_subject(&owner_tokens) {
+        SubjectAst::Player(player) => player,
+        _ => return Ok(None),
+    };
+
+    let mut tail_tokens = trim_commas(&tokens[library_idx + 1..]).to_vec();
+    while tail_tokens
+        .first()
+        .is_some_and(|token| token.is_word("then") || token.is_word("and"))
+    {
+        tail_tokens.remove(0);
+    }
+    let tail_words = words(&tail_tokens);
+    let looks_like_exile_one_of_looked = tail_words.starts_with(&["exile", "one", "of", "them"])
+        || tail_words.starts_with(&["exile", "one", "of", "those"])
+        || tail_words.starts_with(&["exile", "one", "of", "those", "cards"]);
+    if !looks_like_exile_one_of_looked {
+        return Ok(None);
+    }
+
+    let looked_tag = TagKey::from("looked_0");
+    let chosen_tag = TagKey::from("chosen_0");
+    let mut looked_filter = ObjectFilter::tagged(looked_tag.clone());
+    looked_filter.zone = Some(Zone::Library);
+
+    Ok(Some(vec![
+        EffectAst::LookAtTopCards {
+            player,
+            count,
+            tag: looked_tag,
+        },
+        EffectAst::ChooseObjects {
+            filter: looked_filter,
+            count: ChoiceCount::exactly(1),
+            player: PlayerAst::You,
+            tag: chosen_tag.clone(),
+        },
+        EffectAst::Exile {
+            target: TargetAst::Tagged(chosen_tag, None),
+        },
+    ]))
 }
 
 fn parse_gain_life_equal_to_age_sentence(
@@ -13971,7 +14073,7 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
         .map(|(_, _, duration)| duration.clone())
         .unwrap_or(Until::Forever);
 
-    let mut trailing_effects = Vec::new();
+    let mut trailing_tail_tokens: Vec<Token> = Vec::new();
     if let Some((start_rel, len_words, _)) = duration_phrase {
         let tail_word_idx = gain_idx + 1 + start_rel + len_words;
         if let Some(tail_token_idx) = token_index_for_word_index(tokens, tail_word_idx) {
@@ -13983,9 +14085,7 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
                 tail_tokens.remove(0);
             }
             if !tail_tokens.is_empty() {
-                if let Ok(parsed_tail) = parse_effect_chain(&tail_tokens) {
-                    trailing_effects = parsed_tail;
-                }
+                trailing_tail_tokens = tail_tokens;
             }
         }
     }
@@ -14062,7 +14162,7 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
             abilities,
             duration,
         });
-        effects.extend(trailing_effects.clone());
+        effects = append_gain_ability_trailing_effects(effects, &trailing_tail_tokens)?;
         return Ok(Some(effects));
     }
 
@@ -14084,7 +14184,7 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
             abilities,
             duration,
         });
-        effects.extend(trailing_effects.clone());
+        effects = append_gain_ability_trailing_effects(effects, &trailing_tail_tokens)?;
         return Ok(Some(effects));
     }
 
@@ -14104,7 +14204,7 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
             abilities,
             duration,
         });
-        effects.extend(trailing_effects.clone());
+        effects = append_gain_ability_trailing_effects(effects, &trailing_tail_tokens)?;
         return Ok(Some(effects));
     }
 
@@ -14128,9 +14228,39 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
         abilities,
         duration,
     });
-    effects.extend(trailing_effects);
+    effects = append_gain_ability_trailing_effects(effects, &trailing_tail_tokens)?;
 
     Ok(Some(effects))
+}
+
+fn append_gain_ability_trailing_effects(
+    mut effects: Vec<EffectAst>,
+    trailing_tokens: &[Token],
+) -> Result<Vec<EffectAst>, CardTextError> {
+    if trailing_tokens.is_empty() {
+        return Ok(effects);
+    }
+
+    let trimmed = trim_commas(trailing_tokens);
+    if trimmed
+        .first()
+        .is_some_and(|token| token.is_word("unless"))
+    {
+        if let Some(unless_effect) = try_build_unless(effects, &trimmed, 0)? {
+            return Ok(vec![unless_effect]);
+        }
+        return Err(CardTextError::ParseError(format!(
+            "unsupported trailing unless gain-ability clause (clause: '{}')",
+            words(&trimmed).join(" ")
+        )));
+    }
+
+    if let Ok(parsed_tail) = parse_effect_chain(&trimmed)
+        && !parsed_tail.is_empty()
+    {
+        effects.extend(parsed_tail);
+    }
+    Ok(effects)
 }
 
 fn parse_choice_of_abilities(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
@@ -19572,6 +19702,20 @@ fn parse_return(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
     let is_hand = destination_words.contains(&"hand") || destination_words.contains(&"hands");
     let is_battlefield = destination_words.contains(&"battlefield");
     let tapped = destination_words.contains(&"tapped");
+    let return_controller = if destination_words
+        .windows(3)
+        .any(|window| window == ["under", "your", "control"])
+    {
+        ReturnControllerAst::You
+    } else if destination_words
+        .iter()
+        .any(|word| *word == "owner" || *word == "owners")
+        && destination_words.contains(&"control")
+    {
+        ReturnControllerAst::Owner
+    } else {
+        ReturnControllerAst::Preserve
+    };
     if destination_words.contains(&"transformed") {
         return Err(CardTextError::ParseError(format!(
             "unsupported transformed return clause (clause: '{}')",
@@ -19650,7 +19794,11 @@ fn parse_return(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
 
     let target = parse_target_phrase(target_tokens)?;
     if is_battlefield {
-        Ok(EffectAst::ReturnToBattlefield { target, tapped })
+        Ok(EffectAst::ReturnToBattlefield {
+            target,
+            tapped,
+            controller: return_controller,
+        })
     } else {
         Ok(EffectAst::ReturnToHand { target })
     }

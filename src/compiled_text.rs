@@ -2689,6 +2689,8 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
             "Scry 2. you draw a card",
             "Scry 2, then draw a card",
         )
+        .replace(". Put a stun counter on it", " and put a stun counter on it")
+        .replace(". put a stun counter on it", " and put a stun counter on it")
         .replace(". you draw a card", ". Draw a card")
         .replace(
             "you sacrifice a land you control. Search your library",
@@ -3678,7 +3680,17 @@ fn describe_counter_type(counter_type: crate::object::CounterType) -> String {
     match counter_type {
         crate::object::CounterType::PlusOnePlusOne => "+1/+1".to_string(),
         crate::object::CounterType::MinusOneMinusOne => "-1/-1".to_string(),
-        other => format!("{other:?}"),
+        other => {
+            let raw = format!("{other:?}");
+            let mut out = String::with_capacity(raw.len() + 4);
+            for (idx, ch) in raw.chars().enumerate() {
+                if idx > 0 && ch.is_ascii_uppercase() {
+                    out.push(' ');
+                }
+                out.push(ch.to_ascii_lowercase());
+            }
+            out
+        }
     }
 }
 
@@ -3816,6 +3828,23 @@ fn choose_spec_is_plural(spec: &ChooseSpec) -> bool {
         ChooseSpec::Target(inner) => choose_spec_is_plural(inner),
         ChooseSpec::All(_) | ChooseSpec::EachPlayer(_) => true,
         ChooseSpec::WithCount(inner, count) => !count.is_single() || choose_spec_is_plural(inner),
+        _ => false,
+    }
+}
+
+fn choose_spec_allows_multiple(spec: &ChooseSpec) -> bool {
+    match spec {
+        ChooseSpec::Target(inner) => choose_spec_allows_multiple(inner),
+        ChooseSpec::All(_) | ChooseSpec::EachPlayer(_) => true,
+        ChooseSpec::WithCount(inner, count) => {
+            if count.dynamic_x {
+                true
+            } else if let Some(max) = count.max {
+                max > 1 || choose_spec_allows_multiple(inner)
+            } else {
+                true
+            }
+        }
         _ => false,
     }
 }
@@ -4407,6 +4436,32 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             idx += 2;
             continue;
         }
+        if idx + 2 < filtered.len()
+            && let Some(look_at_top) =
+                filtered[idx].downcast_ref::<crate::effects::LookAtTopCardsEffect>()
+            && let Some(choose) =
+                filtered[idx + 1].downcast_ref::<crate::effects::ChooseObjectsEffect>()
+            && let Some(move_to_zone) =
+                filtered[idx + 2].downcast_ref::<crate::effects::MoveToZoneEffect>()
+            && let Some(compact) =
+                describe_look_at_top_then_choose_move_to_exile(look_at_top, choose, move_to_zone)
+        {
+            parts.push(compact);
+            idx += 3;
+            continue;
+        }
+        if idx + 2 < filtered.len()
+            && let Some(look_at_top) =
+                filtered[idx].downcast_ref::<crate::effects::LookAtTopCardsEffect>()
+            && let Some(choose) =
+                filtered[idx + 1].downcast_ref::<crate::effects::ChooseObjectsEffect>()
+            && let Some(exile) = filtered[idx + 2].downcast_ref::<crate::effects::ExileEffect>()
+            && let Some(compact) = describe_look_at_top_then_choose_exile(look_at_top, choose, exile)
+        {
+            parts.push(compact);
+            idx += 3;
+            continue;
+        }
         if idx + 1 < filtered.len()
             && let Some(choose) =
                 filtered[idx].downcast_ref::<crate::effects::ChooseObjectsEffect>()
@@ -4495,7 +4550,26 @@ fn describe_exile_then_return(
         return None;
     }
     let target = describe_choose_spec(&exile_move.target);
-    Some(format!("Exile {target}, then return it to the battlefield"))
+    let return_object = if choose_spec_allows_multiple(&exile_move.target) {
+        "those cards"
+    } else {
+        "that card"
+    };
+    let owner_control_suffix = if choose_spec_allows_multiple(&exile_move.target) {
+        " under their owners' control"
+    } else {
+        " under its owner's control"
+    };
+    let controller_suffix = match move_back.battlefield_controller {
+        crate::effects::BattlefieldController::Preserve => "",
+        crate::effects::BattlefieldController::Owner => owner_control_suffix,
+        crate::effects::BattlefieldController::You => {
+            " under your control"
+        }
+    };
+    Some(format!(
+        "Exile {target}, then return {return_object} to the battlefield{controller_suffix}"
+    ))
 }
 
 fn describe_tagged_target_then_power_damage(
@@ -5009,6 +5083,10 @@ fn describe_choose_then_sacrifice(
         if refers_to_triggering_object {
             return Some(format!("{player} {verb} it"));
         }
+        if let Some(rest) = chosen.strip_prefix(&format!("{player}'s ")) {
+            let chosen_kind = with_indefinite_article(rest);
+            return Some(format!("{player} {verb} {chosen_kind} of their choice"));
+        }
         let chosen = with_indefinite_article(&chosen);
         Some(format!("{player} {verb} {chosen}"))
     } else {
@@ -5163,6 +5241,10 @@ fn describe_choose_then_tap_cost(
 
 fn exile_uses_chosen_tag(spec: &ChooseSpec, tag: &str) -> bool {
     matches!(spec.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
+}
+
+fn move_to_exile_uses_chosen_tag(move_to_zone: &crate::effects::MoveToZoneEffect, tag: &str) -> bool {
+    move_to_zone.zone == Zone::Exile && matches!(move_to_zone.target.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
 }
 
 fn describe_for_each_filter(filter: &ObjectFilter) -> String {
@@ -5417,6 +5499,63 @@ fn describe_choose_then_exile(
         )
     };
     Some(format!("{chooser} {verb} {chosen} {origin}"))
+}
+
+fn describe_look_at_top_then_choose_exile(
+    look_at_top: &crate::effects::LookAtTopCardsEffect,
+    choose: &crate::effects::ChooseObjectsEffect,
+    exile: &crate::effects::ExileEffect,
+) -> Option<String> {
+    if !exile_uses_chosen_tag(&exile.spec, choose.tag.as_str()) {
+        return None;
+    }
+    describe_look_at_top_then_choose_exile_text(look_at_top, choose)
+}
+
+fn describe_look_at_top_then_choose_move_to_exile(
+    look_at_top: &crate::effects::LookAtTopCardsEffect,
+    choose: &crate::effects::ChooseObjectsEffect,
+    move_to_zone: &crate::effects::MoveToZoneEffect,
+) -> Option<String> {
+    if !move_to_exile_uses_chosen_tag(move_to_zone, choose.tag.as_str()) {
+        return None;
+    }
+    describe_look_at_top_then_choose_exile_text(look_at_top, choose)
+}
+
+fn describe_look_at_top_then_choose_exile_text(
+    look_at_top: &crate::effects::LookAtTopCardsEffect,
+    choose: &crate::effects::ChooseObjectsEffect,
+) -> Option<String> {
+    if choose.zone != Zone::Library
+        || choose.is_search
+        || !choose.count.is_single()
+    {
+        return None;
+    }
+    let references_looked = choose.filter.tagged_constraints.iter().any(|constraint| {
+        matches!(
+            constraint.relation,
+            crate::filter::TaggedOpbjectRelation::IsTaggedObject
+        ) && constraint.tag.as_str() == look_at_top.tag.as_str()
+    });
+    if !references_looked {
+        return None;
+    }
+
+    let owner = describe_possessive_player_filter(&look_at_top.player);
+    let count_text = small_number_word(look_at_top.count as u32)
+        .map(str::to_string)
+        .unwrap_or_else(|| look_at_top.count.to_string());
+    let noun = if look_at_top.count == 1 { "card" } else { "cards" };
+    let exile_ref = if look_at_top.count == 1 {
+        "it"
+    } else {
+        "one of them"
+    };
+    Some(format!(
+        "Look at the top {count_text} {noun} of {owner} library, then exile {exile_ref}"
+    ))
 }
 
 fn describe_draw_then_discard(
@@ -5953,12 +6092,26 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 }
             }
             Zone::Battlefield => {
+                let owner_control_suffix = if choose_spec_allows_multiple(&move_to_zone.target) {
+                    " under their owners' control"
+                } else {
+                    " under its owner's control"
+                };
+                let controller_suffix = match move_to_zone.battlefield_controller {
+                    crate::effects::BattlefieldController::Preserve => "",
+                    crate::effects::BattlefieldController::Owner => {
+                        owner_control_suffix
+                    }
+                    crate::effects::BattlefieldController::You => {
+                        " under your control"
+                    }
+                };
                 if let crate::target::ChooseSpec::Tagged(tag) = &move_to_zone.target
                     && tag.as_str().starts_with("exiled_")
                 {
-                    format!("Return {target} to the battlefield")
+                    format!("Return {target} to the battlefield{controller_suffix}")
                 } else {
-                    format!("Put {target} onto the battlefield")
+                    format!("Put {target} onto the battlefield{controller_suffix}")
                 }
             }
             Zone::Stack => format!("Put {target} on the stack"),
@@ -6538,6 +6691,14 @@ fn describe_effect_impl(effect: &Effect) -> String {
             text.push_str(&format!(" and tag it as '{}'", tag.as_str()));
         }
         return text;
+    }
+    if let Some(look_at_top) = effect.downcast_ref::<crate::effects::LookAtTopCardsEffect>() {
+        let owner = describe_possessive_player_filter(&look_at_top.player);
+        let count_text = small_number_word(look_at_top.count as u32)
+            .map(str::to_string)
+            .unwrap_or_else(|| look_at_top.count.to_string());
+        let noun = if look_at_top.count == 1 { "card" } else { "cards" };
+        return format!("Look at the top {count_text} {noun} of {owner} library");
     }
     if let Some(look_at_hand) = effect.downcast_ref::<crate::effects::LookAtHandEffect>() {
         if matches!(
@@ -10239,6 +10400,10 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         .replace(
             "target opponent's nonland permanents",
             "target nonland permanents an opponent controls",
+        )
+        .replace(
+            "target opponent's artifact or creature",
+            "target artifact or creature an opponent controls",
         )
         .replace(
             "permanent can't untap until your next turn",

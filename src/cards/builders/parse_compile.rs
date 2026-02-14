@@ -327,6 +327,24 @@ fn choose_spec_references_tag(spec: &ChooseSpec, tag: &str) -> bool {
     }
 }
 
+fn choose_spec_references_exiled_tag(spec: &ChooseSpec) -> bool {
+    match spec {
+        ChooseSpec::Tagged(tag) => tag.as_str().starts_with("exiled_"),
+        ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
+            choose_spec_references_exiled_tag(inner)
+        }
+        ChooseSpec::Object(filter) | ChooseSpec::All(filter) => filter.tagged_constraints.iter().any(
+            |constraint| {
+                matches!(
+                    constraint.relation,
+                    TaggedOpbjectRelation::IsTaggedObject
+                ) && constraint.tag.as_str().starts_with("exiled_")
+            },
+        ),
+        _ => false,
+    }
+}
+
 fn object_ref_references_tag(reference: &ObjectRef, tag: &str) -> bool {
     matches!(reference, ObjectRef::Tagged(found) if found.as_str() == tag)
 }
@@ -383,6 +401,7 @@ fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::ExileInsteadOfGraveyardThisTurn { player }
         | EffectAst::ExtraTurnAfterTurn { player }
         | EffectAst::RevealTop { player }
+        | EffectAst::LookAtTopCards { player, .. }
         | EffectAst::RevealHand { player }
         | EffectAst::PutIntoHand { player, .. }
         | EffectAst::CopySpell { player, .. }
@@ -1895,11 +1914,15 @@ fn compile_effect(
         } => {
             let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let mut resolved_filter = resolve_it_tag(filter, ctx)?;
-            if resolved_filter.controller.is_none() {
+            if resolved_filter.controller.is_none() && resolved_filter.tagged_constraints.is_empty()
+            {
                 resolved_filter.controller = Some(chooser.clone());
             }
-            let effect =
-                Effect::choose_objects(resolved_filter, *count, chooser.clone(), tag.clone());
+            let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
+            let choose_effect =
+                crate::effects::ChooseObjectsEffect::new(resolved_filter, *count, chooser, tag.clone())
+                    .in_zone(choice_zone);
+            let effect = Effect::new(choose_effect);
             ctx.last_object_tag = Some(tag.as_str().to_string());
             Ok((vec![effect], choices))
         }
@@ -2013,17 +2036,28 @@ fn compile_effect(
             );
             Ok((vec![effect], choices))
         }
-        EffectAst::ReturnToBattlefield { target, tapped } => {
+        EffectAst::ReturnToBattlefield {
+            target,
+            tapped,
+            controller,
+        } => {
             let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
-            let from_exile_tag = matches!(
-                target,
-                TargetAst::Tagged(tag, _) if tag.as_str() == "exiled_0"
-            );
+            let from_exile_tag = choose_spec_references_exiled_tag(&spec);
             let effect = tag_object_target_effect(
                 if from_exile_tag && !*tapped {
                     // Blink-style "exile ... then return it" should move the tagged
                     // exiled object back to the battlefield from exile.
-                    Effect::move_to_zone(spec.clone(), Zone::Battlefield, false)
+                    let move_back = crate::effects::MoveToZoneEffect::new(
+                        spec.clone(),
+                        Zone::Battlefield,
+                        false,
+                    );
+                    let move_back = match controller {
+                        ReturnControllerAst::Preserve => move_back,
+                        ReturnControllerAst::Owner => move_back.under_owner_control(),
+                        ReturnControllerAst::You => move_back.under_you_control(),
+                    };
+                    Effect::new(move_back)
                 } else {
                     Effect::return_from_graveyard_to_battlefield(spec.clone(), *tapped)
                 },
@@ -2325,6 +2359,13 @@ fn compile_effect(
             let tag = ctx.next_tag("revealed");
             ctx.last_object_tag = Some(tag.clone());
             let effect = Effect::reveal_top(player_filter, tag);
+            Ok((vec![effect], choices))
+        }
+        EffectAst::LookAtTopCards { player, count, tag } => {
+            let (player_filter, choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
+            ctx.last_object_tag = Some(tag.as_str().to_string());
+            let effect = Effect::look_at_top_cards(player_filter, *count as usize, tag.clone());
             Ok((vec![effect], choices))
         }
         EffectAst::RevealHand { player } => {
@@ -2987,6 +3028,27 @@ fn resolve_it_tag(
     Ok(resolved)
 }
 
+fn object_filter_as_tagged_reference(filter: &ObjectFilter) -> Option<TagKey> {
+    if filter.tagged_constraints.len() != 1 {
+        return None;
+    }
+    let constraint = &filter.tagged_constraints[0];
+    if !matches!(
+        constraint.relation,
+        TaggedOpbjectRelation::IsTaggedObject
+    ) {
+        return None;
+    }
+
+    let mut bare = filter.clone();
+    bare.tagged_constraints.clear();
+    if bare == ObjectFilter::default() {
+        Some(constraint.tag.clone())
+    } else {
+        None
+    }
+}
+
 fn resolve_restriction_it_tag(
     restriction: &crate::effect::Restriction,
     ctx: &CompileContext,
@@ -3026,7 +3088,14 @@ fn resolve_choose_spec_it_tag(
             Ok(ChooseSpec::Tagged(TagKey::from(resolved.as_str())))
         }
         ChooseSpec::Tagged(tag) => Ok(ChooseSpec::Tagged(tag.clone())),
-        ChooseSpec::Object(filter) => Ok(ChooseSpec::Object(resolve_it_tag(filter, ctx)?)),
+        ChooseSpec::Object(filter) => {
+            let resolved = resolve_it_tag(filter, ctx)?;
+            if let Some(tag) = object_filter_as_tagged_reference(&resolved) {
+                Ok(ChooseSpec::Tagged(tag))
+            } else {
+                Ok(ChooseSpec::Object(resolved))
+            }
+        }
         ChooseSpec::Target(inner) => Ok(ChooseSpec::Target(Box::new(resolve_choose_spec_it_tag(
             inner, ctx,
         )?))),

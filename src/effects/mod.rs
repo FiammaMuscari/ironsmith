@@ -62,8 +62,9 @@ pub use executor_trait::{CostValidationError, EffectExecutor, ModalSpec};
 
 // Re-export effect implementations
 pub use cards::{
-    ConniveEffect, DiscardEffect, DiscardHandEffect, DrawCardsEffect, LookAtHandEffect, MillEffect,
-    RevealTopEffect, ScryEffect, SearchLibraryEffect, ShuffleLibraryEffect, SurveilEffect,
+    ConniveEffect, DiscardEffect, DiscardHandEffect, DrawCardsEffect, LookAtHandEffect,
+    LookAtTopCardsEffect, MillEffect, RevealTopEffect, ScryEffect, SearchLibraryEffect,
+    ShuffleLibraryEffect, SurveilEffect,
 };
 pub use combat::{
     EnterAttackingEffect, FightEffect, GoadEffect, GrantAbilitiesAllEffect,
@@ -109,8 +110,9 @@ pub use restrictions::CantEffect;
 pub use stack::{ChooseNewTargetsEffect, CopySpellEffect, CounterEffect};
 pub use tokens::{CreateTokenCopyEffect, CreateTokenEffect, InvestigateEffect};
 pub use zones::{
-    DestroyEffect, ExileEffect, ExileFromHandAsCostEffect, ExileUntilDuration, ExileUntilEffect,
-    MoveToZoneEffect, PutOntoBattlefieldEffect, ReturnAllToBattlefieldEffect,
+    BattlefieldController, DestroyEffect, ExileEffect, ExileFromHandAsCostEffect,
+    ExileUntilDuration, ExileUntilEffect, MoveToZoneEffect, PutOntoBattlefieldEffect,
+    ReturnAllToBattlefieldEffect,
     ReturnFromGraveyardOrExileToBattlefieldEffect, ReturnFromGraveyardToBattlefieldEffect,
     ReturnFromGraveyardToHandEffect, ReturnToHandEffect, SacrificeEffect, SacrificeTargetEffect,
 };
