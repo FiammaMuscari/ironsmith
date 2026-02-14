@@ -4314,6 +4314,17 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             idx += 2;
             continue;
         }
+        if idx + 1 < filtered.len()
+            && let Some(choose) =
+                filtered[idx].downcast_ref::<crate::effects::ChooseObjectsEffect>()
+            && let Some(move_to_zone) =
+                filtered[idx + 1].downcast_ref::<crate::effects::MoveToZoneEffect>()
+            && let Some(compact) = describe_choose_then_move_to_library(choose, move_to_zone)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
         if idx + 2 < filtered.len()
             && let Some(look_at_top) =
                 filtered[idx].downcast_ref::<crate::effects::LookAtTopCardsEffect>()
@@ -5348,6 +5359,21 @@ fn describe_choose_selection(choose: &crate::effects::ChooseObjectsEffect) -> St
         .unwrap_or(filter_text.as_str())
         .trim()
         .to_string();
+    for owner_prefix in [
+        "target player's ",
+        "that player's ",
+        "their ",
+        "your ",
+        "an opponent's ",
+    ] {
+        if let Some(rest) = card_desc.strip_prefix(owner_prefix) {
+            card_desc = rest.to_string();
+            break;
+        }
+    }
+    if let Some(rest) = card_desc.strip_suffix(" hands") {
+        card_desc = format!("{rest} hand");
+    }
     if let Some(rest) = card_desc.strip_prefix("card ") {
         card_desc = format!("{rest} card");
     }
@@ -5397,6 +5423,75 @@ fn describe_choose_then_exile(
         )
     };
     Some(format!("{chooser} {verb} {chosen} {origin}"))
+}
+
+fn move_to_library_uses_chosen_tag(
+    move_to_zone: &crate::effects::MoveToZoneEffect,
+    tag: &str,
+) -> bool {
+    move_to_zone.zone == Zone::Library
+        && matches!(move_to_zone.target.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
+}
+
+fn describe_choose_zone_origin(
+    choose: &crate::effects::ChooseObjectsEffect,
+    zone_text: &str,
+) -> String {
+    match choose.filter.owner.as_ref() {
+        Some(PlayerFilter::IteratedPlayer) => format!("from their {zone_text}"),
+        Some(owner) => format!("from {} {zone_text}", describe_possessive_player_filter(owner)),
+        None => format!("from a {zone_text}"),
+    }
+}
+
+fn describe_choose_then_move_to_library(
+    choose: &crate::effects::ChooseObjectsEffect,
+    move_to_zone: &crate::effects::MoveToZoneEffect,
+) -> Option<String> {
+    if !move_to_library_uses_chosen_tag(move_to_zone, choose.tag.as_str()) {
+        return None;
+    }
+
+    let origin = match choose.zone {
+        Zone::Hand => describe_choose_zone_origin(choose, "hand"),
+        Zone::Graveyard => describe_choose_zone_origin(choose, "graveyard"),
+        Zone::Library => {
+            if choose.top_only {
+                match choose.filter.owner.as_ref() {
+                    Some(PlayerFilter::IteratedPlayer) => "from the top of their library".to_string(),
+                    Some(owner) => format!(
+                        "from the top of {} library",
+                        describe_possessive_player_filter(owner)
+                    ),
+                    None => "from the top of a library".to_string(),
+                }
+            } else {
+                describe_choose_zone_origin(choose, "library")
+            }
+        }
+        _ => return None,
+    };
+
+    let chooser = describe_player_filter(&choose.chooser);
+    let choose_verb = player_verb(&chooser, "choose", "chooses");
+    let put_verb = player_verb(&chooser, "put", "puts");
+    let chosen = describe_choose_selection(choose);
+    let moved_ref = if choose.count.is_single() { "it" } else { "them" };
+
+    let destination = match choose.filter.owner.as_ref() {
+        Some(PlayerFilter::IteratedPlayer) => "their library".to_string(),
+        Some(owner) => format!("{} library", describe_possessive_player_filter(owner)),
+        None => owner_library_phrase_for_spec(&move_to_zone.target).to_string(),
+    };
+    let placement = if move_to_zone.to_top {
+        "on top of"
+    } else {
+        "on the bottom of"
+    };
+
+    Some(format!(
+        "{chooser} {choose_verb} {chosen} {origin}, then {put_verb} {moved_ref} {placement} {destination}"
+    ))
 }
 
 fn describe_look_at_top_then_choose_exile(
