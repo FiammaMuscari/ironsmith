@@ -5623,9 +5623,27 @@ fn describe_value(
             "the number of colors of mana spent to cast this spell".to_string()
         }
         crate::effect::Value::EffectValue(_) => "a prior effect value".to_string(),
+        crate::effect::Value::EffectValueOffset(_, offset) => {
+            if *offset > 0 {
+                format!("a prior effect value plus {offset}")
+            } else if *offset < 0 {
+                format!("a prior effect value minus {}", -offset)
+            } else {
+                "a prior effect value".to_string()
+            }
+        }
         crate::effect::Value::EventValue(crate::effect::EventValueSpec::Amount)
         | crate::effect::Value::EventValue(crate::effect::EventValueSpec::LifeAmount) => {
             "that much".to_string()
+        }
+        crate::effect::Value::EventValueOffset(_, offset) => {
+            if *offset > 0 {
+                format!("that much plus {offset}")
+            } else if *offset < 0 {
+                format!("that much minus {}", -offset)
+            } else {
+                "that much".to_string()
+            }
         }
         crate::effect::Value::EventValue(crate::effect::EventValueSpec::BlockersBeyondFirst {
             multiplier,
