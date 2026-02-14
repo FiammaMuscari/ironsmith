@@ -263,6 +263,85 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         normalized = normalized.replace(" and you gain ", " and gain ");
     }
 
+    // Canonicalize possessive opponent phrasing.
+    if let Some(rest) = normalized.strip_prefix("Opponent's creatures get ") {
+        normalized = format!("Creatures your opponents control get {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("opponent's creatures get ") {
+        normalized = format!("creatures your opponents control get {rest}");
+    }
+
+    // Canonicalize trigger clauses where explicit "you" is redundant.
+    for (from, to) in [
+        (": you draw ", ": draw "),
+        (": You draw ", ": Draw "),
+        (", you draw ", ", draw "),
+        (", You draw ", ", Draw "),
+        (": you mill ", ": mill "),
+        (": You mill ", ": Mill "),
+        (", you mill ", ", mill "),
+        (", You mill ", ", Mill "),
+        (": you scry ", ": scry "),
+        (", you scry ", ", scry "),
+        (": you surveil ", ": surveil "),
+        (", you surveil ", ", surveil "),
+    ] {
+        normalized = normalized.replace(from, to);
+    }
+
+    // Repair split duration tails.
+    for (from, to) in [
+        (
+            ". until this enchantment leaves the battlefield",
+            " until this enchantment leaves the battlefield",
+        ),
+        (
+            ". until this artifact leaves the battlefield",
+            " until this artifact leaves the battlefield",
+        ),
+        (
+            ". until this permanent leaves the battlefield",
+            " until this permanent leaves the battlefield",
+        ),
+        (
+            ". until this creature leaves the battlefield",
+            " until this creature leaves the battlefield",
+        ),
+    ] {
+        normalized = normalized.replace(from, to);
+    }
+
+    // Normalize clauses that omit the subject.
+    if normalized.starts_with("Can't attack unless defending player controls ") {
+        normalized = format!("This creature {normalized}");
+    }
+
+    // Normalize split target-player draw/lose wording.
+    if let Some((draw_part, lose_part)) = normalized.split_once(". target player loses ")
+        && (draw_part.starts_with("Target player draws ")
+            || draw_part.starts_with("target player draws "))
+    {
+        let draw_tail = draw_part
+            .trim_start_matches("Target player draws ")
+            .trim_start_matches("target player draws ")
+            .trim();
+        normalized = format!("Target player draws {draw_tail} and loses {}", lose_part.trim());
+    }
+    if let Some((left, right)) = normalized.split_once(". Deal ") {
+        let right = right.trim().trim_end_matches('.').trim();
+        if left.to_ascii_lowercase().contains(" deals ") && !right.is_empty() {
+            normalized = format!("{} and {}", left.trim_end_matches('.'), right);
+        }
+    }
+    normalized = normalized.replace(
+        "that an opponent's land could produce",
+        "that a land an opponent controls could produce",
+    );
+    normalized = normalized.replace(
+        "that an opponent's lands could produce",
+        "that lands an opponent controls could produce",
+    );
+
     let lower = normalized.to_ascii_lowercase();
     if let Some(rest) = lower.strip_prefix("for each player, you may that player ")
         && let Some((first, second)) = rest.split_once(". if you don't, that player ")

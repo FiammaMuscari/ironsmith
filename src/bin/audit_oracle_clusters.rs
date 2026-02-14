@@ -519,6 +519,75 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
         normalized = normalized.replace(" and you lose ", " and lose ");
         normalized = normalized.replace(" and you gain ", " and gain ");
     }
+    if let Some(rest) = normalized.strip_prefix("Opponent's creatures get ") {
+        normalized = format!("Creatures your opponents control get {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("opponent's creatures get ") {
+        normalized = format!("creatures your opponents control get {rest}");
+    }
+    for (from, to) in [
+        (": you draw ", ": draw "),
+        (": You draw ", ": Draw "),
+        (", you draw ", ", draw "),
+        (", You draw ", ", Draw "),
+        (": you mill ", ": mill "),
+        (": You mill ", ": Mill "),
+        (", you mill ", ", mill "),
+        (", You mill ", ", Mill "),
+        (": you scry ", ": scry "),
+        (", you scry ", ", scry "),
+        (": you surveil ", ": surveil "),
+        (", you surveil ", ", surveil "),
+    ] {
+        normalized = normalized.replace(from, to);
+    }
+    for (from, to) in [
+        (
+            ". until this enchantment leaves the battlefield",
+            " until this enchantment leaves the battlefield",
+        ),
+        (
+            ". until this artifact leaves the battlefield",
+            " until this artifact leaves the battlefield",
+        ),
+        (
+            ". until this permanent leaves the battlefield",
+            " until this permanent leaves the battlefield",
+        ),
+        (
+            ". until this creature leaves the battlefield",
+            " until this creature leaves the battlefield",
+        ),
+    ] {
+        normalized = normalized.replace(from, to);
+    }
+    if normalized.starts_with("Can't attack unless defending player controls ") {
+        normalized = format!("This creature {normalized}");
+    }
+    if let Some((draw_part, lose_part)) = normalized.split_once(". target player loses ")
+        && (draw_part.starts_with("Target player draws ")
+            || draw_part.starts_with("target player draws "))
+    {
+        let draw_tail = draw_part
+            .trim_start_matches("Target player draws ")
+            .trim_start_matches("target player draws ")
+            .trim();
+        normalized = format!("Target player draws {draw_tail} and loses {}", lose_part.trim());
+    }
+    if let Some((left, right)) = normalized.split_once(". Deal ") {
+        let right = right.trim().trim_end_matches('.').trim();
+        if left.to_ascii_lowercase().contains(" deals ") && !right.is_empty() {
+            normalized = format!("{} and {}", left.trim_end_matches('.'), right);
+        }
+    }
+    normalized = normalized.replace(
+        "that an opponent's land could produce",
+        "that a land an opponent controls could produce",
+    );
+    normalized = normalized.replace(
+        "that an opponent's lands could produce",
+        "that lands an opponent controls could produce",
+    );
     if normalized.contains(", you draw ") && normalized.contains(" and lose ") {
         normalized = normalized.replace(" and lose ", " and you lose ");
     }
@@ -2194,6 +2263,34 @@ mod tests {
             clauses,
             vec!["Each player who controls a multicolored creature draws a card".to_string()]
         );
+    }
+
+    #[test]
+    fn test_semantic_clauses_repair_until_tail_split() {
+        let clauses = semantic_clauses(
+            "When this enchantment enters, exile target nonland permanent an opponent controls. until this enchantment leaves the battlefield.",
+        );
+        assert_eq!(clauses.len(), 1);
+        let clause = clauses[0].to_ascii_lowercase();
+        assert!(clause.contains("exile target nonland permanent"));
+        assert!(clause.contains("until this enchantment leaves the battlefield"));
+    }
+
+    #[test]
+    fn test_semantic_clauses_add_missing_attack_subject() {
+        let clauses = semantic_clauses("Can't attack unless defending player controls island.");
+        assert_eq!(clauses.len(), 1);
+        let clause = clauses[0].to_ascii_lowercase();
+        assert!(clause.starts_with("this creature can't attack unless"));
+    }
+
+    #[test]
+    fn test_semantic_clauses_merge_split_damage_followup() {
+        let clauses = semantic_clauses("This creature deals 1 damage to any target. Deal 1 damage to you.");
+        assert_eq!(clauses.len(), 1);
+        let clause = clauses[0].to_ascii_lowercase();
+        assert!(clause.contains("deal 1 damage to any target"));
+        assert!(clause.contains("and 1 damage to you"));
     }
 
     #[test]
