@@ -9052,6 +9052,48 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         }
         return format!("{prefix}. Draw {draw_tail} and gain {gain_tail}.");
     }
+    if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, "This creature deals ")
+        && let Some((damage, loss_tail)) =
+            split_once_ascii_ci(rest, " damage to target creature. that object's controller loses ")
+        && let Some(loss_amount) = loss_tail
+            .trim()
+            .trim_end_matches('.')
+            .strip_suffix(" life")
+    {
+        return format!(
+            "{prefix}This creature deals {} damage to target creature and that creature's controller loses {} life.",
+            damage.trim(),
+            loss_amount.trim()
+        );
+    }
+    if let Some((prefix, rest)) = split_once_ascii_ci(
+        &normalized,
+        ". At the beginning of the next end step, return it to its owner's hand",
+    ) && prefix
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("exile all card")
+    {
+        let mut rewritten = format!(
+            "{prefix}. At the beginning of the next end step, return those cards to their owners' hands"
+        );
+        let rest = rest.trim();
+        if let Some(tail) = rest.strip_prefix('.') {
+            let tail = tail.trim();
+            if !tail.is_empty() {
+                rewritten.push_str(". ");
+                rewritten.push_str(tail);
+            } else {
+                rewritten.push('.');
+            }
+        } else if !rest.is_empty() {
+            rewritten.push(' ');
+            rewritten.push_str(rest);
+        } else {
+            rewritten.push('.');
+        }
+        return normalize_compiled_post_pass_effect(&rewritten);
+    }
     if let Some(rewritten) = normalize_split_search_battlefield_then_hand_clause(&normalized) {
         return rewritten;
     }
@@ -14437,6 +14479,28 @@ mod tests {
         assert_eq!(
             normalized,
             "Return creature card from your graveyard to your hand. Draw three cards and gain 5 life."
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_damage_then_controller_loses_life_chain() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "{T}: This creature deals 1 damage to target creature. that object's controller loses 1 life.",
+        );
+        assert_eq!(
+            normalized,
+            "{T}: This creature deals 1 damage to target creature and that creature's controller loses 1 life."
+        );
+    }
+
+    #[test]
+    fn post_pass_rewrites_exile_all_cards_then_return_it_chain() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Exile all card in your hand. At the beginning of the next end step, return it to its owner's hand. Draw a card.",
+        );
+        assert_eq!(
+            normalized,
+            "Exile all card in your hand. At the beginning of the next end step, return those cards to their owners' hands. Draw a card."
         );
     }
 
