@@ -9010,6 +9010,47 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
             gain_tail.trim().trim_end_matches('.')
         );
     }
+    if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, ": you discard ")
+        && let Some((discard_tail, draw_tail)) = split_once_ascii_ci(rest, ". Draw ")
+    {
+        return format!(
+            "{prefix}: discard {}, then draw {}.",
+            discard_tail.trim(),
+            draw_tail.trim().trim_end_matches('.')
+        );
+    }
+    if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, ": you discard ")
+        && let Some((discard_tail, draw_tail)) = split_once_ascii_ci(rest, ". you draw ")
+    {
+        return format!(
+            "{prefix}: discard {}, then draw {}.",
+            discard_tail.trim(),
+            draw_tail.trim().trim_end_matches('.')
+        );
+    }
+    if let Some((left, draw_tail)) = split_once_ascii_ci(&normalized, ". you draw ")
+        && left.to_ascii_lowercase().starts_with("exile ")
+    {
+        return format!(
+            "{left}, then draw {}.",
+            draw_tail.trim().trim_end_matches('.')
+        );
+    }
+    if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, ". you draw ")
+        && let Some((draw_tail, gain_tail)) = split_once_ascii_ci(rest, ". you gain ")
+        && gain_tail
+            .trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase()
+            .ends_with(" life")
+    {
+        let draw_tail = draw_tail.trim().trim_end_matches('.');
+        let gain_tail = gain_tail.trim().trim_end_matches('.');
+        if prefix.trim().is_empty() {
+            return format!("Draw {draw_tail} and gain {gain_tail}.");
+        }
+        return format!("{prefix}. Draw {draw_tail} and gain {gain_tail}.");
+    }
     if let Some(rewritten) = normalize_split_search_battlefield_then_hand_clause(&normalized) {
         return rewritten;
     }
@@ -14351,6 +14392,50 @@ mod tests {
         assert_eq!(
             normalized,
             "Whenever this creature enters or attacks, target opponent loses 3 life. Draw a card and gain 3 life."
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_discard_then_draw_chain_after_cost_colon() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "{U}, Sacrifice a creature you control: you discard a card. Draw a card.",
+        );
+        assert_eq!(
+            normalized,
+            "{U}, Sacrifice a creature you control: discard a card, then draw a card."
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_colon_discard_then_you_draw_chain() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "When this creature is turned face up: you discard your hand. you draw three cards.",
+        );
+        assert_eq!(
+            normalized,
+            "When this creature is turned face up: discard your hand, then draw three cards."
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_exile_then_you_draw_chain() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Exile all card in your hand. you draw that many cards.",
+        );
+        assert_eq!(
+            normalized,
+            "Exile all card in your hand, then draw that many cards."
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_prefix_you_draw_then_you_gain_chain() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Return creature card from your graveyard to your hand. you draw three cards. you gain 5 life.",
+        );
+        assert_eq!(
+            normalized,
+            "Return creature card from your graveyard to your hand. Draw three cards and gain 5 life."
         );
     }
 
