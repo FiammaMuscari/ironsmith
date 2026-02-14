@@ -1323,6 +1323,30 @@ fn test_render_sacrifice_unless_you_pay_uses_pay_verb() {
 }
 
 #[test]
+fn test_render_leading_unless_payment_clause_keeps_unless_structure() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Demonic Hordes Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "At the beginning of your upkeep, unless you pay {B}{B}{B}, tap this creature and sacrifice a land.",
+        )
+        .expect("leading-unless upkeep clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("unless you pay {b}{b}{b}"),
+        "expected unless-payment wording, got {rendered}"
+    );
+    assert!(
+        rendered.contains("tap this creature"),
+        "expected tap effect in unless branch, got {rendered}"
+    );
+    assert!(
+        rendered.contains("sacrifice a land"),
+        "expected sacrifice effect in unless branch, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_creatures_without_flying_cant_attack_static_line() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Moat Probe")
         .card_types(vec![CardType::Enchantment])

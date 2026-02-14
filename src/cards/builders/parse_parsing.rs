@@ -10985,11 +10985,31 @@ fn parse_sentence_unless_pays(tokens: &[Token]) -> Result<Option<Vec<EffectAst>>
         None => return Ok(None),
     };
 
-    // Need at least something before "unless" and something after
+    // Leading form: "Unless you pay ..., <effects>."
+    // Rewrite by parsing the effect tail after the first comma and wrapping it
+    // in the parsed unless-payment clause.
     if unless_idx == 0 {
+        let comma_idx = match tokens.iter().position(|token| matches!(token, Token::Comma(_))) {
+            Some(idx) => idx,
+            None => return Ok(None),
+        };
+        if comma_idx + 1 >= tokens.len() {
+            return Ok(None);
+        }
+
+        let effects = parse_effect_chain(&tokens[comma_idx + 1..])?;
+        if effects.is_empty() {
+            return Ok(None);
+        }
+
+        let unless_clause = &tokens[..comma_idx];
+        if let Some(unless_effect) = try_build_unless(effects, unless_clause, 0)? {
+            return Ok(Some(vec![unless_effect]));
+        }
         return Ok(None);
     }
 
+    // Need at least something before "unless" and something after.
     let before_words: Vec<&str> = tokens[..unless_idx]
         .iter()
         .filter_map(Token::as_word)
