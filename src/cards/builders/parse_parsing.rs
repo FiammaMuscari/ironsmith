@@ -9715,6 +9715,8 @@ fn replace_it_damage_target(effect: &mut EffectAst, target: &TargetAst) {
         | EffectAst::ForEachTagged { effects, .. }
         | EffectAst::ForEachPlayerDoesNot { effects, .. }
         | EffectAst::ForEachOpponentDoesNot { effects, .. }
+        | EffectAst::ForEachPlayerDid { effects, .. }
+        | EffectAst::ForEachOpponentDid { effects, .. }
         | EffectAst::ForEachTaggedPlayer { effects, .. }
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
@@ -16158,6 +16160,8 @@ fn bind_implicit_player_context(effect: &mut EffectAst, player: PlayerAst) {
         | EffectAst::ForEachTagged { effects, .. }
         | EffectAst::ForEachOpponentDoesNot { effects }
         | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDid { effects }
+        | EffectAst::ForEachPlayerDid { effects }
         | EffectAst::ForEachTaggedPlayer { effects, .. }
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
@@ -17118,6 +17122,8 @@ fn force_implicit_token_controller_you(effects: &mut [EffectAst]) {
             | EffectAst::ForEachTagged { effects, .. }
             | EffectAst::ForEachOpponentDoesNot { effects }
             | EffectAst::ForEachPlayerDoesNot { effects }
+            | EffectAst::ForEachOpponentDid { effects }
+            | EffectAst::ForEachPlayerDid { effects }
             | EffectAst::ForEachTaggedPlayer { effects, .. }
             | EffectAst::DelayedUntilNextEndStep { effects, .. }
             | EffectAst::DelayedUntilEndOfCombat { effects }
@@ -17197,6 +17203,25 @@ fn parse_for_each_opponent_clause(tokens: &[Token]) -> Result<Option<EffectAst>,
                 if_false: Vec::new(),
             }],
         }));
+    }
+
+    if inner_words.first().copied() == Some("who")
+        && let Some(this_way_idx) = inner_words
+            .windows(2)
+            .position(|window| window == ["this", "way"])
+    {
+        let effect_start = this_way_idx + 2;
+        let effect_token_start =
+            token_index_for_word_index(&inner_tokens, effect_start).unwrap_or(inner_tokens.len());
+        let effect_tokens = trim_commas(&inner_tokens[effect_token_start..]);
+        if effect_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing effect after 'each opponent who ... this way' (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let effects = parse_effect_chain_inner(&effect_tokens)?;
+        return Ok(Some(EffectAst::ForEachOpponentDid { effects }));
     }
 
     let effects = if inner_tokens.iter().any(|token| token.is_word("may")) {
@@ -17285,6 +17310,26 @@ fn parse_for_each_player_clause(tokens: &[Token]) -> Result<Option<EffectAst>, C
             if_false: Vec::new(),
         }];
         return Ok(Some(EffectAst::ForEachPlayer { effects }));
+    }
+
+    let inner_words = words(&inner_tokens);
+    if inner_words.first().copied() == Some("who")
+        && let Some(this_way_idx) = inner_words
+            .windows(2)
+            .position(|window| window == ["this", "way"])
+    {
+        let effect_start = this_way_idx + 2;
+        let effect_token_start =
+            token_index_for_word_index(&inner_tokens, effect_start).unwrap_or(inner_tokens.len());
+        let effect_tokens = trim_commas(&inner_tokens[effect_token_start..]);
+        if effect_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing effect after 'each player who ... this way' (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let effects = parse_effect_chain_inner(&effect_tokens)?;
+        return Ok(Some(EffectAst::ForEachPlayerDid { effects }));
     }
 
     let effects = if inner_tokens.iter().any(|token| token.is_word("may")) {

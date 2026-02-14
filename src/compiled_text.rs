@@ -3677,27 +3677,29 @@ fn normalize_choose_between_modes_clause(text: &str) -> Option<String> {
 
 fn describe_mode_choice_header(max: &Value, min: Option<&Value>) -> String {
     match (min, max) {
-        (Some(Value::Fixed(min_value)), Value::Fixed(max_value)) => match (*min_value, *max_value) {
-            (0, 1) => "Choose up to one -".to_string(),
-            (1, 1) => "Choose one -".to_string(),
-            (1, 2) => "Choose one or both -".to_string(),
-            (1, n) if n > 2 => "Choose one or more -".to_string(),
-            (0, n) => {
-                if let Some(word) = number_word(n) {
-                    format!("Choose up to {word} -")
-                } else {
-                    format!("Choose up to {n} -")
+        (Some(Value::Fixed(min_value)), Value::Fixed(max_value)) => {
+            match (*min_value, *max_value) {
+                (0, 1) => "Choose up to one -".to_string(),
+                (1, 1) => "Choose one -".to_string(),
+                (1, 2) => "Choose one or both -".to_string(),
+                (1, n) if n > 2 => "Choose one or more -".to_string(),
+                (0, n) => {
+                    if let Some(word) = number_word(n) {
+                        format!("Choose up to {word} -")
+                    } else {
+                        format!("Choose up to {n} -")
+                    }
                 }
-            }
-            (n, m) if n == m => {
-                if let Some(word) = number_word(n) {
-                    format!("Choose {word} -")
-                } else {
-                    format!("Choose {n} -")
+                (n, m) if n == m => {
+                    if let Some(word) = number_word(n) {
+                        format!("Choose {word} -")
+                    } else {
+                        format!("Choose {n} -")
+                    }
                 }
+                _ => format!("Choose between {min_value} and {max_value} mode(s) -"),
             }
-            _ => format!("Choose between {min_value} and {max_value} mode(s) -"),
-        },
+        }
         (None, Value::Fixed(value)) if *value > 0 => {
             if let Some(word) = number_word(*value) {
                 format!("Choose {word} -")
@@ -4642,7 +4644,8 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             && let Some(choose) =
                 filtered[idx + 1].downcast_ref::<crate::effects::ChooseObjectsEffect>()
             && let Some(exile) = filtered[idx + 2].downcast_ref::<crate::effects::ExileEffect>()
-            && let Some(compact) = describe_look_at_top_then_choose_exile(look_at_top, choose, exile)
+            && let Some(compact) =
+                describe_look_at_top_then_choose_exile(look_at_top, choose, exile)
         {
             parts.push(compact);
             idx += 3;
@@ -4749,9 +4752,7 @@ fn describe_exile_then_return(
     let controller_suffix = match move_back.battlefield_controller {
         crate::effects::BattlefieldController::Preserve => "",
         crate::effects::BattlefieldController::Owner => owner_control_suffix,
-        crate::effects::BattlefieldController::You => {
-            " under your control"
-        }
+        crate::effects::BattlefieldController::You => " under your control",
     };
     Some(format!(
         "Exile {target}, then return {return_object} to the battlefield{controller_suffix}"
@@ -5435,8 +5436,12 @@ fn exile_uses_chosen_tag(spec: &ChooseSpec, tag: &str) -> bool {
     matches!(spec.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
 }
 
-fn move_to_exile_uses_chosen_tag(move_to_zone: &crate::effects::MoveToZoneEffect, tag: &str) -> bool {
-    move_to_zone.zone == Zone::Exile && matches!(move_to_zone.target.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
+fn move_to_exile_uses_chosen_tag(
+    move_to_zone: &crate::effects::MoveToZoneEffect,
+    tag: &str,
+) -> bool {
+    move_to_zone.zone == Zone::Exile
+        && matches!(move_to_zone.target.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
 }
 
 fn describe_for_each_filter(filter: &ObjectFilter) -> String {
@@ -5719,10 +5724,7 @@ fn describe_look_at_top_then_choose_exile_text(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     choose: &crate::effects::ChooseObjectsEffect,
 ) -> Option<String> {
-    if choose.zone != Zone::Library
-        || choose.is_search
-        || !choose.count.is_single()
-    {
+    if choose.zone != Zone::Library || choose.is_search || !choose.count.is_single() {
         return None;
     }
     let references_looked = choose.filter.tagged_constraints.iter().any(|constraint| {
@@ -5739,7 +5741,11 @@ fn describe_look_at_top_then_choose_exile_text(
     let count_text = small_number_word(look_at_top.count as u32)
         .map(str::to_string)
         .unwrap_or_else(|| look_at_top.count.to_string());
-    let noun = if look_at_top.count == 1 { "card" } else { "cards" };
+    let noun = if look_at_top.count == 1 {
+        "card"
+    } else {
+        "cards"
+    };
     let exile_ref = if look_at_top.count == 1 {
         "it"
     } else {
@@ -6291,12 +6297,8 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 };
                 let controller_suffix = match move_to_zone.battlefield_controller {
                     crate::effects::BattlefieldController::Preserve => "",
-                    crate::effects::BattlefieldController::Owner => {
-                        owner_control_suffix
-                    }
-                    crate::effects::BattlefieldController::You => {
-                        " under your control"
-                    }
+                    crate::effects::BattlefieldController::Owner => owner_control_suffix,
+                    crate::effects::BattlefieldController::You => " under your control",
                 };
                 if let crate::target::ChooseSpec::Tagged(tag) = &move_to_zone.target
                     && tag.as_str().starts_with("exiled_")
@@ -6899,7 +6901,11 @@ fn describe_effect_impl(effect: &Effect) -> String {
         let count_text = small_number_word(look_at_top.count as u32)
             .map(str::to_string)
             .unwrap_or_else(|| look_at_top.count.to_string());
-        let noun = if look_at_top.count == 1 { "card" } else { "cards" };
+        let noun = if look_at_top.count == 1 {
+            "card"
+        } else {
+            "cards"
+        };
         return format!("Look at the top {count_text} {noun} of {owner} library");
     }
     if let Some(look_at_hand) = effect.downcast_ref::<crate::effects::LookAtHandEffect>() {
@@ -8704,23 +8710,6 @@ fn normalize_for_each_clause_surface(text: String) -> String {
         }
         normalized
     };
-    if let Some((prefix, rest)) = text
-        .split_once("For each player, You may that player ")
-        .or_else(|| text.split_once("for each player, You may that player "))
-        && let Some((draw_clause, gain_tail)) =
-            rest.split_once(". For each player, that player gains ")
-        && (draw_clause == "draws a card" || draw_clause == "draw a card")
-    {
-        let each_player = if prefix.is_empty() {
-            "Each player"
-        } else {
-            "each player"
-        };
-        return format!(
-            "{prefix}{each_player} may draw a card, then each player who drew a card this way gains {}.",
-            gain_tail.trim_end_matches('.')
-        );
-    }
     if let Some((prefix, rest)) = text
         .split_once("For each player, You may that player ")
         .or_else(|| text.split_once("for each player, You may that player "))
@@ -14333,18 +14322,6 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             .replacen("For each opponent, Deal ", "This spell deals ", 1)
             .replacen("for each opponent, deal ", "This spell deals ", 1)
             .replace(" damage to that player", " damage to each opponent");
-    }
-    if let Some(rest) = trimmed
-        .strip_prefix("For each player, You may that player ")
-        .or_else(|| trimmed.strip_prefix("for each player, You may that player "))
-        && let Some((draw_clause, gain_tail)) =
-            rest.split_once(". For each player, that player gains ")
-        && (draw_clause == "draws a card" || draw_clause == "draw a card")
-    {
-        return format!(
-            "Each player may draw a card, then each player who drew a card this way gains {}",
-            gain_tail.trim_end_matches('.')
-        );
     }
     if let Some(rest) = trimmed
         .strip_prefix("For each player, You may that player ")

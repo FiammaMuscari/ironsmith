@@ -1847,6 +1847,37 @@ fn test_if_you_do_still_wraps_antecedent_with_with_id() {
 }
 
 #[test]
+fn test_each_player_who_did_this_way_compiles_to_per_player_if_result() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Kwain Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{T}: Each player may draw a card, then each player who drew a card this way gains 1 life.")
+        .expect("parse each-player-who-did-this-way activated line");
+
+    let activated = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) => Some(activated),
+            _ => None,
+        })
+        .expect("expected activated ability");
+
+    let debug = format!("{:?}", activated.effects);
+    assert!(
+        debug.contains("ForPlayersEffect"),
+        "expected per-player iteration wrapper, got {debug}"
+    );
+    assert!(
+        debug.contains("WithIdEffect") && debug.contains("MayEffect"),
+        "expected optional antecedent to be tracked per player, got {debug}"
+    );
+    assert!(
+        debug.contains("IfEffect") && debug.contains("GainLifeEffect"),
+        "expected per-player follow-up gain-life conditional, got {debug}"
+    );
+}
+
+#[test]
 fn test_parse_trigger_without_comma() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "No Comma Trigger")
         .card_types(vec![CardType::Enchantment])
@@ -3552,7 +3583,8 @@ fn parse_instead_if_control_keeps_prior_damage_target() {
     let rendered = compiled_lines(&def).join(" ");
     assert!(
         rendered.contains("Deal 4 damage to target attacking or blocking creature")
-            && rendered.contains("Otherwise, Deal 2 damage to target attacking or blocking creature"),
+            && rendered
+                .contains("Otherwise, Deal 2 damage to target attacking or blocking creature"),
         "expected conditional to reuse the original creature target, got {rendered}"
     );
 }
@@ -7167,7 +7199,9 @@ fn parse_counter_target_spell_if_no_mana_was_spent_keeps_condition() {
 #[test]
 fn parse_counter_target_spell_if_you_control_more_creatures_keeps_condition() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Unified Will Variant")
-        .parse_text("Counter target spell if you control more creatures than that spell's controller.")
+        .parse_text(
+            "Counter target spell if you control more creatures than that spell's controller.",
+        )
         .expect("parse creature-count conditional counter");
 
     let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();

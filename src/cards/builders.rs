@@ -675,6 +675,12 @@ enum EffectAst {
     ForEachPlayerDoesNot {
         effects: Vec<EffectAst>,
     },
+    ForEachOpponentDid {
+        effects: Vec<EffectAst>,
+    },
+    ForEachPlayerDid {
+        effects: Vec<EffectAst>,
+    },
     ForEachTaggedPlayer {
         tag: TagKey,
         effects: Vec<EffectAst>,

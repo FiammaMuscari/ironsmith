@@ -282,6 +282,8 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::ForEachTagged { effects, .. }
         | EffectAst::ForEachOpponentDoesNot { effects }
         | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDid { effects }
+        | EffectAst::ForEachPlayerDid { effects }
         | EffectAst::UnlessPays { effects, .. } => effects_reference_tag(effects, tag),
         EffectAst::ForEachObject { filter, effects } => {
             filter
@@ -417,6 +419,8 @@ fn effect_references_event_derived_amount(effect: &EffectAst) -> bool {
         | EffectAst::ForEachTaggedPlayer { effects, .. }
         | EffectAst::ForEachOpponentDoesNot { effects }
         | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDid { effects }
+        | EffectAst::ForEachPlayerDid { effects }
         | EffectAst::UnlessPays { effects, .. }
         | EffectAst::VoteOption { effects, .. } => {
             effects.iter().any(effect_references_event_derived_amount)
@@ -506,6 +510,8 @@ fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::ForEachObject { effects, .. }
         | EffectAst::ForEachOpponentDoesNot { effects }
         | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDid { effects }
+        | EffectAst::ForEachPlayerDid { effects }
         | EffectAst::ForEachTagged { effects, .. }
         | EffectAst::ForEachTaggedPlayer { effects, .. }
         | EffectAst::UnlessPays { effects, .. } => effects_reference_its_controller(effects),
@@ -605,6 +611,8 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::ForEachTagged { effects, .. }
         | EffectAst::ForEachOpponentDoesNot { effects }
         | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDid { effects }
+        | EffectAst::ForEachPlayerDid { effects }
         | EffectAst::UnlessPays { effects, .. } => effects_reference_it_tag(effects),
         EffectAst::ForEachObject { filter, effects } => {
             filter
@@ -694,6 +702,30 @@ fn compile_effects(
         }
 
         if idx + 1 < effects.len()
+            && let Some((effect_sequence, effect_choices)) =
+                compile_if_do_with_opponent_did(&effects[idx], &effects[idx + 1], ctx)?
+        {
+            compiled.extend(effect_sequence);
+            for choice in effect_choices {
+                push_choice(&mut choices, choice);
+            }
+            idx += 2;
+            continue;
+        }
+
+        if idx + 1 < effects.len()
+            && let Some((effect_sequence, effect_choices)) =
+                compile_if_do_with_player_did(&effects[idx], &effects[idx + 1], ctx)?
+        {
+            compiled.extend(effect_sequence);
+            for choice in effect_choices {
+                push_choice(&mut choices, choice);
+            }
+            idx += 2;
+            continue;
+        }
+
+        if idx + 1 < effects.len()
             && let EffectAst::CreateTokenWithMods {
                 name,
                 count,
@@ -737,7 +769,17 @@ fn compile_effects(
         let next_is_if_result_with_player_doesnt = next_is_if_result
             && idx + 2 < effects.len()
             && matches!(effects[idx + 2], EffectAst::ForEachPlayerDoesNot { .. });
-        if next_is_if_result_with_opponent_doesnt || next_is_if_result_with_player_doesnt {
+        let next_is_if_result_with_opponent_did = next_is_if_result
+            && idx + 2 < effects.len()
+            && matches!(effects[idx + 2], EffectAst::ForEachOpponentDid { .. });
+        let next_is_if_result_with_player_did = next_is_if_result
+            && idx + 2 < effects.len()
+            && matches!(effects[idx + 2], EffectAst::ForEachPlayerDid { .. });
+        if next_is_if_result_with_opponent_doesnt
+            || next_is_if_result_with_player_doesnt
+            || next_is_if_result_with_opponent_did
+            || next_is_if_result_with_player_did
+        {
             let (mut effect_list, effect_choices) = compile_effect(&effects[idx], ctx)?;
             if !effect_list.is_empty() {
                 let id = ctx.next_effect_id();
@@ -912,6 +954,8 @@ fn collect_tag_spans_from_effect(
         | EffectAst::ForEachObject { effects, .. }
         | EffectAst::ForEachOpponentDoesNot { effects }
         | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDid { effects }
+        | EffectAst::ForEachPlayerDid { effects }
         | EffectAst::UnlessPays { effects, .. } => {
             collect_tag_spans_from_effects_with_context(effects, annotations, ctx);
         }
@@ -1076,6 +1120,128 @@ fn compile_if_do_with_player_doesnt(
     Ok(Some((effects, choices)))
 }
 
+fn compile_if_do_with_opponent_did(
+    first: &EffectAst,
+    second: &EffectAst,
+    ctx: &mut CompileContext,
+) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
+    let EffectAst::ForEachOpponentDid {
+        effects: second_effects,
+    } = second
+    else {
+        return Ok(None);
+    };
+
+    if let EffectAst::ForEachOpponent {
+        effects: opponent_effects,
+    } = first
+    {
+        let mut merged_opponent_effects = opponent_effects.clone();
+        merged_opponent_effects.push(EffectAst::IfResult {
+            predicate: IfResultPredicate::Did,
+            effects: second_effects.clone(),
+        });
+
+        let merged = EffectAst::ForEachOpponent {
+            effects: merged_opponent_effects,
+        };
+        let (effects, choices) = compile_effect(&merged, ctx)?;
+        return Ok(Some((effects, choices)));
+    }
+
+    let EffectAst::IfResult {
+        predicate: IfResultPredicate::Did,
+        effects: first_effects,
+    } = first
+    else {
+        return Ok(None);
+    };
+
+    let Some(EffectAst::ForEachOpponent {
+        effects: opponent_effects,
+    }) = first_effects.first()
+    else {
+        return Ok(None);
+    };
+
+    let mut merged_opponent_effects = opponent_effects.clone();
+    merged_opponent_effects.push(EffectAst::IfResult {
+        predicate: IfResultPredicate::Did,
+        effects: second_effects.clone(),
+    });
+
+    let merged = EffectAst::IfResult {
+        predicate: IfResultPredicate::Did,
+        effects: vec![EffectAst::ForEachOpponent {
+            effects: merged_opponent_effects,
+        }],
+    };
+
+    let (effects, choices) = compile_effect(&merged, ctx)?;
+    Ok(Some((effects, choices)))
+}
+
+fn compile_if_do_with_player_did(
+    first: &EffectAst,
+    second: &EffectAst,
+    ctx: &mut CompileContext,
+) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
+    let EffectAst::ForEachPlayerDid {
+        effects: second_effects,
+    } = second
+    else {
+        return Ok(None);
+    };
+
+    if let EffectAst::ForEachPlayer {
+        effects: player_effects,
+    } = first
+    {
+        let mut merged_player_effects = player_effects.clone();
+        merged_player_effects.push(EffectAst::IfResult {
+            predicate: IfResultPredicate::Did,
+            effects: second_effects.clone(),
+        });
+
+        let merged = EffectAst::ForEachPlayer {
+            effects: merged_player_effects,
+        };
+        let (effects, choices) = compile_effect(&merged, ctx)?;
+        return Ok(Some((effects, choices)));
+    }
+
+    let EffectAst::IfResult {
+        predicate: IfResultPredicate::Did,
+        effects: first_effects,
+    } = first
+    else {
+        return Ok(None);
+    };
+
+    let Some(EffectAst::ForEachPlayer {
+        effects: player_effects,
+    }) = first_effects.first()
+    else {
+        return Ok(None);
+    };
+
+    let mut merged_player_effects = player_effects.clone();
+    merged_player_effects.push(EffectAst::IfResult {
+        predicate: IfResultPredicate::Did,
+        effects: second_effects.clone(),
+    });
+
+    let merged = EffectAst::IfResult {
+        predicate: IfResultPredicate::Did,
+        effects: vec![EffectAst::ForEachPlayer {
+            effects: merged_player_effects,
+        }],
+    };
+
+    let (effects, choices) = compile_effect(&merged, ctx)?;
+    Ok(Some((effects, choices)))
+}
+
 #[derive(Debug, Clone)]
 struct CompileContextState {
     iterated_player: bool,
@@ -1179,6 +1345,8 @@ fn force_implicit_vote_token_controller_you(effects: &mut [EffectAst]) {
             | EffectAst::ForEachTagged { effects, .. }
             | EffectAst::ForEachOpponentDoesNot { effects }
             | EffectAst::ForEachPlayerDoesNot { effects }
+            | EffectAst::ForEachOpponentDid { effects }
+            | EffectAst::ForEachPlayerDid { effects }
             | EffectAst::ForEachTaggedPlayer { effects, .. }
             | EffectAst::DelayedUntilNextEndStep { effects, .. }
             | EffectAst::DelayedUntilEndOfCombat { effects }
@@ -2366,6 +2534,12 @@ fn compile_effect(
         )),
         EffectAst::ForEachPlayerDoesNot { .. } => Err(CardTextError::ParseError(
             "for each player who doesn't must follow a player clause".to_string(),
+        )),
+        EffectAst::ForEachOpponentDid { .. } => Err(CardTextError::ParseError(
+            "for each opponent who ... this way must follow an opponent clause".to_string(),
+        )),
+        EffectAst::ForEachPlayerDid { .. } => Err(CardTextError::ParseError(
+            "for each player who ... this way must follow a player clause".to_string(),
         )),
         EffectAst::Destroy { target } => {
             compile_tagged_effect_for_target(target, ctx, "destroyed", Effect::destroy)
