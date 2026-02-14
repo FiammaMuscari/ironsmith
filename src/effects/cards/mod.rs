@@ -14,6 +14,7 @@ mod mill;
 mod reveal_top;
 mod scry;
 mod search_library;
+mod shuffle_graveyard_into_library;
 mod shuffle_library;
 mod surveil;
 
@@ -28,5 +29,6 @@ pub use mill::MillEffect;
 pub use reveal_top::RevealTopEffect;
 pub use scry::ScryEffect;
 pub use search_library::SearchLibraryEffect;
+pub use shuffle_graveyard_into_library::ShuffleGraveyardIntoLibraryEffect;
 pub use shuffle_library::ShuffleLibraryEffect;
 pub use surveil::SurveilEffect;

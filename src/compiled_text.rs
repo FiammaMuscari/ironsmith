@@ -6654,6 +6654,16 @@ fn describe_effect_impl(effect: &Effect) -> String {
             describe_possessive_player_filter(&shuffle_library.player)
         );
     }
+    if let Some(shuffle_gy) =
+        effect.downcast_ref::<crate::effects::ShuffleGraveyardIntoLibraryEffect>()
+    {
+        return format!(
+            "{} shuffles {} graveyard into {} library",
+            describe_player_filter(&shuffle_gy.player),
+            describe_possessive_player_filter(&shuffle_gy.player),
+            describe_possessive_player_filter(&shuffle_gy.player)
+        );
+    }
     if let Some(search_library) = effect.downcast_ref::<crate::effects::SearchLibraryEffect>() {
         let destination = match search_library.destination {
             Zone::Hand => "into hand",
@@ -9493,12 +9503,6 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         "when this creature dies, create three 1/1 green elf warrior creature token under your control. you mill 3 cards",
     ) {
         return "When this creature dies, create three 1/1 green Elf Warrior creature tokens, then mill three cards.".to_string();
-    }
-    if normalized_lower
-        .contains("assassins or mercenaries or pirates or rogues or warlock creature")
-    {
-        return "Return X target outlaw creature cards from your graveyard to the battlefield."
-            .to_string();
     }
     if normalized_lower.starts_with("at the beginning of your end step:")
         && normalized_lower.contains("for each creature you control")

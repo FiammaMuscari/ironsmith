@@ -796,6 +796,9 @@ enum EffectAst {
         count: ChoiceCount,
         tapped: bool,
     },
+    ShuffleGraveyardIntoLibrary {
+        player: PlayerAst,
+    },
     #[allow(dead_code)]
     ShuffleLibrary {
         player: PlayerAst,

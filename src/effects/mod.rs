@@ -64,7 +64,7 @@ pub use executor_trait::{CostValidationError, EffectExecutor, ModalSpec};
 pub use cards::{
     ConniveEffect, DiscardEffect, DiscardHandEffect, DrawCardsEffect, LookAtHandEffect,
     LookAtTopCardsEffect, MillEffect, RevealTopEffect, ScryEffect, SearchLibraryEffect,
-    ShuffleLibraryEffect, SurveilEffect,
+    ShuffleGraveyardIntoLibraryEffect, ShuffleLibraryEffect, SurveilEffect,
 };
 pub use combat::{
     EnterAttackingEffect, FightEffect, GoadEffect, GrantAbilitiesAllEffect,

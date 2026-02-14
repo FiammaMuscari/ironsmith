@@ -2053,6 +2053,12 @@ impl Effect {
         Self::new(ShuffleLibraryEffect::new(player))
     }
 
+    /// Create a "shuffle graveyard into library" effect for a specific player.
+    pub fn shuffle_graveyard_into_library_player(player: PlayerFilter) -> Self {
+        use crate::effects::ShuffleGraveyardIntoLibraryEffect;
+        Self::new(ShuffleGraveyardIntoLibraryEffect::new(player))
+    }
+
     /// Create a "poison counters" effect.
     pub fn poison_counters(count: impl Into<Value>) -> Self {
         use crate::effects::PoisonCountersEffect;

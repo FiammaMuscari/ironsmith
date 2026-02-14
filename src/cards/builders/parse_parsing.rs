@@ -10792,6 +10792,12 @@ fn parse_sentence_search_library(
     parse_search_library_sentence(tokens)
 }
 
+fn parse_sentence_shuffle_graveyard_into_library(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    parse_shuffle_graveyard_into_library_sentence(tokens)
+}
+
 fn parse_sentence_play_from_graveyard(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -11248,6 +11254,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "search-library",
         parser: parse_sentence_search_library,
+    },
+    SentencePrimitive {
+        name: "shuffle-graveyard-into-library",
+        parser: parse_sentence_shuffle_graveyard_into_library,
     },
     SentencePrimitive {
         name: "play-from-graveyard",
@@ -13955,6 +13965,99 @@ fn parse_search_library_sentence(
     }
 
     Ok(Some(effects))
+}
+
+fn parse_shuffle_graveyard_into_library_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    if tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let mut clause_tokens = trim_commas(tokens);
+    while clause_tokens
+        .first()
+        .is_some_and(|token| token.is_word("then") || token.is_word("and"))
+    {
+        clause_tokens.remove(0);
+    }
+    if clause_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let clause_words = words(&clause_tokens);
+    if !clause_words
+        .iter()
+        .any(|word| *word == "shuffle" || *word == "shuffles")
+        || !clause_words.contains(&"graveyard")
+        || !clause_words.contains(&"library")
+    {
+        return Ok(None);
+    }
+
+    let Some(shuffle_idx) = clause_tokens
+        .iter()
+        .position(|token| token.is_word("shuffle") || token.is_word("shuffles"))
+    else {
+        return Ok(None);
+    };
+
+    // Keep this primitive focused on shuffle-led clauses so we don't swallow
+    // earlier effects in chains like "... then shuffle your graveyard ...".
+    if shuffle_idx > 3 {
+        return Ok(None);
+    }
+
+    let subject_tokens = trim_commas(&clause_tokens[..shuffle_idx]);
+    let subject = parse_subject(&subject_tokens);
+    let player = match subject {
+        SubjectAst::Player(player) => player,
+        _ => PlayerAst::You,
+    };
+
+    let body_tokens = trim_commas(&clause_tokens[shuffle_idx + 1..]);
+    if body_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(into_idx) = body_tokens.iter().position(|token| token.is_word("into")) else {
+        return Ok(None);
+    };
+    if into_idx == 0 {
+        return Ok(None);
+    }
+
+    let destination_tokens = trim_commas(&body_tokens[into_idx + 1..]);
+    let destination_words = words(&destination_tokens);
+    if !destination_words.contains(&"library") {
+        return Ok(None);
+    }
+
+    let target_tokens = trim_commas(&body_tokens[..into_idx]);
+    if target_tokens.is_empty() {
+        return Ok(None);
+    }
+    let target_words = words(&target_tokens);
+    if !target_words.contains(&"graveyard") {
+        return Ok(None);
+    }
+
+    let has_target_selector = target_words.contains(&"target");
+    if !has_target_selector {
+        return Ok(Some(vec![EffectAst::ShuffleGraveyardIntoLibrary { player }]));
+    }
+
+    let mut target = parse_target_phrase(&target_tokens)?;
+    apply_shuffle_subject_graveyard_owner_context(&mut target, subject);
+
+    Ok(Some(vec![
+        EffectAst::MoveToZone {
+            target,
+            zone: Zone::Library,
+            to_top: false,
+        },
+        EffectAst::ShuffleLibrary { player },
+    ]))
 }
 
 fn parse_for_each_exiled_this_way_sentence(
@@ -20306,6 +20409,32 @@ fn apply_exile_subject_owner_context(filter: &mut ObjectFilter, subject: Option<
     }
     match filter.owner {
         Some(PlayerFilter::Target(_)) | Some(PlayerFilter::IteratedPlayer) | None => {
+            filter.owner = Some(owner_filter);
+        }
+        _ => {}
+    }
+}
+
+fn apply_shuffle_subject_graveyard_owner_context(target: &mut TargetAst, subject: SubjectAst) {
+    let Some(filter) = target_object_filter_mut(target) else {
+        return;
+    };
+    if filter.zone != Some(Zone::Graveyard) {
+        return;
+    }
+
+    let owner_filter = match subject {
+        SubjectAst::Player(PlayerAst::Target) => Some(PlayerFilter::target_player()),
+        SubjectAst::Player(PlayerAst::TargetOpponent) => Some(PlayerFilter::target_opponent()),
+        SubjectAst::Player(PlayerAst::You) => Some(PlayerFilter::You),
+        _ => None,
+    };
+    let Some(owner_filter) = owner_filter else {
+        return;
+    };
+
+    match filter.owner {
+        Some(PlayerFilter::IteratedPlayer) | Some(PlayerFilter::Target(_)) | None => {
             filter.owner = Some(owner_filter);
         }
         _ => {}

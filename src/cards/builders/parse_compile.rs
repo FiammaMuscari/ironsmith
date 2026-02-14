@@ -420,6 +420,7 @@ fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::CreateTokenCopyFromSource { player, .. }
         | EffectAst::CreateTokenWithMods { player, .. }
         | EffectAst::SearchLibrary { player, .. }
+        | EffectAst::ShuffleGraveyardIntoLibrary { player }
         | EffectAst::ShuffleLibrary { player }
         | EffectAst::Sacrifice { player, .. }
         | EffectAst::SacrificeAll { player, .. }
@@ -2871,13 +2872,18 @@ fn compile_effect(
                 Ok((vec![Effect::new(sequence)], Vec::new()))
             }
         }
-        EffectAst::ShuffleLibrary { player } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
-            Ok((
-                vec![Effect::shuffle_library_player(player_filter)],
-                Vec::new(),
-            ))
-        }
+        EffectAst::ShuffleGraveyardIntoLibrary { player } => compile_player_effect_from_filter(
+            *player,
+            ctx,
+            true,
+            Effect::shuffle_graveyard_into_library_player,
+        ),
+        EffectAst::ShuffleLibrary { player } => compile_player_effect_from_filter(
+            *player,
+            ctx,
+            true,
+            Effect::shuffle_library_player,
+        ),
         EffectAst::VoteStart { .. }
         | EffectAst::VoteOption { .. }
         | EffectAst::VoteExtra { .. } => Err(CardTextError::ParseError(
