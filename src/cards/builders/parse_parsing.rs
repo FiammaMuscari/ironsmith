@@ -16532,6 +16532,7 @@ enum Verb {
     Become,
     Skip,
     Surveil,
+    Shuffle,
     Pay,
     Goad,
 }
@@ -16886,6 +16887,7 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
             "become",
             "skip",
             "surveil",
+            "shuffle",
             "pay",
             "goad",
         ];
@@ -17862,6 +17864,7 @@ fn parse_verb_first_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTe
         "become" => Verb::Become,
         "skip" => Verb::Skip,
         "surveil" => Verb::Surveil,
+        "shuffle" => Verb::Shuffle,
         "pay" => Verb::Pay,
         "goad" => Verb::Goad,
         _ => return Ok(None),
@@ -18021,6 +18024,7 @@ fn find_verb(tokens: &[Token]) -> Option<(Verb, usize)> {
             "becomes" | "become" => Verb::Become,
             "skips" | "skip" => Verb::Skip,
             "surveils" | "surveil" => Verb::Surveil,
+            "shuffles" | "shuffle" => Verb::Shuffle,
             "pays" | "pay" => Verb::Pay,
             "goads" | "goad" => Verb::Goad,
             _ => continue,
@@ -18185,9 +18189,61 @@ fn parse_effect_with_verb(
         Verb::Become => parse_become(tokens, subject),
         Verb::Skip => parse_skip(tokens, subject),
         Verb::Surveil => parse_surveil(tokens, subject),
+        Verb::Shuffle => parse_shuffle(tokens, subject),
         Verb::Pay => parse_pay(tokens, subject),
         Verb::Goad => parse_goad(tokens),
     }
+}
+
+fn parse_shuffle(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
+    fn is_simple_library_phrase(words: &[&str]) -> bool {
+        matches!(
+            words,
+            ["library"]
+                | ["your", "library"]
+                | ["their", "library"]
+                | ["that", "player", "library"]
+                | ["that", "players", "library"]
+                | ["its", "owner", "library"]
+                | ["its", "owners", "library"]
+                | ["his", "or", "her", "library"]
+        )
+    }
+
+    let player = match subject {
+        Some(SubjectAst::Player(player)) => player,
+        _ => PlayerAst::Implicit,
+    };
+
+    if tokens.is_empty() {
+        if matches!(subject, Some(SubjectAst::Player(_))) {
+            return Ok(EffectAst::ShuffleLibrary { player });
+        }
+        return Err(CardTextError::ParseError(
+            "unsupported implicit shuffle clause".to_string(),
+        ));
+    }
+
+    let clause_words = words(tokens);
+    if clause_words.contains(&"graveyard")
+        || clause_words.contains(&"cards")
+        || clause_words.contains(&"card")
+        || clause_words.contains(&"into")
+        || clause_words.contains(&"from")
+    {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported shuffle clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+    if is_simple_library_phrase(&clause_words) {
+        return Ok(EffectAst::ShuffleLibrary { player });
+    }
+
+    Err(CardTextError::ParseError(format!(
+        "unsupported shuffle clause (clause: '{}')",
+        clause_words.join(" ")
+    )))
 }
 
 fn parse_goad(tokens: &[Token]) -> Result<EffectAst, CardTextError> {

@@ -4114,6 +4114,23 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_target_player_shuffles_library_activation() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Soldier of Fortune Variant")
+            .parse_text("{R}, {T}: Target player shuffles their library.")
+            .expect("parse shuffle-target-player activation");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("ShuffleLibraryEffect"),
+            "expected shuffle-library effect, got {debug}"
+        );
+        assert!(
+            !debug.contains("TargetOnlyEffect"),
+            "shuffle activation must not compile as target-only effect, got {debug}"
+        );
+    }
+
+    #[test]
     fn parse_draw_then_discard_renders_then_clause() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Bazaar Variant")
             .card_types(vec![CardType::Creature])
