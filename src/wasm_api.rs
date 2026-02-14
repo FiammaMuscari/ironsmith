@@ -3114,6 +3114,30 @@ fn describe_mana_condition(condition: &crate::ability::ManaAbilityCondition) -> 
                 format!("you control {count} or more lands")
             }
         }
+        crate::ability::ManaAbilityCondition::CardInYourGraveyard {
+            card_types,
+            subtypes,
+        } => {
+            let mut descriptors: Vec<String> = Vec::new();
+            for subtype in subtypes {
+                descriptors.push(split_camel_case(&format!("{subtype:?}")).to_ascii_lowercase());
+            }
+            for card_type in card_types {
+                descriptors.push(format!("{card_type:?}").to_ascii_lowercase());
+            }
+            descriptors.retain(|entry| !entry.is_empty());
+            descriptors.dedup();
+
+            if descriptors.is_empty() {
+                "there is a card in your graveyard".to_string()
+            } else {
+                let descriptor = descriptors.join(" ");
+                format!(
+                    "there is {} card in your graveyard",
+                    with_indefinite_article(&descriptor)
+                )
+            }
+        }
         crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
             crate::ability::ActivationTiming::AnyTime => {
                 "you may activate any time you could cast an instant".to_string()
@@ -3223,6 +3247,10 @@ fn describe_condition(
                 .to_string()
         }
         crate::effect::Condition::SourceIsTapped => "this source is tapped".to_string(),
+        crate::effect::Condition::SourceHasNoCounter(counter_type) => format!(
+            "there are no {} counters on this source",
+            describe_counter_type(*counter_type)
+        ),
         crate::effect::Condition::TargetIsAttacking => "the target is attacking".to_string(),
         crate::effect::Condition::ManaSpentToCastThisSpellAtLeast { amount, symbol } => {
             if let Some(symbol) = symbol {
@@ -5538,6 +5566,12 @@ fn describe_value(
         crate::effect::Value::ToughnessOf(spec) => {
             format!(
                 "the toughness of {}",
+                describe_choose_spec(spec, tagged_subjects)
+            )
+        }
+        crate::effect::Value::ManaValueOf(spec) => {
+            format!(
+                "the mana value of {}",
                 describe_choose_spec(spec, tagged_subjects)
             )
         }
