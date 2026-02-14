@@ -10632,18 +10632,84 @@ fn normalize_sentence_surface_style(line: &str) -> String {
         );
     }
     if let Some((draw_clause, put_clause)) = split_once_ascii_ci(&normalized, ". ")
-        && draw_clause
-            .trim_start()
-            .to_ascii_lowercase()
-            .starts_with("you draw ")
-        && (put_clause.eq_ignore_ascii_case("Put two cards from your hand on top of your library")
-            || put_clause
-                .eq_ignore_ascii_case("Put two cards from your hand on top of your library."))
+        && {
+            let lower_draw = draw_clause.trim_start().to_ascii_lowercase();
+            lower_draw.starts_with("you draw ")
+                || lower_draw.contains(", you draw ")
+                || lower_draw.contains(": you draw ")
+        }
+        && let Some(card_phrase) =
+            strip_suffix_ascii_ci(put_clause.trim(), " from your hand on top of your library.")
+                .or_else(|| {
+                    strip_suffix_ascii_ci(
+                        put_clause.trim(),
+                        " from your hand on top of your library",
+                    )
+                })
     {
-        return format!(
-            "{}, then put two cards from your hand on top of your library in any order.",
-            draw_clause.trim_end_matches('.')
+        let card_phrase = strip_prefix_ascii_ci(card_phrase.trim(), "put ")
+            .unwrap_or(card_phrase)
+            .trim();
+        let mut rewritten = format!(
+            "{}, then put {} from your hand on top of your library",
+            draw_clause.trim_end_matches('.'),
+            card_phrase
         );
+        if card_phrase.to_ascii_lowercase().contains("cards")
+            && !put_clause.to_ascii_lowercase().contains("in any order")
+        {
+            rewritten.push_str(" in any order");
+        }
+        rewritten.push('.');
+        return rewritten;
+    }
+    if let Some((put_clause, shuffle_clause)) = split_once_ascii_ci(&normalized, ". Shuffle ") {
+        let (shuffle_library_head, shuffle_tail) = split_once_ascii_ci(shuffle_clause, ". ")
+            .map_or_else(
+                || (shuffle_clause.trim(), ""),
+                |(head, tail)| (head.trim(), tail.trim()),
+            );
+        if let Some(library_owner) = strip_suffix_ascii_ci(shuffle_library_head, " library")
+            .or_else(|| strip_suffix_ascii_ci(shuffle_library_head, " library."))
+        {
+            let bottom_suffix = format!(" on the bottom of {} library", library_owner.trim());
+            if let Some(move_clause) = strip_suffix_ascii_ci(put_clause.trim(), &bottom_suffix) {
+                let move_clause = move_clause.trim();
+                let split_put_clause = split_once_ascii_ci(move_clause, "Put ")
+                    .or_else(|| split_once_ascii_ci(move_clause, "put "));
+                if let Some((prefix, moved_cards)) = split_put_clause {
+                    let prefix = prefix.trim_end();
+                    let moved_cards = moved_cards.trim();
+                    let shuffle_verb = if prefix.is_empty()
+                        || prefix.ends_with(':')
+                        || prefix.ends_with(';')
+                        || prefix.ends_with('.')
+                    {
+                        "Shuffle"
+                    } else {
+                        "shuffle"
+                    };
+                    let mut rewritten = if prefix.is_empty() {
+                        format!(
+                            "{shuffle_verb} {moved_cards} into {} library",
+                            library_owner.trim()
+                        )
+                    } else {
+                        format!(
+                            "{prefix} {shuffle_verb} {moved_cards} into {} library",
+                            library_owner.trim()
+                        )
+                    };
+                    if !shuffle_tail.is_empty() {
+                        rewritten.push_str(". ");
+                        rewritten.push_str(shuffle_tail);
+                    } else {
+                        rewritten.push('.');
+                    }
+                    return rewritten;
+                }
+            }
+        }
     }
     if let Some(rest) = normalized
         .strip_prefix("For each player, if that player controls ")
@@ -13623,6 +13689,42 @@ mod tests {
                 "Put a -1/-1 counter on target creature. Proliferate."
             ),
             "Put a -1/-1 counter on target creature, then proliferate."
+        );
+    }
+
+    #[test]
+    fn post_pass_normalizes_draw_then_put_top_of_library_chains() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "{2}, {T}, Sacrifice this artifact: you draw three cards. Put two cards from your hand on top of your library.",
+        );
+        assert_eq!(
+            normalized,
+            "{2}, {T}, Sacrifice this artifact: you draw three cards, then put two cards from your hand on top of your library in any order."
+        );
+        let normalized_single = normalize_compiled_post_pass_effect(
+            "When this creature enters, you draw two cards. Put a card from your hand on top of your library.",
+        );
+        assert_eq!(
+            normalized_single,
+            "When this creature enters, you draw two cards, then put a card from your hand on top of your library."
+        );
+    }
+
+    #[test]
+    fn post_pass_normalizes_bottom_then_shuffle_into_library_chains() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Spell effects: Put up to one target card from your graveyard on the bottom of your library. Shuffle your library.",
+        );
+        assert_eq!(
+            normalized,
+            "Spell effects: Shuffle up to one target card from your graveyard into your library."
+        );
+        let targeted = normalize_compiled_post_pass_effect(
+            "Triggered ability 1: When this creature enters, put any number of target cards from target player's graveyard on the bottom of target player's library. Shuffle target player's library.",
+        );
+        assert_eq!(
+            targeted,
+            "Triggered ability 1: When this creature enters, shuffle any number of target cards from target player's graveyard into target player's library."
         );
     }
 
