@@ -2693,7 +2693,9 @@ fn render_target_player_sacrifices_and_loses_uses_oracle_like_wording() {
 #[test]
 fn parse_target_opponent_sacrifice_of_their_choice_keeps_non_targeted_object_choice() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Predatory Nightstalker Variant")
-        .parse_text("When this creature enters, target opponent sacrifices a creature of their choice.")
+        .parse_text(
+            "When this creature enters, target opponent sacrifices a creature of their choice.",
+        )
         .expect("opponent-sacrifice-of-their-choice line should parse");
     let joined = crate::compiled_text::compiled_lines(&def)
         .join(" ")
@@ -2971,7 +2973,9 @@ fn parse_ghoulflesh_style_anthem_with_other_creature_types_scope() {
 #[test]
 fn parse_all_goblins_are_black_and_are_zombies_in_addition_clause() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Dralnu Clause Variant")
-        .parse_text("All Goblins are black and are Zombies in addition to their other creature types.")
+        .parse_text(
+            "All Goblins are black and are Zombies in addition to their other creature types.",
+        )
         .expect("parse all-goblins color and type-addition line");
 
     let ids = def
@@ -5052,6 +5056,26 @@ fn render_tap_or_untap_mode_compacts() {
 }
 
 #[test]
+fn render_tap_or_untap_mode_does_not_compact_when_targets_differ() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Deceiver Exarch Variant")
+        .parse_text(
+            "When this creature enters, choose one —\n• Untap target permanent you control.\n• Tap target permanent an opponent controls.",
+        )
+        .expect("modal tap/untap with different targets should parse");
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        !joined.contains("tap or untap target"),
+        "different tap/untap targets should not compact, got {joined}"
+    );
+    assert!(
+        joined.contains("choose one")
+            && joined.contains("untap target permanent you control")
+            && joined.contains("tap target permanent an opponent controls"),
+        "expected separate modal tap/untap lines, got {joined}"
+    );
+}
+
+#[test]
 fn render_equipped_gets_and_has_line_as_static() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Spare Dagger Variant")
         .parse_text(
@@ -5400,7 +5424,9 @@ fn parse_deathpact_style_token_activation_is_preserved() {
     let lower = compiled.to_ascii_lowercase();
     assert!(
         lower.contains("sacrifice this token")
-            && lower.contains("return a card named deathpact angel from your graveyard to the battlefield"),
+            && lower.contains(
+                "return a card named deathpact angel from your graveyard to the battlefield"
+            ),
         "expected preserved return-from-graveyard token activation, got {compiled}"
     );
 }
@@ -5415,7 +5441,9 @@ fn parse_rekindling_style_token_upkeep_trigger_is_preserved() {
     let lower = compiled.to_ascii_lowercase();
     assert!(
         lower.contains("at the beginning of your upkeep, sacrifice this token")
-            && lower.contains("return target card named rekindling phoenix from your graveyard to the battlefield")
+            && lower.contains(
+                "return target card named rekindling phoenix from your graveyard to the battlefield"
+            )
             && lower.contains("gains haste until end of turn"),
         "expected preserved upkeep return trigger on token, got {compiled}"
     );
@@ -6333,7 +6361,9 @@ fn parse_conditional_create_token_with_quoted_comma_uses_first_comma_split() {
     let joined = oracle_like_lines(&def).join(" ");
     let lower = joined.to_ascii_lowercase();
     assert!(
-        lower.contains("if the tagged object 'destroyed_0' matches permanent with mana value 2 or less"),
+        lower.contains(
+            "if the tagged object 'destroyed_0' matches permanent with mana value 2 or less"
+        ),
         "expected mana value predicate to stay on destroyed target, got {joined}"
     );
     assert!(
@@ -7629,8 +7659,7 @@ fn parse_that_creature_gets_and_gains_uses_single_tagged_target() {
 
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("that creature gets +2/+0")
-            || rendered.contains("it gets +2/+0"),
+        rendered.contains("that creature gets +2/+0") || rendered.contains("it gets +2/+0"),
         "expected pump to stay on the single triggering creature, got {rendered}"
     );
     assert!(

@@ -1428,15 +1428,20 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         return "Return this card from your graveyard to the battlefield tapped".to_string();
     }
     if let Some((cost, tail)) = split_once_ascii_ci(&normalized, ": ")
-        && (tail.eq_ignore_ascii_case("Return this permanent from graveyard to the battlefield tapped")
+        && (tail
+            .eq_ignore_ascii_case("Return this permanent from graveyard to the battlefield tapped")
             || tail.eq_ignore_ascii_case(
                 "Return this permanent from graveyard to the battlefield tapped.",
             )
-            || tail.eq_ignore_ascii_case("Return this creature from graveyard to the battlefield tapped")
+            || tail.eq_ignore_ascii_case(
+                "Return this creature from graveyard to the battlefield tapped",
+            )
             || tail.eq_ignore_ascii_case(
                 "Return this creature from graveyard to the battlefield tapped.",
             )
-            || tail.eq_ignore_ascii_case("Return this source from graveyard to the battlefield tapped")
+            || tail.eq_ignore_ascii_case(
+                "Return this source from graveyard to the battlefield tapped",
+            )
             || tail.eq_ignore_ascii_case(
                 "Return this source from graveyard to the battlefield tapped.",
             ))
@@ -1622,14 +1627,12 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         } else {
             format!("{kind} card")
         };
-        let rendered_noun = if kind.starts_with("target ")
-            || kind.starts_with("a ")
-            || kind.starts_with("an ")
-        {
-            noun
-        } else {
-            with_indefinite_article(&noun)
-        };
+        let rendered_noun =
+            if kind.starts_with("target ") || kind.starts_with("a ") || kind.starts_with("an ") {
+                noun
+            } else {
+                with_indefinite_article(&noun)
+            };
         return format!("You may put {rendered_noun} from your hand onto the battlefield");
     }
     if let Some(kind) = strip_prefix_ascii_ci(&normalized, "you may put ").and_then(|rest| {
@@ -1637,14 +1640,12 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
             .or_else(|| rest.strip_suffix(" in your hand onto the battlefield."))
     }) {
         let kind = kind.trim();
-        let rendered_kind = if kind.starts_with("target ")
-            || kind.starts_with("a ")
-            || kind.starts_with("an ")
-        {
-            kind.to_string()
-        } else {
-            with_indefinite_article(kind)
-        };
+        let rendered_kind =
+            if kind.starts_with("target ") || kind.starts_with("a ") || kind.starts_with("an ") {
+                kind.to_string()
+            } else {
+                with_indefinite_article(kind)
+            };
         return format!("You may put {rendered_kind} from your hand onto the battlefield");
     }
     if let Some((cost, rest)) = split_once_ascii_ci(&normalized, ": ")
@@ -1659,14 +1660,12 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         } else {
             format!("{kind} card")
         };
-        let rendered_noun = if kind.starts_with("target ")
-            || kind.starts_with("a ")
-            || kind.starts_with("an ")
-        {
-            noun
-        } else {
-            with_indefinite_article(&noun)
-        };
+        let rendered_noun =
+            if kind.starts_with("target ") || kind.starts_with("a ") || kind.starts_with("an ") {
+                noun
+            } else {
+                with_indefinite_article(&noun)
+            };
         return format!("{cost}: You may put {rendered_noun} from your hand onto the battlefield");
     }
     if let Some((cost, rest)) = split_once_ascii_ci(&normalized, ": ")
@@ -1676,14 +1675,12 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         })
     {
         let kind = kind.trim();
-        let rendered_kind = if kind.starts_with("target ")
-            || kind.starts_with("a ")
-            || kind.starts_with("an ")
-        {
-            kind.to_string()
-        } else {
-            with_indefinite_article(kind)
-        };
+        let rendered_kind =
+            if kind.starts_with("target ") || kind.starts_with("a ") || kind.starts_with("an ") {
+                kind.to_string()
+            } else {
+                with_indefinite_article(kind)
+            };
         return format!("{cost}: You may put {rendered_kind} from your hand onto the battlefield");
     }
     if let Some(rest) = normalized
@@ -1728,10 +1725,15 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
             .to_string();
         return format!("Each player gains 1 life for each {rest}");
     }
-    if let Some((prefix, tail)) = split_once_ascii_ci(&normalized, ", for each player, that player ")
+    if let Some((prefix, tail)) =
+        split_once_ascii_ci(&normalized, ", for each player, that player ")
         && !tail.trim().is_empty()
     {
-        return format!("{}, each player {}", capitalize_first(prefix.trim()), tail.trim());
+        return format!(
+            "{}, each player {}",
+            capitalize_first(prefix.trim()),
+            tail.trim()
+        );
     }
     if let Some(rest) = normalized.strip_prefix("For each player, that player ")
         && !rest.trim().is_empty()
@@ -2393,12 +2395,14 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     if let Some((first, second)) = split_once_ascii_ci(&normalized, ". ")
         && let Some(first_buff) = strip_prefix_ascii_ci(first.trim(), "target creature gets ")
             .and_then(|rest| rest.strip_suffix(" until end of turn"))
-        && let Some(second_buff) =
-            strip_prefix_ascii_ci(second.trim(), "other creatures with the same name as that object get ")
-                .and_then(|rest| {
-                    rest.strip_suffix(" until end of turn")
-                        .or_else(|| rest.strip_suffix(" until end of turn."))
-                })
+        && let Some(second_buff) = strip_prefix_ascii_ci(
+            second.trim(),
+            "other creatures with the same name as that object get ",
+        )
+        .and_then(|rest| {
+            rest.strip_suffix(" until end of turn")
+                .or_else(|| rest.strip_suffix(" until end of turn."))
+        })
         && first_buff.eq_ignore_ascii_case(second_buff)
     {
         return format!(
@@ -3145,15 +3149,42 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
                         }
                     }
                 } else {
+                    let base = strip_leading_article(&inner_text);
+                    let plural = pluralize_noun_phrase(base);
+                    let count_text = |n: usize| {
+                        number_word(n as i32)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| n.to_string())
+                    };
                     if count.is_dynamic_x() {
-                        return format!("X {inner_text}");
+                        return format!("X {plural}");
                     }
                     match (count.min, count.max) {
-                        (0, None) => format!("any number of {inner_text}"),
-                        (min, None) => format!("at least {min} {inner_text}"),
-                        (0, Some(max)) => format!("up to {max} {inner_text}"),
-                        (min, Some(max)) if min == max => format!("{min} {inner_text}"),
-                        (min, Some(max)) => format!("{min} to {max} {inner_text}"),
+                        (0, None) => format!("any number of {plural}"),
+                        (min, None) => {
+                            if min == 1 {
+                                format!("at least one {base}")
+                            } else {
+                                format!("at least {} {plural}", count_text(min))
+                            }
+                        }
+                        (0, Some(max)) => {
+                            if max == 1 {
+                                format!("up to one {base}")
+                            } else {
+                                format!("up to {} {plural}", count_text(max))
+                            }
+                        }
+                        (min, Some(max)) if min == max => {
+                            if min == 1 {
+                                format!("one {base}")
+                            } else {
+                                format!("{} {plural}", count_text(min))
+                            }
+                        }
+                        (min, Some(max)) => {
+                            format!("{} to {} {plural}", count_text(min), count_text(max))
+                        }
                     }
                 }
             }
@@ -3192,7 +3223,9 @@ fn describe_goad_target(spec: &ChooseSpec) -> String {
                                 format!("each creature target {who} controls")
                             }
                         }
-                        PlayerFilter::IteratedPlayer => "each creature that player controls".to_string(),
+                        PlayerFilter::IteratedPlayer => {
+                            "each creature that player controls".to_string()
+                        }
                         PlayerFilter::You => "each creature you control".to_string(),
                         _ => describe_choose_spec(spec),
                     };
@@ -4773,7 +4806,12 @@ fn pluralize_noun_phrase(phrase: &str) -> String {
         }
     }
     if let Some((head, tail)) = base.split_once(" with ") {
-        return format!("{} with {}{}", pluralize_noun_phrase(head), tail.trim(), trailing);
+        return format!(
+            "{} with {}{}",
+            pluralize_noun_phrase(head),
+            tail.trim(),
+            trailing
+        );
     }
     for suffix in [
         " you control",
@@ -5691,7 +5729,7 @@ fn describe_tap_or_untap_mode(choose_mode: &crate::effects::ChooseModeEffect) ->
     if !is_choose_one {
         return None;
     }
-    let mut target = None;
+    let mut shared_target: Option<String> = None;
     let mut saw_tap = false;
     let mut saw_untap = false;
     for mode in &choose_mode.modes {
@@ -5701,18 +5739,32 @@ fn describe_tap_or_untap_mode(choose_mode: &crate::effects::ChooseModeEffect) ->
         let effect = &mode.effects[0];
         if let Some(tap) = effect.downcast_ref::<crate::effects::TapEffect>() {
             saw_tap = true;
-            target = Some(describe_choose_spec(&tap.spec));
+            let candidate = describe_choose_spec(&tap.spec);
+            if let Some(existing) = &shared_target {
+                if existing != &candidate {
+                    return None;
+                }
+            } else {
+                shared_target = Some(candidate);
+            }
             continue;
         }
         if let Some(untap) = effect.downcast_ref::<crate::effects::UntapEffect>() {
             saw_untap = true;
-            target = Some(describe_choose_spec(&untap.spec));
+            let candidate = describe_choose_spec(&untap.spec);
+            if let Some(existing) = &shared_target {
+                if existing != &candidate {
+                    return None;
+                }
+            } else {
+                shared_target = Some(candidate);
+            }
             continue;
         }
         return None;
     }
     if saw_tap && saw_untap {
-        let target = target.unwrap_or_else(|| "that object".to_string());
+        let target = shared_target.unwrap_or_else(|| "that object".to_string());
         return Some(format!("Tap or untap {target}"));
     }
     None
@@ -8159,8 +8211,7 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
                 normalized_body = "Return all creatures to their owners' hands except for Krakens, Leviathans, Octopuses, and Serpents.".to_string();
             }
         }
-        if normalized_body
-            == "Enchanted permanent has Doesn't untap during your untap step."
+        if normalized_body == "Enchanted permanent has Doesn't untap during your untap step."
             || normalized_body == "Enchanted permanent has Doesn't untap during your untap step"
         {
             normalized_body =
@@ -8597,18 +8648,18 @@ fn normalize_known_low_tail_phrase(text: &str) -> String {
         return "Return this enchantment to its owner's hand: Regenerate target creature."
             .to_string();
     }
-    if normalized.eq_ignore_ascii_case(
-        "Whenever this permanent becomes tapped, you gain 1 life. Scry 1.",
-    ) || normalized.eq_ignore_ascii_case(
-        "Whenever this permanent becomes tapped, you gain 1 life. Scry 1",
-    ) {
+    if normalized
+        .eq_ignore_ascii_case("Whenever this permanent becomes tapped, you gain 1 life. Scry 1.")
+        || normalized
+            .eq_ignore_ascii_case("Whenever this permanent becomes tapped, you gain 1 life. Scry 1")
+    {
         return "Whenever this permanent becomes tapped, you gain 1 life and scry 1.".to_string();
     }
-    if normalized.eq_ignore_ascii_case(
-        "Whenever this creature becomes tapped, you gain 1 life. Scry 1.",
-    ) || normalized.eq_ignore_ascii_case(
-        "Whenever this creature becomes tapped, you gain 1 life. Scry 1",
-    ) {
+    if normalized
+        .eq_ignore_ascii_case("Whenever this creature becomes tapped, you gain 1 life. Scry 1.")
+        || normalized
+            .eq_ignore_ascii_case("Whenever this creature becomes tapped, you gain 1 life. Scry 1")
+    {
         return "Whenever this creature becomes tapped, you gain 1 life and scry 1.".to_string();
     }
     if let Some((prefix, rest)) = normalized.split_once(", creatures you control get ")
@@ -8624,14 +8675,18 @@ fn normalize_known_low_tail_phrase(text: &str) -> String {
             .strip_suffix(" until end of turn. Untap all permanent.")
             .or_else(|| rest.strip_suffix(" until end of turn. Untap all permanent"))
     {
-        return format!("Creatures you control get {buff} until end of turn. Untap all creatures you control.");
+        return format!(
+            "Creatures you control get {buff} until end of turn. Untap all creatures you control."
+        );
     }
     if let Some(rest) = normalized.strip_prefix("Creatures you control get ")
         && let Some(buff) = rest
             .strip_suffix(" until end of turn. Untap all a creature you control.")
             .or_else(|| rest.strip_suffix(" until end of turn. Untap all a creature you control"))
     {
-        return format!("Creatures you control get {buff} until end of turn. Untap all creatures you control.");
+        return format!(
+            "Creatures you control get {buff} until end of turn. Untap all creatures you control."
+        );
     }
     if normalized.eq_ignore_ascii_case("Untap all a creature you control.")
         || normalized.eq_ignore_ascii_case("Untap all a creature you control")
@@ -8867,8 +8922,7 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     ) {
         return format!("Whenever you cast or copy an instant or sorcery spell, {tail}");
     }
-    if normalized.eq_ignore_ascii_case("Whenever you cast an or copy an instant or sorcery spell")
-    {
+    if normalized.eq_ignore_ascii_case("Whenever you cast an or copy an instant or sorcery spell") {
         return "Whenever you cast or copy an instant or sorcery spell".to_string();
     }
     if let Some(tail) = strip_prefix_ascii_ci(
@@ -8900,9 +8954,7 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         &normalized,
         "Whenever you cast a white or blue or black or red spell, ",
     ) {
-        return format!(
-            "Whenever you cast a spell that's white, blue, black, or red, {tail}"
-        );
+        return format!("Whenever you cast a spell that's white, blue, black, or red, {tail}");
     }
     if let Some(rest) = normalized.strip_prefix("Whenever This creature or Whenever another ") {
         return format!("Whenever this creature or another {rest}");
@@ -10952,8 +11004,10 @@ fn merge_adjacent_subject_predicate_lines(lines: Vec<String>) -> Vec<String> {
             && let Some(left_subject) = split_lose_all_abilities_clause(lines[idx].trim())
         {
             let right_trimmed = lines[idx + 1].trim().trim_end_matches('.');
-            let expected_tail_1 = format!("{left_subject} has Doesn't untap during your untap step");
-            let expected_tail_2 = format!("{left_subject} has doesn't untap during your untap step");
+            let expected_tail_1 =
+                format!("{left_subject} has Doesn't untap during your untap step");
+            let expected_tail_2 =
+                format!("{left_subject} has doesn't untap during your untap step");
             if right_trimmed.eq_ignore_ascii_case(&expected_tail_1)
                 || right_trimmed.eq_ignore_ascii_case(&expected_tail_2)
             {
@@ -14789,12 +14843,14 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
     if let Some((first, second)) = split_once_ascii_ci(trimmed, ". ")
         && let Some(first_buff) = strip_prefix_ascii_ci(first.trim(), "target creature gets ")
             .and_then(|rest| rest.strip_suffix(" until end of turn"))
-        && let Some(second_buff) =
-            strip_prefix_ascii_ci(second.trim(), "other creatures with the same name as that object get ")
-                .and_then(|rest| {
-                    rest.strip_suffix(" until end of turn")
-                        .or_else(|| rest.strip_suffix(" until end of turn."))
-                })
+        && let Some(second_buff) = strip_prefix_ascii_ci(
+            second.trim(),
+            "other creatures with the same name as that object get ",
+        )
+        .and_then(|rest| {
+            rest.strip_suffix(" until end of turn")
+                .or_else(|| rest.strip_suffix(" until end of turn."))
+        })
         && first_buff.eq_ignore_ascii_case(second_buff)
     {
         return format!(
@@ -16051,9 +16107,7 @@ fn normalize_oracle_line_for_card(def: &CardDefinition, line: &str) -> String {
     if let Some(tail) =
         normalized.strip_prefix("Whenever you cast a white or blue or black or red spell, ")
     {
-        normalized = format!(
-            "Whenever you cast a spell that's white, blue, black, or red, {tail}"
-        );
+        normalized = format!("Whenever you cast a spell that's white, blue, black, or red, {tail}");
     }
     if let Some((trigger, effect)) = normalized.split_once(": ")
         && let Some((left, right)) = effect.split_once(". ")
@@ -16572,8 +16626,7 @@ mod tests {
         describe_additional_cost_effects, describe_for_each_filter,
         merge_adjacent_static_heading_lines, normalize_common_semantic_phrasing,
         normalize_compiled_post_pass_effect, normalize_create_under_control_clause,
-        normalize_known_low_tail_phrase, normalize_sentence_surface_style,
-        pluralize_noun_phrase,
+        normalize_known_low_tail_phrase, normalize_sentence_surface_style, pluralize_noun_phrase,
     };
     use crate::filter::{ObjectFilter, PlayerFilter};
     use crate::types::CardType;
@@ -16868,8 +16921,9 @@ mod tests {
 
     #[test]
     fn normalizes_target_player_draws_numeric_cards_and_loses_clause() {
-        let normalized =
-            normalize_common_semantic_phrasing("Target player draws 2 cards. target player loses 2 life.");
+        let normalized = normalize_common_semantic_phrasing(
+            "Target player draws 2 cards. target player loses 2 life.",
+        );
         assert_eq!(normalized, "Target player draws two cards and loses 2 life");
     }
 
