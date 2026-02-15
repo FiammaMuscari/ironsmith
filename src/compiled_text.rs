@@ -6827,15 +6827,34 @@ fn describe_effect_impl(effect: &Effect) -> String {
             } else if target == "it" {
                 target = "that creature".to_string();
             }
-            let verb = if choose_spec_is_plural(source) {
-                "deal"
-            } else {
-                "deals"
-            };
             let stat = if matches!(&deal_damage.amount, Value::ToughnessOf(_)) {
                 "toughness"
             } else {
                 "power"
+            };
+            if subject.eq_ignore_ascii_case(&target) {
+                let lower_subject = subject.to_ascii_lowercase();
+                let should_render_each = !lower_subject.starts_with("target ")
+                    && !lower_subject.starts_with("this ")
+                    && !lower_subject.starts_with("that ")
+                    && !lower_subject.starts_with("another ");
+                if should_render_each {
+                    return format!("Each {subject} deals damage to itself equal to its {stat}");
+                }
+                if choose_spec_is_plural(source) {
+                    let each_subject = if subject.to_ascii_lowercase().starts_with("each ") {
+                        subject.clone()
+                    } else {
+                        format!("Each {subject}")
+                    };
+                    return format!("{each_subject} deals damage to itself equal to its {stat}");
+                }
+                return format!("{subject} deals damage to itself equal to its {stat}");
+            }
+            let verb = if choose_spec_is_plural(source) {
+                "deal"
+            } else {
+                "deals"
             };
             return format!("{subject} {verb} damage equal to its {stat} to {target}");
         }
@@ -11798,6 +11817,19 @@ fn split_lose_all_abilities_clause(clause: &str) -> Option<String> {
     None
 }
 
+fn extract_base_pt_tail_for_subject(line: &str, subject: &str) -> Option<String> {
+    if let Some(pt) = line.strip_prefix("Affected permanents have base power and toughness ") {
+        return Some(pt.trim().to_string());
+    }
+    for verb in ["has", "have"] {
+        let prefix = format!("{subject} {verb} base power and toughness ");
+        if let Some(pt) = line.strip_prefix(&prefix) {
+            return Some(pt.trim().to_string());
+        }
+    }
+    None
+}
+
 fn normalize_global_subject_number(subject: &str) -> String {
     let trimmed = subject.trim();
     if trimmed.eq_ignore_ascii_case("Creature") {
@@ -12024,9 +12056,7 @@ fn merge_adjacent_subject_predicate_lines(lines: Vec<String>) -> Vec<String> {
             && let Some(left_subject) = split_lose_all_abilities_clause(lines[idx].trim())
         {
             let right_trimmed = lines[idx + 1].trim().trim_end_matches('.');
-            if let Some(pt) =
-                right_trimmed.strip_prefix("Affected permanents have base power and toughness ")
-            {
+            if let Some(pt) = extract_base_pt_tail_for_subject(right_trimmed, &left_subject) {
                 let subject = normalize_global_subject_number(&left_subject);
                 let plural = subject_is_plural(&subject);
                 let lose_verb = if plural { "lose" } else { "loses" };
@@ -12115,9 +12145,8 @@ fn merge_lose_all_transform_lines(lines: Vec<String>) -> Vec<String> {
 
         while idx + consumed < lines.len() {
             let line = lines[idx + consumed].trim().trim_end_matches('.');
-            if let Some(pt) = line.strip_prefix("Affected permanents have base power and toughness ")
-            {
-                base_pt = Some(pt.trim().to_string());
+            if let Some(pt) = extract_base_pt_tail_for_subject(line, &subject) {
+                base_pt = Some(pt);
                 consumed += 1;
                 continue;
             }

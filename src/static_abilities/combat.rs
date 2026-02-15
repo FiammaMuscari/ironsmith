@@ -86,6 +86,28 @@ impl StaticAbilityKind for FlyingRestriction {
     }
 }
 
+/// Can't be blocked except by creatures with flying.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FlyingOnlyRestriction;
+
+impl StaticAbilityKind for FlyingOnlyRestriction {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::FlyingOnlyRestriction
+    }
+
+    fn display(&self) -> String {
+        "Can't be blocked except by creatures with flying".to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn grants_evasion(&self) -> bool {
+        true
+    }
+}
+
 /// Can block creatures with flying.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CanBlockFlying;

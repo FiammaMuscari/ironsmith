@@ -147,6 +147,13 @@ pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::
         }
     }
 
+    // "Can't be blocked except by creatures with flying" (reach does not satisfy this clause).
+    if attacker_has(StaticAbilityId::FlyingOnlyRestriction)
+        && !blocker_has(StaticAbilityId::Flying)
+    {
+        return false;
+    }
+
     // Shadow: can only block/be blocked by creatures with shadow
     if attacker_has(StaticAbilityId::Shadow) && !blocker_has(StaticAbilityId::Shadow) {
         return false;

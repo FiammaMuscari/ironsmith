@@ -932,8 +932,15 @@ impl StaticAbilityKind for SetBasePowerToughnessForFilter {
     }
 
     fn display(&self) -> String {
+        let subject = self.filter.description();
+        let lower = subject.to_ascii_lowercase();
+        let plural = lower.starts_with("all ")
+            || lower.starts_with("each ")
+            || lower.starts_with("those ")
+            || lower.ends_with('s');
+        let verb = if plural { "have" } else { "has" };
         format!(
-            "Affected permanents have base power and toughness {}/{}",
+            "{subject} {verb} base power and toughness {}/{}",
             self.power, self.toughness
         )
     }

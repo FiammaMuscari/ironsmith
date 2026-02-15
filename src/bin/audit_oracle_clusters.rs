@@ -892,6 +892,8 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
         .replace("that player controls", "they control")
         .replace("sacrifice a creature you control", "sacrifice a creature")
         .replace("Sacrifice a creature you control", "Sacrifice a creature")
+        .replace("sacrifice a land you control", "sacrifice a land")
+        .replace("Sacrifice a land you control", "Sacrifice a land")
         .replace(
             "sacrifice three creatures you control",
             "sacrifice three creatures",
@@ -1929,6 +1931,74 @@ fn split_lose_all_abilities_subject(line: &str) -> Option<&str> {
         .map(str::trim)
 }
 
+fn extract_base_pt_tail_for_subject(line: &str, subject: &str) -> Option<String> {
+    if let Some(pt) = line.strip_prefix("Affected permanents have base power and toughness ") {
+        return Some(pt.trim().to_string());
+    }
+    for verb in ["has", "have"] {
+        let prefix = format!("{subject} {verb} base power and toughness ");
+        if let Some(pt) = line.strip_prefix(&prefix) {
+            return Some(pt.trim().to_string());
+        }
+    }
+    None
+}
+
+fn split_mana_add_line(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim().trim_end_matches('.');
+    let (cost, effect) = trimmed.split_once(':')?;
+    let add_tail = effect.trim().strip_prefix("Add ")?;
+    if add_tail.is_empty() {
+        return None;
+    }
+    Some((cost.trim().to_string(), add_tail.trim().to_string()))
+}
+
+fn merge_simple_mana_add_compiled_lines(lines: &[String]) -> Vec<String> {
+    let mut merged = Vec::with_capacity(lines.len());
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        if idx + 1 < lines.len()
+            && let (Some((left_cost, left_add)), Some((right_cost, right_add))) = (
+                split_mana_add_line(&lines[idx]),
+                split_mana_add_line(&lines[idx + 1]),
+            )
+            && left_cost.eq_ignore_ascii_case(&right_cost)
+            && !left_add.eq_ignore_ascii_case(&right_add)
+        {
+            merged.push(format!("{left_cost}: Add {left_add} or {right_add}"));
+            idx += 2;
+            continue;
+        }
+        merged.push(lines[idx].clone());
+        idx += 1;
+    }
+    merged
+}
+
+fn merge_blockability_compiled_lines(lines: &[String]) -> Vec<String> {
+    let mut merged = Vec::with_capacity(lines.len());
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        if idx + 1 < lines.len() {
+            let left = lines[idx].trim().trim_end_matches('.');
+            let right = lines[idx + 1].trim().trim_end_matches('.');
+            let is_pair = (left.eq_ignore_ascii_case("This creature can't block")
+                && right.eq_ignore_ascii_case("This creature can't be blocked"))
+                || (left.eq_ignore_ascii_case("Can't block")
+                    && right.eq_ignore_ascii_case("Can't be blocked"));
+            if is_pair {
+                merged.push("This creature can't block and can't be blocked".to_string());
+                idx += 2;
+                continue;
+            }
+        }
+        merged.push(lines[idx].clone());
+        idx += 1;
+    }
+    merged
+}
+
 fn merge_transform_compiled_lines(lines: &[String]) -> Vec<String> {
     let mut merged = Vec::with_capacity(lines.len());
     let mut idx = 0usize;
@@ -1950,9 +2020,8 @@ fn merge_transform_compiled_lines(lines: &[String]) -> Vec<String> {
 
         while idx + consumed < lines.len() {
             let line = lines[idx + consumed].trim().trim_end_matches('.');
-            if let Some(pt) = line.strip_prefix("Affected permanents have base power and toughness ")
-            {
-                base_pt = Some(pt.trim().to_string());
+            if let Some(pt) = extract_base_pt_tail_for_subject(line, subject) {
+                base_pt = Some(pt);
                 consumed += 1;
                 continue;
             }
@@ -2047,12 +2116,13 @@ fn compare_semantics(
         .iter()
         .map(|line| normalize_card_self_references(line, card_name))
         .collect::<Vec<_>>();
-    let normalized_compiled_lines = merge_transform_compiled_lines(
-        &normalized_compiled_lines
-            .iter()
-            .map(|line| strip_compiled_prefix(line).to_string())
-            .collect::<Vec<_>>(),
-    );
+    let stripped_compiled_lines = normalized_compiled_lines
+        .iter()
+        .map(|line| strip_compiled_prefix(line).to_string())
+        .collect::<Vec<_>>();
+    let merged_mana_lines = merge_simple_mana_add_compiled_lines(&stripped_compiled_lines);
+    let merged_blockability_lines = merge_blockability_compiled_lines(&merged_mana_lines);
+    let normalized_compiled_lines = merge_transform_compiled_lines(&merged_blockability_lines);
 
     let oracle_clauses = semantic_clauses(&normalized_oracle);
     let reminder_clauses = reminder_clauses(&normalized_oracle);

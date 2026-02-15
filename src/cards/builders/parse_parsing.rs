@@ -1511,15 +1511,7 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
         }
     }
 
-    if let Some(mut abilities) = parse_static_ability_line(&tokens)? {
-        if normalized.starts_with("this spell costs")
-            && (normalized.contains(" if ") || normalized.contains(" as long as "))
-        {
-            abilities.insert(
-                0,
-                StaticAbility::custom("conditional_spell_cost", line.trim().to_string()),
-            );
-        }
+    if let Some(abilities) = parse_static_ability_line(&tokens)? {
         parser_trace("parse_line:branch=static", &tokens);
         if abilities.len() == 1 {
             return Ok(LineAst::StaticAbility(
@@ -2865,6 +2857,12 @@ fn parse_spells_cost_modifier_line(
         ));
     }
 
+    parse_trailing_targets_condition_in_cost_modifier(
+        &mut filter,
+        remaining_tokens,
+        &clause_words,
+    )?;
+
     if is_less {
         return Ok(Some(StaticAbility::new(
             crate::static_abilities::CostReduction::new(filter, amount_value),
@@ -2874,6 +2872,62 @@ fn parse_spells_cost_modifier_line(
     Ok(Some(StaticAbility::new(
         crate::static_abilities::CostIncrease::new(filter, amount_value),
     )))
+}
+
+fn parse_trailing_targets_condition_in_cost_modifier(
+    filter: &mut crate::ability::SpellFilter,
+    remaining_tokens: &[Token],
+    clause_words: &[&str],
+) -> Result<(), CardTextError> {
+    let remaining_words = words(remaining_tokens);
+    let Some(if_word_idx) = remaining_words.iter().position(|word| *word == "if") else {
+        return Ok(());
+    };
+    let condition_words = &remaining_words[if_word_idx..];
+    if condition_words.len() < 4
+        || condition_words[0] != "if"
+        || condition_words[1] != "it"
+        || (condition_words[2] != "targets" && condition_words[2] != "target")
+    {
+        return Ok(());
+    }
+
+    let target_word_idx = if_word_idx + 3;
+    let target_token_idx =
+        token_index_for_word_index(remaining_tokens, target_word_idx).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "unable to map trailing target condition in spells-cost modifier (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+    let target_tokens = &remaining_tokens[target_token_idx..];
+    if target_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing target in trailing spells-cost condition (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let target_words = words(target_tokens);
+    if target_words.starts_with(&["you"]) {
+        filter.targets_player = Some(PlayerFilter::You);
+        filter.targets_object = None;
+        return Ok(());
+    }
+    if target_words.starts_with(&["opponent"]) || target_words.starts_with(&["opponents"]) {
+        filter.targets_player = Some(PlayerFilter::Opponent);
+        filter.targets_object = None;
+        return Ok(());
+    }
+    if target_words.starts_with(&["player"]) || target_words.starts_with(&["players"]) {
+        filter.targets_player = Some(PlayerFilter::Any);
+        filter.targets_object = None;
+        return Ok(());
+    }
+
+    filter.targets_object = Some(parse_object_filter(target_tokens, false)?);
+    filter.targets_player = None;
+    Ok(())
 }
 
 fn parse_flashback_cost_modifier_line(
@@ -5557,7 +5611,7 @@ fn parse_flying_restriction_line(tokens: &[Token]) -> Result<Option<StaticAbilit
         .map(|word| if word == "cannot" { "cant" } else { word })
         .collect::<Vec<_>>();
 
-    let matches = normalized.as_slice()
+    let flying_only_matches = normalized.as_slice()
         == [
             "this",
             "cant",
@@ -5583,7 +5637,41 @@ fn parse_flying_restriction_line(tokens: &[Token]) -> Result<Option<StaticAbilit
                 "flying",
             ];
 
-    if matches {
+    if flying_only_matches {
+        return Ok(Some(StaticAbility::flying_only_restriction()));
+    }
+
+    let flying_or_reach_matches = normalized.as_slice()
+        == [
+            "this",
+            "cant",
+            "be",
+            "blocked",
+            "except",
+            "by",
+            "creatures",
+            "with",
+            "flying",
+            "or",
+            "reach",
+        ]
+        || normalized.as_slice()
+            == [
+                "this",
+                "creature",
+                "cant",
+                "be",
+                "blocked",
+                "except",
+                "by",
+                "creatures",
+                "with",
+                "flying",
+                "or",
+                "reach",
+            ];
+
+    if flying_or_reach_matches {
         return Ok(Some(StaticAbility::flying_restriction()));
     }
 
@@ -24995,6 +25083,14 @@ fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
         idx += 1;
     }
 
+    while tokens
+        .get(idx)
+        .and_then(Token::as_word)
+        .is_some_and(is_article)
+    {
+        idx += 1;
+    }
+
     if tokens.get(idx).is_some_and(|token| token.is_word("other"))
         && tokens
             .get(idx + 1)
@@ -25016,6 +25112,31 @@ fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
             explicit_target = true;
             idx += 1;
         }
+    }
+
+    if let Some(ordinal_word) = tokens.get(idx).and_then(Token::as_word)
+        && matches!(
+            ordinal_word,
+            "first"
+                | "second"
+                | "third"
+                | "fourth"
+                | "fifth"
+                | "sixth"
+                | "seventh"
+                | "eighth"
+                | "ninth"
+                | "tenth"
+        )
+        && tokens
+            .get(idx + 1)
+            .is_some_and(|token| token.is_word("target"))
+    {
+        if ordinal_word != "first" {
+            other = true;
+        }
+        explicit_target = true;
+        idx += 2;
     }
 
     let words_all = words(&tokens[idx..]);

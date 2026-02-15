@@ -1516,6 +1516,74 @@ fn test_parse_lands_dont_untap_during_controllers_steps_static_line() {
 }
 
 #[test]
+fn parse_flying_only_restriction_does_not_widen_to_reach() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Treetop Restriction Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature can't be blocked except by creatures with flying.")
+        .expect("flying-only block restriction should parse");
+
+    let static_ids = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        static_ids.contains(&crate::static_abilities::StaticAbilityId::FlyingOnlyRestriction),
+        "expected flying-only restriction id, got {static_ids:?}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("except by creatures with flying"),
+        "expected flying-only text in render, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("flying or reach"),
+        "flying-only restriction must not widen to reach, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_conditional_spell_cost_if_it_targets_compiles_target_filter() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Conditional Cost Probe")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "This spell costs {3} less to cast if it targets a tapped creature.\nDestroy target creature.",
+        )
+        .expect("conditional spell-cost clause should parse");
+
+    let static_abilities = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let cost_reduction_count = static_abilities
+        .iter()
+        .filter(|id| **id == crate::static_abilities::StaticAbilityId::CostReduction)
+        .count();
+    assert_eq!(
+        cost_reduction_count, 1,
+        "expected exactly one cost reduction static ability, got {static_abilities:?}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("target tapped creature"),
+        "expected tapped-target condition in rendered cost reduction, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("spells cost {3} less to cast"),
+        "unconditional cost reduction text should not be rendered, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_madness_keyword_line() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Madness Probe")
         .card_types(vec![CardType::Instant])

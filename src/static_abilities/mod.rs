@@ -804,6 +804,10 @@ impl StaticAbility {
         Self::new(FlyingRestriction)
     }
 
+    pub fn flying_only_restriction() -> Self {
+        Self::new(FlyingOnlyRestriction)
+    }
+
     pub fn can_block_flying() -> Self {
         Self::new(CanBlockFlying)
     }

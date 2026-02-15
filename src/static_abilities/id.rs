@@ -45,6 +45,7 @@ pub enum StaticAbilityId {
     // === Combat modifiers ===
     Unblockable,
     FlyingRestriction,
+    FlyingOnlyRestriction,
     CanBlockFlying,
     CanBlockOnlyFlying,
     CantBeBlockedByPowerOrLess,
@@ -204,6 +205,7 @@ impl StaticAbilityId {
                 | Fear
                 | Intimidate
                 | FlyingRestriction
+                | FlyingOnlyRestriction
                 | CantBeBlockedByPowerOrLess
                 | CantBeBlockedByMoreThan
                 | Landwalk
@@ -232,6 +234,7 @@ impl StaticAbilityId {
                 | Horsemanship
                 | Unblockable
                 | FlyingRestriction
+                | FlyingOnlyRestriction
                 | CanBlockFlying
                 | CanBlockOnlyFlying
                 | CantBeBlockedByPowerOrLess
