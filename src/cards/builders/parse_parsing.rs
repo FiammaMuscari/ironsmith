@@ -4105,9 +4105,9 @@ fn parse_anthem_and_type_color_addition_line(
 fn parse_anthem_and_keyword_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
-    let words = words(tokens);
+    let clause_words = words(tokens);
     // "until end of turn" indicates a temporary effect, not a permanent anthem.
-    if words
+    if clause_words
         .windows(4)
         .any(|w| w == ["until", "end", "of", "turn"])
     {
@@ -4116,7 +4116,7 @@ fn parse_anthem_and_keyword_line(
     let get_idx = tokens
         .iter()
         .position(|token| token.is_word("get") || token.is_word("gets"));
-    let have_idx = words
+    let have_idx = clause_words
         .iter()
         .position(|word| *word == "have" || *word == "has");
 
@@ -4135,11 +4135,48 @@ fn parse_anthem_and_keyword_line(
         return Ok(None);
     };
 
-    let ability_tokens = &tokens[have_token_idx + 1..];
-    let Some(actions) = parse_ability_line(ability_tokens) else {
+    let mut ability_tokens = trim_commas(&tokens[have_token_idx + 1..]);
+    let mut trailing_condition: Option<StaticCondition> = None;
+    if let Some(as_long_idx) = words(&ability_tokens)
+        .windows(3)
+        .position(|window| window == ["as", "long", "as"])
+    {
+        let as_token_idx = token_index_for_word_index(&ability_tokens, as_long_idx)
+            .ok_or_else(|| {
+                CardTextError::ParseError(format!(
+                    "unable to map trailing 'as long as' keyword condition (clause: '{}')",
+                    clause_words.join(" ")
+                ))
+            })?;
+        let condition_start_idx = token_index_for_word_index(&ability_tokens, as_long_idx + 3)
+            .ok_or_else(|| {
+                CardTextError::ParseError(format!(
+                    "missing condition after trailing 'as long as' keyword clause (clause: '{}')",
+                    clause_words.join(" ")
+                ))
+            })?;
+        let ability_head = trim_commas(&ability_tokens[..as_token_idx]);
+        if ability_head.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing granted keyword list before trailing condition (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let condition_tokens = trim_commas(&ability_tokens[condition_start_idx..]);
+        if condition_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing condition after trailing 'as long as' keyword clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        trailing_condition = Some(parse_static_condition_clause(&condition_tokens)?);
+        ability_tokens = ability_head;
+    }
+
+    let Some(actions) = parse_ability_line(&ability_tokens) else {
         return Ok(None);
     };
-    reject_unimplemented_keyword_actions(&actions, &words.join(" "))?;
+    reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
     let abilities: Vec<StaticAbility> = actions
         .into_iter()
         .filter_map(keyword_action_to_static_ability)
@@ -4157,7 +4194,16 @@ fn parse_anthem_and_keyword_line(
     } else {
         have_token_idx
     };
-    let clause = parse_anthem_clause(tokens, get_idx, clause_tail_end)?;
+    let mut clause = parse_anthem_clause(tokens, get_idx, clause_tail_end)?;
+    if let Some(condition) = trailing_condition {
+        if clause.condition.is_some() {
+            return Err(CardTextError::ParseError(format!(
+                "multiple anthem conditions are not supported (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        clause.condition = Some(condition);
+    }
     let mut result = vec![build_anthem_static_ability(&clause)];
     for ability in abilities {
         let granted = match &clause.subject {

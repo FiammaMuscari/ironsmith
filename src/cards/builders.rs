@@ -5020,6 +5020,25 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_anthem_and_keyword_trailing_condition_applies_to_keyword() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Delirium Anthem Keyword Variant")
+            .parse_text(
+                "This creature gets +1/+0 and has first strike as long as there are four or more card types among cards in your graveyard.",
+            )
+            .expect("parse anthem + keyword with trailing condition");
+
+        let joined = compiled_lines(&def).join(" ");
+        assert!(
+            joined.contains("First strike"),
+            "expected first strike keyword in compiled text, got {joined}"
+        );
+        assert!(
+            joined.contains("as long as there are four or more card types among cards in your graveyard"),
+            "expected trailing condition to be preserved for anthem+keyword line, got {joined}"
+        );
+    }
+
+    #[test]
     fn parse_labeled_trigger_line_as_triggered_ability() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Heroic Label Variant")
             .parse_text(
