@@ -9689,11 +9689,15 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     if let Some((prefix, energy_tail)) = split_once_ascii_ci(&normalized, ". you get ")
         && energy_tail.trim_start().starts_with("{E")
     {
-        return format!(
-            "{} and you get {}.",
-            prefix.trim().trim_end_matches('.'),
-            energy_tail.trim().trim_end_matches('.')
-        );
+        let prefix_clean = prefix.trim().trim_end_matches('.');
+        let lower_prefix = prefix_clean.to_ascii_lowercase();
+        if lower_prefix.starts_with("when ") || lower_prefix.starts_with("at the beginning of ") {
+            return format!(
+                "{} and you get {}.",
+                prefix_clean,
+                energy_tail.trim().trim_end_matches('.')
+            );
+        }
     }
     if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, ": you gain ")
         && let Some((gain_tail, draw_tail)) = split_once_ascii_ci(rest, " life. you may draw ")
@@ -16576,6 +16580,9 @@ mod tests {
             normalized,
             "When this permanent enters, you gain 3 life and you get {E}{E}{E}."
         );
+
+        let normalized = normalize_compiled_post_pass_effect("Draw a card. you get {E}{E}.");
+        assert_eq!(normalized, "Draw a card. You get {E}{E}.");
 
         let normalized = normalize_compiled_post_pass_effect(
             "{1}, Sacrifice an artifact you control: this permanent gets +1/+1 until end of turn. Deal 1 damage to each opponent.",
