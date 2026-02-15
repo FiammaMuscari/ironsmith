@@ -2906,8 +2906,15 @@ fn compile_effect(
             Ok((vec![effect], vec![spec]))
         }
         EffectAst::Attach { object, target } => {
-            let objects = resolve_attach_object_spec(object, ctx)?;
-            let (target, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let (objects, object_choices) = resolve_attach_object_spec(object, ctx)?;
+            let (target, target_choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let mut choices = Vec::new();
+            for choice in object_choices {
+                push_choice(&mut choices, choice);
+            }
+            for choice in target_choices {
+                push_choice(&mut choices, choice);
+            }
             Ok((vec![Effect::attach_objects(objects, target)], choices))
         }
         EffectAst::Investigate => Ok((vec![Effect::investigate(1)], Vec::new())),
@@ -4613,9 +4620,9 @@ fn resolve_target_spec_with_choices(
 fn resolve_attach_object_spec(
     object: &TargetAst,
     ctx: &CompileContext,
-) -> Result<ChooseSpec, CardTextError> {
+) -> Result<(ChooseSpec, Vec<ChooseSpec>), CardTextError> {
     match object {
-        TargetAst::Source(_) => Ok(ChooseSpec::Source),
+        TargetAst::Source(_) => Ok((ChooseSpec::Source, Vec::new())),
         TargetAst::Tagged(tag, _) => {
             let resolved_tag = if tag.as_str() == IT_TAG {
                 ctx.last_object_tag.clone().ok_or_else(|| {
@@ -4627,15 +4634,30 @@ fn resolve_attach_object_spec(
             } else {
                 tag.as_str().to_string()
             };
-            Ok(ChooseSpec::All(ObjectFilter::tagged(TagKey::from(
-                resolved_tag.as_str(),
-            ))))
+            Ok((
+                ChooseSpec::All(ObjectFilter::tagged(TagKey::from(resolved_tag.as_str()))),
+                Vec::new(),
+            ))
         }
-        TargetAst::Object(filter, _, _) => {
+        TargetAst::Object(filter, explicit_target_span, _) => {
             let resolved = resolve_it_tag(filter, ctx)?;
-            Ok(ChooseSpec::All(resolved))
+            if explicit_target_span.is_some() {
+                let spec = ChooseSpec::target(ChooseSpec::Object(resolved));
+                Ok((spec.clone(), vec![spec]))
+            } else {
+                Ok((ChooseSpec::All(resolved), Vec::new()))
+            }
         }
-        TargetAst::WithCount(inner, _) => resolve_attach_object_spec(inner, ctx),
+        TargetAst::WithCount(inner, count) => {
+            let (base, _) = resolve_attach_object_spec(inner, ctx)?;
+            let spec = base.with_count(*count);
+            let choices = if spec.is_target() {
+                vec![spec.clone()]
+            } else {
+                Vec::new()
+            };
+            Ok((spec, choices))
+        }
         _ => Err(CardTextError::ParseError(
             "unsupported attach object reference".to_string(),
         )),

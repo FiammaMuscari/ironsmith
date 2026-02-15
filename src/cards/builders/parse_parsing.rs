@@ -20239,6 +20239,18 @@ fn parse_attach_object_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextErr
         return Ok(TargetAst::Object(tagged_filter, object_span, None));
     }
 
+    if tokens.first().is_some_and(|token| token.is_word("target"))
+        && let Some(attached_idx) = tokens.iter().position(|token| token.is_word("attached"))
+        && tokens
+            .get(attached_idx + 1)
+            .is_some_and(|token| token.is_word("to"))
+    {
+        let head_tokens = trim_commas(&tokens[..attached_idx]);
+        if !head_tokens.is_empty() {
+            return parse_target_phrase(&head_tokens);
+        }
+    }
+
     parse_target_phrase(tokens)
 }
 
@@ -20250,7 +20262,7 @@ fn parse_attach(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         ));
     }
 
-    let Some(to_idx) = tokens.iter().position(|token| token.is_word("to")) else {
+    let Some(to_idx) = tokens.iter().rposition(|token| token.is_word("to")) else {
         return Err(CardTextError::ParseError(format!(
             "attach clause missing destination (clause: '{}')",
             clause_words.join(" ")

@@ -9111,21 +9111,35 @@ fn normalize_known_low_tail_phrase(text: &str) -> String {
         return format!("{merged}.");
     }
     if let Some((choose_clause, destroy_clause)) = split_once_ascii_ci(trimmed, ". ")
-        && let Some(target_phrase) = strip_prefix_ascii_ci(choose_clause.trim(), "Choose ")
-        && target_phrase.to_ascii_lowercase().starts_with("target ")
         && let Some(attached_filter) = strip_prefix_ascii_ci(destroy_clause.trim(), "Destroy all ")
-            .and_then(|tail| {
-                strip_suffix_ascii_ci(
-                    tail.trim_end_matches('.'),
-                    " attached to that object",
-                )
-            })
+            .and_then(|tail| strip_suffix_ascii_ci(tail.trim_end_matches('.'), " attached to that object"))
     {
-        return format!(
-            "Destroy all {} attached to {}.",
-            attached_filter.trim(),
-            target_phrase.trim()
-        );
+        if let Some(target_phrase) = strip_prefix_ascii_ci(choose_clause.trim(), "Choose ")
+            && target_phrase.to_ascii_lowercase().starts_with("target ")
+        {
+            return format!(
+                "Destroy all {} attached to {}.",
+                attached_filter.trim(),
+                target_phrase.trim()
+            );
+        }
+
+        let choose_lower = choose_clause.to_ascii_lowercase();
+        if let Some(pos) = choose_lower.rfind(", choose target ")
+            && pos + 2 <= choose_clause.len()
+        {
+            let prefix = choose_clause[..pos].trim();
+            let choose_target = choose_clause[pos + 2..].trim();
+            if let Some(target_phrase) = strip_prefix_ascii_ci(choose_target, "choose ")
+                && target_phrase.to_ascii_lowercase().starts_with("target ")
+            {
+                return format!(
+                    "{prefix}, destroy all {} attached to {}.",
+                    attached_filter.trim(),
+                    target_phrase.trim()
+                );
+            }
+        }
     }
     if let Some((first_clause, rest)) =
         trimmed.split_once(". For each opponent's creature, Deal ")
@@ -16905,6 +16919,17 @@ mod tests {
         assert_eq!(
             normalized,
             "Destroy all Aura or Equipment attached to target creature."
+        );
+    }
+
+    #[test]
+    fn known_low_tail_rewrites_trigger_choose_target_then_destroy_attached() {
+        let normalized = normalize_known_low_tail_phrase(
+            "Whenever this creature attacks, choose target land. Destroy all Aura attached to that object.",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever this creature attacks, destroy all Aura attached to target land."
         );
     }
 
