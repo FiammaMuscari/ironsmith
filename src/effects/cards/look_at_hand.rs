@@ -13,12 +13,25 @@ use crate::target::ChooseSpec;
 pub struct LookAtHandEffect {
     /// Which player(s) to look at.
     pub target: ChooseSpec,
+    /// Whether this is a public reveal instead of a private look.
+    pub reveal: bool,
 }
 
 impl LookAtHandEffect {
     /// Create a new look-at-hand effect.
     pub fn new(target: ChooseSpec) -> Self {
-        Self { target }
+        Self {
+            target,
+            reveal: false,
+        }
+    }
+
+    /// Create a reveal-hand effect (all players see the hand).
+    pub fn reveal(target: ChooseSpec) -> Self {
+        Self {
+            target,
+            reveal: true,
+        }
     }
 }
 
@@ -46,10 +59,19 @@ impl EffectExecutor for LookAtHandEffect {
                 .unwrap_or_default();
             total_cards += cards.len() as i32;
 
-            let view_ctx =
-                ViewCardsContext::look_at_hand(ctx.controller, player_id, Some(ctx.source));
-            ctx.decision_maker
-                .view_cards(game, ctx.controller, &cards, &view_ctx);
+            if self.reveal {
+                for viewer_idx in 0..game.players.len() {
+                    let viewer = crate::ids::PlayerId::from_index(viewer_idx as u8);
+                    let mut view_ctx = ViewCardsContext::look_at_hand(viewer, player_id, Some(ctx.source));
+                    view_ctx.description = "Reveal that player's hand".to_string();
+                    ctx.decision_maker.view_cards(game, viewer, &cards, &view_ctx);
+                }
+            } else {
+                let view_ctx =
+                    ViewCardsContext::look_at_hand(ctx.controller, player_id, Some(ctx.source));
+                ctx.decision_maker
+                    .view_cards(game, ctx.controller, &cards, &view_ctx);
+            }
         }
 
         Ok(EffectOutcome::count(total_cards))
@@ -68,7 +90,11 @@ impl EffectExecutor for LookAtHandEffect {
     }
 
     fn target_description(&self) -> &'static str {
-        "player to look at"
+        if self.reveal {
+            "player whose hand is revealed"
+        } else {
+            "player to look at"
+        }
     }
 }
 
@@ -159,5 +185,29 @@ mod tests {
         assert_eq!(call.subject, bob);
         assert_eq!(call.zone, Zone::Hand);
         assert_eq!(call.cards, vec![card1, card2]);
+    }
+
+    #[test]
+    fn test_reveal_target_players_hand_to_all_players() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let card1 = add_card_to_hand(&mut game, "Card 1", bob);
+        let card2 = add_card_to_hand(&mut game, "Card 2", bob);
+
+        let source = game.new_object_id();
+        let mut dm = CaptureViewDm::default();
+        let mut ctx = ExecutionContext::new(source, alice, &mut dm)
+            .with_targets(vec![ResolvedTarget::Player(bob)]);
+
+        let effect = LookAtHandEffect::reveal(ChooseSpec::target_player());
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.result, EffectResult::Count(2));
+        assert_eq!(dm.calls.len(), 2, "both players should see revealed hand");
+        assert!(dm.calls.iter().all(|call| call.subject == bob));
+        assert!(dm.calls.iter().all(|call| call.zone == Zone::Hand));
+        assert!(dm.calls.iter().all(|call| call.cards == vec![card1, card2]));
     }
 }

@@ -2684,7 +2684,7 @@ fn compile_effect(
             } else {
                 ChooseSpec::target_player()
             };
-            let effect = Effect::new(crate::effects::LookAtHandEffect::new(spec));
+            let effect = Effect::new(crate::effects::LookAtHandEffect::reveal(spec));
             Ok((vec![effect], choices))
         }
         EffectAst::PutIntoHand { player, object } => {

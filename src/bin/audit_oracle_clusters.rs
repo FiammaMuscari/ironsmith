@@ -985,20 +985,36 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
     if let Some((left, right)) = normalized.split_once(". Scry ") {
         let left = left.trim().trim_end_matches('.');
         let scry_tail = right.trim().trim_end_matches('.');
+        let left_lower = left.to_ascii_lowercase();
+        let should_chain = left_lower.starts_with("draw ")
+            || left_lower.starts_with("you draw ")
+            || left_lower.contains(" you draw ")
+            || left_lower.starts_with("surveil ")
+            || left_lower.contains(" counter on ")
+            || left_lower.contains(" then draw ");
         if scry_tail
             .chars()
             .next()
             .is_some_and(|ch| ch.is_ascii_digit() || ch.eq_ignore_ascii_case(&'x'))
+            && should_chain
         {
             normalized = format!("{left}, then scry {scry_tail}.");
         }
     } else if let Some((left, right)) = normalized.split_once(". scry ") {
         let left = left.trim().trim_end_matches('.');
         let scry_tail = right.trim().trim_end_matches('.');
+        let left_lower = left.to_ascii_lowercase();
+        let should_chain = left_lower.starts_with("draw ")
+            || left_lower.starts_with("you draw ")
+            || left_lower.contains(" you draw ")
+            || left_lower.starts_with("surveil ")
+            || left_lower.contains(" counter on ")
+            || left_lower.contains(" then draw ");
         if scry_tail
             .chars()
             .next()
             .is_some_and(|ch| ch.is_ascii_digit() || ch.eq_ignore_ascii_case(&'x'))
+            && should_chain
         {
             normalized = format!("{left}, then scry {scry_tail}.");
         }

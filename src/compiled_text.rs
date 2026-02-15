@@ -6205,9 +6205,14 @@ fn describe_tap_or_untap_mode(choose_mode: &crate::effects::ChooseModeEffect) ->
     let mut shared_target: Option<String> = None;
     let mut saw_tap = false;
     let mut saw_untap = false;
+    let mut terse_mode_labels = true;
     for mode in &choose_mode.modes {
         if mode.effects.len() != 1 {
             return None;
+        }
+        let mode_label = mode.description.trim().trim_end_matches('.').to_ascii_lowercase();
+        if mode_label != "tap" && mode_label != "untap" {
+            terse_mode_labels = false;
         }
         let effect = &mode.effects[0];
         if let Some(tap) = effect.downcast_ref::<crate::effects::TapEffect>() {
@@ -6238,7 +6243,10 @@ fn describe_tap_or_untap_mode(choose_mode: &crate::effects::ChooseModeEffect) ->
     }
     if saw_tap && saw_untap {
         let target = shared_target.unwrap_or_else(|| "that object".to_string());
-        return Some(format!("Tap or untap {target}"));
+        if terse_mode_labels {
+            return Some(format!("Tap or untap {target}"));
+        }
+        return Some(format!("Choose one — Tap {target}. • Untap {target}."));
     }
     None
 }
@@ -7080,11 +7088,16 @@ fn describe_effect_impl(effect: &Effect) -> String {
         return format!("Look at the top {count_text} {noun} of {owner} library");
     }
     if let Some(look_at_hand) = effect.downcast_ref::<crate::effects::LookAtHandEffect>() {
-        if matches!(
-            look_at_hand.target.base(),
-            crate::target::ChooseSpec::Player(PlayerFilter::You)
-        ) {
-            return "Reveal your hand".to_string();
+        if look_at_hand.reveal {
+            if matches!(
+                look_at_hand.target.base(),
+                crate::target::ChooseSpec::Player(PlayerFilter::You)
+            ) {
+                return "Reveal your hand".to_string();
+            }
+            let subject = capitalize_first(&describe_choose_spec(&look_at_hand.target));
+            let reveal_verb = player_verb(&subject, "reveal", "reveals");
+            return format!("{subject} {reveal_verb} their hand");
         }
         let owner = describe_possessive_choose_spec(&look_at_hand.target);
         return format!("Look at {owner} hand");
@@ -7541,6 +7554,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(scry) = effect.downcast_ref::<crate::effects::ScryEffect>() {
         if scry.player == PlayerFilter::You {
             return format!("Scry {}", describe_value(&scry.count));
+        }
+        if scry.player == PlayerFilter::Opponent {
+            return format!("Fateseal {}", describe_value(&scry.count));
         }
         let player = describe_player_filter(&scry.player);
         return format!(
@@ -8993,6 +9009,30 @@ fn normalize_known_low_tail_phrase(text: &str) -> String {
         return format!(
             "{chooser} chooses {card_phrase} in their graveyard. Put that card onto the battlefield{tail}"
         );
+    }
+    let (head_prefix, reveal_candidate) = if let Some((prefix, tail)) = split_once_ascii_ci(trimmed, ": ")
+    {
+        (Some(prefix.trim()), tail.trim())
+    } else {
+        (None, trimmed)
+    };
+    if let Some((left, right)) = split_once_ascii_ci(reveal_candidate, ". ")
+        && left.to_ascii_lowercase().starts_with("target player loses ")
+        && (right
+            .trim()
+            .eq_ignore_ascii_case("Target player reveals their hand.")
+            || right
+                .trim()
+                .eq_ignore_ascii_case("Target player reveals their hand"))
+    {
+        let merged = format!(
+            "{} and reveals their hand.",
+            left.trim().trim_end_matches('.')
+        );
+        if let Some(prefix) = head_prefix {
+            return format!("{prefix}: {merged}");
+        }
+        return merged;
     }
     if let Some((first_clause, rest)) =
         trimmed.split_once(". For each opponent's creature, Deal ")
@@ -16743,6 +16783,14 @@ mod tests {
             normalized,
             "Target opponent chooses an artifact card in their graveyard. Put that card onto the battlefield under your control."
         );
+    }
+
+    #[test]
+    fn known_low_tail_merges_target_player_loses_and_reveals_hand() {
+        let normalized = normalize_known_low_tail_phrase(
+            "Target player loses 1 life. Target player reveals their hand.",
+        );
+        assert_eq!(normalized, "Target player loses 1 life and reveals their hand.");
     }
 
     #[test]
