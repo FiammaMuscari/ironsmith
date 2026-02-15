@@ -9855,13 +9855,18 @@ fn parse_spell_activity_trigger(tokens: &[Token]) -> Result<Option<TriggerSpec>,
     } else {
         None
     };
-    let min_spells_this_turn = if contains_word_sequence(
+    let has_other_than_first_spell_pattern = contains_word_sequence(
         &clause_words,
         &["other", "than", "your", "first", "spell"],
     ) || contains_word_sequence(
         &clause_words,
         &["other", "than", "the", "first", "spell"],
-    ) || contains_word_sequence(
+    ) || (contains_word_sequence(&clause_words, &["other", "than", "the", "first"])
+        && clause_words.contains(&"spell")
+        && clause_words.contains(&"casts")
+        && clause_words.contains(&"turn"));
+    let min_spells_this_turn = if has_other_than_first_spell_pattern
+        || contains_word_sequence(
         &clause_words,
         &["second", "spell", "cast", "this", "turn"],
     ) || contains_word_sequence(&clause_words, &["second", "spell", "this", "turn"])

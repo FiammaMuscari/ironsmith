@@ -144,6 +144,12 @@ impl TriggerMatcher for SpellCastTrigger {
             spell_text = "their second spell each turn".to_string();
         } else if self.min_spells_this_turn == Some(2) && spell_text == "a spell" {
             spell_text = "another spell".to_string();
+        } else if self.min_spells_this_turn == Some(2)
+            && matches!(self.caster, PlayerFilter::Opponent | PlayerFilter::Specific(_))
+        {
+            spell_text = format!(
+                "{spell_text} other than the first {spell_text} that player casts each turn"
+            );
         } else if self.min_spells_this_turn == Some(2) {
             suffix.push_str(" as your second spell this turn");
         }
@@ -246,8 +252,10 @@ fn describe_spell_filter(filter: &ObjectFilter) -> String {
     let fallback = filter.description();
     if fallback == "permanent" {
         "a spell".to_string()
-    } else {
+    } else if fallback.to_ascii_lowercase().contains("spell") {
         fallback
+    } else {
+        format!("{fallback} spell")
     }
 }
 
