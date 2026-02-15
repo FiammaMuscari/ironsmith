@@ -6,6 +6,9 @@
 use std::borrow::Borrow;
 use std::fmt;
 
+/// Runtime tag for cards linked as "exiled with this source object".
+pub const SOURCE_EXILED_TAG: &str = "__source_exiled__";
+
 /// Dynamic tag key used by the tagging system.
 ///
 /// Using an owned key instead of `&'static str` enables tags built at runtime

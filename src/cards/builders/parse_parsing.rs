@@ -12205,6 +12205,12 @@ fn parse_sentence_for_each_exiled_this_way(
     parse_for_each_exiled_this_way_sentence(tokens)
 }
 
+fn parse_sentence_each_player_put_permanent_cards_exiled_with_source(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    parse_each_player_put_permanent_cards_exiled_with_source_sentence(tokens)
+}
+
 fn parse_sentence_for_each_destroyed_this_way(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -12741,6 +12747,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "for-each-exiled-this-way",
         parser: parse_sentence_for_each_exiled_this_way,
+    },
+    SentencePrimitive {
+        name: "each-player-put-permanent-cards-exiled-with-source",
+        parser: parse_sentence_each_player_put_permanent_cards_exiled_with_source,
     },
     SentencePrimitive {
         name: "for-each-destroyed-this-way",
@@ -16119,6 +16129,57 @@ fn parse_for_each_exiled_this_way_sentence(
             reveal: true,
             shuffle: true,
             count: ChoiceCount::up_to(1),
+            tapped: false,
+        }],
+    }]))
+}
+
+fn parse_each_player_put_permanent_cards_exiled_with_source_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let words_all = words(tokens);
+    let starts_with_each_player_turns_face_up = words_all
+        .starts_with(&["each", "player", "turns", "face", "up", "all", "cards"]);
+    if !starts_with_each_player_turns_face_up {
+        return Ok(None);
+    }
+    let has_exiled_with_this = words_all
+        .windows(3)
+        .any(|window| window == ["exiled", "with", "this"]);
+    if !has_exiled_with_this {
+        return Ok(None);
+    }
+    let has_puts_all_permanent_cards = words_all
+        .windows(5)
+        .any(|window| window == ["then", "puts", "all", "permanent", "cards"]);
+    let has_among_them_onto_battlefield = words_all
+        .windows(4)
+        .any(|window| window == ["among", "them", "onto", "battlefield"])
+        || words_all
+            .windows(5)
+            .any(|window| window == ["among", "them", "onto", "the", "battlefield"]);
+    if !has_puts_all_permanent_cards || !has_among_them_onto_battlefield {
+        return Ok(None);
+    }
+
+    let mut filter = ObjectFilter::default().in_zone(Zone::Exile);
+    filter.owner = Some(PlayerFilter::IteratedPlayer);
+    filter.card_types = vec![
+        CardType::Artifact,
+        CardType::Creature,
+        CardType::Enchantment,
+        CardType::Land,
+        CardType::Planeswalker,
+        CardType::Battle,
+    ];
+    filter.tagged_constraints.push(TaggedObjectConstraint {
+        tag: TagKey::from(crate::tag::SOURCE_EXILED_TAG),
+        relation: TaggedOpbjectRelation::IsTaggedObject,
+    });
+
+    Ok(Some(vec![EffectAst::ForEachPlayer {
+        effects: vec![EffectAst::ReturnAllToBattlefield {
+            filter,
             tapped: false,
         }],
     }]))
@@ -24245,6 +24306,27 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
                 relation: TaggedOpbjectRelation::AttachedToTaggedObject,
             });
         }
+    }
+
+    let starts_with_exiled_card = all_words.starts_with(&["exiled", "card"])
+        || all_words.starts_with(&["exiled", "cards"]);
+    let has_exiled_with_phrase = all_words
+        .windows(2)
+        .any(|window| window == ["exiled", "with"]);
+    let owner_only_tail_after_exiled_cards = starts_with_exiled_card
+        && all_words
+            .iter()
+            .skip(2)
+            .all(|word| matches!(*word, "you" | "your" | "they" | "their" | "own" | "owns"));
+    let is_source_linked_exile_reference = has_exiled_with_phrase
+        || (starts_with_exiled_card
+            && (all_words.len() == 2 || owner_only_tail_after_exiled_cards));
+    if is_source_linked_exile_reference {
+        filter.zone = Some(Zone::Exile);
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag: TagKey::from(crate::tag::SOURCE_EXILED_TAG),
+            relation: TaggedOpbjectRelation::IsTaggedObject,
+        });
     }
 
     if all_words.len() == 1 && (all_words[0] == "it" || all_words[0] == "them") {

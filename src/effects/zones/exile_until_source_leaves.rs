@@ -55,7 +55,8 @@ impl EffectExecutor for ExileUntilEffect {
         let objects = resolve_objects_from_spec(game, &self.spec, ctx)?;
         let mut exiled_count = 0_i32;
         for object_id in objects {
-            if game.move_object(object_id, Zone::Exile).is_some() {
+            if let Some(new_id) = game.move_object(object_id, Zone::Exile) {
+                game.add_exiled_with_source_link(ctx.source, new_id);
                 exiled_count += 1;
             }
         }

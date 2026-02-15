@@ -21,7 +21,7 @@ use crate::game_event::DamageTarget;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::snapshot::ObjectSnapshot;
-use crate::tag::TagKey;
+use crate::tag::{SOURCE_EXILED_TAG, TagKey};
 use crate::target::{ChooseSpec, FilterContext, PlayerFilter};
 
 // ============================================================================
@@ -548,10 +548,22 @@ impl<'a> ExecutionContext<'a> {
                 _ => None,
             })
             .collect::<Vec<_>>();
+        let mut tagged_objects = self.tagged_objects.clone();
+        let source_exiled = game
+            .get_exiled_with_source_links(self.source)
+            .iter()
+            .filter_map(|id| {
+                game.object(*id)
+                    .map(|obj| ObjectSnapshot::from_object_with_calculated_characteristics(obj, game))
+            })
+            .collect::<Vec<_>>();
+        if !source_exiled.is_empty() {
+            tagged_objects.insert(TagKey::from(SOURCE_EXILED_TAG), source_exiled);
+        }
         game.filter_context_for(self.controller, Some(self.source))
             .with_iterated_player(self.iterated_player)
             .with_target_players(target_players)
-            .with_tagged_objects(&self.tagged_objects)
+            .with_tagged_objects(&tagged_objects)
     }
 }
 

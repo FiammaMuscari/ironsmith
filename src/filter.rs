@@ -2117,6 +2117,9 @@ impl ObjectFilter {
                     "it" => parts.push("that".to_string()),
                     "enchanted" => parts.push("enchanted".to_string()),
                     "equipped" => parts.push("equipped".to_string()),
+                    crate::tag::SOURCE_EXILED_TAG => {
+                        post_noun_qualifiers.push("exiled with this permanent".to_string());
+                    }
                     _ => {}
                 },
                 TaggedOpbjectRelation::IsNotTaggedObject => {
@@ -2441,6 +2444,10 @@ impl ObjectFilter {
             parts.push("that has an activated ability with {T} in its cost".to_string());
         }
 
+        let has_source_exiled_constraint = self.tagged_constraints.iter().any(|constraint| {
+            constraint.relation == TaggedOpbjectRelation::IsTaggedObject
+                && constraint.tag.as_str() == crate::tag::SOURCE_EXILED_TAG
+        });
         if let Some(zone) = self.zone {
             let zone_name = match zone {
                 Zone::Battlefield => None,
@@ -2451,7 +2458,10 @@ impl ObjectFilter {
                 Zone::Stack => None,
                 Zone::Command => Some("command zone"),
             };
-            if let Some(zone_name) = zone_name {
+            if zone == Zone::Exile && has_source_exiled_constraint {
+                // Keep wording compact: "card exiled with this permanent" is
+                // clearer than appending an extra "in exile" qualifier.
+            } else if let Some(zone_name) = zone_name {
                 if let Some(owner) = &self.owner {
                     parts.push(format!(
                         "in {} {}",

@@ -156,6 +156,9 @@ impl EffectExecutor for MoveToZoneEffect {
                     }
 
                     if let Some(new_id) = game.move_object(object_id, final_zone) {
+                        if final_zone == Zone::Exile {
+                            game.add_exiled_with_source_link(ctx.source, new_id);
+                        }
                         if final_zone == Zone::Library && !self.to_top {
                             if let Some(obj) = game.object(new_id) {
                                 if let Some(player) = game.player_mut(obj.owner) {

@@ -111,7 +111,11 @@ impl ExileEffect {
             match result {
                 EventOutcome::Prevented => return Ok(Some(EffectResult::Prevented)),
                 EventOutcome::Proceed(final_zone) => {
-                    game.move_object(object_id, final_zone);
+                    if let Some(new_id) = game.move_object(object_id, final_zone)
+                        && final_zone == Zone::Exile
+                    {
+                        game.add_exiled_with_source_link(ctx.source, new_id);
+                    }
                     return Ok(None); // Successfully exiled
                 }
                 EventOutcome::Replaced => {
@@ -182,7 +186,8 @@ impl EffectExecutor for ExileEffect {
 
         let mut exiled_count = 0;
         for object_id in objects {
-            if game.move_object(object_id, Zone::Exile).is_some() {
+            if let Some(new_id) = game.move_object(object_id, Zone::Exile) {
+                game.add_exiled_with_source_link(ctx.source, new_id);
                 exiled_count += 1;
             }
         }

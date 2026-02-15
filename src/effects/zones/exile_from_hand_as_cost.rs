@@ -90,7 +90,9 @@ impl EffectExecutor for ExileFromHandAsCostEffect {
         // Exile each chosen card
         let count_exiled = cards_to_exile.len() as i32;
         for card_id in cards_to_exile {
-            game.move_object(card_id, Zone::Exile);
+            if let Some(new_id) = game.move_object(card_id, Zone::Exile) {
+                game.add_exiled_with_source_link(ctx.source, new_id);
+            }
         }
 
         Ok(EffectOutcome::from_result(EffectResult::Count(

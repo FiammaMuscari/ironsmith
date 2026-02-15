@@ -952,6 +952,11 @@ pub struct GameState {
     /// Used by Chrome Mox, Isochron Scepter, etc.
     pub imprinted_cards: HashMap<ObjectId, Vec<ObjectId>>,
 
+    /// Cards exiled by a specific source object ID.
+    ///
+    /// This powers "cards exiled with <this object>" style references.
+    pub exiled_with_source: HashMap<ObjectId, Vec<ObjectId>>,
+
     /// Linked exile groups keyed by generated runtime ID.
     pub linked_exile_groups: HashMap<u64, LinkedExileGroup>,
 
@@ -1030,6 +1035,7 @@ impl GameState {
             saga_final_chapter_resolved: HashSet::new(),
             commanders: HashSet::new(),
             imprinted_cards: HashMap::new(),
+            exiled_with_source: HashMap::new(),
             linked_exile_groups: HashMap::new(),
             next_linked_exile_group_id: 0,
         }
@@ -2994,6 +3000,7 @@ impl GameState {
     /// Clear exile state for an object (when leaving exile).
     pub fn clear_exile_state(&mut self, id: ObjectId) {
         self.madness_exiled.remove(&id);
+        self.remove_exiled_with_source_link(id);
     }
 
     // === Chosen color helpers ===
@@ -3037,6 +3044,30 @@ impl GameState {
     /// Clear imprinted cards when a permanent leaves the battlefield.
     pub fn clear_imprinted_cards(&mut self, permanent_id: ObjectId) {
         self.imprinted_cards.remove(&permanent_id);
+    }
+
+    /// Record that `exiled_card_id` was exiled by `source_id`.
+    pub fn add_exiled_with_source_link(&mut self, source_id: ObjectId, exiled_card_id: ObjectId) {
+        let entry = self.exiled_with_source.entry(source_id).or_default();
+        if !entry.contains(&exiled_card_id) {
+            entry.push(exiled_card_id);
+        }
+    }
+
+    /// Get cards exiled by a specific source object ID.
+    pub fn get_exiled_with_source_links(&self, source_id: ObjectId) -> &[ObjectId] {
+        self.exiled_with_source
+            .get(&source_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Remove an exiled card from all source-link lists.
+    pub fn remove_exiled_with_source_link(&mut self, exiled_card_id: ObjectId) {
+        self.exiled_with_source.retain(|_, linked| {
+            linked.retain(|id| *id != exiled_card_id);
+            !linked.is_empty()
+        });
     }
 
     /// Create a linked exile group and return its generated group ID.
