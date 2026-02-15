@@ -9068,7 +9068,10 @@ fn parse_triggered_line(tokens: &[Token]) -> Result<LineAst, CardTextError> {
                 .is_some_and(|token| token.is_word("whenever") || token.is_word("when"))
         {
             let tail = &tokens[split_idx + 1..];
-            if looks_like_trigger_type_list_tail(tail) || looks_like_trigger_color_list_tail(tail) {
+            if looks_like_trigger_type_list_tail(tail)
+                || looks_like_trigger_color_list_tail(tail)
+                || looks_like_trigger_object_list_tail(tail)
+            {
                 let next_comma_rel = tail
                     .iter()
                     .enumerate()
@@ -9084,7 +9087,9 @@ fn parse_triggered_line(tokens: &[Token]) -> Result<LineAst, CardTextError> {
                         }
                     })
                     .or_else(|| {
-                        if looks_like_trigger_color_list_tail(tail) {
+                        if looks_like_trigger_color_list_tail(tail)
+                            || looks_like_trigger_object_list_tail(tail)
+                        {
                             tail.iter().enumerate().rev().find_map(|(idx, token)| {
                                 if matches!(token, Token::Comma(_)) {
                                     Some(idx)
@@ -9138,6 +9143,39 @@ fn parse_triggered_line(tokens: &[Token]) -> Result<LineAst, CardTextError> {
         "missing comma in triggered line (clause: '{}')",
         words(tokens).join(" ")
     )))
+}
+
+fn looks_like_trigger_object_list_tail(tokens: &[Token]) -> bool {
+    if tokens.is_empty() {
+        return false;
+    }
+
+    let words = words(tokens);
+    if words.is_empty() {
+        return false;
+    }
+
+    let starts_with_or = words.first().copied() == Some("or");
+    let first_candidate = if starts_with_or {
+        words.get(1).copied()
+    } else {
+        words.first().copied()
+    };
+    let Some(first_word) = first_candidate else {
+        return false;
+    };
+
+    let type_like = parse_card_type(first_word).is_some()
+        || first_word
+            .strip_suffix('s')
+            .is_some_and(|stem| parse_card_type(stem).is_some());
+    if !type_like {
+        return false;
+    }
+
+    tokens
+        .iter()
+        .any(|token| matches!(token, Token::Comma(_)))
 }
 
 fn looks_like_trigger_type_list_tail(tokens: &[Token]) -> bool {
@@ -9596,7 +9634,7 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
         .ok_or_else(|| CardTextError::ParseError("empty trigger clause".to_string()))?;
 
     match *last {
-        "attacks" => {
+        "attack" | "attacks" => {
             let subject_tokens = if tokens.len() > 1 {
                 &tokens[..tokens.len() - 1]
             } else {
@@ -17929,12 +17967,22 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
                 card_types.push(card_type);
             }
         }
-        if !card_types.is_empty() {
+        let mut subtypes = Vec::new();
+        for word in &filtered {
+            if let Some(subtype) = parse_subtype_word(word)
+                .or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
+                && !subtypes.contains(&subtype)
+            {
+                subtypes.push(subtype);
+            }
+        }
+        if !card_types.is_empty() || !subtypes.is_empty() {
             if has_card && card_types.len() == 1 && card_types[0] == CardType::Land {
                 return Ok(PredicateAst::ItIsLandCard);
             }
             return Ok(PredicateAst::ItMatches(ObjectFilter {
                 card_types,
+                subtypes,
                 ..Default::default()
             }));
         }
@@ -25744,6 +25792,17 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         } else if types.len() == 1 {
             filter.card_types = types;
         }
+    }
+
+    if saw_permanent && filter.card_types.is_empty() && filter.all_card_types.is_empty() {
+        filter.card_types = vec![
+            CardType::Artifact,
+            CardType::Creature,
+            CardType::Enchantment,
+            CardType::Land,
+            CardType::Planeswalker,
+            CardType::Battle,
+        ];
     }
 
     if saw_spell && saw_permanent {

@@ -8285,3 +8285,98 @@ fn parse_slivercycling_grant_clause_as_static_grant_not_keyword_line() {
         "expected no standalone keyword-only parse for grant clause, got {rendered}"
     );
 }
+
+#[test]
+fn parse_trigger_list_with_internal_type_commas_keeps_full_trigger_subject() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Harsh Mentor Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Whenever an opponent activates an ability of an artifact, creature, or land on the battlefield, this creature deals 2 damage to that player.",
+        )
+        .expect("trigger list with internal commas should keep full trigger subject");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("artifact") && rendered.contains("creature") && rendered.contains("land"),
+        "expected full trigger subject list to remain in rendered text, got {rendered}"
+    );
+    assert!(
+        rendered.contains("deal 2 damage"),
+        "expected trigger effect clause to remain after comma-splitting fix, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_gideon_planeswalker_predicate_keeps_subtype_constraint() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Gideon Predicate Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Exile target white creature that's attacking or blocking. If it was a Gideon planeswalker, you gain 5 life.")
+        .expect("gideon-planeswalker predicate should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("gideon"),
+        "expected subtype constraint to remain in rendered predicate, got {rendered}"
+    );
+    assert!(
+        rendered.contains("planeswalker"),
+        "expected planeswalker card type to remain in rendered predicate, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_permanent_card_target_in_graveyard_sets_permanent_card_types() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Jailbreak Permanent Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "Return target permanent card in an opponent's graveyard to the battlefield under their control.",
+        )
+        .expect("permanent-card graveyard target should parse");
+
+    let spell_debug = format!("{:#?}", def.spell_effect);
+    assert!(
+        spell_debug.contains("Artifact")
+            && spell_debug.contains("Creature")
+            && spell_debug.contains("Enchantment")
+            && spell_debug.contains("Land")
+            && spell_debug.contains("Planeswalker")
+            && spell_debug.contains("Battle"),
+        "expected permanent card-type expansion for graveyard target, got {spell_debug}"
+    );
+    assert!(
+        !spell_debug.contains("Instant") && !spell_debug.contains("Sorcery"),
+        "expected nonpermanent types to stay excluded, got {spell_debug}"
+    );
+}
+
+#[test]
+fn parse_one_or_more_subject_with_attack_verb_is_not_custom_trigger() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "One Or More Attack Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Whenever one or more Phyrexians you control attack, draw a card.")
+        .expect("one-or-more attack trigger should parse as attacks trigger");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        !abilities_debug.contains("unimplemented_trigger"),
+        "expected no fallback custom trigger for singular 'attack' wording, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_due_respect_variant_renders_permanents_enter_tapped_compactly() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Due Respect Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Permanents enter tapped this turn.\nDraw a card.")
+        .expect("due-respect style line should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("permanents enter tapped"),
+        "expected compact permanent enter-tapped wording, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("artifacts, creatures, enchantments, lands, planeswalkers, and battles"),
+        "expected no expanded permanent type list in enter-tapped wording, got {rendered}"
+    );
+}

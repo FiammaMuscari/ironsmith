@@ -1021,6 +1021,25 @@ impl StaticAbilityKind for EnterTappedForFilter {
             && filter.custom_static_markers.is_empty()
             && filter.excluded_custom_static_markers.is_empty();
 
+        let has_all_permanent_types = {
+            let required = [
+                crate::types::CardType::Artifact,
+                crate::types::CardType::Creature,
+                crate::types::CardType::Enchantment,
+                crate::types::CardType::Land,
+                crate::types::CardType::Planeswalker,
+                crate::types::CardType::Battle,
+            ];
+            filter.card_types.len() == required.len()
+                && required
+                    .iter()
+                    .all(|card_type| filter.card_types.contains(card_type))
+        };
+
+        if is_simple_type_list && has_all_permanent_types {
+            return "Permanents enter tapped".to_string();
+        }
+
         if is_simple_type_list && filter.card_types.len() >= 2 {
             let words = filter
                 .card_types
