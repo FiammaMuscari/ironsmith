@@ -12311,6 +12311,96 @@ fn parse_sentence_destroy_creature_type_of_choice(
     ]))
 }
 
+fn parse_sentence_pump_creature_type_of_choice(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Some(get_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("get") || token.is_word("gets"))
+    else {
+        return Ok(None);
+    };
+    if get_idx == 0 {
+        return Ok(None);
+    }
+
+    let subject_tokens = trim_commas(&tokens[..get_idx]);
+    let Some((choice_idx, consumed)) = find_creature_type_choice_phrase(&subject_tokens) else {
+        return Ok(None);
+    };
+    let trailing_subject = trim_commas(&subject_tokens[choice_idx + consumed..]);
+    if !trailing_subject.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported trailing creature-type choice subject clause (clause: '{}')",
+            words(tokens).join(" ")
+        )));
+    }
+
+    let mut filter_tokens = trim_commas(&subject_tokens[..choice_idx]).to_vec();
+    if filter_tokens
+        .first()
+        .is_some_and(|token| token.is_word("all"))
+    {
+        filter_tokens.remove(0);
+    }
+    if filter_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing creature subject before creature-type choice phrase (clause: '{}')",
+            words(tokens).join(" ")
+        )));
+    }
+
+    let mut filter = parse_object_filter(&filter_tokens, false)?;
+    if !filter.card_types.contains(&CardType::Creature) {
+        return Err(CardTextError::ParseError(format!(
+            "creature-type choice pump subject must be creature-based (clause: '{}')",
+            words(tokens).join(" ")
+        )));
+    }
+
+    let modifier = tokens
+        .get(get_idx + 1)
+        .and_then(Token::as_word)
+        .ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing power/toughness modifier in creature-type choice pump clause (clause: '{}')",
+                words(tokens).join(" ")
+            ))
+        })?;
+    let (base_power, base_toughness) = parse_pt_modifier_values(modifier).map_err(|_| {
+        CardTextError::ParseError(format!(
+            "invalid power/toughness modifier in creature-type choice pump clause (clause: '{}')",
+            words(tokens).join(" ")
+        ))
+    })?;
+    let (power, toughness, duration) =
+        parse_get_modifier_values_with_tail(&tokens[get_idx + 1..], base_power, base_toughness)?;
+
+    let chosen_type_tag: TagKey = "chosen_creature_type_ref".into();
+    filter.tagged_constraints.push(TaggedObjectConstraint {
+        tag: chosen_type_tag.clone(),
+        relation: TaggedOpbjectRelation::SharesSubtypeWithTagged,
+    });
+
+    let mut choose_filter = ObjectFilter::creature();
+    choose_filter.controller = Some(PlayerFilter::Any);
+
+    Ok(Some(vec![
+        EffectAst::ChooseObjects {
+            filter: choose_filter,
+            count: ChoiceCount::exactly(1),
+            player: PlayerAst::You,
+            tag: chosen_type_tag,
+        },
+        EffectAst::PumpAll {
+            filter,
+            power,
+            toughness,
+            duration,
+        },
+    ]))
+}
+
 fn parse_sentence_return_targets_of_creature_type_of_choice(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -13252,6 +13342,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "destroy-creature-type-of-choice",
         parser: parse_sentence_destroy_creature_type_of_choice,
+    },
+    SentencePrimitive {
+        name: "pump-creature-type-of-choice",
+        parser: parse_sentence_pump_creature_type_of_choice,
     },
     SentencePrimitive {
         name: "return-multiple-targets",

@@ -6716,6 +6716,24 @@ fn parse_destroy_all_of_creature_type_of_choice_builds_shared_subtype_filter() {
 }
 
 #[test]
+fn parse_pump_all_of_creature_type_of_choice_builds_shared_subtype_filter() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Defensive Maneuvers Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Creatures of the creature type of your choice get +0/+4 until end of turn.")
+        .expect("parse creature-type choice pump-all clause");
+
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("shares a creature type with that object"),
+        "expected shared creature-type qualifier in rendered text, got {joined}"
+    );
+    assert!(
+        joined.contains("get +0/+4 until end of turn"),
+        "expected pump clause to remain after creature-type choice parse, got {joined}"
+    );
+}
+
+#[test]
 fn parse_return_targets_of_creature_type_of_choice_builds_shared_subtype_target_filter() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Selective Snare Variant")
         .card_types(vec![CardType::Sorcery])
