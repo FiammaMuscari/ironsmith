@@ -13993,6 +13993,7 @@ fn parse_same_name_fanout_filter(tokens: &[Token]) -> Result<Option<ObjectFilter
 fn parse_same_name_target_fanout_sentence(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let (tokens, until_source_leaves) = split_until_source_leaves_tail(tokens);
     let words_all = words(tokens);
     let Some(first_word) = words_all.first().copied() else {
         return Ok(None);
@@ -14156,9 +14157,17 @@ fn parse_same_name_target_fanout_sentence(
         "destroy" => EffectAst::Destroy {
             target: first_target,
         },
-        "exile" => EffectAst::Exile {
-            target: first_target,
-        },
+        "exile" => {
+            if until_source_leaves {
+                EffectAst::ExileUntilSourceLeaves {
+                    target: first_target,
+                }
+            } else {
+                EffectAst::Exile {
+                    target: first_target,
+                }
+            }
+        }
         "return" => EffectAst::ReturnToHand {
             target: first_target,
         },
@@ -14166,7 +14175,15 @@ fn parse_same_name_target_fanout_sentence(
     };
     let second_effect = match verb {
         "destroy" => EffectAst::DestroyAll { filter },
-        "exile" => EffectAst::ExileAll { filter },
+        "exile" => {
+            if until_source_leaves {
+                EffectAst::ExileUntilSourceLeaves {
+                    target: TargetAst::Object(filter, None, None),
+                }
+            } else {
+                EffectAst::ExileAll { filter }
+            }
+        }
         "return" => EffectAst::ReturnAllToHand { filter },
         _ => unreachable!("verb already filtered"),
     };
@@ -23163,6 +23180,7 @@ fn parse_destroy(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
 }
 
 fn parse_exile(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
+    let (tokens, until_source_leaves) = split_until_source_leaves_tail(tokens);
     let clause_words = words(tokens);
     let has_face_down_manifest_tail = (clause_words.contains(&"face-down")
         || clause_words.contains(&"facedown")
@@ -23179,10 +23197,22 @@ fn parse_exile(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAs
         let filter_tokens = &tokens[1..];
         let mut filter = parse_object_filter(filter_tokens, false)?;
         apply_exile_subject_owner_context(&mut filter, subject);
-        return Ok(EffectAst::ExileAll { filter });
+        return Ok(if until_source_leaves {
+            EffectAst::ExileUntilSourceLeaves {
+                target: TargetAst::Object(filter, None, None),
+            }
+        } else {
+            EffectAst::ExileAll { filter }
+        });
     }
     if let Some(filter) = parse_target_player_graveyard_filter(tokens) {
-        return Ok(EffectAst::ExileAll { filter });
+        return Ok(if until_source_leaves {
+            EffectAst::ExileUntilSourceLeaves {
+                target: TargetAst::Object(filter, None, None),
+            }
+        } else {
+            EffectAst::ExileAll { filter }
+        });
     }
 
     if clause_words.contains(&"dealt")
@@ -23255,14 +23285,41 @@ fn parse_exile(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAs
         let predicate = parse_predicate(&predicate_tokens)?;
         return Ok(EffectAst::Conditional {
             predicate,
-            if_true: vec![EffectAst::Exile { target }],
+            if_true: vec![if until_source_leaves {
+                EffectAst::ExileUntilSourceLeaves { target }
+            } else {
+                EffectAst::Exile { target }
+            }],
             if_false: Vec::new(),
         });
     }
 
     let mut target = parse_target_phrase(tokens)?;
     apply_exile_subject_hand_owner_context(&mut target, subject);
-    Ok(EffectAst::Exile { target })
+    Ok(if until_source_leaves {
+        EffectAst::ExileUntilSourceLeaves { target }
+    } else {
+        EffectAst::Exile { target }
+    })
+}
+
+fn split_until_source_leaves_tail(tokens: &[Token]) -> (&[Token], bool) {
+    let Some(until_idx) = tokens.iter().rposition(|token| token.is_word("until")) else {
+        return (tokens, false);
+    };
+    if until_idx == 0 {
+        return (tokens, false);
+    }
+    let tail_words = words(&tokens[until_idx + 1..]);
+    let has_source_leaves_tail = tail_words.len() >= 3
+        && tail_words[tail_words.len() - 3] == "leaves"
+        && tail_words[tail_words.len() - 2] == "the"
+        && tail_words[tail_words.len() - 1] == "battlefield";
+    if has_source_leaves_tail {
+        (&tokens[..until_idx], true)
+    } else {
+        (tokens, false)
+    }
 }
 
 fn parse_target_player_graveyard_filter(tokens: &[Token]) -> Option<ObjectFilter> {

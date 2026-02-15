@@ -5363,6 +5363,44 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_same_name_exile_until_source_leaves_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Deputy Variant")
+            .parse_text(
+                "Exile target nonland permanent an opponent controls and all other nonland permanents that player controls with the same name as that permanent until this creature leaves the battlefield.",
+            )
+            .expect("same-name exile-until clause should parse");
+
+        let lines = compiled_lines(&def);
+        let spell_line = lines
+            .iter()
+            .find(|line| line.starts_with("Spell effects:"))
+            .expect("expected spell effects line");
+        assert!(
+            spell_line.contains("until this permanent leaves the battlefield"),
+            "compiled text should preserve exile duration, got {spell_line}"
+        );
+    }
+
+    #[test]
+    fn parse_exile_target_until_source_leaves_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Static Prison Variant")
+            .parse_text(
+                "Exile target nonland permanent an opponent controls until this enchantment leaves the battlefield.",
+            )
+            .expect("target exile-until clause should parse");
+
+        let lines = compiled_lines(&def);
+        let spell_line = lines
+            .iter()
+            .find(|line| line.starts_with("Spell effects:"))
+            .expect("expected spell effects line");
+        assert!(
+            spell_line.contains("until this permanent leaves the battlefield"),
+            "compiled text should preserve exile-until duration, got {spell_line}"
+        );
+    }
+
+    #[test]
     fn parse_rejects_phase_out_until_leaves_clause() {
         let result = CardDefinitionBuilder::new(CardId::new(), "Oubliette Variant").parse_text(
             "When this enchantment enters, target creature phases out until this enchantment leaves the battlefield.",
