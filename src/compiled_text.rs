@@ -10081,6 +10081,58 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     {
         return format!("Return target exiled {} you own to your hand.", card_desc.trim());
     }
+    if let Some((head, hand_tail)) = split_once_ascii_ci(&normalized, " to their owners' hands")
+        && let Some(rest) = strip_prefix_ascii_ci(head.trim(), "Return all ")
+    {
+        let words = rest.split_whitespace().collect::<Vec<_>>();
+        let mut excluded = Vec::new();
+        let mut noun_idx: Option<usize> = None;
+        for (idx, word) in words.iter().enumerate() {
+            if word.eq_ignore_ascii_case("creature") || word.eq_ignore_ascii_case("creatures") {
+                noun_idx = Some(idx);
+                break;
+            }
+            let Some(subtype) = word.strip_prefix("non-") else {
+                excluded.clear();
+                noun_idx = None;
+                break;
+            };
+            let cleaned = subtype.trim_matches(|ch: char| !ch.is_ascii_alphabetic());
+            if cleaned.is_empty() {
+                excluded.clear();
+                noun_idx = None;
+                break;
+            }
+            excluded.push(cleaned.to_string());
+        }
+        if let Some(noun_idx) = noun_idx
+            && !excluded.is_empty()
+            && words
+                .get(noun_idx + 1..)
+                .is_some_and(|tail| tail.iter().all(|word| word.is_empty()))
+        {
+            let excluded_rendered = excluded
+                .into_iter()
+                .map(|subtype| {
+                    if subtype.eq_ignore_ascii_case("Octopus") {
+                        "Octopuses".to_string()
+                    } else {
+                        pluralize_noun_phrase(&subtype)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let punctuation = if hand_tail.trim_start().starts_with('.') {
+                "."
+            } else {
+                ""
+            };
+            return format!(
+                "Return all creatures to their owners' hands except for {}{}",
+                join_with_and(&excluded_rendered),
+                punctuation
+            );
+        }
+    }
     normalized = normalized
         .replace(
             " creature tokens with \"Sacrifice this creature, add {C}\"",

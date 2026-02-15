@@ -17971,7 +17971,7 @@ fn parse_subtype_word(word: &str) -> Option<Subtype> {
         "nightmare" => Some(Subtype::Nightmare),
         "ninja" => Some(Subtype::Ninja),
         "noble" => Some(Subtype::Noble),
-        "octopus" => Some(Subtype::Octopus),
+        "octopus" | "octopuses" => Some(Subtype::Octopus),
         "ogre" => Some(Subtype::Ogre),
         "ooze" => Some(Subtype::Ooze),
         "orc" => Some(Subtype::Orc),
@@ -23275,7 +23275,45 @@ fn parse_return(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         })?;
 
     let target_tokens = &tokens[..to_idx];
-    let destination_words = words(&tokens[to_idx + 1..]);
+    let destination_words_full = words(&tokens[to_idx + 1..]);
+    let mut destination_words = destination_words_full.clone();
+    let mut destination_excluded_subtypes: Vec<Subtype> = Vec::new();
+    if let Some(except_idx) = destination_words_full
+        .windows(2)
+        .position(|window| window == ["except", "for"])
+    {
+        let exception_words = &destination_words_full[except_idx + 2..];
+        if exception_words.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing return exception qualifiers (clause: '{}')",
+                words(tokens).join(" ")
+            )));
+        }
+        for word in exception_words {
+            if matches!(*word, "and" | "or") {
+                continue;
+            }
+            let Some(subtype) = parse_subtype_word(word)
+                .or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
+            else {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported return exception qualifier '{}' (clause: '{}')",
+                    word,
+                    words(tokens).join(" ")
+                )));
+            };
+            if !destination_excluded_subtypes.contains(&subtype) {
+                destination_excluded_subtypes.push(subtype);
+            }
+        }
+        if destination_excluded_subtypes.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing subtype return exception qualifiers (clause: '{}')",
+                words(tokens).join(" ")
+            )));
+        }
+        destination_words.truncate(except_idx);
+    }
     let is_hand = destination_words.contains(&"hand") || destination_words.contains(&"hands");
     let is_battlefield = destination_words.contains(&"battlefield");
     let tapped = destination_words.contains(&"tapped");
@@ -23361,12 +23399,23 @@ fn parse_return(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
                 "missing return-all filter".to_string(),
             ));
         }
-        let filter = parse_object_filter(&target_tokens[1..], false)?;
+        let mut filter = parse_object_filter(&target_tokens[1..], false)?;
+        for subtype in destination_excluded_subtypes {
+            if !filter.excluded_subtypes.contains(&subtype) {
+                filter.excluded_subtypes.push(subtype);
+            }
+        }
         return if is_battlefield {
             Ok(EffectAst::ReturnAllToBattlefield { filter, tapped })
         } else {
             Ok(EffectAst::ReturnAllToHand { filter })
         };
+    }
+    if !destination_excluded_subtypes.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported return exception on non-return-all clause (clause: '{}')",
+            words(tokens).join(" ")
+        )));
     }
 
     let target = parse_target_phrase(target_tokens)?;
