@@ -1008,6 +1008,12 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     {
         return "Destroy all nonland permanents your opponents control".to_string();
     }
+    if lower_normalized == "destroy all an opponent's creature. destroy all an opponent's planeswalker."
+        || lower_normalized == "destroy all an opponent's creature. destroy all an opponent's planeswalker"
+    {
+        return "Destroy all creatures you don't control and all planeswalkers you don't control"
+            .to_string();
+    }
     let is_simple_mass_noun = |noun: &str| {
         matches!(
             noun.trim_end_matches('.'),
@@ -1091,6 +1097,16 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         " and tag it as 'revealed_0'. If the tagged object 'revealed_0' matches land, Return it to its owner's hand.",
     ) {
         return format!("{prefix}. If it's a land card, that player puts it into their hand");
+    }
+    if let Some(prefix) = normalized.strip_suffix(
+        " and tag it as 'revealed_0'. If the tagged object 'revealed_0' matches creature, Return it to its owner's hand",
+    ) {
+        return format!("{prefix}. If it's a creature card, put it into your hand");
+    }
+    if let Some(prefix) = normalized.strip_suffix(
+        " and tag it as 'revealed_0'. If the tagged object 'revealed_0' matches creature, Return it to its owner's hand.",
+    ) {
+        return format!("{prefix}. If it's a creature card, put it into your hand");
     }
     if let Some(rest) = normalized.strip_prefix("For each player, Deal ")
         && let Some((amount, per_player_tail)) =

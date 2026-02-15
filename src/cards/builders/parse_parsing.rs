@@ -1329,6 +1329,13 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
         return parse_triggered_line(&tokens[trigger_idx..]);
     }
 
+    if tokens.first().is_some_and(|token| token.is_word("waterbend"))
+        && let Some(ability) = parse_activated_line(&tokens[1..])?
+    {
+        parser_trace("parse_line:branch=waterbend-activated", &tokens[1..]);
+        return Ok(LineAst::Ability(ability));
+    }
+
     if let Some(colon_idx) = tokens
         .iter()
         .position(|token| matches!(token, Token::Colon(_)))
