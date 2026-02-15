@@ -11587,6 +11587,12 @@ fn parse_sentence_shuffle_graveyard_into_library(
     parse_shuffle_graveyard_into_library_sentence(tokens)
 }
 
+fn parse_sentence_exile_hand_and_graveyard_bundle(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    parse_exile_hand_and_graveyard_bundle_sentence(tokens)
+}
+
 fn parse_sentence_play_from_graveyard(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -12077,6 +12083,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "shuffle-graveyard-into-library",
         parser: parse_sentence_shuffle_graveyard_into_library,
+    },
+    SentencePrimitive {
+        name: "exile-hand-and-graveyard-bundle",
+        parser: parse_sentence_exile_hand_and_graveyard_bundle,
     },
     SentencePrimitive {
         name: "play-from-graveyard",
@@ -15300,6 +15310,105 @@ fn parse_shuffle_graveyard_into_library_sentence(
     ])
 }
 
+fn parse_exile_hand_and_graveyard_bundle_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    if tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let mut clause_tokens = trim_commas(tokens);
+    while clause_tokens
+        .first()
+        .is_some_and(|token| token.is_word("then") || token.is_word("and"))
+    {
+        clause_tokens.remove(0);
+    }
+    if clause_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let clause_words = words(&clause_tokens);
+    if !clause_words.starts_with(&["exile", "all", "cards", "from"]) {
+        return Ok(None);
+    }
+    if !clause_words.contains(&"hand") && !clause_words.contains(&"hands") {
+        return Ok(None);
+    }
+    if !clause_words.contains(&"graveyard") && !clause_words.contains(&"graveyards") {
+        return Ok(None);
+    }
+
+    let first_zone_idx = clause_words
+        .iter()
+        .position(|word| matches!(*word, "hand" | "hands" | "graveyard" | "graveyards"))
+        .ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing zone in exile hand+graveyard clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+    if first_zone_idx <= 4 {
+        return Ok(None);
+    }
+
+    let owner_words = &clause_words[4..first_zone_idx];
+    let owner = match owner_words {
+        ["target", "player"] | ["target", "players"] => PlayerFilter::target_player(),
+        ["target", "opponent"] | ["target", "opponents"] => PlayerFilter::target_opponent(),
+        ["your"] => PlayerFilter::You,
+        _ => return Ok(None),
+    };
+
+    let Some(first_zone) = parse_zone_word(clause_words[first_zone_idx]) else {
+        return Ok(None);
+    };
+    if !matches!(first_zone, Zone::Hand | Zone::Graveyard) {
+        return Ok(None);
+    }
+
+    let Some(and_word) = clause_words.get(first_zone_idx + 1) else {
+        return Ok(None);
+    };
+    if *and_word != "and" {
+        return Ok(None);
+    }
+
+    let mut second_zone_idx = first_zone_idx + 2;
+    while clause_words
+        .get(second_zone_idx)
+        .is_some_and(|word| matches!(*word, "all" | "cards" | "from"))
+    {
+        second_zone_idx += 1;
+    }
+    let Some(second_zone_word) = clause_words.get(second_zone_idx) else {
+        return Ok(None);
+    };
+    if clause_words.len() != second_zone_idx + 1 {
+        return Ok(None);
+    }
+    let Some(second_zone) = parse_zone_word(second_zone_word) else {
+        return Ok(None);
+    };
+    if !matches!(second_zone, Zone::Hand | Zone::Graveyard) || second_zone == first_zone {
+        return Ok(None);
+    }
+
+    let mut first_filter = ObjectFilter::default().in_zone(first_zone);
+    first_filter.owner = Some(owner.clone());
+    let mut second_filter = ObjectFilter::default().in_zone(second_zone);
+    second_filter.owner = Some(owner);
+
+    Ok(Some(vec![
+        EffectAst::ExileAll {
+            filter: first_filter,
+        },
+        EffectAst::ExileAll {
+            filter: second_filter,
+        },
+    ]))
+}
+
 fn parse_for_each_exiled_this_way_sentence(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -16089,20 +16198,31 @@ fn parse_for_each_opponent_doesnt(tokens: &[Token]) -> Result<Option<EffectAst>,
         return Ok(None);
     }
 
-    let has_doesnt =
-        words.contains(&"doesnt") || words.windows(2).any(|pair| pair == ["do", "not"]);
-    if !has_doesnt {
+    let Some((negation_idx, negation_len)) = negated_action_word_index(&words) else {
         return Ok(None);
-    }
+    };
 
-    let comma_idx = tokens
+    let effect_tokens = if let Some(comma_idx) = tokens
         .iter()
         .position(|token| matches!(token, Token::Comma(_)))
-        .ok_or_else(|| {
-            CardTextError::ParseError("missing comma in for each opponent clause".to_string())
-        })?;
+    {
+        trim_commas(&tokens[comma_idx + 1..])
+    } else if let Some(this_way_idx) = words.windows(2).position(|pair| pair == ["this", "way"]) {
+        let effect_token_start = token_index_for_word_index(tokens, this_way_idx + 2)
+            .unwrap_or(tokens.len());
+        trim_commas(&tokens[effect_token_start..])
+    } else {
+        let effect_token_start = token_index_for_word_index(tokens, negation_idx + negation_len)
+            .unwrap_or(tokens.len());
+        trim_commas(&tokens[effect_token_start..])
+    };
+    if effect_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing effect in for each opponent who doesn't clause (clause: '{}')",
+            words.join(" ")
+        )));
+    }
 
-    let effect_tokens = &tokens[comma_idx + 1..];
     let effects = parse_effect_chain(&effect_tokens)?;
     Ok(Some(EffectAst::ForEachOpponentDoesNot { effects }))
 }
@@ -16133,22 +16253,28 @@ fn parse_for_each_player_doesnt(tokens: &[Token]) -> Result<Option<EffectAst>, C
     let inner_tokens = trim_commas(&clause_tokens[start..]);
     let inner_words = words(&inner_tokens);
     let starts_with_who = inner_words.first().copied() == Some("who");
-    let has_doesnt =
-        inner_words.contains(&"doesnt") || inner_words.windows(2).any(|pair| pair == ["do", "not"]);
-    if !starts_with_who || !has_doesnt {
+    let Some((negation_idx, negation_len)) = negated_action_word_index(&inner_words) else {
+        return Ok(None);
+    };
+    if !starts_with_who {
         return Ok(None);
     }
 
-    let effect_start = if let Some(idx) = inner_words.iter().position(|word| *word == "doesnt") {
-        idx + 1
-    } else if let Some(idx) = inner_words.windows(2).position(|pair| pair == ["do", "not"]) {
-        idx + 2
+    let effect_token_start = if let Some(comma_idx) = inner_tokens
+        .iter()
+        .position(|token| matches!(token, Token::Comma(_)))
+    {
+        comma_idx + 1
+    } else if let Some(this_way_idx) = inner_words
+        .windows(2)
+        .position(|pair| pair == ["this", "way"])
+    {
+        token_index_for_word_index(&inner_tokens, this_way_idx + 2).unwrap_or(inner_tokens.len())
     } else {
-        return Ok(None);
+        token_index_for_word_index(&inner_tokens, negation_idx + negation_len)
+            .unwrap_or(inner_tokens.len())
     };
 
-    let effect_token_start =
-        token_index_for_word_index(&inner_tokens, effect_start).unwrap_or(inner_tokens.len());
     let effect_tokens = trim_commas(&inner_tokens[effect_token_start..]);
     if effect_tokens.is_empty() {
         return Err(CardTextError::ParseError(format!(
@@ -16159,6 +16285,21 @@ fn parse_for_each_player_doesnt(tokens: &[Token]) -> Result<Option<EffectAst>, C
 
     let effects = parse_effect_chain(&effect_tokens)?;
     Ok(Some(EffectAst::ForEachPlayerDoesNot { effects }))
+}
+
+fn negated_action_word_index(words: &[&str]) -> Option<(usize, usize)> {
+    if let Some(idx) = words
+        .iter()
+        .position(|word| *word == "doesnt" || *word == "didnt")
+    {
+        return Some((idx, 1));
+    }
+    for (idx, pair) in words.windows(2).enumerate() {
+        if pair == ["do", "not"] || pair == ["did", "not"] {
+            return Some((idx, 2));
+        }
+    }
+    None
 }
 
 fn parse_vote_start_sentence(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {

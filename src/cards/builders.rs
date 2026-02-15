@@ -6195,6 +6195,48 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_for_each_player_who_didnt_tracks_did_not_result() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Strongarm Tactics Variant")
+            .parse_text(
+                "Each player discards a card. Then each player who didn't discard a creature card this way loses 4 life.",
+            )
+            .expect("parse each-player-who-didnt branch");
+
+        let effects = def.spell_effect.expect("spell effects");
+        let debug = format!("{effects:?}");
+        assert!(
+            debug.contains("DidNotHappen"),
+            "expected did-not branch keyed to prior discard result, got {debug}"
+        );
+        assert!(
+            debug.contains("LoseLifeEffect"),
+            "expected lose-life consequence branch, got {debug}"
+        );
+        assert!(
+            !debug.contains("predicate: Happened"),
+            "did-not branch should not collapse into generic happened check, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_exile_target_player_hand_and_graveyard_bundle_sets_owner() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Identity Crisis Variant")
+            .parse_text("Exile all cards from target player's hand and graveyard.")
+            .expect("parse target hand+graveyard exile");
+
+        let effects = def.spell_effect.expect("spell effects");
+        let debug = format!("{effects:?}");
+        assert!(
+            debug.contains("zone: Some(Hand)") && debug.contains("zone: Some(Graveyard)"),
+            "expected both hand and graveyard exile filters, got {debug}"
+        );
+        assert!(
+            debug.matches("owner: Some(Target(Any))").count() >= 2,
+            "expected both exile filters to track target player ownership, got {debug}"
+        );
+    }
+
+    #[test]
     fn parse_self_enters_with_counters_as_static_not_spell_effect() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Self ETB Counter Variant")
             .parse_text("This creature enters with four +1/+1 counters on it.")

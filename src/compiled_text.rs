@@ -465,6 +465,8 @@ fn looks_like_trigger_condition(head: &str) -> bool {
         " gains life",
         " deals damage",
         " deal damage",
+        " create ",
+        " unlock ",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
@@ -472,11 +474,16 @@ fn looks_like_trigger_condition(head: &str) -> bool {
 
 fn normalize_trigger_colon_clause(line: &str) -> Option<String> {
     let (head, tail) = line.split_once(": ")?;
-    if !looks_like_trigger_condition(head) {
+    let normalized_head = if let Some(rest) = head.strip_prefix("You ") {
+        format!("you {rest}")
+    } else {
+        head.to_string()
+    };
+    if !looks_like_trigger_condition(&normalized_head) {
         return None;
     }
 
-    let lower_head = head.to_ascii_lowercase();
+    let lower_head = normalized_head.to_ascii_lowercase();
     if lower_head.starts_with("as an additional cost to cast this spell") {
         return None;
     }
@@ -494,9 +501,9 @@ fn normalize_trigger_colon_clause(line: &str) -> Option<String> {
         || lower_head.starts_with("whenever ")
         || lower_head.starts_with("at the beginning ")
     {
-        Some(format!("{head}, {normalized_tail}"))
+        Some(format!("{normalized_head}, {normalized_tail}"))
     } else {
-        Some(format!("Whenever {head}, {normalized_tail}"))
+        Some(format!("Whenever {normalized_head}, {normalized_tail}"))
     }
 }
 
@@ -16541,6 +16548,28 @@ mod tests {
         assert_eq!(
             normalized,
             "Return all Zombie creature cards from your graveyard to the battlefield tapped, then destroy all Humans."
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_custom_you_create_token_trigger_head() {
+        let normalized = normalize_common_semantic_phrasing(
+            "You create a token: Put a +1/+1 counter on another target creature you control.",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever you create a token, put a +1/+1 counter on another target creature you control."
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_custom_unlock_door_trigger_head() {
+        let normalized = normalize_common_semantic_phrasing(
+            "You unlock this door: Create a token that's a copy of target creature you control.",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever you unlock this door, create a token that's a copy of target creature you control."
         );
     }
 }
