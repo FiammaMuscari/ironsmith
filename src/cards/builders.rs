@@ -6612,6 +6612,42 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             "expected return + -1/-1 counter effects in for-players branch, got {debug}"
         );
     }
+
+    #[test]
+    fn parse_destroy_then_land_controller_graveyard_count_damage_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Roiling Terrain Variant")
+            .parse_text(
+                "Destroy target land, then Roiling Terrain deals damage to that land's controller equal to the number of land cards in that player's graveyard.",
+            )
+            .expect("destroy-then-graveyard-count damage sentence should parse");
+
+        let effects = def.spell_effect.as_ref().expect("spell effects");
+        assert!(
+            effects
+                .iter()
+                .any(|effect| effect.downcast_ref::<DestroyEffect>().is_some()),
+            "expected destroy effect, got {effects:?}"
+        );
+
+        let deal_damage = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<crate::effects::DealDamageEffect>())
+            .expect("expected deal-damage effect");
+        match &deal_damage.amount {
+            Value::Count(filter) => {
+                assert_eq!(filter.zone, Some(Zone::Graveyard));
+                assert!(
+                    filter.card_types.contains(&CardType::Land),
+                    "expected land-card count filter, got {filter:?}"
+                );
+                assert!(
+                    matches!(filter.owner, Some(PlayerFilter::ControllerOf(_))),
+                    "expected controller-owned graveyard count, got {filter:?}"
+                );
+            }
+            other => panic!("expected count-based damage amount, got {other:?}"),
+        }
+    }
 }
 
 #[cfg(all(test, feature = "parser-tests"))]

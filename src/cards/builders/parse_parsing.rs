@@ -11382,6 +11382,79 @@ fn parse_sentence_comma_then_chain_special(
     Ok(Some(head_effects))
 }
 
+fn parse_destroy_then_land_controller_graveyard_count_damage_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Some(comma_then_idx) = tokens.windows(2).position(|window| {
+        matches!(window[0], Token::Comma(_)) && window[1].is_word("then")
+    }) else {
+        return Ok(None);
+    };
+
+    let head_tokens = trim_commas(&tokens[..comma_then_idx]);
+    let tail_tokens = trim_commas(&tokens[comma_then_idx + 2..]);
+    if head_tokens.is_empty() || tail_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let tail_words = words(&tail_tokens);
+    let suffix = [
+        "damage",
+        "to",
+        "that",
+        "lands",
+        "controller",
+        "equal",
+        "to",
+        "the",
+        "number",
+        "of",
+        "land",
+        "cards",
+        "in",
+        "that",
+        "players",
+        "graveyard",
+    ];
+    let Some(suffix_start) = tail_words
+        .windows(suffix.len())
+        .position(|window| window == suffix)
+    else {
+        return Ok(None);
+    };
+    if suffix_start == 0 || !matches!(tail_words[suffix_start - 1], "deal" | "deals") {
+        return Ok(None);
+    }
+    if suffix_start + suffix.len() != tail_words.len() {
+        return Ok(None);
+    }
+
+    let mut head_effects = parse_effect_chain(&head_tokens)?;
+    if !head_effects
+        .iter()
+        .any(|effect| matches!(effect, EffectAst::Destroy { .. }))
+    {
+        return Ok(None);
+    }
+
+    let mut count_filter = ObjectFilter::default();
+    count_filter.zone = Some(Zone::Graveyard);
+    let tagged_ref = crate::target::ObjectRef::tagged(IT_TAG);
+    count_filter.owner = Some(PlayerFilter::ControllerOf(tagged_ref.clone()));
+    count_filter.card_types.push(CardType::Land);
+    head_effects.push(EffectAst::DealDamage {
+        amount: Value::Count(count_filter),
+        target: TargetAst::Player(PlayerFilter::ControllerOf(tagged_ref), span_from_tokens(&tail_tokens)),
+    });
+    Ok(Some(head_effects))
+}
+
+fn parse_sentence_destroy_then_land_controller_graveyard_count_damage(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    parse_destroy_then_land_controller_graveyard_count_damage_sentence(tokens)
+}
+
 fn add_tagged_subtype_constraint_to_target(target: &mut TargetAst, tag: TagKey) -> bool {
     match target {
         TargetAst::Object(filter, _, _) => {
@@ -12254,6 +12327,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "comma-then-chain-special",
         parser: parse_sentence_comma_then_chain_special,
+    },
+    SentencePrimitive {
+        name: "destroy-then-land-controller-graveyard-count-damage",
+        parser: parse_sentence_destroy_then_land_controller_graveyard_count_damage,
     },
     SentencePrimitive {
         name: "draw-then-connive",
