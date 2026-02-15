@@ -8449,9 +8449,29 @@ fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
 
     if words.starts_with(&["cumulative", "upkeep"]) {
         let mut text = "Cumulative upkeep".to_string();
-        if words.len() > 2 {
-            text.push(' ');
-            text.push_str(&words[2..].join(" "));
+        let tail = &words[2..];
+        if !tail.is_empty() {
+            if tail.first().copied() == Some("add")
+                && let Some((cost, consumed)) = leading_mana_symbols_to_oracle(&tail[1..])
+                && consumed + 1 == tail.len()
+            {
+                text = format!("Cumulative upkeep—Add {cost}");
+            } else if let Some((cost, consumed)) = leading_mana_symbols_to_oracle(tail)
+                && consumed == tail.len()
+            {
+                text = format!("Cumulative upkeep {cost}");
+            } else if tail.len() == 3
+                && tail[1] == "or"
+                && let (Some((left, 1)), Some((right, 1))) = (
+                    leading_mana_symbols_to_oracle(&tail[..1]),
+                    leading_mana_symbols_to_oracle(&tail[2..3]),
+                )
+            {
+                text = format!("Cumulative upkeep {left} or {right}");
+            } else {
+                text.push(' ');
+                text.push_str(&tail.join(" "));
+            }
         }
         return Some(KeywordAction::MarkerText(text));
     }

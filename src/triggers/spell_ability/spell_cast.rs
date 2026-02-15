@@ -168,6 +168,56 @@ impl TriggerMatcher for SpellCastTrigger {
 }
 
 fn describe_spell_filter(filter: &ObjectFilter) -> String {
+    if filter.targets_player.is_some() || filter.targets_object.is_some() {
+        let mut base_filter = filter.clone();
+        let targets_player = base_filter.targets_player.take();
+        let targets_object = base_filter.targets_object.take();
+
+        let mut base_text = describe_spell_filter(&base_filter);
+        if base_text == "spell" {
+            base_text = "a spell".to_string();
+        } else if !base_text.to_ascii_lowercase().contains("spell") {
+            base_text.push_str(" spell");
+        }
+
+        let mut target_parts = Vec::new();
+        if let Some(player_filter) = targets_player {
+            target_parts.push(match player_filter {
+                PlayerFilter::You => "you".to_string(),
+                PlayerFilter::Opponent => "an opponent".to_string(),
+                PlayerFilter::Any => "a player".to_string(),
+                PlayerFilter::Specific(_) => "that player".to_string(),
+                PlayerFilter::Teammate => "a teammate".to_string(),
+                PlayerFilter::Active => "the active player".to_string(),
+                PlayerFilter::Defending => "the defending player".to_string(),
+                PlayerFilter::Attacking => "an attacking player".to_string(),
+                PlayerFilter::DamagedPlayer => "the damaged player".to_string(),
+                PlayerFilter::IteratedPlayer => "that player".to_string(),
+                PlayerFilter::Target(inner) => match inner.as_ref() {
+                    PlayerFilter::You => "you".to_string(),
+                    PlayerFilter::Opponent => "an opponent".to_string(),
+                    PlayerFilter::Any => "a player".to_string(),
+                    _ => "target player".to_string(),
+                },
+                PlayerFilter::ControllerOf(_) => "that object's controller".to_string(),
+                PlayerFilter::OwnerOf(_) => "that object's owner".to_string(),
+            });
+        }
+        if let Some(object_filter) = targets_object {
+            target_parts.push(object_filter.description());
+        }
+
+        if !target_parts.is_empty() {
+            let targets = if target_parts.len() == 2 {
+                format!("{} and {}", target_parts[0], target_parts[1])
+            } else {
+                target_parts[0].clone()
+            };
+            return format!("{base_text} that targets {targets}");
+        }
+        return base_text;
+    }
+
     if filter.zone == Some(Zone::Graveyard) {
         let owner_text = match filter.owner.as_ref().unwrap_or(&PlayerFilter::Any) {
             PlayerFilter::You => "your",
@@ -311,6 +361,18 @@ mod tests {
         assert_eq!(
             trigger.display(),
             "Whenever a player casts their second spell each turn"
+        );
+    }
+
+    #[test]
+    fn test_display_spell_filter_with_targeted_object_clause() {
+        let trigger = SpellCastTrigger::new(
+            Some(ObjectFilter::spell().targeting_object(ObjectFilter::source())),
+            PlayerFilter::You,
+        );
+        assert_eq!(
+            trigger.display(),
+            "Whenever you cast a spell that targets this creature"
         );
     }
 }
