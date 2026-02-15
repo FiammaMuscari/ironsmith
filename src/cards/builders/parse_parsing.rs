@@ -9965,13 +9965,10 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
         if is_generic_token_reminder_sentence(&sentence_tokens)
             && effects.last().is_some_and(effect_creates_any_token)
         {
-            parser_trace(
-                "parse_effect_sentences:generic-token-reminder",
-                &sentence_tokens,
-            );
-            let _ = append_token_reminder_to_last_create_effect(&mut effects, &sentence_tokens);
-            sentence_idx += 1;
-            continue;
+            return Err(CardTextError::ParseError(format!(
+                "unsupported standalone token reminder clause (clause: '{}')",
+                words(&sentence_tokens).join(" ")
+            )));
         }
 
         let mut sentence_effects = parse_effect_sentence(&sentence_tokens)?;

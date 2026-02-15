@@ -5128,6 +5128,17 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_rejects_standalone_token_reminder_sentence() {
+        let result = CardDefinitionBuilder::new(CardId::new(), "Sound the Call Variant").parse_text(
+            "Create a 1/1 green Wolf creature token. It has \"This token gets +1/+1 for each card named Sound the Call in each graveyard.\"",
+        );
+        assert!(
+            result.is_err(),
+            "standalone token reminder sentences should fail parse until they compile to token semantics instead of reminder-text masking"
+        );
+    }
+
+    #[test]
     fn parse_labeled_trigger_line_as_triggered_ability() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Heroic Label Variant")
             .parse_text(
