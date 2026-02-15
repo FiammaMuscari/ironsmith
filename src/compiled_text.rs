@@ -259,6 +259,18 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
         parts.push(colors);
     }
 
+    if !card.supertypes.is_empty() {
+        let supertypes = card
+            .supertypes
+            .iter()
+            .map(|supertype| format!("{supertype:?}").to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !supertypes.is_empty() {
+            parts.push(supertypes);
+        }
+    }
+
     if card.subtypes.is_empty()
         && !card.is_creature()
         && card.card_types.contains(&CardType::Artifact)
@@ -277,11 +289,13 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
             .join(" ");
         let use_name_for_creature = card.is_creature()
             && !card.name.trim().is_empty()
-            && card.name.split_whitespace().count() > 1
             && card.name.to_ascii_lowercase() != "token"
             && card.name.to_ascii_lowercase() != subtype_text.to_ascii_lowercase();
         if use_name_for_creature {
             parts.push(card.name.clone());
+            if !subtype_text.is_empty() {
+                parts.push(subtype_text);
+            }
         } else {
             parts.push(subtype_text);
         }
