@@ -258,6 +258,11 @@ impl Trigger {
         Self::new(ThisAttacksTrigger)
     }
 
+    /// Create a "when this creature and at least N other creatures attack" trigger.
+    pub fn this_attacks_with_n_others(other_count: usize) -> Self {
+        Self::new(ThisAttacksWithNOthersTrigger::new(other_count))
+    }
+
     /// Create a "when [filter] attacks" trigger.
     pub fn attacks(filter: ObjectFilter) -> Self {
         Self::new(AttacksTrigger::new(filter))

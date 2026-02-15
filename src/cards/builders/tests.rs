@@ -7548,6 +7548,26 @@ fn render_attack_skip_untap_uses_controller_next_untap_step() {
 }
 
 #[test]
+fn parse_battalion_trigger_without_or_fallback() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Boros Elite Variant")
+        .parse_text(
+            "Battalion — Whenever this creature and at least two other creatures attack, this creature gets +2/+2 until end of turn.",
+        )
+        .expect("battalion trigger should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    let lower = rendered.to_ascii_lowercase();
+    assert!(
+        lower.contains("whenever this creature and at least two other creatures attack"),
+        "expected battalion trigger wording, got {rendered}"
+    );
+    assert!(
+        !lower.contains("or another creature attacks"),
+        "battalion should not degrade into other-creature attack trigger, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_rejects_three_dog_aura_copy_attachment_clause() {
     let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Three Dog Variant")
         .parse_text(

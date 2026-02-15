@@ -711,6 +711,56 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     if let Some(rewritten) = normalize_reveal_tagged_draw_clause(&normalized) {
         normalized = rewritten;
     }
+    if normalized.contains("Add 1 mana of commander's color identity") {
+        normalized = normalized.replace(
+            "Add 1 mana of commander's color identity",
+            "Add one mana of any color in your commander's color identity",
+        );
+    }
+    if normalized.contains("create a Powerstone artifact token, tapped") {
+        normalized = normalized.replace(
+            "create a Powerstone artifact token, tapped",
+            "create a tapped Powerstone token",
+        );
+    }
+    if normalized.contains("Other Elf you control get ") {
+        normalized = normalized.replace("Other Elf you control get ", "Other Elves you control get ");
+    }
+    if let Some(rest) = normalized.strip_prefix("Target player discards ")
+        && let Some((discard_count, loss_tail)) = rest.split_once(" cards. target player loses ")
+        && let Some(loss_amount) = loss_tail.strip_suffix(" life.")
+    {
+        normalized = format!(
+            "Target player discards {discard_count} cards and loses {loss_amount} life."
+        );
+    }
+    if let Some(rest) = normalized.strip_prefix("Whenever this creature attacks, choose another target attacking creature. ")
+        && rest
+            .to_ascii_lowercase()
+            .starts_with("another target attacking creature can't be blocked this turn")
+    {
+        normalized = format!("Whenever this creature attacks, {}", rest.trim());
+    }
+    if let Some((prefix, rest)) =
+        split_once_ascii_ci(&normalized, "for each opponent, that player sacrifices ")
+        && let Some((sacrifice_tail, pay_tail)) = split_once_ascii_ci(
+            rest,
+            " unless that player pays ",
+        )
+    {
+        normalized = format!(
+            "{}, each opponent sacrifices {} of their choice unless they pay {}",
+            prefix.trim_end_matches(|c| c == ',' || c == ' '),
+            sacrifice_tail.trim_end_matches('.'),
+            pay_tail.trim_end_matches('.')
+        );
+    }
+    if normalized.contains("another target creature has base power and toughness") {
+        normalized = normalized.replace(
+            "another target creature has base power and toughness",
+            "target creature other than this creature has base power and toughness",
+        );
+    }
     if let Some(rest) = strip_prefix_ascii_ci(&normalized, "Creatures you control get ")
         && let Some(buff) = strip_suffix_ascii_ci(rest, " until end of turn. Untap all permanent.")
             .or_else(|| strip_suffix_ascii_ci(rest, " until end of turn. Untap all permanent"))
@@ -12860,6 +12910,8 @@ fn normalize_sentence_surface_style(line: &str) -> String {
         .replace("for each a ", "for each ")
         .replace("for each an ", "for each ")
         .replace("Elfs you control get ", "Elves you control get ")
+        .replace("Other Elf you control get ", "Other Elves you control get ")
+        .replace("other Elf you control get ", "other Elves you control get ")
         .replace("Warrior have ", "Warriors have ")
         .replace("warrior have ", "warriors have ")
         .replace(
@@ -15251,6 +15303,67 @@ mod tests {
         assert_eq!(
             normalized,
             "Creatures of the creature type of your choice get +2/+2 and gain Trample until end of turn."
+        );
+    }
+
+    #[test]
+    fn normalizes_other_elf_plural_surface() {
+        let normalized =
+            normalize_common_semantic_phrasing("Other Elf you control get +1/+1.");
+        assert_eq!(normalized, "Other Elves you control get +1/+1.");
+    }
+
+    #[test]
+    fn normalizes_powerstone_tapped_token_surface() {
+        let normalized = normalize_common_semantic_phrasing(
+            "When this creature enters, create a Powerstone artifact token, tapped.",
+        );
+        assert_eq!(
+            normalized,
+            "When this creature enters, create a tapped Powerstone token."
+        );
+    }
+
+    #[test]
+    fn normalizes_discard_and_lose_same_target_surface() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Target player discards 2 cards. target player loses 2 life.",
+        );
+        assert_eq!(
+            normalized,
+            "Target player discards 2 cards and loses 2 life."
+        );
+    }
+
+    #[test]
+    fn normalizes_commander_color_identity_mana_surface() {
+        let normalized =
+            normalize_common_semantic_phrasing("Mana ability 1: {T}: Add 1 mana of commander's color identity.");
+        assert_eq!(
+            normalized,
+            "Mana ability 1: {T}: Add one mana of any color in your commander's color identity."
+        );
+    }
+
+    #[test]
+    fn normalizes_for_each_opponent_sacrifice_unless_pay_surface() {
+        let normalized = normalize_common_semantic_phrasing(
+            "When this creature enters, for each opponent, that player sacrifices a permanent unless that player pays {1}.",
+        );
+        assert_eq!(
+            normalized,
+            "When this creature enters, each opponent sacrifices a permanent of their choice unless they pay {1}"
+        );
+    }
+
+    #[test]
+    fn normalizes_choose_another_attacking_creature_scaffolding() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Whenever this creature attacks, choose another target attacking creature. another target attacking creature can't be blocked this turn.",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever this creature attacks, another target attacking creature can't be blocked this turn."
         );
     }
 

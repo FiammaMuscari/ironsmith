@@ -9377,6 +9377,29 @@ fn split_trigger_or_index(tokens: &[Token]) -> Option<usize> {
 fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> {
     let words = words(tokens);
 
+    if words.len() == 9
+        && words.first().copied() == Some("this")
+        && words.get(1).copied() == Some("creature")
+        && words.get(2).copied() == Some("and")
+        && words.get(3).copied() == Some("at")
+        && words.get(4).copied() == Some("least")
+        && words.get(6).copied() == Some("other")
+        && words
+            .get(7)
+            .is_some_and(|word| *word == "creature" || *word == "creatures")
+        && words
+            .last()
+            .is_some_and(|word| *word == "attack" || *word == "attacks")
+    {
+        let other_count = parse_cardinal_u32(words[5]).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "invalid battalion attacker count in trigger clause (clause: '{}')",
+                words.join(" ")
+            ))
+        })?;
+        return Ok(TriggerSpec::ThisAttacksWithNOthers(other_count));
+    }
+
     if let Some(or_idx) = tokens.iter().position(|token| token.is_word("or"))
         && words.last().copied() == Some("dies")
         && tokens.first().is_some_and(|token| token.is_word("this"))

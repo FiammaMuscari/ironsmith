@@ -186,6 +186,7 @@ struct ParsedAbility {
 #[derive(Debug, Clone)]
 enum TriggerSpec {
     ThisAttacks,
+    ThisAttacksWithNOthers(u32),
     Attacks(ObjectFilter),
     ThisBlocks,
     ThisBlocksObject(ObjectFilter),

@@ -1,6 +1,9 @@
 fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
     match trigger {
         TriggerSpec::ThisAttacks => Trigger::this_attacks(),
+        TriggerSpec::ThisAttacksWithNOthers(other_count) => {
+            Trigger::this_attacks_with_n_others(other_count as usize)
+        }
         TriggerSpec::Attacks(filter) => Trigger::attacks(filter),
         TriggerSpec::ThisBlocks => Trigger::this_blocks(),
         TriggerSpec::ThisBlocksObject(filter) => Trigger::this_blocks_object(filter),
