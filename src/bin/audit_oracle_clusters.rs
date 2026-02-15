@@ -894,6 +894,50 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
         normalized = normalized.replace("Goad it", "Goad them");
         normalized = normalized.replace("goad it", "goad them");
     }
+    if let Some((left, right)) = normalized.split_once(". Proliferate") {
+        let left = left.trim().trim_end_matches('.');
+        let right_tail = right
+            .trim_start_matches('.')
+            .trim_start_matches(',')
+            .trim();
+        if right_tail.is_empty() {
+            normalized = format!("{left}, then proliferate.");
+        } else {
+            normalized = format!("{left}, then proliferate. {right_tail}");
+        }
+    } else if let Some((left, right)) = normalized.split_once(". proliferate") {
+        let left = left.trim().trim_end_matches('.');
+        let right_tail = right
+            .trim_start_matches('.')
+            .trim_start_matches(',')
+            .trim();
+        if right_tail.is_empty() {
+            normalized = format!("{left}, then proliferate.");
+        } else {
+            normalized = format!("{left}, then proliferate. {right_tail}");
+        }
+    }
+    if let Some((left, right)) = normalized.split_once(". Scry ") {
+        let left = left.trim().trim_end_matches('.');
+        let scry_tail = right.trim().trim_end_matches('.');
+        if scry_tail
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_digit() || ch.eq_ignore_ascii_case(&'x'))
+        {
+            normalized = format!("{left}, then scry {scry_tail}.");
+        }
+    } else if let Some((left, right)) = normalized.split_once(". scry ") {
+        let left = left.trim().trim_end_matches('.');
+        let scry_tail = right.trim().trim_end_matches('.');
+        if scry_tail
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_digit() || ch.eq_ignore_ascii_case(&'x'))
+        {
+            normalized = format!("{left}, then scry {scry_tail}.");
+        }
+    }
     normalize_target_count_wording_for_compare(&normalized)
 }
 
