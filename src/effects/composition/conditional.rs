@@ -259,6 +259,7 @@ fn evaluate_condition_simple(
         | Condition::TargetSpellManaSpentToCastAtLeast { .. }
         | Condition::YouControlMoreCreaturesThanTargetSpellController
         | Condition::TargetHasGreatestPowerAmongCreatures
+        | Condition::TargetManaValueLteColorsSpentToCastThisSpell
         | Condition::SourceIsTapped => false,
     }
 }
@@ -486,6 +487,37 @@ fn evaluate_condition(
                 .filter_map(|obj| game.calculated_power(obj.id).or_else(|| obj.power()))
                 .max();
             Ok(max_power.is_some_and(|max| target_power >= max))
+        }
+        Condition::TargetManaValueLteColorsSpentToCastThisSpell => {
+            let target_id = ctx.targets.iter().find_map(|target| match target {
+                crate::executor::ResolvedTarget::Object(id) => Some(*id),
+                _ => None,
+            });
+            let Some(target_id) = target_id else {
+                return Ok(false);
+            };
+            let Some(target_obj) = game.object(target_id) else {
+                return Ok(false);
+            };
+            let Some(source_obj) = game.object(ctx.source) else {
+                return Ok(false);
+            };
+            let target_mana_value = target_obj
+                .mana_cost
+                .as_ref()
+                .map(|cost| cost.mana_value())
+                .unwrap_or(0);
+            let colors_spent = [
+                source_obj.mana_spent_to_cast.white,
+                source_obj.mana_spent_to_cast.blue,
+                source_obj.mana_spent_to_cast.black,
+                source_obj.mana_spent_to_cast.red,
+                source_obj.mana_spent_to_cast.green,
+            ]
+            .into_iter()
+            .filter(|amount| *amount > 0)
+            .count() as u32;
+            Ok(target_mana_value <= colors_spent)
         }
         Condition::SourceIsTapped => Ok(game.is_tapped(ctx.source)),
         Condition::SourceHasNoCounter(counter_type) => Ok(game

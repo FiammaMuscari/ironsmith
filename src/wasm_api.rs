@@ -3262,6 +3262,9 @@ fn describe_condition(
             "the target creature has the greatest power among creatures on the battlefield"
                 .to_string()
         }
+        crate::effect::Condition::TargetManaValueLteColorsSpentToCastThisSpell => {
+            "the target's mana value is less than or equal to the number of colors of mana spent to cast this spell".to_string()
+        }
         crate::effect::Condition::SourceIsTapped => "this source is tapped".to_string(),
         crate::effect::Condition::SourceHasNoCounter(counter_type) => format!(
             "there are no {} counters on this source",

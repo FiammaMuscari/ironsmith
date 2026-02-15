@@ -2798,6 +2798,9 @@ fn compile_effect(
                 PredicateAst::TargetHasGreatestPowerAmongCreatures => {
                     Condition::TargetHasGreatestPowerAmongCreatures
                 }
+                PredicateAst::TargetManaValueLteColorsSpentToCastThisSpell => {
+                    Condition::TargetManaValueLteColorsSpentToCastThisSpell
+                }
                 PredicateAst::ManaSpentToCastThisSpellAtLeast { amount, symbol } => {
                     Condition::ManaSpentToCastThisSpellAtLeast {
                         amount: *amount,

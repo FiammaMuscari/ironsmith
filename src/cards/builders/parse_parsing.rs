@@ -16304,8 +16304,23 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
 
     if is_it {
         if filtered.len() >= 3 && filtered[1] == "mana" && filtered[2] == "value" {
+            let mana_value_tail = &filtered[3..];
+            let compares_to_colors_spent = mana_value_tail
+                == [
+                    "less", "than", "or", "equal", "to", "number", "of", "colors", "of",
+                    "mana", "spent", "to", "cast", "this", "spell",
+                ]
+                || mana_value_tail
+                    == [
+                        "less", "than", "or", "equal", "to", "number", "of", "color", "of",
+                        "mana", "spent", "to", "cast", "this", "spell",
+                    ];
+            if compares_to_colors_spent {
+                return Ok(PredicateAst::TargetManaValueLteColorsSpentToCastThisSpell);
+            }
+
             if let Some((cmp, _consumed)) =
-                parse_filter_comparison_tokens("mana value", &filtered[3..], &filtered)?
+                parse_filter_comparison_tokens("mana value", mana_value_tail, &filtered)?
             {
                 return Ok(PredicateAst::ItMatches(ObjectFilter {
                     mana_value: Some(cmp),
@@ -21588,6 +21603,27 @@ fn parse_exile(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAs
                 clause_words.join(" ")
             )));
         }
+    }
+
+    if let Some(if_idx) = tokens.iter().position(|token| token.is_word("if"))
+        && if_idx > 0
+    {
+        let target_tokens = trim_commas(&tokens[..if_idx]);
+        let predicate_tokens = trim_commas(&tokens[if_idx + 1..]);
+        if target_tokens.is_empty() || predicate_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported conditional exile clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let mut target = parse_target_phrase(&target_tokens)?;
+        apply_exile_subject_hand_owner_context(&mut target, subject);
+        let predicate = parse_predicate(&predicate_tokens)?;
+        return Ok(EffectAst::Conditional {
+            predicate,
+            if_true: vec![EffectAst::Exile { target }],
+            if_false: Vec::new(),
+        });
     }
 
     let mut target = parse_target_phrase(tokens)?;

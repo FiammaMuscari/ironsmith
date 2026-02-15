@@ -301,6 +301,7 @@ enum PredicateAst {
     TargetSpellNoManaSpentToCast,
     YouControlMoreCreaturesThanTargetSpellController,
     TargetHasGreatestPowerAmongCreatures,
+    TargetManaValueLteColorsSpentToCastThisSpell,
     ManaSpentToCastThisSpellAtLeast {
         amount: u32,
         symbol: Option<ManaSymbol>,

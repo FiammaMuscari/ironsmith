@@ -4241,6 +4241,9 @@ fn describe_condition(condition: &Condition) -> String {
             "the target creature has the greatest power among creatures on the battlefield"
                 .to_string()
         }
+        Condition::TargetManaValueLteColorsSpentToCastThisSpell => {
+            "the target's mana value is less than or equal to the number of colors of mana spent to cast this spell".to_string()
+        }
         Condition::SourceIsTapped => "this source is tapped".to_string(),
         Condition::SourceHasNoCounter(counter_type) => format!(
             "there are no {} counters on this source",
@@ -5815,7 +5818,25 @@ fn describe_with_id_then_if(
         match if_effect.predicate {
             EffectPredicate::Happened => "If it happened".to_string(),
             EffectPredicate::HappenedNotReplaced => {
-                "If it happened and wasn't replaced".to_string()
+                let setup_is_destroy = with_id
+                    .effect
+                    .downcast_ref::<crate::effects::DestroyEffect>()
+                    .is_some()
+                    || with_id
+                        .effect
+                        .downcast_ref::<crate::effects::TaggedEffect>()
+                        .and_then(|tagged| {
+                            tagged
+                                .effect
+                                .downcast_ref::<crate::effects::DestroyEffect>()
+                        })
+                        .is_some();
+                if setup_is_destroy
+                {
+                    "If that permanent dies this way".to_string()
+                } else {
+                    "If it happened and wasn't replaced".to_string()
+                }
             }
             _ => format!("If {}", describe_effect_predicate(&if_effect.predicate)),
         }

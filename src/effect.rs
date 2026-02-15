@@ -1201,6 +1201,9 @@ pub enum Condition {
     /// The targeted creature has the greatest power among creatures on the battlefield.
     TargetHasGreatestPowerAmongCreatures,
 
+    /// The target's mana value is less than or equal to the number of colors of mana spent to cast this spell.
+    TargetManaValueLteColorsSpentToCastThisSpell,
+
     /// Source object is tapped
     SourceIsTapped,
 
