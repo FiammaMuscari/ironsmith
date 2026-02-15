@@ -24238,6 +24238,34 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         all_words.remove(0);
     }
 
+    if let Some(idx) = all_words
+        .windows(4)
+        .position(|window| window == ["that", "isnt", "all", "colors"])
+    {
+        filter.all_colors = Some(false);
+        all_words.drain(idx..idx + 4);
+    } else if let Some(idx) = all_words
+        .windows(3)
+        .position(|window| window == ["isnt", "all", "colors"])
+    {
+        filter.all_colors = Some(false);
+        all_words.drain(idx..idx + 3);
+    }
+
+    if let Some(idx) = all_words
+        .windows(5)
+        .position(|window| window == ["that", "isnt", "exactly", "two", "colors"])
+    {
+        filter.exactly_two_colors = Some(false);
+        all_words.drain(idx..idx + 5);
+    } else if let Some(idx) = all_words
+        .windows(4)
+        .position(|window| window == ["isnt", "exactly", "two", "colors"])
+    {
+        filter.exactly_two_colors = Some(false);
+        all_words.drain(idx..idx + 4);
+    }
+
     if all_words.len() >= 2 && matches!(all_words[0], "that" | "those") {
         let noun_idx = if all_words.get(1).is_some_and(|word| *word == "other") {
             2
@@ -25182,6 +25210,8 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         || filter.colorless
         || filter.multicolored
         || filter.monocolored
+        || filter.all_colors.is_some()
+        || filter.exactly_two_colors.is_some()
         || filter.historic
         || filter.nonhistoric
         || filter.power.is_some()
@@ -25225,6 +25255,8 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         || filter.colorless
         || filter.multicolored
         || filter.monocolored
+        || filter.all_colors.is_some()
+        || filter.exactly_two_colors.is_some()
         || filter.historic
         || filter.nonhistoric
         || filter.power.is_some()

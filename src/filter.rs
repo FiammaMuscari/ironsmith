@@ -419,6 +419,12 @@ pub struct ObjectFilter {
     /// If true, must be monocolored (exactly 1 color)
     pub monocolored: bool,
 
+    /// If set, require (true) or exclude (false) objects that are all five colors.
+    pub all_colors: Option<bool>,
+
+    /// If set, require (true) or exclude (false) objects that are exactly two colors.
+    pub exactly_two_colors: Option<bool>,
+
     /// If true, must be historic (artifact, legendary, or Saga)
     pub historic: bool,
 
@@ -1187,6 +1193,20 @@ impl ObjectFilter {
             return false;
         }
 
+        if let Some(require_all_colors) = self.all_colors {
+            let is_all_colors = object.colors().count() == 5;
+            if require_all_colors != is_all_colors {
+                return false;
+            }
+        }
+
+        if let Some(require_exactly_two_colors) = self.exactly_two_colors {
+            let is_exactly_two_colors = object.colors().count() == 2;
+            if require_exactly_two_colors != is_exactly_two_colors {
+                return false;
+            }
+        }
+
         let is_historic = object.card_types.contains(&CardType::Artifact)
             || object.supertypes.contains(&Supertype::Legendary)
             || object.subtypes.contains(&Subtype::Saga);
@@ -1667,6 +1687,20 @@ impl ObjectFilter {
         // Monocolored check
         if self.monocolored && snapshot.colors.count() != 1 {
             return false;
+        }
+
+        if let Some(require_all_colors) = self.all_colors {
+            let is_all_colors = snapshot.colors.count() == 5;
+            if require_all_colors != is_all_colors {
+                return false;
+            }
+        }
+
+        if let Some(require_exactly_two_colors) = self.exactly_two_colors {
+            let is_exactly_two_colors = snapshot.colors.count() == 2;
+            if require_exactly_two_colors != is_exactly_two_colors {
+                return false;
+            }
         }
 
         let is_historic = snapshot.card_types.contains(&CardType::Artifact)
@@ -2220,6 +2254,20 @@ impl ObjectFilter {
         }
         if self.monocolored {
             parts.push("monocolored".to_string());
+        }
+        if let Some(all_colors) = self.all_colors {
+            if all_colors {
+                post_noun_qualifiers.push("that are all colors".to_string());
+            } else {
+                post_noun_qualifiers.push("that are not all colors".to_string());
+            }
+        }
+        if let Some(exactly_two_colors) = self.exactly_two_colors {
+            if exactly_two_colors {
+                post_noun_qualifiers.push("that are exactly two colors".to_string());
+            } else {
+                post_noun_qualifiers.push("that are not exactly two colors".to_string());
+            }
         }
         if self.historic {
             parts.push("historic".to_string());

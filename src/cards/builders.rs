@@ -2997,6 +2997,42 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_destroy_each_creature_isnt_all_colors_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Iridian Variant")
+            .parse_text("Destroy each creature that isn't all colors.")
+            .expect("destroy non-all-colors clause should parse");
+
+        let lines = crate::compiled_text::compiled_lines(&def);
+        let spell_line = lines
+            .iter()
+            .find(|line| line.starts_with("Spell effects:"))
+            .expect("expected spell effects line");
+        assert!(
+            spell_line.contains("not all colors"),
+            "compiled text should preserve all-colors exclusion, got {spell_line}"
+        );
+    }
+
+    #[test]
+    fn parse_exile_target_nonland_not_exactly_two_colors_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Ravnica Variant")
+            .parse_text(
+                "Exile target nonland permanent an opponent controls that isn't exactly two colors.",
+            )
+            .expect("exile target not-exactly-two-colors clause should parse");
+
+        let lines = crate::compiled_text::compiled_lines(&def);
+        let spell_line = lines
+            .iter()
+            .find(|line| line.starts_with("Spell effects:"))
+            .expect("expected spell effects line");
+        assert!(
+            spell_line.contains("not exactly two colors"),
+            "compiled text should preserve exact-two-colors exclusion, got {spell_line}"
+        );
+    }
+
+    #[test]
     fn parse_base_power_toughness_with_unknown_tail_errors() {
         let result = CardDefinitionBuilder::new(CardId::new(), "Bad Base PT Tail")
             .parse_text("Target creature has base power and toughness 1/1 while enchanted.");
