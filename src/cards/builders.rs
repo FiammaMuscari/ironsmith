@@ -304,6 +304,7 @@ enum PredicateAst {
     TargetSpellControllerIsPoisoned,
     TargetSpellNoManaSpentToCast,
     YouControlMoreCreaturesThanTargetSpellController,
+    TargetIsBlocked,
     TargetHasGreatestPowerAmongCreatures,
     TargetManaValueLteColorsSpentToCastThisSpell,
     ManaSpentToCastThisSpellAtLeast {
@@ -2618,6 +2619,51 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             }
             other => panic!("expected untap restriction, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_targets_dont_untap_during_controller_next_untap_step_uses_controller_duration() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Frost Breath Variant")
+            .card_types(vec![CardType::Instant])
+            .parse_text(
+                "Tap up to two target creatures. Those creatures don't untap during their controller's next untap step.",
+            )
+            .expect("controller-next-untap-step tap clause should parse");
+
+        let effects = def.spell_effect.as_ref().expect("spell effect");
+        let cant = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<CantEffect>())
+            .expect("expected untap restriction");
+        assert_eq!(
+            cant.duration,
+            crate::effect::Until::ControllersNextUntapStep
+        );
+    }
+
+    #[test]
+    fn parse_enchanted_creature_dies_return_under_your_control_uses_move_to_zone() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "False Demise Variant")
+            .card_types(vec![CardType::Enchantment])
+            .subtypes(vec![Subtype::Aura])
+            .parse_text(
+                "Enchant creature\nWhen enchanted creature dies, return that card to the battlefield under your control.",
+            )
+            .expect("false-demise style trigger should parse");
+
+        let abilities_debug = format!("{:#?}", def.abilities);
+        assert!(
+            abilities_debug.contains("MoveToZoneEffect"),
+            "expected move-to-zone return effect, got {abilities_debug}"
+        );
+        assert!(
+            abilities_debug.contains("battlefield_controller: You"),
+            "expected under-your-control return semantics, got {abilities_debug}"
+        );
+        assert!(
+            !abilities_debug.contains("ReturnFromGraveyardToBattlefieldEffect"),
+            "expected compile to avoid target-only graveyard return helper, got {abilities_debug}"
+        );
     }
 
     #[test]

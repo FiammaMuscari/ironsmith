@@ -3186,6 +3186,9 @@ fn describe_until(
         crate::effect::Until::Forever => "forever".to_string(),
         crate::effect::Until::EndOfTurn => "until end of turn".to_string(),
         crate::effect::Until::YourNextTurn => "until your next turn".to_string(),
+        crate::effect::Until::ControllersNextUntapStep => {
+            "during its controller's next untap step".to_string()
+        }
         crate::effect::Until::EndOfCombat => "until end of combat".to_string(),
         crate::effect::Until::ThisLeavesTheBattlefield => {
             "while this remains on the battlefield".to_string()
@@ -3277,6 +3280,7 @@ fn describe_condition(
             describe_counter_type(*counter_type)
         ),
         crate::effect::Condition::TargetIsAttacking => "the target is attacking".to_string(),
+        crate::effect::Condition::TargetIsBlocked => "the target is blocked".to_string(),
         crate::effect::Condition::ManaSpentToCastThisSpellAtLeast { amount, symbol } => {
             if let Some(symbol) = symbol {
                 format!(

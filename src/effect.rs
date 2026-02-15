@@ -1111,6 +1111,9 @@ pub enum Until {
     /// Until your next turn
     YourNextTurn,
 
+    /// Until that permanent's controller's next untap step
+    ControllersNextUntapStep,
+
     /// Until end of combat
     EndOfCombat,
 
@@ -1178,6 +1181,9 @@ pub enum Condition {
 
     /// Target is attacking
     TargetIsAttacking,
+
+    /// Target is blocked
+    TargetIsBlocked,
 
     /// The targeted spell was kicked.
     TargetWasKicked,

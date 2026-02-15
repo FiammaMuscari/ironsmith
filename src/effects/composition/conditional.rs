@@ -253,6 +253,7 @@ fn evaluate_condition_simple(
         // Target-dependent conditions default to false during casting
         Condition::TargetIsTapped
         | Condition::TargetIsAttacking
+        | Condition::TargetIsBlocked
         | Condition::TargetWasKicked
         | Condition::TargetSpellCastOrderThisTurn(_)
         | Condition::TargetSpellControllerIsPoisoned
@@ -544,6 +545,14 @@ fn evaluate_condition(
                             && game.is_tapped(*id),
                     );
                 }
+            }
+            Ok(false)
+        }
+        Condition::TargetIsBlocked => {
+            if let Some(crate::executor::ResolvedTarget::Object(id)) = ctx.targets.first()
+                && let Some(combat) = &game.combat
+            {
+                return Ok(crate::combat_state::is_blocked(combat, *id));
             }
             Ok(false)
         }

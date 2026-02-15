@@ -228,6 +228,16 @@ impl RestrictionEffectInstance {
                 !(current_turn > self.expires_end_of_turn
                     && game.turn.active_player == self.controller)
             }
+            crate::effect::Until::ControllersNextUntapStep => {
+                if current_turn <= self.expires_end_of_turn
+                    || game.turn.active_player != self.controller
+                {
+                    true
+                } else {
+                    matches!(game.turn.phase, Phase::Beginning)
+                        && matches!(game.turn.step, Some(Step::Untap))
+                }
+            }
             crate::effect::Until::ThisLeavesTheBattlefield => game
                 .object(self.source)
                 .is_some_and(|obj| obj.zone == Zone::Battlefield),

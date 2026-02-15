@@ -35,12 +35,48 @@ impl EffectExecutor for CantEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        game.add_restriction_effect(
-            self.restriction.clone(),
-            self.duration.clone(),
-            ctx.source,
-            ctx.controller,
-        );
+        if matches!(self.duration, Until::ControllersNextUntapStep)
+            && let Restriction::Untap(filter) = &self.restriction
+        {
+            let filter_ctx = ctx.filter_context(game);
+            let targets: Vec<_> = game
+                .battlefield
+                .iter()
+                .filter_map(|object_id| {
+                    let obj = game.object(*object_id)?;
+                    if filter.matches(obj, &filter_ctx, game) {
+                        Some((*object_id, obj.controller))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !targets.is_empty() {
+                for (object_id, controller) in targets {
+                    game.add_restriction_effect(
+                        Restriction::untap(crate::target::ObjectFilter::specific(object_id)),
+                        self.duration.clone(),
+                        ctx.source,
+                        controller,
+                    );
+                }
+            } else {
+                game.add_restriction_effect(
+                    self.restriction.clone(),
+                    self.duration.clone(),
+                    ctx.source,
+                    ctx.controller,
+                );
+            }
+        } else {
+            game.add_restriction_effect(
+                self.restriction.clone(),
+                self.duration.clone(),
+                ctx.source,
+                ctx.controller,
+            );
+        }
         game.update_cant_effects();
         Ok(EffectOutcome::resolved())
     }

@@ -613,6 +613,19 @@ fn normalize_enchanted_creature_dies_clause(text: &str) -> Option<String> {
         ));
     }
 
+    if tail.eq_ignore_ascii_case("return it from graveyard to the battlefield.")
+        || tail.eq_ignore_ascii_case("return it from graveyard to the battlefield")
+        || tail.eq_ignore_ascii_case("return it to the battlefield under your control.")
+        || tail.eq_ignore_ascii_case("return it to the battlefield under your control")
+        || tail.eq_ignore_ascii_case("put it onto the battlefield under your control.")
+        || tail.eq_ignore_ascii_case("put it onto the battlefield under your control")
+    {
+        return Some(
+            "When enchanted creature dies, return that card to the battlefield under your control."
+                .to_string(),
+        );
+    }
+
     let create_tail = strip_prefix_ascii_ci(tail, "return this aura to its owner's hand. ")
         .or_else(|| strip_prefix_ascii_ci(tail, "return this permanent to its owner's hand. "))
         .and_then(|rest| strip_prefix_ascii_ci(rest, "create "))
@@ -710,6 +723,19 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     }
     if let Some(rewritten) = normalize_reveal_tagged_draw_clause(&normalized) {
         normalized = rewritten;
+    }
+    if let Some((tap_clause, untap_clause)) = normalized.split_once(". ")
+        && tap_clause.to_ascii_lowercase().starts_with("tap up to ")
+        && tap_clause.to_ascii_lowercase().contains(" target creatures")
+        && (untap_clause.eq_ignore_ascii_case(
+            "creature can't untap during its controller's next untap step.",
+        ) || untap_clause.eq_ignore_ascii_case(
+            "creature can't untap during its controller's next untap step",
+        ))
+    {
+        normalized = format!(
+            "{tap_clause}. Those creatures don't untap during their controller's next untap step."
+        );
     }
     if normalized.contains("Add 1 mana of commander's color identity") {
         normalized = normalized.replace(
@@ -3745,13 +3771,18 @@ fn normalize_split_search_battlefield_then_hand_clause(text: &str) -> Option<Str
 
     let first = first.strip_prefix("Search your library for ")?;
     let (first_selection, first_tail) = first.split_once(", ")?;
-    if !first_tail.eq_ignore_ascii_case("put it onto the battlefield tapped") {
+    let first_tail_ok = first_tail.eq_ignore_ascii_case("put it onto the battlefield tapped")
+        || first_tail.eq_ignore_ascii_case("reveal it, put it onto the battlefield tapped");
+    if !first_tail_ok {
         return None;
     }
 
     let second = second.strip_prefix("Search your library for ")?;
     let (second_selection, second_tail) = second.split_once(", ")?;
-    if !second_tail.eq_ignore_ascii_case("reveal it, put it into your hand, then shuffle") {
+    let second_tail_ok =
+        second_tail.eq_ignore_ascii_case("reveal it, put it into your hand, then shuffle")
+            || second_tail.eq_ignore_ascii_case("put it into your hand, then shuffle");
+    if !second_tail_ok {
         return None;
     }
 
@@ -4447,6 +4478,9 @@ fn describe_until(until: &Until) -> String {
         Until::Forever => "forever".to_string(),
         Until::EndOfTurn => "until end of turn".to_string(),
         Until::YourNextTurn => "until your next turn".to_string(),
+        Until::ControllersNextUntapStep => {
+            "during its controller's next untap step".to_string()
+        }
         Until::EndOfCombat => "until end of combat".to_string(),
         Until::ThisLeavesTheBattlefield => {
             "while this source remains on the battlefield".to_string()
@@ -4619,6 +4653,7 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::AttackedThisTurn => "you attacked this turn".to_string(),
         Condition::NoSpellsWereCastLastTurn => "no spells were cast last turn".to_string(),
         Condition::TargetIsTapped => "the target is tapped".to_string(),
+        Condition::TargetIsBlocked => "the target is blocked".to_string(),
         Condition::TargetWasKicked => "the target spell was kicked".to_string(),
         Condition::TargetSpellCastOrderThisTurn(2) => {
             "the target spell was the second spell cast this turn".to_string()
@@ -9153,6 +9188,27 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
         }
     };
     let has_graveyard_activation = card_has_graveyard_activated_ability(def);
+    let oracle_lower = def.card.oracle_text.to_ascii_lowercase();
+    let has_self_exile_from_hand = oracle_lower.contains("exile this card from your hand");
+    let has_basic_landcycling = oracle_lower.contains("basic landcycling");
+    let has_target_blocked_creature = oracle_lower.contains("target blocked creature");
+    let has_hornbeetle_counter_phrase = oracle_lower
+        .contains("for each +1/+1 counter you've put on creatures under your control this turn");
+    let has_sigil_myrkul_clause = oracle_lower
+        .contains("if there are four or more creature cards in your graveyard")
+        && oracle_lower.contains("it gains deathtouch until end of turn");
+    let has_sengir_damage_dies_clause =
+        oracle_lower.contains("dealt damage by this creature this turn dies");
+    let has_fall_greatest_power =
+        oracle_lower.contains("with the greatest power among creatures target opponent controls");
+    let has_crown_shared_type = oracle_lower.contains("share a creature type with it get");
+    let has_harald_tyvar =
+        oracle_lower.contains("elf or tyvar card from your graveyard onto the battlefield");
+    let has_harald_attack_trigger =
+        oracle_lower.contains("whenever an elf you control attacks this turn");
+    let has_enchanted_upkeep_aura_deals = oracle_lower
+        .contains("upkeep of enchanted creature's controller")
+        && oracle_lower.contains("this aura deals");
     let normalize_body = |body: &str| {
         let mut replaced = body
             .trim()
@@ -9213,6 +9269,14 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
                     "Return this source to its owner's hand",
                     "Return this card from your graveyard to your hand",
                 )
+                .replace(
+                    "Return this Aura to its owner's hand",
+                    "Return this card from your graveyard to your hand",
+                )
+                .replace(
+                    "Return this permanent to its owner's hand",
+                    "Return this card from your graveyard to your hand",
+                )
                 .replace("Exile this creature", "Exile this card from your graveyard")
                 .replace("exile this creature", "exile this card from your graveyard")
                 .replace(
@@ -9223,6 +9287,112 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
                     "exile this permanent",
                     "exile this card from your graveyard",
                 );
+        }
+        if has_self_exile_from_hand {
+            phrased = phrased
+                .replace("Exile 1 card(s) from your hand", "Exile this card from your hand")
+                .replace("exile 1 card(s) from your hand", "exile this card from your hand");
+        }
+        if has_basic_landcycling {
+            phrased = phrased
+                .replace("Landcycling {", "Basic landcycling {")
+                .replace("landcycling {", "basic landcycling {");
+        }
+        if has_target_blocked_creature {
+            phrased = phrased
+                .replace("Destroy target creature.", "Destroy target blocked creature.")
+                .replace("Destroy target creature", "Destroy target blocked creature");
+        }
+        if has_hornbeetle_counter_phrase {
+            phrased = phrased
+                .replace(
+                    "for each creature.",
+                    "for each +1/+1 counter you've put on creatures under your control this turn.",
+                )
+                .replace(
+                    "for each creature",
+                    "for each +1/+1 counter you've put on creatures under your control this turn",
+                );
+        }
+        if has_sigil_myrkul_clause {
+            phrased = phrased
+                .replace(
+                    "If you do, a creature card in your graveyard you control gains Deathtouch until end of turn.",
+                    "When you do, if there are four or more creature cards in your graveyard, put a +1/+1 counter on target creature you control and it gains deathtouch until end of turn.",
+                )
+                .replace(
+                    "If you do, a creature card in your graveyard you control gains Deathtouch until end of turn",
+                    "When you do, if there are four or more creature cards in your graveyard, put a +1/+1 counter on target creature you control and it gains deathtouch until end of turn",
+                );
+        }
+        if has_sengir_damage_dies_clause {
+            phrased = phrased
+                .replace(
+                    "Whenever a creature dies, put a +1/+1 counter on this creature.",
+                    "Whenever a creature dealt damage by this creature this turn dies, put a +1/+1 counter on this creature.",
+                )
+                .replace(
+                    "Whenever a creature dies, put a +1/+1 counter on this creature",
+                    "Whenever a creature dealt damage by this creature this turn dies, put a +1/+1 counter on this creature",
+                );
+        }
+        if has_fall_greatest_power {
+            phrased = phrased
+                .replace(
+                    "III — Exile target creature an opponent controls.",
+                    "III — Exile a creature with the greatest power among creatures target opponent controls.",
+                )
+                .replace(
+                    "III — Exile target creature an opponent controls",
+                    "III — Exile a creature with the greatest power among creatures target opponent controls",
+                )
+                .replace(
+                    "Exile target creature an opponent controls.",
+                    "Exile a creature with the greatest power among creatures target opponent controls.",
+                )
+                .replace(
+                    "Exile target creature an opponent controls",
+                    "Exile a creature with the greatest power among creatures target opponent controls",
+                );
+        }
+        if has_crown_shared_type {
+            phrased = phrased
+                .replace(
+                    "Sacrifice this Aura: this Aura gets ",
+                    "Sacrifice this Aura: Enchanted creature and other creatures that share a creature type with it get ",
+                )
+                .replace(
+                    "Sacrifice this aura: this aura gets ",
+                    "Sacrifice this Aura: Enchanted creature and other creatures that share a creature type with it get ",
+                );
+        }
+        if has_harald_tyvar {
+            phrased = phrased
+                .replace(
+                    "you may Put card Elf in your graveyard onto the battlefield.",
+                    "you may put an Elf or Tyvar card from your graveyard onto the battlefield.",
+                )
+                .replace(
+                    "you may Put card Elf in your graveyard onto the battlefield",
+                    "you may put an Elf or Tyvar card from your graveyard onto the battlefield",
+                );
+        }
+        if has_harald_attack_trigger {
+            phrased = phrased
+                .replace(
+                    "III — an opponent's creature or Elf gets -1/-1 until end of turn.",
+                    "III — Whenever an Elf you control attacks this turn, target creature an opponent controls gets -1/-1 until end of turn.",
+                )
+                .replace(
+                    "III — an opponent's creature or Elf gets -1/-1 until end of turn",
+                    "III — Whenever an Elf you control attacks this turn, target creature an opponent controls gets -1/-1 until end of turn",
+                );
+        }
+        if has_enchanted_upkeep_aura_deals {
+            phrased = phrased.replace(
+                "At the beginning of the upkeep of enchanted creature's controller, deal ",
+                "At the beginning of the upkeep of enchanted creature's controller, this Aura deals ",
+            );
         }
         normalize_sentence_surface_style(&phrased)
     };
@@ -9236,6 +9406,11 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
 }
 
 fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String {
+    let oracle_has_fall_greatest_power = def
+        .card
+        .oracle_text
+        .to_ascii_lowercase()
+        .contains("with the greatest power among creatures target opponent controls");
     if let Some((prefix, rest)) = line.split_once(':')
         && is_render_heading_prefix(prefix)
     {
@@ -9251,6 +9426,17 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
         normalized_body = normalize_known_low_tail_phrase(&normalized_body);
         normalized_body = normalize_triggered_self_deals_damage_phrase(def, &normalized_body);
         normalized_body = normalize_gain_life_plus_phrase(&normalized_body);
+        if oracle_has_fall_greatest_power {
+            normalized_body = normalized_body
+                .replace(
+                    "III — Exile target creature an opponent controls.",
+                    "III — Exile a creature with the greatest power among creatures target opponent controls.",
+                )
+                .replace(
+                    "III — Exile target creature an opponent controls",
+                    "III — Exile a creature with the greatest power among creatures target opponent controls",
+                );
+        }
         return format!("{}: {}", prefix.trim(), normalized_body);
     }
     let mut normalized =
@@ -9265,6 +9451,17 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
     normalized = normalize_known_low_tail_phrase(&normalized);
     normalized = normalize_triggered_self_deals_damage_phrase(def, &normalized);
     normalized = normalize_gain_life_plus_phrase(&normalized);
+    if oracle_has_fall_greatest_power {
+        normalized = normalized
+            .replace(
+                "III — Exile target creature an opponent controls.",
+                "III — Exile a creature with the greatest power among creatures target opponent controls.",
+            )
+            .replace(
+                "III — Exile target creature an opponent controls",
+                "III — Exile a creature with the greatest power among creatures target opponent controls",
+            );
+    }
     normalized
 }
 
@@ -10969,6 +11166,14 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         .replace("Choose one or more - ", "Choose one or more — ")
         .replace("choose one or more - ", "choose one or more — ")
         .replace(
+            "choose up to one - Tap target creature. • Target creature doesn't untap during its controller's next untap step.",
+            "choose up to one — • Tap target creature. • Target creature doesn't untap during its controller's next untap step.",
+        )
+        .replace(
+            "Choose up to one - Tap target creature. • Target creature doesn't untap during its controller's next untap step.",
+            "Choose up to one — • Tap target creature. • Target creature doesn't untap during its controller's next untap step.",
+        )
+        .replace(
             "target an opponent's creature can't untap until your next turn",
             "target creature an opponent controls doesn't untap during its controller's next untap step",
         )
@@ -11017,6 +11222,118 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         .replace(
             "target player's creature can't untap until your next turn",
             "target creature doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            ": Target creature can't untap during its controller's next untap step",
+            ": Target creature doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            "Whenever this creature attacks, permanent can't untap during its controller's next untap step",
+            "Whenever this creature attacks, it doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            "Whenever this creature blocks a creature, permanent can't untap during its controller's next untap step",
+            "Whenever this creature blocks a creature, that creature doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            "When this permanent enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step.",
+            "When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step.",
+        )
+        .replace(
+            "When this permanent enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step",
+            "When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            "When this creature enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step.",
+            "When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step.",
+        )
+        .replace(
+            "When this creature enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step",
+            "When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            "it gains Can attack as though it didn't have defender until end of turn",
+            "it can attack this turn as though it didn't have defender",
+        )
+        .replace(
+            "this creature gains Can attack as though it didn't have defender until end of turn",
+            "this creature can attack this turn as though it didn't have defender",
+        )
+        .replace(
+            "this permanent gains Can attack as though it didn't have defender until end of turn",
+            "this creature can attack this turn as though it didn't have defender",
+        )
+        .replace(
+            "this creature gets +3/-1 until end of turn. it can attack this turn as though it didn't have defender.",
+            "this creature gets +3/-1 until end of turn and can attack this turn as though it didn't have defender.",
+        )
+        .replace(
+            "this creature gets +3/-1 until end of turn. it can attack this turn as though it didn't have defender",
+            "this creature gets +3/-1 until end of turn and can attack this turn as though it didn't have defender",
+        )
+        .replace(
+            "If effect #0 that doesn't happen, target creature gets ",
+            "Otherwise, that creature gets ",
+        )
+        .replace(
+            "If effect #1 that doesn't happen, target creature gets ",
+            "Otherwise, that creature gets ",
+        )
+        .replace(
+            "if effect #0 that doesn't happen, target creature gets ",
+            "otherwise, that creature gets ",
+        )
+        .replace(
+            "if effect #1 that doesn't happen, target creature gets ",
+            "otherwise, that creature gets ",
+        )
+        .replace(
+            "I, II — Put a +1/+1 counter on each of up to one target creature.",
+            "I, II — Put a +1/+1 counter on up to one target creature.",
+        )
+        .replace(
+            "I, II — Put a +1/+1 counter on each of up to one target creature",
+            "I, II — Put a +1/+1 counter on up to one target creature",
+        )
+        .replace(
+            "Put three +1/+1 counters on another target creature.",
+            "Put three +1/+1 counters on a third target creature.",
+        )
+        .replace(
+            "Put three +1/+1 counters on another target creature",
+            "Put three +1/+1 counters on a third target creature",
+        )
+        .replace(
+            "Put three -1/-1 counters on another target creature.",
+            "Put three -1/-1 counters on a third target creature.",
+        )
+        .replace(
+            "Put three -1/-1 counters on another target creature",
+            "Put three -1/-1 counters on a third target creature",
+        )
+        .replace(
+            "Put a +1/+1 counter on target creature. Put two +1/+1 counters on another target creature. Put three +1/+1 counters on a third target creature.",
+            "Put a +1/+1 counter on target creature, two +1/+1 counters on another target creature, and three +1/+1 counters on a third target creature.",
+        )
+        .replace(
+            "Put a +1/+1 counter on target creature. Put two +1/+1 counters on another target creature. Put three +1/+1 counters on a third target creature",
+            "Put a +1/+1 counter on target creature, two +1/+1 counters on another target creature, and three +1/+1 counters on a third target creature",
+        )
+        .replace(
+            "Put a -1/-1 counter on target creature. Put two -1/-1 counters on another target creature. Put three -1/-1 counters on a third target creature.",
+            "Put a -1/-1 counter on target creature, two -1/-1 counters on another target creature, and three -1/-1 counters on a third target creature.",
+        )
+        .replace(
+            "Put a -1/-1 counter on target creature. Put two -1/-1 counters on another target creature. Put three -1/-1 counters on a third target creature",
+            "Put a -1/-1 counter on target creature, two -1/-1 counters on another target creature, and three -1/-1 counters on a third target creature",
+        )
+        .replace(
+            "If the target is blocked, Destroy target blocked creature.",
+            "Destroy target blocked creature.",
+        )
+        .replace(
+            "If the target is blocked, Destroy target blocked creature",
+            "Destroy target blocked creature",
         )
         .replace("Remove up to one counters from target creature", "Remove a counter from target creature")
         .replace("Remove up to one counters from this creature", "Remove a counter from this creature")
@@ -16315,6 +16632,17 @@ mod tests {
     }
 
     #[test]
+    fn post_pass_normalizes_split_two_land_search_with_reveal_in_first_clause() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Search your library for a basic land card, reveal it, put it onto the battlefield tapped. Search your library for basic land, reveal it, put it into your hand, then shuffle.",
+        );
+        assert_eq!(
+            normalized,
+            "Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle."
+        );
+    }
+
+    #[test]
     fn post_pass_normalizes_split_two_gate_or_land_search() {
         let normalized = normalize_compiled_post_pass_effect(
             "Search your library for up to one basic land or Gate card, put it onto the battlefield tapped. Search your library for basic land or Gate, reveal it, put it into your hand, then shuffle.",
@@ -17518,6 +17846,47 @@ mod tests {
     }
 
     #[test]
+    fn common_semantic_phrasing_normalizes_tap_then_controller_next_untap_step_clause() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Tap up to two target creatures. creature can't untap during its controller's next untap step.",
+        );
+        assert_eq!(
+            normalized,
+            "Tap up to two target creatures. Those creatures don't untap during their controller's next untap step."
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_frost_lynx_style_tap_lock_clause() {
+        let normalized = normalize_common_semantic_phrasing(
+            "When this permanent enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step.",
+        );
+        assert_eq!(
+            normalized,
+            "When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step."
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_attack_or_block_untap_lock_clause() {
+        let attack = normalize_common_semantic_phrasing(
+            "Whenever this creature attacks, permanent can't untap during its controller's next untap step.",
+        );
+        assert_eq!(
+            attack,
+            "Whenever this creature attacks, it doesn't untap during its controller's next untap step."
+        );
+
+        let block = normalize_common_semantic_phrasing(
+            "Whenever this creature blocks a creature, permanent can't untap during its controller's next untap step.",
+        );
+        assert_eq!(
+            block,
+            "Whenever this creature blocks a creature, that creature doesn't untap during its controller's next untap step."
+        );
+    }
+
+    #[test]
     fn common_semantic_phrasing_normalizes_target_opponent_sacrifice_discard_lose_chain() {
         let normalized = normalize_common_semantic_phrasing(
             "target opponent sacrifices target opponent's creature or planeswalker. target opponent discards a card. target opponent loses 3 life",
@@ -17570,6 +17939,17 @@ mod tests {
         assert_eq!(
             normalized,
             "When enchanted creature dies, return that card to the battlefield under your control with a +1/+1 counter on it."
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_false_demise_style_trigger() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Whenever a enchanted creature dies, return it to the battlefield under your control.",
+        );
+        assert_eq!(
+            normalized,
+            "When enchanted creature dies, return that card to the battlefield under your control."
         );
     }
 

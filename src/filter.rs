@@ -397,6 +397,10 @@ pub struct ObjectFilter {
     /// If set, only match spells/abilities that target an object matching this filter.
     pub targets_object: Option<Box<ObjectFilter>>,
 
+    /// If true and both `targets_player` and `targets_object` are set, match
+    /// either target class instead of requiring both.
+    pub targets_any_of: bool,
+
     /// Required card types (object must have at least one if non-empty)
     pub card_types: Vec<CardType>,
 
@@ -1535,28 +1539,34 @@ impl ObjectFilter {
                 return false;
             };
 
-            if let Some(player_filter) = &self.targets_player {
-                let matches_player = entry.targets.iter().any(|target| match target {
+            let matches_player = self.targets_player.as_ref().is_none_or(|player_filter| {
+                entry.targets.iter().any(|target| match target {
                     crate::game_state::Target::Player(pid) => {
                         player_filter.matches_player(*pid, ctx)
                     }
                     _ => false,
-                });
-                if !matches_player {
-                    return false;
-                }
-            }
+                })
+            });
 
-            if let Some(object_filter) = &self.targets_object {
-                let matches_object = entry.targets.iter().any(|target| match target {
+            let matches_object = self.targets_object.as_ref().is_none_or(|object_filter| {
+                entry.targets.iter().any(|target| match target {
                     crate::game_state::Target::Object(obj_id) => game
                         .object(*obj_id)
                         .is_some_and(|obj| object_filter.matches(obj, ctx, game)),
                     _ => false,
-                });
-                if !matches_object {
-                    return false;
-                }
+                })
+            });
+
+            let matches = if self.targets_any_of
+                && self.targets_player.is_some()
+                && self.targets_object.is_some()
+            {
+                matches_player || matches_object
+            } else {
+                matches_player && matches_object
+            };
+            if !matches {
+                return false;
             }
         }
 
@@ -2021,28 +2031,34 @@ impl ObjectFilter {
                 return false;
             };
 
-            if let Some(player_filter) = &self.targets_player {
-                let matches_player = entry.targets.iter().any(|target| match target {
+            let matches_player = self.targets_player.as_ref().is_none_or(|player_filter| {
+                entry.targets.iter().any(|target| match target {
                     crate::game_state::Target::Player(pid) => {
                         player_filter.matches_player(*pid, ctx)
                     }
                     _ => false,
-                });
-                if !matches_player {
-                    return false;
-                }
-            }
+                })
+            });
 
-            if let Some(object_filter) = &self.targets_object {
-                let matches_object = entry.targets.iter().any(|target| match target {
+            let matches_object = self.targets_object.as_ref().is_none_or(|object_filter| {
+                entry.targets.iter().any(|target| match target {
                     crate::game_state::Target::Object(obj_id) => game
                         .object(*obj_id)
                         .is_some_and(|obj| object_filter.matches(obj, ctx, game)),
                     _ => false,
-                });
-                if !matches_object {
-                    return false;
-                }
+                })
+            });
+
+            let matches = if self.targets_any_of
+                && self.targets_player.is_some()
+                && self.targets_object.is_some()
+            {
+                matches_player || matches_object
+            } else {
+                matches_player && matches_object
+            };
+            if !matches {
+                return false;
             }
         }
 
@@ -2564,7 +2580,8 @@ impl ObjectFilter {
         }
         if !target_fragments.is_empty() {
             let target_text = if target_fragments.len() == 2 {
-                format!("{} and {}", target_fragments[0], target_fragments[1])
+                let joiner = if self.targets_any_of { "or" } else { "and" };
+                format!("{} {} {}", target_fragments[0], joiner, target_fragments[1])
             } else {
                 target_fragments[0].clone()
             };

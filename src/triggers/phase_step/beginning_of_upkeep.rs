@@ -48,6 +48,16 @@ impl TriggerMatcher for BeginningOfUpkeepTrigger {
             PlayerFilter::You => "At the beginning of your upkeep".to_string(),
             PlayerFilter::Any => "At the beginning of each player's upkeep".to_string(),
             PlayerFilter::Opponent => "At the beginning of each opponent's upkeep".to_string(),
+            PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag))
+                if tag.as_str() == "enchanted" =>
+            {
+                "At the beginning of the upkeep of enchanted creature's controller".to_string()
+            }
+            PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag))
+                if tag.as_str() == "equipped" =>
+            {
+                "At the beginning of the upkeep of equipped creature's controller".to_string()
+            }
             _ => format!("At the beginning of {:?}'s upkeep", self.player),
         }
     }

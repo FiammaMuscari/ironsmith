@@ -2378,10 +2378,14 @@ fn compile_effect(
         } => {
             let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let from_exile_tag = choose_spec_references_exiled_tag(&spec);
+            let use_move_to_zone =
+                !*tapped && (from_exile_tag || !matches!(controller, ReturnControllerAst::Preserve));
             let effect = tag_object_target_effect(
-                if from_exile_tag && !*tapped {
+                if use_move_to_zone {
                     // Blink-style "exile ... then return it" should move the tagged
-                    // exiled object back to the battlefield from exile.
+                    // exiled object back to the battlefield from exile. We also use
+                    // MoveToZone for explicit controller overrides so "under your control"
+                    // semantics are preserved for tagged references like "that card".
                     let move_back = crate::effects::MoveToZoneEffect::new(
                         spec.clone(),
                         Zone::Battlefield,
@@ -2896,6 +2900,7 @@ fn compile_effect(
                 PredicateAst::YouControlMoreCreaturesThanTargetSpellController => {
                     Condition::YouControlMoreCreaturesThanTargetSpellController
                 }
+                PredicateAst::TargetIsBlocked => Condition::TargetIsBlocked,
                 PredicateAst::TargetHasGreatestPowerAmongCreatures => {
                     Condition::TargetHasGreatestPowerAmongCreatures
                 }
