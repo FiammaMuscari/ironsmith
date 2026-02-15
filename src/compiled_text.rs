@@ -6115,7 +6115,7 @@ fn describe_search_choose_for_each(
         SearchDestination::LibraryTop => {
             text = if shuffle.is_some() && shuffle_before_move {
                 format!(
-                    "Search {} library for {}{}, shuffle, then put {} on top of {} library",
+                    "Search {} library for {}{}, then shuffle and put {} on top of {} library",
                     describe_possessive_player_filter(&choose.chooser),
                     selection_text,
                     reveal_clause,
