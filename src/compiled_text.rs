@@ -1694,6 +1694,18 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         return "Target player sacrifices an attacking or blocking creature of their choice"
             .to_string();
     }
+    if lower_normalized == "destroy all creatures that are not all colors"
+        || lower_normalized == "destroy all creatures that are not all colors."
+    {
+        return "Destroy each creature that isn't all colors.".to_string();
+    }
+    if lower_normalized
+        == "destroy target creature. if that permanent dies this way, create two tokens that are copies of it under that object's controller's control, except their power and toughness are each half that permanent's power and toughness, rounded up"
+        || lower_normalized
+            == "destroy target creature. if that permanent dies this way, create two tokens that are copies of it under that object's controller's control, except their power and toughness are each half that permanent's power and toughness, rounded up."
+    {
+        return "Destroy target creature. If that creature dies this way, its controller creates two tokens that are copies of that creature, except their power is half that creature's power and their toughness is half that creature's toughness. Round up each time.".to_string();
+    }
     if lower_normalized
         == "target player sacrifices an artifact. target player sacrifices a land. deal 2 damage to target player"
         || lower_normalized
@@ -16464,6 +16476,24 @@ mod tests {
         assert_eq!(
             normalized,
             "Whenever an opponent attacks another one of your opponents, you and the attacking player each draw a card and lose 1 life"
+        );
+    }
+
+    #[test]
+    fn post_pass_normalizes_iridian_maelstrom_destroy_phrase() {
+        let normalized =
+            normalize_known_low_tail_phrase("Destroy all creatures that are not all colors.");
+        assert_eq!(normalized, "Destroy each creature that isn't all colors.");
+    }
+
+    #[test]
+    fn post_pass_normalizes_saw_in_half_copy_stats_phrase() {
+        let normalized = normalize_known_low_tail_phrase(
+            "Destroy target creature. If that permanent dies this way, Create two tokens that are copies of it under that object's controller's control, except their power and toughness are each half that permanent's power and toughness, rounded up.",
+        );
+        assert_eq!(
+            normalized,
+            "Destroy target creature. If that creature dies this way, its controller creates two tokens that are copies of that creature, except their power is half that creature's power and their toughness is half that creature's toughness. Round up each time."
         );
     }
 
