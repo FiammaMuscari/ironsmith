@@ -9131,6 +9131,20 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
             extra_amount.trim()
         );
     }
+    if let Some((left, right)) = split_once_ascii_ci(&normalized, ". Create ")
+        && left.to_ascii_lowercase().contains("you lose ")
+        && right
+            .trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase()
+            .contains("treasure token")
+    {
+        return format!(
+            "{} and create {}.",
+            left.trim().trim_end_matches('.'),
+            right.trim().trim_end_matches('.')
+        );
+    }
     if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, ". If that doesn't happen, Return ")
         && let Some((return_tail, energy_tail)) = split_once_ascii_ci(rest, ". you get ")
     {
@@ -14505,6 +14519,17 @@ mod tests {
         assert_eq!(
             normalized,
             "When this enchantment enters, you gain 2 life and create a tapped Powerstone token."
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_lose_then_create_treasure_chain() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Whenever a player casts their second spell each turn, you lose 1 life. Create a Treasure token.",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever a player casts their second spell each turn, you lose 1 life and create a Treasure token."
         );
     }
 

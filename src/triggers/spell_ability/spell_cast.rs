@@ -137,7 +137,12 @@ impl TriggerMatcher for SpellCastTrigger {
             .map(describe_spell_filter)
             .unwrap_or_else(|| "a spell".to_string());
         let mut suffix = String::new();
-        if self.min_spells_this_turn == Some(2) && spell_text == "a spell" {
+        if self.min_spells_this_turn == Some(2)
+            && matches!(self.caster, PlayerFilter::Any)
+            && (spell_text == "a spell" || spell_text == "spell")
+        {
+            spell_text = "their second spell each turn".to_string();
+        } else if self.min_spells_this_turn == Some(2) && spell_text == "a spell" {
             spell_text = "another spell".to_string();
         } else if self.min_spells_this_turn == Some(2) {
             suffix.push_str(" as your second spell this turn");
@@ -291,6 +296,21 @@ mod tests {
         assert_eq!(
             trigger.display(),
             "Whenever you cast another spell during your turn"
+        );
+    }
+
+    #[test]
+    fn test_qualified_second_spell_any_player_display() {
+        let trigger = SpellCastTrigger::qualified(
+            Some(ObjectFilter::spell().in_zone(Zone::Stack)),
+            PlayerFilter::Any,
+            None,
+            Some(2),
+            false,
+        );
+        assert_eq!(
+            trigger.display(),
+            "Whenever a player casts their second spell each turn"
         );
     }
 }
