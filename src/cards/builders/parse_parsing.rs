@@ -5978,6 +5978,8 @@ fn parse_filter_has_granted_ability_line(
             )));
         };
         Some(parsed.ability)
+    } else if let Some(parsed) = parse_cycling_line(ability_tokens)? {
+        Some(parsed.ability)
     } else if looks_like_trigger {
         match parse_triggered_line(ability_tokens)? {
             LineAst::Triggered {
@@ -6544,6 +6546,16 @@ fn parse_cycling_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardTex
     let Some(cycling_idx) = words_all.iter().position(|word| word.ends_with("cycling")) else {
         return Ok(None);
     };
+    // Static grant clauses like "Each Sliver card in each player's hand has slivercycling {3}."
+    // must be handled by parse_filter_has_granted_ability_line, not parsed as a standalone
+    // cycling keyword ability on this card.
+    if words_all
+        .iter()
+        .take(cycling_idx)
+        .any(|word| *word == "has" || *word == "have")
+    {
+        return Ok(None);
+    }
 
     let cost_start = cycling_idx + 1;
     if cost_start >= tokens.len() {

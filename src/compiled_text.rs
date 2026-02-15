@@ -1699,6 +1699,11 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     {
         return "Destroy each creature that isn't all colors.".to_string();
     }
+    if lower_normalized == "spell effects: destroy all creatures that are not all colors"
+        || lower_normalized == "spell effects: destroy all creatures that are not all colors."
+    {
+        return "Spell effects: Destroy each creature that isn't all colors.".to_string();
+    }
     if lower_normalized
         == "destroy target creature. if that permanent dies this way, create two tokens that are copies of it under that object's controller's control, except their power and toughness are each half that permanent's power and toughness, rounded up"
         || lower_normalized
@@ -6529,6 +6534,12 @@ fn describe_effect_impl(effect: &Effect) -> String {
         );
     }
     if let Some(destroy) = effect.downcast_ref::<crate::effects::DestroyEffect>() {
+        if let ChooseSpec::All(filter) = &destroy.spec
+            && filter.card_types.as_slice() == [crate::types::CardType::Creature]
+            && filter.all_colors == Some(false)
+        {
+            return "Destroy each creature that isn't all colors".to_string();
+        }
         return format!("Destroy {}", describe_choose_spec(&destroy.spec));
     }
     if let Some(deal_damage) = effect.downcast_ref::<crate::effects::DealDamageEffect>() {
@@ -14815,12 +14826,14 @@ pub fn oracle_like_lines(def: &CardDefinition) -> Vec<String> {
 #[cfg(all(test, feature = "parser-tests"))]
 mod tests {
     use super::{
-        describe_additional_cost_effects, describe_for_each_filter,
+        compiled_lines, describe_additional_cost_effects, describe_for_each_filter,
         merge_adjacent_static_heading_lines, normalize_common_semantic_phrasing,
         normalize_compiled_post_pass_effect, normalize_create_under_control_clause,
         normalize_known_low_tail_phrase, normalize_sentence_surface_style, pluralize_noun_phrase,
     };
+    use crate::cards::CardDefinitionBuilder;
     use crate::filter::{ObjectFilter, PlayerFilter};
+    use crate::ids::CardId;
     use crate::types::CardType;
     use crate::zone::Zone;
 
@@ -16484,6 +16497,33 @@ mod tests {
         let normalized =
             normalize_known_low_tail_phrase("Destroy all creatures that are not all colors.");
         assert_eq!(normalized, "Destroy each creature that isn't all colors.");
+    }
+
+    #[test]
+    fn post_pass_normalizes_iridian_maelstrom_destroy_phrase_with_spell_prefix() {
+        let normalized = normalize_known_low_tail_phrase(
+            "Spell effects: Destroy all creatures that are not all colors.",
+        );
+        assert_eq!(
+            normalized,
+            "Spell effects: Destroy each creature that isn't all colors."
+        );
+    }
+
+    #[test]
+    fn renders_destroy_not_all_colors_with_each_creature_wording() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Iridian Render Variant")
+            .card_types(vec![CardType::Sorcery])
+            .parse_text("Destroy each creature that isn't all colors.")
+            .expect("iridian destroy wording should parse");
+
+        let rendered = compiled_lines(&def).join(" ");
+        assert!(
+            rendered
+                .to_ascii_lowercase()
+                .contains("destroy each creature that isn't all colors"),
+            "expected each-creature wording in rendered compiled line, got {rendered}"
+        );
     }
 
     #[test]

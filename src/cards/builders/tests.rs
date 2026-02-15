@@ -8265,6 +8265,23 @@ fn parse_rhystic_lightning_unless_payment_then_reduced_damage() {
             || rendered.contains("if that doesn't happen")
             || rendered.contains("if that doesnt happen"))
             && rendered.contains("deal 2 damage"),
-        "expected reduced-damage paid branch to remain explicit, got {rendered}"
+            "expected reduced-damage paid branch to remain explicit, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_slivercycling_grant_clause_as_static_grant_not_keyword_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Homing Grant Variant")
+        .parse_text("Each Sliver card in each player's hand has slivercycling {3}.")
+        .expect("slivercycling grant clause should parse as a static grant ability");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("each sliver") && rendered.contains("has slivercycling 3"),
+        "expected rendered static grant clause, got {rendered}"
+    );
+    assert!(
+        !rendered.starts_with("keyword ability 1: slivercycling {3}."),
+        "expected no standalone keyword-only parse for grant clause, got {rendered}"
     );
 }
