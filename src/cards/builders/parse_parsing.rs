@@ -12329,6 +12329,105 @@ fn parse_sentence_exile_up_to_one_each_target_type(
     parse_exile_up_to_one_each_target_type_sentence(tokens)
 }
 
+fn parse_sentence_damage_unless_controller_has_source_deal_damage(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Some(unless_idx) = tokens.iter().position(|token| token.is_word("unless")) else {
+        return Ok(None);
+    };
+    if unless_idx == 0 || unless_idx + 1 >= tokens.len() {
+        return Ok(None);
+    }
+
+    let before_tokens = trim_commas(&tokens[..unless_idx]);
+    if before_tokens.is_empty() {
+        return Ok(None);
+    }
+    let effects = parse_effect_chain(&before_tokens)?;
+    if effects.len() != 1 {
+        return Ok(None);
+    }
+    let Some(main_damage) = effects.first() else {
+        return Ok(None);
+    };
+    let EffectAst::DealDamage {
+        amount: main_amount,
+        target: main_target,
+    } = main_damage
+    else {
+        return Ok(None);
+    };
+    if !matches!(main_target, TargetAst::Object(_, _, _) | TargetAst::WithCount(_, _)) {
+        return Ok(None);
+    }
+
+    let after_unless = trim_commas(&tokens[unless_idx + 1..]);
+    let after_words = words(&after_unless);
+    let has_controller_clause = after_words.starts_with(&["that"])
+        && after_words
+            .iter()
+            .any(|word| *word == "controller" || *word == "controllers");
+    if !has_controller_clause {
+        return Ok(None);
+    }
+    let Some(has_idx) = after_unless
+        .iter()
+        .position(|token| token.is_word("has") || token.is_word("have"))
+    else {
+        return Ok(None);
+    };
+    if has_idx + 1 >= after_unless.len() {
+        return Ok(None);
+    }
+
+    let alt_tokens = &after_unless[has_idx + 1..];
+    let Some(deal_idx) = alt_tokens
+        .iter()
+        .position(|token| token.is_word("deal") || token.is_word("deals"))
+    else {
+        return Ok(None);
+    };
+    let deal_tail = &alt_tokens[deal_idx..];
+    let Some((alt_amount, used)) = parse_value(&deal_tail[1..]) else {
+        return Ok(None);
+    };
+    if !deal_tail
+        .get(1 + used)
+        .is_some_and(|token| token.is_word("damage"))
+    {
+        return Ok(None);
+    }
+
+    let mut alt_target_tokens = &deal_tail[2 + used..];
+    if alt_target_tokens
+        .first()
+        .is_some_and(|token| token.is_word("to"))
+    {
+        alt_target_tokens = &alt_target_tokens[1..];
+    }
+    let alt_target_words = words(alt_target_tokens);
+    if !matches!(alt_target_words.as_slice(), ["them"] | ["that", "player"]) {
+        return Ok(None);
+    }
+
+    let alternative = EffectAst::DealDamage {
+        amount: alt_amount,
+        target: TargetAst::Player(
+            PlayerFilter::ControllerOf(crate::filter::ObjectRef::Target),
+            None,
+        ),
+    };
+    let unless = EffectAst::UnlessAction {
+        effects: vec![EffectAst::DealDamage {
+            amount: main_amount.clone(),
+            target: main_target.clone(),
+        }],
+        alternative: vec![alternative],
+        player: PlayerAst::ItsController,
+    };
+    Ok(Some(vec![unless]))
+}
+
 fn parse_sentence_unless_pays(tokens: &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     // Find "unless" in the token stream
     let unless_idx = match tokens.iter().position(|t| t.is_word("unless")) {
@@ -12839,6 +12938,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "exile-up-to-one-each-target-type",
         parser: parse_sentence_exile_up_to_one_each_target_type,
+    },
+    SentencePrimitive {
+        name: "damage-unless-controller-has-source-deal-damage",
+        parser: parse_sentence_damage_unless_controller_has_source_deal_damage,
     },
     SentencePrimitive {
         name: "unless-pays",

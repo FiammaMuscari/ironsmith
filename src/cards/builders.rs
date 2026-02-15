@@ -4966,6 +4966,26 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_damage_unless_controller_has_source_deal_damage() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Blazing Salvo Variant")
+            .parse_text(
+                "This spell deals 3 damage to target creature unless that creature's controller has this spell deal 5 damage to them.",
+            )
+            .expect("parse damage-unless-controller alternative");
+
+        let lines = compiled_lines(&def);
+        let spell_line = lines
+            .iter()
+            .find(|line| line.starts_with("Spell effects:"))
+            .expect("expected spell effects line");
+        assert!(
+            spell_line.contains("unless its controller")
+                && spell_line.contains("Deal 5 damage"),
+            "expected unless-controller alternative damage text, got {spell_line}"
+        );
+    }
+
+    #[test]
     fn parse_equip_keyword_displays_as_keyword_ability() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Strider Harness Equip Variant")
             .parse_text(
