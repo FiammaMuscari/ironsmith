@@ -9891,23 +9891,31 @@ fn parse_target_player_choose_objects_clause(
     tokens: &[Token],
 ) -> Result<Option<(PlayerAst, ObjectFilter, ChoiceCount)>, CardTextError> {
     let clause_words = words(tokens);
-    if clause_words.len() < 4 || clause_words.first().copied() != Some("target") {
-        return Ok(None);
-    }
+    let (chooser, choose_start_idx) =
+        if clause_words.first().copied() == Some("target") && clause_words.len() >= 4 {
+            let chooser = match clause_words.get(1).copied() {
+                Some("player") => PlayerAst::Target,
+                Some("opponent") | Some("opponents") => PlayerAst::TargetOpponent,
+                _ => return Ok(None),
+            };
+            if !matches!(
+                clause_words.get(2).copied(),
+                Some("choose") | Some("chooses")
+            ) {
+                return Ok(None);
+            }
+            (chooser, 3usize)
+        } else if clause_words.len() >= 4
+            && clause_words.first().copied() == Some("that")
+            && matches!(clause_words.get(1).copied(), Some("player" | "players"))
+            && matches!(clause_words.get(2).copied(), Some("choose" | "chooses"))
+        {
+            (PlayerAst::That, 3usize)
+        } else {
+            return Ok(None);
+        };
 
-    let chooser = match clause_words.get(1).copied() {
-        Some("player") => PlayerAst::Target,
-        Some("opponent") | Some("opponents") => PlayerAst::TargetOpponent,
-        _ => return Ok(None),
-    };
-    if !matches!(
-        clause_words.get(2).copied(),
-        Some("choose") | Some("chooses")
-    ) {
-        return Ok(None);
-    }
-
-    let mut choose_object_tokens = trim_commas(&tokens[3..]);
+    let mut choose_object_tokens = trim_commas(&tokens[choose_start_idx..]);
     if choose_object_tokens.is_empty() {
         return Err(CardTextError::ParseError(format!(
             "missing chosen object after target-player choose clause (clause: '{}')",
@@ -9940,6 +9948,18 @@ fn parse_target_player_choose_objects_clause(
             clause_words.join(" ")
         )));
     }
+    if choose_object_tokens
+        .first()
+        .is_some_and(|token| token.is_word("target"))
+        && choose_object_tokens
+            .get(1)
+            .is_some_and(|token| token.is_word("player") || token.is_word("opponent"))
+    {
+        return Ok(None);
+    }
+    if find_verb(&choose_object_tokens).is_some() {
+        return Ok(None);
+    }
 
     let mut choose_filter = parse_object_filter(&choose_object_tokens, false).map_err(|_| {
         CardTextError::ParseError(format!(
@@ -9947,9 +9967,16 @@ fn parse_target_player_choose_objects_clause(
             clause_words.join(" ")
         ))
     })?;
-    if choose_filter.controller.is_none() {
+    if matches!(
+        choose_filter.zone,
+        Some(Zone::Graveyard | Zone::Hand | Zone::Library | Zone::Exile)
+    ) {
+        choose_filter.controller = None;
+    }
+    if choose_filter.controller.is_none() && choose_filter.owner.is_none() {
         choose_filter.controller = Some(match chooser {
             PlayerAst::TargetOpponent => PlayerFilter::target_opponent(),
+            PlayerAst::That => PlayerFilter::IteratedPlayer,
             _ => PlayerFilter::target_player(),
         });
     }
@@ -10111,6 +10138,96 @@ fn parse_sentence_target_player_chooses_then_puts_on_top_of_library(
             target,
             zone: Zone::Library,
             to_top: true,
+            battlefield_controller: ReturnControllerAst::Preserve,
+        },
+    ]))
+}
+
+fn parse_sentence_target_player_chooses_then_you_put_it_onto_battlefield(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let split = tokens
+        .windows(2)
+        .position(|window| matches!(window[0], Token::Comma(_)) && window[1].is_word("then"))
+        .map(|idx| (idx, idx + 2))
+        .or_else(|| {
+            tokens
+                .iter()
+                .position(|token| token.is_word("then"))
+                .and_then(|idx| (idx > 0 && idx + 1 < tokens.len()).then_some((idx, idx + 1)))
+        });
+    let Some((head_end, tail_start)) = split else {
+        return Ok(None);
+    };
+
+    let first_clause = trim_commas(&tokens[..head_end]);
+    let second_clause = trim_commas(&tokens[tail_start..]);
+    if second_clause.is_empty() {
+        return Ok(None);
+    }
+
+    let Some((chooser, choose_filter, choose_count)) =
+        parse_target_player_choose_objects_clause(&first_clause)?
+    else {
+        return Ok(None);
+    };
+
+    let second_words = words(&second_clause);
+    if second_words.len() < 4
+        || second_words[0] != "you"
+        || !matches!(second_words[1], "put" | "puts")
+    {
+        return Ok(None);
+    }
+
+    let Some(onto_idx) = second_clause.iter().position(|token| token.is_word("onto")) else {
+        return Ok(None);
+    };
+    if onto_idx < 2 {
+        return Ok(None);
+    }
+
+    let moved_words = words(&second_clause[2..onto_idx]);
+    let moved_is_tagged_choice = moved_words == ["it"]
+        || moved_words == ["that", "card"]
+        || moved_words == ["that", "permanent"];
+    if !moved_is_tagged_choice {
+        return Ok(None);
+    }
+
+    let destination_words: Vec<&str> = words(&second_clause[onto_idx + 1..])
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    if destination_words.first() != Some(&"battlefield") {
+        return Ok(None);
+    }
+    let destination_tail = &destination_words[1..];
+    let battlefield_controller = if destination_tail == ["under", "your", "control"] {
+        ReturnControllerAst::You
+    } else if destination_tail.is_empty() {
+        ReturnControllerAst::Preserve
+    } else if destination_tail == ["under", "its", "owners", "control"]
+        || destination_tail == ["under", "their", "owners", "control"]
+        || destination_tail == ["under", "that", "players", "control"]
+    {
+        ReturnControllerAst::Owner
+    } else {
+        return Ok(None);
+    };
+
+    Ok(Some(vec![
+        EffectAst::ChooseObjects {
+            filter: choose_filter,
+            count: choose_count,
+            player: chooser,
+            tag: TagKey::from(IT_TAG),
+        },
+        EffectAst::MoveToZone {
+            target: TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(&second_clause)),
+            zone: Zone::Battlefield,
+            to_top: false,
+            battlefield_controller,
         },
     ]))
 }
@@ -12363,6 +12480,10 @@ const PRE_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "target-player-choose-then-put-on-top-library",
         parser: parse_sentence_target_player_chooses_then_puts_on_top_of_library,
+    },
+    SentencePrimitive {
+        name: "target-player-choose-then-you-put-it-onto-battlefield",
+        parser: parse_sentence_target_player_chooses_then_you_put_it_onto_battlefield,
     },
     SentencePrimitive {
         name: "exile-instead-of-graveyard",
@@ -15719,6 +15840,7 @@ fn parse_shuffle_graveyard_into_library_sentence(
                 target: TargetAst::Object(hand_filter, None, None),
                 zone: Zone::Library,
                 to_top: false,
+                battlefield_controller: ReturnControllerAst::Preserve,
             });
         }
         effects.push(EffectAst::ShuffleGraveyardIntoLibrary { player });
@@ -15736,6 +15858,7 @@ fn parse_shuffle_graveyard_into_library_sentence(
             target,
             zone: Zone::Library,
             to_top: false,
+            battlefield_controller: ReturnControllerAst::Preserve,
         },
         EffectAst::ShuffleLibrary { player },
     ])
@@ -20789,6 +20912,7 @@ fn parse_put_into_hand(
             target,
             zone: Zone::Library,
             to_top: true,
+            battlefield_controller: ReturnControllerAst::Preserve,
         });
     }
 
@@ -20823,6 +20947,16 @@ fn parse_put_into_hand(
                 clause_words.join(" ")
             )));
         }
+        let battlefield_controller = if destination_tail == ["under", "your", "control"] {
+            ReturnControllerAst::You
+        } else if destination_tail == ["under", "its", "owners", "control"]
+            || destination_tail == ["under", "their", "owners", "control"]
+            || destination_tail == ["under", "that", "players", "control"]
+        {
+            ReturnControllerAst::Owner
+        } else {
+            ReturnControllerAst::Preserve
+        };
 
         if target_tokens
             .first()
@@ -20865,6 +20999,7 @@ fn parse_put_into_hand(
             target: parse_target_phrase(&target_tokens)?,
             zone: Zone::Battlefield,
             to_top: false,
+            battlefield_controller,
         });
     }
 

@@ -614,6 +614,7 @@ enum EffectAst {
         target: TargetAst,
         zone: Zone,
         to_top: bool,
+        battlefield_controller: ReturnControllerAst,
     },
     ReturnAllToHand {
         filter: ObjectFilter,
@@ -2449,12 +2450,13 @@ mod effect_parse_tests {
     use crate::effects::CantEffect;
     use crate::effects::{
         AddManaOfAnyColorEffect, AddManaOfAnyOneColorEffect, AddManaOfLandProducedTypesEffect,
-        AddScaledManaEffect, ConniveEffect, CounterEffect, CreateTokenCopyEffect, DestroyEffect,
+        AddScaledManaEffect, BattlefieldController, ConniveEffect, CounterEffect,
+        CreateTokenCopyEffect, DestroyEffect,
         DiscardEffect, DrawCardsEffect, EnergyCountersEffect, ExchangeControlEffect, ExileEffect,
         ExileInsteadOfGraveyardEffect, ForEachObject, ForPlayersEffect, GainControlEffect,
         GrantPlayFromGraveyardEffect, LookAtHandEffect, ModifyPowerToughnessEffect,
         ModifyPowerToughnessForEachEffect, PutCountersEffect, RemoveUpToAnyCountersEffect,
-        ReturnAllToBattlefieldEffect,
+        ReturnAllToBattlefieldEffect, MoveToZoneEffect,
         ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect, SacrificeEffect,
         ScryEffect, SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipCombatPhasesEffect,
         SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, SurveilEffect,
@@ -6685,6 +6687,34 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             message.contains("unsupported amass mechanic"),
             "expected unsupported amass parse error, got {message}"
         );
+    }
+
+    #[test]
+    fn parse_choose_from_graveyard_then_put_under_your_control() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Scrounge Variant")
+            .parse_text(
+                "Target opponent chooses an artifact card in their graveyard. Put that card onto the battlefield under your control.",
+            )
+            .expect("choose-from-graveyard then put-under-your-control should parse");
+
+        let effects = def.spell_effect.as_ref().expect("spell effects");
+        let choose = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<crate::effects::ChooseObjectsEffect>())
+            .expect("expected choose-objects effect");
+        assert_eq!(choose.filter.zone, Some(Zone::Graveyard));
+        assert_eq!(choose.filter.owner, Some(PlayerFilter::IteratedPlayer));
+        assert_eq!(
+            choose.filter.controller, None,
+            "graveyard selection should rely on owner context, got {choose:?}"
+        );
+
+        let move_to = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<MoveToZoneEffect>())
+            .expect("expected move-to-zone follow-up");
+        assert_eq!(move_to.zone, Zone::Battlefield);
+        assert_eq!(move_to.battlefield_controller, BattlefieldController::You);
     }
 }
 

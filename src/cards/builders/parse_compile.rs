@@ -2194,11 +2194,13 @@ fn compile_effect(
         } => {
             let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let mut resolved_filter = resolve_it_tag(filter, ctx)?;
-            if resolved_filter.controller.is_none() && resolved_filter.tagged_constraints.is_empty()
+            let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
+            if choice_zone == Zone::Battlefield
+                && resolved_filter.controller.is_none()
+                && resolved_filter.tagged_constraints.is_empty()
             {
                 resolved_filter.controller = Some(chooser.clone());
             }
-            let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
             let choose_effect =
                 crate::effects::ChooseObjectsEffect::new(resolved_filter, *count, chooser, tag.clone())
                     .in_zone(choice_zone);
@@ -2361,10 +2363,17 @@ fn compile_effect(
             target,
             zone,
             to_top,
+            battlefield_controller,
         } => {
             let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let move_effect = crate::effects::MoveToZoneEffect::new(spec.clone(), *zone, *to_top);
+            let move_effect = match battlefield_controller {
+                ReturnControllerAst::Preserve => move_effect,
+                ReturnControllerAst::Owner => move_effect.under_owner_control(),
+                ReturnControllerAst::You => move_effect.under_you_control(),
+            };
             let effect = tag_object_target_effect(
-                Effect::move_to_zone(spec.clone(), *zone, *to_top),
+                Effect::new(move_effect),
                 &spec,
                 ctx,
                 "moved",

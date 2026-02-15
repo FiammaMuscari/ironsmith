@@ -6323,8 +6323,24 @@ fn describe_effect_impl(effect: &Effect) -> String {
         } else {
             format!("{} {}", describe_choice_count(&choose.count), filter_text)
         };
+        let (zone_phrase, zone_keyword) = match choose.zone {
+            Zone::Battlefield => ("the battlefield", "battlefield"),
+            Zone::Hand => ("a hand", "hand"),
+            Zone::Graveyard => ("a graveyard", "graveyard"),
+            Zone::Library => ("a library", "library"),
+            Zone::Stack => ("the stack", "stack"),
+            Zone::Exile => ("exile", "exile"),
+            Zone::Command => ("the command zone", "command"),
+        };
+        let filter_lower = filter_text.to_ascii_lowercase();
+        let includes_zone_already = filter_lower.contains(zone_keyword);
+        let location_suffix = if includes_zone_already {
+            String::new()
+        } else {
+            format!(" in {zone_phrase}")
+        };
         return format!(
-            "{} {} {} in {} and tags it as '{}'",
+            "{} {} {}{} and tags it as '{}'",
             chooser,
             if search_like {
                 "searches for"
@@ -6332,15 +6348,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 choose_verb
             },
             choice_text,
-            match choose.zone {
-                Zone::Battlefield => "the battlefield",
-                Zone::Hand => "a hand",
-                Zone::Graveyard => "a graveyard",
-                Zone::Library => "a library",
-                Zone::Stack => "the stack",
-                Zone::Exile => "exile",
-                Zone::Command => "the command zone",
-            },
+            location_suffix,
             choose.tag.as_str()
         );
     }
