@@ -7919,6 +7919,40 @@ fn parse_then_that_player_discards_clause() {
 }
 
 #[test]
+fn parse_comma_then_that_player_discards_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Dinrova Variant")
+        .parse_text(
+            "Return target permanent to its owner's hand, then that player discards a card.",
+        )
+        .expect("comma-then-that-player discard clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("that player discards a card")
+            || rendered.contains("target player discards a card"),
+        "expected discard to remain bound to the returned permanent's player, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_comma_then_return_source_to_hand_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Cyclopean Variant")
+        .card_types(vec![CardType::Artifact])
+        .parse_text("{3}, {T}: Tap target creature, then return this artifact to its owner's hand.")
+        .expect("comma-then return-source clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("tap target creature"),
+        "expected tap target creature effect, got {rendered}"
+    );
+    assert!(
+        rendered.contains("return this artifact to its owner's hand"),
+        "expected return-source clause, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_then_exile_that_players_graveyard_clause() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Go Blank Variant")
         .parse_text("Target player discards two cards. Then exile that player's graveyard.")

@@ -11081,6 +11081,52 @@ fn parse_sentence_keyword_then_chain(
     Ok(Some(effects))
 }
 
+fn parse_sentence_comma_then_chain_special(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Some(comma_then_idx) = tokens.windows(2).position(|window| {
+        matches!(window[0], Token::Comma(_)) && window[1].is_word("then")
+    }) else {
+        return Ok(None);
+    };
+
+    let head_tokens = trim_commas(&tokens[..comma_then_idx]);
+    let tail_tokens = trim_commas(&tokens[comma_then_idx + 2..]);
+    if head_tokens.is_empty() || tail_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let head_words = words(&head_tokens);
+    let tail_words = words(&tail_tokens);
+    let is_that_player_tail = tail_words.starts_with(&["that", "player"]);
+    let is_return_source_tail = tail_words.starts_with(&["return", "this"])
+        && (tail_words.contains(&"owner") || tail_words.contains(&"owners"))
+        && tail_words.contains(&"hand");
+    if !is_that_player_tail && !is_return_source_tail {
+        return Ok(None);
+    }
+    if is_return_source_tail
+        && !head_words
+            .first()
+            .is_some_and(|word| matches!(*word, "tap" | "untap"))
+    {
+        return Ok(None);
+    }
+
+    let mut head_effects = parse_effect_chain(&head_tokens)?;
+    if head_effects.is_empty() {
+        return Ok(None);
+    }
+
+    let mut tail_effects = parse_effect_chain(&tail_tokens)?;
+    if tail_effects.is_empty() {
+        return Ok(None);
+    }
+
+    head_effects.append(&mut tail_effects);
+    Ok(Some(head_effects))
+}
+
 fn add_tagged_subtype_constraint_to_target(target: &mut TargetAst, tag: TagKey) -> bool {
     match target {
         TargetAst::Object(filter, _, _) => {
@@ -11943,6 +11989,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "keyword-then-chain",
         parser: parse_sentence_keyword_then_chain,
+    },
+    SentencePrimitive {
+        name: "comma-then-chain-special",
+        parser: parse_sentence_comma_then_chain_special,
     },
     SentencePrimitive {
         name: "put-counter-sequence",
