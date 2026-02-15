@@ -245,6 +245,7 @@ enum TriggerSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlayerAst {
     You,
+    Any,
     Defending,
     Target,
     TargetOpponent,
@@ -5912,6 +5913,19 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_mill_with_trailing_clause_fails_instead_of_silently_partial_parsing() {
+        let err = CardDefinitionBuilder::new(CardId::new(), "Midnight Tilling Variant")
+            .parse_text("Mill four cards, then you may return a permanent card from among them to your hand.")
+            .expect_err("mill with trailing from-among clause should fail until supported");
+
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("unsupported trailing mill clause"),
+            "expected strict trailing-clause mill parse error, got {message}"
+        );
+    }
+
+    #[test]
     fn parse_fireblast_style_alternative_cost_line_from_text() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Fireblast Variant")
             .parse_text(
@@ -6047,6 +6061,45 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             debug.contains("tag: TagKey(\"exiled_0\")"),
             "expected shared exiled_0 tag for chained follow-up, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_unless_any_player_pays_mana_prefix() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Rhystic Tutor Variant")
+            .parse_text(
+                "Unless any player pays {2}, search your library for a card, put that card into your hand, then shuffle.",
+            )
+            .expect("parse unless-any-player-pays prefix");
+
+        let effects = def.spell_effect.expect("spell effects");
+        let debug = format!("{effects:?}");
+        assert!(
+            debug.contains("UnlessPaysEffect"),
+            "expected unless-pays wrapper in compiled effects, got {debug}"
+        );
+        assert!(
+            debug.contains("player: Any"),
+            "expected any-player payment choice, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_construct_token_with_explicit_pt_does_not_force_karnstruct_stats() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Sokenzan Smelter Variant")
+            .parse_text(
+                "At the beginning of combat on your turn, you may pay {1} and sacrifice an artifact. If you do, create a 3/1 red Construct artifact creature token with haste.",
+            )
+            .expect("parse explicit-pt construct token");
+
+        let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+        assert!(
+            rendered.contains("create a 3/1 red construct artifact creature token with haste"),
+            "expected explicit 3/1 haste construct token text, got {rendered}"
+        );
+        assert!(
+            !rendered.contains("power and toughness are each equal to the number of artifacts you control"),
+            "explicit 3/1 construct token should not be forced into karnstruct stats, got {rendered}"
         );
     }
 

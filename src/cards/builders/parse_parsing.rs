@@ -906,6 +906,9 @@ fn split_segments_on_comma_effect_head(segments: Vec<Vec<Token>>) -> Vec<Vec<Tok
                     || parse_ability_line(after.as_slice()).is_some();
             let before_words = words(before.as_slice());
             let after_words = words(after.as_slice());
+            if before_words.first() == Some(&"unless") {
+                continue;
+            }
             let is_inline_token_rules_split = is_token_creation_context(&before_words)
                 && starts_with_inline_token_rules_tail(&after_words);
             if is_inline_token_rules_split {
@@ -11719,6 +11722,8 @@ fn try_build_unless(
     // Determine the player from the "unless" clause
     let (player, action_token_start) = if after_words.starts_with(&["you"]) {
         (PlayerAst::You, 1)
+    } else if after_words.starts_with(&["any", "player"]) {
+        (PlayerAst::Any, 2)
     } else if after_words.starts_with(&["they"]) {
         (PlayerAst::That, 1)
     } else if after_words.starts_with(&["defending", "player"]) {
@@ -14674,6 +14679,12 @@ fn parse_search_library_sentence(
     let Some(search_idx) = tokens.iter().position(|token| token.is_word("search")) else {
         return Ok(None);
     };
+    if tokens[..search_idx]
+        .iter()
+        .any(|token| token.is_word("unless"))
+    {
+        return Ok(None);
+    }
     if tokens[..search_idx]
         .iter()
         .any(|token| token.is_word("may"))
@@ -20805,6 +20816,13 @@ fn parse_mill(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst
         return Err(CardTextError::ParseError(
             "missing card keyword".to_string(),
         ));
+    }
+    let trailing_words: Vec<&str> = rest.iter().skip(1).filter_map(Token::as_word).collect();
+    if !trailing_words.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported trailing mill clause (clause: '{}')",
+            words(tokens).join(" ")
+        )));
     }
 
     let player = match subject {

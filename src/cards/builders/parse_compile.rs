@@ -3289,6 +3289,7 @@ fn resolve_non_target_player_filter(
 ) -> Result<PlayerFilter, CardTextError> {
     match player {
         PlayerAst::You => Ok(PlayerFilter::You),
+        PlayerAst::Any => Ok(PlayerFilter::Any),
         PlayerAst::Defending => Ok(PlayerFilter::Defending),
         PlayerAst::Target | PlayerAst::TargetOpponent => Err(CardTextError::ParseError(
             "target player requires explicit targeting".to_string(),
@@ -4093,7 +4094,14 @@ fn token_definition_for(name: &str) -> Option<CardDefinition> {
             .power_toughness(PowerToughness::fixed(3, 3));
         return Some(builder.build());
     }
-    if has_word("construct") {
+    let has_construct_cda_words = words.contains(&"power")
+        && words.contains(&"toughness")
+        && words.contains(&"equal")
+        && words.contains(&"number")
+        && words.contains(&"artifacts")
+        && words.contains(&"you")
+        && words.contains(&"control");
+    if has_word("construct") && (!has_explicit_pt || has_construct_cda_words) {
         let builder = CardDefinitionBuilder::new(CardId::new(), "Construct")
             .token()
             .card_types(vec![CardType::Artifact, CardType::Creature])
