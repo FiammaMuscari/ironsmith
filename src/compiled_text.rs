@@ -9188,6 +9188,18 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     ) {
         return format!("Whenever you cast or copy an instant or sorcery spell, {tail}");
     }
+    if let Some(rest) = strip_prefix_ascii_ci(
+        &normalized,
+        "Whenever you cast an as your second spell this turn, ",
+    ) {
+        let effect = rest
+            .trim()
+            .trim_end_matches('.')
+            .strip_suffix(" spell")
+            .unwrap_or(rest.trim().trim_end_matches('.'))
+            .trim();
+        return format!("Whenever you cast your second spell each turn, {effect}.");
+    }
     if normalized.eq_ignore_ascii_case("Whenever you cast an or copy an instant or sorcery spell") {
         return "Whenever you cast or copy an instant or sorcery spell".to_string();
     }
@@ -14530,6 +14542,17 @@ mod tests {
         assert_eq!(
             normalized,
             "Whenever a player casts their second spell each turn, you lose 1 life and create a Treasure token."
+        );
+    }
+
+    #[test]
+    fn post_pass_normalizes_malformed_second_spell_trigger_phrase() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Whenever you cast an as your second spell this turn, create a 4/4 red Dragon Elemental creature token with flying under your control spell.",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever you cast your second spell each turn, create a 4/4 red Dragon Elemental creature token with flying under your control."
         );
     }
 

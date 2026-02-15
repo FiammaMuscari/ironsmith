@@ -7436,6 +7436,14 @@ fn parse_activation_condition(tokens: &[Token]) -> Option<ManaAbilityCondition> 
             return Some(ManaAbilityCondition::ControlAtLeastLands(count));
         }
     }
+    let control_tail = words(after_control);
+    if control_tail == ["an", "artifact"]
+        || control_tail == ["a", "artifact"]
+        || control_tail == ["artifact"]
+        || control_tail == ["artifacts"]
+    {
+        return Some(ManaAbilityCondition::ControlAtLeastArtifacts(1));
+    }
 
     let mut subtypes = Vec::new();
     for word in line_words {

@@ -4015,6 +4015,29 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_mana_ability_activate_only_if_you_control_an_artifact() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Spire Variant")
+            .parse_text(
+                "{T}: Add {C}.\n{T}, Pay 1 life: Add one mana of any color. Activate only if you control an artifact.",
+            )
+            .expect("artifact-gated mana ability should parse");
+
+        let lines = compiled_lines(&def);
+        let gated = lines
+            .iter()
+            .find(|line| {
+                line.starts_with("Mana ability")
+                    && line.contains("Pay 1 life")
+                    && line.contains("Activate only if you control an artifact")
+            })
+            .expect("expected mana line with artifact activation condition");
+        assert!(
+            gated.contains("Add one mana of any color"),
+            "expected gated rainbow mana text, got: {gated}"
+        );
+    }
+
+    #[test]
     fn parse_add_any_color_with_unsupported_trailing_clause_fails() {
         let err = CardDefinitionBuilder::new(CardId::new(), "Broken Orchard Variant")
             .parse_text(
