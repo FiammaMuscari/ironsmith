@@ -30,6 +30,7 @@ use crate::zone::Zone;
 /// * `zone` - Zone to search for objects (default: Battlefield)
 /// * `tag` - Tag name to store chosen objects under
 /// * `description` - Human-readable description for the UI
+/// * `reveal` - Whether chosen cards are revealed before moving them
 ///
 /// # Result
 ///
@@ -66,6 +67,8 @@ pub struct ChooseObjectsEffect {
     pub description: &'static str,
     /// Whether this choice represents a library search.
     pub is_search: bool,
+    /// Whether chosen cards should be revealed.
+    pub reveal: bool,
     /// Restrict selection to only the top-most matching object in ordered zones.
     pub top_only: bool,
 }
@@ -86,6 +89,7 @@ impl ChooseObjectsEffect {
             tag: tag.into(),
             description: "Choose",
             is_search: false,
+            reveal: false,
             top_only: false,
         }
     }
@@ -105,6 +109,12 @@ impl ChooseObjectsEffect {
     /// Mark this choice as a library search (respects search restrictions).
     pub fn as_search(mut self) -> Self {
         self.is_search = true;
+        self
+    }
+
+    /// Mark chosen cards as revealed.
+    pub fn reveal(mut self) -> Self {
+        self.reveal = true;
         self
     }
 

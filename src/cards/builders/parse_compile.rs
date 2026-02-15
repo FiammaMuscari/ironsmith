@@ -3146,7 +3146,7 @@ fn compile_effect(
             let player_filter = resolve_non_target_player_filter(*player, ctx)?;
             let count = *count;
             let mut filter = filter.clone();
-            if filter.owner.is_none() {
+            if filter.owner.is_none() && !matches!(player_filter, PlayerFilter::You) {
                 filter.owner = Some(player_filter.clone());
             }
             let use_search_effect = count.min == 0
@@ -3171,6 +3171,7 @@ fn compile_effect(
                 .in_zone(Zone::Library)
                 .with_description("cards")
                 .as_search();
+                let choose = if *reveal { choose.reveal() } else { choose };
 
                 let to_top = matches!(destination, Zone::Library);
                 let move_effect = if *destination == Zone::Battlefield && *tapped {

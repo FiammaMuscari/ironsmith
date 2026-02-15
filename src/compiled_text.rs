@@ -4946,6 +4946,17 @@ fn pluralize_word(word: &str) -> String {
             "elves".to_string()
         };
     }
+    if lower == "dwarf" {
+        return if word
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+        {
+            "Dwarves".to_string()
+        } else {
+            "dwarves".to_string()
+        };
+    }
     if lower.ends_with('y')
         && lower.len() > 1
         && !matches!(
@@ -4997,10 +5008,14 @@ fn pluralize_noun_phrase(phrase: &str) -> String {
     }
     for suffix in [
         " you control",
+        " you own",
         " an opponent controls",
+        " an opponent owns",
         " target opponent controls",
         " target player controls",
+        " target player owns",
         " that player controls",
+        " that player owns",
         " in your graveyard",
         " in target player's graveyard",
         " in that player's graveyard",
@@ -6013,12 +6028,22 @@ fn describe_search_choose_for_each(
     let selection_text = if choose.count.is_single() {
         with_indefinite_article(&filter_text)
     } else {
-        format!("{} {}", describe_choice_count(&choose.count), filter_text)
+        let mut count_text = describe_choice_count(&choose.count);
+        if count_text == "any number" {
+            count_text = "any number of".to_string();
+        }
+        format!("{count_text} {filter_text}")
     };
+    let selection_text = describe_search_selection_with_cards(&selection_text);
     let pronoun = if choose.count.max == Some(1) {
         "it"
     } else {
         "them"
+    };
+    let reveal_clause = if choose.reveal {
+        format!(", reveal {pronoun}")
+    } else {
+        String::new()
     };
 
     let mut text;
@@ -6026,16 +6051,18 @@ fn describe_search_choose_for_each(
         SearchDestination::Battlefield { tapped } => {
             text = if shuffle.is_some() && shuffle_before_move {
                 format!(
-                    "Search {} library for {}, shuffle, then put {} onto the battlefield",
+                    "Search {} library for {}{}, shuffle, then put {} onto the battlefield",
                     describe_possessive_player_filter(&choose.chooser),
                     selection_text,
+                    reveal_clause,
                     pronoun
                 )
             } else {
                 format!(
-                    "Search {} library for {}, put {} onto the battlefield",
+                    "Search {} library for {}{}, put {} onto the battlefield",
                     describe_possessive_player_filter(&choose.chooser),
                     selection_text,
+                    reveal_clause,
                     pronoun
                 )
             };
@@ -6046,17 +6073,19 @@ fn describe_search_choose_for_each(
         SearchDestination::Hand => {
             text = if shuffle.is_some() && shuffle_before_move {
                 format!(
-                    "Search {} library for {}, shuffle, then put {} into {} hand",
+                    "Search {} library for {}{}, shuffle, then put {} into {} hand",
                     describe_possessive_player_filter(&choose.chooser),
                     selection_text,
+                    reveal_clause,
                     pronoun,
                     describe_possessive_player_filter(&choose.chooser)
                 )
             } else {
                 format!(
-                    "Search {} library for {}, put {} into {} hand",
+                    "Search {} library for {}{}, put {} into {} hand",
                     describe_possessive_player_filter(&choose.chooser),
                     selection_text,
+                    reveal_clause,
                     pronoun,
                     describe_possessive_player_filter(&choose.chooser)
                 )
@@ -6065,17 +6094,19 @@ fn describe_search_choose_for_each(
         SearchDestination::Graveyard => {
             text = if shuffle.is_some() && shuffle_before_move {
                 format!(
-                    "Search {} library for {}, shuffle, then put {} into {} graveyard",
+                    "Search {} library for {}{}, shuffle, then put {} into {} graveyard",
                     describe_possessive_player_filter(&choose.chooser),
                     selection_text,
+                    reveal_clause,
                     pronoun,
                     describe_possessive_player_filter(&choose.chooser)
                 )
             } else {
                 format!(
-                    "Search {} library for {}, put {} into {} graveyard",
+                    "Search {} library for {}{}, put {} into {} graveyard",
                     describe_possessive_player_filter(&choose.chooser),
                     selection_text,
+                    reveal_clause,
                     pronoun,
                     describe_possessive_player_filter(&choose.chooser)
                 )
@@ -6084,21 +6115,26 @@ fn describe_search_choose_for_each(
         SearchDestination::LibraryTop => {
             text = if shuffle.is_some() && shuffle_before_move {
                 format!(
-                    "Search {} library for {}, shuffle, then put {} on top of {} library",
+                    "Search {} library for {}{}, shuffle, then put {} on top of {} library",
                     describe_possessive_player_filter(&choose.chooser),
                     selection_text,
+                    reveal_clause,
                     pronoun,
                     describe_possessive_player_filter(&choose.chooser)
                 )
             } else {
                 format!(
-                    "Search {} library for {}, put {} on top of {} library",
+                    "Search {} library for {}{}, put {} on top of {} library",
                     describe_possessive_player_filter(&choose.chooser),
                     selection_text,
+                    reveal_clause,
                     pronoun,
                     describe_possessive_player_filter(&choose.chooser)
                 )
             };
+            if !choose.count.is_single() {
+                text.push_str(" in any order");
+            }
         }
     }
     if shuffle.is_some() && !shuffle_before_move {
@@ -14650,6 +14686,18 @@ mod tests {
         assert_eq!(
             pluralize_noun_phrase("target creature an opponent controls"),
             "target creatures an opponent controls"
+        );
+    }
+
+    #[test]
+    fn pluralize_noun_phrase_handles_you_own_suffix() {
+        assert_eq!(
+            pluralize_noun_phrase("Dwarf you own"),
+            "Dwarves you own"
+        );
+        assert_eq!(
+            pluralize_noun_phrase("target permanent you own"),
+            "target permanents you own"
         );
     }
 
