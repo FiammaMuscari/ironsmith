@@ -9145,6 +9145,20 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
             right.trim().trim_end_matches('.')
         );
     }
+    if let Some((left, right)) = split_once_ascii_ci(&normalized, ". Destroy all ")
+        && left
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("return all ")
+        && !right.trim_start().to_ascii_lowercase().starts_with("a ")
+        && !right.trim_start().to_ascii_lowercase().starts_with("an ")
+    {
+        return format!(
+            "{}, then destroy all {}.",
+            left.trim().trim_end_matches('.'),
+            right.trim().trim_end_matches('.')
+        );
+    }
     if let Some((prefix, rest)) = split_once_ascii_ci(&normalized, ". If that doesn't happen, Return ")
         && let Some((return_tail, energy_tail)) = split_once_ascii_ci(rest, ". you get ")
     {
@@ -14699,6 +14713,17 @@ mod tests {
         assert_eq!(
             normalized,
             "Exile all card in your hand. At the beginning of the next end step, return those cards to their owners' hands. Draw a card."
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_return_all_then_destroy_all_chain() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Return all Zombie creature card in your graveyard to the battlefield tapped. Destroy all Humans.",
+        );
+        assert_eq!(
+            normalized,
+            "Return all Zombie creature card in your graveyard to the battlefield tapped, then destroy all Humans."
         );
     }
 
