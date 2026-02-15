@@ -243,17 +243,24 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
                 || effects_reference_tag(if_true, tag)
                 || effects_reference_tag(if_false, tag)
         }
-        EffectAst::ChooseObjects { filter, .. }
+        EffectAst::DealDamageEach { filter, .. }
+        | EffectAst::PutCountersAll { filter, .. }
+        | EffectAst::DoubleCountersOnEach { filter, .. }
+        | EffectAst::TapAll { filter }
+        | EffectAst::ChooseObjects { filter, .. }
         | EffectAst::Sacrifice { filter, .. }
         | EffectAst::SacrificeAll { filter, .. }
         | EffectAst::RegenerateAll { filter }
         | EffectAst::DestroyAll { filter }
         | EffectAst::ExileAll { filter }
         | EffectAst::PreventDamageEach { filter, .. }
+        | EffectAst::ReturnAllToHand { filter }
         | EffectAst::ReturnAllToBattlefield { filter, .. }
+        | EffectAst::ExchangeControl { filter, .. }
         | EffectAst::PumpAll { filter, .. }
         | EffectAst::UntapAll { filter }
         | EffectAst::GrantAbilitiesAll { filter, .. }
+        | EffectAst::Enchant { filter }
         | EffectAst::SearchLibrary { filter, .. } => filter
             .tagged_constraints
             .iter()
@@ -584,16 +591,24 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
             ) || effects_reference_it_tag(if_true)
                 || effects_reference_it_tag(if_false)
         }
-        EffectAst::ChooseObjects { filter, .. }
+        EffectAst::DealDamageEach { filter, .. }
+        | EffectAst::PutCountersAll { filter, .. }
+        | EffectAst::DoubleCountersOnEach { filter, .. }
+        | EffectAst::TapAll { filter }
+        | EffectAst::ChooseObjects { filter, .. }
         | EffectAst::Sacrifice { filter, .. }
         | EffectAst::SacrificeAll { filter, .. }
         | EffectAst::RegenerateAll { filter }
         | EffectAst::DestroyAll { filter }
         | EffectAst::ExileAll { filter }
         | EffectAst::PreventDamageEach { filter, .. }
+        | EffectAst::ReturnAllToHand { filter }
+        | EffectAst::ReturnAllToBattlefield { filter, .. }
+        | EffectAst::ExchangeControl { filter, .. }
         | EffectAst::PumpAll { filter, .. }
         | EffectAst::UntapAll { filter }
         | EffectAst::GrantAbilitiesAll { filter, .. }
+        | EffectAst::Enchant { filter }
         | EffectAst::SearchLibrary { filter, .. } => filter
             .tagged_constraints
             .iter()

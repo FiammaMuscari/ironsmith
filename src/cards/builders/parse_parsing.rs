@@ -22727,6 +22727,9 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     let has_share_color = all_words.contains(&"shares")
         && all_words.contains(&"color")
         && all_words.contains(&"it");
+    let has_same_name_as_tagged_spell = all_words
+        .windows(5)
+        .any(|window| window == ["same", "name", "as", "that", "spell"]);
 
     if has_share_card_type {
         filter.tagged_constraints.push(TaggedObjectConstraint {
@@ -22738,6 +22741,12 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         filter.tagged_constraints.push(TaggedObjectConstraint {
             tag: IT_TAG.into(),
             relation: TaggedOpbjectRelation::SharesColorWithTagged,
+        });
+    }
+    if has_same_name_as_tagged_spell {
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag: IT_TAG.into(),
+            relation: TaggedOpbjectRelation::SameNameAsTagged,
         });
     }
 
@@ -22782,6 +22791,14 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     } else {
         PlayerFilter::IteratedPlayer
     };
+    let is_tagged_spell_reference_at = |idx: usize| {
+        all_words
+            .get(idx.wrapping_sub(1))
+            .is_some_and(|prev| matches!(*prev, "that" | "this" | "its" | "their"))
+    };
+    let contains_unqualified_spell_word = all_words.iter().enumerate().any(|(idx, word)| {
+        matches!(*word, "spell" | "spells") && !is_tagged_spell_reference_at(idx)
+    });
 
     if all_words.len() >= 2 {
         for window in all_words.windows(2) {
@@ -22980,7 +22997,7 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
 
     for idx in 0..all_words.len() {
         if let Some(zone) = parse_zone_word(all_words[idx]) {
-            let is_reference_zone_for_spell = if all_words.contains(&"spell") {
+            let is_reference_zone_for_spell = if contains_unqualified_spell_word {
                 idx > 0
                     && matches!(
                         all_words[idx - 1],
@@ -23116,7 +23133,11 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     for (idx, word) in all_words.iter().enumerate() {
         match *word {
             "permanent" | "permanents" => saw_permanent = true,
-            "spell" | "spells" => saw_spell = true,
+            "spell" | "spells" => {
+                if !is_tagged_spell_reference_at(idx) {
+                    saw_spell = true;
+                }
+            }
             "token" | "tokens" => filter.token = true,
             "nontoken" => filter.nontoken = true,
             "other" => filter.other = true,
