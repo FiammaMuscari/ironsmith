@@ -7,7 +7,7 @@ use crate::effect::{
 };
 use crate::object::CounterType;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
-use crate::types::Subtype;
+use crate::types::{Subtype, Supertype};
 use crate::{CardDefinition, CardType, Effect, ManaSymbol, Zone};
 
 thread_local! {
@@ -7507,6 +7507,47 @@ fn describe_effect_impl(effect: &Effect) -> String {
                     ", except their power and toughness are each half that permanent's power and toughness, rounded up",
                 );
             }
+        }
+        if let Some((power, toughness)) = create_copy.set_base_power_toughness {
+            text.push_str(&format!(
+                ", with base power and toughness {power}/{toughness}"
+            ));
+        }
+        if !create_copy.added_card_types.is_empty() || !create_copy.added_subtypes.is_empty() {
+            let mut type_words: Vec<String> = create_copy
+                .added_card_types
+                .iter()
+                .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
+                .collect();
+            type_words.extend(
+                create_copy
+                    .added_subtypes
+                    .iter()
+                    .map(|subtype| format!("{subtype:?}").to_ascii_lowercase()),
+            );
+            if !type_words.is_empty() {
+                text.push_str(", and it's ");
+                text.push_str(&type_words.join(" "));
+                text.push_str(" in addition to its other types");
+            }
+        }
+        if create_copy
+            .removed_supertypes
+            .iter()
+            .any(|supertype| *supertype == Supertype::Legendary)
+        {
+            text.push_str(", and it isn't legendary");
+        }
+        if !create_copy.granted_static_abilities.is_empty() {
+            let mut granted = create_copy
+                .granted_static_abilities
+                .iter()
+                .map(|ability| ability.display().to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            granted.sort();
+            granted.dedup();
+            text.push_str(", and it has ");
+            text.push_str(&join_with_and(&granted));
         }
         return text;
     }

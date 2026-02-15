@@ -16,6 +16,7 @@ use crate::object::Object;
 use crate::static_abilities::StaticAbility;
 use crate::target::{ChooseSpec, PlayerFilter};
 use crate::triggers::{Trigger, TriggerEvent};
+use crate::types::{CardType, Subtype, Supertype};
 use crate::zone::Zone;
 
 /// Effect that creates a token copy of a permanent.
@@ -61,6 +62,16 @@ pub struct CreateTokenCopyEffect {
     pub exile_at_next_end_step: bool,
     /// Optional power/toughness adjustment for the created tokens.
     pub pt_adjustment: Option<CopyPtAdjustment>,
+    /// Card types to add to copied tokens.
+    pub added_card_types: Vec<CardType>,
+    /// Subtypes to add to copied tokens.
+    pub added_subtypes: Vec<Subtype>,
+    /// Supertypes to remove from copied tokens.
+    pub removed_supertypes: Vec<Supertype>,
+    /// Optional fixed base power/toughness override.
+    pub set_base_power_toughness: Option<(i32, i32)>,
+    /// Static abilities to grant to copied tokens.
+    pub granted_static_abilities: Vec<StaticAbility>,
 }
 
 /// Optional power/toughness adjustment for copied tokens.
@@ -84,6 +95,11 @@ impl CreateTokenCopyEffect {
             sacrifice_at_next_end_step: false,
             exile_at_next_end_step: false,
             pt_adjustment: None,
+            added_card_types: Vec::new(),
+            added_subtypes: Vec::new(),
+            removed_supertypes: Vec::new(),
+            set_base_power_toughness: None,
+            granted_static_abilities: Vec::new(),
         }
     }
 
@@ -155,6 +171,42 @@ impl CreateTokenCopyEffect {
         self.pt_adjustment = Some(CopyPtAdjustment::HalfRoundUp);
         self
     }
+
+    /// Add a card type to copied tokens.
+    pub fn added_card_type(mut self, card_type: CardType) -> Self {
+        if !self.added_card_types.contains(&card_type) {
+            self.added_card_types.push(card_type);
+        }
+        self
+    }
+
+    /// Add a subtype to copied tokens.
+    pub fn added_subtype(mut self, subtype: Subtype) -> Self {
+        if !self.added_subtypes.contains(&subtype) {
+            self.added_subtypes.push(subtype);
+        }
+        self
+    }
+
+    /// Remove a supertype from copied tokens.
+    pub fn removed_supertype(mut self, supertype: Supertype) -> Self {
+        if !self.removed_supertypes.contains(&supertype) {
+            self.removed_supertypes.push(supertype);
+        }
+        self
+    }
+
+    /// Set copied tokens to a fixed base power/toughness.
+    pub fn set_base_power_toughness(mut self, power: i32, toughness: i32) -> Self {
+        self.set_base_power_toughness = Some((power, toughness));
+        self
+    }
+
+    /// Grant a static ability to copied tokens.
+    pub fn grant_static_ability(mut self, ability: StaticAbility) -> Self {
+        self.granted_static_abilities.push(ability);
+        self
+    }
 }
 
 impl EffectExecutor for CreateTokenCopyEffect {
@@ -224,6 +276,24 @@ impl EffectExecutor for CreateTokenCopyEffect {
             if let Some(CopyPtAdjustment::HalfRoundUp) = self.pt_adjustment {
                 token.base_power = Some(PtValue::Fixed(half_power));
                 token.base_toughness = Some(PtValue::Fixed(half_toughness));
+            }
+            if let Some((power, toughness)) = self.set_base_power_toughness {
+                token.base_power = Some(PtValue::Fixed(power));
+                token.base_toughness = Some(PtValue::Fixed(toughness));
+            }
+            for card_type in &self.added_card_types {
+                if !token.card_types.contains(card_type) {
+                    token.card_types.push(*card_type);
+                }
+            }
+            for subtype in &self.added_subtypes {
+                if !token.subtypes.contains(subtype) {
+                    token.subtypes.push(*subtype);
+                }
+            }
+            if !self.removed_supertypes.is_empty() {
+                token.supertypes
+                    .retain(|supertype| !self.removed_supertypes.contains(supertype));
             }
 
             // Track creature ETBs for trap conditions
@@ -306,6 +376,14 @@ impl EffectExecutor for CreateTokenCopyEffect {
                 ctx.targets = vec![ResolvedTarget::Object(id)];
                 let grant_effect = GrantObjectAbilityEffect::new(
                     Ability::static_ability(StaticAbility::haste()),
+                    ChooseSpec::AnyTarget,
+                );
+                let _ = execute_effect(game, &Effect::new(grant_effect), ctx)?;
+            }
+            for static_ability in &self.granted_static_abilities {
+                ctx.targets = vec![ResolvedTarget::Object(id)];
+                let grant_effect = GrantObjectAbilityEffect::new(
+                    Ability::static_ability(static_ability.clone()),
                     ChooseSpec::AnyTarget,
                 );
                 let _ = execute_effect(game, &Effect::new(grant_effect), ctx)?;

@@ -747,6 +747,11 @@ enum EffectAst {
         has_haste: bool,
         sacrifice_at_next_end_step: bool,
         exile_at_next_end_step: bool,
+        added_card_types: Vec<CardType>,
+        added_subtypes: Vec<Subtype>,
+        removed_supertypes: Vec<Supertype>,
+        set_base_power_toughness: Option<(i32, i32)>,
+        granted_abilities: Vec<StaticAbility>,
     },
     CreateTokenCopyFromSource {
         source: TargetAst,
@@ -756,6 +761,11 @@ enum EffectAst {
         has_haste: bool,
         sacrifice_at_next_end_step: bool,
         exile_at_next_end_step: bool,
+        added_card_types: Vec<CardType>,
+        added_subtypes: Vec<Subtype>,
+        removed_supertypes: Vec<Supertype>,
+        set_base_power_toughness: Option<(i32, i32)>,
+        granted_abilities: Vec<StaticAbility>,
     },
     CreateTokenWithMods {
         name: String,

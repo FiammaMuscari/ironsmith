@@ -2973,6 +2973,11 @@ fn compile_effect(
             has_haste,
             sacrifice_at_next_end_step,
             exile_at_next_end_step,
+            added_card_types,
+            added_subtypes,
+            removed_supertypes,
+            set_base_power_toughness,
+            granted_abilities,
         } => {
             let tag = match object {
                 ObjectRefAst::It => ctx.last_object_tag.clone().ok_or_else(|| {
@@ -3000,6 +3005,21 @@ fn compile_effect(
             if *exile_at_next_end_step {
                 effect = effect.exile_at_next_end_step(true);
             }
+            for card_type in added_card_types {
+                effect = effect.added_card_type(*card_type);
+            }
+            for subtype in added_subtypes {
+                effect = effect.added_subtype(*subtype);
+            }
+            for supertype in removed_supertypes {
+                effect = effect.removed_supertype(*supertype);
+            }
+            if let Some((power, toughness)) = set_base_power_toughness {
+                effect = effect.set_base_power_toughness(*power, *toughness);
+            }
+            for ability in granted_abilities {
+                effect = effect.grant_static_ability(ability.clone());
+            }
             Ok((vec![Effect::new(effect)], Vec::new()))
         }
         EffectAst::CreateTokenCopyFromSource {
@@ -3010,6 +3030,11 @@ fn compile_effect(
             has_haste,
             sacrifice_at_next_end_step,
             exile_at_next_end_step,
+            added_card_types,
+            added_subtypes,
+            removed_supertypes,
+            set_base_power_toughness,
+            granted_abilities,
         } => {
             let player_filter = resolve_non_target_player_filter(*player, ctx)?;
             compile_effect_for_target(source, ctx, |source_spec| {
@@ -3026,6 +3051,21 @@ fn compile_effect(
                 }
                 if *exile_at_next_end_step {
                     effect = effect.exile_at_next_end_step(true);
+                }
+                for card_type in added_card_types {
+                    effect = effect.added_card_type(*card_type);
+                }
+                for subtype in added_subtypes {
+                    effect = effect.added_subtype(*subtype);
+                }
+                for supertype in removed_supertypes {
+                    effect = effect.removed_supertype(*supertype);
+                }
+                if let Some((power, toughness)) = set_base_power_toughness {
+                    effect = effect.set_base_power_toughness(*power, *toughness);
+                }
+                for ability in granted_abilities {
+                    effect = effect.grant_static_ability(ability.clone());
                 }
                 Effect::new(effect)
             })
@@ -4580,6 +4620,13 @@ fn token_definition_for(name: &str) -> Option<CardDefinition> {
 
 fn parse_token_pt(word: &str) -> Option<(i32, i32)> {
     let (left, right) = word.split_once('/')?;
+    if left.starts_with('+')
+        || right.starts_with('+')
+        || left.starts_with('-')
+        || right.starts_with('-')
+    {
+        return None;
+    }
     let power = left.parse::<i32>().ok()?;
     let toughness = right.parse::<i32>().ok()?;
     Some((power, toughness))

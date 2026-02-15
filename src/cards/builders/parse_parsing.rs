@@ -22857,6 +22857,102 @@ fn looks_like_pt_word(word: &str) -> bool {
     is_component(power) && is_component(toughness)
 }
 
+fn parse_unsigned_pt_word(word: &str) -> Option<(i32, i32)> {
+    let (power, toughness) = word.split_once('/')?;
+    if power.starts_with('+')
+        || toughness.starts_with('+')
+        || power.starts_with('-')
+        || toughness.starts_with('-')
+    {
+        return None;
+    }
+    let power = power.parse::<i32>().ok()?;
+    let toughness = toughness.parse::<i32>().ok()?;
+    Some((power, toughness))
+}
+
+fn parse_copy_modifiers_from_tail(
+    tail_words: &[&str],
+) -> (
+    Vec<CardType>,
+    Vec<Subtype>,
+    Vec<Supertype>,
+    Option<(i32, i32)>,
+    Vec<StaticAbility>,
+) {
+    let mut added_card_types = Vec::new();
+    let mut added_subtypes = Vec::new();
+    let mut removed_supertypes = Vec::new();
+    let mut set_base_power_toughness = None;
+    let mut granted_abilities = Vec::new();
+
+    let except_idx = tail_words.iter().rposition(|word| *word == "except");
+    let modifier_words = except_idx
+        .map(|idx| &tail_words[idx + 1..])
+        .unwrap_or_default();
+    if modifier_words.is_empty() {
+        return (
+            added_card_types,
+            added_subtypes,
+            removed_supertypes,
+            set_base_power_toughness,
+            granted_abilities,
+        );
+    }
+
+    if modifier_words
+        .windows(2)
+        .any(|window| window == ["isnt", "legendary"] || window == ["isn't", "legendary"])
+        || modifier_words
+            .windows(3)
+            .any(|window| window == ["is", "not", "legendary"])
+    {
+        removed_supertypes.push(Supertype::Legendary);
+    }
+
+    if let Some((power, toughness)) = modifier_words
+        .iter()
+        .find_map(|word| parse_unsigned_pt_word(word))
+    {
+        set_base_power_toughness = Some((power, toughness));
+    }
+
+    let has_grant_verb = modifier_words.contains(&"has")
+        || modifier_words.contains(&"have")
+        || modifier_words.contains(&"gain")
+        || modifier_words.contains(&"gains");
+    if has_grant_verb && modifier_words.contains(&"flying") {
+        granted_abilities.push(StaticAbility::flying());
+    }
+
+    let addition_idx = modifier_words.windows(6).position(|window| {
+        window == ["in", "addition", "to", "its", "other", "types"]
+            || window == ["in", "addition", "to", "their", "other", "types"]
+    });
+    if let Some(addition_idx) = addition_idx {
+        let descriptor_words = &modifier_words[..addition_idx];
+        for word in descriptor_words {
+            if let Some(card_type) = parse_card_type(word) && !added_card_types.contains(&card_type) {
+                added_card_types.push(card_type);
+            }
+            if let Some(subtype) =
+                parse_subtype_word(word).or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
+                && !added_subtypes.contains(&subtype)
+            {
+                added_subtypes.push(subtype);
+            }
+        }
+    }
+
+    (
+        added_card_types,
+        added_subtypes,
+        removed_supertypes,
+        set_base_power_toughness,
+        granted_abilities,
+    )
+}
+
 fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
     let player = match subject {
         Some(SubjectAst::Player(player)) => player,
@@ -22964,11 +23060,19 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
         }
         true
     });
+    let name_words_primary_len = name_words.len();
     if name_words.is_empty() {
         if tail_words
             .iter()
             .any(|word| *word == "copy" || *word == "copies")
         {
+            let (
+                added_card_types,
+                added_subtypes,
+                removed_supertypes,
+                set_base_power_toughness,
+                granted_abilities,
+            ) = parse_copy_modifiers_from_tail(&tail_words);
             let half_pt = tail_words.contains(&"half")
                 && tail_words.contains(&"power")
                 && tail_words.contains(&"toughness");
@@ -23016,6 +23120,11 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                         has_haste,
                         sacrifice_at_next_end_step,
                         exile_at_next_end_step,
+                        added_card_types,
+                        added_subtypes,
+                        removed_supertypes,
+                        set_base_power_toughness,
+                        granted_abilities,
                     }));
                 }
             }
@@ -23027,6 +23136,11 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                 has_haste,
                 sacrifice_at_next_end_step,
                 exile_at_next_end_step,
+                added_card_types,
+                added_subtypes,
+                removed_supertypes,
+                set_base_power_toughness,
+                granted_abilities,
             }));
         }
         return Err(CardTextError::ParseError(
@@ -23037,64 +23151,69 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
         let with_tail_end = for_each_idx.unwrap_or(tail_words.len());
         if with_idx + 1 < with_tail_end {
             let with_words = &tail_words[with_idx + 1..with_tail_end];
-            let rules_text_start = with_words.iter().position(|word| {
-                matches!(
-                    *word,
-                    "when"
-                        | "whenever"
-                        | "if"
-                        | "t"
-                        | "this"
-                        | "that"
-                        | "it"
-                        | "those"
-                        | "sacrifice"
-                        | "add"
-                        | "draw"
-                        | "deals"
-                        | "deal"
-                )
-            });
-            let include_end = rules_text_start.unwrap_or(with_words.len());
-            let preserve_rules_tail = rules_text_start
-                .is_some_and(|start| start < with_words.len())
-                && with_words[include_end..].iter().any(|word| {
+            let starts_with_attached_token_rules = with_words.starts_with(&["equipped", "creature"])
+                || with_words.starts_with(&["enchanted", "creature"]);
+            if !starts_with_attached_token_rules {
+                let rules_text_start = with_words.iter().position(|word| {
                     matches!(
                         *word,
                         "when"
                             | "whenever"
-                            | "at"
+                            | "if"
+                            | "t"
+                            | "this"
+                            | "that"
+                            | "it"
+                            | "those"
                             | "sacrifice"
-                            | "return"
-                            | "counter"
-                            | "draw"
                             | "add"
+                            | "draw"
                             | "deals"
                             | "deal"
-                            | "gets"
-                            | "gain"
-                            | "gains"
-                            | "cant"
-                            | "can"
-                            | "block"
                     )
                 });
-            if include_end > 0 {
-                name_words.extend(with_words[..include_end].iter().copied());
-                if preserve_rules_tail {
-                    // Keep quoted token rules text tails so token lowering can
-                    // reconstruct granted abilities instead of dropping them.
-                    name_words.extend(with_words[include_end..].iter().copied());
+                let include_end = rules_text_start.unwrap_or(with_words.len());
+                let preserve_rules_tail = rules_text_start
+                    .is_some_and(|start| start < with_words.len())
+                    && with_words[include_end..].iter().any(|word| {
+                        matches!(
+                            *word,
+                            "when"
+                                | "whenever"
+                                | "at"
+                                | "sacrifice"
+                                | "return"
+                                | "counter"
+                                | "draw"
+                                | "add"
+                                | "deals"
+                                | "deal"
+                                | "gets"
+                                | "gain"
+                                | "gains"
+                                | "cant"
+                                | "can"
+                                | "block"
+                        )
+                    });
+                if include_end > 0 {
+                    name_words.extend(with_words[..include_end].iter().copied());
+                    if preserve_rules_tail {
+                        // Keep quoted token rules text tails so token lowering can
+                        // reconstruct granted abilities instead of dropping them.
+                        name_words.extend(with_words[include_end..].iter().copied());
+                    }
+                } else {
+                    // Preserve quoted token rules text so token compilation can
+                    // attach the ability to the created token definition.
+                    name_words.extend(with_words.iter().copied());
                 }
-            } else {
-                // Preserve quoted token rules text so token compilation can
-                // attach the ability to the created token definition.
-                name_words.extend(with_words.iter().copied());
             }
         }
     }
     if let Some(pt_idx) = name_words.iter().position(|word| looks_like_pt_word(word))
         && pt_idx > 0
+        && pt_idx < name_words_primary_len
     {
         name_words = name_words[pt_idx..].to_vec();
     }
