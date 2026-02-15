@@ -71,6 +71,22 @@ impl EffectExecutor for TaggedEffect {
                 break;
             }
         }
+        // Some non-targeted effects (for example, return-all patterns) do not
+        // return explicit object IDs. Capture candidate stable IDs so we can tag
+        // post-resolution objects if needed.
+        let pre_stable_ids = self
+            .effect
+            .downcast_ref::<crate::effects::ReturnAllToBattlefieldEffect>()
+            .and_then(|return_all| {
+                let spec = crate::target::ChooseSpec::all(return_all.filter.clone());
+                crate::effects::helpers::resolve_objects_from_spec(game, &spec, ctx)
+                    .ok()
+                    .map(|ids| {
+                        ids.into_iter()
+                            .filter_map(|id| game.object(id).map(|obj| obj.stable_id))
+                            .collect::<Vec<_>>()
+                    })
+            });
 
         // Execute the inner effect
         let outcome = crate::executor::execute_effect(game, &self.effect, ctx)?;
@@ -95,6 +111,25 @@ impl EffectExecutor for TaggedEffect {
         // Otherwise, fall back to tagging the pre-effect snapshot if we captured one.
         if let Some(snapshot) = pre_snapshot {
             ctx.tag_object(self.tag.clone(), snapshot);
+            return Ok(outcome);
+        }
+
+        // As a final fallback, try to remap pre-resolution stable IDs to current
+        // battlefield objects (zone changes create new object IDs).
+        if let Some(stable_ids) = pre_stable_ids {
+            let snapshots: Vec<ObjectSnapshot> = stable_ids
+                .into_iter()
+                .filter_map(|stable_id| game.find_object_by_stable_id(stable_id))
+                .filter_map(|id| {
+                    game.object(id).and_then(|obj| {
+                        (obj.zone == crate::zone::Zone::Battlefield)
+                            .then(|| ObjectSnapshot::from_object(obj, game))
+                    })
+                })
+                .collect();
+            if !snapshots.is_empty() {
+                ctx.set_tagged_objects(self.tag.clone(), snapshots);
+            }
         }
 
         Ok(outcome)
@@ -216,7 +251,7 @@ mod tests {
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
-    use crate::target::{ChooseSpec, PlayerFilter};
+    use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
     use crate::types::CardType;
     use crate::zone::Zone;
 
@@ -235,6 +270,21 @@ mod tests {
             .power_toughness(PowerToughness::fixed(2, 2))
             .build();
         let obj = Object::from_card(id, &card, controller, Zone::Battlefield);
+        game.add_object(obj);
+        id
+    }
+
+    fn create_graveyard_creature(game: &mut GameState, name: &str, owner: PlayerId) -> ObjectId {
+        let id = game.new_object_id();
+        let card = CardBuilder::new(CardId::from_raw(id.0 as u32), name)
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(1)],
+                vec![ManaSymbol::Green],
+            ]))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let obj = Object::from_card(id, &card, owner, Zone::Graveyard);
         game.add_object(obj);
         id
     }
@@ -323,6 +373,39 @@ mod tests {
         let effect = TaggedEffect::new("test", Effect::gain_life(1));
         let cloned = effect.clone_box();
         assert!(format!("{:?}", cloned).contains("TaggedEffect"));
+    }
+
+    #[test]
+    fn test_tagged_effect_tracks_return_all_to_battlefield_objects() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        create_graveyard_creature(&mut game, "Grizzly Bears", alice);
+        create_graveyard_creature(&mut game, "Runeclaw Bear", alice);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let filter = ObjectFilter::creature()
+            .in_zone(Zone::Graveyard)
+            .owned_by(PlayerFilter::You);
+        let effect = TaggedEffect::new(
+            "returned",
+            Effect::new(crate::effects::ReturnAllToBattlefieldEffect::new(
+                filter, false,
+            )),
+        );
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.result, EffectResult::Count(2));
+        let tagged = ctx
+            .get_tagged_all("returned")
+            .expect("returned objects should be tagged");
+        assert_eq!(tagged.len(), 2);
+        assert!(
+            tagged
+                .iter()
+                .all(|snapshot| snapshot.zone == Zone::Battlefield)
+        );
+        assert!(tagged.iter().all(|snapshot| snapshot.controller == alice));
     }
 
     #[test]

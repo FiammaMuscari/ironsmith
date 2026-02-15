@@ -8951,6 +8951,49 @@ fn normalize_triggered_self_deals_damage_phrase(def: &CardDefinition, text: &str
 fn normalize_known_low_tail_phrase(text: &str) -> String {
     let trimmed = text.trim();
 
+    if let Some((left, right)) = split_once_ascii_ci(trimmed, ". ")
+        && let Some(cards) = strip_prefix_ascii_ci(left.trim(), "Each player returns each ")
+            .and_then(|tail| {
+                strip_suffix_ascii_ci(tail, " from their graveyard to the battlefield")
+            })
+            .or_else(|| {
+                strip_prefix_ascii_ci(left.trim(), "For each player, Return all ").and_then(
+                    |tail| strip_suffix_ascii_ci(tail, " from their graveyard to the battlefield"),
+                )
+            })
+        && let Some(counter_text) = strip_prefix_ascii_ci(right.trim(), "Put a ")
+            .or_else(|| strip_prefix_ascii_ci(right.trim(), "Put an "))
+            .or_else(|| strip_prefix_ascii_ci(right.trim(), "put a "))
+            .or_else(|| strip_prefix_ascii_ci(right.trim(), "put an "))
+            .and_then(|tail| strip_suffix_ascii_ci(tail.trim_end_matches('.'), " counter on it"))
+    {
+        return format!(
+            "Each player returns each {} from their graveyard to the battlefield with an additional {} counter on it.",
+            cards.trim(),
+            counter_text.trim()
+        );
+    }
+    if let Some(prefix) = trimmed
+        .strip_suffix(", then puts them on top of their library.")
+        .or_else(|| trimmed.strip_suffix(", then puts them on top of their library"))
+        && prefix.to_ascii_lowercase().contains(" chooses ")
+        && prefix
+            .to_ascii_lowercase()
+            .contains(" cards from their hand")
+    {
+        return format!("{prefix} and puts them on top of their library in any order.");
+    }
+    if let Some((chooser, rest)) = split_once_ascii_ci(trimmed, " chooses ")
+        && let Some((chosen_kind, tail)) = split_once_ascii_ci(
+            rest,
+            " card from a graveyard. Put it onto the battlefield",
+        )
+    {
+        let card_phrase = with_indefinite_article(&format!("{} card", chosen_kind.trim()));
+        return format!(
+            "{chooser} chooses {card_phrase} in their graveyard. Put that card onto the battlefield{tail}"
+        );
+    }
     if let Some((first_clause, rest)) =
         trimmed.split_once(". For each opponent's creature, Deal ")
         && let Some(amount) = rest
@@ -11009,7 +11052,11 @@ fn parse_choose_exact_tail(head: &str) -> Option<(&str, usize, &str)> {
         .strip_suffix(" in the battlefield")
         .or_else(|| rest.strip_suffix(" in a hand"))
         .or_else(|| rest.strip_suffix(" in hand"))
-        .or_else(|| rest.strip_suffix(" in the stack"))?;
+        .or_else(|| rest.strip_suffix(" in the stack"))
+        .or_else(|| rest.strip_suffix(" in a graveyard"))
+        .or_else(|| rest.strip_suffix(" in a library"))
+        .or_else(|| rest.strip_suffix(" in exile"))
+        .unwrap_or(rest);
     Some((prefix, count, descriptor))
 }
 
@@ -16651,6 +16698,50 @@ mod tests {
         assert_eq!(
             normalized,
             "Each player returns each creature card from their graveyard to the battlefield with an additional -1/-1 counter on it."
+        );
+    }
+
+    #[test]
+    fn known_low_tail_normalizes_for_each_player_return_with_counter_chain() {
+        let normalized = normalize_known_low_tail_phrase(
+            "For each player, Return all creature card from their graveyard to the battlefield. Put a -1/-1 counter on it.",
+        );
+        assert_eq!(
+            normalized,
+            "Each player returns each creature card from their graveyard to the battlefield with an additional -1/-1 counter on it."
+        );
+    }
+
+    #[test]
+    fn known_low_tail_adds_any_order_for_choose_then_put_top_library() {
+        let normalized = normalize_known_low_tail_phrase(
+            "Target player chooses three cards from their hand, then puts them on top of their library.",
+        );
+        assert_eq!(
+            normalized,
+            "Target player chooses three cards from their hand and puts them on top of their library in any order."
+        );
+    }
+
+    #[test]
+    fn semantic_phrasing_normalizes_choose_exact_tagged_graveyard_chain() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Target opponent chooses exactly 1 artifact card from their graveyard and tags it as '__it__'. Put it onto the battlefield under your control.",
+        );
+        assert_eq!(
+            normalized,
+            "Target opponent chooses an artifact card from their graveyard. Put it onto the battlefield under your control."
+        );
+    }
+
+    #[test]
+    fn known_low_tail_normalizes_choose_from_graveyard_put_under_your_control() {
+        let normalized = normalize_known_low_tail_phrase(
+            "Target opponent chooses artifact card from a graveyard. Put it onto the battlefield under your control.",
+        );
+        assert_eq!(
+            normalized,
+            "Target opponent chooses an artifact card in their graveyard. Put that card onto the battlefield under your control."
         );
     }
 
