@@ -12335,8 +12335,59 @@ fn parse_sentence_pump_creature_type_of_choice(
             words(tokens).join(" ")
         )));
     }
+    let trimmed_subject_tokens = trim_commas(&subject_tokens[..choice_idx]).to_vec();
+    if trimmed_subject_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing creature subject before creature-type choice phrase (clause: '{}')",
+            words(tokens).join(" ")
+        )));
+    }
 
-    let mut filter_tokens = trim_commas(&subject_tokens[..choice_idx]).to_vec();
+    let chosen_type_tag: TagKey = "chosen_creature_type_ref".into();
+    let mut choose_filter = ObjectFilter::creature();
+    choose_filter.controller = Some(PlayerFilter::Any);
+
+    // Handle composed clauses like:
+    // "Creatures of the creature type of your choice get +2/+2 and gain trample until end of turn."
+    let mut gain_candidate_tokens = trimmed_subject_tokens.clone();
+    gain_candidate_tokens.extend_from_slice(&tokens[get_idx..]);
+    if let Some(mut gain_effects) = parse_gain_ability_sentence(&gain_candidate_tokens)? {
+        let mut patched = false;
+        for effect in &mut gain_effects {
+            match effect {
+                EffectAst::PumpAll { filter, .. } | EffectAst::GrantAbilitiesAll { filter, .. } => {
+                    if !filter
+                        .tagged_constraints
+                        .iter()
+                        .any(|constraint| {
+                            constraint.tag == chosen_type_tag
+                                && constraint.relation
+                                    == TaggedOpbjectRelation::SharesSubtypeWithTagged
+                        })
+                    {
+                        filter.tagged_constraints.push(TaggedObjectConstraint {
+                            tag: chosen_type_tag.clone(),
+                            relation: TaggedOpbjectRelation::SharesSubtypeWithTagged,
+                        });
+                    }
+                    patched = true;
+                }
+                _ => {}
+            }
+        }
+        if patched {
+            let mut effects = vec![EffectAst::ChooseObjects {
+                filter: choose_filter,
+                count: ChoiceCount::exactly(1),
+                player: PlayerAst::You,
+                tag: chosen_type_tag,
+            }];
+            effects.extend(gain_effects);
+            return Ok(Some(effects));
+        }
+    }
+
+    let mut filter_tokens = trimmed_subject_tokens;
     if filter_tokens
         .first()
         .is_some_and(|token| token.is_word("all"))
@@ -12376,14 +12427,10 @@ fn parse_sentence_pump_creature_type_of_choice(
     let (power, toughness, duration) =
         parse_get_modifier_values_with_tail(&tokens[get_idx + 1..], base_power, base_toughness)?;
 
-    let chosen_type_tag: TagKey = "chosen_creature_type_ref".into();
     filter.tagged_constraints.push(TaggedObjectConstraint {
         tag: chosen_type_tag.clone(),
         relation: TaggedOpbjectRelation::SharesSubtypeWithTagged,
     });
-
-    let mut choose_filter = ObjectFilter::creature();
-    choose_filter.controller = Some(PlayerFilter::Any);
 
     Ok(Some(vec![
         EffectAst::ChooseObjects {

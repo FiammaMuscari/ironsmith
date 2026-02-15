@@ -635,6 +635,55 @@ fn normalize_enchanted_creature_dies_clause(text: &str) -> Option<String> {
     None
 }
 
+fn normalize_chosen_creature_type_clause(text: &str) -> Option<String> {
+    let rest = strip_prefix_ascii_ci(
+        text.trim(),
+        "You choose exactly 1 creature in the battlefield and tags it as 'chosen_creature_type_ref'. ",
+    )?;
+    let rest = rest.trim();
+
+    let shared_get_prefixes = [
+        "creature that shares a creature types with that object get ",
+        "creature that shares a creature type with that object get ",
+    ];
+    let shared_gain_prefixes = [
+        "creature that shares a creature types with that object gain ",
+        "creature that shares a creature type with that object gain ",
+    ];
+
+    for get_prefix in shared_get_prefixes {
+        if let Some((pump_clause, gain_clause)) = rest.split_once(". ")
+            && let Some(pump_amount) = strip_prefix_ascii_ci(pump_clause.trim(), get_prefix)
+        {
+            for gain_prefix in shared_gain_prefixes {
+                if let Some(gain_text) = strip_prefix_ascii_ci(gain_clause.trim(), gain_prefix)
+                    && let Some(gain_body) = strip_suffix_ascii_ci(gain_text.trim(), " until end of turn.")
+                        .or_else(|| strip_suffix_ascii_ci(gain_text.trim(), " until end of turn"))
+                {
+                    let pump_amount = strip_suffix_ascii_ci(pump_amount.trim(), " until end of turn.")
+                        .or_else(|| strip_suffix_ascii_ci(pump_amount.trim(), " until end of turn"))
+                        .unwrap_or_else(|| pump_amount.trim());
+                    return Some(format!(
+                        "Creatures of the creature type of your choice get {} and gain {} until end of turn.",
+                        pump_amount.trim(),
+                        gain_body.trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    shared_get_prefixes
+        .iter()
+        .find_map(|prefix| strip_prefix_ascii_ci(rest, prefix))
+        .map(|buff_clause| {
+            format!(
+                "Creatures of the creature type of your choice get {}",
+                buff_clause.trim()
+            )
+        })
+}
+
 fn normalize_common_semantic_phrasing(line: &str) -> String {
     let mut normalized = line.trim().to_string();
     if let Some(rewritten) = normalize_granted_activated_ability_clause(&normalized) {
@@ -646,6 +695,13 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     if let Some(rewritten) = normalize_enchanted_creature_dies_clause(&normalized) {
         normalized = rewritten;
     }
+    if let Some(rewritten) = normalize_chosen_creature_type_clause(&normalized) {
+        normalized = rewritten;
+    } else if let Some((head, tail)) = split_once_ascii_ci(&normalized, ": ")
+        && let Some(rewritten_tail) = normalize_chosen_creature_type_clause(tail)
+    {
+        normalized = format!("{}: {}", head.trim(), rewritten_tail);
+    }
     if let Some(rewritten) = normalize_search_you_own_clause(&normalized) {
         normalized = rewritten;
     }
@@ -654,6 +710,14 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     }
     if let Some(rewritten) = normalize_reveal_tagged_draw_clause(&normalized) {
         normalized = rewritten;
+    }
+    if let Some(rest) = strip_prefix_ascii_ci(&normalized, "Creatures you control get ")
+        && let Some(buff) = strip_suffix_ascii_ci(rest, " until end of turn. Untap all permanent.")
+            .or_else(|| strip_suffix_ascii_ci(rest, " until end of turn. Untap all permanent"))
+    {
+        return format!(
+            "Creatures you control get {buff} until end of turn. Untap them."
+        );
     }
     let lower = normalized.to_ascii_lowercase();
 
@@ -14109,7 +14173,7 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             .or_else(|| rest.strip_suffix(" until end of turn. Untap all permanent."))
     {
         return format!(
-            "Creatures you control get {buff} until end of turn. Untap all creatures you control"
+            "Creatures you control get {buff} until end of turn. Untap them"
         );
     }
     if trimmed == "Can't block" {
@@ -15165,6 +15229,28 @@ mod tests {
         assert_eq!(
             normalized,
             "When this permanent enters, create two 0/1 colorless Eldrazi Spawn creature tokens with \"Sacrifice this creature: Add {C}.\""
+        );
+    }
+
+    #[test]
+    fn normalizes_creature_type_choice_pump_sentence() {
+        let normalized = normalize_common_semantic_phrasing(
+            "You choose exactly 1 creature in the battlefield and tags it as 'chosen_creature_type_ref'. creature that shares a creature types with that object get +0/+4 until end of turn.",
+        );
+        assert_eq!(
+            normalized,
+            "Creatures of the creature type of your choice get +0/+4 until end of turn."
+        );
+    }
+
+    #[test]
+    fn normalizes_creature_type_choice_pump_and_gain_sentence() {
+        let normalized = normalize_common_semantic_phrasing(
+            "You choose exactly 1 creature in the battlefield and tags it as 'chosen_creature_type_ref'. creature that shares a creature types with that object get +2/+2 until end of turn. creature that shares a creature types with that object gain Trample until end of turn.",
+        );
+        assert_eq!(
+            normalized,
+            "Creatures of the creature type of your choice get +2/+2 and gain Trample until end of turn."
         );
     }
 
