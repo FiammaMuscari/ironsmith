@@ -15638,6 +15638,7 @@ fn parse_subtype_word(word: &str) -> Option<Subtype> {
         "alien" | "aliens" => Some(Subtype::Alien),
         "angel" => Some(Subtype::Angel),
         "ape" => Some(Subtype::Ape),
+        "army" | "armies" => Some(Subtype::Army),
         "archer" => Some(Subtype::Archer),
         "artificer" => Some(Subtype::Artificer),
         "assassin" => Some(Subtype::Assassin),

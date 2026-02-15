@@ -39,6 +39,7 @@ pub enum Subtype {
     Alien,
     Angel,
     Ape,
+    Army,
     Archer,
     Artificer,
     Assassin,
@@ -309,6 +310,7 @@ impl Subtype {
                 | Subtype::Alien
                 | Subtype::Angel
                 | Subtype::Ape
+                | Subtype::Army
                 | Subtype::Archer
                 | Subtype::Artificer
                 | Subtype::Assassin

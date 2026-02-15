@@ -2392,6 +2392,23 @@ mod target_parse_tests {
     }
 
     #[test]
+    fn parse_target_non_army_creature_populates_excluded_army_subtype() {
+        let tokens = tokenize_line("target non-Army creature", 0);
+        let target = parse_target_phrase(&tokens).expect("parse non-Army creature target");
+        let TargetAst::Object(filter, _, _) = target else {
+            panic!("expected object target");
+        };
+        assert!(
+            filter.card_types.contains(&CardType::Creature),
+            "expected creature type in filter"
+        );
+        assert!(
+            filter.excluded_subtypes.contains(&Subtype::Army),
+            "expected excluded Army subtype"
+        );
+    }
+
+    #[test]
     fn parse_anthem_subject_prefers_non_subtype_filter_suffix() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Ferocity Variant")
             .parse_text("Attacking non-Human creatures you control get +1/+0 and have trample.")
