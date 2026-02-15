@@ -11336,6 +11336,85 @@ fn parse_sentence_keyword_then_chain(
     Ok(Some(effects))
 }
 
+fn parse_sentence_chain_then_keyword(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let split = tokens
+        .windows(2)
+        .position(|window| matches!(window[0], Token::Comma(_)) && window[1].is_word("then"))
+        .map(|idx| (idx, idx + 2))
+        .or_else(|| {
+            tokens
+                .iter()
+                .position(|token| token.is_word("then"))
+                .and_then(|idx| (idx > 0 && idx + 1 < tokens.len()).then_some((idx, idx + 1)))
+        });
+    let Some((head_end, tail_start)) = split else {
+        return Ok(None);
+    };
+
+    let head_tokens = trim_commas(&tokens[..head_end]);
+    let tail_tokens = trim_commas(&tokens[tail_start..]);
+    if head_tokens.is_empty() || tail_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(keyword_effect) = parse_keyword_mechanic_clause(&tail_tokens)? else {
+        return Ok(None);
+    };
+    let mut head_effects = parse_effect_chain(&head_tokens)?;
+    if head_effects.is_empty() {
+        return Ok(None);
+    }
+    head_effects.push(keyword_effect);
+    Ok(Some(head_effects))
+}
+
+fn parse_sentence_exile_then_may_put_from_exile(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let split = tokens
+        .windows(2)
+        .position(|window| matches!(window[0], Token::Comma(_)) && window[1].is_word("then"))
+        .map(|idx| (idx, idx + 2))
+        .or_else(|| {
+            tokens
+                .iter()
+                .position(|token| token.is_word("then"))
+                .and_then(|idx| (idx > 0 && idx + 1 < tokens.len()).then_some((idx, idx + 1)))
+        });
+    let Some((head_end, tail_start)) = split else {
+        return Ok(None);
+    };
+
+    let head_tokens = trim_commas(&tokens[..head_end]);
+    let tail_tokens = trim_commas(&tokens[tail_start..]);
+    if head_tokens.is_empty() || tail_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let tail_words = words(&tail_tokens);
+    if !tail_words.starts_with(&["you", "may", "put", "any", "number", "of"])
+        || !tail_words.contains(&"from")
+        || !tail_words.contains(&"exile")
+        || !tail_words.contains(&"battlefield")
+    {
+        return Ok(None);
+    }
+
+    let mut head_effects = parse_effect_chain(&head_tokens)?;
+    if head_effects.is_empty() {
+        return Ok(None);
+    }
+    let mut tail_effects = parse_effect_chain(&tail_tokens)?;
+    if tail_effects.is_empty() {
+        return Ok(None);
+    }
+
+    head_effects.append(&mut tail_effects);
+    Ok(Some(head_effects))
+}
+
 fn parse_sentence_comma_then_chain_special(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -12323,6 +12402,14 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "keyword-then-chain",
         parser: parse_sentence_keyword_then_chain,
+    },
+    SentencePrimitive {
+        name: "chain-then-keyword",
+        parser: parse_sentence_chain_then_keyword,
+    },
+    SentencePrimitive {
+        name: "exile-then-may-put-from-exile",
+        parser: parse_sentence_exile_then_may_put_from_exile,
     },
     SentencePrimitive {
         name: "comma-then-chain-special",
@@ -19363,6 +19450,13 @@ fn parse_keyword_mechanic_clause(tokens: &[Token]) -> Result<Option<EffectAst>, 
         return Ok(None);
     }
 
+    if clause_words.first() == Some(&"amass") {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported amass mechanic (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
     if clause_words.starts_with(&["open", "an", "attraction"])
         || clause_words.starts_with(&["opens", "an", "attraction"])
     {
@@ -19394,6 +19488,25 @@ fn parse_keyword_mechanic_clause(tokens: &[Token]) -> Result<Option<EffectAst>, 
             _ => unreachable!(),
         };
         return Ok(Some(effect));
+    }
+
+    if clause_words.first() == Some(&"fateseal") {
+        let (count, used) = parse_value(&clause_tokens[1..]).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing amount for fateseal clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+        if 1 + used != clause_tokens.len() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported trailing fateseal clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        return Ok(Some(EffectAst::Scry {
+            count,
+            player: PlayerAst::Opponent,
+        }));
     }
 
     if matches!(clause_words.last().copied(), Some("explore" | "explores")) {
@@ -20692,7 +20805,19 @@ fn parse_put_into_hand(
             .into_iter()
             .filter(|word| !is_article(word))
             .collect();
-        if destination_words.as_slice() != ["battlefield"] {
+        if destination_words.first() != Some(&"battlefield") {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported put destination after 'onto' (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let destination_tail = &destination_words[1..];
+        let supported_control_tail = destination_tail.is_empty()
+            || destination_tail == ["under", "your", "control"]
+            || destination_tail == ["under", "its", "owners", "control"]
+            || destination_tail == ["under", "their", "owners", "control"]
+            || destination_tail == ["under", "that", "players", "control"];
+        if !supported_control_tail {
             return Err(CardTextError::ParseError(format!(
                 "unsupported put destination after 'onto' (clause: '{}')",
                 clause_words.join(" ")

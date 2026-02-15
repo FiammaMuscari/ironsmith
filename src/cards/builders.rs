@@ -2456,7 +2456,7 @@ mod effect_parse_tests {
         ModifyPowerToughnessForEachEffect, PutCountersEffect, RemoveUpToAnyCountersEffect,
         ReturnAllToBattlefieldEffect,
         ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect, SacrificeEffect,
-        SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipCombatPhasesEffect,
+        ScryEffect, SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipCombatPhasesEffect,
         SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, SurveilEffect,
         TapEffect, TargetOnlyEffect, TransformEffect,
     };
@@ -6647,6 +6647,44 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             }
             other => panic!("expected count-based damage amount, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_spin_into_myth_fateseal_appends_scry_effect() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Spin into Myth Variant")
+            .parse_text(
+                "Put target creature on top of its owner's library, then fateseal 2.",
+            )
+            .expect("fateseal tail should parse");
+
+        let effects = def.spell_effect.as_ref().expect("spell effects");
+        assert!(
+            effects
+                .iter()
+                .any(|effect| effect.downcast_ref::<MoveToZoneEffect>().is_some()),
+            "expected move-to-library effect, got {effects:?}"
+        );
+        let scry = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<ScryEffect>())
+            .expect("expected scry effect for fateseal");
+        assert_eq!(scry.player, PlayerFilter::Opponent);
+        assert_eq!(scry.count, Value::Fixed(2));
+    }
+
+    #[test]
+    fn parse_amass_clause_is_rejected_until_supported() {
+        let err = CardDefinitionBuilder::new(CardId::new(), "Widespread Brutality Variant")
+            .parse_text(
+                "Amass Zombies 2, then the Army you amassed deals damage equal to its power to each non-Army creature.",
+            )
+            .expect_err("amass should fail until mechanic support is implemented");
+
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("unsupported amass mechanic"),
+            "expected unsupported amass parse error, got {message}"
+        );
     }
 }
 
