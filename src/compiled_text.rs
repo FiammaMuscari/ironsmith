@@ -2900,7 +2900,7 @@ fn describe_effect_count_backref(value: &Value) -> Option<String> {
 fn is_generic_owned_card_search_filter(filter: &ObjectFilter) -> bool {
     filter.zone.is_none()
         && filter.controller.is_none()
-        && matches!(filter.owner, Some(PlayerFilter::You))
+        && (filter.owner.is_none() || matches!(filter.owner, Some(PlayerFilter::You)))
         && filter.targets_player.is_none()
         && filter.targets_object.is_none()
         && filter.card_types.is_empty()
