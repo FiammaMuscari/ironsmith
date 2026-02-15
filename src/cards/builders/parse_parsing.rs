@@ -1130,6 +1130,20 @@ fn is_non_mana_additional_cost_modifier_line(normalized_line: &str) -> bool {
     normalized_line.contains('"') || normalized_line.contains('“') || normalized_line.contains('”')
 }
 
+fn dash_labeled_remainder_starts_with_trigger(line: &str) -> bool {
+    let lower = line.trim().to_ascii_lowercase();
+    let remainder = lower
+        .split_once('—')
+        .map(|(_, rest)| rest.trim())
+        .or_else(|| lower.split_once(" - ").map(|(_, rest)| rest.trim()));
+    let Some(rest) = remainder else {
+        return false;
+    };
+    rest.starts_with("whenever ")
+        || rest.starts_with("when ")
+        || rest.starts_with("at ")
+}
+
 fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
     parser_trace_line("parse_line:entry", line);
     let normalized = line
@@ -1300,7 +1314,7 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
             || token.is_word("when")
             || is_at_trigger_intro(&tokens, *idx)
     }) && (trigger_idx <= 2
-        || (trigger_idx > 2 && (line.contains('—') || line.contains(" - "))))
+        || (trigger_idx > 2 && dash_labeled_remainder_starts_with_trigger(line)))
     {
         parser_trace("parse_line:branch=triggered", &tokens[trigger_idx..]);
         return parse_triggered_line(&tokens[trigger_idx..]);
