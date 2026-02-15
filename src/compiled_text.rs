@@ -10075,6 +10075,12 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         return "At the beginning of your end step, put a +1/+1 counter on each creature you control and a loyalty counter on each planeswalker you control."
             .to_string();
     }
+    if let Some(rest) = strip_prefix_ascii_ci(&normalized, "Return target ")
+        && let Some((card_desc, _tail)) =
+            split_once_ascii_ci(rest, " in your exile to its owner's hand")
+    {
+        return format!("Return target exiled {} you own to your hand.", card_desc.trim());
+    }
     normalized = normalized
         .replace(
             " creature tokens with \"Sacrifice this creature, add {C}\"",
