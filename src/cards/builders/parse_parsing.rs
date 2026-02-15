@@ -698,6 +698,11 @@ fn is_basic_color_word(word: &str) -> bool {
 fn starts_with_inline_token_rules_tail(words: &[&str]) -> bool {
     words.starts_with(&["when", "this", "token"])
         || words.starts_with(&["whenever", "this", "token"])
+        || words.starts_with(&["this", "token"])
+        || words.starts_with(&["that", "token"])
+        || words.starts_with(&["those", "tokens"])
+        || words.starts_with(&["this", "creature"])
+        || words.starts_with(&["that", "creature"])
         || words.starts_with(&["at", "the", "beginning"])
         || words.starts_with(&["at", "beginning"])
         || words.starts_with(&["sacrifice", "this", "token"])
@@ -886,6 +891,13 @@ fn split_segments_on_comma_effect_head(segments: Vec<Vec<Token>>) -> Vec<Vec<Tok
             let after_starts_effect =
                 find_verb(after.as_slice()).is_some_and(|(_, verb_idx)| verb_idx == 0)
                     || parse_ability_line(after.as_slice()).is_some();
+            let before_words = words(before.as_slice());
+            let after_words = words(after.as_slice());
+            let is_inline_token_rules_split = is_token_creation_context(&before_words)
+                && starts_with_inline_token_rules_tail(&after_words);
+            if is_inline_token_rules_split {
+                continue;
+            }
             if !before_has_verb || !after_starts_effect {
                 continue;
             }
@@ -16156,6 +16168,9 @@ fn expand_segments_with_multi_create_clauses(segments: Vec<Vec<Token>>) -> Vec<V
             .any(|window| matches!(window, ["when", "this", "token"] | ["whenever", "this", "token"]))
             || segment_words
                 .windows(2)
+                .any(|window| matches!(window, ["this", "token"] | ["that", "token"] | ["those", "tokens"]))
+            || segment_words
+                .windows(2)
                 .any(|window| matches!(window, ["it", "has"] | ["they", "have"]));
         if has_token_rules_tail {
             expanded.push(segment);
@@ -16179,6 +16194,16 @@ fn expand_segments_with_multi_create_clauses(segments: Vec<Vec<Token>>) -> Vec<V
         let mut local_parts: Vec<Vec<Token>> = Vec::new();
         for part in comma_parts {
             if part.is_empty() {
+                continue;
+            }
+            if let Some(previous) = local_parts.last()
+                && is_token_creation_context(&words(previous))
+                && starts_with_inline_token_rules_tail(&words(&part))
+            {
+                if let Some(last) = local_parts.last_mut() {
+                    last.push(Token::Comma(TextSpan::synthetic()));
+                    last.extend(part);
+                }
                 continue;
             }
             if find_verb(&part).is_some() {

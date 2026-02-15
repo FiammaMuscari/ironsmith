@@ -3532,11 +3532,54 @@ fn parse_number_word(word: &str) -> Option<i32> {
 
 fn parse_deals_damage_amount(words: &[&str]) -> Option<i32> {
     for window in words.windows(3) {
-        if window[0] == "deals" && window[2] == "damage" {
+        if (window[0] == "deals" || window[0] == "deal") && window[2] == "damage" {
             return parse_number_word(window[1]);
         }
     }
     None
+}
+
+fn token_inline_noncreature_spell_each_opponent_damage_amount(name: &str) -> Option<i32> {
+    let lower_name = name.to_ascii_lowercase();
+    let words: Vec<&str> = lower_name
+        .split_whitespace()
+        .map(|word| {
+            word.trim_matches(|ch: char| {
+                !ch.is_ascii_alphanumeric() && ch != '/' && ch != '+' && ch != '-'
+            })
+        })
+        .filter(|word| !word.is_empty())
+        .collect();
+    let has_noncreature_cast_trigger = words
+        .windows(6)
+        .any(|window| window == ["whenever", "you", "cast", "a", "noncreature", "spell"])
+        || words
+            .windows(5)
+            .any(|window| window == ["whenever", "you", "cast", "noncreature", "spell"]);
+    if !has_noncreature_cast_trigger {
+        return None;
+    }
+    let has_damage_subject = words
+        .windows(3)
+        .any(|window| {
+            window == ["this", "token", "deals"]
+                || window == ["this", "creature", "deals"]
+                || window == ["this", "token", "deal"]
+                || window == ["this", "creature", "deal"]
+        })
+        || words
+            .windows(2)
+            .any(|window| window == ["it", "deals"] || window == ["it", "deal"]);
+    if !has_damage_subject {
+        return None;
+    }
+    if !words
+        .windows(3)
+        .any(|window| window == ["to", "each", "opponent"])
+    {
+        return None;
+    }
+    parse_deals_damage_amount(&words)
 }
 
 fn parse_crew_amount(words: &[&str]) -> Option<u32> {
@@ -3646,6 +3689,28 @@ fn token_damage_to_player_poison_counter_ability() -> Ability {
             "Whenever this creature deals damage to a player, that player gets a poison counter."
                 .to_string(),
         ),
+    }
+}
+
+fn token_noncreature_spell_each_opponent_damage_ability(amount: i32) -> Ability {
+    Ability {
+        kind: AbilityKind::Triggered(TriggeredAbility {
+            trigger: Trigger::spell_cast(
+                Some(ObjectFilter::spell().without_type(CardType::Creature)),
+                PlayerFilter::You,
+            ),
+            effects: vec![Effect::for_each_opponent(vec![Effect::deal_damage(
+                Value::Fixed(amount),
+                ChooseSpec::Player(PlayerFilter::IteratedPlayer),
+            )])],
+            choices: Vec::new(),
+            intervening_if: None,
+            once_each_turn: false,
+        }),
+        functional_zones: vec![Zone::Battlefield],
+        text: Some(format!(
+            "Whenever you cast a noncreature spell, this token deals {amount} damage to each opponent."
+        )),
     }
 }
 
@@ -4239,6 +4304,11 @@ fn token_definition_for(name: &str) -> Option<CardDefinition> {
             && words.contains(&"counter")
         {
             builder = builder.with_ability(token_damage_to_player_poison_counter_ability());
+        }
+        if let Some(amount) = token_inline_noncreature_spell_each_opponent_damage_amount(lower.as_str())
+        {
+            builder =
+                builder.with_ability(token_noncreature_spell_each_opponent_damage_ability(amount));
         }
         if has_word("pest")
             && words.contains(&"when")

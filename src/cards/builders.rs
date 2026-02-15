@@ -4949,6 +4949,31 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_token_with_noncreature_cast_damage_trigger_reminder() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Wizard Trigger Token Probe")
+            .parse_text(
+                "When this creature enters, create a 0/1 black Wizard creature token with \"Whenever you cast a noncreature spell, this token deals 1 damage to each opponent.\"",
+            )
+            .expect("parse token creation with noncreature-cast trigger reminder");
+
+        let abilities_debug = format!("{:?}", def.abilities);
+        assert!(
+            abilities_debug.contains("CreateTokenEffect"),
+            "expected token creation in compiled trigger effects, got {abilities_debug}"
+        );
+        assert!(
+            !abilities_debug.contains("ForPlayersEffect"),
+            "inline token reminder should not become immediate for-each-opponent damage, got {abilities_debug}"
+        );
+        assert!(
+            abilities_debug.contains("SpellCastTrigger")
+                && abilities_debug.contains("without_type: [Creature]")
+                && abilities_debug.contains("IteratedPlayer"),
+            "expected token to receive a noncreature-spell cast trigger that pings each opponent, got {abilities_debug}"
+        );
+    }
+
+    #[test]
     fn parse_gain_control_target_creature_from_text() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Threaten")
             .parse_text("Gain control of target creature until end of turn.")
