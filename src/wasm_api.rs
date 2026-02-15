@@ -5018,6 +5018,9 @@ fn describe_effect_core_expanded(
         if create_copy.sacrifice_at_next_end_step {
             text.push_str(", and sacrifice it at the beginning of the next end step");
         }
+        if create_copy.exile_at_next_end_step {
+            text.push_str(", and exile it at the beginning of the next end step");
+        }
         if let Some(adjustment) = &create_copy.pt_adjustment {
             text.push_str(&format!(", with P/T adjustment {adjustment:?}"));
         }

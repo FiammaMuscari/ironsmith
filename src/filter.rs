@@ -320,6 +320,8 @@ pub enum TaggedOpbjectRelation {
     SameNameAsTagged,
     /// The object must have the same controller as a tagged object.
     SameControllerAsTagged,
+    /// The object must have the same mana value as a tagged object.
+    SameManaValueAsTagged,
     /// The object must NOT be one of the tagged objects.
     IsNotTaggedObject,
 }
@@ -1383,7 +1385,11 @@ impl ObjectFilter {
         for constraint in &self.tagged_constraints {
             let Some(tagged_snapshots) = ctx.tagged_objects.get(constraint.tag.as_str()) else {
                 // Tag not found - no match possible for positive constraints.
-                if matches!(constraint.relation, TaggedOpbjectRelation::IsTaggedObject) {
+                if matches!(
+                    constraint.relation,
+                    TaggedOpbjectRelation::IsTaggedObject
+                        | TaggedOpbjectRelation::SameManaValueAsTagged
+                ) {
                     return false;
                 }
                 // For negative constraints, missing tag means nothing is excluded.
@@ -1445,6 +1451,18 @@ impl ObjectFilter {
                         .iter()
                         .any(|s| s.controller == object.controller)
                     {
+                        return false;
+                    }
+                }
+                TaggedOpbjectRelation::SameManaValueAsTagged => {
+                    let object_mana_value =
+                        object.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32);
+                    if !tagged_snapshots.iter().any(|s| {
+                        s.mana_cost
+                            .as_ref()
+                            .map_or(0, |mc| mc.mana_value() as i32)
+                            == object_mana_value
+                    }) {
                         return false;
                     }
                 }
@@ -1825,6 +1843,7 @@ impl ObjectFilter {
                         | TaggedOpbjectRelation::SameStableId
                         | TaggedOpbjectRelation::SameNameAsTagged
                         | TaggedOpbjectRelation::SameControllerAsTagged
+                        | TaggedOpbjectRelation::SameManaValueAsTagged
                 ) {
                     return false;
                 }
@@ -1899,6 +1918,20 @@ impl ObjectFilter {
                         .iter()
                         .any(|s| s.controller == snapshot.controller)
                     {
+                        return false;
+                    }
+                }
+                TaggedOpbjectRelation::SameManaValueAsTagged => {
+                    let snapshot_mana_value = snapshot
+                        .mana_cost
+                        .as_ref()
+                        .map_or(0, |mc| mc.mana_value() as i32);
+                    if !tagged_snapshots.iter().any(|s| {
+                        s.mana_cost
+                            .as_ref()
+                            .map_or(0, |mc| mc.mana_value() as i32)
+                            == snapshot_mana_value
+                    }) {
                         return false;
                     }
                 }
@@ -2074,6 +2107,15 @@ impl ObjectFilter {
                 }
                 TaggedOpbjectRelation::SameControllerAsTagged => {
                     post_noun_qualifiers.push("controlled by that object's controller".to_string());
+                }
+                TaggedOpbjectRelation::SameManaValueAsTagged => {
+                    if constraint.tag.as_str().starts_with("sacrifice_cost_") {
+                        post_noun_qualifiers
+                            .push("with the same mana value as the sacrificed creature".to_string());
+                    } else {
+                        post_noun_qualifiers
+                            .push("with the same mana value as that object".to_string());
+                    }
                 }
                 TaggedOpbjectRelation::SharesColorWithTagged => {
                     post_noun_qualifiers.push("that shares a color with that object".to_string());

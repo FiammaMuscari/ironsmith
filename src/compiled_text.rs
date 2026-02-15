@@ -7317,8 +7317,19 @@ fn describe_effect_impl(effect: &Effect) -> String {
         if create_copy.sacrifice_at_next_end_step {
             text.push_str(", and sacrifice it at the beginning of the next end step");
         }
-        if let Some(adjustment) = &create_copy.pt_adjustment {
-            text.push_str(&format!(", with P/T adjustment {adjustment:?}"));
+        if create_copy.exile_at_next_end_step {
+            text.push_str(", and exile it at the beginning of the next end step");
+        }
+        if create_copy.pt_adjustment.is_some() {
+            if matches!(create_copy.count, Value::Fixed(1)) {
+                text.push_str(
+                    ", except its power and toughness are each half that permanent's power and toughness, rounded up",
+                );
+            } else {
+                text.push_str(
+                    ", except their power and toughness are each half that permanent's power and toughness, rounded up",
+                );
+            }
         }
         return text;
     }
@@ -10510,11 +10521,11 @@ fn render_choose_exact_subject(descriptor: &str, count: usize) -> String {
 }
 
 fn normalize_choose_exact_return_cost_clause(text: &str) -> Option<String> {
-    let marker = " and tags it as 'return_cost_0', Return target permanent to its owner's hand";
-    let (head, tail) = text.split_once(marker)?;
-    let choose_idx = head.rfind("Choose exactly ")?;
+    let marker = " and tags it as 'return_cost_0', return target permanent to its owner's hand";
+    let (head, tail) = split_once_ascii_ci(text, marker)?;
+    let choose_idx = head.to_ascii_lowercase().rfind("choose exactly ")?;
     let prefix = &head[..choose_idx];
-    let choose_tail = &head[choose_idx + "Choose exactly ".len()..];
+    let choose_tail = &head[choose_idx + "choose exactly ".len()..];
     let (count_token, rest) = choose_tail.split_once(' ')?;
     let count = count_token.parse::<usize>().ok()?;
     let descriptor = rest.strip_suffix(" in the battlefield")?;
@@ -10529,11 +10540,11 @@ fn normalize_choose_exact_return_cost_clause(text: &str) -> Option<String> {
 }
 
 fn normalize_choose_exact_exile_cost_clause(text: &str) -> Option<String> {
-    let marker = " and tags it as 'exile_cost_0', Exile it";
-    let (head, tail) = text.split_once(marker)?;
-    let choose_idx = head.rfind("Choose exactly ")?;
+    let marker = " and tags it as 'exile_cost_0', exile it";
+    let (head, tail) = split_once_ascii_ci(text, marker)?;
+    let choose_idx = head.to_ascii_lowercase().rfind("choose exactly ")?;
     let prefix = &head[..choose_idx];
-    let choose_tail = &head[choose_idx + "Choose exactly ".len()..];
+    let choose_tail = &head[choose_idx + "choose exactly ".len()..];
     let (count_token, rest) = choose_tail.split_once(' ')?;
     let count = count_token.parse::<usize>().ok()?;
     let descriptor = rest
@@ -11227,6 +11238,12 @@ fn normalize_sentence_surface_style(line: &str) -> String {
         .to_string();
     normalized = normalized.replace('\u{00a0}', " ");
     normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+    if let Some(rewritten) = normalize_choose_exact_return_cost_clause(&normalized) {
+        normalized = rewritten;
+    }
+    if let Some(rewritten) = normalize_choose_exact_exile_cost_clause(&normalized) {
+        normalized = rewritten;
+    }
     normalized = normalized.replace("controlss", "controls");
     let lower_normalized = normalized.to_ascii_lowercase();
     let format_choose_modes = |head: &str, marker: &str, tail: &str| {

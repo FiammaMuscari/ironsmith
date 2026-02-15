@@ -732,6 +732,7 @@ enum EffectAst {
         half_power_toughness_round_up: bool,
         has_haste: bool,
         sacrifice_at_next_end_step: bool,
+        exile_at_next_end_step: bool,
     },
     CreateTokenCopyFromSource {
         source: TargetAst,
@@ -740,6 +741,7 @@ enum EffectAst {
         half_power_toughness_round_up: bool,
         has_haste: bool,
         sacrifice_at_next_end_step: bool,
+        exile_at_next_end_step: bool,
     },
     CreateTokenWithMods {
         name: String,
@@ -834,6 +836,7 @@ enum EffectAst {
     },
     TokenCopyGainHasteUntilEot,
     TokenCopySacrificeAtNextEndStep,
+    TokenCopyExileAtNextEndStep,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -3859,6 +3862,45 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             },
             other => panic!("expected mana-value scaling, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_destroy_same_mana_value_as_sacrificed_creature_uses_sacrifice_cost_tag() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Sanguine Praetor Variant")
+            .parse_text(
+                "{B}, Sacrifice a creature: Destroy each creature with the same mana value as the sacrificed creature.",
+            )
+            .expect("same-mana-value destroy ability should parse");
+
+        let activated = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(ability) => Some(ability),
+                _ => None,
+            })
+            .expect("expected activated ability");
+        let destroy = activated
+            .effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<DestroyEffect>())
+            .expect("expected destroy effect");
+
+        let ChooseSpec::All(filter) = &destroy.spec else {
+            panic!("expected destroy-all filter");
+        };
+
+        let tag_constraint = filter
+            .tagged_constraints
+            .iter()
+            .find(|constraint| {
+                matches!(
+                    constraint.relation,
+                    crate::filter::TaggedOpbjectRelation::SameManaValueAsTagged
+                )
+            })
+            .expect("expected same-mana-value tagged constraint");
+        assert_eq!(tag_constraint.tag.as_str(), "sacrifice_cost_0");
     }
 
     #[test]

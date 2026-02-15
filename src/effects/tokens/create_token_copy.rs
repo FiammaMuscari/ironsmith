@@ -57,6 +57,8 @@ pub struct CreateTokenCopyEffect {
     pub exile_at_end_of_combat: bool,
     /// Whether to sacrifice at the beginning of the next end step.
     pub sacrifice_at_next_end_step: bool,
+    /// Whether to exile at the beginning of the next end step.
+    pub exile_at_next_end_step: bool,
     /// Optional power/toughness adjustment for the created tokens.
     pub pt_adjustment: Option<CopyPtAdjustment>,
 }
@@ -80,6 +82,7 @@ impl CreateTokenCopyEffect {
             enters_attacking: false,
             exile_at_end_of_combat: false,
             sacrifice_at_next_end_step: false,
+            exile_at_next_end_step: false,
             pt_adjustment: None,
         }
     }
@@ -138,6 +141,12 @@ impl CreateTokenCopyEffect {
     /// Set whether to sacrifice at the beginning of the next end step.
     pub fn sacrifice_at_next_end_step(mut self, value: bool) -> Self {
         self.sacrifice_at_next_end_step = value;
+        self
+    }
+
+    /// Set whether to exile at the beginning of the next end step.
+    pub fn exile_at_next_end_step(mut self, value: bool) -> Self {
+        self.exile_at_next_end_step = value;
         self
     }
 
@@ -275,6 +284,16 @@ impl EffectExecutor for CreateTokenCopyEffect {
                     vec![Effect::new(SacrificeTargetEffect::new(
                         ChooseSpec::SpecificObject(id),
                     ))],
+                    true,
+                    vec![id],
+                    PlayerFilter::Specific(controller_id),
+                );
+                let _ = execute_effect(game, &Effect::new(schedule), ctx)?;
+            }
+            if self.exile_at_next_end_step {
+                let schedule = ScheduleDelayedTriggerEffect::new(
+                    Trigger::beginning_of_end_step(PlayerFilter::Any),
+                    vec![Effect::exile(ChooseSpec::SpecificObject(id))],
                     true,
                     vec![id],
                     PlayerFilter::Specific(controller_id),

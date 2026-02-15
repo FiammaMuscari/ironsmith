@@ -2874,6 +2874,7 @@ fn compile_effect(
             half_power_toughness_round_up,
             has_haste,
             sacrifice_at_next_end_step,
+            exile_at_next_end_step,
         } => {
             let tag = match object {
                 ObjectRefAst::It => ctx.last_object_tag.clone().ok_or_else(|| {
@@ -2898,6 +2899,9 @@ fn compile_effect(
             if *sacrifice_at_next_end_step {
                 effect = effect.sacrifice_at_next_end_step(true);
             }
+            if *exile_at_next_end_step {
+                effect = effect.exile_at_next_end_step(true);
+            }
             Ok((vec![Effect::new(effect)], Vec::new()))
         }
         EffectAst::CreateTokenCopyFromSource {
@@ -2907,6 +2911,7 @@ fn compile_effect(
             half_power_toughness_round_up,
             has_haste,
             sacrifice_at_next_end_step,
+            exile_at_next_end_step,
         } => {
             let player_filter = resolve_non_target_player_filter(*player, ctx)?;
             compile_effect_for_target(source, ctx, |source_spec| {
@@ -2921,11 +2926,16 @@ fn compile_effect(
                 if *sacrifice_at_next_end_step {
                     effect = effect.sacrifice_at_next_end_step(true);
                 }
+                if *exile_at_next_end_step {
+                    effect = effect.exile_at_next_end_step(true);
+                }
                 Effect::new(effect)
             })
         }
         EffectAst::ExileThatTokenAtEndOfCombat => Ok((Vec::new(), Vec::new())),
-        EffectAst::TokenCopyGainHasteUntilEot | EffectAst::TokenCopySacrificeAtNextEndStep => {
+        EffectAst::TokenCopyGainHasteUntilEot
+        | EffectAst::TokenCopySacrificeAtNextEndStep
+        | EffectAst::TokenCopyExileAtNextEndStep => {
             Ok((Vec::new(), Vec::new()))
         }
         EffectAst::Monstrosity { amount } => {

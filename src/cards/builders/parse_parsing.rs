@@ -701,6 +701,10 @@ fn starts_with_inline_token_rules_tail(words: &[&str]) -> bool {
         || words.starts_with(&["this", "token"])
         || words.starts_with(&["that", "token"])
         || words.starts_with(&["those", "tokens"])
+        || words.starts_with(&["except", "it"])
+        || words.starts_with(&["except", "they"])
+        || words.starts_with(&["except", "its"])
+        || words.starts_with(&["except", "their"])
         || words.starts_with(&["this", "creature"])
         || words.starts_with(&["that", "creature"])
         || words.starts_with(&["at", "the", "beginning"])
@@ -10144,6 +10148,7 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
         }
 
         let mut sentence_effects = parse_effect_sentence(&sentence_tokens)?;
+        collapse_token_copy_next_end_step_exile_followup(&mut sentence_effects, &sentence_tokens);
         if is_that_turn_end_step_sentence(&sentence_tokens)
             && let Some(extra_turn_player) = most_recent_extra_turn_player(&effects)
             && !sentence_effects.is_empty()
@@ -10187,6 +10192,18 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
                         filter: ObjectFilter::tagged(TagKey::from(IT_TAG)),
                         player: PlayerAst::Implicit,
                         count: 1,
+                    }],
+                };
+            } else if matches!(effect, EffectAst::TokenCopyExileAtNextEndStep) {
+                let span = span_from_tokens(&sentence);
+                *effect = EffectAst::DelayedUntilNextEndStep {
+                    player: PlayerFilter::Any,
+                    effects: vec![EffectAst::Exile {
+                        target: TargetAst::Object(
+                            ObjectFilter::tagged(TagKey::from(IT_TAG)),
+                            span,
+                            None,
+                        ),
                     }],
                 };
             }
@@ -10356,9 +10373,10 @@ fn try_apply_token_copy_followup(
         return Ok(false);
     };
 
-    let Some((haste, sacrifice)) = (match sentence_effects.first() {
-        Some(EffectAst::TokenCopyGainHasteUntilEot) => Some((true, false)),
-        Some(EffectAst::TokenCopySacrificeAtNextEndStep) => Some((false, true)),
+    let Some((haste, sacrifice, exile)) = (match sentence_effects.first() {
+        Some(EffectAst::TokenCopyGainHasteUntilEot) => Some((true, false, false)),
+        Some(EffectAst::TokenCopySacrificeAtNextEndStep) => Some((false, true, false)),
+        Some(EffectAst::TokenCopyExileAtNextEndStep) => Some((false, false, true)),
         _ => None,
     }) else {
         return Ok(false);
@@ -10368,11 +10386,13 @@ fn try_apply_token_copy_followup(
         EffectAst::CreateTokenCopy {
             has_haste,
             sacrifice_at_next_end_step,
+            exile_at_next_end_step,
             ..
         }
         | EffectAst::CreateTokenCopyFromSource {
             has_haste,
             sacrifice_at_next_end_step,
+            exile_at_next_end_step,
             ..
         } => {
             if haste {
@@ -10380,6 +10400,9 @@ fn try_apply_token_copy_followup(
             }
             if sacrifice {
                 *sacrifice_at_next_end_step = true;
+            }
+            if exile {
+                *exile_at_next_end_step = true;
             }
             Ok(true)
         }
@@ -12438,6 +12461,14 @@ fn parse_token_copy_modifier_sentence(tokens: &[Token]) -> Option<EffectAst> {
             return Some(EffectAst::TokenCopySacrificeAtNextEndStep);
         }
     }
+    if filtered.starts_with(&["exile", "it"]) || filtered.starts_with(&["exile", "them"]) {
+        let has_next_end_step = filtered.windows(6).any(|window| {
+            window == ["at", "beginning", "of", "next", "end", "step"]
+        });
+        if has_next_end_step {
+            return Some(EffectAst::TokenCopyExileAtNextEndStep);
+        }
+    }
 
     let starts_delayed_end_step_sacrifice =
         filtered.starts_with(&["at", "the", "beginning", "of", "the", "end", "step", "sacrifice"])
@@ -12464,6 +12495,32 @@ fn parse_token_copy_modifier_sentence(tokens: &[Token]) -> Option<EffectAst> {
             ]);
     if starts_delayed_end_step_sacrifice {
         return Some(EffectAst::TokenCopySacrificeAtNextEndStep);
+    }
+    let starts_delayed_end_step_exile =
+        filtered.starts_with(&["at", "the", "beginning", "of", "the", "end", "step", "exile"])
+            || filtered.starts_with(&[
+                "at",
+                "the",
+                "beginning",
+                "of",
+                "the",
+                "next",
+                "end",
+                "step",
+                "exile",
+            ])
+            || filtered.starts_with(&[
+                "at",
+                "the",
+                "beginning",
+                "of",
+                "next",
+                "end",
+                "step",
+                "exile",
+            ]);
+    if starts_delayed_end_step_exile {
+        return Some(EffectAst::TokenCopyExileAtNextEndStep);
     }
 
     None
@@ -16592,7 +16649,81 @@ fn parse_effect_chain_inner(tokens: &[Token]) -> Result<Vec<EffectAst>, CardText
         }
         effects.push(effect);
     }
+    collapse_token_copy_next_end_step_exile_followup(&mut effects, tokens);
     Ok(effects)
+}
+
+fn is_beginning_of_end_step_words(words: &[&str]) -> bool {
+    words.windows(5)
+        .any(|window| window == ["beginning", "of", "the", "end", "step"])
+        || words
+            .windows(5)
+            .any(|window| window == ["beginning", "of", "next", "end", "step"])
+        || words
+            .windows(6)
+            .any(|window| window == ["beginning", "of", "the", "next", "end", "step"])
+}
+
+fn target_is_generic_token_filter(target: &TargetAst) -> bool {
+    let TargetAst::Object(filter, _, _) = target else {
+        return false;
+    };
+    filter.token
+        && filter.zone.is_none()
+        && filter.card_types.is_empty()
+        && filter.subtypes.is_empty()
+        && filter.tagged_constraints.is_empty()
+        && filter.controller.is_none()
+        && filter.owner.is_none()
+}
+
+fn collapse_token_copy_next_end_step_exile_followup(effects: &mut Vec<EffectAst>, tokens: &[Token]) {
+    let chain_words = words(tokens);
+    if !chain_words.contains(&"exile")
+        || !chain_words.contains(&"token")
+        || !is_beginning_of_end_step_words(&chain_words)
+    {
+        return;
+    }
+
+    let mut idx = 0usize;
+    while idx + 1 < effects.len() {
+        let mark_next_end_step_exile = match (&effects[idx], &effects[idx + 1]) {
+            (
+                EffectAst::CreateTokenCopy { .. } | EffectAst::CreateTokenCopyFromSource { .. },
+                EffectAst::MoveToZone {
+                    target,
+                    zone: Zone::Exile,
+                    ..
+                },
+            ) => target_is_generic_token_filter(target),
+            (
+                EffectAst::CreateTokenCopy { .. } | EffectAst::CreateTokenCopyFromSource { .. },
+                EffectAst::Exile { target },
+            ) => target_is_generic_token_filter(target),
+            _ => false,
+        };
+
+        if !mark_next_end_step_exile {
+            idx += 1;
+            continue;
+        }
+
+        match &mut effects[idx] {
+            EffectAst::CreateTokenCopy {
+                exile_at_next_end_step,
+                ..
+            }
+            | EffectAst::CreateTokenCopyFromSource {
+                exile_at_next_end_step,
+                ..
+            } => {
+                *exile_at_next_end_step = true;
+            }
+            _ => {}
+        }
+        effects.remove(idx + 1);
+    }
 }
 
 fn expand_segments_with_comma_action_clauses(segments: Vec<Vec<Token>>) -> Vec<Vec<Token>> {
@@ -21290,7 +21421,13 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                     || tail_words.contains(&"permanent")
                     || tail_words.contains(&"it")
                     || tail_words.contains(&"them"));
+            let has_exile_reference = tail_words.contains(&"exile")
+                && (tail_words.contains(&"token")
+                    || tail_words.contains(&"permanent")
+                    || tail_words.contains(&"it")
+                    || tail_words.contains(&"them"));
             let sacrifice_at_next_end_step = has_beginning_of_end_step && has_sacrifice_reference;
+            let exile_at_next_end_step = has_beginning_of_end_step && has_exile_reference;
             if let Some(of_idx) = tail_tokens.iter().position(|token| token.is_word("of")) {
                 let source_tokens = &tail_tokens[of_idx + 1..];
                 let source_end = source_tokens
@@ -21307,6 +21444,7 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                         half_power_toughness_round_up: half_pt,
                         has_haste,
                         sacrifice_at_next_end_step,
+                        exile_at_next_end_step,
                     }));
                 }
             }
@@ -21317,6 +21455,7 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                 half_power_toughness_round_up: half_pt,
                 has_haste,
                 sacrifice_at_next_end_step,
+                exile_at_next_end_step,
             }));
         }
         return Err(CardTextError::ParseError(
@@ -22770,6 +22909,39 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     let has_share_color = all_words.contains(&"shares")
         && all_words.contains(&"color")
         && all_words.contains(&"it");
+    let has_same_mana_value = all_words
+        .windows(4)
+        .any(|window| window == ["same", "mana", "value", "as"]);
+    let references_sacrifice_cost_object = all_words.windows(3).any(|window| {
+        matches!(
+            window,
+            ["the", "sacrificed", "creature"]
+                | ["the", "sacrificed", "artifact"]
+                | ["the", "sacrificed", "permanent"]
+                | ["a", "sacrificed", "creature"]
+                | ["a", "sacrificed", "artifact"]
+                | ["a", "sacrificed", "permanent"]
+        )
+    }) || all_words.windows(2).any(|window| {
+        matches!(
+            window,
+            ["sacrificed", "creature"]
+                | ["sacrificed", "artifact"]
+                | ["sacrificed", "permanent"]
+        )
+    });
+    let references_it_for_mana_value = all_words.iter().any(|word| matches!(*word, "it" | "its"))
+        || all_words.windows(2).any(|window| {
+            matches!(
+                window,
+                ["that", "object"]
+                    | ["that", "creature"]
+                    | ["that", "artifact"]
+                    | ["that", "permanent"]
+                    | ["that", "spell"]
+                    | ["that", "card"]
+            )
+        });
     let has_same_name_as_tagged_spell = all_words
         .windows(5)
         .any(|window| window == ["same", "name", "as", "that", "spell"]);
@@ -22784,6 +22956,17 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         filter.tagged_constraints.push(TaggedObjectConstraint {
             tag: IT_TAG.into(),
             relation: TaggedOpbjectRelation::SharesColorWithTagged,
+        });
+    }
+    if has_same_mana_value && references_sacrifice_cost_object {
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag: TagKey::from("sacrifice_cost_0"),
+            relation: TaggedOpbjectRelation::SameManaValueAsTagged,
+        });
+    } else if has_same_mana_value && references_it_for_mana_value {
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag: IT_TAG.into(),
+            relation: TaggedOpbjectRelation::SameManaValueAsTagged,
         });
     }
     if has_same_name_as_tagged_spell {
