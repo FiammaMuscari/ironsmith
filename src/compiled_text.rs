@@ -2916,6 +2916,18 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     {
         normalized = normalized.replacen(" unless you ", " or ", 1);
     }
+    if let Some((left, rest)) = normalized.split_once("target card ")
+        && let Some((kind, right)) = rest.split_once(" from")
+    {
+        let lower_kind = kind.to_ascii_lowercase();
+        let blocked = matches!(
+            lower_kind.as_str(),
+            "a" | "an" | "the" | "named" | "from" | "in" | "with" | "without"
+        );
+        if !kind.contains(' ') && !blocked {
+            normalized = format!("{left}target {kind} card from{right}");
+        }
+    }
     normalized = normalized
         .replace("Return a Island", "Return an Island")
         .replace("Return a artifact", "Return an artifact")
@@ -18163,6 +18175,17 @@ mod tests {
         assert_eq!(
             strix,
             "Counter target artifact, creature, or planeswalker spell."
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_target_card_subtype_order() {
+        let normalized = normalize_common_semantic_phrasing(
+            "When Orah dies or a Cleric you control dies, return target card Cleric from your graveyard to the battlefield",
+        );
+        assert_eq!(
+            normalized,
+            "When Orah dies or a Cleric you control dies, return target Cleric card from your graveyard to the battlefield"
         );
     }
 
