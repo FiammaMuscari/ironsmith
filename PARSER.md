@@ -55,18 +55,23 @@ Use the full-card strict report as baseline:
 cargo run --quiet --bin audit_oracle_clusters -- \
   --cards /Users/chiplis/ironsmith/cards.json \
   --use-embeddings \
-  --embedding-threshold 0.75 \
-  --false-positive-names /Users/chiplis/ironsmith/scripts/semantic_false_positives.txt \
-  --min-cluster-size 2 \
-  --top-clusters 200 \
+  --embedding-threshold 0.99 \
+  --min-cluster-size 1 \
+  --top-clusters 100000 \
   --examples 3 \
-  --json-out /tmp/oracle_clusters_075.json \
-  --mismatch-names-out /tmp/mismatch_names_075.txt
+  --json-out /private/tmp/oracle_clusters_099_raw.json \
+  --mismatch-names-out /private/tmp/mismatch_names_099_full.txt \
+  --failures-out /private/tmp/threshold_failures_099_full.json
+# Filter out parse failures
+jq '
+  .clusters |= map(select(.parse_failures == 0)) |
+  .clusters_reported = (.clusters | length)
+' /private/tmp/oracle_clusters_099_raw.json > /private/tmp/oracle_clusters_099_semantic_only.json
 ```
 
 Notes:
 - Do **not** pass `--allow-unsupported` for gating runs.
-- Keep `--min-cluster-size 2` so you focus on reusable patterns first.
+- Adjust `--min-cluster-size ` so you focus on reusable patterns first.
 - Save both JSON and mismatch-name outputs every run.
 - Semantic comparison for gating must use compiled output from the actual renderer path (never oracle-preserved text).
 
