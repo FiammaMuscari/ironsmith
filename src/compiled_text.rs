@@ -752,6 +752,15 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
             "create a tapped Powerstone token",
         );
     }
+    // Fix "all/each/for each another" → "all/each/for each other" (grammar fix for
+    // filter descriptions with `other: true` used in quantified contexts).
+    normalized = normalized
+        .replace("all another ", "all other ")
+        .replace("All another ", "All other ")
+        .replace("each another ", "each other ")
+        .replace("Each another ", "Each other ")
+        .replace("For each another ", "For each other ")
+        .replace("for each another ", "for each other ");
     if normalized.contains("Other Elf you control get ") {
         normalized = normalized.replace("Other Elf you control get ", "Other Elves you control get ");
     }
@@ -3382,7 +3391,11 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
                 format!("the tagged object '{}'", tag.as_str())
             }
         }
-        ChooseSpec::All(filter) => format!("all {}", filter.description()),
+        ChooseSpec::All(filter) => {
+            let desc = filter.description();
+            let stripped = strip_leading_article(&desc);
+            format!("all {}", pluralize_noun_phrase(stripped))
+        }
         ChooseSpec::EachPlayer(filter) => format!("each {}", describe_player_filter(filter)),
         ChooseSpec::SpecificObject(_) => "that object".to_string(),
         ChooseSpec::SpecificPlayer(_) => "that player".to_string(),
@@ -3637,11 +3650,15 @@ fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
                     None => " in graveyard".to_string(),
                 };
                 if let Some(stripped) = text.strip_suffix(&suffix) {
-                    return format!("all {}", stripped);
+                    let stripped = strip_leading_article(stripped);
+                    return format!("all {}", pluralize_noun_phrase(stripped));
                 }
-                return format!("all {}", text);
+                let text = strip_leading_article(&text);
+                return format!("all {}", pluralize_noun_phrase(text));
             }
-            format!("all {}", filter.description())
+            let desc = filter.description();
+            let stripped = strip_leading_article(&desc);
+            format!("all {}", pluralize_noun_phrase(stripped))
         }
         ChooseSpec::WithCount(inner, count) => {
             let inner_text = describe_choose_spec_without_graveyard_zone(inner);
@@ -15702,8 +15719,12 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             "target attacking or blocking creature",
         )
         .replace("a another ", "another ")
+        .replace("all another ", "all other ")
+        .replace("All another ", "All other ")
         .replace("each another ", "each other ")
-        .replace("each another creature", "each other creature")
+        .replace("Each another ", "Each other ")
+        .replace("For each another ", "For each other ")
+        .replace("for each another ", "for each other ")
         .replace("you takes ", "you take ")
         .replace("You takes ", "You take ")
         .replace("you loses ", "you lose ")
