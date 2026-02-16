@@ -484,6 +484,7 @@ fn looks_like_trigger_condition(head: &str) -> bool {
         " create ",
         " unlock ",
         "beginning of",
+        "control no other ",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
@@ -521,6 +522,8 @@ fn normalize_trigger_colon_clause(line: &str) -> Option<String> {
         || lower_head.starts_with("at the beginning ")
     {
         Some(format!("{normalized_head}, {normalized_tail}"))
+    } else if lower_head.starts_with("you control no other ") {
+        Some(format!("When {normalized_head}, {normalized_tail}"))
     } else {
         Some(format!("Whenever {normalized_head}, {normalized_tail}"))
     }
@@ -17799,6 +17802,16 @@ mod tests {
         assert_eq!(
             normalized,
             "Creatures you control have \"Whenever this creature becomes the target of a spell or ability reveal the top card of your library. If it's a land card put it onto the battlefield. Otherwise put it into your hand. This ability triggers only twice each turn.\""
+        );
+    }
+
+    #[test]
+    fn post_pass_normalizes_state_trigger_colon_prefix() {
+        let normalized =
+            normalize_compiled_post_pass_effect("You control no other artifacts: Sacrifice this creature.");
+        assert_eq!(
+            normalized,
+            "When you control no other artifacts, sacrifice this creature."
         );
     }
 
