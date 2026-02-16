@@ -2947,6 +2947,17 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     {
         normalized = format!("{head}, {}", lowercase_first(tail));
     }
+    if let Some((head, tail)) = normalized.split_once(", ")
+        && head
+            .to_ascii_lowercase()
+            .starts_with("whenever a creature blocks ")
+        && tail
+            .to_ascii_lowercase()
+            .starts_with("blocking creatures get ")
+    {
+        let normalized_tail = tail.replacen("blocking creatures get ", "the blocking creature gets ", 1);
+        normalized = format!("{head}, {normalized_tail}");
+    }
     normalized
 }
 
@@ -18186,6 +18197,17 @@ mod tests {
         assert_eq!(
             normalized,
             "When Orah dies or a Cleric you control dies, return target Cleric card from your graveyard to the battlefield"
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_single_blocking_creature_verb() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Whenever a creature blocks a black or red creature, blocking creatures get +1/+1 until end of turn.",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever a creature blocks a black or red creature, the blocking creature gets +1/+1 until end of turn."
         );
     }
 
