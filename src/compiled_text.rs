@@ -2841,6 +2841,9 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         .replace(" from target opponent's hand", " from their hand")
         .replace(" from target player's hand", " from their hand")
         .replace("target opponent exiles a card from their hand", "target opponent exiles a card from their hand")
+        .replace("casts creature spell", "casts a creature spell")
+        .replace("casts colorless spell", "casts a colorless spell")
+        .replace("unless that player pays ", "unless they pay ")
         .replace("Counter target instant", "Counter target instant spell")
         .replace("Counter target sorcery", "Counter target sorcery spell")
         .replace(
@@ -18109,6 +18112,17 @@ mod tests {
         assert_eq!(
             normalized,
             "When this creature enters, each opponent sacrifices a creature of their choice, discards a card, and loses 4 life"
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_cast_article_and_unless_payer_pronoun() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Whenever an opponent casts creature spell, that player loses 2 life unless that player pays {2}.",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever an opponent casts a creature spell, that player loses 2 life unless they pay {2}."
         );
     }
 
