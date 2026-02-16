@@ -15307,6 +15307,30 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
     }
     if let Some((left, right)) = trimmed.split_once(". ")
         && left.to_ascii_lowercase().contains("exile ")
+        && right.eq_ignore_ascii_case("Return that card to the battlefield under your control.")
+    {
+        return format!("{left}, then return it to the battlefield under your control.");
+    }
+    if let Some((left, right)) = trimmed.split_once(". ")
+        && left.to_ascii_lowercase().contains("exile ")
+        && right.eq_ignore_ascii_case("Return that card to the battlefield under your control")
+    {
+        return format!("{left}, then return it to the battlefield under your control");
+    }
+    if let Some((left, right)) = trimmed.split_once(". ")
+        && left.to_ascii_lowercase().contains("exile ")
+        && right.eq_ignore_ascii_case("Return that card to the battlefield under its owner's control.")
+    {
+        return format!("{left}, then return it to the battlefield under its owner's control.");
+    }
+    if let Some((left, right)) = trimmed.split_once(". ")
+        && left.to_ascii_lowercase().contains("exile ")
+        && right.eq_ignore_ascii_case("Return that card to the battlefield under its owner's control")
+    {
+        return format!("{left}, then return it to the battlefield under its owner's control");
+    }
+    if let Some((left, right)) = trimmed.split_once(". ")
+        && left.to_ascii_lowercase().contains("exile ")
         && let Some(tail) = strip_prefix_ascii_ci(
             right,
             "At the beginning of the next end step, return it to the battlefield. Put ",
@@ -17822,6 +17846,14 @@ mod tests {
         assert_eq!(
             normalized,
             "Exile up to one target non-Warrior creature you control, then return it to the battlefield under its owner's control."
+        );
+
+        let normalized = normalize_compiled_post_pass_effect(
+            "Exile target land you control. Return that card to the battlefield under your control.",
+        );
+        assert_eq!(
+            normalized,
+            "Exile target land you control, then return it to the battlefield under your control."
         );
 
         let normalized = normalize_compiled_post_pass_effect(
