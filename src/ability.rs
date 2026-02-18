@@ -609,8 +609,18 @@ pub enum ManaAbilityCondition {
     /// Activation timing restriction for mana abilities.
     Timing(ActivationTiming),
 
+    /// Maximum number of activations allowed in one turn.
+    /// Used for clauses like "Activate only twice each turn".
+    MaxActivationsPerTurn(u32),
+
     /// Conjunction of multiple activation restrictions.
     All(Vec<ManaAbilityCondition>),
+
+    /// A supported-but-unmodeled restriction condition.
+    ///
+    /// This is used when a known activation restriction pattern is not
+    /// modeled in detail yet but should still be represented in compiled text.
+    Unmodeled(String),
 }
 
 impl ManaAbility {

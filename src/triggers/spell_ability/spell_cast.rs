@@ -212,7 +212,13 @@ fn describe_spell_filter(filter: &ObjectFilter) -> String {
             });
         }
         if let Some(object_filter) = targets_object {
-            target_parts.push(object_filter.description());
+            let mut object_desc = object_filter.description();
+            if object_desc == "this source" {
+                object_desc = "this creature".to_string();
+            } else if object_desc == "that source" {
+                object_desc = "that creature".to_string();
+            }
+            target_parts.push(object_desc);
         }
 
         if !target_parts.is_empty() {

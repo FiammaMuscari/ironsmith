@@ -1451,6 +1451,7 @@ mod tests {
         let baseline = HashMap::from([(
             object.id,
             CalculatedCharacteristics {
+                name: object.name.clone(),
                 power: object.base_power.as_ref().map(|p| p.base_value()),
                 toughness: object.base_toughness.as_ref().map(|t| t.base_value()),
                 card_types: object.card_types.clone(),
@@ -1492,6 +1493,7 @@ mod tests {
         let baseline = HashMap::from([(
             land.id,
             CalculatedCharacteristics {
+                name: land.name.clone(),
                 power: land.base_power.as_ref().map(|p| p.base_value()),
                 toughness: land.base_toughness.as_ref().map(|t| t.base_value()),
                 card_types: land.card_types.clone(),
@@ -1584,6 +1586,7 @@ mod tests {
         let baseline = HashMap::from([(
             land.id,
             CalculatedCharacteristics {
+                name: land.name.clone(),
                 power: land.base_power.as_ref().map(|p| p.base_value()),
                 toughness: land.base_toughness.as_ref().map(|t| t.base_value()),
                 card_types: land.card_types.clone(),

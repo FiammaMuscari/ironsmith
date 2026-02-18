@@ -393,7 +393,7 @@ pub fn must_attack(creature: &Object) -> bool {
 
 /// Check if a creature must attack this turn if able, with continuous effects applied.
 pub fn must_attack_with_game(creature: &Object, game: &crate::game_state::GameState) -> bool {
-    has_ability_id_with_game(creature, game, StaticAbilityId::MustAttack)
+    has_ability_id_with_game(creature, game, StaticAbilityId::MustAttack) || game.is_goaded(creature.id)
 }
 
 /// Check if a creature must block this turn if able.

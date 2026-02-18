@@ -15,6 +15,12 @@ struct PendingModal {
     modes: Vec<EffectMode>,
 }
 
+#[derive(Default)]
+struct PendingRestrictions {
+    activation: Vec<String>,
+    trigger: Vec<String>,
+}
+
 pub(super) fn parse_text_with_annotations(
     builder: CardDefinitionBuilder,
     text: String,
@@ -23,6 +29,8 @@ pub(super) fn parse_text_with_annotations(
 
     let mut level_abilities: Vec<LevelAbility> = Vec::new();
     let mut pending_modal: Option<PendingModal> = None;
+    let mut pending_restrictions = PendingRestrictions::default();
+    let mut last_restrictable_ability: Option<usize> = None;
     let allow_unsupported = parser_allow_unsupported_enabled();
 
     let mut idx = 0usize;
@@ -175,34 +183,113 @@ pub(super) fn parse_text_with_annotations(
             }
         }
 
-        let parsed = match parse_line(&info.normalized.normalized, info.line_index) {
-            Ok(parsed) => parsed,
-            Err(err) if allow_unsupported => {
-                let reason = format!("{err:?}");
-                let short_reason = reason
-                    .split(" (clause:")
-                    .next()
-                    .unwrap_or(reason.as_str())
-                    .split(" (line:")
-                    .next()
-                    .unwrap_or(reason.as_str())
-                    .trim()
-                    .to_string();
-                let marker = StaticAbility::custom(
-                    "unsupported_line",
-                    format!(
-                        "Unsupported parser line fallback: {} ({})",
-                        info.raw_line.trim(),
-                        short_reason
-                    ),
-                );
-                LineAst::StaticAbility(marker)
+        let line_sentences = split_sentences_for_parse(&info.normalized.normalized, info.line_index);
+        let mut parsed_portion = Vec::new();
+        for sentence in line_sentences {
+            if sentence.is_empty() {
+                continue;
             }
-            Err(err) => return Err(err),
-        };
 
-        collect_tag_spans_from_line(&parsed, &mut annotations, &info.normalized);
-        builder = apply_line_ast(builder, parsed, info, allow_unsupported, &mut annotations)?;
+            if queue_restriction(&sentence, info.line_index, &mut pending_restrictions) {
+                continue;
+            }
+
+            parsed_portion.push(sentence);
+        }
+
+        for restriction in extract_parenthetical_restrictions(&info.raw_line) {
+            let _ = queue_restriction(&restriction, info.line_index, &mut pending_restrictions);
+        }
+
+        let mut handled_restrictions_for_new_ability = false;
+
+        if !parsed_portion.is_empty() {
+            let line_text = parsed_portion.join(". ");
+            let parsed = match parse_line(&line_text, info.line_index) {
+                Ok(parsed) => parsed,
+                Err(err) if allow_unsupported => {
+                    let reason = format!("{err:?}");
+                    let short_reason = reason
+                        .split(" (clause:")
+                        .next()
+                        .unwrap_or(reason.as_str())
+                        .split(" (line:")
+                        .next()
+                        .unwrap_or(reason.as_str())
+                        .trim()
+                        .to_string();
+                    let marker = StaticAbility::custom(
+                        "unsupported_line",
+                        format!(
+                            "Unsupported parser line fallback: {} ({})",
+                            info.raw_line.trim(),
+                            short_reason
+                        ),
+                    );
+                    LineAst::StaticAbility(marker)
+                }
+                Err(err) => return Err(err),
+            };
+
+            let mut handled_followup_statement = false;
+            if let LineAst::Statement { effects } = &parsed {
+                if apply_instead_followup_statement_to_last_ability(
+                    &mut builder,
+                    last_restrictable_ability,
+                    effects,
+                    info,
+                    allow_unsupported,
+                    &mut annotations,
+                )? {
+                    handled_followup_statement = true;
+                    handled_restrictions_for_new_ability = true;
+                }
+            }
+
+            if !handled_followup_statement {
+                let abilities_before = builder.abilities.len();
+                collect_tag_spans_from_line(&parsed, &mut annotations, &info.normalized);
+                builder =
+                    apply_line_ast(builder, parsed, info, allow_unsupported, &mut annotations)?;
+                let abilities_after = builder.abilities.len();
+
+                for ability_idx in abilities_before..abilities_after {
+                    apply_pending_restrictions_to_ability(
+                        &mut builder.abilities[ability_idx],
+                        &mut pending_restrictions,
+                    );
+                    handled_restrictions_for_new_ability = true;
+                }
+
+                if abilities_after > abilities_before {
+                    let mut last_restrictable = None;
+                    for ability_idx in (abilities_before..abilities_after).rev() {
+                        if is_restrictable_ability(&builder.abilities[ability_idx]) {
+                            last_restrictable = Some(ability_idx);
+                            break;
+                        }
+                    }
+                    if last_restrictable.is_some() {
+                        last_restrictable_ability = last_restrictable;
+                    }
+                }
+            }
+        }
+
+        if !handled_restrictions_for_new_ability
+            && let Some(index) = last_restrictable_ability
+            && index < builder.abilities.len()
+        {
+            apply_pending_restrictions_to_ability(
+                &mut builder.abilities[index],
+                &mut pending_restrictions,
+            );
+        }
+
+        if !pending_restrictions.activation.is_empty() || !pending_restrictions.trigger.is_empty() {
+            pending_restrictions.activation.clear();
+            pending_restrictions.trigger.clear();
+        }
 
         idx += 1;
     }
@@ -626,18 +713,6 @@ fn apply_line_ast(
             }
             builder.cost_effects.push(Effect::choose_one(modes));
         }
-        LineAst::AlternativeCost {
-            mana_cost,
-            cost_effects,
-        } => {
-            builder
-                .alternative_casts
-                .push(AlternativeCastingMethod::alternative_cost(
-                    "Parsed alternative cost",
-                    mana_cost,
-                    cost_effects,
-                ));
-        }
         LineAst::AlternativeCastingMethod(method) => {
             builder.alternative_casts.push(method);
         }
@@ -837,4 +912,372 @@ fn finalize_pending_modal(
 fn is_bullet_line(line: &str) -> bool {
     let trimmed = line.trim_start();
     trimmed.starts_with('•') || trimmed.starts_with('*') || trimmed.starts_with('-')
+}
+
+fn split_sentences_for_parse(line: &str, _line_index: usize) -> Vec<String> {
+    let mut sentences = Vec::new();
+    let mut current = String::new();
+    let mut paren_depth = 0u32;
+    let mut quote_depth = 0u32;
+
+    for ch in line.chars() {
+        if ch == '(' {
+            paren_depth = paren_depth.saturating_add(1);
+            current.push(ch);
+            continue;
+        }
+        if ch == ')' {
+            if paren_depth > 0 {
+                paren_depth -= 1;
+            }
+            current.push(ch);
+            continue;
+        }
+        if ch == '"' || ch == '“' || ch == '”' {
+            quote_depth = if quote_depth == 0 {
+                1
+            } else {
+                0
+            };
+            current.push(ch);
+            continue;
+        }
+        if ch == '.' && paren_depth == 0 && quote_depth == 0 {
+            let sentence = current.trim();
+            if !sentence.is_empty() {
+                sentences.push(sentence.to_string());
+            }
+            current.clear();
+            continue;
+        }
+        current.push(ch);
+    }
+
+    let sentence = current.trim();
+    if !sentence.is_empty() {
+        sentences.push(sentence.to_string());
+    }
+
+    sentences
+}
+
+fn queue_restriction(
+    restriction: &str,
+    line_index: usize,
+    pending: &mut PendingRestrictions,
+) -> bool {
+    let normalized = normalize_restriction_text(restriction);
+    if normalized.is_empty() {
+        return false;
+    }
+
+    let tokens = tokenize_line(&normalized, line_index);
+    if is_activate_only_restriction_sentence(&tokens) {
+        pending.activation.push(normalized);
+        true
+    } else if is_trigger_only_restriction_sentence(&tokens) {
+        pending.trigger.push(normalized);
+        true
+    } else {
+        false
+    }
+}
+
+fn extract_parenthetical_restrictions(line: &str) -> Vec<String> {
+    let mut restrictions = Vec::new();
+    let mut paren_depth = 0u32;
+    let mut start = None::<usize>;
+
+    for (byte_idx, ch) in line.char_indices() {
+        match ch {
+            '(' => {
+                if paren_depth == 0 {
+                    start = Some(byte_idx + ch.len_utf8());
+                }
+                paren_depth = paren_depth.saturating_add(1);
+            }
+            ')' => {
+                if paren_depth == 1 {
+                    if let Some(start_idx) = start.take() {
+                        let inside = &line[start_idx..byte_idx];
+                        for sentence in split_sentences_for_parse(inside, 0) {
+                            restrictions.push(sentence);
+                        }
+                    }
+                }
+                paren_depth = paren_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    restrictions
+        .into_iter()
+        .map(|restriction| normalize_restriction_text(&restriction))
+        .filter(|restriction| !restriction.is_empty())
+        .collect()
+}
+
+fn apply_pending_restrictions_to_ability(ability: &mut Ability, pending: &mut PendingRestrictions) {
+    let activation_restrictions = std::mem::take(&mut pending.activation);
+    let trigger_restrictions = std::mem::take(&mut pending.trigger);
+
+    match &mut ability.kind {
+        AbilityKind::Activated(ability) => {
+            if activation_restrictions.is_empty() {
+                return;
+            }
+            for restriction in activation_restrictions.iter() {
+                apply_pending_activation_restriction(ability, &restriction);
+            }
+        }
+        AbilityKind::Mana(mana_ability) => {
+            if activation_restrictions.is_empty() {
+                return;
+            }
+            for restriction in activation_restrictions.iter() {
+                apply_pending_mana_restriction(mana_ability, &restriction);
+            }
+        }
+        AbilityKind::Triggered(ability) => {
+            if trigger_restrictions.is_empty() {
+                return;
+            }
+            for restriction in trigger_restrictions.iter() {
+                apply_pending_trigger_restriction(ability, &restriction);
+            }
+        }
+        _ => {}
+    }
+
+    if !activation_restrictions.is_empty() {
+        pending.activation.extend(activation_restrictions);
+    }
+    if !trigger_restrictions.is_empty() {
+        pending.trigger.extend(trigger_restrictions);
+    }
+}
+
+fn apply_instead_followup_statement_to_last_ability(
+    builder: &mut CardDefinitionBuilder,
+    last_restrictable_ability: Option<usize>,
+    effects: &[EffectAst],
+    info: &LineInfo,
+    allow_unsupported: bool,
+    annotations: &mut ParseAnnotations,
+) -> Result<bool, CardTextError> {
+    let Some(index) = last_restrictable_ability else {
+        return Ok(false);
+    };
+    if index >= builder.abilities.len() {
+        return Ok(false);
+    }
+
+    let normalized = info.normalized.normalized.as_str().to_ascii_lowercase();
+    if !normalized.starts_with("if ") || !normalized.contains(" instead") {
+        return Ok(false);
+    }
+
+    let compiled = match compile_statement_effects(effects) {
+        Ok(compiled) => compiled,
+        Err(err) if allow_unsupported => {
+            return Err(err);
+        }
+        Err(_) => return Ok(false),
+    };
+
+    if compiled.len() != 1 {
+        return Ok(false);
+    }
+
+    let Some(replacement) = compiled[0].downcast_ref::<crate::effects::ConditionalEffect>()
+    else {
+        return Ok(false);
+    };
+
+    if !replacement.if_false.is_empty() {
+        return Ok(false);
+    }
+
+    collect_tag_spans_from_effects_with_context(effects, annotations, &info.normalized);
+
+    let conditional = replacement.clone();
+    match &mut builder.abilities[index].kind {
+        AbilityKind::Triggered(ability) => {
+            let original = std::mem::take(&mut ability.effects);
+            if original.is_empty() {
+                return Ok(false);
+            }
+            ability.effects = vec![Effect::new(crate::effects::ConditionalEffect::new(
+                conditional.condition,
+                conditional.if_true,
+                original,
+            ))];
+        }
+        AbilityKind::Activated(ability) => {
+            let original = std::mem::take(&mut ability.effects);
+            if original.is_empty() {
+                return Ok(false);
+            }
+            ability.effects = vec![Effect::new(crate::effects::ConditionalEffect::new(
+                conditional.condition,
+                conditional.if_true,
+                original,
+            ))];
+        }
+        AbilityKind::Mana(ability) => {
+            let Some(effects) = ability.effects.as_mut() else {
+                return Ok(false);
+            };
+
+            let original = std::mem::take(effects);
+            if original.is_empty() {
+                return Ok(false);
+            }
+            *effects = vec![Effect::new(crate::effects::ConditionalEffect::new(
+                conditional.condition,
+                conditional.if_true,
+                original,
+            ))];
+        }
+        _ => return Ok(false),
+    }
+
+    Ok(true)
+}
+
+fn is_restrictable_ability(ability: &Ability) -> bool {
+    matches!(
+        ability.kind,
+        AbilityKind::Activated(_) | AbilityKind::Triggered(_) | AbilityKind::Mana(_)
+    )
+}
+
+fn apply_pending_activation_restriction(
+    ability: &mut crate::ability::ActivatedAbility,
+    restriction: &str,
+) {
+    let tokens = tokenize_line(restriction, 0);
+    let parsed_timing = parse_activate_only_timing(&tokens);
+    if let Some(parsed_timing) = parsed_timing.as_ref() {
+        ability.timing = merge_activation_timing(&ability.timing, parsed_timing.clone());
+    }
+    let restriction = normalize_activation_restriction(restriction, parsed_timing.as_ref());
+    if let Some(restriction) = restriction {
+        ability.additional_restrictions.push(restriction);
+    }
+}
+
+fn apply_pending_trigger_restriction(ability: &mut TriggeredAbility, restriction: &str) {
+    let tokens = tokenize_line(restriction, 0);
+    let count = parse_triggered_times_each_turn_from_words(&words(&tokens));
+    if let Some(parsed_count) = count {
+        ability.intervening_if = Some(match ability.intervening_if.take() {
+            Some(crate::ability::InterveningIfCondition::MaxTimesEachTurn(existing)) => {
+                crate::ability::InterveningIfCondition::MaxTimesEachTurn(existing.min(parsed_count))
+            }
+            _ => crate::ability::InterveningIfCondition::MaxTimesEachTurn(parsed_count),
+        });
+    }
+}
+
+fn apply_pending_mana_restriction(ability: &mut crate::ability::ManaAbility, restriction: &str) {
+    let normalized_restriction = normalize_restriction_text(restriction);
+    if normalized_restriction.is_empty() {
+        return;
+    }
+    let tokens = tokenize_line(&normalized_restriction, 0);
+    let parsed_timing = parse_activate_only_timing(&tokens).unwrap_or_default();
+    let parsed_condition = parse_activation_condition(&tokens)
+        .or_else(|| {
+            if parsed_timing == ActivationTiming::AnyTime {
+                Some(ManaAbilityCondition::Unmodeled(normalized_restriction.clone()))
+            } else {
+                None
+            }
+        });
+
+    if parsed_condition.is_none() && parsed_timing == ActivationTiming::AnyTime {
+        return;
+    }
+
+    let condition_with_timing = parsed_condition
+        .map(|condition| {
+            combine_mana_activation_condition(
+                Some(condition),
+                parsed_timing.clone(),
+            )
+        })
+        .unwrap_or_else(|| combine_mana_activation_condition(None, parsed_timing));
+
+    let existing = ability.activation_condition.take();
+    ability.activation_condition = merge_mana_activation_conditions(existing, condition_with_timing);
+}
+
+fn merge_activation_timing(
+    existing: &crate::ability::ActivationTiming,
+    next: crate::ability::ActivationTiming,
+) -> ActivationTiming {
+    match (existing, &next) {
+        (current, crate::ability::ActivationTiming::AnyTime) => current.clone(),
+        (crate::ability::ActivationTiming::AnyTime, _) => next,
+        (current, next_timing) if current == next_timing => current.clone(),
+        (current, _) => current.clone(),
+    }
+}
+
+fn normalize_restriction_text(text: &str) -> String {
+    text.trim().trim_end_matches('.').trim().to_string()
+}
+
+fn normalize_activation_restriction(
+    restriction: &str,
+    timing: Option<&ActivationTiming>,
+) -> Option<String> {
+    if timing != Some(&ActivationTiming::OncePerTurn) {
+        return Some(restriction.to_string());
+    }
+    let mut normalized = restriction.to_ascii_lowercase();
+    if normalized == "activate only once each turn" {
+        return None;
+    }
+    let prefix = "activate only once each turn and ";
+    if normalized.starts_with(prefix) {
+        normalized = normalized[prefix.len()..].trim_start().to_string();
+    }
+    let suffix = " and only once each turn";
+    if normalized.ends_with(suffix) {
+        normalized = normalized[..normalized.len() - suffix.len()].trim_end().to_string();
+    }
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn merge_mana_activation_conditions(
+    existing: Option<ManaAbilityCondition>,
+    additional: Option<ManaAbilityCondition>,
+) -> Option<ManaAbilityCondition> {
+    match (existing, additional) {
+        (None, None) => None,
+        (Some(condition), None) => Some(condition),
+        (None, Some(condition)) => Some(condition),
+        (Some(left), Some(right)) => Some(ManaAbilityCondition::All(
+            flatten_mana_activation_conditions(left)
+                .into_iter()
+                .chain(flatten_mana_activation_conditions(right))
+                .collect(),
+        )),
+    }
+}
+
+fn flatten_mana_activation_conditions(
+    condition: ManaAbilityCondition,
+) -> Vec<ManaAbilityCondition> {
+    match condition {
+        ManaAbilityCondition::All(conditions) => conditions,
+        condition => vec![condition],
+    }
 }

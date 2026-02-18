@@ -228,6 +228,8 @@ fn mana_ability_condition_met(
             // For mana-production inference we only care about what colors can be
             // produced, not whether the ability is currently activatable by timing.
             ManaAbilityCondition::Timing(_) => true,
+            ManaAbilityCondition::MaxActivationsPerTurn(_) => true,
+            ManaAbilityCondition::Unmodeled(_) => true,
             ManaAbilityCondition::All(conditions) => conditions
                 .iter()
                 .all(|inner| condition_met(game, source, inner)),

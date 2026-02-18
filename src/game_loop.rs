@@ -19,8 +19,8 @@ use crate::decision::{
     AlternativePaymentEffect, AttackerDeclaration, BlockerDeclaration, DecisionMaker, GameProgress,
     GameResult, KeywordPaymentContribution, LegalAction, ManaPaymentOption, ManaPipPaymentAction,
     ManaPipPaymentOption, OptionalCostOption, ReplacementOption, ResponseError, TargetRequirement,
-    compute_commander_actions, compute_legal_actions, compute_legal_attackers,
-    compute_legal_blockers, compute_potential_mana,
+    can_activate_ability_with_restrictions, compute_commander_actions, compute_legal_actions,
+    compute_legal_attackers, compute_legal_blockers, compute_potential_mana,
 };
 use crate::effect::Effect;
 use crate::events::cause::EventCause;
@@ -54,7 +54,12 @@ use crate::rules::state_based::{apply_state_based_actions_with, check_state_base
 use crate::snapshot::ObjectSnapshot;
 use crate::target::{ChooseSpec, ObjectFilter};
 use crate::triggers::{
-    verify_intervening_if, DamageEventTarget, TriggerEvent, TriggerQueue, TriggeredAbilityEntry,
+    check_triggers,
+    verify_intervening_if,
+    DamageEventTarget,
+    TriggerEvent,
+    TriggerQueue,
+    TriggeredAbilityEntry,
     generate_step_trigger_events,
 };
 use crate::turn::{
@@ -2560,8 +2565,8 @@ pub fn apply_priority_response_with_dm(
                     CastingMethod::Normal => obj.mana_cost.clone(),
                     CastingMethod::Alternative(idx) => {
                         if let Some(method) = obj.alternative_casts.get(*idx) {
-                            // For AlternativeCost (with cost_effects), use its mana_cost directly (even if None)
-                            // For other methods (flashback, etc.), fall back to spell's cost
+                            // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
+                            // For other methods (flashback, etc.), fall back to spell's cost.
                             if !method.cost_effects().is_empty() {
                                 method.mana_cost().cloned()
                             } else {
@@ -2589,7 +2594,7 @@ pub fn apply_priority_response_with_dm(
                     } => {
                         // Yawgmoth's Will with alternative cost (like Force of Will's pitch)
                         if let Some(method) = obj.alternative_casts.get(*idx) {
-                            // For AlternativeCost (with cost_effects), use its mana_cost directly (even if None)
+                            // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
                             if !method.cost_effects().is_empty() {
                                 method.mana_cost().cloned()
                             } else {
@@ -2700,6 +2705,38 @@ pub fn apply_priority_response_with_dm(
             source,
             ability_index,
         } => {
+            // Re-check activation legality at execution time so stale actions can’t
+            // bypass constraints discovered after action discovery.
+            if let Some(obj) = game.object(*source) {
+                if let Some(ability) = obj.abilities.get(*ability_index) {
+                    if let AbilityKind::Activated(activated) = &ability.kind {
+                        if !can_activate_ability_with_restrictions(
+                            game,
+                            *source,
+                            *ability_index,
+                            activated,
+                        ) {
+                            return Err(GameLoopError::InvalidState(
+                                "Ability activation restrictions are no longer satisfied"
+                                    .to_string(),
+                            ));
+                        }
+                    } else {
+                        return Err(GameLoopError::InvalidState(
+                            "Selected action is not an activated ability".to_string(),
+                        ));
+                    }
+                } else {
+                    return Err(GameLoopError::InvalidState(
+                        "Ability index no longer valid".to_string(),
+                    ));
+                }
+            } else {
+                return Err(GameLoopError::InvalidState(
+                    "Ability source no longer exists".to_string(),
+                ));
+            }
+
             // Save checkpoint before starting the action chain
             // This allows rollback if the player makes an invalid choice
             state.save_checkpoint(game);
@@ -3469,11 +3506,10 @@ fn format_alternative_method(
                 format!("{}, Exile {} cards from graveyard", cost_desc, exile_count),
             )
         }
-        AlternativeCastingMethod::AlternativeCost {
-            mana_cost,
-            cost_effects,
-            name,
-        } => {
+        AlternativeCastingMethod::Composed { .. } => {
+            let mana_cost = method.mana_cost();
+            let cost_effects = method.cost_effects();
+            let name = method.name();
             let mut parts = Vec::new();
             if let Some(mana) = mana_cost {
                 parts.push(format_mana_cost_simple(mana));
@@ -3486,8 +3522,7 @@ fn format_alternative_method(
             } else {
                 parts.join(", ")
             };
-            let method_name = (*name).to_string();
-            (method_name, cost_desc)
+            (name.to_string(), cost_desc)
         }
         AlternativeCastingMethod::MindbreakTrap {
             cost, condition, ..
@@ -3728,8 +3763,8 @@ fn get_spell_mana_cost(
         CastingMethod::Normal => obj.mana_cost.clone(),
         CastingMethod::Alternative(idx) => {
             if let Some(method) = obj.alternative_casts.get(*idx) {
-                // For AlternativeCost (with cost_effects), use its mana_cost directly (even if None)
-                // For other methods (flashback, etc.), fall back to spell's cost
+                // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
+                // For other methods (flashback, etc.), fall back to spell's cost.
                 if !method.cost_effects().is_empty() {
                     method.mana_cost().cloned()
                 } else {
@@ -3753,7 +3788,7 @@ fn get_spell_mana_cost(
             ..
         } => {
             if let Some(method) = obj.alternative_casts.get(*idx) {
-                // For AlternativeCost (with cost_effects), use its mana_cost directly (even if None)
+                // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
                 // For other methods (flashback, etc.), fall back to spell's cost
                 if !method.cost_effects().is_empty() {
                     method.mana_cost().cloned()
@@ -4012,8 +4047,8 @@ fn continue_to_mana_payment(
             CastingMethod::Normal => obj.mana_cost.clone(),
             CastingMethod::Alternative(idx) => {
                 if let Some(method) = obj.alternative_casts.get(*idx) {
-                    // For AlternativeCost (with cost_effects), use its mana_cost directly (even if None)
-                    // For other methods (flashback, etc.), fall back to spell's cost
+                    // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
+                    // For other methods (flashback, etc.), fall back to spell's cost.
                     if !method.cost_effects().is_empty() {
                         method.mana_cost().cloned()
                     } else {
@@ -4037,8 +4072,8 @@ fn continue_to_mana_payment(
                 ..
             } => {
                 if let Some(method) = obj.alternative_casts.get(*idx) {
-                    // For AlternativeCost (with cost_effects), use its mana_cost directly (even if None)
-                    // For other methods (flashback, etc.), fall back to spell's cost
+                    // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
+                    // For other methods (flashback, etc.), fall back to spell's cost.
                     if !method.cost_effects().is_empty() {
                         method.mana_cost().cloned()
                     } else {
@@ -4614,6 +4649,27 @@ fn continue_activation(
     mut pending: PendingActivation,
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<GameProgress, GameLoopError> {
+    // Re-check activation constraints while continuing an in-flight activation.
+    let Some(obj) = game.object(pending.source) else {
+        return Err(GameLoopError::InvalidState(
+            "Ability source no longer exists".to_string(),
+        ));
+    };
+    let Some(ability) = obj.abilities.get(pending.ability_index) else {
+        return Err(GameLoopError::InvalidState("Ability index no longer valid".to_string()));
+    };
+    if let AbilityKind::Activated(activated) = &ability.kind {
+        if !can_activate_ability_with_restrictions(game, pending.source, pending.ability_index, activated) {
+            return Err(GameLoopError::InvalidState(
+                "Ability activation restrictions are no longer satisfied".to_string(),
+            ));
+        }
+    } else {
+        return Err(GameLoopError::InvalidState(
+            "Pending ability is not an activated ability".to_string(),
+        ));
+    }
+
     match pending.stage {
         ActivationStage::ChoosingX => {
             // Need to choose X value first
@@ -6050,6 +6106,8 @@ fn execute_pending_mana_ability(
         }
     }
 
+    game.record_ability_activation(pending.source, pending.ability_index);
+
     queue_ability_activated_event(
         game,
         trigger_queue,
@@ -6342,8 +6400,8 @@ fn apply_card_to_exile_response(
             CastingMethod::Normal => obj.mana_cost.clone(),
             CastingMethod::Alternative(idx) => {
                 if let Some(method) = obj.alternative_casts.get(*idx) {
-                    // For AlternativeCost (with cost_effects), use its mana_cost directly (even if None)
-                    // For other methods (flashback, etc.), fall back to spell's cost
+                    // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
+                    // For other methods (flashback, etc.), fall back to spell's cost.
                     if !method.cost_effects().is_empty() {
                         method.mana_cost().cloned()
                     } else {
@@ -6367,8 +6425,8 @@ fn apply_card_to_exile_response(
                 ..
             } => {
                 if let Some(method) = obj.alternative_casts.get(*idx) {
-                    // For AlternativeCost (with cost_effects), use its mana_cost directly (even if None)
-                    // For other methods (flashback, etc.), fall back to spell's cost
+                    // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
+                    // For other methods (flashback, etc.), fall back to spell's cost.
                     if !method.cost_effects().is_empty() {
                         method.mana_cost().cloned()
                     } else {
@@ -6437,8 +6495,8 @@ fn apply_casting_method_choice_response(
             CastingMethod::Normal => obj.mana_cost.clone(),
             CastingMethod::Alternative(idx) => {
                 if let Some(method) = obj.alternative_casts.get(*idx) {
-                    // For AlternativeCost (with cost_effects), use its mana_cost directly (even if None)
-                    // For other methods (flashback, etc.), fall back to spell's cost
+                    // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
+                    // For other methods (flashback, etc.), fall back to spell's cost.
                     if !method.cost_effects().is_empty() {
                         method.mana_cost().cloned()
                     } else {
@@ -6462,8 +6520,8 @@ fn apply_casting_method_choice_response(
                 ..
             } => {
                 if let Some(method) = obj.alternative_casts.get(*idx) {
-                    // For AlternativeCost (with cost_effects), use its mana_cost directly (even if None)
-                    // For other methods (flashback, etc.), fall back to spell's cost
+                    // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
+                    // For other methods (flashback, etc.), fall back to spell's cost.
                     if !method.cost_effects().is_empty() {
                         method.mana_cost().cloned()
                     } else {
@@ -6646,7 +6704,7 @@ fn finalize_spell_cast(
                     if let Some(method) = obj.alternative_casts.get(*idx) {
                         let cost_effects = method.cost_effects().to_vec();
                         if !cost_effects.is_empty() {
-                            // AlternativeCost (Force of Will style) - uses cost_effects
+                            // Composed alternative method (Force of Will style) - uses cost_effects.
                             let mana = method.mana_cost().cloned();
                             (mana, cost_effects, None)
                         } else {
@@ -7689,6 +7747,17 @@ pub fn apply_attacker_declarations(
     }
 
     for decl in declarations {
+        let Some(legal_option) = legal_attackers.iter().find(|option| option.creature == decl.creature)
+        else {
+            return Err(ResponseError::InvalidAttackers("Creature cannot attack".to_string()).into());
+        };
+        if !legal_option.valid_targets.contains(&decl.target) {
+            return Err(ResponseError::InvalidAttackers(
+                "Creature cannot attack the chosen target".to_string(),
+            )
+            .into());
+        }
+
         // Validate the attacker
         let Some(creature) = game.object(decl.creature) else {
             return Err(ResponseError::InvalidAttackers(format!(
@@ -7719,6 +7788,8 @@ pub fn apply_attacker_declarations(
         if !crate::rules::combat::has_vigilance(creature) {
             tap_permanent_with_trigger(game, trigger_queue, decl.creature);
         }
+
+        game.mark_creature_attacked_this_turn(decl.creature);
 
         // Generate attack trigger
         let event_target = match &decl.target {
@@ -8167,6 +8238,7 @@ fn generate_damage_triggers(
     events: &[CombatDamageEvent],
     trigger_queue: &mut TriggerQueue,
 ) {
+    game.clear_combat_damage_player_batch_hits();
     for event in events {
         let damage_target = match event.target {
             DamageEventTarget::Player(p) => EventDamageTarget::Player(p),
@@ -8187,7 +8259,14 @@ fn generate_damage_triggers(
                 TriggerEvent::new(LifeLossEvent::new(player_id, event.life_lost, true));
             queue_triggers_from_event(game, trigger_queue, life_loss_event, false);
         }
+
+        if let DamageEventTarget::Player(player_id) = event.target
+            && event.amount > 0
+        {
+            game.record_combat_damage_player_batch_hit(event.source, player_id);
+        }
     }
+    game.clear_combat_damage_player_batch_hits();
 }
 
 /// Queue combat-damage and life-loss triggers for a batch of combat damage events.
@@ -8593,7 +8672,7 @@ mod tests {
                         .with_subtype(crate::types::Subtype::Swamp)
                         .you_control(),
                 ),
-                comparison: crate::filter::Comparison::GreaterThanOrEqual(1),
+                comparison: crate::effect::Comparison::GreaterThanOrEqual(1),
                 display: Some("you control a Swamp".to_string()),
             };
             let anthem =
@@ -9806,6 +9885,7 @@ mod tests {
                     effects: vec![Effect::draw(1)],
                     choices: vec![],
                     timing: ActivationTiming::OncePerTurn,
+                    additional_restrictions: vec![],
                 }),
                 functional_zones: vec![Zone::Battlefield],
                 text: None,
@@ -10300,6 +10380,7 @@ mod tests {
                     effects: vec![Effect::draw(1)],
                     choices: vec![],
                     timing: ActivationTiming::OncePerTurn,
+                    additional_restrictions: vec![],
                 }),
                 functional_zones: vec![Zone::Battlefield],
                 text: None,

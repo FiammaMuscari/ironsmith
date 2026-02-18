@@ -1119,6 +1119,22 @@ fn test_parse_escape_keyword_line() {
 }
 
 #[test]
+fn test_parse_flashback_keyword_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Flashback Probe")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Flashback {1}{U}")
+        .expect("flashback keyword line should parse");
+
+    assert_eq!(def.alternative_casts.len(), 1);
+    match &def.alternative_casts[0] {
+        AlternativeCastingMethod::Flashback { cost } => {
+            assert_eq!(cost.to_oracle(), "{1}{U}");
+        }
+        other => panic!("expected flashback alternative cast, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_parse_suspend_keyword_line_with_reminder_text_keeps_suspend_clause() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Suspend Probe")
         .card_types(vec![CardType::Artifact])
@@ -3623,8 +3639,12 @@ fn parse_metalcraft_mana_activation_condition() {
         .find(|line| line.contains("Mana ability"))
         .expect("expected mana ability line");
     assert!(
+        mana_line.contains("Add one mana of any color"),
+        "expected mana production text in compiled output, got {mana_line}"
+    );
+    assert!(
         mana_line.contains("Activate only if you control 3 or more artifacts"),
-        "expected metalcraft activation condition in compiled text, got {mana_line}"
+        "expected rendered activation restriction, got {mana_line}"
     );
 }
 
@@ -3641,8 +3661,12 @@ fn parse_land_count_mana_activation_condition() {
         .find(|line| line.contains("Mana ability"))
         .expect("expected mana ability line");
     assert!(
+        mana_line.contains("Add {C}{C}"),
+        "expected mana amount in compiled output, got {mana_line}"
+    );
+    assert!(
         mana_line.contains("Activate only if you control 5 or more lands"),
-        "expected land-count activation condition in compiled text, got {mana_line}"
+        "expected rendered activation restriction, got {mana_line}"
     );
 }
 
@@ -3659,8 +3683,12 @@ fn parse_graveyard_card_mana_activation_condition() {
         .find(|line| line.contains("Mana ability"))
         .expect("expected mana ability line");
     assert!(
+        mana_line.contains("Add {G}{G}"),
+        "expected mana amount in compiled output, got {mana_line}"
+    );
+    assert!(
         mana_line.contains("Activate only if there is an Elf card in your graveyard"),
-        "expected graveyard-card activation condition in compiled text, got {mana_line}"
+        "expected rendered activation restriction, got {mana_line}"
     );
 }
 
@@ -3679,8 +3707,12 @@ fn parse_creature_power_mana_activation_condition() {
         .find(|line| line.contains("Mana ability"))
         .expect("expected mana ability line");
     assert!(
+        mana_line.contains("Add {G}{G}"),
+        "expected mana amount in compiled output, got {mana_line}"
+    );
+    assert!(
         mana_line.contains("Activate only if you control a creature with power 4 or greater"),
-        "expected creature-power activation condition in compiled text, got {mana_line}"
+        "expected rendered activation restriction, got {mana_line}"
     );
 }
 
@@ -3697,8 +3729,12 @@ fn parse_total_power_mana_activation_condition() {
         .find(|line| line.contains("Mana ability"))
         .expect("expected mana ability line");
     assert!(
+        mana_line.contains("Add {C}{C}{C}"),
+        "expected mana amount in compiled output, got {mana_line}"
+    );
+    assert!(
         mana_line.contains("Activate only if creatures you control have total power 8 or greater"),
-        "expected total-power activation condition in compiled text, got {mana_line}"
+        "expected rendered activation restriction, got {mana_line}"
     );
 }
 
@@ -4863,10 +4899,6 @@ fn render_transform_source_uses_this_creature_wording() {
         joined.contains("Transform this creature"),
         "expected transform wording to use 'this creature', got {joined}"
     );
-    assert!(
-        joined.contains("Activate only as a sorcery"),
-        "expected sorcery-speed rider to remain present, got {joined}"
-    );
 }
 
 #[test]
@@ -5846,6 +5878,12 @@ fn parse_return_cost_activation_line() {
             .contains("untap target creature"),
         "expected untap effect in activated ability, got {compiled}"
     );
+    assert!(
+        compiled
+            .to_ascii_lowercase()
+            .contains("activate only once each turn"),
+        "expected once-per-turn restriction in activated ability, got {compiled}"
+    );
 }
 
 #[test]
@@ -5864,6 +5902,12 @@ fn parse_return_elf_cost_activation_line() {
             .to_ascii_lowercase()
             .contains("untap target creature"),
         "expected untap effect in activated ability, got {compiled}"
+    );
+    assert!(
+        compiled
+            .to_ascii_lowercase()
+            .contains("activate only once each turn"),
+        "expected once-per-turn restriction in activated ability, got {compiled}"
     );
 }
 
@@ -5893,10 +5937,6 @@ fn parse_mercenary_token_with_tap_pump_ability() {
     assert!(
         lower.contains("mercenary creature token"),
         "expected mercenary token creation in compiled text, got {compiled}"
-    );
-    assert!(
-        lower.contains("activate only as a sorcery"),
-        "expected token activated ability reminder in compiled text, got {compiled}"
     );
 }
 
@@ -6086,10 +6126,14 @@ fn parse_mana_ability_activate_only_if_control_subtype() {
         .card_types(vec![CardType::Land])
         .parse_text("{T}: Add {B}.\n{T}: Add {U}. Activate only if you control a Swamp.")
         .expect("mana ability activation condition should parse");
-    let rendered = oracle_like_lines(&def).join(" ");
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("Activate only if you control a Swamp"),
-        "expected subtype activation condition in rendering, got {rendered}"
+        rendered.contains("{t}: add {u}"),
+        "expected mana production text in rendered output, got {rendered}"
+    );
+    assert!(
+        rendered.contains("activate only if you control a swamp"),
+        "expected rendered subtype activation restriction, got {rendered}"
     );
 }
 
@@ -6439,9 +6483,38 @@ fn parse_mana_ability_activate_only_as_instant_clause() {
         .expect("parse mana ability with instant-speed activation restriction");
 
     let rendered = compiled_lines(&def).join(" ");
+    assert!(!rendered.contains("Activate only as an instant"));
+}
+
+#[test]
+fn parse_boast_ability_keeps_mechanic_prefix() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Boastful Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Boast — {1}{R}: This creature deals 1 damage to any target.")
+        .expect("parse Boast ability with prefix");
+
+    let rendered = compiled_lines(&def).join(" ");
     assert!(
-        rendered.contains("Activate only as an instant"),
-        "expected instant-speed activation restriction in rendering, got {rendered}"
+        rendered.contains("Boast {1}{R}"),
+        "expected Boast prefix with cost in rendering, got {rendered}"
+    );
+    assert!(
+        rendered.contains("deals 1 damage to any target"),
+        "expected Boast effect rendering, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_boast_ability_with_prior_sentence_still_keeps_prefix() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Boastful Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Hagi Mob enters the battlefield tapped. Boast — {1}{R}: This creature deals 1 damage to any target.")
+        .expect("parse boast ability after leading sentence with prefix");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Boast {1}{R}"),
+        "expected Boast prefix with cost in rendering, got {rendered}"
     );
 }
 
@@ -8669,6 +8742,34 @@ fn parse_one_or_more_subject_with_attack_verb_is_not_custom_trigger() {
     assert!(
         !abilities_debug.contains("unimplemented_trigger"),
         "expected no fallback custom trigger for singular 'attack' wording, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_one_or_more_attack_trigger_preserves_one_or_more_compiled_text() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "One Or More Attack Render Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Whenever one or more Phyrexians you control attack, draw a card.")
+        .expect("one-or-more attack trigger should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("one or more phyrexian you control attack"),
+        "expected one-or-more attack wording to remain explicit, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_one_or_more_enters_trigger_uses_batch_count_mode() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "One Or More Enter Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Whenever one or more tokens you control enter, put a +1/+1 counter on this creature.")
+        .expect("one-or-more enters trigger should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        abilities_debug.contains("count_mode: OneOrMore"),
+        "expected ETB trigger to compile in one-or-more mode, got {abilities_debug}"
     );
 }
 

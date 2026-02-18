@@ -891,6 +891,10 @@ pub struct GameState {
     /// Reset at the start of each turn.
     pub players_attacked_this_turn: HashSet<PlayerId>,
 
+    /// Creatures that attacked this turn.
+    /// Used for activated ability restrictions like "Activate only if this creature attacked this turn".
+    pub creatures_attacked_this_turn: HashSet<ObjectId>,
+
     /// Total number of spells cast during the immediately previous turn.
     /// Updated when turn advances.
     pub spells_cast_last_turn_total: u32,
@@ -910,6 +914,10 @@ pub struct GameState {
     /// Damage dealt to each player this turn (from any source).
     /// Used for mechanics like Bloodthirst.
     pub damage_to_players_this_turn: HashMap<PlayerId, u32>,
+
+    /// Combat-damage-to-player hits already processed in the current trigger batch.
+    /// Used for "one or more ... deal combat damage to a player" trigger matching.
+    pub combat_damage_player_batch_hits: Vec<(ObjectId, PlayerId)>,
 
     /// Active restriction effects (spell/ability-based "can't" effects).
     pub restriction_effects: Vec<RestrictionEffectInstance>,
@@ -1027,11 +1035,13 @@ impl GameState {
             spells_cast_this_turn_total: 0,
             spell_cast_order_this_turn: HashMap::new(),
             players_attacked_this_turn: HashSet::new(),
+            creatures_attacked_this_turn: HashSet::new(),
             spells_cast_last_turn_total: 0,
             library_searches_this_turn: HashSet::new(),
             creatures_entered_this_turn: HashMap::new(),
             creature_damage_to_players_this_turn: HashMap::new(),
             damage_to_players_this_turn: HashMap::new(),
+            combat_damage_player_batch_hits: Vec::new(),
             restriction_effects: Vec::new(),
             goad_effects: Vec::new(),
             // Battlefield state extension maps
@@ -2376,10 +2386,12 @@ impl GameState {
         self.spells_cast_this_turn_total = 0;
         self.spell_cast_order_this_turn.clear();
         self.players_attacked_this_turn.clear();
+        self.creatures_attacked_this_turn.clear();
         self.library_searches_this_turn.clear();
         self.creatures_entered_this_turn.clear();
         self.creature_damage_to_players_this_turn.clear();
         self.damage_to_players_this_turn.clear();
+        self.combat_damage_player_batch_hits.clear();
 
         // Activate any pending player-control effects for the new active player.
         self.activate_pending_player_control(next_player);
@@ -2519,6 +2531,16 @@ impl GameState {
         self.activated_abilities_this_turn.clear();
     }
 
+    /// Record that a creature has attacked this turn.
+    pub fn mark_creature_attacked_this_turn(&mut self, creature: ObjectId) {
+        self.creatures_attacked_this_turn.insert(creature);
+    }
+
+    /// Check whether a creature has attacked this turn.
+    pub fn creature_attacked_this_turn(&self, creature: ObjectId) -> bool {
+        self.creatures_attacked_this_turn.contains(&creature)
+    }
+
     /// Record that a specific trigger fired this turn.
     pub fn record_trigger_fired(
         &mut self,
@@ -2553,6 +2575,21 @@ impl GameState {
     pub fn trigger_event_kind_count_this_turn(&self, event_kind: EventKind) -> u32 {
         self.turn_counters
             .get(&TurnCounterKey::EventKind(event_kind))
+    }
+
+    /// Clear combat-damage player hits tracked for the current trigger batch.
+    pub fn clear_combat_damage_player_batch_hits(&mut self) {
+        self.combat_damage_player_batch_hits.clear();
+    }
+
+    /// Record a combat-damage player hit for the current trigger batch.
+    pub fn record_combat_damage_player_batch_hit(&mut self, source: ObjectId, player: PlayerId) {
+        self.combat_damage_player_batch_hits.push((source, player));
+    }
+
+    /// Return combat-damage player hits already seen in the current trigger batch.
+    pub fn combat_damage_player_batch_hits(&self) -> &[(ObjectId, PlayerId)] {
+        &self.combat_damage_player_batch_hits
     }
 
     /// Increment an arbitrary named turn counter.

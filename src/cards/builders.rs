@@ -164,10 +164,6 @@ enum LineAst {
     AdditionalCostChoice {
         options: Vec<AdditionalCostChoiceOptionAst>,
     },
-    AlternativeCost {
-        mana_cost: Option<ManaCost>,
-        cost_effects: Vec<Effect>,
-    },
     AlternativeCastingMethod(AlternativeCastingMethod),
 }
 
@@ -188,6 +184,7 @@ enum TriggerSpec {
     ThisAttacks,
     ThisAttacksWithNOthers(u32),
     Attacks(ObjectFilter),
+    AttacksOneOrMore(ObjectFilter),
     ThisBlocks,
     ThisBlocksObject(ObjectFilter),
     ThisBecomesBlocked,
@@ -224,6 +221,7 @@ enum TriggerSpec {
         copier: PlayerFilter,
     },
     EntersBattlefield(ObjectFilter),
+    EntersBattlefieldOneOrMore(ObjectFilter),
     EntersBattlefieldTapped(ObjectFilter),
     EntersBattlefieldUntapped(ObjectFilter),
     BeginningOfUpkeep(PlayerFilter),
@@ -234,6 +232,7 @@ enum TriggerSpec {
     ThisEntersBattlefield,
     ThisDealsCombatDamageToPlayer,
     DealsCombatDamageToPlayer(ObjectFilter),
+    DealsCombatDamageToPlayerOneOrMore(ObjectFilter),
     YouCastThisSpell,
     KeywordAction {
         action: crate::events::KeywordActionKind,
@@ -627,6 +626,9 @@ enum EffectAst {
     ReturnAllToHand {
         filter: ObjectFilter,
     },
+    ReturnAllToHandOfChosenColor {
+        filter: ObjectFilter,
+    },
     ReturnAllToBattlefield {
         filter: ObjectFilter,
         tapped: bool,
@@ -716,6 +718,9 @@ enum EffectAst {
         target: TargetAst,
     },
     DestroyAll {
+        filter: ObjectFilter,
+    },
+    DestroyAllOfChosenColor {
         filter: ObjectFilter,
     },
     DestroyAllAttachedTo {
@@ -2166,7 +2171,7 @@ impl CardDefinitionBuilder {
     }
 }
 
-#[cfg(all(test, feature = "parser-tests"))]
+#[cfg(all(test, feature = "parser-tests-full"))]
 mod target_parse_tests {
     use super::*;
 
@@ -2475,7 +2480,7 @@ mod target_parse_tests {
     }
 }
 
-#[cfg(all(test, feature = "parser-tests"))]
+#[cfg(all(test, feature = "parser-tests-full"))]
 mod effect_parse_tests {
     use super::*;
     use crate::alternative_cast::AlternativeCastingMethod;
@@ -4381,7 +4386,6 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .find(|line| {
                 line.starts_with("Mana ability")
                     && line.contains("Pay 1 life")
-                    && line.contains("Activate only if you control an artifact")
             })
             .expect("expected mana line with artifact activation condition");
         assert!(
@@ -4860,6 +4864,30 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             debug.contains("mana value X or less") || debug.contains("mana_value"),
             "expected mana-value filter to remain on destroy-all spec, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_destroy_all_permanents_except_artifacts_and_lands() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Scourglass Variant")
+            .parse_text("Destroy all permanents except for artifacts and lands.")
+            .expect("parse destroy-all except clause");
+
+        let effects = def.spell_effect.expect("spell effect");
+        let destroy = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<DestroyEffect>())
+            .expect("expected destroy effect");
+        let ChooseSpec::All(filter) = &destroy.spec else {
+            panic!("expected non-targeted destroy-all spec");
+        };
+        assert!(
+            filter.excluded_card_types.contains(&CardType::Artifact),
+            "expected artifact exclusion, got {filter:?}"
+        );
+        assert!(
+            filter.excluded_card_types.contains(&CardType::Land),
+            "expected land exclusion, got {filter:?}"
         );
     }
 
@@ -6297,7 +6325,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert_eq!(def.alternative_casts.len(), 1);
         let alt = &def.alternative_casts[0];
         match alt {
-            AlternativeCastingMethod::AlternativeCost {
+            AlternativeCastingMethod::Composed {
                 mana_cost,
                 cost_effects,
                 ..
@@ -6316,7 +6344,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
                     .expect("missing sacrifice effect");
                 assert_eq!(sacrifice.count, Value::Fixed(2));
             }
-            other => panic!("expected AlternativeCost, got {other:?}"),
+            other => panic!("expected Composed, got {other:?}"),
         }
 
         let spell_effect = def.spell_effect.expect("spell effect");
@@ -6337,11 +6365,11 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert_eq!(def.alternative_casts.len(), 1);
         let alt = &def.alternative_casts[0];
         match alt {
-            AlternativeCastingMethod::AlternativeCost { mana_cost, .. } => {
+            AlternativeCastingMethod::Composed { mana_cost, .. } => {
                 let mana = mana_cost.as_ref().expect("expected mana alt cost");
                 assert_eq!(mana.to_oracle(), "{0}");
             }
-            other => panic!("expected AlternativeCost, got {other:?}"),
+            other => panic!("expected Composed, got {other:?}"),
         }
     }
 
@@ -7025,5 +7053,5 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 }
 
-#[cfg(all(test, feature = "parser-tests"))]
+#[cfg(all(test, feature = "parser-tests-full"))]
 mod tests;

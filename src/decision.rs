@@ -623,6 +623,8 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                             activated.max_activations_per_turn();
                         let activation_count =
                             game.ability_activation_count_this_turn(perm_id, i);
+                        let restrictions_ok =
+                            can_activate_ability_with_restrictions(game, perm_id, i, activated);
 
                         // Check timing restrictions
                         let timing_ok = match activated.timing {
@@ -651,7 +653,7 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                         let under_turn_limit = max_activations_per_turn
                             .map_or(true, |max| activation_count < max);
 
-                        if timing_ok && under_turn_limit {
+                        if timing_ok && under_turn_limit && restrictions_ok {
                             actions.push(LegalAction::ActivateAbility {
                                 source: perm_id,
                                 ability_index: i,
@@ -664,6 +666,87 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
     }
 
     actions
+}
+
+/// Returns whether an activated ability can be used right now based on per-turn
+/// limits and textual activation restrictions parsed from Oracle text.
+pub(crate) fn can_activate_ability_with_restrictions(
+    game: &GameState,
+    source: ObjectId,
+    ability_index: usize,
+    activated: &crate::ability::ActivatedAbility,
+) -> bool {
+    let max_activations_per_turn = activated.max_activations_per_turn();
+    let activation_count = game.ability_activation_count_this_turn(source, ability_index);
+    if let Some(max_activations) = max_activations_per_turn
+        && activation_count >= max_activations
+    {
+        return false;
+    }
+
+    activated
+        .additional_restrictions
+        .iter()
+        .all(|restriction| activation_only_restriction_holds(game, source, restriction))
+}
+
+fn activation_only_restriction_holds(game: &GameState, source: ObjectId, restriction: &str) -> bool {
+    let lower = restriction
+        .trim()
+        .to_ascii_lowercase()
+        .trim_end_matches('.')
+        .to_string();
+
+    let Some(rest) = lower.strip_prefix("activate only ") else {
+        return true;
+    };
+
+    let mut conditions = rest.trim_start();
+    if conditions.starts_with("if ") {
+        conditions = conditions[3..].trim_start();
+    }
+
+    for condition in conditions.split(" and ") {
+        let condition = condition.trim();
+        if condition.is_empty() {
+            continue;
+        }
+
+        if condition.contains("didn't attack this turn")
+            || condition.contains("did not attack this turn")
+            || condition.contains("has not attacked this turn")
+        {
+            if game.creature_attacked_this_turn(source) {
+                return false;
+            }
+            continue;
+        }
+
+        if condition.contains("this creature attacked this turn")
+            || condition.contains("it attacked this turn")
+            || condition.contains("that creature attacked this turn")
+        {
+            if !game.creature_attacked_this_turn(source) {
+                return false;
+            }
+            continue;
+        }
+
+        // Activation limits are tracked separately via max_activations_per_turn.
+        if condition.starts_with("once each turn")
+            || condition.starts_with("twice each turn")
+            || condition.starts_with("three times")
+            || condition.starts_with("three each turn")
+        {
+            continue;
+        }
+
+        // Unknown textual restrictions are intentionally treated as permissive to avoid
+        // introducing false negatives from unmodeled conditions.
+        continue;
+    }
+
+    true
 }
 
 /// Compute legal commander actions for a player (casting from command zone).
@@ -975,24 +1058,12 @@ fn can_cast_with_cost(
 fn build_requirements_for_method(
     method: &crate::alternative_cast::AlternativeCastingMethod,
 ) -> AdditionalCastRequirements {
-    use crate::alternative_cast::AlternativeCastingMethod;
-
-    let mut requirements = AdditionalCastRequirements::default();
-
-    match method {
-        AlternativeCastingMethod::JumpStart => {
-            requirements.discard_from_hand = 1;
-        }
-        AlternativeCastingMethod::Escape { exile_count, .. } => {
-            requirements.exile_from_graveyard = *exile_count;
-        }
-        AlternativeCastingMethod::Flashback { .. } => {
-            // Flashback has no additional requirements beyond mana
-        }
-        _ => {}
+    let method_requirements = method.requirements();
+    AdditionalCastRequirements {
+        exile_from_graveyard: method_requirements.exile_from_graveyard,
+        discard_from_hand: method_requirements.discard_from_hand,
+        ..Default::default()
     }
-
-    requirements
 }
 
 /// Get the mana cost for an alternative casting method.
@@ -1027,11 +1098,8 @@ pub fn can_cast_with_alternative_from_hand(
     use crate::alternative_cast::AlternativeCastingMethod;
 
     match method {
-        AlternativeCastingMethod::AlternativeCost {
-            mana_cost,
-            cost_effects,
-            ..
-        } => {
+        method if method.uses_composed_cost_effects() => {
+            let mana_cost = method.mana_cost();
             // Check mana cost if present
             if let Some(mana) = mana_cost
                 && !can_cast_with_cost(
@@ -1047,7 +1115,7 @@ pub fn can_cast_with_alternative_from_hand(
             }
 
             // Check cost effects can be paid using the generic can_execute_as_cost method
-            for effect in cost_effects {
+            for effect in method.cost_effects() {
                 if effect
                     .0
                     .can_execute_as_cost(game, spell_id, player)
@@ -1520,7 +1588,7 @@ pub fn compute_potential_mana(game: &GameState, player: PlayerId) -> crate::play
             continue;
         }
 
-        for ability in perm.abilities.iter() {
+        for (ability_idx, ability) in perm.abilities.iter().enumerate() {
             if let AbilityKind::Mana(mana_ability) = &ability.kind {
                 // Do a simple non-recursive check for whether this mana ability
                 // could be activated. We intentionally skip mana cost checks here
@@ -1545,7 +1613,13 @@ pub fn compute_potential_mana(game: &GameState, player: PlayerId) -> crate::play
                     .activation_condition
                     .as_ref()
                     .is_none_or(|cond| {
-                        check_mana_ability_condition_for_potential(game, player, cond)
+                        check_mana_ability_condition_for_potential(
+                            game,
+                            player,
+                            perm_id,
+                            ability_idx,
+                            cond,
+                        )
                     });
 
                 if can_activate && condition_met {
@@ -1567,6 +1641,8 @@ pub fn compute_potential_mana(game: &GameState, player: PlayerId) -> crate::play
 fn check_mana_ability_condition_for_potential(
     game: &GameState,
     player: PlayerId,
+    source: ObjectId,
+    ability_index: usize,
     condition: &crate::ability::ManaAbilityCondition,
 ) -> bool {
     match condition {
@@ -1649,15 +1725,29 @@ fn check_mana_ability_condition_for_potential(
                     && matches!(game.turn.phase, Phase::FirstMain | Phase::NextMain)
                     && game.stack_is_empty()
             }
-            crate::ability::ActivationTiming::OncePerTurn => true,
+            crate::ability::ActivationTiming::OncePerTurn => {
+                game.ability_activation_count_this_turn(source, ability_index) == 0
+            }
             crate::ability::ActivationTiming::DuringYourTurn => game.turn.active_player == player,
             crate::ability::ActivationTiming::DuringOpponentsTurn => {
                 game.turn.active_player != player
             }
         },
+        crate::ability::ManaAbilityCondition::MaxActivationsPerTurn(limit) => {
+            game.ability_activation_count_this_turn(source, ability_index) < *limit
+        }
+        crate::ability::ManaAbilityCondition::Unmodeled(_) => true,
         crate::ability::ManaAbilityCondition::All(conditions) => conditions
             .iter()
-            .all(|inner| check_mana_ability_condition_for_potential(game, player, inner)),
+            .all(|inner| {
+                check_mana_ability_condition_for_potential(
+                    game,
+                    player,
+                    source,
+                    ability_index,
+                    inner,
+                )
+            }),
     }
 }
 
@@ -2054,13 +2144,30 @@ pub fn compute_legal_attackers(game: &GameState, _combat: &CombatState) -> Vec<A
             continue;
         }
 
+        let goaded_by = game.active_goaders_for(perm.id);
+
         // Determine valid attack targets
         let mut valid_targets = Vec::new();
 
         // Can attack each opponent
+        let mut goad_targets = Vec::new();
+        let mut nongoad_targets = Vec::new();
+
         for opponent in &game.players {
             if opponent.id != active_player && opponent.is_in_game() {
-                valid_targets.push(AttackTarget::Player(opponent.id));
+                let can_attack = crate::rules::combat::can_attack_defending_player(
+                    perm,
+                    opponent.id,
+                    game,
+                );
+                if can_attack {
+                    let target = AttackTarget::Player(opponent.id);
+                    if goaded_by.contains(&opponent.id) {
+                        goad_targets.push(target);
+                    } else {
+                        nongoad_targets.push(target);
+                    }
+                }
             }
         }
 
@@ -2069,9 +2176,25 @@ pub fn compute_legal_attackers(game: &GameState, _combat: &CombatState) -> Vec<A
             if let Some(other_perm) = game.object(other_perm_id)
                 && other_perm.controller != active_player
                 && game.object_has_card_type(other_perm_id, crate::types::CardType::Planeswalker)
+                && crate::rules::combat::can_attack_defending_player(
+                    perm,
+                    other_perm.controller,
+                    game,
+                )
             {
-                valid_targets.push(AttackTarget::Planeswalker(other_perm_id));
+                let target = AttackTarget::Planeswalker(other_perm_id);
+                if goaded_by.contains(&other_perm.controller) {
+                    goad_targets.push(target);
+                } else {
+                    nongoad_targets.push(target);
+                }
             }
+        }
+
+        if !nongoad_targets.is_empty() {
+            valid_targets.extend(nongoad_targets);
+        } else {
+            valid_targets.extend(goad_targets);
         }
 
         let must_attack = crate::rules::combat::must_attack_with_game(perm, game);
@@ -4369,7 +4492,7 @@ fn format_action_short(game: &GameState, action: &LegalAction) -> String {
                         if let Some(alt_method) = obj.alternative_casts.get(*idx) {
                             let cost_effects = alt_method.cost_effects();
                             let cost_desc = if !cost_effects.is_empty() {
-                                // For AlternativeCost (like Force of Will), show the cost effects
+                                // For composed methods (like Force of Will), show the cost effects
                                 let effects_desc = format_cost_effects(cost_effects);
                                 if let Some(mana) = alt_method.mana_cost() {
                                     // Has both mana and cost effects

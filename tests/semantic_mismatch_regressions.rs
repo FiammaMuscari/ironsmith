@@ -1,4 +1,4 @@
-#![cfg(feature = "parser-tests")]
+#![cfg(feature = "parser-tests-full")]
 
 use ironsmith::{
     cards::CardDefinitionBuilder,

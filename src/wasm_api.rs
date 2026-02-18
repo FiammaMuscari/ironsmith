@@ -3167,6 +3167,25 @@ fn describe_mana_condition(condition: &crate::ability::ManaAbilityCondition) -> 
                 "activate only during an opponent's turn".to_string()
             }
         },
+        crate::ability::ManaAbilityCondition::MaxActivationsPerTurn(limit) => {
+            if *limit == 1 {
+                "activate only once each turn".to_string()
+            } else {
+                format!("activate only up to {limit} times each turn")
+            }
+        }
+        crate::ability::ManaAbilityCondition::Unmodeled(restriction) => {
+            let suffix = restriction
+                .trim_start_matches("activate only ")
+                .trim_start_matches("Activate only ")
+                .trim_start_matches("activate ")
+                .trim_start_matches("Activate ");
+            if suffix.is_empty() {
+                "activate only".to_string()
+            } else {
+                format!("activate only {suffix}")
+            }
+        }
         crate::ability::ManaAbilityCondition::All(conditions) => {
             let clauses = conditions
                 .iter()

@@ -5,6 +5,7 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
             Trigger::this_attacks_with_n_others(other_count as usize)
         }
         TriggerSpec::Attacks(filter) => Trigger::attacks(filter),
+        TriggerSpec::AttacksOneOrMore(filter) => Trigger::attacks_one_or_more(filter),
         TriggerSpec::ThisBlocks => Trigger::this_blocks(),
         TriggerSpec::ThisBlocksObject(filter) => Trigger::this_blocks_object(filter),
         TriggerSpec::ThisBecomesBlocked => Trigger::this_becomes_blocked(),
@@ -43,6 +44,9 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         ),
         TriggerSpec::SpellCopied { filter, copier } => Trigger::spell_copied(filter, copier),
         TriggerSpec::EntersBattlefield(filter) => Trigger::enters_battlefield(filter),
+        TriggerSpec::EntersBattlefieldOneOrMore(filter) => {
+            Trigger::enters_battlefield_one_or_more(filter)
+        }
         TriggerSpec::EntersBattlefieldTapped(filter) => Trigger::enters_battlefield_tapped(filter),
         TriggerSpec::EntersBattlefieldUntapped(filter) => {
             Trigger::enters_battlefield_untapped(filter)
@@ -58,6 +62,9 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         TriggerSpec::ThisDealsCombatDamageToPlayer => Trigger::this_deals_combat_damage_to_player(),
         TriggerSpec::DealsCombatDamageToPlayer(filter) => {
             Trigger::deals_combat_damage_to_player(filter)
+        }
+        TriggerSpec::DealsCombatDamageToPlayerOneOrMore(filter) => {
+            Trigger::deals_combat_damage_to_player_one_or_more(filter)
         }
         TriggerSpec::YouCastThisSpell => Trigger::you_cast_this_spell(),
         TriggerSpec::KeywordAction { action, player } => Trigger::keyword_action(action, player),
@@ -259,9 +266,11 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::SacrificeAll { filter, .. }
         | EffectAst::RegenerateAll { filter }
         | EffectAst::DestroyAll { filter }
+        | EffectAst::DestroyAllOfChosenColor { filter }
         | EffectAst::ExileAll { filter }
         | EffectAst::PreventDamageEach { filter, .. }
         | EffectAst::ReturnAllToHand { filter }
+        | EffectAst::ReturnAllToHandOfChosenColor { filter }
         | EffectAst::ReturnAllToBattlefield { filter, .. }
         | EffectAst::ExchangeControl { filter, .. }
         | EffectAst::PumpAll { filter, .. }
@@ -620,9 +629,11 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::SacrificeAll { filter, .. }
         | EffectAst::RegenerateAll { filter }
         | EffectAst::DestroyAll { filter }
+        | EffectAst::DestroyAllOfChosenColor { filter }
         | EffectAst::ExileAll { filter }
         | EffectAst::PreventDamageEach { filter, .. }
         | EffectAst::ReturnAllToHand { filter }
+        | EffectAst::ReturnAllToHandOfChosenColor { filter }
         | EffectAst::ReturnAllToBattlefield { filter, .. }
         | EffectAst::ExchangeControl { filter, .. }
         | EffectAst::PumpAll { filter, .. }
@@ -927,8 +938,7 @@ fn collect_tag_spans_from_line(
                 collect_tag_spans_from_effects_with_context(&option.effects, annotations, ctx);
             }
         }
-        LineAst::AlternativeCost { .. }
-        | LineAst::AlternativeCastingMethod(_)
+        LineAst::AlternativeCastingMethod(_)
         | LineAst::StaticAbility(_)
         | LineAst::StaticAbilities(_)
         | LineAst::Ability(_)
@@ -2433,6 +2443,36 @@ fn compile_effect(
                 Vec::new(),
             ))
         }
+        EffectAst::ReturnAllToHandOfChosenColor { filter } => {
+            use crate::effect::EffectMode;
+            let resolved_filter = resolve_it_tag(filter, ctx)?;
+            let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
+            let mut modes = Vec::new();
+            let colors = [
+                ("White", crate::color::Color::White),
+                ("Blue", crate::color::Color::Blue),
+                ("Black", crate::color::Color::Black),
+                ("Red", crate::color::Color::Red),
+                ("Green", crate::color::Color::Green),
+            ];
+            for (_name, color) in colors {
+                let chosen = ColorSet::from(color);
+                let mut filter = resolved_filter.clone();
+                filter.colors = Some(
+                    filter
+                        .colors
+                        .map_or(chosen, |existing| existing.intersection(chosen)),
+                );
+                let description =
+                    format!("Return all {} to their owners' hands.", filter.description());
+                modes.push(EffectMode {
+                    description,
+                    effects: vec![Effect::return_all_to_hand(filter)],
+                });
+            }
+            prelude.push(Effect::choose_one(modes));
+            Ok((prelude, choices))
+        }
         EffectAst::ReturnAllToBattlefield { filter, tapped } => {
             let mut effect = Effect::new(crate::effects::ReturnAllToBattlefieldEffect::new(
                 resolve_it_tag(filter, ctx)?,
@@ -2698,6 +2738,46 @@ fn compile_effect(
                 ctx.last_object_tag = Some(tag);
             }
             prelude.push(effect);
+            Ok((prelude, choices))
+        }
+        EffectAst::DestroyAllOfChosenColor { filter } => {
+            use crate::effect::EffectMode;
+            let resolved_filter = resolve_it_tag(filter, ctx)?;
+            let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
+            let mut modes = Vec::new();
+            let colors = [
+                ("White", crate::color::Color::White),
+                ("Blue", crate::color::Color::Blue),
+                ("Black", crate::color::Color::Black),
+                ("Red", crate::color::Color::Red),
+                ("Green", crate::color::Color::Green),
+            ];
+            let auto_tag = if ctx.auto_tag_object_targets {
+                let tag = ctx.next_tag("destroyed");
+                ctx.last_object_tag = Some(tag.clone());
+                Some(tag)
+            } else {
+                None
+            };
+            for (_name, color) in colors {
+                let chosen = ColorSet::from(color);
+                let mut filter = resolved_filter.clone();
+                filter.colors = Some(
+                    filter
+                        .colors
+                        .map_or(chosen, |existing| existing.intersection(chosen)),
+                );
+                let description = format!("Destroy all {}.", filter.description());
+                let mut effect = Effect::destroy_all(filter);
+                if let Some(tag) = &auto_tag {
+                    effect = effect.tag(tag.clone());
+                }
+                modes.push(EffectMode {
+                    description,
+                    effects: vec![effect],
+                });
+            }
+            prelude.push(Effect::choose_one(modes));
             Ok((prelude, choices))
         }
         EffectAst::ExileAll { filter } => {
@@ -3882,7 +3962,7 @@ fn token_dies_target_creature_gets_minus_one_minus_one_ability() -> Ability {
 
 fn token_red_pump_ability() -> Ability {
     Ability {
-        kind: AbilityKind::Activated(ActivatedAbility {
+                kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
             mana_cost: ability::merge_cost_effects(
                 TotalCost::mana(ManaCost::from_pips(vec![vec![ManaSymbol::Red]])),
                 Vec::new(),
@@ -3900,7 +3980,7 @@ fn token_red_pump_ability() -> Ability {
 fn token_white_tap_target_creature_ability() -> Ability {
     let target = ChooseSpec::target(ChooseSpec::Object(ObjectFilter::creature()));
     Ability {
-        kind: AbilityKind::Activated(ActivatedAbility {
+                kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
             mana_cost: ability::merge_cost_effects(
                 TotalCost::mana(ManaCost::from_pips(vec![vec![ManaSymbol::White]])),
                 vec![Effect::tap_source()],
@@ -4122,7 +4202,7 @@ fn token_sacrifice_return_named_from_graveyard_ability(
             .named(card_name.to_string()),
     );
     Ability {
-        kind: AbilityKind::Activated(ActivatedAbility {
+                kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
             mana_cost: ability::merge_cost_effects(TotalCost::mana(mana_cost), cost_effects),
             effects: vec![Effect::return_from_graveyard_to_battlefield(
                 target.clone(),

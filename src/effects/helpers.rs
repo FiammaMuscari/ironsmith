@@ -888,8 +888,9 @@ pub fn resolve_objects_from_spec(
             Ok(objects)
         }
 
-        // Object filter (non-targeted choice) - also uses ctx.targets
-        ChooseSpec::Object(_) => {
+        // Object filter (non-targeted choice) - generally supplied via previous selection,
+        // but some tags only effects resolve from tagged objects and filters.
+        ChooseSpec::Object(filter) => {
             let objects: Vec<ObjectId> = ctx
                 .targets
                 .iter()
@@ -903,7 +904,52 @@ pub fn resolve_objects_from_spec(
                 .collect();
 
             if objects.is_empty() {
-                return Err(ExecutionError::InvalidTarget);
+                if filter.tagged_constraints.is_empty() {
+                    return Err(ExecutionError::InvalidTarget);
+                }
+
+                let filter_ctx = ctx.filter_context(game);
+                let candidate_ids: Vec<ObjectId> = match filter.zone {
+                    Some(Zone::Battlefield) => game.battlefield.clone(),
+                    Some(Zone::Graveyard) => game
+                        .players
+                        .iter()
+                        .flat_map(|player| player.graveyard.iter().copied())
+                        .collect(),
+                    Some(Zone::Hand) => game
+                        .players
+                        .iter()
+                        .flat_map(|player| player.hand.iter().copied())
+                        .collect(),
+                    Some(Zone::Library) => game
+                        .players
+                        .iter()
+                        .flat_map(|player| player.library.iter().copied())
+                        .collect(),
+                    Some(Zone::Stack) => game.stack.iter().map(|entry| entry.object_id).collect(),
+                    Some(Zone::Exile) => game.exile.clone(),
+                    Some(Zone::Command) => game.command_zone.clone(),
+                    None => game
+                        .battlefield
+                        .iter()
+                        .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
+                        .filter(|(_, obj)| filter.matches(obj, &filter_ctx, game))
+                        .map(|(id, _)| id)
+                        .collect(),
+                };
+
+                let objects: Vec<ObjectId> = candidate_ids
+                    .iter()
+                    .filter_map(|&id| game.object(id))
+                    .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                    .map(|obj| obj.id)
+                    .collect();
+
+                if objects.is_empty() {
+                    return Err(ExecutionError::InvalidTarget);
+                }
+
+                return Ok(objects);
             }
 
             Ok(objects)

@@ -1549,6 +1549,10 @@ impl StaticAbilityKind for MakeColorlessForFilter {
         }
     }
 
+    fn is_devoid(&self) -> bool {
+        self.filter == ObjectFilter::source()
+    }
+
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
         Box::new(self.clone())
     }
@@ -1596,11 +1600,15 @@ impl StaticAbilityKind for RemoveSupertypesForFilter {
     }
 
     fn display(&self) -> String {
-        let subject = pluralized_subject_text(&self.filter);
+        let mut subject = pluralized_subject_text(&self.filter);
+        if subject == "lands" {
+            subject = "land".to_string();
+        }
         let singular = subject.starts_with("enchanted ")
             || subject.starts_with("equipped ")
             || subject.starts_with("this ")
-            || subject.starts_with("that ");
+            || subject.starts_with("that ")
+            || subject == "land";
         let verb = if singular { "is" } else { "are" };
         let supertypes = self
             .supertypes

@@ -22,6 +22,7 @@ js-sys = { version = "0.3", optional = true }
 default = []
 generated-registry = []
 parser-tests = []
+parser-tests-full = ["parser-tests"]
 net = ["sha2", "secp256k1"]
 wasm = [
     "generated-registry",

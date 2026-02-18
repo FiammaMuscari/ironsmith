@@ -32,12 +32,13 @@ pub enum AlternativeCastingMethod {
     /// Miracle - if first card drawn this turn, may cast for miracle cost
     Miracle { cost: ManaCost },
 
-    /// Alternative cost - cast from hand, but pay a different cost instead of mana cost.
+    /// Composed alternative cost - cast from hand, with optional mana plus
+    /// additional non-mana cost effects composed through the effect system.
     /// Used for cards like Force of Will ("pay 1 life, exile a blue card").
     ///
     /// The mana_cost field holds the mana portion (if any), while cost_effects
     /// holds non-mana costs that execute through the effect system.
-    AlternativeCost {
+    Composed {
         /// The name shown to the player (e.g., "Force of Will's alternative cost")
         name: &'static str,
         /// The mana portion of the alternative cost (None = no mana cost)
@@ -71,13 +72,22 @@ pub enum TrapCondition {
     CreatureDealtDamageToYou,
 }
 
+/// Static requirement bits needed to use an alternative casting method.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct AlternativeCastRequirements {
+    /// Number of graveyard cards that must be exiled as part of the cast.
+    pub exile_from_graveyard: u32,
+    /// Number of cards that must be discarded from hand as part of the cast.
+    pub discard_from_hand: u32,
+}
+
 impl AlternativeCastingMethod {
     /// Returns the zone this method allows casting from.
     pub fn cast_from_zone(&self) -> Zone {
         match self {
             Self::Flashback { .. } | Self::JumpStart | Self::Escape { .. } => Zone::Graveyard,
             Self::Madness { .. } => Zone::Exile,
-            Self::Miracle { .. } | Self::AlternativeCost { .. } | Self::MindbreakTrap { .. } => {
+            Self::Miracle { .. } | Self::Composed { .. } | Self::MindbreakTrap { .. } => {
                 Zone::Hand
             }
         }
@@ -101,7 +111,7 @@ impl AlternativeCastingMethod {
             Self::Madness { cost } => Some(cost),
             Self::Miracle { cost } => Some(cost),
             Self::MindbreakTrap { cost, .. } => Some(cost),
-            Self::AlternativeCost { mana_cost, .. } => mana_cost.as_ref(),
+            Self::Composed { mana_cost, .. } => mana_cost.as_ref(),
         }
     }
 
@@ -109,7 +119,7 @@ impl AlternativeCastingMethod {
     /// These are non-mana costs that execute through the effect system.
     pub fn cost_effects(&self) -> &[Effect] {
         match self {
-            Self::AlternativeCost { cost_effects, .. } => cost_effects,
+            Self::Composed { cost_effects, .. } => cost_effects,
             _ => &[],
         }
     }
@@ -135,7 +145,7 @@ impl AlternativeCastingMethod {
             Self::Escape { .. } => "Escape",
             Self::Madness { .. } => "Madness",
             Self::Miracle { .. } => "Miracle",
-            Self::AlternativeCost { name, .. } => name,
+            Self::Composed { name, .. } => name,
             Self::MindbreakTrap { name, .. } => name,
         }
     }
@@ -157,10 +167,10 @@ impl AlternativeCastingMethod {
         }
     }
 
-    /// Create an alternative cost method (for cards like Force of Will).
+    /// Create a composed alternative cast method (for cards like Force of Will).
     ///
     /// # Arguments
-    /// * `name` - Display name for the alternative cost
+    /// * `name` - Display name for the method
     /// * `mana_cost` - Mana portion of the cost (None for no mana)
     /// * `cost_effects` - Non-mana cost effects (pay life, exile cards, etc.)
     pub fn alternative_cost(
@@ -168,11 +178,39 @@ impl AlternativeCastingMethod {
         mana_cost: Option<ManaCost>,
         cost_effects: Vec<Effect>,
     ) -> Self {
-        Self::AlternativeCost {
+        Self::Composed {
             name,
             mana_cost,
             cost_effects,
         }
+    }
+
+    /// Returns the zone-independent gameplay requirements for this alternative casting method.
+    ///
+    /// This captures non-mana requirements expressed outside the base mana cost, such as
+    /// graveyard exile counts or hand discard counts. Additional costs like life payment,
+    /// card choice, etc. remain composed in `cost_effects()`.
+    pub fn requirements(&self) -> AlternativeCastRequirements {
+        match self {
+            Self::JumpStart => AlternativeCastRequirements {
+                discard_from_hand: 1,
+                ..Default::default()
+            },
+            Self::Escape { exile_count, .. } => AlternativeCastRequirements {
+                exile_from_graveyard: *exile_count,
+                ..Default::default()
+            },
+            Self::Flashback { .. } | Self::Miracle { .. } | Self::Madness { .. } => {
+                AlternativeCastRequirements::default()
+            }
+            Self::Composed { .. } => AlternativeCastRequirements::default(),
+            Self::MindbreakTrap { .. } => AlternativeCastRequirements::default(),
+        }
+    }
+
+    /// Returns true if this method is paid through composed non-mana cost effects.
+    pub fn uses_composed_cost_effects(&self) -> bool {
+        !self.cost_effects().is_empty()
     }
 
     /// Returns true if this is the Miracle alternative casting method.
@@ -327,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn test_alternative_cost_properties() {
+    fn test_composed_alternative_properties() {
         use crate::color::{Color, ColorSet};
         use crate::effect::Effect;
 

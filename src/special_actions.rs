@@ -543,7 +543,7 @@ fn can_activate_mana_ability(
 
         // Check activation condition if present
         if let Some(condition) = &mana_ability.activation_condition
-            && !check_mana_ability_condition(game, player, condition)
+            && !check_mana_ability_condition(game, player, permanent_id, ability_index, condition)
         {
             return Err(ActionError::CantPayCost);
         }
@@ -609,7 +609,7 @@ fn can_activate_mana_ability_check(
 
         // Check activation condition if present
         if let Some(condition) = &mana_ability.activation_condition
-            && !check_mana_ability_condition(game, player, condition)
+            && !check_mana_ability_condition(game, player, permanent_id, ability_index, condition)
         {
             return Err(ActionError::CantPayCost);
         }
@@ -622,6 +622,8 @@ fn can_activate_mana_ability_check(
 fn check_mana_ability_condition(
     game: &GameState,
     player: PlayerId,
+    source: ObjectId,
+    ability_index: usize,
     condition: &crate::ability::ManaAbilityCondition,
 ) -> bool {
     match condition {
@@ -699,7 +701,7 @@ fn check_mana_ability_condition(
                 card_type_match && subtype_match
             })
         }),
-        crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
+            crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
             crate::ability::ActivationTiming::AnyTime => true,
             crate::ability::ActivationTiming::DuringCombat => {
                 matches!(game.turn.phase, Phase::Combat)
@@ -709,15 +711,23 @@ fn check_mana_ability_condition(
                     && matches!(game.turn.phase, Phase::FirstMain | Phase::NextMain)
                     && game.stack_is_empty()
             }
-            crate::ability::ActivationTiming::OncePerTurn => true,
+            crate::ability::ActivationTiming::OncePerTurn => {
+                game.ability_activation_count_this_turn(source, ability_index) == 0
+            }
             crate::ability::ActivationTiming::DuringYourTurn => game.turn.active_player == player,
             crate::ability::ActivationTiming::DuringOpponentsTurn => {
                 game.turn.active_player != player
             }
         },
+        crate::ability::ManaAbilityCondition::MaxActivationsPerTurn(limit) => {
+            game.ability_activation_count_this_turn(source, ability_index) < *limit
+        }
+        crate::ability::ManaAbilityCondition::Unmodeled(_) => true,
         crate::ability::ManaAbilityCondition::All(conditions) => conditions
             .iter()
-            .all(|inner| check_mana_ability_condition(game, player, inner)),
+            .all(|inner| {
+                check_mana_ability_condition(game, player, source, ability_index, inner)
+            }),
     }
 }
 
@@ -772,6 +782,7 @@ pub fn perform_activate_mana_ability(
             }
         }
 
+        game.record_ability_activation(permanent_id, ability_index);
         Ok(())
     } else {
         Err(ActionError::NoSuchAbility)

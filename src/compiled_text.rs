@@ -5857,6 +5857,14 @@ fn pluralize_noun_phrase(phrase: &str) -> String {
             trailing
         );
     }
+    if let Some((head, tail)) = base.split_once(" without ") {
+        return format!(
+            "{} without {}{}",
+            pluralize_noun_phrase(head),
+            tail.trim(),
+            trailing
+        );
+    }
     for suffix in [
         " you control",
         " you own",
@@ -8936,6 +8944,79 @@ fn normalize_activation_restriction_clause(raw: &str) -> String {
     clause
 }
 
+fn collect_activation_restriction_clauses(
+    timing: &ActivationTiming,
+    additional_restrictions: &[String],
+) -> Vec<String> {
+    let mut clauses = Vec::new();
+
+    if let Some(timing_clause) = describe_activation_timing_clause(timing) {
+        let normalized = normalize_activation_restriction_clause(timing_clause);
+        push_activation_restriction_clause(&mut clauses, normalized);
+    }
+
+    for raw in additional_restrictions {
+        let normalized = normalize_activation_restriction_clause(raw);
+        push_activation_restriction_clause(&mut clauses, normalized);
+    }
+
+    clauses
+}
+
+fn push_activation_restriction_clause(clauses: &mut Vec<String>, clause: String) {
+    if clause.is_empty() {
+        return;
+    }
+    let clause_lower = clause.to_ascii_lowercase();
+    let mut remove_indices = Vec::new();
+    for (idx, existing) in clauses.iter().enumerate() {
+        let existing_lower = existing.to_ascii_lowercase();
+        if existing_lower == clause_lower
+            || activation_clause_is_more_specific(&existing_lower, &clause_lower)
+        {
+            return;
+        }
+        if activation_clause_is_more_specific(&clause_lower, &existing_lower) {
+            remove_indices.push(idx);
+        }
+    }
+    for idx in remove_indices.into_iter().rev() {
+        clauses.remove(idx);
+    }
+    clauses.push(clause);
+}
+
+fn activation_clause_is_more_specific(candidate: &str, base: &str) -> bool {
+    if candidate.len() <= base.len() || !candidate.starts_with(base) {
+        return false;
+    }
+    let tail = candidate[base.len()..].trim_start();
+    tail.starts_with(',')
+        || tail.starts_with("and ")
+        || tail.starts_with("before ")
+        || tail.starts_with("after ")
+        || tail.starts_with("if ")
+        || tail.starts_with("unless ")
+}
+
+fn join_activation_restriction_clauses(clauses: &[String]) -> String {
+    let mut iter = clauses.iter();
+    let Some(first) = iter.next() else {
+        return String::new();
+    };
+    let mut line = first.clone();
+    for clause in iter {
+        if let Some(rest) = clause.strip_prefix("Activate only ") {
+            line.push_str(" and ");
+            line.push_str(rest);
+        } else {
+            line.push_str(" and ");
+            line.push_str(clause);
+        }
+    }
+    line
+}
+
 fn describe_keyword_ability(ability: &Ability) -> Option<String> {
     let raw_text = ability.text.as_deref()?.trim();
     let text = raw_text.to_ascii_lowercase();
@@ -9120,13 +9201,24 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
         AbilityKind::Activated(activated) => {
             let mut line = format!("Activated ability {index}");
             let mut pre = Vec::new();
-            if !activated.mana_cost.costs().is_empty() {
+            let has_boast_label = ability
+                .text
+                .as_deref()
+                .is_some_and(|text| text.eq_ignore_ascii_case("boast"));
+            if has_boast_label {
+                let mut label = "Boast".to_string();
+                if !activated.mana_cost.costs().is_empty() {
+                    label.push(' ');
+                    label.push_str(&describe_cost_list(activated.mana_cost.costs()));
+                }
+                pre.push(label);
+            } else if !activated.mana_cost.costs().is_empty() {
                 pre.push(describe_cost_list(activated.mana_cost.costs()));
             }
             if !activated.choices.is_empty()
                 && !(!activated.effects.is_empty()
                     && choices_are_simple_targets(&activated.choices))
-            {
+                {
                 pre.push(format!(
                     "choose {}",
                     activated
@@ -9145,26 +9237,13 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
                 line.push_str(": ");
                 line.push_str(&describe_effect_list(&activated.effects));
             }
-            let mut restriction_clauses: Vec<String> = Vec::new();
-            if let Some(timing_clause) = describe_activation_timing_clause(&activated.timing) {
-                restriction_clauses.push(timing_clause.to_string());
-            }
-            for clause in &activated.additional_restrictions {
-                let normalized = normalize_activation_restriction_clause(clause);
-                if normalized.is_empty() {
-                    continue;
-                }
-                if restriction_clauses
-                    .iter()
-                    .any(|existing| existing.eq_ignore_ascii_case(&normalized))
-                {
-                    continue;
-                }
-                restriction_clauses.push(normalized);
-            }
+            let restriction_clauses = collect_activation_restriction_clauses(
+                &activated.timing,
+                &activated.additional_restrictions,
+            );
             if !restriction_clauses.is_empty() {
                 line.push_str(". ");
-                line.push_str(&restriction_clauses.join(" and "));
+                line.push_str(&join_activation_restriction_clauses(&restriction_clauses));
             }
             vec![line]
         }
@@ -9208,12 +9287,11 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
                 line.push_str(&describe_effect_list(extra_effects));
             }
             if let Some(condition) = &mana_ability.activation_condition {
-                if cost_text.is_some() || add_text.is_some() || mana_ability.effects.is_some() {
+                let clause = describe_mana_activation_condition(condition);
+                if !clause.is_empty() {
                     line.push_str(". ");
-                } else {
-                    line.push_str(": ");
+                    line.push_str(&clause);
                 }
-                line.push_str(&describe_mana_activation_condition(condition));
             }
             vec![line]
         }
@@ -9303,6 +9381,25 @@ fn describe_mana_activation_condition(condition: &crate::ability::ManaAbilityCon
                 "Activate only during an opponent's turn".to_string()
             }
         },
+        crate::ability::ManaAbilityCondition::MaxActivationsPerTurn(limit) => {
+            if *limit == 1 {
+                "Activate only once each turn".to_string()
+            } else {
+                format!("Activate only up to {limit} times each turn")
+            }
+        }
+        crate::ability::ManaAbilityCondition::Unmodeled(restriction) => {
+            let suffix = restriction
+                .trim_start_matches("activate only ")
+                .trim_start_matches("Activate only ")
+                .trim_start_matches("activate ")
+                .trim_start_matches("Activate ");
+            if suffix.is_empty() {
+                "Activate only".to_string()
+            } else {
+                format!("Activate only {suffix}")
+            }
+        }
         crate::ability::ManaAbilityCondition::All(conditions) => {
             let clauses = conditions
                 .iter()
@@ -9463,15 +9560,14 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
     });
     for (idx, method) in def.alternative_casts.iter().enumerate() {
         match method {
-            AlternativeCastingMethod::AlternativeCost {
-                name,
-                mana_cost,
-                cost_effects,
-            } => {
-                let mut parts = Vec::new();
-                if let Some(cost) = mana_cost {
-                    parts.push(format!("pay {}", cost.to_oracle()));
-                }
+        method if method.uses_composed_cost_effects() => {
+            let name = method.name();
+            let mana_cost = method.mana_cost();
+            let cost_effects = method.cost_effects();
+            let mut parts = Vec::new();
+            if let Some(cost) = mana_cost {
+                parts.push(format!("pay {}", cost.to_oracle()));
+            }
                 if !cost_effects.is_empty() {
                     parts.push(describe_effect_list(cost_effects));
                 }
@@ -16453,12 +16549,13 @@ pub fn oracle_like_lines(def: &CardDefinition) -> Vec<String> {
         .collect()
 }
 
-#[cfg(all(test, feature = "parser-tests"))]
+#[cfg(all(test, feature = "parser-tests-full"))]
 mod tests {
     use super::{
         compiled_lines, describe_additional_cost_effects, describe_for_each_filter,
-        merge_adjacent_static_heading_lines, normalize_common_semantic_phrasing,
-        normalize_compiled_post_pass_effect, normalize_create_under_control_clause,
+        merge_adjacent_static_heading_lines, merge_adjacent_subject_predicate_lines,
+        normalize_common_semantic_phrasing, normalize_compiled_post_pass_effect,
+        normalize_create_under_control_clause, normalize_gain_life_plus_phrase,
         normalize_known_low_tail_phrase, normalize_rendered_line_for_card,
         normalize_sentence_surface_style, pluralize_noun_phrase,
     };
@@ -17221,6 +17318,14 @@ mod tests {
         assert_eq!(
             pluralize_noun_phrase("target permanent you own"),
             "target permanents you own"
+        );
+    }
+
+    #[test]
+    fn pluralize_noun_phrase_keeps_without_qualifier_singular() {
+        assert_eq!(
+            pluralize_noun_phrase("target creature without flying"),
+            "target creatures without flying"
         );
     }
 

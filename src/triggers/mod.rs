@@ -139,6 +139,11 @@ impl Trigger {
         Self::new(ZoneChangeTrigger::enters_battlefield(filter))
     }
 
+    /// Create a "when one or more [filter] enter the battlefield" trigger.
+    pub fn enters_battlefield_one_or_more(filter: ObjectFilter) -> Self {
+        Self::new(ZoneChangeTrigger::enters_battlefield(filter).count(CountMode::OneOrMore))
+    }
+
     /// Create a "when [filter] enters the battlefield tapped" trigger.
     pub fn enters_battlefield_tapped(filter: ObjectFilter) -> Self {
         Self::new(EntersBattlefieldTappedTrigger::new(filter))
@@ -268,6 +273,11 @@ impl Trigger {
         Self::new(AttacksTrigger::new(filter))
     }
 
+    /// Create a "when one or more [filter] attack" trigger.
+    pub fn attacks_one_or_more(filter: ObjectFilter) -> Self {
+        Self::new(AttacksTrigger::one_or_more(filter))
+    }
+
     /// Create a "when [filter] attacks alone" trigger.
     pub fn attacks_alone(filter: ObjectFilter) -> Self {
         Self::new(AttacksAloneTrigger::new(filter))
@@ -321,6 +331,11 @@ impl Trigger {
     /// Create a "when [filter] deals combat damage to a player" trigger.
     pub fn deals_combat_damage_to_player(filter: ObjectFilter) -> Self {
         Self::new(DealsCombatDamageToPlayerTrigger::new(filter))
+    }
+
+    /// Create a "when one or more [filter] deal combat damage to a player" trigger.
+    pub fn deals_combat_damage_to_player_one_or_more(filter: ObjectFilter) -> Self {
+        Self::new(DealsCombatDamageToPlayerTrigger::one_or_more(filter))
     }
 
     /// Create a "when this permanent deals damage" trigger.

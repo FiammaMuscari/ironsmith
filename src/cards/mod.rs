@@ -12,7 +12,7 @@ pub mod tokens;
 pub use builders::{CardDefinitionBuilder, ParseAnnotations, TextSpan};
 pub use definitions::*;
 
-#[cfg(all(test, feature = "parser-tests"))]
+#[cfg(all(test, feature = "parser-tests-full"))]
 mod parse_snapshots;
 
 mod generated_registry {
