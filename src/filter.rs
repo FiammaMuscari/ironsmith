@@ -2828,6 +2828,14 @@ fn object_has_custom_static_marker(object: &Object, marker: &str) -> bool {
         return true;
     }
 
+    if object
+        .abilities
+        .iter()
+        .any(|ability| ability_text_has_custom_marker(ability, marker))
+    {
+        return true;
+    }
+
     object.level_granted_abilities().iter().any(|ability| {
         ability.id() == StaticAbilityId::Custom && ability.display().eq_ignore_ascii_case(marker)
     })
@@ -2864,12 +2872,65 @@ fn snapshot_has_custom_static_marker(
     use crate::ability::AbilityKind;
 
     snapshot.abilities.iter().any(|ability| {
-        if let AbilityKind::Static(static_ability) = &ability.kind {
-            static_ability.id() == StaticAbilityId::Custom
-                && static_ability.display().eq_ignore_ascii_case(marker)
-        } else {
-            false
+        if let AbilityKind::Static(static_ability) = &ability.kind
+            && static_ability.id() == StaticAbilityId::Custom
+            && static_ability.display().eq_ignore_ascii_case(marker)
+        {
+            return true;
         }
+        ability_text_has_custom_marker(ability, marker)
+    })
+}
+
+fn ability_text_has_custom_marker(ability: &crate::ability::Ability, marker: &str) -> bool {
+    let marker = marker.trim().to_ascii_lowercase();
+    if marker.is_empty() {
+        return false;
+    }
+    let Some(text) = ability.text.as_deref() else {
+        return false;
+    };
+
+    let words = text
+        .split_whitespace()
+        .map(|word| {
+            word.trim_matches(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '\'')))
+                .to_ascii_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        return false;
+    }
+
+    if marker == "cycling" {
+        if !ability
+            .functional_zones
+            .contains(&crate::zone::Zone::Hand)
+        {
+            return false;
+        }
+        return words
+            .iter()
+            .any(|word| word == "cycling" || word.ends_with("cycling"));
+    }
+
+    let marker_words = marker
+        .split_whitespace()
+        .map(|word| word.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    if marker_words.is_empty() {
+        return false;
+    }
+    if marker_words.len() == 1 {
+        return words.iter().any(|word| word == &marker_words[0]);
+    }
+
+    words.windows(marker_words.len()).any(|window| {
+        window
+            .iter()
+            .zip(marker_words.iter())
+            .all(|(word, marker_word)| word == marker_word)
     })
 }
 

@@ -2568,6 +2568,20 @@ fn test_parse_cycling_pay_life_keeps_keyword_ability() {
 }
 
 #[test]
+fn test_return_from_graveyard_keeps_with_cycling_filter() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Sacred Excavation Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Return up to two target cards with cycling from your graveyard to your hand.")
+        .expect("parse return with cycling filter");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("with cycling from your graveyard"),
+        "expected rendered target filter to keep with-cycling qualifier, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_same_name_destroy_fans_out_to_all_other_matching_objects() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Same Name Destroy Variant")
         .parse_text(

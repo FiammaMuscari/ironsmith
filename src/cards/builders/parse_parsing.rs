@@ -27970,6 +27970,12 @@ fn parse_filter_keyword_constraint_words(
     if words.is_empty() {
         return None;
     }
+    if words[0] == "cycling" || words[0].ends_with("cycling") {
+        return Some((FilterKeywordConstraint::Marker("cycling"), 1));
+    }
+    if words.len() >= 2 && words[0] == "basic" && words[1] == "landcycling" {
+        return Some((FilterKeywordConstraint::Marker("cycling"), 2));
+    }
 
     let max_len = words.len().min(4);
     for len in (1..=max_len).rev() {

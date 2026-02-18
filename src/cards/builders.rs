@@ -2371,6 +2371,23 @@ mod target_parse_tests {
     }
 
     #[test]
+    fn parse_object_filter_cards_with_cycling_from_your_graveyard() {
+        let tokens = tokenize_line("cards with cycling from your graveyard", 0);
+        let filter =
+            parse_object_filter(&tokens, false).expect("parse cycling graveyard object filter");
+        assert_eq!(filter.zone, Some(Zone::Graveyard));
+        assert_eq!(filter.owner, Some(PlayerFilter::You));
+        assert!(
+            filter
+                .custom_static_markers
+                .iter()
+                .any(|marker| marker.eq_ignore_ascii_case("cycling")),
+            "expected cycling marker in filter, got {:?}",
+            filter.custom_static_markers
+        );
+    }
+
+    #[test]
     fn parse_object_filter_commanders_you_own_sets_commander_and_owner() {
         let tokens = tokenize_line("commander creatures you own", 0);
         let filter =
