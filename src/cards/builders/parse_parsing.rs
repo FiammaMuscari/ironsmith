@@ -24751,12 +24751,18 @@ fn is_probable_token_name_word(word: &str) -> bool {
 fn parse_copy_modifiers_from_tail(
     tail_words: &[&str],
 ) -> (
+    Option<ColorSet>,
+    Option<Vec<CardType>>,
+    Option<Vec<Subtype>>,
     Vec<CardType>,
     Vec<Subtype>,
     Vec<Supertype>,
     Option<(i32, i32)>,
     Vec<StaticAbility>,
 ) {
+    let mut set_colors = None;
+    let mut set_card_types = None;
+    let mut set_subtypes = None;
     let mut added_card_types = Vec::new();
     let mut added_subtypes = Vec::new();
     let mut removed_supertypes = Vec::new();
@@ -24769,6 +24775,9 @@ fn parse_copy_modifiers_from_tail(
         .unwrap_or_default();
     if modifier_words.is_empty() {
         return (
+            set_colors,
+            set_card_types,
+            set_subtypes,
             added_card_types,
             added_subtypes,
             removed_supertypes,
@@ -24798,8 +24807,17 @@ fn parse_copy_modifiers_from_tail(
         || modifier_words.contains(&"have")
         || modifier_words.contains(&"gain")
         || modifier_words.contains(&"gains");
-    if has_grant_verb && modifier_words.contains(&"flying") {
+    let has_modifier_keyword = |keyword: &str| {
+        modifier_words
+            .windows(2)
+            .any(|window| window == ["with", keyword])
+            || (has_grant_verb && modifier_words.contains(&keyword))
+    };
+    if has_modifier_keyword("flying") {
         granted_abilities.push(StaticAbility::flying());
+    }
+    if has_modifier_keyword("trample") {
+        granted_abilities.push(StaticAbility::trample());
     }
 
     let addition_idx = modifier_words.windows(6).position(|window| {
@@ -24819,9 +24837,52 @@ fn parse_copy_modifiers_from_tail(
                 added_subtypes.push(subtype);
             }
         }
+    } else {
+        let descriptor_end = modifier_words
+            .iter()
+            .position(|word| matches!(*word, "with" | "has" | "have" | "gain" | "gains"))
+            .unwrap_or(modifier_words.len());
+        let descriptor_words = &modifier_words[..descriptor_end];
+        let mut colors = ColorSet::new();
+        let mut card_types = Vec::new();
+        let mut subtypes = Vec::new();
+        for word in descriptor_words {
+            if is_article(word)
+                || matches!(*word, "its" | "it" | "is" | "they" | "are")
+                || looks_like_pt_word(word)
+            {
+                continue;
+            }
+            if let Some(color) = parse_color(word) {
+                colors = colors.union(color);
+            }
+            if let Some(card_type) = parse_card_type(word)
+                && !card_types.contains(&card_type)
+            {
+                card_types.push(card_type);
+            }
+            if let Some(subtype) =
+                parse_subtype_word(word).or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
+                && !subtypes.contains(&subtype)
+            {
+                subtypes.push(subtype);
+            }
+        }
+        if !colors.is_empty() {
+            set_colors = Some(colors);
+        }
+        if !card_types.is_empty() {
+            set_card_types = Some(card_types);
+        }
+        if !subtypes.is_empty() {
+            set_subtypes = Some(subtypes);
+        }
     }
 
     (
+        set_colors,
+        set_card_types,
+        set_subtypes,
         added_card_types,
         added_subtypes,
         removed_supertypes,
@@ -24974,6 +25035,9 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
             .any(|word| *word == "copy" || *word == "copies")
         {
             let (
+                set_colors,
+                set_card_types,
+                set_subtypes,
                 added_card_types,
                 added_subtypes,
                 removed_supertypes,
@@ -25006,6 +25070,9 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                         has_haste,
                         sacrifice_at_next_end_step,
                         exile_at_next_end_step,
+                        set_colors,
+                        set_card_types,
+                        set_subtypes,
                         added_card_types,
                         added_subtypes,
                         removed_supertypes,
@@ -25022,6 +25089,9 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                 has_haste,
                 sacrifice_at_next_end_step,
                 exile_at_next_end_step,
+                set_colors,
+                set_card_types,
+                set_subtypes,
                 added_card_types,
                 added_subtypes,
                 removed_supertypes,
@@ -26526,6 +26596,7 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     {
         base_tokens.truncate(until_token_idx);
     }
+    let mut segment_tokens = base_tokens.clone();
 
     let mut all_words: Vec<&str> = words(&base_tokens)
         .into_iter()
@@ -26833,6 +26904,60 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
             tag: TagKey::from(crate::tag::SOURCE_EXILED_TAG),
             relation: TaggedOpbjectRelation::IsTaggedObject,
         });
+        if let Some(exiled_with_idx) = all_words
+            .windows(2)
+            .position(|window| window == ["exiled", "with"])
+        {
+            let mut reference_end = exiled_with_idx + 2;
+            if all_words
+                .get(reference_end)
+                .is_some_and(|word| matches!(*word, "this" | "that" | "the" | "it" | "them"))
+            {
+                reference_end += 1;
+            }
+            if all_words.get(reference_end).is_some_and(|word| {
+                matches!(
+                    *word,
+                    "artifact" | "creature" | "permanent" | "card" | "spell" | "source"
+                )
+            }) {
+                reference_end += 1;
+            }
+            if reference_end > exiled_with_idx + 1 {
+                all_words.drain(exiled_with_idx + 1..reference_end);
+            }
+        }
+        if let Some(exiled_with_idx) = segment_tokens
+            .windows(2)
+            .position(|window| window[0].is_word("exiled") && window[1].is_word("with"))
+        {
+            let mut reference_end = exiled_with_idx + 2;
+            if segment_tokens
+                .get(reference_end)
+                .is_some_and(|token| {
+                    token.is_word("this")
+                        || token.is_word("that")
+                        || token.is_word("the")
+                        || token.is_word("it")
+                        || token.is_word("them")
+                })
+            {
+                reference_end += 1;
+            }
+            if segment_tokens.get(reference_end).is_some_and(|token| {
+                token.is_word("artifact")
+                    || token.is_word("creature")
+                    || token.is_word("permanent")
+                    || token.is_word("card")
+                    || token.is_word("spell")
+                    || token.is_word("source")
+            }) {
+                reference_end += 1;
+            }
+            if reference_end > exiled_with_idx + 1 {
+                segment_tokens.drain(exiled_with_idx + 1..reference_end);
+            }
+        }
     }
 
     if all_words.len() == 1 && (all_words[0] == "it" || all_words[0] == "them") {
@@ -27401,7 +27526,7 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         }
     }
 
-    let segments = split_on_or(&base_tokens);
+    let segments = split_on_or(&segment_tokens);
     let mut segment_types = Vec::new();
     let mut segment_subtypes = Vec::new();
     let mut segment_marker_counts = Vec::new();

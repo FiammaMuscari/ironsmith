@@ -2,6 +2,7 @@
 
 use crate::ability::Ability;
 use crate::card::PtValue;
+use crate::color::ColorSet;
 use crate::effect::{Effect, EffectOutcome, EffectResult, Value};
 use crate::effects::helpers::{resolve_objects_from_spec, resolve_value};
 use crate::effects::{
@@ -70,6 +71,12 @@ pub struct CreateTokenCopyEffect {
     pub removed_supertypes: Vec<Supertype>,
     /// Optional fixed base power/toughness override.
     pub set_base_power_toughness: Option<(i32, i32)>,
+    /// Optional color override for copied tokens.
+    pub set_colors: Option<ColorSet>,
+    /// Optional exact card-type override for copied tokens.
+    pub set_card_types: Option<Vec<CardType>>,
+    /// Optional exact subtype override for copied tokens.
+    pub set_subtypes: Option<Vec<Subtype>>,
     /// Static abilities to grant to copied tokens.
     pub granted_static_abilities: Vec<StaticAbility>,
 }
@@ -99,6 +106,9 @@ impl CreateTokenCopyEffect {
             added_subtypes: Vec::new(),
             removed_supertypes: Vec::new(),
             set_base_power_toughness: None,
+            set_colors: None,
+            set_card_types: None,
+            set_subtypes: None,
             granted_static_abilities: Vec::new(),
         }
     }
@@ -202,6 +212,24 @@ impl CreateTokenCopyEffect {
         self
     }
 
+    /// Set copied tokens to exact colors.
+    pub fn set_colors(mut self, colors: ColorSet) -> Self {
+        self.set_colors = Some(colors);
+        self
+    }
+
+    /// Set copied tokens to exact card types.
+    pub fn set_card_types(mut self, card_types: Vec<CardType>) -> Self {
+        self.set_card_types = Some(card_types);
+        self
+    }
+
+    /// Set copied tokens to exact subtypes.
+    pub fn set_subtypes(mut self, subtypes: Vec<Subtype>) -> Self {
+        self.set_subtypes = Some(subtypes);
+        self
+    }
+
     /// Grant a static ability to copied tokens.
     pub fn grant_static_ability(mut self, ability: StaticAbility) -> Self {
         self.granted_static_abilities.push(ability);
@@ -280,6 +308,15 @@ impl EffectExecutor for CreateTokenCopyEffect {
             if let Some((power, toughness)) = self.set_base_power_toughness {
                 token.base_power = Some(PtValue::Fixed(power));
                 token.base_toughness = Some(PtValue::Fixed(toughness));
+            }
+            if let Some(colors) = self.set_colors {
+                token.color_override = Some(colors);
+            }
+            if let Some(card_types) = &self.set_card_types {
+                token.card_types = card_types.clone();
+            }
+            if let Some(subtypes) = &self.set_subtypes {
+                token.subtypes = subtypes.clone();
             }
             for card_type in &self.added_card_types {
                 if !token.card_types.contains(card_type) {

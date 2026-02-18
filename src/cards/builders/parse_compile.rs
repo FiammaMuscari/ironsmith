@@ -3104,6 +3104,9 @@ fn compile_effect(
             has_haste,
             sacrifice_at_next_end_step,
             exile_at_next_end_step,
+            set_colors,
+            set_card_types,
+            set_subtypes,
             added_card_types,
             added_subtypes,
             removed_supertypes,
@@ -3137,6 +3140,15 @@ fn compile_effect(
             if *exile_at_next_end_step {
                 effect = effect.exile_at_next_end_step(true);
             }
+            if let Some(colors) = set_colors {
+                effect = effect.set_colors(*colors);
+            }
+            if let Some(card_types) = set_card_types {
+                effect = effect.set_card_types(card_types.clone());
+            }
+            if let Some(subtypes) = set_subtypes {
+                effect = effect.set_subtypes(subtypes.clone());
+            }
             for card_type in added_card_types {
                 effect = effect.added_card_type(*card_type);
             }
@@ -3162,6 +3174,9 @@ fn compile_effect(
             has_haste,
             sacrifice_at_next_end_step,
             exile_at_next_end_step,
+            set_colors,
+            set_card_types,
+            set_subtypes,
             added_card_types,
             added_subtypes,
             removed_supertypes,
@@ -3187,6 +3202,15 @@ fn compile_effect(
                 }
                 if *exile_at_next_end_step {
                     effect = effect.exile_at_next_end_step(true);
+                }
+                if let Some(colors) = set_colors {
+                    effect = effect.set_colors(*colors);
+                }
+                if let Some(card_types) = set_card_types {
+                    effect = effect.set_card_types(card_types.clone());
+                }
+                if let Some(subtypes) = set_subtypes {
+                    effect = effect.set_subtypes(subtypes.clone());
                 }
                 for card_type in added_card_types {
                     effect = effect.added_card_type(*card_type);

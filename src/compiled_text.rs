@@ -8416,6 +8416,47 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 ", with base power and toughness {power}/{toughness}"
             ));
         }
+        if create_copy.set_colors.is_some()
+            || create_copy.set_card_types.is_some()
+            || create_copy.set_subtypes.is_some()
+        {
+            let mut words = Vec::new();
+            if let Some(colors) = create_copy.set_colors {
+                if colors.contains(crate::color::Color::White) {
+                    words.push("white".to_string());
+                }
+                if colors.contains(crate::color::Color::Blue) {
+                    words.push("blue".to_string());
+                }
+                if colors.contains(crate::color::Color::Black) {
+                    words.push("black".to_string());
+                }
+                if colors.contains(crate::color::Color::Red) {
+                    words.push("red".to_string());
+                }
+                if colors.contains(crate::color::Color::Green) {
+                    words.push("green".to_string());
+                }
+            }
+            if let Some(subtypes) = &create_copy.set_subtypes {
+                words.extend(
+                    subtypes
+                        .iter()
+                        .map(|subtype| format!("{subtype:?}").to_ascii_lowercase()),
+                );
+            }
+            if let Some(card_types) = &create_copy.set_card_types {
+                words.extend(
+                    card_types
+                        .iter()
+                        .map(|card_type| format!("{card_type:?}").to_ascii_lowercase()),
+                );
+            }
+            if !words.is_empty() {
+                text.push_str(", and it's ");
+                text.push_str(&words.join(" "));
+            }
+        }
         if !create_copy.added_card_types.is_empty() || !create_copy.added_subtypes.is_empty() {
             let mut type_words: Vec<String> = create_copy
                 .added_card_types

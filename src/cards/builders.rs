@@ -757,6 +757,9 @@ enum EffectAst {
         has_haste: bool,
         sacrifice_at_next_end_step: bool,
         exile_at_next_end_step: bool,
+        set_colors: Option<ColorSet>,
+        set_card_types: Option<Vec<CardType>>,
+        set_subtypes: Option<Vec<Subtype>>,
         added_card_types: Vec<CardType>,
         added_subtypes: Vec<Subtype>,
         removed_supertypes: Vec<Supertype>,
@@ -771,6 +774,9 @@ enum EffectAst {
         has_haste: bool,
         sacrifice_at_next_end_step: bool,
         exile_at_next_end_step: bool,
+        set_colors: Option<ColorSet>,
+        set_card_types: Option<Vec<CardType>>,
+        set_subtypes: Option<Vec<Subtype>>,
         added_card_types: Vec<CardType>,
         added_subtypes: Vec<Subtype>,
         removed_supertypes: Vec<Supertype>,
@@ -2388,6 +2394,36 @@ mod target_parse_tests {
     }
 
     #[test]
+    fn parse_object_filter_exiled_with_this_artifact_keeps_target_type() {
+        let tokens = tokenize_line("target creature card exiled with this artifact", 0);
+        let target = parse_target_phrase(&tokens).expect("parse exiled-with-source object filter");
+        let TargetAst::Object(filter, _, _) = target else {
+            panic!("expected object target");
+        };
+        assert!(
+            filter.card_types.contains(&CardType::Creature),
+            "expected creature type"
+        );
+        assert!(
+            !filter.card_types.contains(&CardType::Artifact),
+            "source artifact reference should not become a target type"
+        );
+        assert!(
+            !filter.all_card_types.contains(&CardType::Artifact),
+            "source artifact reference should not become an all-card-types selector"
+        );
+        assert_eq!(filter.zone, Some(Zone::Exile));
+        assert!(
+            filter.tagged_constraints.iter().any(|constraint| {
+                constraint.tag.as_str() == crate::tag::SOURCE_EXILED_TAG
+                    && constraint.relation == TaggedOpbjectRelation::IsTaggedObject
+            }),
+            "expected source-linked exile tag, got {:?}",
+            filter.tagged_constraints
+        );
+    }
+
+    #[test]
     fn parse_object_filter_commanders_you_own_sets_commander_and_owner() {
         let tokens = tokenize_line("commander creatures you own", 0);
         let filter =
@@ -3347,6 +3383,44 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             copy.sacrifice_at_next_end_step,
             "copy should sacrifice at next end step"
+        );
+    }
+
+    #[test]
+    fn parse_dino_dna_style_copy_modifier_with_trample() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Dino DNA Variant")
+            .parse_text("Create a token that's a copy of target creature card exiled with this artifact, except it's a 6/6 green Dinosaur creature with trample.")
+            .expect("parse dino dna copy clause");
+
+        let effects = def.spell_effect.expect("spell effect");
+        let copy = effects
+            .iter()
+            .find_map(|e| e.downcast_ref::<CreateTokenCopyEffect>())
+            .expect("should include create-token-copy effect");
+        assert_eq!(copy.set_base_power_toughness, Some((6, 6)));
+        assert_eq!(copy.set_colors, Some(ColorSet::GREEN));
+        assert_eq!(copy.set_card_types, Some(vec![CardType::Creature]));
+        assert_eq!(copy.set_subtypes, Some(vec![Subtype::Dinosaur]));
+        assert!(
+            copy.granted_static_abilities
+                .iter()
+                .any(|ability| ability.id() == StaticAbilityId::Trample),
+            "copy should grant trample"
+        );
+        let ChooseSpec::Object(filter) = copy.target.base() else {
+            panic!("expected object filter target for copy source, got {:?}", copy.target);
+        };
+        assert!(
+            filter.card_types.contains(&CardType::Creature),
+            "expected creature target"
+        );
+        assert!(
+            !filter.card_types.contains(&CardType::Artifact),
+            "source artifact reference should not become a target type"
+        );
+        assert!(
+            !filter.all_card_types.contains(&CardType::Artifact),
+            "source artifact reference should not become an all-card-types selector"
         );
     }
 
