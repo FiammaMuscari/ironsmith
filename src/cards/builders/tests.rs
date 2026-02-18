@@ -3759,6 +3759,24 @@ fn parse_inline_whenever_clause_keeps_its_controller_subject() {
 }
 
 #[test]
+fn parse_until_end_of_turn_whenever_clause_as_temporary_grant() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Mountain Titan Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{1}{R}{R}: Until end of turn, whenever you cast a black spell, put a +1/+1 counter on this creature.")
+        .expect("until-end-of-turn whenever clause should parse as temporary granted trigger");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("whenever you cast a black spell"),
+        "expected cast trigger wording in compiled text, got {rendered}"
+    );
+    assert!(
+        rendered.contains("until end of turn"),
+        "expected temporary duration wording in compiled text, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_rejects_marker_keyword_with_non_keyword_tail() {
     let err = CardDefinitionBuilder::new(CardId::new(), "Ninjutsu Tail Variant")
         .parse_text("Ninjutsu abilities you activate cost {1} less to activate.")

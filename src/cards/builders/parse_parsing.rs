@@ -20132,6 +20132,9 @@ fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardText
             parser: parse_can_attack_as_though_no_defender_clause,
         },
         ClausePrimitive {
+            parser: parse_until_duration_triggered_clause,
+        },
+        ClausePrimitive {
             parser: parse_keyword_mechanic_clause,
         },
         ClausePrimitive {
@@ -20148,6 +20151,76 @@ fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardText
         }
     }
     Ok(None)
+}
+
+fn parse_until_duration_triggered_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    let has_leading_duration = clause_words.starts_with(&["until", "end", "of", "turn"])
+        || clause_words.starts_with(&["until", "your", "next", "turn"])
+        || clause_words.starts_with(&["until", "your", "next", "upkeep"])
+        || clause_words.starts_with(&["until", "your", "next", "untap", "step"])
+        || clause_words.starts_with(&["during", "your", "next", "untap", "step"]);
+    if !has_leading_duration {
+        return Ok(None);
+    }
+
+    let Some((duration, trigger_tokens)) = parse_restriction_duration(tokens)? else {
+        return Ok(None);
+    };
+    if trigger_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing trigger after duration clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let trigger_words = words(&trigger_tokens);
+    let looks_like_trigger = trigger_words
+        .first()
+        .is_some_and(|word| *word == "when" || *word == "whenever")
+        || trigger_words.starts_with(&["at", "the"]);
+    if !looks_like_trigger {
+        return Ok(None);
+    }
+
+    let (trigger, effects, max_triggers_per_turn) = match parse_triggered_line(&trigger_tokens)? {
+        LineAst::Triggered {
+            trigger,
+            effects,
+            max_triggers_per_turn,
+        } => (trigger, effects, max_triggers_per_turn),
+        _ => {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported duration-triggered clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+    };
+
+    let (compiled_effects, choices) = compile_trigger_effects(Some(&trigger), &effects)?;
+    let trigger_text = trigger_words.join(" ");
+    let ability = Ability {
+        kind: AbilityKind::Triggered(TriggeredAbility {
+            trigger: compile_trigger_spec(trigger),
+            effects: compiled_effects,
+            choices,
+            intervening_if: max_triggers_per_turn
+                .map(crate::ability::InterveningIfCondition::MaxTimesEachTurn),
+        }),
+        functional_zones: vec![Zone::Battlefield],
+        text: Some(trigger_text.clone()),
+    };
+    let granted = StaticAbility::grant_object_ability_for_filter(
+        ObjectFilter::source(),
+        ability,
+        trigger_text,
+    );
+
+    Ok(Some(EffectAst::GrantAbilitiesToTarget {
+        target: TargetAst::Source(span_from_tokens(tokens)),
+        abilities: vec![granted],
+        duration,
+    }))
 }
 
 fn parse_power_reference_word_count(words: &[&str]) -> Option<usize> {
