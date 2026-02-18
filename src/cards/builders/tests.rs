@@ -5930,6 +5930,24 @@ fn parse_return_elf_cost_activation_line() {
 }
 
 #[test]
+fn parse_equip_with_once_each_turn_restriction() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Leather Armor Variant")
+        .card_types(vec![CardType::Artifact])
+        .subtypes(vec![Subtype::Equipment])
+        .parse_text("Equip {0}.\nActivate only once each turn.")
+        .expect("equip with once-each-turn restriction should parse");
+    let compiled = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        compiled.contains("equip {0}"),
+        "expected equip ability in compiled output, got {compiled}"
+    );
+    assert!(
+        compiled.contains("only once each turn"),
+        "expected once-per-turn activation restriction in compiled output, got {compiled}"
+    );
+}
+
+#[test]
 fn parse_monocolored_cant_block_clause() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Monocolored Block Variant")
         .card_types(vec![CardType::Sorcery])

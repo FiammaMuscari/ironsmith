@@ -1159,10 +1159,19 @@ fn apply_pending_activation_restriction(
 ) {
     let tokens = tokenize_line(restriction, 0);
     let parsed_timing = parse_activate_only_timing(&tokens);
+    let mut timing_applied = false;
     if let Some(parsed_timing) = parsed_timing.as_ref() {
-        ability.timing = merge_activation_timing(&ability.timing, parsed_timing.clone());
+        let merged_timing = merge_activation_timing(&ability.timing, parsed_timing.clone());
+        timing_applied = &merged_timing == parsed_timing;
+        ability.timing = merged_timing;
     }
-    let restriction = normalize_activation_restriction(restriction, parsed_timing.as_ref());
+    // If timing cannot encode the new restriction (e.g. Equip's built-in sorcery timing
+    // combined with "once each turn"), preserve the clause text as an extra restriction.
+    let restriction = if parsed_timing.is_some() && !timing_applied {
+        Some(normalize_restriction_text(restriction))
+    } else {
+        normalize_activation_restriction(restriction, parsed_timing.as_ref())
+    };
     if let Some(restriction) = restriction {
         ability.additional_restrictions.push(restriction);
     }

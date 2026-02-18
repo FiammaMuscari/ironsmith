@@ -9030,10 +9030,25 @@ fn describe_keyword_ability(ability: &Ability) -> Option<String> {
         return Some(format!("Cycling—Pay {} life", words[2]));
     }
     if words.first().copied() == Some("equip") {
-        if raw_text.eq_ignore_ascii_case("equip") {
-            return Some("Equip".to_string());
+        let mut rendered = if raw_text.eq_ignore_ascii_case("equip") {
+            "Equip".to_string()
+        } else {
+            raw_text.to_string()
+        };
+        if let AbilityKind::Activated(activated) = &ability.kind {
+            let mut restriction_clauses = collect_activation_restriction_clauses(
+                &activated.timing,
+                &activated.additional_restrictions,
+            );
+            // Equip implies sorcery-speed by default; only surface extra restrictions.
+            restriction_clauses
+                .retain(|clause| !clause.eq_ignore_ascii_case("Activate only as a sorcery"));
+            if !restriction_clauses.is_empty() {
+                rendered.push_str(". ");
+                rendered.push_str(&join_activation_restriction_clauses(&restriction_clauses));
+            }
         }
-        return Some(raw_text.to_string());
+        return Some(rendered);
     }
     if words.len() >= 2 && words[0] == "level" && words[1] == "up" {
         return Some(raw_text.to_string());
