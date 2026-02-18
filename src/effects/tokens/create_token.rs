@@ -221,9 +221,9 @@ impl EffectExecutor for CreateTokenEffect {
             if self.sacrifice_at_next_end_step {
                 let schedule = ScheduleDelayedTriggerEffect::new(
                     Trigger::beginning_of_end_step(PlayerFilter::Any),
-                    vec![Effect::new(SacrificeTargetEffect::new(ChooseSpec::SpecificObject(
-                        id,
-                    )))],
+                    vec![Effect::new(SacrificeTargetEffect::new(
+                        ChooseSpec::SpecificObject(id),
+                    ))],
                     true,
                     vec![id],
                     PlayerFilter::Specific(controller_id),

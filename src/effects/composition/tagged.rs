@@ -71,6 +71,12 @@ impl EffectExecutor for TaggedEffect {
                 break;
             }
         }
+        if pre_snapshot.is_none()
+            && let Some(object_id) = ctx.iterated_object
+            && let Some(obj) = game.object(object_id)
+        {
+            pre_snapshot = Some(ObjectSnapshot::from_object(obj, game));
+        }
         // Some non-targeted effects (for example, return-all patterns) do not
         // return explicit object IDs. Capture candidate stable IDs so we can tag
         // post-resolution objects if needed.

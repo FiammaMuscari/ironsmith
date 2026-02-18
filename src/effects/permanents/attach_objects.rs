@@ -154,7 +154,9 @@ mod tests {
             ChooseSpec::SpecificObject(new_creature),
         );
         let mut ctx = ExecutionContext::new_default(equipment, alice);
-        let outcome = effect.execute(&mut game, &mut ctx).expect("attach should resolve");
+        let outcome = effect
+            .execute(&mut game, &mut ctx)
+            .expect("attach should resolve");
 
         assert_eq!(outcome.result, EffectResult::Count(1));
         assert_eq!(

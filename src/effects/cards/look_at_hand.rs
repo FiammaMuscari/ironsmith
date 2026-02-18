@@ -62,9 +62,11 @@ impl EffectExecutor for LookAtHandEffect {
             if self.reveal {
                 for viewer_idx in 0..game.players.len() {
                     let viewer = crate::ids::PlayerId::from_index(viewer_idx as u8);
-                    let mut view_ctx = ViewCardsContext::look_at_hand(viewer, player_id, Some(ctx.source));
+                    let mut view_ctx =
+                        ViewCardsContext::look_at_hand(viewer, player_id, Some(ctx.source));
                     view_ctx.description = "Reveal that player's hand".to_string();
-                    ctx.decision_maker.view_cards(game, viewer, &cards, &view_ctx);
+                    ctx.decision_maker
+                        .view_cards(game, viewer, &cards, &view_ctx);
                 }
             } else {
                 let view_ctx =

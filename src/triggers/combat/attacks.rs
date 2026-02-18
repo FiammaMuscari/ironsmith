@@ -40,7 +40,11 @@ impl AttacksTrigger {
         Self::new(ObjectFilter::creature())
     }
 
-    fn is_first_matching_attacker_this_combat(&self, attacker: ObjectId, ctx: &TriggerContext) -> bool {
+    fn is_first_matching_attacker_this_combat(
+        &self,
+        attacker: ObjectId,
+        ctx: &TriggerContext,
+    ) -> bool {
         let Some(combat) = ctx.game.combat.as_ref() else {
             return true;
         };

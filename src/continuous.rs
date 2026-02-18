@@ -2473,7 +2473,8 @@ fn resolve_value_with_context(
     match value {
         Value::Fixed(n) => *n,
         Value::Add(left, right) => {
-            resolve_value_with_context(left, ctx, source) + resolve_value_with_context(right, ctx, source)
+            resolve_value_with_context(left, ctx, source)
+                + resolve_value_with_context(right, ctx, source)
         }
 
         Value::X => 0, // X is 0 unless specified (resolved at cast time, not layer time)

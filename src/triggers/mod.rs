@@ -340,7 +340,19 @@ impl Trigger {
 
     /// Create a "when this permanent deals damage" trigger.
     pub fn this_deals_damage() -> Self {
-        Self::new(ThisDealsDamageTrigger)
+        Self::new(ThisDealsDamageTrigger::new())
+    }
+
+    /// Create a qualified "when this permanent deals damage to a player" trigger.
+    pub fn this_deals_damage_to_player(
+        player: PlayerFilter,
+        amount: Option<crate::filter::Comparison>,
+    ) -> Self {
+        let mut trigger = ThisDealsDamageTrigger::new().with_player_filter(player);
+        if let Some(amount) = amount {
+            trigger = trigger.with_amount(amount);
+        }
+        Self::new(trigger)
     }
 
     /// Create a "when this permanent deals damage to [filter]" trigger.
@@ -388,6 +400,7 @@ impl Trigger {
         caster: PlayerFilter,
         during_turn: Option<PlayerFilter>,
         min_spells_this_turn: Option<u32>,
+        exact_spells_this_turn: Option<u32>,
         from_not_hand: bool,
     ) -> Self {
         Self::new(SpellCastTrigger::qualified(
@@ -395,6 +408,7 @@ impl Trigger {
             caster,
             during_turn,
             min_spells_this_turn,
+            exact_spells_this_turn,
             from_not_hand,
         ))
     }

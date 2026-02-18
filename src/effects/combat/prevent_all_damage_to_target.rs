@@ -47,8 +47,14 @@ impl EffectExecutor for PreventAllDamageToTargetEffect {
         }
 
         let protected = resolve_prevention_target(game, &self.target, ctx)?;
-        let shield = PreventionShield::new(ctx.source, ctx.controller, protected, None, self.duration.clone())
-            .with_filter(self.damage_filter.clone());
+        let shield = PreventionShield::new(
+            ctx.source,
+            ctx.controller,
+            protected,
+            None,
+            self.duration.clone(),
+        )
+        .with_filter(self.damage_filter.clone());
         game.prevention_effects.add_shield(shield);
 
         Ok(EffectOutcome::resolved())

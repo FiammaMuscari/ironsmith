@@ -326,6 +326,8 @@ pub enum StaticCondition {
     NotYourTurn,
     /// "As long as this creature is equipped"
     SourceIsEquipped,
+    /// "As long as this creature is enchanted"
+    SourceIsEnchanted,
     /// "As long as equipped creature is tapped"
     EquippedCreatureTapped,
     /// "As long as equipped creature is untapped"
@@ -380,6 +382,7 @@ fn describe_static_condition(condition: &StaticCondition) -> String {
         StaticCondition::YourTurn => "as long as it's your turn".to_string(),
         StaticCondition::NotYourTurn => "during turns other than yours".to_string(),
         StaticCondition::SourceIsEquipped => "as long as this creature is equipped".to_string(),
+        StaticCondition::SourceIsEnchanted => "as long as this creature is enchanted".to_string(),
         StaticCondition::EquippedCreatureTapped => {
             "as long as equipped creature is tapped".to_string()
         }
@@ -481,6 +484,12 @@ fn static_condition_is_active(
             source_obj.attachments.iter().any(|id| {
                 game.object(*id)
                     .is_some_and(|obj| obj.subtypes.contains(&Subtype::Equipment))
+            })
+        }),
+        StaticCondition::SourceIsEnchanted => game.object(source).is_some_and(|source_obj| {
+            source_obj.attachments.iter().any(|id| {
+                game.object(*id)
+                    .is_some_and(|obj| obj.subtypes.contains(&Subtype::Aura))
             })
         }),
         StaticCondition::EquippedCreatureTapped => game
@@ -911,7 +920,10 @@ impl StaticAbilityKind for RemoveAllAbilitiesForFilter {
     }
 
     fn display(&self) -> String {
-        format!("{} lose all abilities", pluralized_subject_text(&self.filter))
+        format!(
+            "{} lose all abilities",
+            pluralized_subject_text(&self.filter)
+        )
     }
 
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
@@ -1746,6 +1758,7 @@ pub struct GrantObjectAbilityForFilter {
     pub filter: ObjectFilter,
     pub ability: Ability,
     pub display: String,
+    pub condition: Option<StaticCondition>,
 }
 
 impl GrantObjectAbilityForFilter {
@@ -1754,7 +1767,13 @@ impl GrantObjectAbilityForFilter {
             filter,
             ability,
             display,
+            condition: None,
         }
+    }
+
+    pub fn with_condition(mut self, condition: StaticCondition) -> Self {
+        self.condition = Some(condition);
+        self
     }
 }
 
@@ -1775,8 +1794,13 @@ impl StaticAbilityKind for GrantObjectAbilityForFilter {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        _game: &GameState,
+        game: &GameState,
     ) -> Vec<ContinuousEffect> {
+        if let Some(condition) = &self.condition
+            && !static_condition_is_active(condition, game, source, controller)
+        {
+            return Vec::new();
+        }
         vec![
             ContinuousEffect::new(
                 source,

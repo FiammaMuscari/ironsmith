@@ -183,7 +183,8 @@ pub(super) fn parse_text_with_annotations(
             }
         }
 
-        let line_sentences = split_sentences_for_parse(&info.normalized.normalized, info.line_index);
+        let line_sentences =
+            split_sentences_for_parse(&info.normalized.normalized, info.line_index);
         let mut parsed_portion = Vec::new();
         for sentence in line_sentences {
             if sentence.is_empty() {
@@ -732,7 +733,7 @@ fn apply_line_ast(
                         ));
                     }
                     Err(err) => return Err(err),
-            };
+                };
 
             let compiled_trigger = compile_trigger_spec(trigger);
             builder = builder.with_ability(Ability {
@@ -934,11 +935,7 @@ fn split_sentences_for_parse(line: &str, _line_index: usize) -> Vec<String> {
             continue;
         }
         if ch == '"' || ch == '“' || ch == '”' {
-            quote_depth = if quote_depth == 0 {
-                1
-            } else {
-                0
-            };
+            quote_depth = if quote_depth == 0 { 1 } else { 0 };
             current.push(ch);
             continue;
         }
@@ -1090,8 +1087,7 @@ fn apply_instead_followup_statement_to_last_ability(
         return Ok(false);
     }
 
-    let Some(replacement) = compiled[0].downcast_ref::<crate::effects::ConditionalEffect>()
-    else {
+    let Some(replacement) = compiled[0].downcast_ref::<crate::effects::ConditionalEffect>() else {
         return Ok(false);
     };
 
@@ -1197,30 +1193,27 @@ fn apply_pending_mana_restriction(ability: &mut crate::ability::ManaAbility, res
     }
     let tokens = tokenize_line(&normalized_restriction, 0);
     let parsed_timing = parse_activate_only_timing(&tokens).unwrap_or_default();
-    let parsed_condition = parse_activation_condition(&tokens)
-        .or_else(|| {
-            if parsed_timing == ActivationTiming::AnyTime {
-                Some(ManaAbilityCondition::Unmodeled(normalized_restriction.clone()))
-            } else {
-                None
-            }
-        });
+    let parsed_condition = parse_activation_condition(&tokens).or_else(|| {
+        if parsed_timing == ActivationTiming::AnyTime {
+            Some(ManaAbilityCondition::Unmodeled(
+                normalized_restriction.clone(),
+            ))
+        } else {
+            None
+        }
+    });
 
     if parsed_condition.is_none() && parsed_timing == ActivationTiming::AnyTime {
         return;
     }
 
     let condition_with_timing = parsed_condition
-        .map(|condition| {
-            combine_mana_activation_condition(
-                Some(condition),
-                parsed_timing.clone(),
-            )
-        })
+        .map(|condition| combine_mana_activation_condition(Some(condition), parsed_timing.clone()))
         .unwrap_or_else(|| combine_mana_activation_condition(None, parsed_timing));
 
     let existing = ability.activation_condition.take();
-    ability.activation_condition = merge_mana_activation_conditions(existing, condition_with_timing);
+    ability.activation_condition =
+        merge_mana_activation_conditions(existing, condition_with_timing);
 }
 
 fn merge_activation_timing(
@@ -1256,7 +1249,9 @@ fn normalize_activation_restriction(
     }
     let suffix = " and only once each turn";
     if normalized.ends_with(suffix) {
-        normalized = normalized[..normalized.len() - suffix.len()].trim_end().to_string();
+        normalized = normalized[..normalized.len() - suffix.len()]
+            .trim_end()
+            .to_string();
     }
     if normalized.is_empty() {
         None

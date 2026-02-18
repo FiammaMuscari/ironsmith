@@ -66,6 +66,7 @@ pub enum CounterType {
     Fate,
     Feather,
     Filibuster,
+    Finality,
     Flame,
     Flood,
     Foreshadow,

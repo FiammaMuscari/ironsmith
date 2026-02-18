@@ -54,13 +54,8 @@ use crate::rules::state_based::{apply_state_based_actions_with, check_state_base
 use crate::snapshot::ObjectSnapshot;
 use crate::target::{ChooseSpec, ObjectFilter};
 use crate::triggers::{
-    check_triggers,
-    verify_intervening_if,
-    DamageEventTarget,
-    TriggerEvent,
-    TriggerQueue,
-    TriggeredAbilityEntry,
-    generate_step_trigger_events,
+    DamageEventTarget, TriggerEvent, TriggerQueue, TriggeredAbilityEntry, check_triggers,
+    generate_step_trigger_events, verify_intervening_if,
 };
 use crate::turn::{
     PriorityResult, PriorityTracker, TurnError, execute_cleanup_step, execute_draw_step,
@@ -4656,10 +4651,17 @@ fn continue_activation(
         ));
     };
     let Some(ability) = obj.abilities.get(pending.ability_index) else {
-        return Err(GameLoopError::InvalidState("Ability index no longer valid".to_string()));
+        return Err(GameLoopError::InvalidState(
+            "Ability index no longer valid".to_string(),
+        ));
     };
     if let AbilityKind::Activated(activated) = &ability.kind {
-        if !can_activate_ability_with_restrictions(game, pending.source, pending.ability_index, activated) {
+        if !can_activate_ability_with_restrictions(
+            game,
+            pending.source,
+            pending.ability_index,
+            activated,
+        ) {
             return Err(GameLoopError::InvalidState(
                 "Ability activation restrictions are no longer satisfied".to_string(),
             ));
@@ -7534,26 +7536,21 @@ pub fn put_triggers_on_stack_with_dm(
     Ok(())
 }
 
-fn can_stack_trigger_this_turn(
-    game: &GameState,
-    trigger: &TriggeredAbilityEntry,
-) -> bool {
+fn can_stack_trigger_this_turn(game: &GameState, trigger: &TriggeredAbilityEntry) -> bool {
     let Some(ref condition) = trigger.ability.intervening_if else {
         return true;
     };
 
     match condition {
         crate::ability::InterveningIfCondition::FirstTimeThisTurn
-        | crate::ability::InterveningIfCondition::MaxTimesEachTurn(_) => {
-            verify_intervening_if(
-                game,
-                condition,
-                trigger.controller,
-                &trigger.triggering_event,
-                trigger.source,
-                Some(trigger.trigger_identity),
-            )
-        }
+        | crate::ability::InterveningIfCondition::MaxTimesEachTurn(_) => verify_intervening_if(
+            game,
+            condition,
+            trigger.controller,
+            &trigger.triggering_event,
+            trigger.source,
+            Some(trigger.trigger_identity),
+        ),
         _ => true,
     }
 }
@@ -7747,9 +7744,13 @@ pub fn apply_attacker_declarations(
     }
 
     for decl in declarations {
-        let Some(legal_option) = legal_attackers.iter().find(|option| option.creature == decl.creature)
+        let Some(legal_option) = legal_attackers
+            .iter()
+            .find(|option| option.creature == decl.creature)
         else {
-            return Err(ResponseError::InvalidAttackers("Creature cannot attack".to_string()).into());
+            return Err(
+                ResponseError::InvalidAttackers("Creature cannot attack".to_string()).into(),
+            );
         };
         if !legal_option.valid_targets.contains(&decl.target) {
             return Err(ResponseError::InvalidAttackers(

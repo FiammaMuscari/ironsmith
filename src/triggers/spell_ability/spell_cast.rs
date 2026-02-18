@@ -13,6 +13,7 @@ pub struct SpellCastTrigger {
     pub caster: PlayerFilter,
     pub during_turn: Option<PlayerFilter>,
     pub min_spells_this_turn: Option<u32>,
+    pub exact_spells_this_turn: Option<u32>,
     pub from_not_hand: bool,
 }
 
@@ -23,6 +24,7 @@ impl SpellCastTrigger {
             caster,
             during_turn: None,
             min_spells_this_turn: None,
+            exact_spells_this_turn: None,
             from_not_hand: false,
         }
     }
@@ -32,6 +34,7 @@ impl SpellCastTrigger {
         caster: PlayerFilter,
         during_turn: Option<PlayerFilter>,
         min_spells_this_turn: Option<u32>,
+        exact_spells_this_turn: Option<u32>,
         from_not_hand: bool,
     ) -> Self {
         Self {
@@ -39,6 +42,7 @@ impl SpellCastTrigger {
             caster,
             during_turn,
             min_spells_this_turn,
+            exact_spells_this_turn,
             from_not_hand,
         }
     }
@@ -88,13 +92,17 @@ impl TriggerMatcher for SpellCastTrigger {
             }
         }
 
-        if let Some(min_spells) = self.min_spells_this_turn {
-            let cast_count = ctx
-                .game
-                .spells_cast_this_turn
-                .get(&e.caster)
-                .copied()
-                .unwrap_or(0);
+        let cast_count = ctx
+            .game
+            .spells_cast_this_turn
+            .get(&e.caster)
+            .copied()
+            .unwrap_or(0);
+        if let Some(exact_spells) = self.exact_spells_this_turn {
+            if cast_count != exact_spells {
+                return false;
+            }
+        } else if let Some(min_spells) = self.min_spells_this_turn {
             if cast_count < min_spells {
                 return false;
             }
@@ -137,7 +145,29 @@ impl TriggerMatcher for SpellCastTrigger {
             .map(describe_spell_filter)
             .unwrap_or_else(|| "a spell".to_string());
         let mut suffix = String::new();
-        if self.min_spells_this_turn == Some(2)
+        if let Some(exact_spells) = self.exact_spells_this_turn {
+            let ordinal = ordinal_word(exact_spells);
+            if spell_text == "a spell" || spell_text == "spell" {
+                spell_text = match &self.caster {
+                    PlayerFilter::You => format!("your {ordinal} spell each turn"),
+                    PlayerFilter::Any => format!("their {ordinal} spell each turn"),
+                    PlayerFilter::Opponent | PlayerFilter::Specific(_) => {
+                        format!("that player's {ordinal} spell each turn")
+                    }
+                    _ => format!("the {ordinal} spell each turn"),
+                };
+            } else {
+                let exact_suffix = match &self.caster {
+                    PlayerFilter::You => format!(" as your {ordinal} spell this turn"),
+                    PlayerFilter::Any => format!(" as the {ordinal} spell this turn"),
+                    PlayerFilter::Opponent | PlayerFilter::Specific(_) => {
+                        format!(" as that player's {ordinal} spell this turn")
+                    }
+                    _ => format!(" as the {ordinal} spell this turn"),
+                };
+                suffix.push_str(&exact_suffix);
+            }
+        } else if self.min_spells_this_turn == Some(2)
             && matches!(self.caster, PlayerFilter::Any)
             && (spell_text == "a spell" || spell_text == "spell")
         {
@@ -145,7 +175,10 @@ impl TriggerMatcher for SpellCastTrigger {
         } else if self.min_spells_this_turn == Some(2) && spell_text == "a spell" {
             spell_text = "another spell".to_string();
         } else if self.min_spells_this_turn == Some(2)
-            && matches!(self.caster, PlayerFilter::Opponent | PlayerFilter::Specific(_))
+            && matches!(
+                self.caster,
+                PlayerFilter::Opponent | PlayerFilter::Specific(_)
+            )
         {
             spell_text = format!(
                 "{spell_text} other than the first {spell_text} that player casts each turn"
@@ -267,6 +300,22 @@ fn describe_spell_filter(filter: &ObjectFilter) -> String {
     }
 }
 
+fn ordinal_word(value: u32) -> &'static str {
+    match value {
+        1 => "first",
+        2 => "second",
+        3 => "third",
+        4 => "fourth",
+        5 => "fifth",
+        6 => "sixth",
+        7 => "seventh",
+        8 => "eighth",
+        9 => "ninth",
+        10 => "tenth",
+        _ => "nth",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +406,7 @@ mod tests {
             PlayerFilter::You,
             Some(PlayerFilter::You),
             Some(2),
+            None,
             false,
         );
         assert_eq!(
@@ -372,11 +422,22 @@ mod tests {
             PlayerFilter::Any,
             None,
             Some(2),
+            None,
             false,
         );
         assert_eq!(
             trigger.display(),
             "Whenever a player casts their second spell each turn"
+        );
+    }
+
+    #[test]
+    fn test_qualified_third_spell_you_display() {
+        let trigger =
+            SpellCastTrigger::qualified(None, PlayerFilter::You, None, None, Some(3), false);
+        assert_eq!(
+            trigger.display(),
+            "Whenever you cast your third spell each turn"
         );
     }
 

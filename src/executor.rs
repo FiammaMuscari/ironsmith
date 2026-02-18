@@ -556,8 +556,9 @@ impl<'a> ExecutionContext<'a> {
             .get_exiled_with_source_links(self.source)
             .iter()
             .filter_map(|id| {
-                game.object(*id)
-                    .map(|obj| ObjectSnapshot::from_object_with_calculated_characteristics(obj, game))
+                game.object(*id).map(|obj| {
+                    ObjectSnapshot::from_object_with_calculated_characteristics(obj, game)
+                })
             })
             .collect::<Vec<_>>();
         if !source_exiled.is_empty() {

@@ -311,13 +311,13 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     normalized = strip_compiled_prefixes(&normalized);
     normalized = strip_not_named_phrase(&normalized);
     let normalized_lower = normalized.to_ascii_lowercase();
-    if normalized_lower
-        .starts_with("target opponent chooses target creature an opponent controls. exile it. exile all ")
-        && (normalized_lower.contains(" in target opponent's graveyard")
-            || normalized_lower.contains(" in target opponent's graveyards"))
+    if normalized_lower.starts_with(
+        "target opponent chooses target creature an opponent controls. exile it. exile all ",
+    ) && (normalized_lower.contains(" in target opponent's graveyard")
+        || normalized_lower.contains(" in target opponent's graveyards"))
     {
-        normalized = "Target opponent exiles a creature they control and their graveyard."
-            .to_string();
+        normalized =
+            "Target opponent exiles a creature they control and their graveyard.".to_string();
     }
     normalized = normalized.replace(
         "Whenever another creature enters under your control",
@@ -423,10 +423,15 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     }
     for marker in [". Target player loses ", ". target player loses "] {
         if let Some((left, lose_part)) = normalized.split_once(marker)
-            && (left.starts_with("Target player mills ") || left.starts_with("target player mills "))
+            && (left.starts_with("Target player mills ")
+                || left.starts_with("target player mills "))
             && left.contains(" and draws ")
         {
-            normalized = format!("{}, and loses {}", left.trim_end_matches('.'), lose_part.trim());
+            normalized = format!(
+                "{}, and loses {}",
+                left.trim_end_matches('.'),
+                lose_part.trim()
+            );
             break;
         }
     }
@@ -471,9 +476,7 @@ fn split_common_clause_conjunctions(text: &str) -> String {
             .strip_suffix(" counter on it.")
             .or_else(|| right_trimmed.strip_suffix(" counter on it"))
         {
-            normalized = format!(
-                "{left} to the battlefield. Put {counter_phrase} counter on it."
-            );
+            normalized = format!("{left} to the battlefield. Put {counter_phrase} counter on it.");
         }
     }
     if let Some((left, right)) = normalized.split_once(". Put ")
@@ -789,24 +792,36 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         .replace("enters with 10 ", "enters with ten ")
         .replace(" counter(s).", " counters.")
         .replace(" counter(s)", " counters")
-        .replace("Remove a +1/+1 counter or a charge counter from", "Remove a counter from")
+        .replace(
+            "Remove a +1/+1 counter or a charge counter from",
+            "Remove a counter from",
+        )
         .replace("Remove a +1/+1 counter from", "Remove a counter from")
         .replace("Remove a -1/-1 counter from", "Remove a counter from")
         .replace("Remove a time counter from", "Remove a counter from")
         .replace("remove a +1/+1 counter from", "remove a counter from")
         .replace("remove a -1/-1 counter from", "remove a counter from")
         .replace("remove a time counter from", "remove a counter from")
-        .replace("Remove a counter from a creature you control", "Remove a counter from a permanent you control")
-        .replace("remove a counter from a creature you control", "remove a counter from a permanent you control")
-        .replace("Remove a counter from among permanents you control", "Remove a counter from a permanent you control")
-        .replace("remove a counter from among permanents you control", "remove a counter from a permanent you control");
+        .replace(
+            "Remove a counter from a creature you control",
+            "Remove a counter from a permanent you control",
+        )
+        .replace(
+            "remove a counter from a creature you control",
+            "remove a counter from a permanent you control",
+        )
+        .replace(
+            "Remove a counter from among permanents you control",
+            "Remove a counter from a permanent you control",
+        )
+        .replace(
+            "remove a counter from among permanents you control",
+            "remove a counter from a permanent you control",
+        );
 
     if let Some((left, right)) = normalized.split_once(". Proliferate") {
         let left = left.trim().trim_end_matches('.');
-        let right_tail = right
-            .trim_start_matches('.')
-            .trim_start_matches(',')
-            .trim();
+        let right_tail = right.trim_start_matches('.').trim_start_matches(',').trim();
         if right_tail.is_empty() {
             normalized = format!("{left}, then proliferate.");
         } else {
@@ -814,10 +829,7 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         }
     } else if let Some((left, right)) = normalized.split_once(". proliferate") {
         let left = left.trim().trim_end_matches('.');
-        let right_tail = right
-            .trim_start_matches('.')
-            .trim_start_matches(',')
-            .trim();
+        let right_tail = right.trim_start_matches('.').trim_start_matches(',').trim();
         if right_tail.is_empty() {
             normalized = format!("{left}, then proliferate.");
         } else {
@@ -1598,7 +1610,11 @@ fn merge_transform_compiled_lines(lines: &[String]) -> Vec<String> {
                 consumed += 1;
                 continue;
             }
-            for part in rest.split(" and ").map(str::trim).filter(|part| !part.is_empty()) {
+            for part in rest
+                .split(" and ")
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+            {
                 let lower = part.to_ascii_lowercase();
                 if matches!(
                     lower.as_str(),
@@ -1769,7 +1785,7 @@ pub fn compare_semantics(
 
 #[cfg(test)]
 mod tests {
-    use super::{compare_semantics_scored, EmbeddingConfig};
+    use super::{EmbeddingConfig, compare_semantics_scored};
 
     #[test]
     fn compare_semantics_ignores_choose_scaffolding_clause() {
@@ -1872,7 +1888,9 @@ mod tests {
     #[test]
     fn compare_semantics_normalizes_each_creature_you_control_gets_anthem_wording() {
         let oracle = "Creatures you control get +2/+2.";
-        let compiled = vec![String::from("Static ability 1: Each creature you control gets +2/+2.")];
+        let compiled = vec![String::from(
+            "Static ability 1: Each creature you control gets +2/+2.",
+        )];
         let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
             compare_semantics_scored(oracle, &compiled, None);
         assert!(
@@ -1937,7 +1955,10 @@ mod tests {
                     mismatch_threshold: 0.99,
                 }),
             );
-        assert!(mismatch, "payer-role inversion must count as semantic mismatch");
+        assert!(
+            mismatch,
+            "payer-role inversion must count as semantic mismatch"
+        );
         assert!(
             similarity < 0.99,
             "payer-role inversion should not remain above strict 0.99 score floor (score={similarity})"

@@ -18,6 +18,9 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         TriggerSpec::ThisTurnedFaceUp => Trigger::this_is_turned_face_up(),
         TriggerSpec::ThisBecomesTargeted => Trigger::becomes_targeted(),
         TriggerSpec::ThisDealsDamage => Trigger::this_deals_damage(),
+        TriggerSpec::ThisDealsDamageToPlayer { player, amount } => {
+            Trigger::this_deals_damage_to_player(player, amount)
+        }
         TriggerSpec::ThisDealsDamageTo(filter) => Trigger::this_deals_damage_to(filter),
         TriggerSpec::DealsDamage(filter) => Trigger::deals_damage(filter),
         TriggerSpec::ThisIsDealtDamage => Trigger::is_dealt_damage(ChooseSpec::Source),
@@ -34,12 +37,14 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
             caster,
             during_turn,
             min_spells_this_turn,
+            exact_spells_this_turn,
             from_not_hand,
         } => Trigger::spell_cast_qualified(
             filter,
             caster,
             during_turn,
             min_spells_this_turn,
+            exact_spells_this_turn,
             from_not_hand,
         ),
         TriggerSpec::SpellCopied { filter, copier } => Trigger::spell_copied(filter, copier),
@@ -104,6 +109,7 @@ fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<PlayerFilter>
         TriggerSpec::PlayerLosesLife(_) => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerDrawsCard(_) => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerSacrifices { .. } => Some(PlayerFilter::IteratedPlayer),
+        TriggerSpec::ThisDealsDamageToPlayer { .. } => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::BeginningOfUpkeep(player)
         | TriggerSpec::BeginningOfDrawStep(player)
         | TriggerSpec::BeginningOfCombat(player)
@@ -314,7 +320,7 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
         | EffectAst::IfResult { effects, .. }
         | EffectAst::ForEachOpponent { effects }
         | EffectAst::ForEachPlayer { effects }
@@ -451,7 +457,7 @@ fn effect_references_event_derived_amount(effect: &EffectAst) -> bool {
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
         | EffectAst::IfResult { effects, .. }
         | EffectAst::ForEachOpponent { effects }
         | EffectAst::ForEachPlayer { effects }
@@ -545,7 +551,7 @@ fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
         | EffectAst::IfResult { effects, .. }
         | EffectAst::ForEachOpponent { effects }
         | EffectAst::ForEachPlayer { effects }
@@ -669,7 +675,6 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
         | EffectAst::IfResult { effects, .. }
         | EffectAst::ForEachOpponent { effects }
         | EffectAst::ForEachPlayer { effects }
@@ -679,6 +684,7 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::ForEachOpponentDid { effects }
         | EffectAst::ForEachPlayerDid { effects }
         | EffectAst::UnlessPays { effects, .. } => effects_reference_it_tag(effects),
+        EffectAst::DelayedWhenLastObjectDiesThisTurn { .. } => true,
         EffectAst::ForEachObject { filter, effects } => {
             filter
                 .tagged_constraints
@@ -1017,7 +1023,7 @@ fn collect_tag_spans_from_effect(
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
         | EffectAst::IfResult { effects, .. }
         | EffectAst::ForEachOpponent { effects }
         | EffectAst::ForEachPlayer { effects }
@@ -1421,7 +1427,7 @@ fn force_implicit_vote_token_controller_you(effects: &mut [EffectAst]) {
             | EffectAst::DelayedUntilNextEndStep { effects, .. }
             | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
             | EffectAst::DelayedUntilEndOfCombat { effects }
-            | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+            | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
             | EffectAst::UnlessPays { effects, .. }
             | EffectAst::VoteOption { effects, .. } => {
                 force_implicit_vote_token_controller_you(effects);
@@ -1704,9 +1710,11 @@ fn compile_effect(
             Ok((vec![effect], choices))
         }
         EffectAst::DealDamageEach { amount, filter } => {
+            let tag = ctx.next_tag("damaged");
+            ctx.last_object_tag = Some(tag.clone());
             let effect = Effect::for_each(
                 filter.clone(),
-                vec![Effect::deal_damage(amount.clone(), ChooseSpec::Iterated)],
+                vec![Effect::deal_damage(amount.clone(), ChooseSpec::Iterated).tag(tag)],
             );
             Ok((vec![effect], Vec::new()))
         }
@@ -2237,7 +2245,7 @@ fn compile_effect(
             ));
             Ok((vec![effect], choices))
         }
-        EffectAst::DelayedWhenLastObjectDiesThisTurn { effects } => {
+        EffectAst::DelayedWhenLastObjectDiesThisTurn { filter, effects } => {
             let target_tag = ctx.last_object_tag.clone().ok_or_else(|| {
                 CardTextError::ParseError(
                     "cannot schedule 'dies this turn' trigger without prior object context"
@@ -2249,13 +2257,17 @@ fn compile_effect(
             let compiled = compile_effects_preserving_last_effect(effects, ctx);
             ctx.last_object_tag = previous_last;
             let (delayed_effects, choices) = compiled?;
-            let effect = Effect::new(crate::effects::ScheduleDelayedTriggerEffect::from_tag(
+            let mut delayed = crate::effects::ScheduleDelayedTriggerEffect::from_tag(
                 Trigger::this_dies(),
                 delayed_effects,
                 true,
                 target_tag,
                 PlayerFilter::You,
-            ));
+            );
+            if let Some(filter) = filter {
+                delayed = delayed.with_target_filter(resolve_it_tag(filter, ctx)?);
+            }
+            let effect = Effect::new(delayed);
             Ok((vec![effect], choices))
         }
         EffectAst::ChooseObjects {
@@ -2413,7 +2425,7 @@ fn compile_effect(
             let from_exile_tag = choose_spec_references_exiled_tag(&spec);
             let use_move_to_zone =
                 !*tapped && (from_exile_tag || !matches!(controller, ReturnControllerAst::Preserve));
-            let effect = tag_object_target_effect(
+            let mut effect = tag_object_target_effect(
                 if use_move_to_zone {
                     // Blink-style "exile ... then return it" should move the tagged
                     // exiled object back to the battlefield from exile. We also use
@@ -2437,6 +2449,12 @@ fn compile_effect(
                 ctx,
                 "returned",
             );
+            if ctx.auto_tag_object_targets && !spec.is_target() && choose_spec_targets_object(&spec)
+            {
+                let tag = ctx.next_tag("returned");
+                ctx.last_object_tag = Some(tag.clone());
+                effect = effect.tag(tag);
+            }
             Ok((vec![effect], choices))
         }
         EffectAst::MoveToZone {

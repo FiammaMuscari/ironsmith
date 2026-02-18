@@ -6,7 +6,7 @@ use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::tag::TagKey;
-use crate::target::PlayerFilter;
+use crate::target::{ObjectFilter, PlayerFilter};
 use crate::triggers::{DelayedTrigger, Trigger};
 
 /// Effect that schedules a delayed trigger.
@@ -18,6 +18,7 @@ pub struct ScheduleDelayedTriggerEffect {
     pub start_next_turn: bool,
     pub target_objects: Vec<crate::ids::ObjectId>,
     pub target_tag: Option<TagKey>,
+    pub target_filter: Option<ObjectFilter>,
     pub controller: PlayerFilter,
 }
 
@@ -36,6 +37,7 @@ impl ScheduleDelayedTriggerEffect {
             start_next_turn: false,
             target_objects,
             target_tag: None,
+            target_filter: None,
             controller,
         }
     }
@@ -54,8 +56,14 @@ impl ScheduleDelayedTriggerEffect {
             start_next_turn: false,
             target_objects: Vec::new(),
             target_tag: Some(target_tag.into()),
+            target_filter: None,
             controller,
         }
+    }
+
+    pub fn with_target_filter(mut self, filter: ObjectFilter) -> Self {
+        self.target_filter = Some(filter);
+        self
     }
 
     pub fn starting_next_turn(mut self) -> Self {
@@ -76,7 +84,14 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
             let Some(tagged) = ctx.get_tagged_all(tag) else {
                 return Ok(EffectOutcome::count(0));
             };
+            let filter_ctx = ctx.filter_context(game);
+            let mut matched = 0i32;
             for snapshot in tagged {
+                if let Some(filter) = &self.target_filter
+                    && !filter.matches_snapshot(snapshot, &filter_ctx, game)
+                {
+                    continue;
+                }
                 let delayed = DelayedTrigger {
                     trigger: self.trigger.clone(),
                     effects: self.effects.clone(),
@@ -90,8 +105,9 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
                     controller: controller_id,
                 };
                 game.delayed_triggers.push(delayed);
+                matched += 1;
             }
-            return Ok(EffectOutcome::count(tagged.len() as i32));
+            return Ok(EffectOutcome::count(matched));
         }
 
         let delayed = DelayedTrigger {

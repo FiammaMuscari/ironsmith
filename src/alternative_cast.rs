@@ -87,9 +87,7 @@ impl AlternativeCastingMethod {
         match self {
             Self::Flashback { .. } | Self::JumpStart | Self::Escape { .. } => Zone::Graveyard,
             Self::Madness { .. } => Zone::Exile,
-            Self::Miracle { .. } | Self::Composed { .. } | Self::MindbreakTrap { .. } => {
-                Zone::Hand
-            }
+            Self::Miracle { .. } | Self::Composed { .. } | Self::MindbreakTrap { .. } => Zone::Hand,
         }
     }
 

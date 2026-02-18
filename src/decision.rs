@@ -619,10 +619,8 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                 if let crate::ability::AbilityKind::Activated(activated) = &ability.kind {
                     // Validate the ability's cost can be paid
                     if can_pay_ability_cost(game, perm_id, player, &activated.mana_cost) {
-                        let max_activations_per_turn =
-                            activated.max_activations_per_turn();
-                        let activation_count =
-                            game.ability_activation_count_this_turn(perm_id, i);
+                        let max_activations_per_turn = activated.max_activations_per_turn();
+                        let activation_count = game.ability_activation_count_this_turn(perm_id, i);
                         let restrictions_ok =
                             can_activate_ability_with_restrictions(game, perm_id, i, activated);
 
@@ -650,8 +648,8 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                             }
                         };
 
-                        let under_turn_limit = max_activations_per_turn
-                            .map_or(true, |max| activation_count < max);
+                        let under_turn_limit =
+                            max_activations_per_turn.map_or(true, |max| activation_count < max);
 
                         if timing_ok && under_turn_limit && restrictions_ok {
                             actions.push(LegalAction::ActivateAbility {
@@ -690,7 +688,11 @@ pub(crate) fn can_activate_ability_with_restrictions(
         .all(|restriction| activation_only_restriction_holds(game, source, restriction))
 }
 
-fn activation_only_restriction_holds(game: &GameState, source: ObjectId, restriction: &str) -> bool {
+fn activation_only_restriction_holds(
+    game: &GameState,
+    source: ObjectId,
+    restriction: &str,
+) -> bool {
     let lower = restriction
         .trim()
         .to_ascii_lowercase()
@@ -1684,7 +1686,9 @@ fn check_mana_ability_condition_for_potential(
                 game.object(perm_id).is_some_and(|perm| {
                     perm.controller == player
                         && perm.is_creature()
-                        && perm.power().is_some_and(|power| power >= *required_power as i32)
+                        && perm
+                            .power()
+                            .is_some_and(|power| power >= *required_power as i32)
                 })
             })
         }
@@ -1737,17 +1741,9 @@ fn check_mana_ability_condition_for_potential(
             game.ability_activation_count_this_turn(source, ability_index) < *limit
         }
         crate::ability::ManaAbilityCondition::Unmodeled(_) => true,
-        crate::ability::ManaAbilityCondition::All(conditions) => conditions
-            .iter()
-            .all(|inner| {
-                check_mana_ability_condition_for_potential(
-                    game,
-                    player,
-                    source,
-                    ability_index,
-                    inner,
-                )
-            }),
+        crate::ability::ManaAbilityCondition::All(conditions) => conditions.iter().all(|inner| {
+            check_mana_ability_condition_for_potential(game, player, source, ability_index, inner)
+        }),
     }
 }
 
@@ -2155,11 +2151,8 @@ pub fn compute_legal_attackers(game: &GameState, _combat: &CombatState) -> Vec<A
 
         for opponent in &game.players {
             if opponent.id != active_player && opponent.is_in_game() {
-                let can_attack = crate::rules::combat::can_attack_defending_player(
-                    perm,
-                    opponent.id,
-                    game,
-                );
+                let can_attack =
+                    crate::rules::combat::can_attack_defending_player(perm, opponent.id, game);
                 if can_attack {
                     let target = AttackTarget::Player(opponent.id);
                     if goaded_by.contains(&opponent.id) {

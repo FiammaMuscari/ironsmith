@@ -966,6 +966,37 @@ fn split_segments_on_comma_then(segments: Vec<Vec<Token>>) -> Vec<Vec<Token>> {
                         || after_words.starts_with(&["gains", "life", "equal", "to", "that"])
                         || after_words.starts_with(&["lose", "life", "equal", "to", "that"])
                         || after_words.starts_with(&["loses", "life", "equal", "to", "that"]));
+                let allow_deal_damage_equal_power_followup =
+                    !starts_with_for_each_player_or_opponent
+                        && has_back_ref
+                        && (after_words
+                            .starts_with(&["it", "deal", "damage", "equal", "to"])
+                            || after_words
+                                .starts_with(&["it", "deals", "damage", "equal", "to"])
+                            || after_words.starts_with(&[
+                                "that", "creature", "deal", "damage", "equal", "to",
+                            ])
+                            || after_words.starts_with(&[
+                                "that", "creature", "deals", "damage", "equal", "to",
+                            ])
+                            || after_words.starts_with(&[
+                                "that", "objects", "deal", "damage", "equal", "to",
+                            ])
+                            || after_words.starts_with(&[
+                                "that", "objects", "deals", "damage", "equal", "to",
+                            ]));
+                let allow_return_with_counter_followup =
+                    !starts_with_for_each_player_or_opponent
+                        && has_back_ref
+                        && after_words
+                            .first()
+                            .is_some_and(|word| *word == "return")
+                        && after_words
+                            .iter()
+                            .any(|word| *word == "counter" || *word == "counters")
+                        && after_words
+                            .windows(2)
+                            .any(|window| window == ["on", "it"] || window == ["on", "them"]);
                 if has_effect_head && (!has_back_ref || allow_backref_split) {
                     split_point = Some(i);
                     break;
@@ -976,6 +1007,12 @@ fn split_segments_on_comma_then(segments: Vec<Vec<Token>>) -> Vec<Vec<Token>> {
                     split_point = Some(i);
                     break;
                 } else if has_effect_head && allow_gain_or_lose_life_equal_followup {
+                    split_point = Some(i);
+                    break;
+                } else if has_effect_head && allow_deal_damage_equal_power_followup {
+                    split_point = Some(i);
+                    break;
+                } else if has_effect_head && allow_return_with_counter_followup {
                     split_point = Some(i);
                     break;
                 }
@@ -4051,6 +4088,11 @@ fn parse_static_condition_clause(tokens: &[Token]) -> Result<StaticCondition, Ca
     {
         return Ok(StaticCondition::SourceIsEquipped);
     }
+    if clause_words == ["this", "creature", "is", "enchanted"]
+        || clause_words == ["it", "is", "enchanted"]
+    {
+        return Ok(StaticCondition::SourceIsEnchanted);
+    }
     if clause_words == ["equipped", "creature", "is", "tapped"] {
         return Ok(StaticCondition::EquippedCreatureTapped);
     }
@@ -4559,13 +4601,6 @@ fn parse_anthem_and_keyword_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     let clause_words = words(tokens);
-    // "until end of turn" indicates a temporary effect, not a permanent anthem.
-    if clause_words
-        .windows(4)
-        .any(|w| w == ["until", "end", "of", "turn"])
-    {
-        return Ok(None);
-    }
     let get_idx = tokens
         .iter()
         .position(|token| token.is_word("get") || token.is_word("gets"));
@@ -4587,6 +4622,16 @@ fn parse_anthem_and_keyword_line(
     let Some(have_token_idx) = have_token_idx else {
         return Ok(None);
     };
+
+    let pre_grant_words = words(&tokens[..have_token_idx]);
+    // "until end of turn" in the pump clause indicates a one-shot effect.
+    // Ignore timing text that appears only inside a quoted granted ability.
+    if pre_grant_words
+        .windows(4)
+        .any(|window| window == ["until", "end", "of", "turn"])
+    {
+        return Ok(None);
+    }
 
     let mut ability_tokens = trim_commas(&tokens[have_token_idx + 1..]);
     let mut trailing_condition: Option<StaticCondition> = None;
@@ -4626,15 +4671,62 @@ fn parse_anthem_and_keyword_line(
         ability_tokens = ability_head;
     }
 
-    let Some(actions) = parse_ability_line(&ability_tokens) else {
+    let mut abilities: Vec<StaticAbility> = Vec::new();
+    let mut granted_activated_ability: Option<Ability> = None;
+    let mut granted_activated_display: Option<String> = None;
+
+    let and_has_idx = (0..ability_tokens.len().saturating_sub(1)).find(|idx| {
+        ability_tokens[*idx].is_word("and")
+            && (ability_tokens[*idx + 1].is_word("has") || ability_tokens[*idx + 1].is_word("have"))
+    });
+    if let Some(and_has_idx) = and_has_idx {
+        let keyword_tokens = trim_commas(&ability_tokens[..and_has_idx]);
+        if !keyword_tokens.is_empty() {
+            if let Some(actions) = parse_ability_line(&keyword_tokens) {
+                reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
+                abilities.extend(
+                    actions
+                        .into_iter()
+                        .filter_map(keyword_action_to_static_ability),
+                );
+            } else {
+                return Ok(None);
+            }
+        }
+
+        let ability_tail_tokens = trim_commas(&ability_tokens[and_has_idx + 2..]);
+        if !ability_tail_tokens.is_empty() {
+            let has_colon = ability_tail_tokens
+                .iter()
+                .any(|token| matches!(token, Token::Colon(_)));
+            let Some(parsed) = parse_activated_line(&ability_tail_tokens)? else {
+                if has_colon {
+                    return Err(CardTextError::ParseError(format!(
+                        "unsupported granted activated ability in anthem clause (clause: '{}')",
+                        clause_words.join(" ")
+                    )));
+                }
+                return Ok(None);
+            };
+            let mut ability = parsed.ability;
+            let display = words(&ability_tail_tokens).join(" ");
+            if ability.text.is_none() {
+                ability.text = Some(display.clone());
+            }
+            granted_activated_display = Some(display);
+            granted_activated_ability = Some(ability);
+        }
+    } else if let Some(actions) = parse_ability_line(&ability_tokens) {
+        reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
+        abilities = actions
+            .into_iter()
+            .filter_map(keyword_action_to_static_ability)
+            .collect();
+    } else {
         return Ok(None);
-    };
-    reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
-    let abilities: Vec<StaticAbility> = actions
-        .into_iter()
-        .filter_map(keyword_action_to_static_ability)
-        .collect();
-    if abilities.is_empty() {
+    }
+
+    if abilities.is_empty() && granted_activated_ability.is_none() {
         return Ok(None);
     }
 
@@ -4670,6 +4762,23 @@ fn parse_anthem_and_keyword_line(
         };
         result.push(StaticAbility::new(granted));
     }
+
+    if let Some(ability) = granted_activated_ability {
+        let filter = match &clause.subject {
+            AnthemSubjectAst::Source => ObjectFilter::source(),
+            AnthemSubjectAst::Filter(filter) => filter.clone(),
+        };
+        let mut granted = crate::static_abilities::GrantObjectAbilityForFilter::new(
+            filter,
+            ability,
+            granted_activated_display.unwrap_or_else(|| clause_words.join(" ")),
+        );
+        if let Some(condition) = &clause.condition {
+            granted = granted.with_condition(condition.clone());
+        }
+        result.push(StaticAbility::new(granted));
+    }
+
     Ok(Some(result))
 }
 
@@ -9786,36 +9895,47 @@ fn parse_triggered_line(tokens: &[Token]) -> Result<LineAst, CardTextError> {
             if looks_like_trigger_type_list_tail(tail)
                 || looks_like_trigger_color_list_tail(tail)
                 || looks_like_trigger_object_list_tail(tail)
+                || looks_like_trigger_numeric_list_tail(tail)
             {
-                let next_comma_rel = tail
-                    .iter()
-                    .enumerate()
-                    .find_map(|(idx, token)| {
-                        if !matches!(token, Token::Comma(_)) {
-                            return None;
-                        }
-                        let before_words = words(&tail[..idx]);
-                        if before_words.contains(&"spell") || before_words.contains(&"spells") {
+                let next_comma_rel = if looks_like_trigger_numeric_list_tail(tail) {
+                    tail.iter().enumerate().rev().find_map(|(idx, token)| {
+                        if matches!(token, Token::Comma(_)) {
                             Some(idx)
                         } else {
                             None
                         }
                     })
-                    .or_else(|| {
-                        if looks_like_trigger_color_list_tail(tail)
-                            || looks_like_trigger_object_list_tail(tail)
-                        {
-                            tail.iter().enumerate().rev().find_map(|(idx, token)| {
-                                if matches!(token, Token::Comma(_)) {
-                                    Some(idx)
-                                } else {
-                                    None
-                                }
-                            })
-                        } else {
-                            None
-                        }
-                    });
+                } else {
+                    tail.iter()
+                        .enumerate()
+                        .find_map(|(idx, token)| {
+                            if !matches!(token, Token::Comma(_)) {
+                                return None;
+                            }
+                            let before_words = words(&tail[..idx]);
+                            if before_words.contains(&"spell") || before_words.contains(&"spells")
+                            {
+                                Some(idx)
+                            } else {
+                                None
+                            }
+                        })
+                        .or_else(|| {
+                            if looks_like_trigger_color_list_tail(tail)
+                                || looks_like_trigger_object_list_tail(tail)
+                            {
+                                tail.iter().enumerate().rev().find_map(|(idx, token)| {
+                                    if matches!(token, Token::Comma(_)) {
+                                        Some(idx)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                };
                 if let Some(next_comma_rel) = next_comma_rel {
                     let candidate_idx = split_idx + 1 + next_comma_rel;
                     if candidate_idx > start_idx && candidate_idx + 1 < tokens.len() {
@@ -9979,6 +10099,21 @@ fn looks_like_trigger_color_list_tail(tokens: &[Token]) -> bool {
         && tokens.iter().any(|token| matches!(token, Token::Comma(_)))
 }
 
+fn looks_like_trigger_numeric_list_tail(tokens: &[Token]) -> bool {
+    if tokens.is_empty() {
+        return false;
+    }
+    let words = words(tokens);
+    if words.len() < 3 {
+        return false;
+    }
+    if words[0].parse::<i32>().is_err() {
+        return false;
+    }
+    let has_second_number = words.iter().skip(1).any(|word| word.parse::<i32>().is_ok());
+    has_second_number && words.contains(&"or")
+}
+
 fn strip_leading_trigger_intro(tokens: &[Token]) -> &[Token] {
     if tokens.first().is_some_and(|token| {
         token.is_word("when") || token.is_word("whenever") || token.is_word("at")
@@ -10002,7 +10137,21 @@ fn split_trigger_or_index(tokens: &[Token]) -> Option<usize> {
             && tokens
                 .get(idx + 1)
                 .is_some_and(|next| next.is_word("more"));
-        if quantifier_or { None } else { Some(idx) }
+        let comparison_or = is_comparison_or_delimiter(tokens, idx);
+        let previous_numeric = (0..idx)
+            .rev()
+            .find_map(|i| tokens[i].as_word())
+            .is_some_and(|word| word.parse::<i32>().is_ok());
+        let next_numeric = tokens
+            .get(idx + 1)
+            .and_then(Token::as_word)
+            .is_some_and(|word| word.parse::<i32>().is_ok());
+        let numeric_list_or = previous_numeric && next_numeric;
+        if quantifier_or || comparison_or || numeric_list_or {
+            None
+        } else {
+            Some(idx)
+        }
     })
 }
 
@@ -10347,6 +10496,47 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
         return Ok(TriggerSpec::ThisIsDealtDamage);
     }
 
+    if (words.starts_with(&["this", "creature", "deals"])
+        || words.starts_with(&["this", "deals"]))
+        && let Some(deals_idx) = tokens
+            .iter()
+            .position(|token| token.is_word("deal") || token.is_word("deals"))
+        && let Some(damage_idx_rel) = tokens[deals_idx + 1..]
+            .iter()
+            .position(|token| token.is_word("damage"))
+    {
+        let damage_idx = deals_idx + 1 + damage_idx_rel;
+        if let Some(to_idx_rel) = tokens[damage_idx + 1..]
+            .iter()
+            .position(|token| token.is_word("to"))
+        {
+            let to_idx = damage_idx + 1 + to_idx_rel;
+            let amount_tokens = trim_commas(&tokens[deals_idx + 1..damage_idx]);
+            if !amount_tokens
+                .first()
+                .is_some_and(|token| token.is_word("combat"))
+            {
+                let amount_words: Vec<&str> =
+                    amount_tokens.iter().filter_map(Token::as_word).collect();
+                if let Some((amount, _)) = parse_filter_comparison_tokens(
+                    "damage amount",
+                    &amount_words,
+                    &words,
+                )? {
+                    let target_tokens = trim_commas(&tokens[to_idx + 1..]);
+                    let target_words: Vec<&str> =
+                        target_tokens.iter().filter_map(Token::as_word).collect();
+                    if let Some(player) = parse_trigger_subject_player_filter(&target_words) {
+                        return Ok(TriggerSpec::ThisDealsDamageToPlayer {
+                            player,
+                            amount: Some(amount),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     if (words.starts_with(&["this", "creature", "deals", "damage", "to"])
         || words.starts_with(&["this", "deals", "damage", "to"]))
         && let Some(to_idx) = tokens.iter().position(|token| token.is_word("to"))
@@ -10666,6 +10856,31 @@ fn parse_trigger_subject_filter(
         })
 }
 
+fn parse_exact_spell_count_each_turn(words: &[&str]) -> Option<u32> {
+    for (ordinal, count) in [
+        ("third", 3u32),
+        ("fourth", 4u32),
+        ("fifth", 5u32),
+        ("sixth", 6u32),
+        ("seventh", 7u32),
+        ("eighth", 8u32),
+        ("ninth", 9u32),
+        ("tenth", 10u32),
+    ] {
+        if contains_word_sequence(words, &[ordinal, "spell", "cast", "this", "turn"])
+            || contains_word_sequence(words, &[ordinal, "spell", "this", "turn"])
+            || contains_word_sequence(words, &["your", ordinal, "spell", "each", "turn"])
+            || contains_word_sequence(words, &["their", ordinal, "spell", "each", "turn"])
+            || contains_word_sequence(words, &["your", ordinal, "spell", "this", "turn"])
+            || contains_word_sequence(words, &["their", ordinal, "spell", "this", "turn"])
+            || contains_word_sequence(words, &[ordinal, "spell", "each", "turn"])
+        {
+            return Some(count);
+        }
+    }
+    None
+}
+
 fn parse_spell_activity_trigger(tokens: &[Token]) -> Result<Option<TriggerSpec>, CardTextError> {
     let clause_words = words(tokens);
     if !clause_words.contains(&"spell") && !clause_words.contains(&"spells") {
@@ -10703,7 +10918,10 @@ fn parse_spell_activity_trigger(tokens: &[Token]) -> Result<Option<TriggerSpec>,
         && clause_words.contains(&"spell")
         && clause_words.contains(&"casts")
         && clause_words.contains(&"turn"));
-    let min_spells_this_turn = if has_other_than_first_spell_pattern
+    let exact_spells_this_turn = parse_exact_spell_count_each_turn(&clause_words);
+    let min_spells_this_turn = if exact_spells_this_turn.is_some() {
+        None
+    } else if has_other_than_first_spell_pattern
         || contains_word_sequence(
         &clause_words,
         &["second", "spell", "cast", "this", "turn"],
@@ -10802,6 +11020,7 @@ fn parse_spell_activity_trigger(tokens: &[Token]) -> Result<Option<TriggerSpec>,
                 caster: actor.clone(),
                 during_turn: during_turn.clone(),
                 min_spells_this_turn,
+                exact_spells_this_turn,
                 from_not_hand,
             };
             let copied_trigger = TriggerSpec::SpellCopied {
@@ -10823,6 +11042,7 @@ fn parse_spell_activity_trigger(tokens: &[Token]) -> Result<Option<TriggerSpec>,
             caster: actor,
             during_turn,
             min_spells_this_turn,
+            exact_spells_this_turn,
             from_not_hand,
         }));
     }
@@ -11518,7 +11738,7 @@ fn primary_damage_target_from_effect(effect: &EffectAst) -> Option<TargetAst> {
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
         | EffectAst::VoteOption { effects, .. }
         | EffectAst::UnlessAction {
             effects,
@@ -11568,7 +11788,7 @@ fn replace_it_damage_target(effect: &mut EffectAst, target: &TargetAst) {
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
         | EffectAst::VoteOption { effects, .. } => {
             replace_it_damage_target_in_effects(effects, target);
         }
@@ -12251,6 +12471,99 @@ fn parse_sentence_put_counter_sequence(
     }
 }
 
+fn is_pump_like_effect(effect: &EffectAst) -> bool {
+    matches!(
+        effect,
+        EffectAst::Pump { .. }
+            | EffectAst::PumpByLastEffect { .. }
+            | EffectAst::SetBasePowerToughness { .. }
+            | EffectAst::SetBasePower { .. }
+    )
+}
+
+fn parse_gets_then_fights_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let mut body_tokens = tokens;
+    if body_tokens
+        .first()
+        .is_some_and(|token| token.is_word("then"))
+    {
+        body_tokens = &body_tokens[1..];
+    }
+    if body_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(fight_idx) = body_tokens
+        .iter()
+        .position(|token| token.is_word("fight") || token.is_word("fights"))
+    else {
+        return Ok(None);
+    };
+    if fight_idx == 0 || fight_idx + 1 >= body_tokens.len() {
+        return Ok(None);
+    }
+
+    let mut left_tokens = trim_commas(&body_tokens[..fight_idx]).to_vec();
+    while left_tokens.last().is_some_and(|token| token.is_word("and")) {
+        left_tokens.pop();
+    }
+    let left_tokens = trim_commas(&left_tokens);
+    let right_tokens = trim_commas(&body_tokens[fight_idx + 1..]);
+    if left_tokens.is_empty() || right_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(get_idx) = left_tokens
+        .iter()
+        .position(|token| token.is_word("get") || token.is_word("gets"))
+    else {
+        return Ok(None);
+    };
+    if get_idx == 0 {
+        return Ok(None);
+    }
+
+    let pump_effect = parse_effect_clause(&left_tokens)?;
+    if !is_pump_like_effect(&pump_effect) {
+        return Ok(None);
+    }
+
+    let subject_tokens = trim_commas(&left_tokens[..get_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+    let creature1 = parse_target_phrase(&subject_tokens)?;
+    let creature2 = parse_target_phrase(&right_tokens)?;
+    if matches!(
+        creature1,
+        TargetAst::Player(_, _) | TargetAst::PlayerOrPlaneswalker(_, _)
+    ) || matches!(
+        creature2,
+        TargetAst::Player(_, _) | TargetAst::PlayerOrPlaneswalker(_, _)
+    ) {
+        return Err(CardTextError::ParseError(format!(
+            "fight target must be a creature (clause: '{}')",
+            words(tokens).join(" ")
+        )));
+    }
+
+    Ok(Some(vec![
+        pump_effect,
+        EffectAst::Fight {
+            creature1,
+            creature2,
+        },
+    ]))
+}
+
+fn parse_sentence_gets_then_fights(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    parse_gets_then_fights_sentence(tokens)
+}
+
 fn parse_return_with_counters_on_it_sentence(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -12869,6 +13182,107 @@ fn parse_sentence_exile_then_may_put_from_exile(
 
     head_effects.append(&mut tail_effects);
     Ok(Some(head_effects))
+}
+
+fn parse_exile_source_with_counters_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    if !tokens.first().is_some_and(|token| token.is_word("exile")) {
+        return Ok(None);
+    }
+
+    let Some(with_idx) = tokens.iter().position(|token| token.is_word("with")) else {
+        return Ok(None);
+    };
+    if with_idx <= 1 || with_idx + 1 >= tokens.len() {
+        return Ok(None);
+    }
+
+    let source_name_tokens = trim_commas(&tokens[1..with_idx]);
+    if source_name_tokens.is_empty() {
+        return Ok(None);
+    }
+    let source_name_words = words(&source_name_tokens);
+    let references_source = source_name_words.as_slice() == ["this"]
+        || source_name_words.as_slice() == ["this", "card"]
+        || source_name_words.as_slice() == ["this", "spell"];
+    let has_generic_object_words = source_name_words.iter().any(|word| {
+        matches!(
+            *word,
+            "a"
+                | "an"
+                | "the"
+                | "this"
+                | "that"
+                | "those"
+                | "it"
+                | "them"
+                | "target"
+                | "all"
+                | "each"
+                | "card"
+                | "cards"
+                | "creature"
+                | "creatures"
+                | "permanent"
+                | "permanents"
+                | "artifact"
+                | "artifacts"
+                | "enchantment"
+                | "enchantments"
+                | "land"
+                | "lands"
+                | "planeswalker"
+                | "planeswalkers"
+                | "spell"
+                | "spells"
+        )
+    });
+    if has_generic_object_words && !references_source {
+        return Ok(None);
+    }
+
+    let counter_clause_tokens = trim_commas(&tokens[with_idx + 1..]);
+    let Some(on_idx) = counter_clause_tokens
+        .iter()
+        .rposition(|token| token.is_word("on"))
+    else {
+        return Ok(None);
+    };
+    if on_idx + 1 >= counter_clause_tokens.len() {
+        return Ok(None);
+    }
+
+    let on_target_words = words(&counter_clause_tokens[on_idx + 1..]);
+    if on_target_words != ["it"] && on_target_words != ["them"] {
+        return Ok(None);
+    }
+
+    let descriptor_tokens = trim_commas(&counter_clause_tokens[..on_idx]);
+    if descriptor_tokens.is_empty() {
+        return Ok(None);
+    }
+    let (count, counter_type) = parse_counter_descriptor(&descriptor_tokens)?;
+
+    let source_target = TargetAst::Source(span_from_tokens(tokens));
+    Ok(Some(vec![
+        EffectAst::Exile {
+            target: source_target.clone(),
+        },
+        EffectAst::PutCounters {
+            counter_type,
+            count: Value::Fixed(count as i32),
+            target: source_target,
+            target_count: None,
+            distributed: false,
+        },
+    ]))
+}
+
+fn parse_sentence_exile_source_with_counters(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    parse_exile_source_with_counters_sentence(tokens)
 }
 
 fn parse_sentence_comma_then_chain_special(
@@ -14274,6 +14688,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
         parser: parse_sentence_exile_then_may_put_from_exile,
     },
     SentencePrimitive {
+        name: "exile-source-with-counters",
+        parser: parse_sentence_exile_source_with_counters,
+    },
+    SentencePrimitive {
         name: "destroy-all-attached-to-target",
         parser: parse_sentence_destroy_all_attached_to_target,
     },
@@ -14296,6 +14714,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "put-counter-sequence",
         parser: parse_sentence_put_counter_sequence,
+    },
+    SentencePrimitive {
+        name: "gets-then-fights",
+        parser: parse_sentence_gets_then_fights,
     },
     SentencePrimitive {
         name: "return-with-counters-on-it",
@@ -15018,33 +15440,55 @@ fn parse_delayed_when_that_dies_this_turn_sentence(
     if clause_words.len() < 6 {
         return Ok(None);
     }
-    if !matches!(clause_words.first().copied(), Some("when" | "if")) {
+    if !matches!(clause_words.first().copied(), Some("when" | "whenever" | "if")) {
         return Ok(None);
     }
-    if clause_words.get(1) != Some(&"that") {
-        return Ok(None);
-    }
-    let Some(dies_idx) = clause_words.iter().position(|word| *word == "dies") else {
+    let mut delayed_filter: Option<ObjectFilter> = None;
+    let split_after_word_idx = if clause_words.get(1) == Some(&"that") {
+        let Some(dies_idx) = clause_words.iter().position(|word| *word == "dies") else {
+            return Ok(None);
+        };
+        if clause_words.get(dies_idx + 1) != Some(&"this")
+            || clause_words.get(dies_idx + 2) != Some(&"turn")
+        {
+            return Ok(None);
+        }
+        dies_idx + 2
+    } else if let Some(dealt_idx) = clause_words
+        .windows(7)
+        .position(|window| window == ["dealt", "damage", "this", "way", "dies", "this", "turn"])
+    {
+        if dealt_idx <= 1 {
+            return Ok(None);
+        }
+        let subject_start = token_index_for_word_index(tokens, 1).unwrap_or(tokens.len());
+        let subject_end = token_index_for_word_index(tokens, dealt_idx).unwrap_or(tokens.len());
+        if subject_start >= subject_end {
+            return Ok(None);
+        }
+        let mut subject_tokens = trim_edge_punctuation(&tokens[subject_start..subject_end]);
+        if subject_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing object filter in delayed dies-this-way clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let stripped_subject = strip_leading_articles(&subject_tokens);
+        if !stripped_subject.is_empty() {
+            subject_tokens = stripped_subject;
+        }
+        delayed_filter = Some(parse_object_filter(&subject_tokens, false).map_err(|_| {
+            CardTextError::ParseError(format!(
+                "unsupported object filter in delayed dies-this-way clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?);
+        dealt_idx + 6
+    } else {
         return Ok(None);
     };
-    if clause_words.get(dies_idx + 1) != Some(&"this")
-        || clause_words.get(dies_idx + 2) != Some(&"turn")
-    {
-        return Ok(None);
-    }
-
-    let mut split_idx = tokens.len();
-    let mut word_count = 0usize;
-    for (idx, token) in tokens.iter().enumerate() {
-        if token.as_word().is_some() {
-            word_count += 1;
-            if word_count == dies_idx + 3 {
-                split_idx = idx + 1;
-                break;
-            }
-        }
-    }
-
+    let split_idx =
+        token_index_for_word_index(tokens, split_after_word_idx + 1).unwrap_or(tokens.len());
     let mut remainder = &tokens[split_idx..];
     if matches!(remainder.first(), Some(Token::Comma(_))) {
         remainder = &remainder[1..];
@@ -15066,6 +15510,7 @@ fn parse_delayed_when_that_dies_this_turn_sentence(
     }
 
     Ok(Some(vec![EffectAst::DelayedWhenLastObjectDiesThisTurn {
+        filter: delayed_filter,
         effects: delayed_effects,
     }]))
 }
@@ -19224,6 +19669,22 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
             }
         }
 
+        if filtered.len() >= 3 && (filtered[1] == "power" || filtered[1] == "toughness") {
+            let axis = filtered[1];
+            let value_tail = &filtered[2..];
+            if let Some((cmp, _consumed)) =
+                parse_filter_comparison_tokens(axis, value_tail, &filtered)?
+            {
+                let mut filter = ObjectFilter::default();
+                if axis == "power" {
+                    filter.power = Some(cmp);
+                } else {
+                    filter.toughness = Some(cmp);
+                }
+                return Ok(PredicateAst::ItMatches(filter));
+            }
+        }
+
         let mut card_types = Vec::new();
         for word in &filtered {
             if let Some(card_type) = parse_card_type(word)
@@ -19538,6 +19999,23 @@ fn parse_effect_chain_inner(tokens: &[Token]) -> Result<Vec<EffectAst>, CardText
     segments = expand_segments_with_multi_create_clauses(segments);
     let mut carried_context: Option<CarryContext> = None;
     for segment in segments {
+        let segment_effects = if let Some(effects) = parse_sentence_return_with_counters_on_it(&segment)? {
+            Some(effects)
+        } else {
+            parse_sentence_exile_source_with_counters(&segment)?
+        };
+        if let Some(segment_effects) = segment_effects {
+            for mut effect in segment_effects {
+                if let Some(context) = carried_context {
+                    maybe_apply_carried_player_with_clause(&mut effect, context, &segment);
+                }
+                if let Some(context) = explicit_player_for_carry(&effect) {
+                    carried_context = Some(context);
+                }
+                effects.push(effect);
+            }
+            continue;
+        }
         let mut effect = parse_effect_clause(&segment)?;
         if let Some(context) = carried_context {
             maybe_apply_carried_player_with_clause(&mut effect, context, &segment);
@@ -20069,7 +20547,7 @@ fn bind_implicit_player_context(effect: &mut EffectAst, player: PlayerAst) {
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
         | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
         | EffectAst::UnlessPays { effects, .. }
         | EffectAst::VoteOption { effects, .. } => {
             for nested in effects {
@@ -20799,8 +21277,9 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
                 }
 
                 if !subject_words.contains(&"this")
-                    && !subject_words.contains(&"that")
                     && !subject_words.contains(&"it")
+                    && !subject_words.contains(&"them")
+                    && !has_demonstrative_object_reference(&subject_words)
                     && let Ok(filter) = parse_object_filter(subject_tokens, false)
                     && filter != ObjectFilter::default()
                 {
@@ -20896,6 +21375,38 @@ fn parse_for_each_object_subject(
     }
 
     Ok(Some(parse_object_filter(filter_tokens, false)?))
+}
+
+fn has_demonstrative_object_reference(words: &[&str]) -> bool {
+    words.windows(2).any(|window| {
+        matches!(
+            window,
+            ["that", "creature"]
+                | ["that", "creatures"]
+                | ["that", "permanent"]
+                | ["that", "permanents"]
+                | ["that", "artifact"]
+                | ["that", "artifacts"]
+                | ["that", "enchantment"]
+                | ["that", "enchantments"]
+                | ["that", "land"]
+                | ["that", "lands"]
+                | ["that", "card"]
+                | ["that", "cards"]
+                | ["that", "token"]
+                | ["that", "tokens"]
+                | ["that", "spell"]
+                | ["that", "spells"]
+                | ["those", "creatures"]
+                | ["those", "permanents"]
+                | ["those", "artifacts"]
+                | ["those", "enchantments"]
+                | ["those", "lands"]
+                | ["those", "cards"]
+                | ["those", "tokens"]
+                | ["those", "spells"]
+        )
+    })
 }
 
 fn is_target_player_dealt_damage_by_this_turn_subject(words: &[&str]) -> bool {
@@ -21246,7 +21757,7 @@ fn force_implicit_token_controller_you(effects: &mut [EffectAst]) {
             | EffectAst::DelayedUntilNextEndStep { effects, .. }
             | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
             | EffectAst::DelayedUntilEndOfCombat { effects }
-            | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects }
+            | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
             | EffectAst::UnlessPays { effects, .. }
             | EffectAst::VoteOption { effects, .. } => force_implicit_token_controller_you(effects),
             EffectAst::UnlessAction {
@@ -22510,7 +23021,7 @@ fn parse_deal_damage_equal_to_clause(tokens: &[Token]) -> Result<Option<EffectAs
             clause_words.join(" ")
         )));
     }
-    let target = parse_target_phrase(target_tokens)?;
+    let target = parse_target_phrase(&target_tokens)?;
     Ok(Some(EffectAst::DealDamage { amount, target }))
 }
 
@@ -22683,7 +23194,7 @@ fn parse_deal_damage_with_amount(
         });
     }
 
-    let target = parse_target_phrase(target_tokens)?;
+    let target = parse_target_phrase(&target_tokens)?;
     Ok(EffectAst::DealDamage { amount, target })
 }
 
@@ -23457,6 +23968,7 @@ fn parse_counter_type_word(word: &str) -> Option<CounterType> {
         "ki" => Some(CounterType::Ki),
         "energy" => Some(CounterType::Energy),
         "age" => Some(CounterType::Age),
+        "finality" => Some(CounterType::Finality),
         "time" => Some(CounterType::Time),
         "brain" => Some(CounterType::Brain),
         "level" => Some(CounterType::Level),
@@ -23541,8 +24053,35 @@ fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
             ))
         })?;
 
-    let target_tokens = &rest[on_idx + 1..];
-    if let Some((target_count, used)) = parse_counter_target_count_prefix(target_tokens)? {
+    let mut target_tokens = rest[on_idx + 1..].to_vec();
+    let mut trailing_predicate: Option<PredicateAst> = None;
+    if let Some(if_idx) = target_tokens.iter().position(|token| token.is_word("if")) {
+        let predicate_tokens = trim_commas(&target_tokens[if_idx + 1..]);
+        if !predicate_tokens.is_empty() {
+            trailing_predicate = Some(parse_predicate(&predicate_tokens)?);
+            target_tokens = trim_commas(&target_tokens[..if_idx]);
+        }
+    }
+    while target_tokens
+        .last()
+        .is_some_and(|token| token.is_word("instead"))
+    {
+        target_tokens.pop();
+    }
+
+    let wrap_conditional = |effect: EffectAst| {
+        if let Some(predicate) = trailing_predicate.clone() {
+            EffectAst::Conditional {
+                predicate,
+                if_true: vec![effect],
+                if_false: Vec::new(),
+            }
+        } else {
+            effect
+        }
+    };
+
+    if let Some((target_count, used)) = parse_counter_target_count_prefix(&target_tokens)? {
         let target_phrase = &target_tokens[used..];
         if target_phrase.is_empty() {
             return Err(CardTextError::ParseError(format!(
@@ -23550,13 +24089,28 @@ fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
                 words(tokens).join(" ")
             )));
         }
-        let target = parse_target_phrase(target_phrase)?;
-        return Ok(EffectAst::PutCounters {
+        let mut target = parse_target_phrase(target_phrase)?;
+        let mut predicate = trailing_predicate.clone();
+        if let Some(PredicateAst::ItMatches(filter)) = predicate.as_ref()
+            && merge_it_match_filter_into_target(&mut target, filter)
+        {
+            predicate = None;
+        }
+        let effect = EffectAst::PutCounters {
             counter_type,
             count: Value::Fixed(count as i32),
             target,
             target_count: Some(target_count),
             distributed: false,
+        };
+        return Ok(if let Some(predicate) = predicate {
+            EffectAst::Conditional {
+                predicate,
+                if_true: vec![effect],
+                if_false: Vec::new(),
+            }
+        } else {
+            effect
         });
     }
 
@@ -23565,11 +24119,11 @@ fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         .is_some_and(|token| token.is_word("each"))
     {
         let filter = parse_object_filter(&target_tokens[1..], false)?;
-        return Ok(EffectAst::PutCountersAll {
+        return Ok(wrap_conditional(EffectAst::PutCountersAll {
             counter_type,
             count: Value::Fixed(count as i32),
             filter,
-        });
+        }));
     }
     if let Some(for_each_idx) = (0..target_tokens.len().saturating_sub(1)).find(|idx| {
         target_tokens[*idx].is_word("for") && target_tokens[*idx + 1].is_word("each")
@@ -23577,24 +24131,54 @@ fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         let base_target_tokens = trim_commas(&target_tokens[..for_each_idx]);
         let count_filter_tokens = trim_commas(&target_tokens[for_each_idx + 2..]);
         if !base_target_tokens.is_empty() && !count_filter_tokens.is_empty() {
-            let target = parse_target_phrase(&base_target_tokens)?;
+            let mut target = parse_target_phrase(&base_target_tokens)?;
+            let mut predicate = trailing_predicate.clone();
+            if let Some(PredicateAst::ItMatches(filter)) = predicate.as_ref()
+                && merge_it_match_filter_into_target(&mut target, filter)
+            {
+                predicate = None;
+            }
             let count_filter = parse_object_filter(&count_filter_tokens, false)?;
-            return Ok(EffectAst::PutCounters {
+            let effect = EffectAst::PutCounters {
                 counter_type,
                 count: Value::Count(count_filter),
                 target,
                 target_count: None,
                 distributed: false,
+            };
+            return Ok(if let Some(predicate) = predicate {
+                EffectAst::Conditional {
+                    predicate,
+                    if_true: vec![effect],
+                    if_false: Vec::new(),
+                }
+            } else {
+                effect
             });
         }
     }
-    let target = parse_target_phrase(target_tokens)?;
-    Ok(EffectAst::PutCounters {
+    let mut target = parse_target_phrase(&target_tokens)?;
+    let mut predicate = trailing_predicate.clone();
+    if let Some(PredicateAst::ItMatches(filter)) = predicate.as_ref()
+        && merge_it_match_filter_into_target(&mut target, filter)
+    {
+        predicate = None;
+    }
+    let effect = EffectAst::PutCounters {
         counter_type,
         count: Value::Fixed(count as i32),
         target,
         target_count: None,
         distributed: false,
+    };
+    Ok(if let Some(predicate) = predicate {
+        EffectAst::Conditional {
+            predicate,
+            if_true: vec![effect],
+            if_false: Vec::new(),
+        }
+    } else {
+        effect
     })
 }
 
@@ -25755,6 +26339,39 @@ fn target_object_filter_mut(target: &mut TargetAst) -> Option<&mut ObjectFilter>
     }
 }
 
+fn merge_it_match_filter_into_target(target: &mut TargetAst, it_filter: &ObjectFilter) -> bool {
+    if let TargetAst::Tagged(tag, span) = target {
+        let mut filter = ObjectFilter::default();
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag: tag.clone(),
+            relation: TaggedOpbjectRelation::IsTaggedObject,
+        });
+        *target = TargetAst::Object(filter, span.clone(), None);
+    }
+
+    let Some(filter) = target_object_filter_mut(target) else {
+        return false;
+    };
+    if !it_filter.card_types.is_empty() {
+        filter.card_types = it_filter.card_types.clone();
+    }
+    if !it_filter.subtypes.is_empty() {
+        filter.subtypes = it_filter.subtypes.clone();
+    }
+    if let Some(power) = &it_filter.power {
+        filter.power = Some(power.clone());
+        filter.power_reference = it_filter.power_reference;
+    }
+    if let Some(toughness) = &it_filter.toughness {
+        filter.toughness = Some(toughness.clone());
+        filter.toughness_reference = it_filter.toughness_reference;
+    }
+    if let Some(mana_value) = &it_filter.mana_value {
+        filter.mana_value = Some(mana_value.clone());
+    }
+    true
+}
+
 fn parse_untap(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
     if tokens.is_empty() {
         return Err(CardTextError::ParseError(
@@ -25922,16 +26539,6 @@ fn parse_filter_comparison_tokens(
 
     let first = tokens[0];
     if let Ok(value) = first.parse::<i32>() {
-        if tokens.get(1) == Some(&"or")
-            && tokens
-                .get(2)
-                .is_some_and(|word| word.parse::<i32>().is_ok())
-        {
-            return Err(CardTextError::ParseError(format!(
-                "unsupported disjunctive {axis} comparison (clause: '{}')",
-                clause_words.join(" ")
-            )));
-        }
         if tokens
             .get(1)
             .is_some_and(|word| matches!(*word, "plus" | "minus"))
@@ -25957,6 +26564,24 @@ fn parse_filter_comparison_tokens(
                 .is_some_and(|word| matches!(*word, "less" | "fewer"))
         {
             return Ok(Some((crate::filter::Comparison::LessThanOrEqual(value), 3)));
+        }
+        let mut values = vec![value];
+        let mut consumed = 1usize;
+        while consumed < tokens.len() {
+            let token = tokens[consumed];
+            if matches!(token, "and" | "or" | "and/or") {
+                consumed += 1;
+                continue;
+            }
+            if let Ok(next_value) = token.parse::<i32>() {
+                values.push(next_value);
+                consumed += 1;
+                continue;
+            }
+            break;
+        }
+        if values.len() > 1 {
+            return Ok(Some((crate::filter::Comparison::OneOf(values), consumed)));
         }
         return Ok(Some((crate::filter::Comparison::Equal(value), 1)));
     }
@@ -26647,6 +27272,57 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     {
         base_tokens.truncate(until_token_idx);
     }
+
+    // "other than this/it/them ..." marks an exclusion, not an additional
+    // type selector. Keep "other" but drop the self-reference tail.
+    let mut idx = 0usize;
+    while idx + 2 < base_tokens.len() {
+        if !(base_tokens[idx].is_word("other") && base_tokens[idx + 1].is_word("than")) {
+            idx += 1;
+            continue;
+        }
+
+        let mut end = idx + 2;
+        let starts_with_self_reference =
+            base_tokens[end].is_word("this") || base_tokens[end].is_word("it") || base_tokens[end].is_word("them");
+        if !starts_with_self_reference {
+            idx += 1;
+            continue;
+        }
+        end += 1;
+
+        if end < base_tokens.len()
+            && base_tokens[end].as_word().is_some_and(|word| {
+                matches!(
+                    word,
+                    "artifact"
+                        | "artifacts"
+                        | "battle"
+                        | "battles"
+                        | "card"
+                        | "cards"
+                        | "creature"
+                        | "creatures"
+                        | "enchantment"
+                        | "enchantments"
+                        | "land"
+                        | "lands"
+                        | "permanent"
+                        | "permanents"
+                        | "planeswalker"
+                        | "planeswalkers"
+                        | "spell"
+                        | "spells"
+                        | "token"
+                        | "tokens"
+                )
+            })
+        {
+            end += 1;
+        }
+
+        base_tokens.drain(idx + 1..end);
+    }
     let mut segment_tokens = base_tokens.clone();
 
     let mut all_words: Vec<&str> = words(&base_tokens)
@@ -27213,6 +27889,17 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
                 }
                 ["target", "opponent", "own"] | ["target", "opponent", "owns"] => {
                     filter.owner = Some(PlayerFilter::target_opponent());
+                }
+                ["its", "controller", "control"]
+                | ["its", "controller", "controls"]
+                | ["its", "controllers", "control"]
+                | ["its", "controllers", "controls"]
+                | ["their", "controller", "control"]
+                | ["their", "controller", "controls"]
+                | ["their", "controllers", "control"]
+                | ["their", "controllers", "controls"] => {
+                    filter.controller =
+                        Some(PlayerFilter::ControllerOf(crate::filter::ObjectRef::Target));
                 }
                 ["you", "dont", "control"] => {
                     filter.controller = Some(PlayerFilter::NotYou);

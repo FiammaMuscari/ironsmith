@@ -2619,11 +2619,12 @@ impl GameState {
     }
 
     /// Get how many times an activated ability has been used this turn.
-    pub fn ability_activation_count_this_turn(&self, source: ObjectId, ability_index: usize) -> u32 {
-        self.named_turn_counter(&activated_ability_turn_counter_name(
-            source,
-            ability_index,
-        ))
+    pub fn ability_activation_count_this_turn(
+        &self,
+        source: ObjectId,
+        ability_index: usize,
+    ) -> u32 {
+        self.named_turn_counter(&activated_ability_turn_counter_name(source, ability_index))
     }
 
     /// Returns the active player.

@@ -570,7 +570,9 @@ fn test_parse_copy_this_spell_for_each_creature_sacrificed_this_way() {
     );
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("additional cost to cast this spell, you may sacrifice one or more creatures"),
+        rendered.contains(
+            "additional cost to cast this spell, you may sacrifice one or more creatures"
+        ),
         "expected one-or-more sacrifice wording in compiled text, got {rendered}"
     );
     assert!(
@@ -598,14 +600,22 @@ fn test_parse_additional_cost_tap_two_untapped_creatures_and_or_lands() {
         other => panic!("expected counted tap spec, got {other:?}"),
     };
     assert_eq!(count.min, 2, "expected two taps, got {count:?}");
-    assert_eq!(count.max, Some(2), "expected exactly two taps, got {count:?}");
+    assert_eq!(
+        count.max,
+        Some(2),
+        "expected exactly two taps, got {count:?}"
+    );
     let filter = match inner {
         ChooseSpec::Object(filter) => filter,
         other => panic!("expected object tap filter, got {other:?}"),
     };
-    assert!(filter.untapped, "expected untapped requirement, got {filter:?}");
     assert!(
-        filter.card_types.contains(&CardType::Creature) && filter.card_types.contains(&CardType::Land),
+        filter.untapped,
+        "expected untapped requirement, got {filter:?}"
+    );
+    assert!(
+        filter.card_types.contains(&CardType::Creature)
+            && filter.card_types.contains(&CardType::Land),
         "expected creature/land tap filter, got {filter:?}"
     );
 }
@@ -629,12 +639,19 @@ fn test_parse_additional_cost_tap_four_untapped_artifacts_creatures_or_lands() {
         other => panic!("expected counted tap spec, got {other:?}"),
     };
     assert_eq!(count.min, 4, "expected four taps, got {count:?}");
-    assert_eq!(count.max, Some(4), "expected exactly four taps, got {count:?}");
+    assert_eq!(
+        count.max,
+        Some(4),
+        "expected exactly four taps, got {count:?}"
+    );
     let filter = match inner {
         ChooseSpec::Object(filter) => filter,
         other => panic!("expected object tap filter, got {other:?}"),
     };
-    assert!(filter.untapped, "expected untapped requirement, got {filter:?}");
+    assert!(
+        filter.untapped,
+        "expected untapped requirement, got {filter:?}"
+    );
     assert!(
         filter.card_types.contains(&CardType::Artifact)
             && filter.card_types.contains(&CardType::Creature)
@@ -843,6 +860,100 @@ fn test_parse_target_creature_you_control_deals_damage_equal_to_its_power_to_tar
     assert!(
         !joined.contains("fights"),
         "bite-style damage must not compile as fight, got {joined}"
+    );
+}
+
+#[test]
+fn test_parse_put_counter_then_it_deals_damage_equal_to_its_power() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Knockout Maneuver Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Put a +1/+1 counter on target creature you control, then it deals damage equal to its power to target creature an opponent controls.",
+        )
+        .expect("parse put-counter then deal-damage-equal-to-power clause");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("PutCountersEffect"),
+        "expected +1/+1 counter effect before damage clause, got {debug}"
+    );
+    assert!(
+        debug.contains("DealDamageEffect"),
+        "expected damage effect after counter clause, got {debug}"
+    );
+
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("put a +1/+1 counter on target creature you control"),
+        "expected counter clause in compiled text, got {joined}"
+    );
+    assert!(
+        joined.contains("deals damage equal to its power to target creature an opponent controls"),
+        "expected follow-up damage clause in compiled text, got {joined}"
+    );
+}
+
+#[test]
+fn test_parse_surveil_then_return_with_finality_and_exile_with_time_counters() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Charnel Serenade Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "Surveil 3, then return a creature card from your graveyard to the battlefield with a finality counter on it. Exile Charnel Serenade with three time counters on it.",
+        )
+        .expect("parse surveil/return/finality/time-counter clause");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("SurveilEffect"),
+        "expected surveil effect, got {debug}"
+    );
+    assert!(
+        debug.contains("ReturnFromGraveyardToBattlefieldEffect"),
+        "expected return-to-battlefield effect, got {debug}"
+    );
+    assert!(
+        debug.contains("counter_type: Finality"),
+        "expected finality counter placement, got {debug}"
+    );
+    assert!(
+        debug.contains("counter_type: Time"),
+        "expected time counter placement on exile, got {debug}"
+    );
+    assert!(
+        debug.contains("target: Source"),
+        "expected self-exile counter placement to target source, got {debug}"
+    );
+
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("put a finality counter on it"),
+        "expected finality counter text, got {joined}"
+    );
+    assert!(
+        joined.contains("put three time counters"),
+        "expected time counter text, got {joined}"
+    );
+}
+
+#[test]
+fn test_parse_exile_named_source_with_time_counters() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Suspend Setup Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Exile Suspend Setup Variant with three time counters on it.")
+        .expect("parse named-source exile with time counters");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("MoveToZoneEffect"),
+        "expected exile move-to-zone effect, got {debug}"
+    );
+    assert!(
+        debug.contains("target: Source"),
+        "expected source-targeted exile/counter effects, got {debug}"
+    );
+    assert!(
+        debug.contains("counter_type: Time"),
+        "expected time counter placement, got {debug}"
     );
 }
 
@@ -4566,7 +4677,9 @@ fn parse_cant_attack_unless_defending_player_controls_island_line() {
 fn parse_attacks_trigger_targeting_defending_player_creature_keeps_controller_filter() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Fiend Binder Variant")
         .card_types(vec![CardType::Creature])
-        .parse_text("Whenever this creature attacks, tap target creature defending player controls.")
+        .parse_text(
+            "Whenever this creature attacks, tap target creature defending player controls.",
+        )
         .expect("defending-player target filter should parse");
 
     let compiled = crate::compiled_text::compiled_lines(&def).join("\n");
@@ -4582,7 +4695,9 @@ fn parse_attacks_trigger_targeting_defending_player_creature_keeps_controller_fi
 fn parse_attached_gets_plus_and_attacks_each_combat_if_able_keeps_both_statics() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Furor Variant")
         .card_types(vec![CardType::Enchantment])
-        .parse_text("Enchant creature\nEnchanted creature gets +2/+2 and attacks each combat if able.")
+        .parse_text(
+            "Enchant creature\nEnchanted creature gets +2/+2 and attacks each combat if able.",
+        )
         .expect("attached gets+attacks static clause should parse");
 
     let compiled = crate::compiled_text::compiled_lines(&def).join("\n");
@@ -6677,10 +6792,6 @@ fn reject_singleton_partial_parse_clauses_030() {
         "Long-Term Plans Variant",
         "Search your library for a card, then shuffle and put that card third from the top.",
     );
-    assert_partial_parse_rejected(
-        "Reckless Blaze Variant",
-        "Whenever a creature you control dealt damage this way dies this turn, add {R}.",
-    );
     assert_partial_parse_rejected("Torens Variant", "Training");
     assert_partial_parse_rejected("Crack in Time Variant", "Vanishing 3");
     assert_partial_parse_rejected(
@@ -8361,7 +8472,7 @@ fn parse_each_opponent_who_has_less_life_uses_conditional_you_create() {
 fn parse_burn_away_delayed_dies_this_turn_clause() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Burn Away Variant")
         .parse_text(
-            "Burn Away deals 6 damage to target creature. When that creature dies this turn, exile its controller's graveyard.",
+            "This spell deals 6 damage to target creature. When that creature dies this turn, exile its controller's graveyard.",
         )
         .expect("burn-away delayed dies clause should parse");
 
@@ -8373,6 +8484,29 @@ fn parse_burn_away_delayed_dies_this_turn_clause() {
     assert!(
         rendered.contains("its controller's graveyard"),
         "expected graveyard exile to remain tied to that creature's controller, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_reckless_blaze_dealt_damage_this_way_dies_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Reckless Blaze Variant")
+        .parse_text(
+            "This spell deals 5 damage to each creature. Whenever a creature you control dealt damage this way dies this turn, add {R}.",
+        )
+        .expect("reckless blaze delayed dies-this-way clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("for each creature") && rendered.contains("deal 5 damage"),
+        "expected primary damage clause, got {rendered}"
+    );
+    assert!(
+        rendered.contains("a creature you control dealt damage this way dies this turn"),
+        "expected delayed dies-this-way trigger, got {rendered}"
+    );
+    assert!(
+        rendered.contains("add {r}"),
+        "expected mana add effect to remain in delayed trigger, got {rendered}"
     );
 }
 
@@ -9064,10 +9198,67 @@ fn parse_one_or_more_attack_trigger_preserves_one_or_more_compiled_text() {
 }
 
 #[test]
+fn parse_spell_cast_trigger_power_comparisons_do_not_split_on_comparison_or() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Sarkhan Trigger Variant")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text(
+            "Whenever you cast a creature spell with power 4, 5, or 6, this enchantment deals 4 damage to any target.\nWhenever you cast a creature spell with power 7 or greater, this enchantment deals 4 damage to each opponent and each creature and planeswalker they control.",
+        )
+        .expect("power-list and or-greater spell-cast triggers should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        !abilities_debug.contains("unimplemented_trigger"),
+        "expected no fallback custom trigger branch from comparison 'or', got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug.contains("OneOf(")
+            && abilities_debug.contains("4")
+            && abilities_debug.contains("5")
+            && abilities_debug.contains("6"),
+        "expected disjunctive power list to compile as a discrete comparison, got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug
+            .contains("GreaterThanOrEqual(\n                                                    7")
+            || abilities_debug.contains("GreaterThanOrEqual(7)"),
+        "expected second trigger to preserve '7 or greater', got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_this_deals_or_more_damage_to_opponent_trigger_keeps_threshold_and_player() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Deus Trigger Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Whenever this creature deals 6 or more damage to an opponent, destroy target land that player controls.")
+        .expect("noncombat damage threshold trigger should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        abilities_debug.contains("ThisDealsDamageTrigger"),
+        "expected this-deals-damage trigger matcher, got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug
+            .contains("GreaterThanOrEqual(\n                                                    6")
+            || abilities_debug.contains("GreaterThanOrEqual(6)"),
+        "expected 6-or-more threshold on trigger, got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug.contains(
+            "damaged_player: Some(\n                                            Opponent"
+        ) || abilities_debug.contains("damaged_player: Some(Opponent)"),
+        "expected opponent recipient filter on trigger, got {abilities_debug}"
+    );
+}
+
+#[test]
 fn parse_one_or_more_enters_trigger_uses_batch_count_mode() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "One Or More Enter Variant")
         .card_types(vec![CardType::Creature])
-        .parse_text("Whenever one or more tokens you control enter, put a +1/+1 counter on this creature.")
+        .parse_text(
+            "Whenever one or more tokens you control enter, put a +1/+1 counter on this creature.",
+        )
         .expect("one-or-more enters trigger should parse");
 
     let abilities_debug = format!("{:#?}", def.abilities);

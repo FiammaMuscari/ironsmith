@@ -197,6 +197,10 @@ enum TriggerSpec {
     ThisTurnedFaceUp,
     ThisBecomesTargeted,
     ThisDealsDamage,
+    ThisDealsDamageToPlayer {
+        player: PlayerFilter,
+        amount: Option<crate::filter::Comparison>,
+    },
     ThisDealsDamageTo(ObjectFilter),
     DealsDamage(ObjectFilter),
     ThisIsDealtDamage,
@@ -214,6 +218,7 @@ enum TriggerSpec {
         caster: PlayerFilter,
         during_turn: Option<PlayerFilter>,
         min_spells_this_turn: Option<u32>,
+        exact_spells_this_turn: Option<u32>,
         from_not_hand: bool,
     },
     SpellCopied {
@@ -539,6 +544,7 @@ enum EffectAst {
         effects: Vec<EffectAst>,
     },
     DelayedWhenLastObjectDiesThisTurn {
+        filter: Option<ObjectFilter>,
         effects: Vec<EffectAst>,
     },
     RevealTop {
@@ -2544,14 +2550,13 @@ mod effect_parse_tests {
     use crate::effects::{
         AddManaOfAnyColorEffect, AddManaOfAnyOneColorEffect, AddManaOfLandProducedTypesEffect,
         AddScaledManaEffect, BattlefieldController, ConniveEffect, CounterEffect,
-        CreateTokenCopyEffect, DestroyEffect,
-        DiscardEffect, DrawCardsEffect, EnergyCountersEffect, ExchangeControlEffect, ExileEffect,
-        ExileInsteadOfGraveyardEffect, ForEachObject, ForPlayersEffect, GainControlEffect,
-        GrantPlayFromGraveyardEffect, LookAtHandEffect, ModifyPowerToughnessEffect,
-        ModifyPowerToughnessForEachEffect, PutCountersEffect, RemoveUpToAnyCountersEffect,
-        ReturnAllToBattlefieldEffect, MoveToZoneEffect,
-        ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect, SacrificeEffect,
-        ScryEffect, SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipCombatPhasesEffect,
+        CreateTokenCopyEffect, DestroyEffect, DiscardEffect, DrawCardsEffect, EnergyCountersEffect,
+        ExchangeControlEffect, ExileEffect, ExileInsteadOfGraveyardEffect, ForEachObject,
+        ForPlayersEffect, GainControlEffect, GrantPlayFromGraveyardEffect, LookAtHandEffect,
+        ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect, MoveToZoneEffect,
+        PutCountersEffect, RemoveUpToAnyCountersEffect, ReturnAllToBattlefieldEffect,
+        ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect, SacrificeEffect, ScryEffect,
+        SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipCombatPhasesEffect,
         SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, SurveilEffect,
         TapEffect, TargetOnlyEffect, TransformEffect,
     };
@@ -3076,9 +3081,11 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         );
 
         let spell_has_set_base = def.spell_effect.as_ref().is_some_and(|effects| {
-            effects
-                .iter()
-                .any(|effect| effect.downcast_ref::<SetBasePowerToughnessEffect>().is_some())
+            effects.iter().any(|effect| {
+                effect
+                    .downcast_ref::<SetBasePowerToughnessEffect>()
+                    .is_some()
+            })
         });
         assert!(
             !spell_has_set_base,
@@ -3408,7 +3415,10 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             "copy should grant trample"
         );
         let ChooseSpec::Object(filter) = copy.target.base() else {
-            panic!("expected object filter target for copy source, got {:?}", copy.target);
+            panic!(
+                "expected object filter target for copy source, got {:?}",
+                copy.target
+            );
         };
         assert!(
             filter.card_types.contains(&CardType::Creature),
@@ -4500,10 +4510,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         let lines = compiled_lines(&def);
         let gated = lines
             .iter()
-            .find(|line| {
-                line.starts_with("Mana ability")
-                    && line.contains("Pay 1 life")
-            })
+            .find(|line| line.starts_with("Mana ability") && line.contains("Pay 1 life"))
             .expect("expected mana line with artifact activation condition");
         assert!(
             gated.contains("Add one mana of any color"),
@@ -4707,17 +4714,21 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         );
         let lines = compiled_lines(&def);
         assert!(
-            lines.iter().any(|line| line.starts_with("Triggered ability 1:")),
+            lines
+                .iter()
+                .any(|line| line.starts_with("Triggered ability 1:")),
             "expected upkeep trigger to remain triggered ability, got {lines:?}"
         );
         assert!(
-            lines.iter().any(|line| line.contains("Spells cost an additional \"Sacrifice a Swamp\" to cast")),
+            lines.iter().any(
+                |line| line.contains("Spells cost an additional \"Sacrifice a Swamp\" to cast")
+            ),
             "expected spell additional cost line as static ability, got {lines:?}"
         );
         assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("Activated abilities cost an additional \"Sacrifice a Swamp\" to activate")),
+            lines.iter().any(|line| line.contains(
+                "Activated abilities cost an additional \"Sacrifice a Swamp\" to activate"
+            )),
             "expected activated additional cost line as static ability, got {lines:?}"
         );
     }
@@ -5245,8 +5256,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .find(|line| line.starts_with("Spell effects:"))
             .expect("expected spell effects line");
         assert!(
-            spell_line.contains("unless its controller")
-                && spell_line.contains("Deal 5 damage"),
+            spell_line.contains("unless its controller") && spell_line.contains("Deal 5 damage"),
             "expected unless-controller alternative damage text, got {spell_line}"
         );
     }
@@ -5419,6 +5429,20 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_spell_cast_third_each_turn_trigger_text() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Third Spell Probe")
+            .parse_text("Whenever you cast your third spell each turn, draw a card.")
+            .expect("parse third-spell-each-turn trigger");
+
+        let lines = compiled_lines(&def);
+        let joined = lines.join(" ");
+        assert!(
+            joined.contains("Whenever you cast your third spell each turn"),
+            "expected third-spell qualifier in trigger text, got {joined}"
+        );
+    }
+
+    #[test]
     fn parse_put_counter_for_each_filter_on_target() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Moldgraf Millipede Probe")
             .parse_text(
@@ -5551,7 +5575,9 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             "expected first strike keyword in compiled text, got {joined}"
         );
         assert!(
-            joined.contains("as long as there are four or more card types among cards in your graveyard"),
+            joined.contains(
+                "as long as there are four or more card types among cards in your graveyard"
+            ),
             "expected trailing condition to be preserved for anthem+keyword line, got {joined}"
         );
     }
@@ -6604,7 +6630,9 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             "expected explicit 3/1 haste construct token text, got {rendered}"
         );
         assert!(
-            !rendered.contains("power and toughness are each equal to the number of artifacts you control"),
+            !rendered.contains(
+                "power and toughness are each equal to the number of artifacts you control"
+            ),
             "explicit 3/1 construct token should not be forced into karnstruct stats, got {rendered}"
         );
     }
@@ -7106,9 +7134,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     #[test]
     fn parse_spin_into_myth_fateseal_appends_scry_effect() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Spin into Myth Variant")
-            .parse_text(
-                "Put target creature on top of its owner's library, then fateseal 2.",
-            )
+            .parse_text("Put target creature on top of its owner's library, then fateseal 2.")
             .expect("fateseal tail should parse");
 
         let effects = def.spell_effect.as_ref().expect("spell effects");

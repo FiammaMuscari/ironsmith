@@ -194,7 +194,9 @@ fn mana_ability_condition_met(
                     game.object(perm_id).is_some_and(|perm| {
                         perm.controller == source.controller
                             && perm.is_creature()
-                            && perm.power().is_some_and(|power| power >= *required_power as i32)
+                            && perm
+                                .power()
+                                .is_some_and(|power| power >= *required_power as i32)
                     })
                 })
             }

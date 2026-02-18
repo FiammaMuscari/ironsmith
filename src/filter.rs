@@ -176,6 +176,7 @@ impl FilterContext {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Comparison {
     Equal(i32),
+    OneOf(Vec<i32>),
     NotEqual(i32),
     LessThan(i32),
     LessThanOrEqual(i32),
@@ -188,6 +189,7 @@ impl Comparison {
     pub fn satisfies(&self, value: i32) -> bool {
         match self {
             Comparison::Equal(n) => value == *n,
+            Comparison::OneOf(values) => values.contains(&value),
             Comparison::NotEqual(n) => value != *n,
             Comparison::LessThan(n) => value < *n,
             Comparison::LessThanOrEqual(n) => value <= *n,
@@ -2904,10 +2906,7 @@ fn ability_text_has_custom_marker(ability: &crate::ability::Ability, marker: &st
     }
 
     if marker == "cycling" {
-        if !ability
-            .functional_zones
-            .contains(&crate::zone::Zone::Hand)
-        {
+        if !ability.functional_zones.contains(&crate::zone::Zone::Hand) {
             return false;
         }
         return words
@@ -3016,8 +3015,24 @@ fn describe_filter_static_ability(ability_id: StaticAbilityId) -> Option<&'stati
 }
 
 fn describe_comparison(cmp: &Comparison) -> String {
+    let describe_values = |values: &[i32]| -> String {
+        match values.len() {
+            0 => String::new(),
+            1 => values[0].to_string(),
+            2 => format!("{} or {}", values[0], values[1]),
+            _ => {
+                let head = values[..values.len() - 1]
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{head}, or {}", values[values.len() - 1])
+            }
+        }
+    };
     match cmp {
         Comparison::Equal(v) => format!("{v}"),
+        Comparison::OneOf(values) => describe_values(values),
         Comparison::NotEqual(v) => format!("not equal to {v}"),
         Comparison::LessThan(v) => format!("less than {v}"),
         Comparison::LessThanOrEqual(v) => format!("{v} or less"),

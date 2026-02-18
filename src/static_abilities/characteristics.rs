@@ -216,7 +216,8 @@ mod tests {
         filter.zone = Some(crate::zone::Zone::Graveyard);
         filter.owner = Some(PlayerFilter::You);
         filter.colors = Some(crate::color::ColorSet::BLACK);
-        let ability = CharacteristicDefiningPT::new(Value::Count(filter.clone()), Value::Count(filter));
+        let ability =
+            CharacteristicDefiningPT::new(Value::Count(filter.clone()), Value::Count(filter));
         assert!(
             ability.display().contains("black cards in your graveyard"),
             "expected color-adjective count to pluralize 'card', got {}",

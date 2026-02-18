@@ -329,7 +329,8 @@ impl EffectExecutor for CreateTokenCopyEffect {
                 }
             }
             if !self.removed_supertypes.is_empty() {
-                token.supertypes
+                token
+                    .supertypes
                     .retain(|supertype| !self.removed_supertypes.contains(supertype));
             }
 

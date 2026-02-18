@@ -29,8 +29,24 @@ fn join_with_and(parts: &[String]) -> String {
 }
 
 fn describe_comparison(cmp: &Comparison) -> String {
+    let describe_values = |values: &[i32]| -> String {
+        match values.len() {
+            0 => String::new(),
+            1 => values[0].to_string(),
+            2 => format!("{} or {}", values[0], values[1]),
+            _ => {
+                let head = values[..values.len() - 1]
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{head}, or {}", values[values.len() - 1])
+            }
+        }
+    };
     match cmp {
         Comparison::Equal(v) => v.to_string(),
+        Comparison::OneOf(values) => describe_values(values),
         Comparison::NotEqual(v) => format!("not equal to {v}"),
         Comparison::LessThan(v) => format!("less than {v}"),
         Comparison::LessThanOrEqual(v) => format!("{v} or less"),

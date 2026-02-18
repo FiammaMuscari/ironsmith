@@ -670,7 +670,9 @@ fn check_mana_ability_condition(
                 game.object(id).is_some_and(|obj| {
                     obj.controller == player
                         && obj.is_creature()
-                        && obj.power().is_some_and(|power| power >= *required_power as i32)
+                        && obj
+                            .power()
+                            .is_some_and(|power| power >= *required_power as i32)
                 })
             })
         }
@@ -701,7 +703,7 @@ fn check_mana_ability_condition(
                 card_type_match && subtype_match
             })
         }),
-            crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
+        crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
             crate::ability::ActivationTiming::AnyTime => true,
             crate::ability::ActivationTiming::DuringCombat => {
                 matches!(game.turn.phase, Phase::Combat)
@@ -725,9 +727,7 @@ fn check_mana_ability_condition(
         crate::ability::ManaAbilityCondition::Unmodeled(_) => true,
         crate::ability::ManaAbilityCondition::All(conditions) => conditions
             .iter()
-            .all(|inner| {
-                check_mana_ability_condition(game, player, source, ability_index, inner)
-            }),
+            .all(|inner| check_mana_ability_condition(game, player, source, ability_index, inner)),
     }
 }
 

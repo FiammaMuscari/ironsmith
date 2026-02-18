@@ -3,8 +3,8 @@
 //! This module contains effects that modify the state of permanents on the battlefield,
 //! such as tapping, untapping, monstrosity, regeneration, and transformation.
 
-mod attach_to;
 mod attach_objects;
+mod attach_to;
 mod earthbend;
 mod grant_object_ability;
 mod monstrosity;
