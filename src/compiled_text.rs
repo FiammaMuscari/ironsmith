@@ -6363,6 +6363,14 @@ fn describe_draw_for_each(draw: &crate::effects::DrawCardsEffect) -> Option<Stri
     ))
 }
 
+fn describe_create_for_each_count(value: &Value) -> Option<String> {
+    match value {
+        Value::Count(filter) => Some(describe_for_each_filter(filter)),
+        Value::CreaturesDiedThisTurn => Some("creature that died this turn".to_string()),
+        _ => None,
+    }
+}
+
 fn describe_compact_token_count(value: &Value, token_name: &str) -> String {
     match value {
         Value::Fixed(1) => format!("a {token_name} token"),
@@ -6385,6 +6393,9 @@ fn describe_compact_token_count(value: &Value, token_name: &str) -> String {
                     describe_for_each_count_filter(filter)
                 )
             }
+        }
+        Value::CreaturesDiedThisTurn => {
+            format!("a {token_name} token for each creature that died this turn")
         }
         Value::ColorsOfManaSpentToCastThisSpell => {
             format!("a {token_name} token for each color of mana spent to cast this spell")
@@ -8292,20 +8303,20 @@ fn describe_effect_impl(effect: &Effect) -> String {
         if let Some(compact) = describe_compact_create_token(create_token) {
             return compact;
         }
-        if let Value::Count(filter) = &create_token.count {
+        if let Some(for_each_count) = describe_create_for_each_count(&create_token.count) {
             let token_blueprint = describe_token_blueprint(&create_token.token);
             let mut text = if matches!(create_token.controller, PlayerFilter::You) {
                 format!(
                     "Create 1 {} for each {}",
                     token_blueprint,
-                    describe_for_each_filter(filter)
+                    for_each_count
                 )
             } else {
                 format!(
                     "Create 1 {} under {} control for each {}",
                     token_blueprint,
                     describe_possessive_player_filter(&create_token.controller),
-                    describe_for_each_filter(filter)
+                    for_each_count
                 )
             };
             if create_token.enters_tapped {

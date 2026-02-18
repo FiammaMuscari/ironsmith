@@ -663,6 +663,27 @@ fn test_parse_target_opponent_gains_control_clause() {
 }
 
 #[test]
+fn test_parse_create_token_for_each_creature_that_died_this_turn() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Mahadi Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "At the beginning of your end step, create a Treasure token for each creature that died this turn.",
+        )
+        .expect("parse died-this-turn dynamic token count");
+
+    let debug = format!("{:?}", def.abilities);
+    assert!(
+        debug.contains("CreaturesDiedThisTurn"),
+        "expected dynamic died-this-turn count in triggered token creation, got {debug}"
+    );
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("for each creature that died this turn"),
+        "expected compiled text to preserve died-this-turn token count, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_trigger_attacks_with_subject_filter() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Attack Filter Probe")
         .card_types(vec![CardType::Enchantment])

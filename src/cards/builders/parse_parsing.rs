@@ -25023,6 +25023,11 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
 
 fn parse_create_for_each_dynamic_count(tokens: &[Token]) -> Option<Value> {
     let clause_words = words(tokens);
+    if clause_words.starts_with(&["creature", "that", "died", "this", "turn"])
+        || clause_words.starts_with(&["creatures", "that", "died", "this", "turn"])
+    {
+        return Some(Value::CreaturesDiedThisTurn);
+    }
     if clause_words.starts_with(&["color", "of", "mana", "spent", "to", "cast", "this", "spell"])
         || clause_words
             .starts_with(&["colors", "of", "mana", "spent", "to", "cast", "this", "spell"])
