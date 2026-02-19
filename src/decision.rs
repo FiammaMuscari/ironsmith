@@ -682,6 +682,20 @@ pub(crate) fn can_activate_ability_with_restrictions(
         return false;
     }
 
+    for effect in &activated.effects {
+        if let Some(choose_mode) = effect.downcast_ref::<crate::effects::ChooseModeEffect>()
+            && choose_mode.disallow_previously_chosen_modes
+            && !game.ability_has_unchosen_mode(
+                source,
+                ability_index,
+                choose_mode.modes.len(),
+                choose_mode.disallow_previously_chosen_modes_this_turn,
+            )
+        {
+            return false;
+        }
+    }
+
     activated
         .additional_restrictions
         .iter()

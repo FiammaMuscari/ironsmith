@@ -2199,6 +2199,54 @@ fn test_parse_modal_choose_one_header_without_fallback() {
 }
 
 #[test]
+fn test_parse_modal_choose_one_that_hasnt_been_chosen_sets_mode_memory() {
+    let oracle = "{2}, {T}: Choose one that hasn't been chosen —\n\
+• This artifact deals 2 damage to target creature.\n\
+• Tap target creature.\n\
+• Sacrifice this artifact. You gain 3 life.";
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Three Bowls Probe")
+        .card_types(vec![CardType::Artifact])
+        .parse_text(oracle)
+        .expect("parse choose-one-that-hasnt-been-chosen modal ability");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        abilities_debug.contains("disallow_previously_chosen_modes: true"),
+        "expected modal memory flag in compiled ability, got {abilities_debug}"
+    );
+
+    let rendered = compiled_lines(&def).join("\n").to_ascii_lowercase();
+    assert!(
+        rendered.contains("choose one that hasn't been chosen"),
+        "expected modal heading to keep unchosen-mode clause, got {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_modal_choose_one_that_hasnt_been_chosen_this_turn_sets_turn_scope() {
+    let oracle = "Whenever another creature you control enters, choose one that hasn't been chosen this turn —\n\
+• Put a +1/+1 counter on this creature.\n\
+• Create a tapped Treasure token.\n\
+• You gain 2 life.";
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Gala Greeters Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text(oracle)
+        .expect("parse this-turn choose-one-that-hasnt-been-chosen trigger");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        abilities_debug.contains("disallow_previously_chosen_modes_this_turn: true"),
+        "expected per-turn modal memory flag in compiled ability, got {abilities_debug}"
+    );
+
+    let rendered = compiled_lines(&def).join("\n").to_ascii_lowercase();
+    assert!(
+        rendered.contains("choose one that hasn't been chosen this turn"),
+        "expected this-turn unchosen-mode clause in rendering, got {rendered}"
+    );
+}
+
+#[test]
 fn test_keyword_marker_rejects_partial_trailing_clause() {
     let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Bad Unleash")
         .card_types(vec![CardType::Creature])

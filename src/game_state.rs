@@ -843,6 +843,13 @@ pub struct GameState {
     /// Key is (source ObjectId, ability index within that object).
     pub activated_abilities_this_turn: HashSet<(ObjectId, usize)>,
 
+    /// Tracks modal choices that were already selected for an activated ability.
+    /// Key is (source ObjectId, ability index), value is the set of chosen mode indices.
+    pub chosen_modes_by_ability: HashMap<(ObjectId, usize), HashSet<usize>>,
+
+    /// Tracks per-turn modal choices for abilities with "that hasn't been chosen this turn".
+    pub chosen_modes_by_ability_this_turn: HashMap<(ObjectId, usize), HashSet<usize>>,
+
     /// Tracks how many cards each player has drawn this turn.
     /// Used for "first card drawn this turn" triggers and replacement effects.
     /// Reset at the start of each turn.
@@ -1030,6 +1037,8 @@ impl GameState {
             pending_trigger_events: Vec::new(),
             combat: None,
             activated_abilities_this_turn: HashSet::new(),
+            chosen_modes_by_ability: HashMap::new(),
+            chosen_modes_by_ability_this_turn: HashMap::new(),
             cards_drawn_this_turn: HashMap::new(),
             pending_replacement_choice: None,
             grant_registry: crate::grant_registry::GrantRegistry::new(),
@@ -2393,6 +2402,7 @@ impl GameState {
 
         // Clear turn-based tracking
         self.clear_activated_abilities_tracking();
+        self.chosen_modes_by_ability_this_turn.clear();
         self.cards_drawn_this_turn.clear();
         self.creatures_died_this_turn = 0;
         self.triggers_fired_this_turn.clear();
@@ -2641,6 +2651,65 @@ impl GameState {
         ability_index: usize,
     ) -> u32 {
         self.named_turn_counter(&activated_ability_turn_counter_name(source, ability_index))
+    }
+
+    /// Record that a mode index was chosen for an activated modal ability.
+    pub fn record_ability_mode_choice(
+        &mut self,
+        source: ObjectId,
+        ability_index: usize,
+        mode_index: usize,
+        this_turn: bool,
+    ) {
+        let target_map = if this_turn {
+            &mut self.chosen_modes_by_ability_this_turn
+        } else {
+            &mut self.chosen_modes_by_ability
+        };
+        target_map
+            .entry((source, ability_index))
+            .or_default()
+            .insert(mode_index);
+    }
+
+    /// Check whether a given mode index has already been chosen for an activated ability.
+    pub fn ability_mode_was_chosen(
+        &self,
+        source: ObjectId,
+        ability_index: usize,
+        mode_index: usize,
+        this_turn: bool,
+    ) -> bool {
+        let target_map = if this_turn {
+            &self.chosen_modes_by_ability_this_turn
+        } else {
+            &self.chosen_modes_by_ability
+        };
+        target_map
+            .get(&(source, ability_index))
+            .is_some_and(|modes| modes.contains(&mode_index))
+    }
+
+    /// Check whether an activated modal ability still has an unchosen mode available.
+    pub fn ability_has_unchosen_mode(
+        &self,
+        source: ObjectId,
+        ability_index: usize,
+        total_mode_count: usize,
+        this_turn: bool,
+    ) -> bool {
+        if total_mode_count == 0 {
+            return false;
+        }
+        let target_map = if this_turn {
+            &self.chosen_modes_by_ability_this_turn
+        } else {
+            &self.chosen_modes_by_ability
+        };
+        let chosen_count = target_map
+            .get(&(source, ability_index))
+            .map_or(0, HashSet::len);
+        chosen_count < total_mode_count
     }
 
     /// Returns the active player.
@@ -3072,6 +3141,9 @@ impl GameState {
         self.phased_out.remove(&id);
         self.imprinted_cards.remove(&id);
         self.chosen_colors.remove(&id);
+        self.chosen_modes_by_ability.retain(|(source, _), _| *source != id);
+        self.chosen_modes_by_ability_this_turn
+            .retain(|(source, _), _| *source != id);
         // Note: saga_final_chapter_resolved and commanders persist across zone changes
     }
 

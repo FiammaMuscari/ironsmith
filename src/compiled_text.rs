@@ -8672,10 +8672,17 @@ fn describe_effect_impl(effect: &Effect) -> String {
         if let Some(compact) = describe_put_or_remove_counter_mode(choose_mode) {
             return compact;
         }
-        let header = describe_mode_choice_header(
+        let mut header = describe_mode_choice_header(
             &choose_mode.choose_count,
             choose_mode.min_choose_count.as_ref(),
         );
+        if choose_mode.disallow_previously_chosen_modes {
+            header = if choose_mode.disallow_previously_chosen_modes_this_turn {
+                "Choose one that hasn't been chosen this turn —".to_string()
+            } else {
+                "Choose one that hasn't been chosen —".to_string()
+            };
+        }
         let modes = choose_mode
             .modes
             .iter()
@@ -8733,6 +8740,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
             })
             .collect::<Vec<_>>()
             .join(" • ");
+        if choose_mode.disallow_previously_chosen_modes {
+            return format!("{header}\n• {}", modes.replace(" • ", "\n• "));
+        }
         if choose_mode.allow_repeated_modes {
             let normalized_header = header
                 .trim_end_matches('-')

@@ -5,6 +5,8 @@ struct ModalHeader {
     min: u32,
     max: Option<u32>,
     same_mode_more_than_once: bool,
+    mode_must_be_unchosen: bool,
+    mode_must_be_unchosen_this_turn: bool,
     commander_allows_both: bool,
     trigger: Option<TriggerSpec>,
     activated: Option<ModalActivatedHeader>,
@@ -864,6 +866,25 @@ fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextEr
     let same_mode_more_than_once = token_words
         .windows(5)
         .any(|window| window == ["same", "mode", "more", "than", "once"]);
+    let mode_must_be_unchosen_this_turn = token_words
+        .windows(6)
+        .any(|window| {
+            window == ["that", "hasnt", "been", "chosen", "this", "turn"]
+                || window == ["that", "hasn't", "been", "chosen", "this", "turn"]
+        })
+        || token_words
+            .windows(7)
+            .any(|window| window == ["that", "has", "not", "been", "chosen", "this", "turn"]);
+    let mode_must_be_unchosen = mode_must_be_unchosen_this_turn
+        || token_words
+        .windows(4)
+        .any(|window| {
+            window == ["that", "hasnt", "been", "chosen"]
+                || window == ["that", "hasn't", "been", "chosen"]
+        })
+        || token_words
+            .windows(5)
+            .any(|window| window == ["that", "has", "not", "been", "chosen"]);
 
     let mut trigger = None;
     let mut activated = None;
@@ -939,6 +960,8 @@ fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextEr
         min,
         max,
         same_mode_more_than_once,
+        mode_must_be_unchosen,
+        mode_must_be_unchosen_this_turn,
         commander_allows_both,
         trigger,
         activated,
@@ -1242,6 +1265,9 @@ fn try_merge_modal_into_remove_mode(
         choose_count: choose_mode.choose_count.clone(),
         min_choose_count: choose_mode.min_choose_count.clone(),
         allow_repeated_modes: choose_mode.allow_repeated_modes,
+        disallow_previously_chosen_modes: choose_mode.disallow_previously_chosen_modes,
+        disallow_previously_chosen_modes_this_turn: choose_mode
+            .disallow_previously_chosen_modes_this_turn,
     }));
     true
 }
@@ -1259,6 +1285,8 @@ fn finalize_pending_modal(
         min: header_min,
         max: header_max,
         same_mode_more_than_once,
+        mode_must_be_unchosen,
+        mode_must_be_unchosen_this_turn,
         commander_allows_both,
         trigger,
         activated,
@@ -1276,28 +1304,43 @@ fn finalize_pending_modal(
     let mode_count = modes.len() as u32;
     let max = header_max.unwrap_or(mode_count).min(mode_count);
     let min = header_min.min(max);
+    let with_unchosen_requirement = |effect: Effect| {
+        if !mode_must_be_unchosen {
+            return effect;
+        }
+        if let Some(choose_mode) = effect.downcast_ref::<crate::effects::ChooseModeEffect>() {
+            let choose_mode = choose_mode.clone();
+            let choose_mode = if mode_must_be_unchosen_this_turn {
+                choose_mode.with_previously_unchosen_modes_only_this_turn()
+            } else {
+                choose_mode.with_previously_unchosen_modes_only()
+            };
+            return Effect::new(choose_mode);
+        }
+        effect
+    };
 
     let modal_effect = if commander_allows_both {
         let max_both = mode_count.min(2).max(1);
         let choose_both = if max_both == 1 {
-            Effect::choose_one(modes.clone())
+            with_unchosen_requirement(Effect::choose_one(modes.clone()))
         } else {
-            Effect::choose_up_to(max_both, 1, modes.clone())
+            with_unchosen_requirement(Effect::choose_up_to(max_both, 1, modes.clone()))
         };
-        let choose_one = Effect::choose_one(modes.clone());
+        let choose_one = with_unchosen_requirement(Effect::choose_one(modes.clone()));
         Effect::conditional(
             Condition::YouControlCommander,
             vec![choose_both],
             vec![choose_one],
         )
     } else if same_mode_more_than_once && min == max {
-        Effect::choose_exactly_allow_repeated_modes(max, modes)
+        with_unchosen_requirement(Effect::choose_exactly_allow_repeated_modes(max, modes))
     } else if min == 1 && max == 1 {
-        Effect::choose_one(modes)
+        with_unchosen_requirement(Effect::choose_one(modes))
     } else if min == max {
-        Effect::choose_exactly(max, modes)
+        with_unchosen_requirement(Effect::choose_exactly(max, modes))
     } else {
-        Effect::choose_up_to(max, min, modes)
+        with_unchosen_requirement(Effect::choose_up_to(max, min, modes))
     };
 
     let mut combined_effects = prefix_effects;
