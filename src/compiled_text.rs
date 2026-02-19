@@ -1259,6 +1259,8 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     normalized = normalized
         .replace("target another ", "other target ")
         .replace("a another ", "another ")
+        .replace("Creatures token", "Creature tokens")
+        .replace("creatures token", "creature tokens")
         .replace("Whenever a another ", "Whenever another ")
         .replace("Others ", "Other ")
         .replace(" that objects ", " that object ")
@@ -5760,6 +5762,8 @@ fn cleanup_decompiled_text(text: &str) -> String {
         ("a opponent", "an opponent"),
         (" ors ", " or "),
         ("creature are", "creatures are"),
+        ("Creatures token", "Creature tokens"),
+        ("creatures token", "creature tokens"),
         ("target any target", "any target"),
     ] {
         while out.contains(from) {

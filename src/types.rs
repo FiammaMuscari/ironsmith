@@ -128,6 +128,7 @@ pub enum Subtype {
     Mercenary,
     Merfolk,
     Minion,
+    Mite,
     Minotaur,
     Mole,
     Monk,

@@ -9153,11 +9153,17 @@ fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility>, CardText
         ["this", "spell", "cant", "be", "countered"] => StaticAbility::cant_be_countered_ability(),
         ["this", "creature", "cant", "attack"] => StaticAbility::cant_attack(),
         ["this", "creature", "cant", "block"] => StaticAbility::cant_block(),
+        ["this", "token", "cant", "attack"] => StaticAbility::cant_attack(),
+        ["this", "token", "cant", "block"] => StaticAbility::cant_block(),
         ["this", "cant", "block"] => StaticAbility::cant_block(),
         ["this", "cant", "attack"] => StaticAbility::cant_attack(),
         ["this", "creature", "cant", "attack", "or", "block"] => StaticAbility::custom(
             "cant_attack_or_block",
             "this creature can't attack or block".to_string(),
+        ),
+        ["this", "token", "cant", "attack", "or", "block"] => StaticAbility::custom(
+            "cant_attack_or_block",
+            "this token can't attack or block".to_string(),
         ),
         ["this", "cant", "attack", "or", "block"] => StaticAbility::custom(
             "cant_attack_or_block",
@@ -9169,6 +9175,10 @@ fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility>, CardText
                 "this creature can't attack or block alone".to_string(),
             )
         }
+        ["this", "token", "cant", "attack", "or", "block", "alone"] => StaticAbility::custom(
+            "cant_attack_or_block_alone",
+            "this token can't attack or block alone".to_string(),
+        ),
         ["this", "cant", "attack", "or", "block", "alone"] => StaticAbility::custom(
             "cant_attack_or_block_alone",
             "this can't attack or block alone".to_string(),
@@ -19349,6 +19359,7 @@ fn parse_subtype_word(word: &str) -> Option<Subtype> {
         "mercenary" => Some(Subtype::Mercenary),
         "merfolk" => Some(Subtype::Merfolk),
         "minion" => Some(Subtype::Minion),
+        "mite" | "mites" => Some(Subtype::Mite),
         "minotaur" => Some(Subtype::Minotaur),
         "mole" => Some(Subtype::Mole),
         "monk" => Some(Subtype::Monk),

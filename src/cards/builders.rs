@@ -3657,6 +3657,22 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn create_token_render_preserves_cant_attack_or_block_alone_text() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Toby Token Variant")
+            .parse_text(
+                "When this creature enters, create a 4/4 white Beast creature token with \"This token can't attack or block alone.\"",
+            )
+            .expect("token attack-or-block-alone text should parse");
+
+        let lines = compiled_lines(&def);
+        let joined = lines.join("\n").to_ascii_lowercase();
+        assert!(
+            joined.contains("can't attack or block alone"),
+            "compiled token text should preserve attack/block-alone restriction, got: {joined}"
+        );
+    }
+
+    #[test]
     fn parse_ring_tempts_now_errors_instead_of_silent_success() {
         let result = CardDefinitionBuilder::new(CardId::new(), "Ring Variant")
             .parse_text("The Ring tempts you.");

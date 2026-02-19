@@ -5038,6 +5038,15 @@ fn token_definition_for(name: &str) -> Option<CardDefinition> {
         if words.contains(&"indestructible") {
             builder = builder.indestructible();
         }
+        if let Some(amount) = words.windows(2).find_map(|window| {
+            if window[0] == "toxic" {
+                window[1].parse::<u32>().ok()
+            } else {
+                None
+            }
+        }) {
+            builder = builder.toxic(amount);
+        }
         if words.contains(&"sacrifice")
             && words.contains(&"this")
             && words.contains(&"token")
@@ -5242,7 +5251,21 @@ fn token_definition_for(name: &str) -> Option<CardDefinition> {
             };
             builder = builder.with_ability(ability);
         }
-        if words.contains(&"cant") && words.contains(&"block") {
+        let has_cant_attack_or_block = words.contains(&"cant")
+            && words.contains(&"attack")
+            && words.contains(&"or")
+            && words.contains(&"block");
+        if has_cant_attack_or_block && words.contains(&"alone") {
+            builder = builder.with_ability(Ability::static_ability(StaticAbility::custom(
+                "cant_attack_or_block_alone",
+                "this token can't attack or block alone".to_string(),
+            )));
+        } else if has_cant_attack_or_block {
+            builder = builder.with_ability(Ability::static_ability(StaticAbility::custom(
+                "cant_attack_or_block",
+                "this token can't attack or block".to_string(),
+            )));
+        } else if words.contains(&"cant") && words.contains(&"block") {
             builder = builder.with_ability(Ability::static_ability(StaticAbility::cant_block()));
         }
         if words.contains(&"can")

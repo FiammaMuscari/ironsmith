@@ -1790,6 +1790,22 @@ fn test_parse_this_creature_cant_attack_alone_static_line() {
 }
 
 #[test]
+fn test_parse_this_token_cant_attack_or_block_alone_static_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Token Restriction Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "When this creature enters, create a 4/4 white Beast creature token with \"This token can't attack or block alone.\"",
+        )
+        .expect("token cant-attack-or-block-alone restriction should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("this token can't attack or block alone"),
+        "expected token cant-attack-or-block-alone text in oracle-like output, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_lands_dont_untap_during_controllers_steps_static_line() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Rising Waters Probe")
         .card_types(vec![CardType::Enchantment])
