@@ -5488,20 +5488,40 @@ fn describe_condition(condition: &Condition) -> String {
             format!("an opponent controls {}", filter.description())
         }
         Condition::PlayerControls { player, filter } => {
+            let subject = describe_player_filter(player);
+            let mut described_filter = filter.clone();
+            if described_filter
+                .controller
+                .as_ref()
+                .is_some_and(|controller| controller == player)
+            {
+                described_filter.controller = None;
+            }
             format!(
-                "{} controls {}",
-                describe_player_filter(player),
-                filter.description()
+                "{} {} {}",
+                subject,
+                player_verb(&subject, "control", "controls"),
+                described_filter.description()
             )
         }
         Condition::PlayerControlsMost { player, filter } => {
-            let mut subject = strip_indefinite_article(&filter.description()).to_string();
+            let controller = describe_player_filter(player);
+            let mut described_filter = filter.clone();
+            if described_filter
+                .controller
+                .as_ref()
+                .is_some_and(|filter_controller| filter_controller == player)
+            {
+                described_filter.controller = None;
+            }
+            let mut subject = strip_indefinite_article(&described_filter.description()).to_string();
             if !subject.ends_with('s') {
                 subject.push('s');
             }
             format!(
-                "{} controls the most {}",
-                describe_player_filter(player),
+                "{} {} the most {}",
+                controller,
+                player_verb(&controller, "control", "controls"),
                 subject
             )
         }
@@ -5577,6 +5597,24 @@ fn describe_condition(condition: &Condition) -> String {
             } = inner.as_ref()
             {
                 "no mana was spent to cast the target spell".to_string()
+            } else if let Condition::PlayerControls { player, filter } = inner.as_ref() {
+                let subject = describe_player_filter(player);
+                let mut described_filter = filter.clone();
+                if described_filter
+                    .controller
+                    .as_ref()
+                    .is_some_and(|controller| controller == player)
+                {
+                    described_filter.controller = None;
+                }
+                let described = described_filter.description();
+                let object_text = strip_indefinite_article(&described);
+                format!(
+                    "{} {} no {}",
+                    subject,
+                    player_verb(&subject, "control", "controls"),
+                    object_text
+                )
             } else {
                 format!("not ({})", describe_condition(inner))
             }
@@ -8415,6 +8453,15 @@ fn describe_effect_impl(effect: &Effect) -> String {
             .map(describe_mana_symbol)
             .collect::<Vec<_>>()
             .join("");
+        if !matches!(add_mana.player, PlayerFilter::You) {
+            let player = describe_player_filter(&add_mana.player);
+            return format!(
+                "{} {} {}",
+                player,
+                player_verb(&player, "add", "adds"),
+                if mana.is_empty() { "{0}" } else { &mana }
+            );
+        }
         return format!(
             "Add {} to {}",
             if mana.is_empty() { "{0}" } else { &mana },
@@ -10551,6 +10598,30 @@ fn describe_additional_cost_effects(effects: &[Effect]) -> String {
     describe_effect_list(effects)
 }
 
+fn describe_alternative_cost_effects(cost_effects: &[Effect]) -> String {
+    if cost_effects.len() == 2
+        && let Some(choose) = cost_effects[0].downcast_ref::<crate::effects::ChooseObjectsEffect>()
+        && let Some(return_to_hand) =
+            cost_effects[1].downcast_ref::<crate::effects::ReturnToHandEffect>()
+        && let ChooseSpec::Target(inner) = &return_to_hand.spec
+        && let ChooseSpec::Object(filter) = inner.as_ref()
+    {
+        let references_chosen = filter.tagged_constraints.len() == 1
+            && filter.tagged_constraints[0].tag == choose.tag
+            && filter.tagged_constraints[0].relation
+                == crate::filter::TaggedOpbjectRelation::IsTaggedObject;
+        if references_chosen {
+            let mut described = choose.filter.clone();
+            if described.zone == Some(Zone::Battlefield) {
+                described.zone = None;
+            }
+            return format!("return {} to its owner's hand", described.description());
+        }
+    }
+
+    describe_effect_list(cost_effects)
+}
+
 pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
     let mut out = Vec::new();
     let has_attach_only_spell_effect = def.spell_effect.as_ref().is_some_and(|effects| {
@@ -10570,7 +10641,7 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
                     parts.push(format!("pay {}", cost.to_oracle()));
                 }
                 if !cost_effects.is_empty() {
-                    parts.push(describe_effect_list(cost_effects));
+                    parts.push(describe_alternative_cost_effects(cost_effects));
                 }
                 let clause = if parts.is_empty() {
                     "cast this spell without paying its mana cost".to_string()

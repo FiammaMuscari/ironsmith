@@ -1160,6 +1160,58 @@ fn split_cost_segments(tokens: &[Token]) -> Vec<Vec<Token>> {
     segments
 }
 
+fn alternative_cast_parts_from_total_cost(
+    total_cost: &crate::cost::TotalCost,
+) -> (Option<ManaCost>, Vec<Effect>) {
+    let mut mana_cost: Option<ManaCost> = None;
+    let mut cost_effects = Vec::new();
+
+    for cost in total_cost.costs() {
+        if let Some(mana) = cost.mana_cost_ref() {
+            if mana_cost.is_none() {
+                mana_cost = Some(mana.clone());
+            }
+            continue;
+        }
+        if let Some(effect) = cost.effect_ref() {
+            cost_effects.push(effect.clone());
+            continue;
+        }
+        if cost.is_life_cost() {
+            if let Some(amount) = cost.life_amount() {
+                cost_effects.push(Effect::pay_life(amount));
+            }
+            continue;
+        }
+        if cost.is_discard() {
+            let (count, card_type) = cost.discard_details().unwrap_or((1, None));
+            let card_filter = card_type.map(|card_type| ObjectFilter {
+                card_types: vec![card_type],
+                ..Default::default()
+            });
+            cost_effects.push(Effect::discard_player_filtered(
+                Value::Fixed(count as i32),
+                PlayerFilter::You,
+                false,
+                card_filter,
+            ));
+            continue;
+        }
+        if cost.is_exile_from_hand() {
+            if let Some((count, color_filter)) = cost.exile_from_hand_details() {
+                cost_effects.push(Effect::exile_from_hand_as_cost(count, color_filter));
+            }
+            continue;
+        }
+        if cost.is_sacrifice_self() {
+            cost_effects.push(Effect::sacrifice_source());
+            continue;
+        }
+    }
+
+    (mana_cost, cost_effects)
+}
+
 fn parse_mana_output_options_tokens(
     tokens: &[Token],
 ) -> Result<Vec<Vec<ManaSymbol>>, CardTextError> {
@@ -1475,7 +1527,8 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
                 ));
             }
             let (total_cost, mut cost_effects) = parse_activation_cost(cost_tokens)?;
-            let mana_cost = total_cost.mana_cost().cloned();
+            let (mana_cost, mut total_cost_effects) = alternative_cast_parts_from_total_cost(&total_cost);
+            cost_effects.append(&mut total_cost_effects);
             // Keep cost effects stable for deterministic snapshots.
             if !cost_effects.is_empty() {
                 cost_effects.shrink_to_fit();
@@ -10913,6 +10966,15 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
             && words.contains(&"turn") =>
         {
             Ok(TriggerSpec::BeginningOfCombat(
+                parse_possessive_clause_player_filter(&words),
+            ))
+        }
+        _ if words.contains(&"beginning")
+            && words.contains(&"first")
+            && words.contains(&"main")
+            && words.contains(&"phase") =>
+        {
+            Ok(TriggerSpec::BeginningOfPrecombatMain(
                 parse_possessive_clause_player_filter(&words),
             ))
         }
@@ -20744,6 +20806,24 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
                 subtypes,
                 ..Default::default()
             }));
+        }
+    }
+
+    if filtered.len() >= 3
+        && filtered[0] == "you"
+        && (filtered[1] == "control" || filtered[1] == "controls")
+        && filtered[2] == "no"
+    {
+        let control_tokens = filtered[3..]
+            .iter()
+            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .collect::<Vec<_>>();
+        if let Ok(mut filter) = parse_object_filter(&control_tokens, false) {
+            filter.controller = Some(PlayerFilter::You);
+            return Ok(PredicateAst::PlayerControlsNo {
+                player: PlayerAst::You,
+                filter,
+            });
         }
     }
 

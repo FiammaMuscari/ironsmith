@@ -2,9 +2,11 @@ use super::*;
 use crate::ability::AbilityKind;
 use crate::color::Color;
 use crate::compiled_text::{compiled_lines, oracle_like_lines};
-use crate::effects::{CreateTokenEffect, ReturnFromGraveyardToHandEffect, SearchLibraryEffect};
+use crate::effects::{
+    AddManaEffect, CreateTokenEffect, ReturnFromGraveyardToHandEffect,
+};
 use crate::static_abilities::StaticAbilityId;
-use crate::target::{ChooseSpec, ObjectRef, PlayerFilter};
+use crate::target::{ChooseSpec, PlayerFilter};
 
 #[test]
 fn test_creature_with_keywords() {
@@ -5391,6 +5393,82 @@ fn parse_alternative_cost_with_return_to_hand_segment() {
     CardDefinitionBuilder::new(CardId::new(), "Borderpost Variant")
         .parse_text("You may pay {1} and return a basic land you control to its owner's hand rather than pay this spell's mana cost.")
         .expect("alternative cost with return-to-hand segment should parse");
+}
+
+#[test]
+fn parse_alternative_cost_with_return_to_hand_segment_preserves_cost_effects() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Borderpost Variant")
+        .card_types(vec![CardType::Artifact])
+        .parse_text(
+            "You may pay {1} and return a basic land you control to its owner's hand rather than pay this spell's mana cost.",
+        )
+        .expect("alternative cost with return-to-hand segment should parse");
+
+    let alternative = def
+        .alternative_casts
+        .first()
+        .expect("expected parsed alternative cast");
+    assert!(
+        alternative.uses_composed_cost_effects(),
+        "expected non-mana alternative cost effects to be preserved"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("return") && rendered.contains("basic land"),
+        "expected return-land cost in compiled text, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_if_you_control_no_artifacts_compiles_to_negated_player_controls() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "No Artifacts Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Draw two cards. If you control no artifacts, discard a card.")
+        .expect("control-no-artifacts predicate should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("if you control no artifac"),
+        "expected negated control predicate in compiled text, got {rendered}"
+    );
+
+    let debug = format!("{:#?}", def.spell_effect);
+    assert!(
+        debug.contains("Not(") && debug.contains("PlayerControls"),
+        "expected control-no predicate to compile to Condition::Not(PlayerControls), got {debug}"
+    );
+}
+
+#[test]
+fn parse_first_main_phase_trigger_uses_precombat_main_and_active_player() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Vineyard Probe")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("At the beginning of each player's first main phase, that player adds {G}{G}.")
+        .expect("first-main-phase trigger should parse");
+
+    let ability = def.abilities.first().expect("expected triggered ability");
+    let AbilityKind::Triggered(triggered) = &ability.kind else {
+        panic!("expected triggered ability");
+    };
+    assert!(
+        triggered
+            .trigger
+            .display()
+            .to_ascii_lowercase()
+            .contains("first main phase"),
+        "expected first-main-phase trigger display, got {}",
+        triggered.trigger.display()
+    );
+
+    let add_mana = triggered.effects[0]
+        .downcast_ref::<AddManaEffect>()
+        .expect("expected add-mana effect");
+    assert_eq!(
+        add_mana.player,
+        PlayerFilter::Active,
+        "expected \"that player\" to resolve to active player"
+    );
 }
 
 #[test]

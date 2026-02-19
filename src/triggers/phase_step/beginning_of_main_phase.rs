@@ -85,10 +85,12 @@ impl TriggerMatcher for BeginningOfMainPhaseTrigger {
     }
 
     fn display(&self) -> String {
-        let phase_str = match self.phase_type {
-            MainPhaseType::Precombat => "precombat main phase",
-            MainPhaseType::Postcombat => "postcombat main phase",
-            MainPhaseType::Either => "main phase",
+        let phase_str = match (&self.player, self.phase_type) {
+            (PlayerFilter::Any, MainPhaseType::Precombat) => "player's first main phase",
+            (PlayerFilter::Any, MainPhaseType::Postcombat) => "player's second main phase",
+            (_, MainPhaseType::Precombat) => "precombat main phase",
+            (_, MainPhaseType::Postcombat) => "postcombat main phase",
+            (_, MainPhaseType::Either) => "main phase",
         };
         match &self.player {
             PlayerFilter::You => format!("At the beginning of your {}", phase_str),

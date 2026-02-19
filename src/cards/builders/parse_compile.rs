@@ -3268,6 +3268,15 @@ fn compile_effect(
                         filter: resolved,
                     }
                 }
+                PredicateAst::PlayerControlsNo { player, filter } => {
+                    let player = resolve_non_target_player_filter(*player, ctx)?;
+                    let mut resolved = resolve_it_tag(filter, ctx)?;
+                    resolved.zone = None;
+                    Condition::Not(Box::new(Condition::PlayerControls {
+                        player,
+                        filter: resolved,
+                    }))
+                }
                 PredicateAst::PlayerControlsMost { player, filter } => {
                     let player = resolve_non_target_player_filter(*player, ctx)?;
                     let mut resolved = resolve_it_tag(filter, ctx)?;

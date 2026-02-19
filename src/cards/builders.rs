@@ -298,6 +298,10 @@ enum PredicateAst {
         player: PlayerAst,
         filter: ObjectFilter,
     },
+    PlayerControlsNo {
+        player: PlayerAst,
+        filter: ObjectFilter,
+    },
     PlayerControlsMost {
         player: PlayerAst,
         filter: ObjectFilter,
