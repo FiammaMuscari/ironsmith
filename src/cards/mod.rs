@@ -15,6 +15,7 @@ pub use definitions::*;
 #[cfg(all(test, feature = "parser-tests-full"))]
 mod parse_snapshots;
 
+#[allow(dead_code)]
 mod generated_registry {
     include!(concat!(env!("OUT_DIR"), "/generated_registry.rs"));
 }

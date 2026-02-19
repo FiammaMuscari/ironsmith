@@ -5,6 +5,9 @@ use crate::decisions::{SearchSpec, make_decision_with_fallback};
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
+use crate::effects::zones::{
+    BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
+};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::ids::ObjectId;
@@ -156,13 +159,15 @@ impl EffectExecutor for SearchLibraryEffect {
 
                 // For other destinations, move then shuffle
                 let new_id = if self.destination == Zone::Battlefield {
-                    // Use ETB processing for battlefield to handle replacement effects
-                    game.move_object_with_etb_processing_with_dm(
+                    match move_to_battlefield_with_options(
+                        game,
+                        ctx,
                         card_id,
-                        Zone::Battlefield,
-                        &mut ctx.decision_maker,
-                    )
-                    .map(|r| r.new_id)
+                        BattlefieldEntryOptions::preserve(false),
+                    ) {
+                        BattlefieldEntryOutcome::Moved(new_id) => Some(new_id),
+                        BattlefieldEntryOutcome::Prevented => None,
+                    }
                 } else {
                     game.move_object(card_id, self.destination)
                 };

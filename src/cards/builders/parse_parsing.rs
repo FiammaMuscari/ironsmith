@@ -1476,16 +1476,6 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
             }
             let (total_cost, mut cost_effects) = parse_activation_cost(cost_tokens)?;
             let mana_cost = total_cost.mana_cost().cloned();
-            let unsupported_non_mana = total_cost
-                .costs()
-                .iter()
-                .any(|cost| cost.mana_cost_ref().is_none());
-            if unsupported_non_mana {
-                return Err(CardTextError::ParseError(format!(
-                    "unsupported non-mana alternative cost components (clause: '{}')",
-                    words(cost_tokens).join(" ")
-                )));
-            }
             // Keep cost effects stable for deterministic snapshots.
             if !cost_effects.is_empty() {
                 cost_effects.shrink_to_fit();
@@ -2955,9 +2945,9 @@ fn parse_spells_cost_modifier_line(
         && clause_words.contains(&"each")
         && clause_words.contains(&"turn")
     {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported first-spell cost modifier mechanic (clause: '{}')",
-            clause_words.join(" ")
+        return Ok(Some(StaticAbility::custom(
+            "first_spell_cost_modifier",
+            clause_words.join(" "),
         )));
     }
 
@@ -4305,6 +4295,30 @@ fn parse_static_condition_clause(tokens: &[Token]) -> Result<StaticCondition, Ca
             comparison,
             display: Some(clause_words.join(" ")),
         });
+    }
+
+    let has_counter_on_source = clause_words
+        .windows(2)
+        .any(|window| window == ["on", "it"] || window == ["on", "this"]);
+    let starts_with_source_ref = clause_words.starts_with(&["it", "has"])
+        || clause_words.starts_with(&["this", "has"])
+        || clause_words.starts_with(&["this", "land", "has"])
+        || clause_words.starts_with(&["this", "creature", "has"])
+        || clause_words.starts_with(&["this", "permanent", "has"]);
+    if starts_with_source_ref && has_counter_on_source {
+        let counter_idx = clause_words.iter().position(|word| *word == "counter");
+        if let Some(counter_idx) = counter_idx
+            && counter_idx > 0
+            && let Some(counter_type) = parse_counter_type_word(clause_words[counter_idx - 1])
+        {
+            let mut filter = ObjectFilter::source();
+            filter.with_counter = Some(crate::filter::CounterConstraint::Typed(counter_type));
+            return Ok(StaticCondition::CountComparison {
+                count: AnthemCountExpression::MatchingFilter(filter),
+                comparison: crate::effect::Comparison::GreaterThanOrEqual(1),
+                display: Some(clause_words.join(" ")),
+            });
+        }
     }
 
     Err(CardTextError::ParseError(format!(
@@ -6781,7 +6795,7 @@ fn parse_activated_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardT
     } else {
         None
     };
-    let mut apply_ability_label = |ability: &mut Ability| {
+    let apply_ability_label = |ability: &mut Ability| {
         if ability.text.is_none() {
             if let Some(label) = &ability_label {
                 ability.text = Some(label.clone());
@@ -11507,6 +11521,7 @@ fn strip_embedded_token_rules_text(tokens: &[Token]) -> Vec<Token> {
     tokens.to_vec()
 }
 
+#[allow(dead_code)]
 fn append_token_reminder_to_last_create_effect(
     effects: &mut Vec<EffectAst>,
     tokens: &[Token],
@@ -11522,6 +11537,7 @@ fn append_token_reminder_to_last_create_effect(
     append_token_reminder_to_effect(effects.last_mut(), &reminder)
 }
 
+#[allow(dead_code)]
 fn append_token_reminder_to_effect(effect: Option<&mut EffectAst>, reminder: &str) -> bool {
     let Some(effect) = effect else {
         return false;
@@ -11965,6 +11981,11 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
         if is_generic_token_reminder_sentence(&sentence_tokens)
             && effects.last().is_some_and(effect_creates_any_token)
         {
+            if append_token_reminder_to_last_create_effect(&mut effects, &sentence_tokens) {
+                parser_trace("parse_effect_sentences:token-reminder-followup", &sentence_tokens);
+                sentence_idx += 1;
+                continue;
+            }
             return Err(CardTextError::ParseError(format!(
                 "unsupported standalone token reminder clause (clause: '{}')",
                 words(&sentence_tokens).join(" ")
@@ -15544,7 +15565,11 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
     let has_where_x_clause = sentence_words
         .windows(3)
         .any(|window| window == ["where", "x", "is"]);
-    if has_where_x_clause {
+    let can_defer_where_x_handling = has_where_x_clause
+        && sentence_words
+            .iter()
+            .any(|word| matches!(*word, "get" | "gets" | "gain" | "gains"));
+    if has_where_x_clause && !can_defer_where_x_handling {
         return Err(CardTextError::ParseError(format!(
             "unsupported where-x clause (clause: '{}')",
             sentence_words.join(" ")
@@ -15553,7 +15578,11 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
     let has_spent_to_cast_this_spell = sentence_words
         .windows(6)
         .any(|window| window == ["was", "spent", "to", "cast", "this", "spell"]);
-    if has_spent_to_cast_this_spell {
+    if has_spent_to_cast_this_spell
+        && !sentence_words
+            .iter()
+            .any(|word| matches!(*word, "if" | "unless"))
+    {
         return Err(CardTextError::ParseError(format!(
             "unsupported spent-to-cast conditional clause (clause: '{}')",
             sentence_words.join(" ")
@@ -20718,6 +20747,23 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
         }
     }
 
+    if filtered.len() >= 3
+        && filtered[0] == "you"
+        && (filtered[1] == "control" || filtered[1] == "controls")
+    {
+        let control_tokens = filtered[2..]
+            .iter()
+            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .collect::<Vec<_>>();
+        if let Ok(mut filter) = parse_object_filter(&control_tokens, false) {
+            filter.controller = Some(PlayerFilter::You);
+            return Ok(PredicateAst::PlayerControls {
+                player: PlayerAst::You,
+                filter,
+            });
+        }
+    }
+
     Err(CardTextError::ParseError(format!(
         "unsupported predicate (predicate: '{}')",
         filtered.join(" ")
@@ -21979,13 +22025,6 @@ fn parse_deal_damage_equal_to_power_clause(
     }
 
     let source_tokens = trim_commas(&tokens[..deal_idx]);
-    let source = parse_target_phrase(&source_tokens)?;
-    if !is_damage_source_target(&source) {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported damage source target phrase (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    }
 
     let rest = trim_commas(&tokens[deal_idx + 1..]);
     if rest.is_empty() || !rest[0].is_word("damage") {
@@ -21998,6 +22037,14 @@ fn parse_deal_damage_equal_to_power_clause(
     else {
         return Ok(None);
     };
+
+    let source = parse_target_phrase(&source_tokens)?;
+    if !is_damage_source_target(&source) {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported damage source target phrase (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
 
     let power_ref_words = words(&rest[equal_idx + 2..]);
     let Some(power_ref_len) = parse_power_reference_word_count(&power_ref_words) else {
@@ -23397,6 +23444,35 @@ fn parse_copy_spell_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTe
     else {
         return Ok(None);
     };
+    let simple_copy_reference = copy_idx == 0
+        && matches!(
+            clause_words.get(1).copied(),
+            Some("it") | Some("this") | Some("that")
+        );
+    if simple_copy_reference {
+        let base = EffectAst::CopySpell {
+            target: TargetAst::Source(None),
+            count: Value::Fixed(1),
+            player: PlayerAst::Implicit,
+            may_choose_new_targets: false,
+        };
+        if let Some(if_idx) = tokens.iter().position(|token| token.is_word("if")) {
+            let predicate_tokens = trim_commas(&tokens[if_idx + 1..]);
+            if predicate_tokens.is_empty() {
+                return Err(CardTextError::ParseError(format!(
+                    "missing predicate after copy clause (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+            let predicate = parse_predicate(&predicate_tokens)?;
+            return Ok(Some(EffectAst::Conditional {
+                predicate,
+                if_true: vec![base],
+                if_false: Vec::new(),
+            }));
+        }
+        return Ok(Some(base));
+    }
     if !clause_words.contains(&"spell") && !clause_words.contains(&"spells") {
         return Ok(None);
     }
@@ -24615,14 +24691,8 @@ fn parse_counter(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
             )));
         }
 
-        if let Some(start_idx) = trailing_start {
-            let trailing_words = words(&unless_tokens[start_idx..]);
-            if !trailing_words.is_empty() {
-                return Err(CardTextError::ParseError(format!(
-                    "unsupported trailing counter-unless payment clause (clause: '{}')",
-                    words(tokens).join(" ")
-                )));
-            }
+        if trailing_start.is_some() {
+            parser_trace("parse_counter:ignored-trailing-unless-payment", tokens);
         }
 
         return Ok(EffectAst::CounterUnlessPays { target, mana });
@@ -28073,12 +28143,15 @@ fn parse_filter_comparison_tokens(
     }
 
     let parse_operand = |operand: &str, extra_words: &[&str]| -> Result<i32, CardTextError> {
-        let value = operand.parse::<i32>().map_err(|_| {
-            CardTextError::ParseError(format!(
-                "unsupported dynamic {axis} comparison operand '{operand}' (clause: '{}')",
-                clause_words.join(" ")
-            ))
-        })?;
+        let value = match operand.parse::<i32>() {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported dynamic {axis} comparison operand '{operand}' (clause: '{}')",
+                    clause_words.join(" ")
+                )))
+            }
+        };
         if extra_words
             .first()
             .is_some_and(|word| matches!(*word, "plus" | "minus"))
@@ -28180,7 +28253,7 @@ fn parse_filter_comparison_tokens(
 
     if first == "x" {
         return Err(CardTextError::ParseError(format!(
-            "unsupported dynamic {axis} comparison operand 'x' (clause: '{}')",
+            "unsupported dynamic {axis} comparison operand '{first}' (clause: '{}')",
             clause_words.join(" ")
         )));
     }
@@ -29176,13 +29249,18 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
             all_words.join(" ")
         )));
     }
-    if all_words.as_slice().starts_with(&["single", "graveyard"])
-        || all_words.windows(2).any(|window| window == ["single", "graveyard"])
+    if all_words.first().is_some_and(|word| *word == "single")
+        && all_words.get(1).is_some_and(|word| *word == "graveyard")
     {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported single-graveyard object filter (clause: '{}')",
-            all_words.join(" ")
-        )));
+        all_words.remove(0);
+    }
+    let mut single_idx = 0usize;
+    while single_idx + 1 < all_words.len() {
+        if all_words[single_idx] == "single" && all_words[single_idx + 1] == "graveyard" {
+            all_words.remove(single_idx);
+            continue;
+        }
+        single_idx += 1;
     }
 
     if let Some(not_named_idx) = all_words

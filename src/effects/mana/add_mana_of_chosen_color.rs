@@ -1,12 +1,13 @@
 //! Add mana of the chosen color effect implementation.
 
+use super::choice_helpers::{choose_mana_colors, credit_repeated_mana_symbol};
 use crate::color::Color;
-use crate::decisions::{ManaColorsSpec, make_decision};
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
+use crate::mana::ManaSymbol;
 use crate::target::PlayerFilter;
 
 /// Effect that adds mana of a previously chosen color.
@@ -62,37 +63,39 @@ impl EffectExecutor for AddManaOfChosenColorEffect {
             if fixed == chosen {
                 fixed
             } else {
-                let colors = vec![fixed, chosen];
-                let spec = ManaColorsSpec::restricted(ctx.source, 1, true, colors.clone());
-                let mut decision = make_decision(
-                    game,
-                    &mut ctx.decision_maker,
-                    player_id,
-                    Some(ctx.source),
-                    spec,
-                );
-                decision.pop().unwrap_or(fixed)
+                let options = [fixed, chosen];
+                choose_mana_colors(game, ctx, player_id, 1, true, Some(&options), fixed)
+                    .into_iter()
+                    .next()
+                    .unwrap_or(fixed)
             }
         } else {
             chosen
         };
 
-        if let Some(p) = game.player_mut(player_id) {
-            for _ in 0..amount {
-                match selected {
-                    Color::White => p.mana_pool.white += 1,
-                    Color::Blue => p.mana_pool.blue += 1,
-                    Color::Black => p.mana_pool.black += 1,
-                    Color::Red => p.mana_pool.red += 1,
-                    Color::Green => p.mana_pool.green += 1,
-                }
-            }
-        }
+        credit_repeated_mana_symbol(game, player_id, ManaSymbol::from_color(selected), amount);
 
         Ok(EffectOutcome::count(amount as i32))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
+    }
+
+    fn producible_mana_symbols(
+        &self,
+        game: &GameState,
+        source: crate::ids::ObjectId,
+        _controller: crate::ids::PlayerId,
+    ) -> Option<Vec<ManaSymbol>> {
+        let chosen = game.chosen_color(source).unwrap_or(Color::Green);
+        let mut symbols = vec![ManaSymbol::from_color(chosen)];
+        if let Some(fixed) = self.fixed_option {
+            let fixed_symbol = ManaSymbol::from_color(fixed);
+            if !symbols.contains(&fixed_symbol) {
+                symbols.push(fixed_symbol);
+            }
+        }
+        Some(symbols)
     }
 }

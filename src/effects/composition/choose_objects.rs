@@ -3,16 +3,11 @@
 //! This effect allows a player to choose objects matching a filter and tag them
 //! for reference by subsequent effects in the same spell/ability.
 
-use crate::decisions::make_decision;
-use crate::decisions::specs::ChooseObjectsSpec;
-use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
+use crate::effect::{ChoiceCount, EffectOutcome};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::filter::Comparison;
 use crate::game_state::GameState;
-use crate::ids::ObjectId;
-use crate::snapshot::ObjectSnapshot;
 use crate::tag::TagKey;
 use crate::target::{ObjectFilter, PlayerFilter};
 use crate::zone::Zone;
@@ -250,134 +245,7 @@ impl EffectExecutor for ChooseObjectsEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        // Resolve the chooser
-        let chooser_id = resolve_player_filter(game, &self.chooser, ctx)?;
-
-        // If this is a library search, honor search restrictions and track it.
-        if self.is_search && !game.can_search_library(chooser_id) {
-            return Ok(EffectOutcome::from_result(EffectResult::Prevented));
-        }
-        if self.is_search {
-            game.library_searches_this_turn.insert(chooser_id);
-        }
-
-        // Get filter context - use the controller's perspective for "you control" filters
-        let filter_ctx = ctx.filter_context(game);
-
-        // Determine the zone to search - prefer filter's zone if set, otherwise use effect's zone
-        let search_zone = self.filter.zone.unwrap_or(self.zone);
-
-        // Find all valid objects in the specified zone
-        let candidates: Vec<ObjectId> = match search_zone {
-            Zone::Battlefield => game
-                .battlefield
-                .iter()
-                .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
-                .filter(|(_, obj)| self.filter.matches(obj, &filter_ctx, game))
-                .map(|(id, _)| id)
-                .collect(),
-            Zone::Hand => {
-                // For hand, we need to filter by the chooser's hand
-                let player = game
-                    .player(chooser_id)
-                    .ok_or(ExecutionError::PlayerNotFound(chooser_id))?;
-                player
-                    .hand
-                    .iter()
-                    .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
-                    .filter(|(_, obj)| self.filter.matches(obj, &filter_ctx, game))
-                    .map(|(id, _)| id)
-                    .collect()
-            }
-            Zone::Graveyard => {
-                let player = game
-                    .player(chooser_id)
-                    .ok_or(ExecutionError::PlayerNotFound(chooser_id))?;
-                if self.top_only {
-                    player
-                        .graveyard
-                        .iter()
-                        .rev()
-                        .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
-                        .find(|(_, obj)| self.filter.matches(obj, &filter_ctx, game))
-                        .map(|(id, _)| vec![id])
-                        .unwrap_or_default()
-                } else {
-                    player
-                        .graveyard
-                        .iter()
-                        .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
-                        .filter(|(_, obj)| self.filter.matches(obj, &filter_ctx, game))
-                        .map(|(id, _)| id)
-                        .collect()
-                }
-            }
-            _ => {
-                // For other zones, use the generic objects_in_zone method
-                game.objects_in_zone(search_zone)
-                    .into_iter()
-                    .filter_map(|id| game.object(id).map(|obj| (id, obj)))
-                    .filter(|(_, obj)| self.filter.matches(obj, &filter_ctx, game))
-                    .map(|(id, _)| id)
-                    .collect()
-            }
-        };
-
-        if candidates.is_empty() {
-            return Ok(EffectOutcome::count(0));
-        }
-
-        let min = self.count.min.min(candidates.len());
-        let max = self
-            .count
-            .max
-            .unwrap_or(candidates.len())
-            .min(candidates.len());
-
-        if max == 0 {
-            return Ok(EffectOutcome::count(0));
-        }
-
-        let spec = ChooseObjectsSpec::new(
-            ctx.source,
-            self.description.to_string(),
-            candidates.clone(),
-            min,
-            Some(max),
-        );
-        let mut chosen: Vec<ObjectId> =
-            make_decision(game, ctx.decision_maker, chooser_id, Some(ctx.source), spec);
-
-        // Clamp to max and ensure uniqueness.
-        chosen.truncate(max);
-        chosen.sort();
-        chosen.dedup();
-
-        if chosen.len() < min {
-            for id in &candidates {
-                if chosen.len() >= min {
-                    break;
-                }
-                if !chosen.contains(id) {
-                    chosen.push(*id);
-                }
-            }
-        }
-
-        // Create snapshots and tag them
-        let snapshots: Vec<ObjectSnapshot> = chosen
-            .iter()
-            .filter_map(|&id| {
-                game.object(id)
-                    .map(|obj| ObjectSnapshot::from_object(obj, game))
-            })
-            .collect();
-
-        if !snapshots.is_empty() {
-            ctx.tag_objects(self.tag.clone(), snapshots);
-        }
-
-        Ok(EffectOutcome::from_result(EffectResult::Objects(chosen)))
+        super::choose_objects_runtime::run_choose_objects(self, game, ctx)
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
@@ -493,7 +361,8 @@ impl EffectExecutor for ChooseObjectsEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
-    use crate::ids::{CardId, PlayerId};
+    use crate::effect::EffectResult;
+    use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
     use crate::types::CardType;

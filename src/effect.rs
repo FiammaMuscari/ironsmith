@@ -17,7 +17,8 @@
 //! can reference those results using `Effect::if_` with an `EffectPredicate`.
 
 use crate::effects::EffectExecutor;
-use crate::ids::ObjectId;
+use crate::game_state::GameState;
+use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaSymbol;
 use crate::object::CounterType;
 use crate::tag::TagKey;
@@ -1033,6 +1034,16 @@ impl Effect {
     /// Attempt to downcast this effect to a concrete executor type.
     pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
         (self.0.as_ref() as &dyn std::any::Any).downcast_ref::<T>()
+    }
+
+    /// Return mana symbols this effect can produce for inference call sites.
+    pub fn producible_mana_symbols(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<Vec<ManaSymbol>> {
+        self.0.producible_mana_symbols(game, source, controller)
     }
 
     /// Tag this effect's target for reference by subsequent effects.

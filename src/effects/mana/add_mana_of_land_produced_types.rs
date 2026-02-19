@@ -1,8 +1,7 @@
 //! Add mana of any color/type that lands matching a filter could produce.
 
+use super::choice_helpers::{choose_mana_symbols, credit_mana_symbols};
 use crate::ability::{AbilityKind, ManaAbility, ManaAbilityCondition};
-use crate::color::Color;
-use crate::decisions::ask_choose_one;
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
@@ -70,39 +69,17 @@ impl EffectExecutor for AddManaOfLandProducedTypesEffect {
             return Ok(EffectOutcome::count(0));
         }
 
-        let choices = available
-            .iter()
-            .map(|symbol| (mana_symbol_oracle(*symbol), *symbol))
-            .collect::<Vec<_>>();
+        let chosen_symbols = choose_mana_symbols(
+            game,
+            ctx,
+            player_id,
+            amount,
+            self.same_type,
+            &available,
+            available[0],
+        );
 
-        let mut chosen_symbols = Vec::new();
-        if self.same_type {
-            let chosen = ask_choose_one(
-                game,
-                &mut ctx.decision_maker,
-                player_id,
-                ctx.source,
-                &choices,
-            );
-            chosen_symbols.resize(amount as usize, chosen);
-        } else {
-            for _ in 0..amount {
-                let chosen = ask_choose_one(
-                    game,
-                    &mut ctx.decision_maker,
-                    player_id,
-                    ctx.source,
-                    &choices,
-                );
-                chosen_symbols.push(chosen);
-            }
-        }
-
-        if let Some(player) = game.player_mut(player_id) {
-            for symbol in chosen_symbols {
-                player.mana_pool.add(symbol, 1);
-            }
-        }
+        credit_mana_symbols(game, player_id, chosen_symbols);
 
         Ok(EffectOutcome::count(amount as i32))
     }
@@ -140,7 +117,13 @@ fn collect_available_mana_symbols(
             }
             if let Some(effects) = &mana_ability.effects {
                 for effect in effects {
-                    infer_symbols_from_mana_effect(game, perm.controller, effect, &mut symbols);
+                    infer_symbols_from_mana_effect(
+                        game,
+                        perm.id,
+                        perm.controller,
+                        effect,
+                        &mut symbols,
+                    );
                 }
             }
         }
@@ -246,78 +229,15 @@ fn mana_ability_condition_met(
 
 fn infer_symbols_from_mana_effect(
     game: &GameState,
+    source: crate::ids::ObjectId,
     land_controller: crate::ids::PlayerId,
     effect: &crate::effect::Effect,
     out: &mut Vec<ManaSymbol>,
 ) {
-    if let Some(add_mana) = effect.downcast_ref::<crate::effects::AddManaEffect>() {
-        for symbol in &add_mana.mana {
-            push_symbol_if_addable(out, *symbol);
+    if let Some(inferred) = effect.producible_mana_symbols(game, source, land_controller) {
+        for symbol in inferred {
+            push_symbol_if_addable(out, symbol);
         }
-        return;
-    }
-    if let Some(add_scaled) = effect.downcast_ref::<crate::effects::AddScaledManaEffect>() {
-        for symbol in &add_scaled.mana {
-            push_symbol_if_addable(out, *symbol);
-        }
-        return;
-    }
-    if effect
-        .downcast_ref::<crate::effects::AddColorlessManaEffect>()
-        .is_some()
-    {
-        push_symbol_if_addable(out, ManaSymbol::Colorless);
-        return;
-    }
-    if effect
-        .downcast_ref::<crate::effects::AddManaOfAnyColorEffect>()
-        .is_some()
-        || effect
-            .downcast_ref::<crate::effects::AddManaOfAnyOneColorEffect>()
-            .is_some()
-        || effect
-            .downcast_ref::<crate::effects::mana::AddManaOfImprintedColorsEffect>()
-            .is_some()
-    {
-        push_all_colored_symbols(out);
-        return;
-    }
-    if effect
-        .downcast_ref::<crate::effects::AddManaFromCommanderColorIdentityEffect>()
-        .is_some()
-    {
-        let identity = game.get_commander_color_identity(land_controller);
-        if identity.is_empty() {
-            push_symbol_if_addable(out, ManaSymbol::Colorless);
-        } else {
-            if identity.contains(Color::White) {
-                push_symbol_if_addable(out, ManaSymbol::White);
-            }
-            if identity.contains(Color::Blue) {
-                push_symbol_if_addable(out, ManaSymbol::Blue);
-            }
-            if identity.contains(Color::Black) {
-                push_symbol_if_addable(out, ManaSymbol::Black);
-            }
-            if identity.contains(Color::Red) {
-                push_symbol_if_addable(out, ManaSymbol::Red);
-            }
-            if identity.contains(Color::Green) {
-                push_symbol_if_addable(out, ManaSymbol::Green);
-            }
-        }
-    }
-}
-
-fn push_all_colored_symbols(out: &mut Vec<ManaSymbol>) {
-    for symbol in [
-        ManaSymbol::White,
-        ManaSymbol::Blue,
-        ManaSymbol::Black,
-        ManaSymbol::Red,
-        ManaSymbol::Green,
-    ] {
-        push_symbol_if_addable(out, symbol);
     }
 }
 
@@ -359,25 +279,16 @@ fn canonical_symbol_order(symbol: ManaSymbol) -> usize {
     }
 }
 
-fn mana_symbol_oracle(symbol: ManaSymbol) -> String {
-    match symbol {
-        ManaSymbol::White => "{W}".to_string(),
-        ManaSymbol::Blue => "{U}".to_string(),
-        ManaSymbol::Black => "{B}".to_string(),
-        ManaSymbol::Red => "{R}".to_string(),
-        ManaSymbol::Green => "{G}".to_string(),
-        ManaSymbol::Colorless => "{C}".to_string(),
-        _ => "{?}".to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ability::Ability;
-    use crate::card::CardBuilder;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::cost::TotalCost;
     use crate::effect::EffectResult;
     use crate::ids::{CardId, PlayerId};
+    use crate::mana::ManaCost;
+    use crate::object::Object;
     use crate::types::CardType;
     use crate::zone::Zone;
 
@@ -400,6 +311,41 @@ mod tests {
                 .push(Ability::mana(crate::cost::TotalCost::free(), mana));
         }
         id
+    }
+
+    fn create_land_with_mana_effects(
+        game: &mut GameState,
+        owner: PlayerId,
+        name: &str,
+        effects: Vec<crate::effect::Effect>,
+    ) -> crate::ids::ObjectId {
+        let card = CardBuilder::new(CardId::new(), name)
+            .card_types(vec![CardType::Land])
+            .build();
+        let id = game.create_object_from_card(&card, owner, Zone::Battlefield);
+        if let Some(obj) = game.object_mut(id) {
+            obj.abilities
+                .push(Ability::mana_with_effects(TotalCost::free(), effects));
+        }
+        id
+    }
+
+    fn setup_commander(game: &mut GameState, player: PlayerId, colors: Vec<ManaSymbol>) {
+        let commander_card = CardBuilder::new(CardId::new(), "Commander")
+            .mana_cost(ManaCost::from_pips(
+                colors.into_iter().map(|symbol| vec![symbol]).collect(),
+            ))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(3, 3))
+            .build();
+
+        let id = game.new_object_id();
+        let commander = Object::from_card(id, &commander_card, player, Zone::Command);
+        game.add_object(commander);
+
+        if let Some(state) = game.player_mut(player) {
+            state.add_commander(id);
+        }
     }
 
     #[test]
@@ -476,5 +422,74 @@ mod tests {
         assert_eq!(result.result, EffectResult::Count(1));
         let pool = &game.player(alice).expect("alice exists").mana_pool;
         assert_eq!(pool.colorless, 1);
+    }
+
+    #[test]
+    fn infers_symbols_from_effect_based_any_color_ability() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = create_land_with_mana_effects(
+            &mut game,
+            alice,
+            "Prismatic Test Land",
+            vec![crate::effect::Effect::new(
+                crate::effects::AddManaOfAnyColorEffect::you(1),
+            )],
+        );
+
+        let effect = AddManaOfLandProducedTypesEffect::new(
+            1,
+            PlayerFilter::You,
+            ObjectFilter::land().you_control(),
+            false,
+            false,
+        );
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("effect resolves");
+
+        assert_eq!(result.result, EffectResult::Count(1));
+        let pool = &game.player(alice).expect("alice exists").mana_pool;
+        assert_eq!(
+            pool.white, 1,
+            "default choice should use first inferred symbol"
+        );
+        assert_eq!(pool.total(), 1);
+    }
+
+    #[test]
+    fn infers_symbols_from_effect_based_commander_identity_ability() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        setup_commander(&mut game, alice, vec![ManaSymbol::Black, ManaSymbol::Red]);
+        let source = create_land_with_mana_effects(
+            &mut game,
+            alice,
+            "Commander Test Land",
+            vec![crate::effect::Effect::new(
+                crate::effects::AddManaFromCommanderColorIdentityEffect::you(1),
+            )],
+        );
+
+        let effect = AddManaOfLandProducedTypesEffect::new(
+            1,
+            PlayerFilter::You,
+            ObjectFilter::land().you_control(),
+            false,
+            false,
+        );
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("effect resolves");
+
+        assert_eq!(result.result, EffectResult::Count(1));
+        let pool = &game.player(alice).expect("alice exists").mana_pool;
+        assert_eq!(
+            pool.black, 1,
+            "default choice should use first inferred symbol"
+        );
+        assert_eq!(pool.total(), 1);
     }
 }

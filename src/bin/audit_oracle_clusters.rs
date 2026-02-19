@@ -1787,7 +1787,6 @@ fn normalize_cast_cost_conditional_reference(line: &str) -> String {
 
     if let Some(marker_start) = lower.find("spells that target ") {
         let prefix_len = "spells that target ".len();
-        let tail_lower = &lower[marker_start + prefix_len..];
         let tail = &normalized[marker_start + prefix_len..];
         if let Some((_, cost_and_tail)) = tail.split_once(" cost ") {
             let cost_and_tail = cost_and_tail.trim_start();
@@ -1866,7 +1865,7 @@ fn normalize_cast_cost_conditional_reference(line: &str) -> String {
 fn normalize_target_count_wording_for_compare(line: &str) -> String {
     let mut normalized = line.to_string();
 
-    let mut tokens: Vec<&str> = normalized.split_whitespace().collect();
+    let tokens: Vec<&str> = normalized.split_whitespace().collect();
     let mut collapsed: Vec<&str> = Vec::with_capacity(tokens.len());
     let mut idx = 0usize;
     while idx < tokens.len() {
@@ -2701,7 +2700,7 @@ fn normalize_word(token: &str) -> Option<String> {
 }
 
 fn replace_case_insensitive(text: &str, needle: &str, replacement: &str) -> String {
-    let mut replacement_text = text.to_string();
+    let replacement_text = text.to_string();
     let haystack = replacement_text.to_ascii_lowercase();
     let needle = needle.to_ascii_lowercase();
     if needle.is_empty() {
@@ -3044,6 +3043,7 @@ fn tokens_match_subsetish_with_threshold(
     (overlap as f32 / tokens.len() as f32) >= threshold
 }
 
+#[allow(dead_code)]
 fn is_activation_restriction_tokens(tokens: &[String]) -> bool {
     tokens.len() >= 2 && tokens[0] == "activate" && tokens[1] == "only"
 }
@@ -3753,7 +3753,7 @@ fn merge_destroy_all_compiled_lines(lines: &[String]) -> Vec<String> {
     const DESTROY_ALL_TYPES: [&str; 3] = ["artifacts", "creatures", "enchantments"];
 
     while idx < split_lines.len() {
-        let Some(mut first) = is_destroy_all_clause(&split_lines[idx]) else {
+        let Some(first) = is_destroy_all_clause(&split_lines[idx]) else {
             merged.push(split_lines[idx].clone());
             idx += 1;
             continue;

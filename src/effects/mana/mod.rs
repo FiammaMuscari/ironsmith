@@ -11,6 +11,7 @@ mod add_mana_of_chosen_color;
 mod add_mana_of_imprinted_colors;
 mod add_mana_of_land_produced_types;
 mod add_scaled_mana;
+mod choice_helpers;
 mod pay_mana;
 
 pub use add_colorless_mana::AddColorlessManaEffect;

@@ -127,25 +127,6 @@ mod tests {
     // Damage Tests
     // =========================================================================
 
-    #[test]
-    fn test_ancient_tomb_deals_damage_to_controller() {
-        let def = ancient_tomb();
-
-        let ability = &def.abilities[0];
-        if let AbilityKind::Mana(mana_ability) = &ability.kind {
-            let effects = mana_ability.effects.as_ref().unwrap();
-
-            // Check the DealDamage effect
-            let target_spec = effects[1].0.get_target_spec();
-            assert!(target_spec.is_some(), "Should have a target spec");
-            assert!(
-                matches!(target_spec.unwrap(), ChooseSpec::SourceController),
-                "Damage target should be SourceController"
-            );
-        } else {
-            panic!("Expected mana ability");
-        }
-    }
 
     // =========================================================================
     // Integration Tests

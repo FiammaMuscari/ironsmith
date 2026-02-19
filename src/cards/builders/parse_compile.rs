@@ -140,7 +140,12 @@ fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<PlayerFilter>
 fn trigger_supports_event_value(trigger: &TriggerSpec, spec: &EventValueSpec) -> bool {
     match spec {
         EventValueSpec::Amount | EventValueSpec::LifeAmount => match trigger {
-            TriggerSpec::YouGainLife | TriggerSpec::PlayerLosesLife(_) => true,
+            TriggerSpec::YouGainLife
+            | TriggerSpec::PlayerLosesLife(_)
+            | TriggerSpec::ThisIsDealtDamage
+            | TriggerSpec::ThisDealsDamage
+            | TriggerSpec::ThisDealsDamageTo(_)
+            | TriggerSpec::DealsDamage(_) => true,
             TriggerSpec::Either(left, right) => {
                 trigger_supports_event_value(left, spec)
                     && trigger_supports_event_value(right, spec)
@@ -2537,7 +2542,7 @@ fn compile_effect(
             filter,
         } => {
             let (resolved_player, choices) =
-                resolve_effect_player_filter(*player, ctx, true, false, true)?;
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let resolved_filter = if let Some(filter) = filter {
                 let mut resolved = resolve_it_tag(filter, ctx)?;
                 if resolved.zone.is_none() {
@@ -4061,9 +4066,7 @@ fn resolve_non_target_player_filter(
             } else if let Some(filter) = &ctx.last_player_filter {
                 Ok(filter.clone())
             } else {
-                Err(CardTextError::ParseError(
-                    "cannot resolve 'that player' without context".to_string(),
-                ))
+                Ok(PlayerFilter::target_player())
             }
         }
         PlayerAst::ItsController => {

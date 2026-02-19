@@ -9,7 +9,9 @@ use crate::tag::TagKey;
 use crate::target::PlayerFilter;
 use crate::triggers::Trigger;
 
-use super::trigger_queue::{DelayedTriggerConfig, queue_delayed_trigger};
+use super::trigger_queue::{
+    DelayedTriggerTemplate, DelayedWatcherIdentity, queue_delayed_from_template,
+};
 
 /// Determines which object should be treated as the source when the delayed
 /// trigger resolves.
@@ -58,24 +60,24 @@ impl EffectExecutor for ScheduleEffectsWhenTaggedLeavesEffect {
             return Ok(EffectOutcome::count(0));
         };
 
-        let mut scheduled = 0i32;
-        for snapshot in tagged {
-            let delayed = DelayedTriggerConfig::new(
-                Trigger::this_leaves_battlefield(),
-                self.effects.clone(),
-                true,
-                vec![snapshot.object_id],
-                controller_id,
-            )
-            .with_ability_source(match self.ability_source {
-                TaggedLeavesAbilitySource::WatchedObject => None,
-                TaggedLeavesAbilitySource::CurrentSource => Some(ctx.source),
-            });
-            queue_delayed_trigger(game, delayed);
-            scheduled += 1;
-        }
+        let watched = tagged
+            .iter()
+            .map(|snapshot| snapshot.object_id)
+            .collect::<Vec<_>>();
+        let delayed = DelayedTriggerTemplate::new(
+            Trigger::this_leaves_battlefield(),
+            self.effects.clone(),
+            true,
+            controller_id,
+        )
+        .with_ability_source(match self.ability_source {
+            TaggedLeavesAbilitySource::WatchedObject => None,
+            TaggedLeavesAbilitySource::CurrentSource => Some(ctx.source),
+        });
+        let scheduled =
+            queue_delayed_from_template(game, DelayedWatcherIdentity::per_object(watched), delayed);
 
-        Ok(EffectOutcome::count(scheduled))
+        Ok(EffectOutcome::count(scheduled as i32))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {

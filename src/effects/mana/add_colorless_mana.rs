@@ -1,5 +1,6 @@
 //! Add colorless mana effect implementation.
 
+use super::choice_helpers::credit_repeated_mana_symbol;
 use crate::effect::{EffectOutcome, EffectResult, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
@@ -53,9 +54,7 @@ impl EffectExecutor for AddColorlessManaEffect {
         let player_id = resolve_player_filter(game, &self.player, ctx)?;
         let count = resolve_value(game, &self.amount, ctx)?.max(0) as u32;
 
-        if let Some(p) = game.player_mut(player_id) {
-            p.mana_pool.add(ManaSymbol::Colorless, count);
-        }
+        credit_repeated_mana_symbol(game, player_id, ManaSymbol::Colorless, count);
 
         let mana_added: Vec<ManaSymbol> = (0..count).map(|_| ManaSymbol::Colorless).collect();
         Ok(EffectOutcome::from_result(EffectResult::ManaAdded(
@@ -65,6 +64,15 @@ impl EffectExecutor for AddColorlessManaEffect {
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
+    }
+
+    fn producible_mana_symbols(
+        &self,
+        _game: &GameState,
+        _source: crate::ids::ObjectId,
+        _controller: crate::ids::PlayerId,
+    ) -> Option<Vec<ManaSymbol>> {
+        Some(vec![ManaSymbol::Colorless])
     }
 }
 

@@ -3,6 +3,7 @@
 //! Adds a fixed mana pattern repeated by a resolved numeric value.
 //! Example: "Add {B} for each creature card in your graveyard."
 
+use super::choice_helpers::credit_mana_symbols;
 use crate::effect::{EffectOutcome, EffectResult, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
@@ -42,21 +43,26 @@ impl EffectExecutor for AddScaledManaEffect {
         let player_id = resolve_player_filter(game, &self.player, ctx)?;
         let repeats = resolve_value(game, &self.amount, ctx)?.max(0) as usize;
 
-        let mut added = Vec::new();
-        if let Some(player) = game.player_mut(player_id) {
-            for _ in 0..repeats {
-                for symbol in &self.mana {
-                    player.mana_pool.add(*symbol, 1);
-                    added.push(*symbol);
-                }
-            }
+        let mut added = Vec::with_capacity(repeats * self.mana.len());
+        for _ in 0..repeats {
+            added.extend(self.mana.iter().copied());
         }
+        credit_mana_symbols(game, player_id, added.iter().copied());
 
         Ok(EffectOutcome::from_result(EffectResult::ManaAdded(added)))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
+    }
+
+    fn producible_mana_symbols(
+        &self,
+        _game: &GameState,
+        _source: crate::ids::ObjectId,
+        _controller: crate::ids::PlayerId,
+    ) -> Option<Vec<ManaSymbol>> {
+        Some(self.mana.clone())
     }
 }
 

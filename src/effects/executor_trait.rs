@@ -10,6 +10,7 @@ use crate::effect::{EffectOutcome, Value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
+use crate::mana::ManaSymbol;
 use crate::target::ChooseSpec;
 
 /// Specification for a modal effect, used during spell casting per MTG rule 601.2b.
@@ -173,6 +174,20 @@ pub trait EffectExecutor: std::fmt::Debug + Any + Send + Sync + 'static {
     /// Used for displaying alternative casting costs like "Pay 1 life, exile a blue card".
     /// Returns None if no description is available, in which case a generic display is used.
     fn cost_description(&self) -> Option<String> {
+        None
+    }
+
+    /// Returns mana symbols this effect can produce when used as a mana ability payload.
+    ///
+    /// This is a best-effort capability hook used by inference effects such as
+    /// "add one mana of any type that a land could produce". Implementations
+    /// should return all possible symbols for the given source/controller context.
+    fn producible_mana_symbols(
+        &self,
+        _game: &GameState,
+        _source: ObjectId,
+        _controller: PlayerId,
+    ) -> Option<Vec<ManaSymbol>> {
         None
     }
 

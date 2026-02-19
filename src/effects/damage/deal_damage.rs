@@ -337,7 +337,10 @@ impl EffectExecutor for DealDamageEffect {
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
-        if self.target.is_target() {
+        // SourceController is deterministic at resolution time (no cast-time selection),
+        // but exposing it here keeps downstream wrappers/tests able to inspect
+        // what subject this damage effect is bound to.
+        if self.target.is_target() || matches!(self.target, ChooseSpec::SourceController) {
             Some(&self.target)
         } else {
             None

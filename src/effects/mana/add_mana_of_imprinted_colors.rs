@@ -2,12 +2,13 @@
 //!
 //! Used by Chrome Mox to produce mana based on the colors of the exiled card.
 
+use super::choice_helpers::{choose_mana_colors, credit_mana_symbols};
 use crate::color::Color;
-use crate::decisions::{ManaColorsSpec, make_decision};
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
+use crate::mana::ManaSymbol;
 
 /// Effect that adds one mana of any of the imprinted card's colors.
 ///
@@ -84,43 +85,49 @@ impl EffectExecutor for AddManaOfImprintedColorsEffect {
             return Ok(EffectOutcome::count(0));
         }
 
-        // If only one color, add that mana
-        // If multiple colors, player chooses
-        let chosen_color = if colors.len() == 1 {
-            colors[0]
-        } else {
-            let spec = ManaColorsSpec::restricted(source_id, 1, true, colors.clone());
-            let chosen = make_decision(
-                game,
-                &mut ctx.decision_maker,
-                controller,
-                Some(source_id),
-                spec,
-            );
-            // Verify the chosen color is valid, default to first if invalid
-            if !chosen.is_empty() && colors.contains(&chosen[0]) {
-                chosen[0]
-            } else {
-                colors[0]
-            }
-        };
-
-        // Add the mana
-        if let Some(p) = game.player_mut(controller) {
-            match chosen_color {
-                Color::White => p.mana_pool.white += 1,
-                Color::Blue => p.mana_pool.blue += 1,
-                Color::Black => p.mana_pool.black += 1,
-                Color::Red => p.mana_pool.red += 1,
-                Color::Green => p.mana_pool.green += 1,
-            }
-        }
+        let chosen_color =
+            choose_mana_colors(game, ctx, controller, 1, true, Some(&colors), colors[0])
+                .into_iter()
+                .next()
+                .unwrap_or(colors[0]);
+        credit_mana_symbols(game, controller, [ManaSymbol::from_color(chosen_color)]);
 
         Ok(EffectOutcome::count(1))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
+    }
+
+    fn producible_mana_symbols(
+        &self,
+        game: &GameState,
+        source: crate::ids::ObjectId,
+        _controller: crate::ids::PlayerId,
+    ) -> Option<Vec<ManaSymbol>> {
+        let imprinted_id = *game.get_imprinted_cards(source).first()?;
+        let color_set = game.object(imprinted_id)?.colors();
+
+        let mut symbols = Vec::new();
+        if color_set.contains(Color::White) {
+            symbols.push(ManaSymbol::White);
+        }
+        if color_set.contains(Color::Blue) {
+            symbols.push(ManaSymbol::Blue);
+        }
+        if color_set.contains(Color::Black) {
+            symbols.push(ManaSymbol::Black);
+        }
+        if color_set.contains(Color::Red) {
+            symbols.push(ManaSymbol::Red);
+        }
+        if color_set.contains(Color::Green) {
+            symbols.push(ManaSymbol::Green);
+        }
+        if symbols.is_empty() {
+            return None;
+        }
+        Some(symbols)
     }
 }
 

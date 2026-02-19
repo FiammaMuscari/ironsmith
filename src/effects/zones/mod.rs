@@ -17,6 +17,10 @@ mod return_from_graveyard_to_hand;
 mod return_to_hand;
 mod sacrifice;
 
+pub(crate) use battlefield_entry::{
+    BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
+};
+
 pub use destroy::DestroyEffect;
 pub use exile::ExileEffect;
 pub use exile_from_hand_as_cost::ExileFromHandAsCostEffect;

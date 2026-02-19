@@ -9,7 +9,9 @@ use crate::target::{ChooseSpec, PlayerFilter};
 use crate::triggers::Trigger;
 use crate::zone::Zone;
 
-use super::trigger_queue::{DelayedTriggerConfig, queue_delayed_trigger};
+use super::trigger_queue::{
+    DelayedTriggerTemplate, DelayedWatcherIdentity, queue_delayed_from_template,
+};
 
 /// Schedules one delayed trigger per tagged object:
 /// "When this source leaves the battlefield, exile that object."
@@ -41,7 +43,7 @@ impl EffectExecutor for ExileTaggedWhenSourceLeavesEffect {
 
         let mut scheduled = 0i32;
         for snapshot in tagged {
-            let delayed = DelayedTriggerConfig::new(
+            let delayed = DelayedTriggerTemplate::new(
                 Trigger::this_leaves_battlefield(),
                 vec![Effect::move_to_zone(
                     ChooseSpec::SpecificObject(snapshot.object_id),
@@ -49,11 +51,13 @@ impl EffectExecutor for ExileTaggedWhenSourceLeavesEffect {
                     true,
                 )],
                 true,
-                vec![ctx.source],
                 controller_id,
             );
-            queue_delayed_trigger(game, delayed);
-            scheduled += 1;
+            scheduled += queue_delayed_from_template(
+                game,
+                DelayedWatcherIdentity::combined(vec![ctx.source]),
+                delayed,
+            ) as i32;
         }
 
         Ok(EffectOutcome::count(scheduled))

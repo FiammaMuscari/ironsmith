@@ -9,7 +9,9 @@ use crate::tag::TagKey;
 use crate::target::{ObjectFilter, PlayerFilter};
 use crate::triggers::Trigger;
 
-use super::trigger_queue::{DelayedTriggerConfig, queue_delayed_trigger};
+use super::trigger_queue::{
+    DelayedTriggerTemplate, DelayedWatcherIdentity, queue_delayed_from_template,
+};
 
 /// Effect that schedules a delayed trigger.
 #[derive(Debug, Clone, PartialEq)]
@@ -102,11 +104,10 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
                 {
                     continue;
                 }
-                let delayed = DelayedTriggerConfig::new(
+                let delayed = DelayedTriggerTemplate::new(
                     self.trigger.clone(),
                     self.effects.clone(),
                     self.one_shot,
-                    vec![snapshot.object_id],
                     controller_id,
                 )
                 .with_not_before_turn(if self.start_next_turn {
@@ -119,17 +120,20 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
                 } else {
                     None
                 });
-                queue_delayed_trigger(game, delayed);
+                queue_delayed_from_template(
+                    game,
+                    DelayedWatcherIdentity::combined(vec![snapshot.object_id]),
+                    delayed,
+                );
                 matched += 1;
             }
             return Ok(EffectOutcome::count(matched));
         }
 
-        let delayed = DelayedTriggerConfig::new(
+        let delayed = DelayedTriggerTemplate::new(
             self.trigger.clone(),
             self.effects.clone(),
             self.one_shot,
-            self.target_objects.clone(),
             controller_id,
         )
         .with_not_before_turn(if self.start_next_turn {
@@ -142,7 +146,11 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
         } else {
             None
         });
-        queue_delayed_trigger(game, delayed);
+        queue_delayed_from_template(
+            game,
+            DelayedWatcherIdentity::combined(self.target_objects.clone()),
+            delayed,
+        );
 
         Ok(EffectOutcome::resolved())
     }

@@ -86,6 +86,7 @@ fn subject_text(filter: &ObjectFilter) -> String {
     attached_subject(filter).unwrap_or_else(|| filter.description())
 }
 
+#[allow(dead_code)]
 fn strip_indefinite_article(text: &str) -> &str {
     if let Some(rest) = text.strip_prefix("a ") {
         return rest;
@@ -122,6 +123,7 @@ fn split_subject_suffix(subject: &str) -> (&str, &str) {
     (subject, "")
 }
 
+#[allow(dead_code)]
 fn pluralize_terminal_noun(base: &str) -> Option<String> {
     const NOUNS: &[&str] = &[
         "permanent",

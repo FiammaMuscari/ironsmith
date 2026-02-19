@@ -1,13 +1,15 @@
 //! Add mana of any one color effect implementation.
 
 use crate::color::Color;
-use crate::decisions::ask_mana_color;
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
+use crate::mana::ManaSymbol;
 use crate::target::PlayerFilter;
+
+use super::choice_helpers::{choose_mana_colors, credit_repeated_mana_symbol};
 
 /// Effect that adds mana of any ONE color to a player's mana pool.
 ///
@@ -62,32 +64,33 @@ impl EffectExecutor for AddManaOfAnyOneColorEffect {
             return Ok(EffectOutcome::count(0));
         }
 
-        // Ask player to choose ONE color (we only need to ask for 1, then add that many)
-        let color = ask_mana_color(
-            game,
-            &mut ctx.decision_maker,
-            player_id,
-            ctx.source,
-            None,         // All colors available
-            Color::Green, // Default
-        );
+        let color = choose_mana_colors(game, ctx, player_id, 1, true, None, Color::Green)
+            .into_iter()
+            .next()
+            .unwrap_or(Color::Green);
 
-        // Add all the mana of the chosen color
-        if let Some(p) = game.player_mut(player_id) {
-            match color {
-                Color::White => p.mana_pool.white += amount,
-                Color::Blue => p.mana_pool.blue += amount,
-                Color::Black => p.mana_pool.black += amount,
-                Color::Red => p.mana_pool.red += amount,
-                Color::Green => p.mana_pool.green += amount,
-            }
-        }
+        credit_repeated_mana_symbol(game, player_id, ManaSymbol::from_color(color), amount);
 
         Ok(EffectOutcome::count(amount as i32))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
+    }
+
+    fn producible_mana_symbols(
+        &self,
+        _game: &GameState,
+        _source: crate::ids::ObjectId,
+        _controller: crate::ids::PlayerId,
+    ) -> Option<Vec<ManaSymbol>> {
+        Some(vec![
+            ManaSymbol::White,
+            ManaSymbol::Blue,
+            ManaSymbol::Black,
+            ManaSymbol::Red,
+            ManaSymbol::Green,
+        ])
     }
 }
 

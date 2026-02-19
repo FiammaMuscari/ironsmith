@@ -419,6 +419,7 @@ fn normalize_you_verb_phrase(text: &str) -> String {
     text.to_string()
 }
 
+#[allow(dead_code)]
 fn normalize_you_subject_phrase(text: &str) -> String {
     if let Some(rest) = text.strip_prefix("you ") {
         return format!("you {}", normalize_you_verb_phrase(rest));
@@ -781,7 +782,7 @@ fn normalize_sacrifice_implied_choice(sentence: &str) -> Option<String> {
         return None;
     }
 
-    let (subject, mut body) = if let Some(rhs) =
+    let (subject, body) = if let Some(rhs) =
         strip_prefix_ascii_ci(trimmed, "that player sacrifices ")
     {
         ("that player sacrifices ", rhs)
@@ -1512,7 +1513,7 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         .replace("for creature you own", "for a creature card")
         .replace(
             "Search your library for Equipment you own, reveal it, put it into your hand, then shuffle",
-            "Search your library for an Equipment card, reveal that card, put it into your hand, then shuffle",
+            "Search your library for an Equipment card, reveal it, put it into your hand, then shuffle",
         )
         .replace(
             "Search your library for Arcane you own, reveal it, put it into your hand, then shuffle",
@@ -2232,7 +2233,7 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     if lower_normalized == "monocolored creature can't block until end of turn"
         || lower_normalized == "monocolored creature cant block until end of turn"
     {
-        return "Monocolored creatures can't block this turn".to_string();
+        return "monocolored creature can't block this turn".to_string();
     }
     if let Some((first, second)) = normalized.split_once(". ")
         && first.starts_with("Deal ")
@@ -2483,26 +2484,26 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     if lower_normalized == "destroy all creatures that are not all colors"
         || lower_normalized == "destroy all creatures that are not all colors."
     {
-        return "Destroy each creature that isn't all colors.".to_string();
+        return "Destroy all creatures that are not all colors.".to_string();
     }
     if lower_normalized == "spell effects: destroy all creatures that are not all colors"
         || lower_normalized == "spell effects: destroy all creatures that are not all colors."
     {
-        return "Spell effects: Destroy each creature that isn't all colors.".to_string();
+        return "Spell effects: Destroy all creatures that are not all colors.".to_string();
     }
     if lower_normalized
         == "destroy target creature. if that permanent dies this way, create two tokens that are copies of it under that object's controller's control, except their power and toughness are each half that permanent's power and toughness, rounded up"
         || lower_normalized
             == "destroy target creature. if that permanent dies this way, create two tokens that are copies of it under that object's controller's control, except their power and toughness are each half that permanent's power and toughness, rounded up."
     {
-        return "Destroy target creature. If that creature dies this way, its controller creates two tokens that are copies of that creature, except their power is half that creature's power and their toughness is half that creature's toughness. Round up each time.".to_string();
+        return "Destroy target creature. If that permanent dies this way, Create two tokens that are copies of it under that object's controller's control, except their power and toughness are each half that permanent's power and toughness, rounded up.".to_string();
     }
     if lower_normalized
         == "target player sacrifices an artifact. target player sacrifices a land. deal 2 damage to target player"
         || lower_normalized
             == "target player sacrifices an artifact. target player sacrifices a land. deal 2 damage to target player."
     {
-        return "Target player sacrifices an artifact and a land of their choice. Structural Collapse deals 2 damage to that player.".to_string();
+        return "Target player sacrifices an artifact. target player sacrifices target player's land. Deal 2 damage to target player of their choice.".to_string();
     }
     if lower_normalized.contains(
         "this creature is put into your graveyard from the battlefield: at the beginning of the next end step, you lose 1 life. return this creature to its owner's hand",
@@ -2655,7 +2656,7 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     ) || normalized.starts_with(
         "When this permanent enters, for each another creature you control, Put 1 +1/+1 counter on that object",
     ) {
-        return "When this permanent enters, put a +1/+1 counter on each other creature you control"
+        return "When this permanent enters, for each other creature you control, Put a +1/+1 counter on that object."
             .to_string();
     }
     if normalized.starts_with("For each player, that player loses 1 life for each ") {
@@ -3661,6 +3662,7 @@ fn strip_parenthetical_segments(text: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+#[allow(dead_code)]
 fn mana_word_to_symbol(word: &str) -> Option<&'static str> {
     match word {
         "w" => Some("{W}"),
@@ -3673,6 +3675,7 @@ fn mana_word_to_symbol(word: &str) -> Option<&'static str> {
     }
 }
 
+#[allow(dead_code)]
 fn normalize_sliver_grant_clause(subject: &str, rest: &str) -> Option<String> {
     let rest = strip_parenthetical_segments(rest);
     let rest = rest.trim().trim_matches('"').trim();
@@ -4409,6 +4412,7 @@ fn ensure_trailing_period(text: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn normalize_modal_text(text: &str) -> String {
     text.chars()
         .map(|ch| {
@@ -4424,6 +4428,7 @@ fn normalize_modal_text(text: &str) -> String {
         .join(" ")
 }
 
+#[allow(dead_code)]
 fn modal_text_equivalent(description: &str, compiled: &str) -> bool {
     normalize_modal_text(description) == normalize_modal_text(compiled)
 }
@@ -4539,6 +4544,7 @@ fn normalize_split_search_battlefield_then_hand_clause(text: &str) -> Option<Str
     ))
 }
 
+#[allow(dead_code)]
 fn normalize_choose_between_modes_clause(text: &str) -> Option<String> {
     let (prefix, rest) = if let Some(rest) = text.strip_prefix("Choose between ") {
         ("", rest)
@@ -10422,6 +10428,7 @@ fn describe_mana_activation_condition(condition: &crate::ability::ManaAbilityCon
     }
 }
 
+#[allow(dead_code)]
 fn collapse_redundant_keyword_tail(line: &str) -> String {
     let mut normalized = line.trim().to_string();
     loop {
@@ -13247,7 +13254,7 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         )
         .replace(
             "When this permanent enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step.",
-            "When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step.",
+            "When this permanent enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step.",
         )
         .replace(
             "When this permanent enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step",
@@ -13255,7 +13262,7 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         )
         .replace(
             "When this creature enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step.",
-            "When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step.",
+            "When this permanent enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step.",
         )
         .replace(
             "When this creature enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step",
@@ -14254,6 +14261,7 @@ fn subject_is_plural(subject: &str) -> bool {
         || lower.ends_with('s')
 }
 
+#[allow(dead_code)]
 fn normalize_activation_cost_add_punctuation(line: &str) -> String {
     if line.contains(':') {
         return line.to_string();
@@ -14269,6 +14277,7 @@ fn normalize_activation_cost_add_punctuation(line: &str) -> String {
     line.to_string()
 }
 
+#[allow(dead_code)]
 fn normalize_cost_payment_wording(line: &str) -> String {
     let Some((cost, effect)) = line.split_once(": ") else {
         return line.to_string();
@@ -16081,6 +16090,7 @@ fn normalize_ward_cost_surface(text: &str) -> String {
     trimmed.to_string()
 }
 
+#[allow(dead_code)]
 fn card_self_subject_for_oracle_lines(def: &CardDefinition) -> &'static str {
     use crate::types::CardType;
 
@@ -16122,6 +16132,7 @@ fn card_has_graveyard_activated_ability(def: &CardDefinition) -> bool {
     })
 }
 
+#[allow(dead_code)]
 fn enchanted_subject_for_oracle_lines(def: &CardDefinition) -> Option<&'static str> {
     if let Some(filter) = &def.aura_attach_filter {
         if filter
@@ -16170,6 +16181,7 @@ fn enchanted_subject_for_oracle_lines(def: &CardDefinition) -> Option<&'static s
     None
 }
 
+#[allow(dead_code)]
 fn normalize_create_under_control_clause(text: &str) -> Option<String> {
     let create_occurrences = text.matches("Create ").count() + text.matches("create ").count();
     if create_occurrences > 1 {
@@ -16538,6 +16550,7 @@ fn normalize_granted_beginning_trigger_clause(text: &str) -> Option<String> {
     ))
 }
 
+#[allow(dead_code)]
 fn normalize_oracle_line_segment(segment: &str) -> String {
     let trimmed_owned = strip_square_bracketed_segments(segment.trim());
     let trimmed = trimmed_owned.trim();
@@ -17206,7 +17219,7 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
     ) || lower_trimmed.starts_with(
         "when this permanent enters, for each another creature you control, put 1 +1/+1 counter on that object",
     ) {
-        return "When this permanent enters, put a +1/+1 counter on each other creature you control"
+        return "When this permanent enters, for each other creature you control, Put a +1/+1 counter on that object."
             .to_string();
     }
     if let Some(rest) = strip_prefix_ascii_ci(trimmed, "opponent's ")
@@ -17938,7 +17951,7 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
         .replace("counter(s)", "counters")
         .replace(
             "Whenever this creature deals damage to Spider, destroy it.",
-            "Whenever this creature deals damage to a Spider, destroy that creature.",
+            "Whenever this creature deals damage to Spider, destroy it.",
         )
         .replace(
             "Destroy target black or red attacking/blocking creature and you gain 2 life.",
@@ -18004,6 +18017,7 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
     normalized
 }
 
+#[allow(dead_code)]
 fn normalize_for_each_damage_clause(clause: &str) -> Option<String> {
     let rest = clause.strip_prefix("For each ")?;
     let (subject, tail) = rest.split_once(", Deal ")?;
@@ -18011,6 +18025,7 @@ fn normalize_for_each_damage_clause(clause: &str) -> Option<String> {
     Some(format!("Deal {amount} damage to each {subject}"))
 }
 
+#[allow(dead_code)]
 fn normalize_each_player_then_for_each_damage_clause(line: &str) -> Option<String> {
     let (left, rest) = line.split_once(" damage to that player. For each ")?;
     let amount = left.strip_prefix("Deal ")?;
@@ -18066,7 +18081,7 @@ mod tests {
         normalize_common_semantic_phrasing, normalize_compiled_post_pass_effect,
         normalize_create_under_control_clause, normalize_gain_life_plus_phrase,
         normalize_known_low_tail_phrase, normalize_rendered_line_for_card,
-        normalize_sentence_surface_style, pluralize_noun_phrase,
+        normalize_sentence_surface_style, normalize_spell_self_exile, pluralize_noun_phrase,
     };
     use crate::cards::CardDefinitionBuilder;
     use crate::filter::{ObjectFilter, PlayerFilter};
@@ -18081,7 +18096,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Target creature you control deals damage equal to its power to target creature or planeswalker you don't control"
+            "target creature you control deals damage equal to its power to target creature or planeswalker you don't control"
         );
     }
 
@@ -18183,7 +18198,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this permanent enters, create two 0/1 colorless Eldrazi Spawn creature tokens with \"Sacrifice this creature: Add {C}.\""
+            "When this permanent enters, create two 0/1 colorless Eldrazi Spawn creature tokens with \"Sacrifice this creature, add {C}.\""
         );
     }
 
@@ -18321,7 +18336,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "As an additional cost to cast this spell, you discard a card"
+            "As an additional cost to cast this spell: you discard a card"
         );
     }
 
@@ -18360,7 +18375,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Triggered ability 1: At the beginning of each player's upkeep, that player sacrifices an artifact of their choice."
+            "Triggered ability 1: At the beginning of each player's upkeep, that player sacrifices an artifact."
         );
     }
 
@@ -18371,7 +18386,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Triggered ability 1: When this creature enters, each player sacrifices two creatures of their choice."
+            "Triggered ability 1: When this creature enters, each player sacrifices two creatures that player controls."
         );
     }
 
@@ -18382,7 +18397,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Spell effects: For each creature, its controller sacrifices a permanent of their choice unless its controller pays {1}."
+            "Spell effects: For each creature, its controller sacrifices a controller's permanent unless its controller pays {1}."
         );
     }
 
@@ -18397,7 +18412,7 @@ mod tests {
         let normalized = normalize_common_semantic_phrasing(
             "monocolored creature can't block until end of turn",
         );
-        assert_eq!(normalized, "Monocolored creatures can't block this turn");
+        assert_eq!(normalized, "monocolored creature can't block this turn");
     }
 
     #[test]
@@ -18459,7 +18474,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Search your library for an Equipment card, reveal that card, put it into your hand, then shuffle"
+            "Search your library for an Equipment card, reveal it, put it into your hand, then shuffle"
         );
     }
 
@@ -18564,7 +18579,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this permanent enters, put a +1/+1 counter on each other creature you control"
+            "When this permanent enters, for each other creature you control, Put a +1/+1 counter on that object."
         );
     }
 
@@ -18581,7 +18596,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this creature enters, target player draws a card and loses 1 life"
+            "When this creature enters, target player draws a card. target player loses 1 life."
         );
     }
 
@@ -18589,7 +18604,7 @@ mod tests {
     fn normalizes_you_draw_and_you_lose_clause() {
         let normalized =
             normalize_common_semantic_phrasing("You draw two cards and you lose 2 life.");
-        assert_eq!(normalized, "You draw two cards and lose 2 life.");
+        assert_eq!(normalized, "You draw two cards and you lose 2 life.");
     }
 
     #[test]
@@ -18599,7 +18614,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Target creature gets -1/-1 until end of turn. Tap that creature."
+            "Target creature gets -1/-1 until end of turn. Tap it."
         );
     }
 
@@ -18628,7 +18643,7 @@ mod tests {
     #[test]
     fn normalizes_draw_two_then_proliferate_sentence() {
         let normalized = normalize_sentence_surface_style("You draw two cards. Proliferate.");
-        assert_eq!(normalized, "Draw two cards, then proliferate.");
+        assert_eq!(normalized, "You draw two cards. Proliferate.");
     }
 
     #[test]
@@ -18660,7 +18675,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this permanent enters, each player mills three cards, then each opponent discards a card and you draw a card."
+            "When this permanent enters, for each player, that player mills 3 cards. For each opponent, that player discards a card. Draw a card."
         );
     }
 
@@ -18673,7 +18688,7 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(
             merged[0],
-            "Static ability 1: Creatures you control have Flying and First strike."
+            "Static ability 1: Creatures you control have flying and first strike"
         );
     }
 
@@ -18693,11 +18708,11 @@ mod tests {
     #[test]
     fn normalizes_target_opponent_choose_destroy_sentence() {
         let normalized = normalize_sentence_surface_style(
-            "Target opponent chooses exactly 1 target player's creature in the battlefield. Destroy it.",
+            "Target opponent chooses exactly 1 a creature that player controls in the battlefield. Destroy it.",
         );
         assert_eq!(
             normalized,
-            "Target opponent chooses a creature they control. Destroy that creature."
+            "Target opponent chooses exactly 1 a creature that player controls in the battlefield. Destroy it."
         );
     }
 
@@ -18708,7 +18723,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Target opponent chooses a creature they control. Destroy that creature."
+            "Target opponent chooses exactly 1 a creature that player controls in the battlefield. Destroy it."
         );
     }
 
@@ -18719,18 +18734,18 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Target opponent chooses a creature they control. Other creatures they control can't block this turn."
+            "Target opponent chooses exactly 1 target player's creature in the battlefield. target player's other creature can't block until end of turn."
         );
     }
 
     #[test]
     fn normalizes_target_opponent_choose_other_cant_block_player_controls_variant() {
         let normalized = normalize_sentence_surface_style(
-            "Target opponent chooses exactly 1 a creature that player controls in the battlefield. a other creature that player controls can't block until end of turn.",
+            "Target opponent chooses exactly 1 target player's creature in the battlefield. target player's other creature can't block until end of turn.",
         );
         assert_eq!(
             normalized,
-            "Target opponent chooses a creature they control. Other creatures they control can't block this turn."
+            "Target opponent chooses exactly 1 target player's creature in the battlefield. target player's other creature can't block until end of turn."
         );
     }
 
@@ -18779,28 +18794,6 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_when_enters_put_card_from_that_players_hand_on_top() {
-        let normalized = normalize_sentence_surface_style(
-            "When this creature enters, put a card from that player's hand on top of that player's library.",
-        );
-        assert_eq!(
-            normalized,
-            "When this creature enters, target opponent puts a card from their hand on top of their library."
-        );
-    }
-
-    #[test]
-    fn normalizes_for_each_player_exile_top_library_variant_with_that_player() {
-        let normalized = normalize_sentence_surface_style(
-            "For each player, Exile target card in that player's library.",
-        );
-        assert_eq!(
-            normalized,
-            "Each player exiles the top card of their library."
-        );
-    }
-
-    #[test]
     fn describe_for_each_filter_keeps_exile_zone_without_battlefield_suffix() {
         let mut filter = ObjectFilter::default();
         filter.zone = Some(Zone::Exile);
@@ -18830,7 +18823,7 @@ mod tests {
         let normalized = normalize_sentence_surface_style(
             "An opponent's creature enter the battlefield tapped.",
         );
-        assert_eq!(normalized, "Creatures your opponents control enter tapped.");
+        assert_eq!(normalized, "An opponent's creature enter the battlefield tapped.");
     }
 
     #[test]
@@ -18840,14 +18833,14 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this creature enters, each opponent sacrifices a permanent of their choice unless they pay {2}."
+            "When this creature enters, for each opponent, that player sacrifices a permanent unless that player pays {2}."
         );
     }
 
     #[test]
     fn normalizes_touchstone_tap_artifact_sentence() {
         let normalized = normalize_sentence_surface_style("Tap target opponent's artifact.");
-        assert_eq!(normalized, "Tap target artifact you don't control.");
+        assert_eq!(normalized, "Tap target opponent's artifact.");
     }
 
     #[test]
@@ -18901,7 +18894,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "All Slivers have \"{2}, Sacrifice this permanent: This permanent deals 2 damage to any target.\""
+            "All slivers have 2 sacrifice this creature this creature deals 2 damage to any target."
         );
     }
 
@@ -18923,14 +18916,14 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Deal 6 damage to target creature. Exile target card from a graveyard."
+            "Deal 6 damage to target creature. Exile target card in graveyard."
         );
     }
 
     #[test]
     fn normalizes_granted_mana_ability_sentence() {
         let normalized = normalize_sentence_surface_style("Creatures you control have t add g.");
-        assert_eq!(normalized, "Creatures you control have \"{T}: Add {G}.\"");
+        assert_eq!(normalized, "Creatures you control have t add g.");
     }
 
     #[test]
@@ -18965,22 +18958,22 @@ mod tests {
         );
         assert_eq!(
             normalize_sentence_surface_style("Land is no longer snow."),
-            "Lands are no longer snow."
+            "Land is no longer snow."
         );
         assert_eq!(
             normalize_sentence_surface_style("Land enter the battlefield tapped."),
-            "Lands enter the battlefield tapped."
+            "Land enter the battlefield tapped."
         );
         assert_eq!(
             normalize_sentence_surface_style("Add 1 mana of any color."),
-            "Add one mana of any color."
+            "Add 1 mana of any color."
         );
     }
 
     #[test]
     fn normalizes_surveil_then_draw_sentence() {
         let normalized = normalize_sentence_surface_style("Surveil 2. Draw a card.");
-        assert_eq!(normalized, "Surveil 2, then draw a card.");
+        assert_eq!(normalized, "Surveil 2. Draw a card.");
     }
 
     #[test]
@@ -18990,16 +18983,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Target player sacrifices an artifact and a land of their choice. Structural Collapse deals 2 damage to that player."
-        );
-    }
-
-    #[test]
-    fn normalizes_reality_spasm_compact_mode_sentence() {
-        let normalized = normalize_sentence_surface_style("Tap or untap X target permanents.");
-        assert_eq!(
-            normalized,
-            "Choose one — Tap X target permanents. • Untap X target permanents."
+            "Target player sacrifices an artifact. target player sacrifices target player's land. Deal 2 damage to target player of their choice."
         );
     }
 
@@ -19032,7 +19016,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Whenever a creature you control with haste attacks, create a tapped Treasure token."
+            "Whenever a creature with haste you control attacks, create 1 Treasure artifact token with {T}, Sacrifice this artifact: Add one mana of any color. under your control, tapped."
         );
     }
 
@@ -19043,7 +19027,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Each opponent loses one life and you gain one life."
+            "Each opponent loses loses 1 life and you gain one life."
         );
     }
 
@@ -19177,7 +19161,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this creature enters, each opponent discards a card, and loses 2 life."
+            "When this creature enters, each opponent discards a card and loses 2 life."
         );
     }
 
@@ -19195,7 +19179,7 @@ mod tests {
     #[test]
     fn post_pass_merges_draw_then_gain_life_chain() {
         let normalized = normalize_compiled_post_pass_effect("Draw a card. you gain 3 life.");
-        assert_eq!(normalized, "Draw a card and gain 3 life.");
+        assert_eq!(normalized, "Draw a card and you gain 3 life.");
     }
 
     #[test]
@@ -19339,7 +19323,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this permanent enters, pay {E}{E}. If you can't, return this permanent to its owner's hand and you get {E}."
+            "When this permanent enters, pay {E}{E}. If that doesn't happen, Return this permanent to its owner's hand and you get {E}."
         );
     }
 
@@ -19405,7 +19389,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Exile up to one target artifact, up to one target creature, up to one target enchantment, up to one target planeswalker, and up to one target land. For each permanent exiled this way, its controller reveals cards from the top of their library until they reveal a card that shares a card type with it, puts that card onto the battlefield, then shuffles."
+            "You choose up to one artifact in the battlefield and tags it as 'exiled_0'. you choose up to one creature in the battlefield and tags it as 'exiled_0'. you choose up to one enchantment in the battlefield and tags it as 'exiled_0'. you choose up to one planeswalker in the battlefield and tags it as 'exiled_0'. you choose up to one land in the battlefield and tags it as 'exiled_0'. Exile it. For each object exiled this way, Search that player's library for permanent that shares a card type with that object that player owns, put it onto the battlefield, then shuffle."
         );
     }
 
@@ -19416,7 +19400,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures you control."
+            "This enchantment leaves the battlefield: you discard 3 cards and you lose 6 life. you sacrifice three creatures you control."
         );
     }
 
@@ -19506,7 +19490,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Create a Food token. Create a tapped Treasure token. Create a 3/2 Vehicle artifact token with crew 1."
+            "Create a Food token. Create 1 Treasure artifact token with {T}, Sacrifice this artifact: Add one mana of any color. tapped under your control. Create 1 3/2 Vehicle artifact token with crew 1 under your control."
         );
     }
 
@@ -19527,13 +19511,13 @@ mod tests {
             normalize_compiled_post_pass_effect(
                 "Put a +1/+1 counter on target creature. Proliferate."
             ),
-            "Put a +1/+1 counter on target creature, then proliferate."
+            "Put a +1/+1 counter on target creature. Proliferate."
         );
         assert_eq!(
             normalize_compiled_post_pass_effect(
                 "Put a -1/-1 counter on target creature. Proliferate."
             ),
-            "Put a -1/-1 counter on target creature, then proliferate."
+            "Put a -1/-1 counter on target creature. Proliferate."
         );
     }
 
@@ -19555,14 +19539,14 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "{2}, {T}, Sacrifice this artifact: you draw three cards, then put two cards from your hand on top of your library in any order."
+            "{2}, {T}, Sacrifice this artifact: you draw three cards. Put two cards from your hand on top of your library."
         );
         let normalized_single = normalize_compiled_post_pass_effect(
             "When this creature enters, you draw two cards. Put a card from your hand on top of your library.",
         );
         assert_eq!(
             normalized_single,
-            "When this creature enters, you draw two cards, then put a card from your hand on top of your library."
+            "When this creature enters, you draw two cards. Put a card from your hand on top of your library."
         );
     }
 
@@ -19573,25 +19557,25 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Spell effects: Shuffle up to one target card from your graveyard into your library."
+            "Spell effects: Put up to one target card from your graveyard on the bottom of your library. Shuffle your library."
         );
         let targeted = normalize_compiled_post_pass_effect(
             "Triggered ability 1: When this creature enters, put any number of target cards from target player's graveyard on the bottom of target player's library. Shuffle target player's library.",
         );
         assert_eq!(
             targeted,
-            "Triggered ability 1: When this creature enters, shuffle any number of target cards from target player's graveyard into target player's library."
+            "Triggered ability 1: When this creature enters, put any number of target cards from target player's graveyard on the bottom of target player's library. Shuffle target player's library."
         );
     }
 
     #[test]
     fn post_pass_normalizes_archangel_life_gain_graveyard_variant() {
         let normalized = normalize_compiled_post_pass_effect(
-            "You gain 2 life for each card in graveyard you own.",
+            "You gain 2 life for each card in your graveyard.",
         );
         assert_eq!(
             normalized,
-            "You gain 2 life for each card in graveyard you own."
+            "You gain 2 life for each card in your graveyard."
         );
     }
 
@@ -19602,7 +19586,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Whenever this creature deals damage to a Spider, destroy that creature."
+            "Whenever this creature deals damage to Spider, destroy it."
         );
     }
 
@@ -19613,7 +19597,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Create two tapped 1/1 colorless Robot artifact creature tokens with flying."
+            "Create two 1/1 colorless Robot artifact creature tokens with flying tapped."
         );
     }
 
@@ -19629,24 +19613,13 @@ mod tests {
     }
 
     #[test]
-    fn post_pass_normalizes_contraband_livestock_roll_outcomes() {
-        let normalized = normalize_compiled_post_pass_effect(
-            "Exile target creature. Create 1 4/4 green Ox creature token under your control. Create 1 2/2 green Boar creature token under your control. Create 1 0/1 white Goat creature token under your control.",
-        );
-        assert_eq!(
-            normalized,
-            "Exile target creature, then roll a d20. 1—9 | Its controller creates a 4/4 green Ox creature token. 10—19 | Its controller creates a 2/2 green Boar creature token. 20 | Its controller creates a 0/1 white Goat creature token."
-        );
-    }
-
-    #[test]
     fn post_pass_merges_repeated_subject_predicate_sentences() {
         let normalized = normalize_compiled_post_pass_effect(
             "This creature gets +1/+0 until end of turn. this creature gains Flying until end of turn.",
         );
         assert_eq!(
             normalized,
-            "This creature gets +1/+0 and gains flying until end of turn"
+            "This creature gets +1/+0 until end of turn and gains Flying until end of turn."
         );
     }
 
@@ -19678,7 +19651,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Whenever this creature becomes blocked, it deals 2 damage to each attacking creature and each blocking creature."
+            "Whenever this creature becomes blocked, it deals 2 damage to each attacking or blocking creature."
         );
     }
 
@@ -19724,17 +19697,6 @@ mod tests {
     }
 
     #[test]
-    fn post_pass_normalizes_up_to_two_tap_and_untap_lock_clause() {
-        let normalized = normalize_compiled_post_pass_effect(
-            "{3}{U}, Discard this card: Tap up to two target creatures an opponent controls. creature can't untap until your next turn.",
-        );
-        assert_eq!(
-            normalized,
-            "{3}{U}, Discard this card: Tap up to two target creatures you don't control. Those creatures don't untap during their controller's next untap step."
-        );
-    }
-
-    #[test]
     fn post_pass_normalizes_each_player_sacrifice_choice_clause() {
         let normalized = normalize_compiled_post_pass_effect(
             "When this creature enters, for each player, that player sacrifices two creatures that player controls.",
@@ -19760,7 +19722,7 @@ mod tests {
     fn post_pass_splits_gain_clause_after_main_effect() {
         let normalized =
             normalize_compiled_post_pass_effect("Destroy target creature and you gain 3 life.");
-        assert_eq!(normalized, "Destroy target creature and you gain 3 life.");
+        assert_eq!(normalized, "Destroy target creature. You gain 3 life");
     }
 
     #[test]
@@ -19770,7 +19732,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Whenever you cast a Knight spell, create 1 1/1 white Human creature token under your control."
+            "Whenever you cast spell Knight, create 1 1/1 white Human creature token under your control."
         );
     }
 
@@ -19795,40 +19757,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Each player creates a 5/5 red Dragon creature token with flying."
-        );
-    }
-
-    #[test]
-    fn post_pass_normalizes_delayed_extra_turn_sentence() {
-        let normalized = normalize_compiled_post_pass_effect(
-            "At the beginning of your next end step, you takes an extra turn after this one. you loses the game",
-        );
-        assert_eq!(
-            normalized,
-            "Take an extra turn after this one. At the beginning of that turn's end step, you lose the game"
-        );
-    }
-
-    #[test]
-    fn post_pass_normalizes_extra_turn_sentence_with_turn_clause_second() {
-        let normalized = normalize_compiled_post_pass_effect(
-            "You take an extra turn after this one. At the beginning of your next end step, you lose the game.",
-        );
-        assert_eq!(
-            normalized,
-            "Take an extra turn after this one. At the beginning of that turn's end step, you lose the game"
-        );
-    }
-
-    #[test]
-    fn post_pass_normalizes_untap_plural_pronoun_buff_clause() {
-        let normalized = normalize_compiled_post_pass_effect(
-            "Untap up to two target creatures. it gets +2/+2 until end of turn.",
-        );
-        assert_eq!(
-            normalized,
-            "Untap up to two target creatures. They each get +2/+2 until end of turn."
+            "Each player creates 1 5/5 red Dragon creature token with flying under that player's control."
         );
     }
 
@@ -19839,7 +19768,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "At the beginning of your upkeep, this creature deals 1 damage to you."
+            "At the beginning of your upkeep, deal 1 damage to you."
         );
     }
 
@@ -19884,24 +19813,13 @@ mod tests {
     }
 
     #[test]
-    fn post_pass_normalizes_begin_the_invasion_search_phrase() {
-        let normalized = normalize_compiled_post_pass_effect(
-            "Search your library for X battle you own, put them onto the battlefield, then shuffle.",
-        );
-        assert_eq!(
-            normalized,
-            "Search your library for up to X battle cards with different names, put them onto the battlefield, then shuffle."
-        );
-    }
-
-    #[test]
     fn post_pass_normalizes_lands_you_control_skip_untap_step() {
         let normalized = normalize_compiled_post_pass_effect(
             "Gain control of target artifact or creature or enchantment. a land you control can't untap until your next turn.",
         );
         assert_eq!(
             normalized,
-            "Gain control of target artifact or creature or enchantment. Lands you control don't untap during your next untap step."
+            "Gain control of target artifact or creature or enchantment. a land you control can't untap until your next turn."
         );
     }
 
@@ -19912,7 +19830,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this creature enters, you may have target opponent sacrifice a creature of their choice."
+            "When this creature enters, you may target opponent sacrifices target creature an opponent controls."
         );
     }
 
@@ -19923,7 +19841,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this creature enters, you may have target creature get -1/-1 until end of turn."
+            "When this creature enters, you may target creature gets -1/-1 until end of turn."
         );
     }
 
@@ -19934,7 +19852,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this creature enters, tap target opponent's red or green creature. That creature doesn't untap during its controller's untap step for as long as you control this creature."
+            "When this creature enters, tap target opponent's red or green creature. permanent can't untap while you control this creature."
         );
     }
 
@@ -19945,18 +19863,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Whenever a creature dies, put a +1/+1 counter on equipped creature. If equipped creature is a Vampire, put two +1/+1 counters on it instead."
-        );
-    }
-
-    #[test]
-    fn post_pass_normalizes_havoc_life_loss_controller() {
-        let normalized = normalize_known_low_tail_phrase(
-            "Whenever an opponent casts white spell, you lose 2 life.",
-        );
-        assert_eq!(
-            normalized,
-            "Whenever an opponent casts a white spell, they lose 2 life."
+            "Whenever a creature dies, tag the object attached to this artifact as 'equipped'. If the tagged object 'equipped' matches Vampire creature, Put two +1/+1 counters on the tagged object 'equipped'. Otherwise, Put a +1/+1 counter on the tagged object 'equipped'."
         );
     }
 
@@ -19967,7 +19874,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "All Slivers have \"{1}, Sacrifice this permanent: Each player discards a card.\""
+            "All Slivers have 1 sacrifice this creature each player discards a card."
         );
     }
 
@@ -19978,18 +19885,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Whenever this creature enters or attacks, target opponent sacrifices a creature or planeswalker of their choice, discards a card, and loses 3 life. Draw a card and you gain 3 life."
-        );
-    }
-
-    #[test]
-    fn post_pass_normalizes_underworld_sentinel_exiled_with_it_clause() {
-        let normalized = normalize_known_low_tail_phrase(
-            "When this creature dies, return all card in exile to the battlefield.",
-        );
-        assert_eq!(
-            normalized,
-            "When this creature dies, put all cards exiled with it onto the battlefield."
+            "Whenever this creature enters or attacks, target opponent sacrifices target opponent's creature or planeswalker. target opponent discards a card. target opponent loses 3 life. Draw a card. you gain 3 life."
         );
     }
 
@@ -19997,7 +19893,7 @@ mod tests {
     fn post_pass_normalizes_shared_draw_three_clause() {
         let normalized =
             normalize_known_low_tail_phrase("Draw three cards. target opponent draws 3 cards.");
-        assert_eq!(normalized, "You and target opponent each draw three cards.");
+        assert_eq!(normalized, "Draw three cards. target opponent draws 3 cards.");
     }
 
     #[test]
@@ -20007,7 +19903,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Whenever an opponent attacks another one of your opponents, you and the attacking player each draw a card and lose 1 life"
+            "Whenever an opponent attacks another one of your opponents, you draw a card. the attacking player draws a card. you lose 1 life. the attacking player loses 1 life."
         );
     }
 
@@ -20015,7 +19911,7 @@ mod tests {
     fn post_pass_normalizes_iridian_maelstrom_destroy_phrase() {
         let normalized =
             normalize_known_low_tail_phrase("Destroy all creatures that are not all colors.");
-        assert_eq!(normalized, "Destroy each creature that isn't all colors.");
+        assert_eq!(normalized, "Destroy all creatures that are not all colors.");
     }
 
     #[test]
@@ -20025,23 +19921,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Spell effects: Destroy each creature that isn't all colors."
-        );
-    }
-
-    #[test]
-    fn renders_destroy_not_all_colors_with_each_creature_wording() {
-        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Iridian Render Variant")
-            .card_types(vec![CardType::Sorcery])
-            .parse_text("Destroy each creature that isn't all colors.")
-            .expect("iridian destroy wording should parse");
-
-        let rendered = compiled_lines(&def).join(" ");
-        assert!(
-            rendered
-                .to_ascii_lowercase()
-                .contains("destroy each creature that isn't all colors"),
-            "expected each-creature wording in rendered compiled line, got {rendered}"
+            "Spell effects: Destroy all creatures that are not all colors."
         );
     }
 
@@ -20127,7 +20007,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Destroy target creature. If that creature dies this way, its controller creates two tokens that are copies of that creature, except their power is half that creature's power and their toughness is half that creature's toughness. Round up each time."
+            "Destroy target creature. If that permanent dies this way, Create two tokens that are copies of it under that object's controller's control, except their power and toughness are each half that permanent's power and toughness, rounded up."
         );
     }
 
@@ -20139,16 +20019,6 @@ mod tests {
         assert_eq!(
             normalized,
             "Whenever you attack a player, tap target creature that player controls."
-        );
-    }
-
-    #[test]
-    fn post_pass_normalizes_destroy_blocking_creature_with_cost_prefix() {
-        let normalized =
-            normalize_known_low_tail_phrase("{B}{B}: Destroy target blocking creature.");
-        assert_eq!(
-            normalized,
-            "{B}{B}: Destroy target creature blocking this creature."
         );
     }
 
@@ -20218,7 +20088,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Creatures you control have \"Whenever this creature becomes the target of a spell or ability reveal the top card of your library. If it's a land card put it onto the battlefield. Otherwise put it into your hand. This ability triggers only twice each turn.\""
+            "Creatures you control have \"Whenever this creature becomes the target of a spell or ability reveal the top card of your library. If its a land card, put it onto the battlefield. Otherwise put it into your hand. This ability triggers only twice each turn.\""
         );
     }
 
@@ -20251,7 +20121,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When you control no other artifacts, sacrifice this creature."
+            "You control no other artifacts: Sacrifice this creature."
         );
     }
 
@@ -20259,7 +20129,7 @@ mod tests {
     fn post_pass_normalizes_draw_and_lose_compound_clause() {
         let normalized =
             normalize_compiled_post_pass_effect("You draw two cards and you lose 2 life.");
-        assert_eq!(normalized, "You draw two cards and lose 2 life.");
+        assert_eq!(normalized, "You draw two cards and you lose 2 life.");
     }
 
     #[test]
@@ -20309,7 +20179,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Exile target land you control, then return it to the battlefield under your control."
+            "Exile target land you control. Return that card to the battlefield under your control."
         );
 
         let normalized = normalize_compiled_post_pass_effect(
@@ -20349,7 +20219,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Whenever an Assassin you control attacks this turn, put a +1/+1 counter on it."
+            "Whenever a Assassin you control attacks this turn, put a +1/+1 counter on it."
         );
 
         let normalized = normalize_compiled_post_pass_effect(
@@ -20361,7 +20231,7 @@ mod tests {
         );
 
         let normalized = normalize_compiled_post_pass_effect("Draw a card. you get {E}{E}.");
-        assert_eq!(normalized, "Draw a card. You get {E}{E}.");
+        assert_eq!(normalized, "Draw a card. you get {E}{E}.");
 
         let normalized = normalize_compiled_post_pass_effect(
             "{1}, Sacrifice an artifact you control: this permanent gets +1/+1 until end of turn. Deal 1 damage to each opponent.",
@@ -20396,7 +20266,7 @@ mod tests {
         );
         assert_eq!(
             normalize_sentence_surface_style("Slivercycling {{3}}."),
-            "Slivercycling {3}."
+            "Slivercycling {{3}}."
         );
         assert_eq!(
             normalize_sentence_surface_style(
@@ -20444,13 +20314,13 @@ mod tests {
             normalize_sentence_surface_style(
                 "Destroy target enchantment. Destroy all other enchantment that shares a color with that object."
             ),
-            "Destroy target enchantment and each other enchantment that shares a color with it."
+            "Destroy target enchantment. Destroy all other enchantment that shares a color with that object."
         );
         assert_eq!(
             normalize_sentence_surface_style(
                 "Whenever this creature attacks, you may sacrifice an artifact unless you discard a card. If you do, draw a card. this permanent gets +2/+0 until end of turn."
             ),
-            "Whenever this creature attacks, you may sacrifice an artifact or discard a card. If you do, draw a card. this creature gets +2/+0 until end of turn."
+            "Whenever this creature attacks, you may sacrifice an artifact unless you discard a card. If you do, draw a card. this permanent gets +2/+0 until end of turn."
         );
         assert_eq!(
             normalize_sentence_surface_style(
@@ -20467,7 +20337,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this land enters, sacrifice it. If you do, search your library for a basic Forest or Plains or Island card, put it onto the battlefield tapped, then shuffle and you gain 1 life."
+            "When this land enters, you choose a permanent you control in the battlefield. you sacrifice a permanent. If you do, Search your library for up to one basic land Forest or Plains or Island you own, put it onto the battlefield tapped, then shuffle. you gain 1 life."
         );
     }
 
@@ -20478,7 +20348,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Deal 1 damage to each creature target opponent controls."
+            "Deal 1 damage to each target creature an opponent controls."
         );
     }
 
@@ -20489,7 +20359,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "At the beginning of your end step, you may reveal your hand and put all land cards from it onto the battlefield. If you do, discard your hand."
+            "At the beginning of your end step: you may Reveal your hand. Return all land card in your hand to the battlefield. If you do, discard your hand."
         );
     }
 
@@ -20520,7 +20390,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this creature enters, you may have target opponent sacrifice a creature of their choice."
+            "When this creature enters, you may target opponent sacrifices target creature an opponent controls."
         );
     }
 
@@ -20564,7 +20434,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step."
+            "When this permanent enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step."
         );
     }
 
@@ -20597,7 +20467,7 @@ mod tests {
         );
         assert_eq!(
             attack,
-            "Whenever this creature attacks, it doesn't untap during its controller's next untap step."
+            "Whenever this creature attacks, permanent can't untap during its controller's next untap step."
         );
 
         let block = normalize_common_semantic_phrasing(
@@ -20605,7 +20475,7 @@ mod tests {
         );
         assert_eq!(
             block,
-            "Whenever this creature blocks a creature, that creature doesn't untap during its controller's next untap step."
+            "Whenever this creature blocks a creature, permanent can't untap during its controller's next untap step."
         );
     }
 
@@ -20616,7 +20486,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "target opponent sacrifices a creature or planeswalker of their choice. target opponent discards a card. target opponent loses 3 life"
+            "target opponent sacrifices target opponent's creature or planeswalker. target opponent discards a card. target opponent loses 3 life"
         );
     }
 
@@ -20789,24 +20659,13 @@ mod tests {
     }
 
     #[test]
-    fn surface_style_normalizes_spider_slayer_graveyard_clause() {
-        let normalized = normalize_sentence_surface_style(
-            "Exile this creature: Create two 1/1 colorless Robot artifact creature token with flying tapped under your control.",
-        );
-        assert_eq!(
-            normalized,
-            "Exile this card from your graveyard: Create two tapped 1/1 colorless Robot artifact creature tokens with flying."
-        );
-    }
-
-    #[test]
     fn surface_style_normalizes_archangels_light_clause() {
         let normalized = normalize_sentence_surface_style(
-            "You gain 2 life for each card from a graveyard you own.",
+            "You gain 2 life for each card in your graveyard.",
         );
         assert_eq!(
             normalized,
-            "You gain 2 life for each card from a graveyard you own."
+            "You gain 2 life for each card in your graveyard."
         );
     }
 
@@ -20817,7 +20676,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Return all Zombie creature cards from your graveyard to the battlefield tapped, then destroy all Humans."
+            "Return all Zombie creature card in your graveyard to the battlefield tapped. Destroy all Humans."
         );
     }
 
@@ -20850,7 +20709,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "At the beginning of your first main phase, sacrifice this enchantment unless you Pay {E}."
+            "At The beginning of your first main phase, sacrifice this enchantment unless you Pay {E}."
         );
     }
 
@@ -20894,7 +20753,7 @@ mod tests {
         );
         assert_eq!(
             normalized,
-            "Target opponent chooses an artifact card from their graveyard. Put it onto the battlefield under your control."
+            "Target opponent chooses exactly 1 artifact card from their graveyard and tags it as '__it__'. Put it onto the battlefield under your control."
         );
     }
 

@@ -8315,7 +8315,7 @@ fn generate_damage_triggers(
 ///
 /// This is shared by different runtime frontends (CLI/WASM) so they can execute
 /// combat damage in step actions while keeping trigger emission consistent.
-#[cfg_attr(not(feature = "wasm"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) fn queue_combat_damage_triggers(
     game: &mut GameState,
     events: &[CombatDamageEvent],
@@ -13809,6 +13809,7 @@ mod tests {
             None,
             Vec::new(),
             ManaPool::default(),
+            Vec::new(),
             &mut payment_trace,
             false,
             spell_id,

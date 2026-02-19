@@ -5,10 +5,13 @@
 
 use crate::effect::{Effect, EffectOutcome};
 use crate::effects::EffectExecutor;
-use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
+use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
-use crate::snapshot::ObjectSnapshot;
 use crate::tag::TagKey;
+
+use super::tagging_runtime::{
+    apply_tagged_runtime_state, capture_tagged_runtime_state, capture_target_object_snapshots,
+};
 
 /// Effect that executes an inner effect and tags its target for later reference.
 ///
@@ -60,83 +63,11 @@ impl EffectExecutor for TaggedEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        // Capture a snapshot of the first object target before executing the effect.
-        // This preserves LKI for effects that don't return explicit object results.
-        let mut pre_snapshot: Option<ObjectSnapshot> = None;
-        for target in &ctx.targets {
-            if let ResolvedTarget::Object(object_id) = target
-                && let Some(obj) = game.object(*object_id)
-            {
-                pre_snapshot = Some(ObjectSnapshot::from_object(obj, game));
-                break;
-            }
-        }
-        if pre_snapshot.is_none()
-            && let Some(object_id) = ctx.iterated_object
-            && let Some(obj) = game.object(object_id)
-        {
-            pre_snapshot = Some(ObjectSnapshot::from_object(obj, game));
-        }
-        // Some non-targeted effects (for example, return-all patterns) do not
-        // return explicit object IDs. Capture candidate stable IDs so we can tag
-        // post-resolution objects if needed.
-        let pre_stable_ids = self
-            .effect
-            .downcast_ref::<crate::effects::ReturnAllToBattlefieldEffect>()
-            .and_then(|return_all| {
-                let spec = crate::target::ChooseSpec::all(return_all.filter.clone());
-                crate::effects::helpers::resolve_objects_from_spec(game, &spec, ctx)
-                    .ok()
-                    .map(|ids| {
-                        ids.into_iter()
-                            .filter_map(|id| game.object(id).map(|obj| obj.stable_id))
-                            .collect::<Vec<_>>()
-                    })
-            });
+        let runtime = capture_tagged_runtime_state(game, &self.effect, ctx);
 
         // Execute the inner effect
         let outcome = crate::executor::execute_effect(game, &self.effect, ctx)?;
-
-        // If the inner effect returned explicit objects, tag those (post-effect state).
-        if let crate::effect::EffectResult::Objects(ids) = &outcome.result
-            && !ids.is_empty()
-        {
-            let snapshots: Vec<ObjectSnapshot> = ids
-                .iter()
-                .filter_map(|id| {
-                    game.object(*id)
-                        .map(|obj| ObjectSnapshot::from_object(obj, game))
-                })
-                .collect();
-            if !snapshots.is_empty() {
-                ctx.set_tagged_objects(self.tag.clone(), snapshots);
-            }
-            return Ok(outcome);
-        }
-
-        // Otherwise, fall back to tagging the pre-effect snapshot if we captured one.
-        if let Some(snapshot) = pre_snapshot {
-            ctx.tag_object(self.tag.clone(), snapshot);
-            return Ok(outcome);
-        }
-
-        // As a final fallback, try to remap pre-resolution stable IDs to current
-        // battlefield objects (zone changes create new object IDs).
-        if let Some(stable_ids) = pre_stable_ids {
-            let snapshots: Vec<ObjectSnapshot> = stable_ids
-                .into_iter()
-                .filter_map(|stable_id| game.find_object_by_stable_id(stable_id))
-                .filter_map(|id| {
-                    game.object(id).and_then(|obj| {
-                        (obj.zone == crate::zone::Zone::Battlefield)
-                            .then(|| ObjectSnapshot::from_object(obj, game))
-                    })
-                })
-                .collect();
-            if !snapshots.is_empty() {
-                ctx.set_tagged_objects(self.tag.clone(), snapshots);
-            }
-        }
+        apply_tagged_runtime_state(game, ctx, self.tag.clone(), &outcome, runtime);
 
         Ok(outcome)
     }
@@ -207,16 +138,7 @@ impl EffectExecutor for TagAllEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        // Before executing the inner effect, capture snapshots of ALL object targets.
-        // This preserves LKI even if the objects are destroyed/exiled/etc.
-        let mut snapshots = Vec::new();
-        for target in &ctx.targets {
-            if let ResolvedTarget::Object(object_id) = target
-                && let Some(obj) = game.object(*object_id)
-            {
-                snapshots.push(ObjectSnapshot::from_object(obj, game));
-            }
-        }
+        let snapshots = capture_target_object_snapshots(game, ctx);
 
         // Tag all the snapshots
         if !snapshots.is_empty() {
@@ -253,6 +175,7 @@ mod tests {
     use crate::card::{CardBuilder, PowerToughness};
     use crate::effect::Effect;
     use crate::effect::EffectResult;
+    use crate::executor::ResolvedTarget;
     use crate::filter::ObjectRef;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};

@@ -1306,7 +1306,6 @@ pub fn resolve_objects_from_spec(
 
         // Player specs can't be resolved to objects
         ChooseSpec::Player(_)
-        | ChooseSpec::PlayerOrPlaneswalker(_)
         | ChooseSpec::SpecificPlayer(_)
         | ChooseSpec::SourceController
         | ChooseSpec::SourceOwner

@@ -1,12 +1,13 @@
 //! Add mana from commander color identity effect implementation.
 
+use super::choice_helpers::{choose_mana_colors, credit_repeated_mana_symbol};
 use crate::color::Color;
-use crate::decisions::ask_mana_color;
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
+use crate::mana::ManaSymbol;
 use crate::target::PlayerFilter;
 
 /// Effect that adds mana of any color in the player's commander's color identity.
@@ -66,9 +67,7 @@ impl EffectExecutor for AddManaFromCommanderColorIdentityEffect {
 
         // If colorless identity, add colorless mana
         if color_identity.is_empty() {
-            if let Some(p) = game.player_mut(player_id) {
-                p.mana_pool.colorless += amount;
-            }
+            credit_repeated_mana_symbol(game, player_id, ManaSymbol::Colorless, amount);
             return Ok(EffectOutcome::count(amount as i32));
         }
 
@@ -90,32 +89,56 @@ impl EffectExecutor for AddManaFromCommanderColorIdentityEffect {
             available_colors.push(Color::Green);
         }
 
-        // Ask player to choose one color from their commander's color identity
-        let color = ask_mana_color(
+        let color = choose_mana_colors(
             game,
-            &mut ctx.decision_maker,
+            ctx,
             player_id,
-            ctx.source,
-            Some(&available_colors), // Restrict to commander's color identity
-            available_colors[0],     // Default to first available
-        );
+            1,
+            true,
+            Some(&available_colors),
+            available_colors[0],
+        )
+        .into_iter()
+        .next()
+        .unwrap_or(available_colors[0]);
 
-        // Add the mana (all of the same color)
-        if let Some(p) = game.player_mut(player_id) {
-            match color {
-                Color::White => p.mana_pool.white += amount,
-                Color::Blue => p.mana_pool.blue += amount,
-                Color::Black => p.mana_pool.black += amount,
-                Color::Red => p.mana_pool.red += amount,
-                Color::Green => p.mana_pool.green += amount,
-            }
-        }
+        credit_repeated_mana_symbol(game, player_id, ManaSymbol::from_color(color), amount);
 
         Ok(EffectOutcome::count(amount as i32))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
+    }
+
+    fn producible_mana_symbols(
+        &self,
+        game: &GameState,
+        _source: crate::ids::ObjectId,
+        controller: crate::ids::PlayerId,
+    ) -> Option<Vec<ManaSymbol>> {
+        let identity = game.get_commander_color_identity(controller);
+        if identity.is_empty() {
+            return Some(vec![ManaSymbol::Colorless]);
+        }
+
+        let mut symbols = Vec::new();
+        if identity.contains(Color::White) {
+            symbols.push(ManaSymbol::White);
+        }
+        if identity.contains(Color::Blue) {
+            symbols.push(ManaSymbol::Blue);
+        }
+        if identity.contains(Color::Black) {
+            symbols.push(ManaSymbol::Black);
+        }
+        if identity.contains(Color::Red) {
+            symbols.push(ManaSymbol::Red);
+        }
+        if identity.contains(Color::Green) {
+            symbols.push(ManaSymbol::Green);
+        }
+        Some(symbols)
     }
 }
 

@@ -8,6 +8,8 @@ use crate::game_state::GameState;
 use crate::target::ChooseSpec;
 use crate::zone::Zone;
 
+use super::{BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BattlefieldController {
     Preserve,
@@ -140,30 +142,28 @@ impl EffectExecutor for MoveToZoneEffect {
                 }
                 EventOutcome::Proceed(final_zone) => {
                     if final_zone == Zone::Battlefield {
-                        if let Some(result) = game.move_object_with_etb_processing_with_dm(
-                            object_id,
-                            Zone::Battlefield,
-                            &mut ctx.decision_maker,
-                        ) {
-                            if let Some(new_obj) = game.object_mut(result.new_id) {
-                                match self.battlefield_controller {
-                                    BattlefieldController::Preserve => {}
-                                    BattlefieldController::Owner => {
-                                        new_obj.controller = new_obj.owner;
-                                    }
-                                    BattlefieldController::You => {
-                                        new_obj.controller = ctx.controller;
-                                    }
+                        let options = match self.battlefield_controller {
+                            BattlefieldController::Preserve => {
+                                BattlefieldEntryOptions::preserve(self.enters_tapped)
+                            }
+                            BattlefieldController::Owner => {
+                                BattlefieldEntryOptions::owner(self.enters_tapped)
+                            }
+                            BattlefieldController::You => BattlefieldEntryOptions::specific(
+                                ctx.controller,
+                                self.enters_tapped,
+                            ),
+                        };
+                        return Ok(
+                            match move_to_battlefield_with_options(game, ctx, object_id, options) {
+                                BattlefieldEntryOutcome::Moved(new_id) => {
+                                    EffectOutcome::from_result(EffectResult::Objects(vec![new_id]))
                                 }
-                            }
-                            if self.enters_tapped && !result.enters_tapped {
-                                game.tap(result.new_id);
-                            }
-                            return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
-                                result.new_id,
-                            ])));
-                        }
-                        return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+                                BattlefieldEntryOutcome::Prevented => {
+                                    EffectOutcome::from_result(EffectResult::Prevented)
+                                }
+                            },
+                        );
                     }
 
                     if let Some(new_id) = game.move_object(object_id, final_zone) {

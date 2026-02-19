@@ -1,5 +1,6 @@
 //! Add mana effect implementation.
 
+use super::choice_helpers::credit_mana_symbols;
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
@@ -49,11 +50,7 @@ impl EffectExecutor for AddManaEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let player_id = resolve_player_filter(game, &self.player, ctx)?;
 
-        if let Some(p) = game.player_mut(player_id) {
-            for symbol in &self.mana {
-                p.mana_pool.add(*symbol, 1);
-            }
-        }
+        credit_mana_symbols(game, player_id, self.mana.iter().copied());
 
         Ok(EffectOutcome::from_result(EffectResult::ManaAdded(
             self.mana.clone(),
@@ -62,6 +59,15 @@ impl EffectExecutor for AddManaEffect {
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
+    }
+
+    fn producible_mana_symbols(
+        &self,
+        _game: &GameState,
+        _source: crate::ids::ObjectId,
+        _controller: crate::ids::PlayerId,
+    ) -> Option<Vec<ManaSymbol>> {
+        Some(self.mana.clone())
     }
 }
 

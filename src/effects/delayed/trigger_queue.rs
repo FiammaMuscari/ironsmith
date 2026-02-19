@@ -54,6 +54,71 @@ impl DelayedTriggerConfig {
     }
 }
 
+/// How watcher identity should be represented in delayed scheduling.
+#[derive(Debug, Clone)]
+pub(crate) enum DelayedWatcherIdentity {
+    /// One delayed trigger that watches any object in this set.
+    Combined(Vec<ObjectId>),
+    /// One delayed trigger per watched object.
+    PerObject(Vec<ObjectId>),
+}
+
+impl DelayedWatcherIdentity {
+    pub fn combined(watchers: Vec<ObjectId>) -> Self {
+        Self::Combined(watchers)
+    }
+
+    pub fn per_object(watchers: Vec<ObjectId>) -> Self {
+        Self::PerObject(watchers)
+    }
+}
+
+/// Trigger/effect policy template for delayed scheduling.
+#[derive(Debug, Clone)]
+pub(crate) struct DelayedTriggerTemplate {
+    pub trigger: Trigger,
+    pub effects: Vec<Effect>,
+    pub one_shot: bool,
+    pub not_before_turn: Option<u32>,
+    pub expires_at_turn: Option<u32>,
+    pub ability_source: Option<ObjectId>,
+    pub controller: PlayerId,
+}
+
+impl DelayedTriggerTemplate {
+    pub fn new(
+        trigger: Trigger,
+        effects: Vec<Effect>,
+        one_shot: bool,
+        controller: PlayerId,
+    ) -> Self {
+        Self {
+            trigger,
+            effects,
+            one_shot,
+            not_before_turn: None,
+            expires_at_turn: None,
+            ability_source: None,
+            controller,
+        }
+    }
+
+    pub fn with_not_before_turn(mut self, not_before_turn: Option<u32>) -> Self {
+        self.not_before_turn = not_before_turn;
+        self
+    }
+
+    pub fn with_expires_at_turn(mut self, expires_at_turn: Option<u32>) -> Self {
+        self.expires_at_turn = expires_at_turn;
+        self
+    }
+
+    pub fn with_ability_source(mut self, ability_source: Option<ObjectId>) -> Self {
+        self.ability_source = ability_source;
+        self
+    }
+}
+
 /// Push a delayed trigger onto the game queue.
 pub(crate) fn queue_delayed_trigger(game: &mut GameState, config: DelayedTriggerConfig) {
     game.delayed_triggers.push(DelayedTrigger {
@@ -66,6 +131,54 @@ pub(crate) fn queue_delayed_trigger(game: &mut GameState, config: DelayedTrigger
         ability_source: config.ability_source,
         controller: config.controller,
     });
+}
+
+/// Queue delayed trigger(s) using a shared template and watcher identity policy.
+///
+/// Returns how many delayed triggers were enqueued.
+pub(crate) fn queue_delayed_from_template(
+    game: &mut GameState,
+    watchers: DelayedWatcherIdentity,
+    template: DelayedTriggerTemplate,
+) -> usize {
+    match watchers {
+        DelayedWatcherIdentity::Combined(target_objects) => {
+            queue_delayed_trigger(
+                game,
+                DelayedTriggerConfig::new(
+                    template.trigger,
+                    template.effects,
+                    template.one_shot,
+                    target_objects,
+                    template.controller,
+                )
+                .with_not_before_turn(template.not_before_turn)
+                .with_expires_at_turn(template.expires_at_turn)
+                .with_ability_source(template.ability_source),
+            );
+            1
+        }
+        DelayedWatcherIdentity::PerObject(target_objects) => {
+            let mut queued = 0usize;
+            for watched in target_objects {
+                queue_delayed_trigger(
+                    game,
+                    DelayedTriggerConfig::new(
+                        template.trigger.clone(),
+                        template.effects.clone(),
+                        template.one_shot,
+                        vec![watched],
+                        template.controller,
+                    )
+                    .with_not_before_turn(template.not_before_turn)
+                    .with_expires_at_turn(template.expires_at_turn)
+                    .with_ability_source(template.ability_source),
+                );
+                queued += 1;
+            }
+            queued
+        }
+    }
 }
 
 #[cfg(test)]
@@ -130,5 +243,59 @@ mod tests {
         assert_eq!(delayed.not_before_turn, Some(turn + 1));
         assert_eq!(delayed.expires_at_turn, Some(turn));
         assert_eq!(delayed.ability_source, Some(source));
+    }
+
+    #[test]
+    fn test_queue_delayed_from_template_combined_watchers() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let watched_a = game.new_object_id();
+        let watched_b = game.new_object_id();
+
+        let template = DelayedTriggerTemplate::new(
+            Trigger::this_leaves_battlefield(),
+            vec![Effect::exile(ChooseSpec::SpecificObject(source))],
+            true,
+            alice,
+        )
+        .with_ability_source(Some(source));
+
+        let queued = queue_delayed_from_template(
+            &mut game,
+            DelayedWatcherIdentity::combined(vec![watched_a, watched_b]),
+            template,
+        );
+
+        assert_eq!(queued, 1);
+        assert_eq!(game.delayed_triggers.len(), 1);
+        let delayed = &game.delayed_triggers[0];
+        assert_eq!(delayed.target_objects, vec![watched_a, watched_b]);
+    }
+
+    #[test]
+    fn test_queue_delayed_from_template_per_object_watchers() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let watched_a = game.new_object_id();
+        let watched_b = game.new_object_id();
+
+        let template = DelayedTriggerTemplate::new(
+            Trigger::this_leaves_battlefield(),
+            vec![Effect::sacrifice_source()],
+            true,
+            alice,
+        );
+
+        let queued = queue_delayed_from_template(
+            &mut game,
+            DelayedWatcherIdentity::per_object(vec![watched_a, watched_b]),
+            template,
+        );
+
+        assert_eq!(queued, 2);
+        assert_eq!(game.delayed_triggers.len(), 2);
+        assert_eq!(game.delayed_triggers[0].target_objects, vec![watched_a]);
+        assert_eq!(game.delayed_triggers[1].target_objects, vec![watched_b]);
     }
 }

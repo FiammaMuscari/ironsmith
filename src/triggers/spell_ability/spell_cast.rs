@@ -122,6 +122,13 @@ impl TriggerMatcher for SpellCastTrigger {
                 }
                 stack_filter.zone = Some(Zone::Stack);
             }
+            // `ObjectFilter::spell()` historically used `has_mana_cost` as a rough
+            // spell-vs-ability proxy on stack filters. SpellCastEvent already
+            // guarantees this is a spell, and real spells can have no mana cost
+            // (e.g. suspend cards), so drop that extra gate here.
+            if stack_filter.zone == Some(Zone::Stack) {
+                stack_filter.has_mana_cost = false;
+            }
             if let Some(obj) = ctx.game.object(e.spell) {
                 stack_filter.matches(obj, &ctx.filter_ctx, ctx.game)
             } else {
