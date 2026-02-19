@@ -20,6 +20,7 @@ Battle Strain
 Birchlore Rangers
 Body Snatcher
 Brass Squire
+Brightcap Badger // Fungus Frolic
 Burn Away
 Burn Bright
 Cadaverous Bloom
@@ -145,6 +146,7 @@ Tajuru Beastmaster
 Tectonic Reformation
 Temur Ascendancy
 Thunderhead Gunner
+Tori D'Avenant, Fury Rider
 Tormod's Crypt
 Triumph of the Hordes
 Tuktuk Rubblefort
