@@ -3732,7 +3732,6 @@ fn describe_discard_count(value: &Value, filter: Option<&ObjectFilter>) -> Strin
 
 fn describe_discard_card_phrase(filter: &ObjectFilter) -> String {
     let mut bare = filter.clone();
-    bare.zone = None;
     bare.controller = None;
     bare.owner = None;
     bare.targets_player = None;
@@ -3740,6 +3739,9 @@ fn describe_discard_card_phrase(filter: &ObjectFilter) -> String {
     bare.tagged_constraints.clear();
 
     let mut phrase = strip_indefinite_article(&bare.description()).to_string();
+    if let Some(stripped) = phrase.strip_suffix(" in hand") {
+        phrase = stripped.to_string();
+    }
     if phrase.is_empty() || phrase == "object" || phrase == "objects" {
         return "card".to_string();
     }
