@@ -13620,6 +13620,47 @@ fn parse_sentence_chain_then_keyword(
     Ok(Some(head_effects))
 }
 
+fn parse_sentence_return_then_create(tokens: &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let split = tokens
+        .windows(2)
+        .position(|window| matches!(window[0], Token::Comma(_)) && window[1].is_word("then"))
+        .map(|idx| (idx, idx + 2))
+        .or_else(|| {
+            tokens
+                .iter()
+                .position(|token| token.is_word("then"))
+                .and_then(|idx| (idx > 0 && idx + 1 < tokens.len()).then_some((idx, idx + 1)))
+        });
+    let Some((head_end, tail_start)) = split else {
+        return Ok(None);
+    };
+
+    let head_tokens = trim_commas(&tokens[..head_end]);
+    let tail_tokens = trim_commas(&tokens[tail_start..]);
+    if head_tokens.is_empty() || tail_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let head_words = words(&head_tokens);
+    let tail_words = words(&tail_tokens);
+    if head_words.first() != Some(&"return") || tail_words.first() != Some(&"create") {
+        return Ok(None);
+    }
+
+    let mut head_effects = parse_effect_chain(&head_tokens)?;
+    if head_effects.is_empty() {
+        return Ok(None);
+    }
+
+    let mut tail_effects = parse_effect_chain(&tail_tokens)?;
+    if tail_effects.is_empty() {
+        return Ok(None);
+    }
+
+    head_effects.append(&mut tail_effects);
+    Ok(Some(head_effects))
+}
+
 fn parse_sentence_exile_then_may_put_from_exile(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -15263,6 +15304,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
         parser: parse_sentence_return_then_do_same_for_subtypes,
     },
     SentencePrimitive {
+        name: "return-then-create",
+        parser: parse_sentence_return_then_create,
+    },
+    SentencePrimitive {
         name: "put-counter-sequence",
         parser: parse_sentence_put_counter_sequence,
     },
@@ -15701,6 +15746,10 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
     {
         parser_trace("parse_effect_sentence:conditional-then", &tokens[1..]);
         return parse_conditional_sentence(&tokens[1..]);
+    }
+    if tokens.first().is_some_and(|token| token.is_word("then")) && tokens.len() > 1 {
+        parser_trace("parse_effect_sentence:leading-then", &tokens[1..]);
+        return parse_effect_sentence(&tokens[1..]);
     }
     if let Some(effects) = run_sentence_primitives(tokens, PRE_CONDITIONAL_SENTENCE_PRIMITIVES)? {
         return Ok(effects);
@@ -26824,6 +26873,27 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
             tail_tokens.truncate(cut_idx);
         }
     }
+    let mut attached_to_target: Option<TargetAst> = None;
+    let pre_attach_tail_words = words(&tail_tokens);
+    let pre_attach_for_each_idx = pre_attach_tail_words
+        .windows(2)
+        .position(|window| window == ["for", "each"]);
+    if let Some(attached_word_idx) = pre_attach_tail_words.iter().position(|word| *word == "attached")
+        && pre_attach_tail_words.get(attached_word_idx + 1) == Some(&"to")
+        && (pre_attach_for_each_idx.is_none()
+            || pre_attach_for_each_idx.is_some_and(|for_each_idx| attached_word_idx < for_each_idx))
+        && let Some(attached_token_idx) = token_index_for_word_index(&tail_tokens, attached_word_idx)
+    {
+        let target_tokens = trim_commas(&tail_tokens[attached_token_idx + 2..]);
+        if target_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing attachment target in create clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        attached_to_target = Some(parse_target_phrase(&target_tokens)?);
+        tail_tokens.truncate(attached_token_idx);
+    }
     let tail_words = words(&tail_tokens);
     let for_each_idx = tail_words
         .windows(2)
@@ -27069,6 +27139,7 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
         name,
         count: count_value,
         player,
+        attached_to: attached_to_target,
         tapped,
         attacking,
         exile_at_end_of_combat: false,

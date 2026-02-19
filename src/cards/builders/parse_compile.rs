@@ -814,6 +814,7 @@ fn compile_effects(
                 name,
                 count,
                 player,
+                attached_to,
                 tapped,
                 attacking,
                 sacrifice_at_next_end_step,
@@ -826,6 +827,7 @@ fn compile_effects(
                 name: name.clone(),
                 count: count.clone(),
                 player: *player,
+                attached_to: attached_to.clone(),
                 tapped: *tapped,
                 attacking: *attacking,
                 exile_at_end_of_combat: true,
@@ -3316,6 +3318,7 @@ fn compile_effect(
             name,
             count,
             player,
+            attached_to,
             tapped,
             attacking,
             exile_at_end_of_combat,
@@ -3347,12 +3350,27 @@ fn compile_effect(
                 effect = effect.exile_at_next_end_step();
             }
             let mut effect = Effect::new(effect);
-            if ctx.auto_tag_object_targets {
+            let needs_created_tag = ctx.auto_tag_object_targets || attached_to.is_some();
+            let mut created_tag: Option<String> = None;
+            if needs_created_tag {
                 let tag = ctx.next_tag("created");
                 ctx.last_object_tag = Some(tag.clone());
-                effect = effect.tag(tag);
+                effect = effect.tag(tag.clone());
+                created_tag = Some(tag);
             }
-            Ok((vec![effect], Vec::new()))
+
+            let mut compiled = vec![effect];
+            let mut choices = Vec::new();
+            if let Some(target) = attached_to {
+                let (target_spec, target_choices) = resolve_target_spec_with_choices(target, ctx)?;
+                for choice in target_choices {
+                    push_choice(&mut choices, choice);
+                }
+                let created_tag = created_tag.expect("created token tag should exist when attaching");
+                let objects = ChooseSpec::All(ObjectFilter::tagged(created_tag));
+                compiled.push(Effect::attach_objects(objects, target_spec));
+            }
+            Ok((compiled, choices))
         }
         EffectAst::CreateToken {
             name,
@@ -4804,6 +4822,18 @@ fn token_definition_for(name: &str) -> Option<CardDefinition> {
             .token()
             .card_types(vec![CardType::Artifact])
             .subtypes(vec![Subtype::Food]);
+        return Some(builder.build());
+    }
+    if has_word("wicked") && has_word("role") {
+        let builder = CardDefinitionBuilder::new(CardId::new(), "Wicked Role")
+            .token()
+            .card_types(vec![CardType::Enchantment])
+            .subtypes(vec![Subtype::Aura, Subtype::Role]);
+        if let Ok(def) = builder.clone().parse_text(
+            "Enchant creature\nEnchanted creature gets +1/+1.\nWhen this token is put into a graveyard from the battlefield, each opponent loses 1 life.",
+        ) {
+            return Some(def);
+        }
         return Some(builder.build());
     }
     if has_word("blood") && !words.contains(&"creature") {

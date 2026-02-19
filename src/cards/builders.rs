@@ -823,6 +823,7 @@ enum EffectAst {
         name: String,
         count: Value,
         player: PlayerAst,
+        attached_to: Option<TargetAst>,
         tapped: bool,
         attacking: bool,
         exile_at_end_of_combat: bool,

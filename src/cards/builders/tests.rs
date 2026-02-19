@@ -9576,6 +9576,26 @@ fn parse_nesting_dragon_inline_token_rules_remain_attached_to_created_token() {
 }
 
 #[test]
+fn parse_not_dead_after_all_keeps_role_creation_and_attachment_in_granted_trigger() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Not Dead After All Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Until end of turn, target creature you control gains \"When this creature dies, return it to the battlefield tapped under its owner's control, then create a Wicked Role token attached to it.\"",
+        )
+        .expect("wicked-role-on-return clause should parse");
+
+    let debug = format!("{:#?}", def.spell_effect);
+    assert!(
+        debug.contains("CreateTokenEffect"),
+        "expected granted trigger to keep Wicked Role token creation, got {debug}"
+    );
+    assert!(
+        debug.contains("AttachObjectsEffect"),
+        "expected created role token to be attached, got {debug}"
+    );
+}
+
+#[test]
 fn parse_one_or_more_trigger_subject_does_not_split_on_or() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Yarus Trigger Variant")
         .card_types(vec![CardType::Creature])

@@ -245,6 +245,12 @@ fn describe_token_color_words(colors: crate::color::ColorSet, include_colorless:
 
 fn describe_token_blueprint(token: &CardDefinition) -> String {
     let card = &token.card;
+    if card.subtypes.contains(&crate::types::Subtype::Role)
+        && !card.name.trim().is_empty()
+        && card.name.to_ascii_lowercase() != "token"
+    {
+        return format!("{} token", card.name);
+    }
     let mut parts = Vec::new();
     let mut creature_name_prefix: Option<String> = None;
 
@@ -11764,6 +11770,21 @@ fn rewrite_granted_triggered_ability_quote(text: &str) -> Option<String> {
         normalized
     }
 
+    fn split_until_end_of_turn_suffix(body: &str) -> (&str, &str) {
+        let trimmed = body.trim();
+        let trimmed_no_period = trimmed.trim_end_matches('.');
+        let lower = trimmed_no_period.to_ascii_lowercase();
+        let suffix = " until end of turn";
+        if lower.ends_with(suffix) {
+            let split_idx = trimmed_no_period.len().saturating_sub(suffix.len());
+            return (
+                trimmed_no_period[..split_idx].trim_end(),
+                trimmed_no_period[split_idx..].trim(),
+            );
+        }
+        (trimmed_no_period.trim(), "")
+    }
+
     if let Some((subject, body)) = text.split_once(" have whenever ") {
         let body = insert_trigger_comma_if_missing(&normalize_granted_trigger_body(body));
         let body = format!("Whenever {body}");
@@ -11783,6 +11804,24 @@ fn rewrite_granted_triggered_ability_quote(text: &str) -> Option<String> {
         let body = insert_trigger_comma_if_missing(&normalize_granted_trigger_body(body));
         let body = format!("When {body}");
         return Some(format!("{} has \"{}.\"", subject.trim(), body));
+    }
+    if let Some((subject, body)) = text.split_once(" gains when ")
+        && body
+            .to_ascii_lowercase()
+            .contains("wicked role token")
+    {
+        let (body_core, until_suffix) = split_until_end_of_turn_suffix(body);
+        let body = insert_trigger_comma_if_missing(&normalize_granted_trigger_body(body_core));
+        let body = format!("When {body}");
+        if until_suffix.is_empty() {
+            return Some(format!("{} gains \"{}.\"", subject.trim(), body));
+        }
+        return Some(format!(
+            "{} gains \"{}.\" {}.",
+            subject.trim(),
+            body,
+            until_suffix
+        ));
     }
     None
 }
@@ -12283,6 +12322,26 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     }
     if normalized.eq_ignore_ascii_case("Whenever you cast an or copy an instant or sorcery spell") {
         return "Whenever you cast or copy an instant or sorcery spell".to_string();
+    }
+    if let Some((left, right)) = split_once_ascii_ci(&normalized, ". Attach it to ")
+        && left.to_ascii_lowercase().contains("create ")
+        && left.to_ascii_lowercase().contains(" token")
+    {
+        return format!(
+            "{} attached to {}.",
+            left.trim().trim_end_matches('.'),
+            right.trim().trim_end_matches('.')
+        );
+    }
+    if let Some((left, right)) = split_once_ascii_ci(&normalized, ". Attach them to ")
+        && left.to_ascii_lowercase().contains("create ")
+        && left.to_ascii_lowercase().contains(" token")
+    {
+        return format!(
+            "{} attached to {}.",
+            left.trim().trim_end_matches('.'),
+            right.trim().trim_end_matches('.')
+        );
     }
     if let Some(tail) = strip_prefix_ascii_ci(
         &normalized,
@@ -20072,6 +20131,28 @@ mod tests {
         assert_eq!(
             normalized,
             "Creatures you control have \"Whenever this creature becomes the target of a spell or ability reveal the top card of your library. If it's a land card put it onto the battlefield. Otherwise put it into your hand. This ability triggers only twice each turn.\""
+        );
+    }
+
+    #[test]
+    fn post_pass_merges_create_then_attach_sentence() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Destroy target creature or enchantment. Create a Wicked Role token. Attach it to up to one target creature you control.",
+        );
+        assert_eq!(
+            normalized,
+            "Destroy target creature or enchantment. Create a Wicked Role token attached to up to one target creature you control."
+        );
+    }
+
+    #[test]
+    fn post_pass_quotes_wicked_role_granted_trigger_text() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Target creature you control gains when this creature dies return it to the battlefield tapped under its owner's control then create a wicked role token attached to it until end of turn.",
+        );
+        assert_eq!(
+            normalized,
+            "Target creature you control gains \"When this creature dies, return it to the battlefield tapped under its owner's control, then create a wicked role token attached to it.\" until end of turn."
         );
     }
 
