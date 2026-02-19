@@ -25604,6 +25604,22 @@ fn parse_sacrifice(
             words(tokens).join(" ")
         )));
     }
+    let sacrifice_words = words(tokens);
+    let excludes_attached_object = sacrifice_words.windows(3).any(|window| {
+        matches!(
+            window,
+            ["than", "enchanted", "creature"]
+                | ["than", "enchanted", "permanent"]
+                | ["than", "equipped", "creature"]
+                | ["than", "equipped", "permanent"]
+        )
+    });
+    if excludes_attached_object
+        && filter.controller.is_none()
+        && let Some(controller) = controller_filter_for_token_player(player)
+    {
+        filter.controller = Some(controller);
+    }
 
     Ok(EffectAst::Sacrifice {
         filter,
@@ -28823,6 +28839,36 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         .into_iter()
         .filter(|word| !is_article(word) && *word != "instead")
         .collect();
+
+    let mut attached_exclusion_idx = 0usize;
+    while attached_exclusion_idx + 2 < all_words.len() {
+        if all_words[attached_exclusion_idx] != "other" || all_words[attached_exclusion_idx + 1] != "than" {
+            attached_exclusion_idx += 1;
+            continue;
+        }
+
+        let Some((tag, mut drain_end)) = (match all_words.get(attached_exclusion_idx + 2).copied() {
+            Some("enchanted") => Some((TagKey::from("enchanted"), attached_exclusion_idx + 3)),
+            Some("equipped") => Some((TagKey::from("equipped"), attached_exclusion_idx + 3)),
+            _ => None,
+        })
+        else {
+            attached_exclusion_idx += 1;
+            continue;
+        };
+
+        if all_words
+            .get(drain_end)
+            .is_some_and(|word| is_demonstrative_object_head(word))
+        {
+            drain_end += 1;
+        }
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag,
+            relation: TaggedOpbjectRelation::IsNotTaggedObject,
+        });
+        all_words.drain(attached_exclusion_idx..drain_end);
+    }
 
     if let Some((power, toughness)) = all_words
         .first()
