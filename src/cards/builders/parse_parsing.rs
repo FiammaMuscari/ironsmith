@@ -21381,7 +21381,16 @@ fn parse_deal_damage_equal_to_power_clause(
                 clause_words.join(" ")
             )));
         }
-        parse_target_phrase(target_tokens)?
+        let mut normalized_target_tokens = target_tokens;
+        let target_words = words(target_tokens);
+        if target_words.starts_with(&["each", "of"]) {
+            let each_of_tokens = &target_tokens[2..];
+            let each_of_words = words(each_of_tokens);
+            if each_of_words.iter().any(|word| *word == "target") {
+                normalized_target_tokens = each_of_tokens;
+            }
+        }
+        parse_target_phrase(normalized_target_tokens)?
     } else if pre_equal_words.starts_with(&["damage", "to"]) {
         let target_tokens = trim_commas(&rest[2..equal_idx]);
         let target_words = words(&target_tokens);
@@ -23526,7 +23535,16 @@ fn parse_deal_damage_equal_to_clause(tokens: &[Token]) -> Result<Option<EffectAs
             clause_words.join(" ")
         )));
     }
-    let target = parse_target_phrase(&target_tokens)?;
+    let mut normalized_target_tokens = target_tokens;
+    let target_words = words(target_tokens);
+    if target_words.starts_with(&["each", "of"]) {
+        let each_of_tokens = &target_tokens[2..];
+        let each_of_words = words(each_of_tokens);
+        if each_of_words.iter().any(|word| *word == "target") {
+            normalized_target_tokens = each_of_tokens;
+        }
+    }
+    let target = parse_target_phrase(normalized_target_tokens)?;
     Ok(Some(EffectAst::DealDamage { amount, target }))
 }
 
