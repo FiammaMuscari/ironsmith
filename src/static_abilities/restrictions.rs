@@ -301,6 +301,43 @@ impl StaticAbilityKind for CantBeCountered {
     }
 }
 
+/// Generic static restriction ability with custom display text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuleRestriction {
+    pub restriction: Restriction,
+    pub display: String,
+}
+
+impl RuleRestriction {
+    pub fn new(restriction: Restriction, display: String) -> Self {
+        Self {
+            restriction,
+            display,
+        }
+    }
+}
+
+impl StaticAbilityKind for RuleRestriction {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::Custom
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, controller: PlayerId) {
+        let mut tracker = CantEffectTracker::default();
+        self.restriction
+            .apply(game, &mut tracker, controller, Some(source));
+        game.cant_effects.merge(tracker);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -9,6 +9,7 @@ use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
+use crate::filter::Comparison;
 use crate::game_state::GameState;
 use crate::ids::ObjectId;
 use crate::snapshot::ObjectSnapshot;
@@ -428,6 +429,13 @@ impl EffectExecutor for ChooseObjectsEffect {
                 .map(|t| format!("{:?}", t).to_lowercase())
                 .collect::<Vec<_>>()
                 .join(" or ")
+        } else if !self.filter.subtypes.is_empty() {
+            self.filter
+                .subtypes
+                .iter()
+                .map(|s| format!("{:?}", s).to_lowercase())
+                .collect::<Vec<_>>()
+                .join(" or ")
         } else {
             "card".to_string()
         };
@@ -440,11 +448,38 @@ impl EffectExecutor for ChooseObjectsEffect {
             _ => "",
         };
 
+        let mana_value_desc = match &self.filter.mana_value {
+            Some(Comparison::Equal(value)) => format!(" with mana value {}", value),
+            Some(Comparison::LessThan(value)) => format!(" with mana value less than {}", value),
+            Some(Comparison::LessThanOrEqual(value)) => {
+                format!(" with mana value {} or less", value)
+            }
+            Some(Comparison::GreaterThan(value)) => {
+                format!(" with mana value greater than {}", value)
+            }
+            Some(Comparison::GreaterThanOrEqual(value)) => {
+                format!(" with mana value {} or greater", value)
+            }
+            Some(Comparison::NotEqual(value)) => {
+                format!(" with mana value not equal to {}", value)
+            }
+            Some(Comparison::OneOf(values)) => {
+                let joined = values
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(" with mana value {}", joined)
+            }
+            None => String::new(),
+        };
+
         Some(format!(
-            "Exile {} {}{}{}",
+            "Exile {} {}{}{}{}",
             count_str,
             color_desc,
             type_desc,
+            mana_value_desc,
             if zone_desc.is_empty() {
                 String::new()
             } else {

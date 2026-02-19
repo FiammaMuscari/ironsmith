@@ -691,6 +691,7 @@ pub enum Restriction {
     HaveCountersPlaced(ObjectFilter),
     BeTargeted(ObjectFilter),
     BeCountered(ObjectFilter),
+    Transform(ObjectFilter),
 }
 
 impl Restriction {
@@ -764,6 +765,10 @@ impl Restriction {
 
     pub fn be_countered(filter: ObjectFilter) -> Self {
         Self::BeCountered(filter)
+    }
+
+    pub fn transform(filter: ObjectFilter) -> Self {
+        Self::Transform(filter)
     }
 
     pub fn apply(
@@ -949,6 +954,15 @@ impl Restriction {
                         && filter.matches(obj, &ctx, game)
                     {
                         tracker.cant_be_countered.insert(obj_id);
+                    }
+                }
+            }
+            Restriction::Transform(filter) => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && filter.matches(obj, &ctx, game)
+                    {
+                        tracker.cant_transform.insert(obj_id);
                     }
                 }
             }

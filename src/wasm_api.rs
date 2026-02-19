@@ -3448,6 +3448,9 @@ fn describe_restriction(
         crate::effect::Restriction::BeCountered(filter) => {
             format!("{} can't be countered", filter.description())
         }
+        crate::effect::Restriction::Transform(filter) => {
+            format!("{} can't transform", filter.description())
+        }
     }
 }
 

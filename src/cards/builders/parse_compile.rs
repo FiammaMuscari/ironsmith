@@ -266,6 +266,7 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         }
         EffectAst::DealDamageEach { filter, .. }
         | EffectAst::PutCountersAll { filter, .. }
+        | EffectAst::RemoveCountersAll { filter, .. }
         | EffectAst::DoubleCountersOnEach { filter, .. }
         | EffectAst::TapAll { filter }
         | EffectAst::ChooseObjects { filter, .. }
@@ -630,6 +631,7 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         }
         EffectAst::DealDamageEach { filter, .. }
         | EffectAst::PutCountersAll { filter, .. }
+        | EffectAst::RemoveCountersAll { filter, .. }
         | EffectAst::DoubleCountersOnEach { filter, .. }
         | EffectAst::TapAll { filter }
         | EffectAst::ChooseObjects { filter, .. }
@@ -717,7 +719,8 @@ fn restriction_references_tag(restriction: &crate::effect::Restriction, tag: &st
         | Restriction::BeSacrificed(filter)
         | Restriction::HaveCountersPlaced(filter)
         | Restriction::BeTargeted(filter)
-        | Restriction::BeCountered(filter) => Some(filter),
+        | Restriction::BeCountered(filter)
+        | Restriction::Transform(filter) => Some(filter),
         _ => None,
     };
     let Some(filter) = maybe_filter else {
@@ -1014,6 +1017,7 @@ fn collect_tag_spans_from_effect(
             collect_tag_spans_from_target(from, annotations, ctx);
             collect_tag_spans_from_target(to, annotations, ctx);
         }
+        EffectAst::RemoveCountersAll { .. } => {}
         EffectAst::Conditional {
             if_true, if_false, ..
         } => {
@@ -1805,6 +1809,25 @@ fn compile_effect(
             );
             Ok((vec![effect], Vec::new()))
         }
+        EffectAst::RemoveCountersAll {
+            amount,
+            filter,
+            counter_type,
+            up_to,
+        } => {
+            let iterated = ChooseSpec::Iterated;
+            let inner = if let Some(counter_type) = counter_type {
+                if *up_to {
+                    Effect::remove_up_to_counters(*counter_type, amount.clone(), iterated.clone())
+                } else {
+                    Effect::remove_counters(*counter_type, amount.clone(), iterated.clone())
+                }
+            } else {
+                Effect::remove_up_to_any_counters(amount.clone(), iterated.clone())
+            };
+            let effect = Effect::for_each(filter.clone(), vec![inner]);
+            Ok((vec![effect], Vec::new()))
+        }
         EffectAst::DoubleCountersOnEach {
             counter_type,
             filter,
@@ -2467,7 +2490,7 @@ fn compile_effect(
             let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
             let from_exile_tag = choose_spec_references_exiled_tag(&spec);
             let use_move_to_zone =
-                !*tapped && (from_exile_tag || !matches!(controller, ReturnControllerAst::Preserve));
+                from_exile_tag || !matches!(controller, ReturnControllerAst::Preserve);
             let mut effect = tag_object_target_effect(
                 if use_move_to_zone {
                     // Blink-style "exile ... then return it" should move the tagged
@@ -2479,6 +2502,11 @@ fn compile_effect(
                         Zone::Battlefield,
                         false,
                     );
+                    let move_back = if *tapped {
+                        move_back.tapped()
+                    } else {
+                        move_back
+                    };
                     let move_back = match controller {
                         ReturnControllerAst::Preserve => move_back,
                         ReturnControllerAst::Owner => move_back.under_owner_control(),
@@ -2513,7 +2541,13 @@ fn compile_effect(
                 ReturnControllerAst::Owner => move_effect.under_owner_control(),
                 ReturnControllerAst::You => move_effect.under_you_control(),
             };
-            let effect = tag_object_target_effect(Effect::new(move_effect), &spec, ctx, "moved");
+            let mut effect = tag_object_target_effect(Effect::new(move_effect), &spec, ctx, "moved");
+            if ctx.auto_tag_object_targets && !spec.is_target() && choose_spec_targets_object(&spec)
+            {
+                let tag = ctx.next_tag("moved");
+                ctx.last_object_tag = Some(tag.clone());
+                effect = effect.tag(tag);
+            }
             Ok((vec![effect], choices))
         }
         EffectAst::ReturnAllToHand { filter } => {
@@ -3202,8 +3236,11 @@ fn compile_effect(
             object,
             count,
             player,
+            enters_tapped,
+            enters_attacking,
             half_power_toughness_round_up,
             has_haste,
+            exile_at_end_of_combat,
             sacrifice_at_next_end_step,
             exile_at_next_end_step,
             set_colors,
@@ -3230,11 +3267,20 @@ fn compile_effect(
                 count,
                 player_filter,
             );
+            if *enters_tapped {
+                effect = effect.enters_tapped(true);
+            }
+            if *enters_attacking {
+                effect = effect.attacking(true);
+            }
             if *half_power_toughness_round_up {
                 effect = effect.half_power_toughness_round_up();
             }
             if *has_haste {
                 effect = effect.haste(true);
+            }
+            if *exile_at_end_of_combat {
+                effect = effect.exile_at_eoc(true);
             }
             if *sacrifice_at_next_end_step {
                 effect = effect.sacrifice_at_next_end_step(true);
@@ -3272,8 +3318,11 @@ fn compile_effect(
             source,
             count,
             player,
+            enters_tapped,
+            enters_attacking,
             half_power_toughness_round_up,
             has_haste,
+            exile_at_end_of_combat,
             sacrifice_at_next_end_step,
             exile_at_next_end_step,
             set_colors,
@@ -3293,11 +3342,20 @@ fn compile_effect(
                     count.clone(),
                     player_filter,
                 );
+                if *enters_tapped {
+                    effect = effect.enters_tapped(true);
+                }
+                if *enters_attacking {
+                    effect = effect.attacking(true);
+                }
                 if *half_power_toughness_round_up {
                     effect = effect.half_power_toughness_round_up();
                 }
                 if *has_haste {
                     effect = effect.haste(true);
+                }
+                if *exile_at_end_of_combat {
+                    effect = effect.exile_at_eoc(true);
                 }
                 if *sacrifice_at_next_end_step {
                     effect = effect.sacrifice_at_next_end_step(true);
@@ -3339,14 +3397,25 @@ fn compile_effect(
         EffectAst::Monstrosity { amount } => {
             Ok((vec![Effect::monstrosity(amount.clone())], Vec::new()))
         }
-        EffectAst::RemoveUpToAnyCounters { amount, target } => {
+        EffectAst::RemoveUpToAnyCounters {
+            amount,
+            target,
+            counter_type,
+            up_to,
+        } => {
             let id = ctx.next_effect_id();
             ctx.last_effect_id = Some(id);
             compile_tagged_effect_for_target(target, ctx, "counters", |spec| {
-                Effect::with_id(
-                    id.0,
-                    Effect::remove_up_to_any_counters(amount.clone(), spec),
-                )
+                let effect = if let Some(counter_type) = counter_type {
+                    if *up_to {
+                        Effect::remove_up_to_counters(*counter_type, amount.clone(), spec)
+                    } else {
+                        Effect::remove_counters(*counter_type, amount.clone(), spec)
+                    }
+                } else {
+                    Effect::remove_up_to_any_counters(amount.clone(), spec)
+                };
+                Effect::with_id(id.0, effect)
             })
         }
         EffectAst::MoveAllCounters { from, to } => {
@@ -3567,7 +3636,8 @@ fn compile_effect(
             if filter.owner.is_none() && !matches!(player_filter, PlayerFilter::You) {
                 filter.owner = Some(player_filter.clone());
             }
-            let use_search_effect = count.min == 0
+            let use_search_effect = *shuffle
+                && count.min == 0
                 && count.max == Some(1)
                 && !(*destination == Zone::Battlefield && *tapped);
             if use_search_effect {
@@ -3580,6 +3650,17 @@ fn compile_effect(
                 Ok((effects, Vec::new()))
             } else {
                 let tag = ctx.next_tag("searched");
+                let mut generic_search_filter = ObjectFilter::default();
+                generic_search_filter.owner = filter.owner.clone();
+                let choose_description = if filter == generic_search_filter {
+                    if count.max == Some(1) {
+                        "card"
+                    } else {
+                        "cards"
+                    }
+                } else {
+                    "objects"
+                };
                 let choose = crate::effects::ChooseObjectsEffect::new(
                     filter,
                     count,
@@ -3587,7 +3668,7 @@ fn compile_effect(
                     tag.clone(),
                 )
                 .in_zone(Zone::Library)
-                .with_description("cards")
+                .with_description(choose_description)
                 .as_search();
                 let choose = if *reveal { choose.reveal() } else { choose };
 
@@ -3829,6 +3910,7 @@ fn resolve_restriction_it_tag(
         }
         Restriction::BeTargeted(filter) => Restriction::be_targeted(resolve_it_tag(filter, ctx)?),
         Restriction::BeCountered(filter) => Restriction::be_countered(resolve_it_tag(filter, ctx)?),
+        Restriction::Transform(filter) => Restriction::transform(resolve_it_tag(filter, ctx)?),
         _ => restriction.clone(),
     };
     Ok(resolved)

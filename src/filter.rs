@@ -473,8 +473,14 @@ pub struct ObjectFilter {
     /// If true, must be attacking
     pub attacking: bool,
 
+    /// If true, must not be attacking
+    pub nonattacking: bool,
+
     /// If true, must be blocking
     pub blocking: bool,
+
+    /// If true, must not be blocking
+    pub nonblocking: bool,
 
     /// If true, must have entered since your last turn ended.
     /// This is currently approximated via summoning-sick state.
@@ -535,6 +541,9 @@ pub struct ObjectFilter {
 
     /// If true, must be a commander creature (for Commander format)
     pub is_commander: bool,
+
+    /// If true, must not be a commander creature.
+    pub noncommander: bool,
 
     /// Tagged-object constraints evaluated against `FilterContext::tagged_objects`.
     pub tagged_constraints: Vec<TaggedObjectConstraint>,
@@ -879,6 +888,12 @@ impl ObjectFilter {
     /// Require the object to be a commander (for Commander format).
     pub fn commander(mut self) -> Self {
         self.is_commander = true;
+        self
+    }
+
+    /// Exclude commander creatures.
+    pub fn noncommander(mut self) -> Self {
+        self.noncommander = true;
         self
     }
 
@@ -1281,6 +1296,22 @@ impl ObjectFilter {
         {
             return false;
         }
+        if self.nonattacking
+            && game
+                .combat
+                .as_ref()
+                .is_some_and(|combat| crate::combat_state::is_attacking(combat, object.id))
+        {
+            return false;
+        }
+        if self.nonblocking
+            && game
+                .combat
+                .as_ref()
+                .is_some_and(|combat| crate::combat_state::is_blocking(combat, object.id))
+        {
+            return false;
+        }
 
         // Power check
         if let Some(power_cmp) = &self.power {
@@ -1426,6 +1457,9 @@ impl ObjectFilter {
 
         // Commander check
         if self.is_commander && !game.is_commander(object.id) {
+            return false;
+        }
+        if self.noncommander && game.is_commander(object.id) {
             return false;
         }
 
@@ -1908,6 +1942,9 @@ impl ObjectFilter {
         if self.is_commander && !snapshot.is_commander {
             return false;
         }
+        if self.noncommander && snapshot.is_commander {
+            return false;
+        }
 
         for constraint in &self.tagged_constraints {
             let Some(tagged_snapshots) = ctx.tagged_objects.get(constraint.tag.as_str()) else {
@@ -2321,12 +2358,28 @@ impl ObjectFilter {
         if self.is_commander {
             parts.push("commander".to_string());
         }
+        if self.noncommander {
+            parts.push("noncommander".to_string());
+        }
         if self.attacking && self.blocking {
             parts.push("attacking/blocking".to_string());
-        } else if self.attacking {
-            parts.push("attacking".to_string());
-        } else if self.blocking {
-            parts.push("blocking".to_string());
+        } else {
+            if self.attacking {
+                parts.push("attacking".to_string());
+            }
+            if self.blocking {
+                parts.push("blocking".to_string());
+            }
+        }
+        if self.nonattacking && self.nonblocking {
+            parts.push("nonattacking/nonblocking".to_string());
+        } else {
+            if self.nonattacking {
+                parts.push("nonattacking".to_string());
+            }
+            if self.nonblocking {
+                parts.push("nonblocking".to_string());
+            }
         }
         if self.tapped && self.untapped {
             parts.push("tapped/untapped".to_string());

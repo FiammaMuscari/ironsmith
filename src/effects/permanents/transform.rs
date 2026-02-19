@@ -63,6 +63,10 @@ impl EffectExecutor for TransformEffect {
             _ => find_target_object(&ctx.targets)?,
         };
 
+        if !game.can_transform(target_id) {
+            return Ok(EffectOutcome::resolved());
+        }
+
         // Toggle the face state (for DFCs, face_down = back face)
         if game.is_face_down(target_id) {
             game.set_face_up(target_id);
@@ -195,5 +199,23 @@ mod tests {
     fn test_transform_get_target_spec() {
         let effect = TransformEffect::target_permanent();
         assert!(effect.get_target_spec().is_some());
+    }
+
+    #[test]
+    fn test_transform_is_blocked_by_cant_transform_restriction() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let creature_id = create_dfc(&mut game, "Locked Werewolf", alice);
+
+        game.cant_effects.cant_transform.insert(creature_id);
+        let mut ctx = ExecutionContext::new_default(creature_id, alice);
+        let effect = TransformEffect::source();
+
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+        assert_eq!(result.result, EffectResult::Resolved);
+        assert!(
+            !game.is_face_down(creature_id),
+            "restricted permanent should stay on its current face"
+        );
     }
 }

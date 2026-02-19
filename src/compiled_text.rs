@@ -1022,6 +1022,41 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
             "{tap_clause}. Those creatures don't untap during their controller's next untap step."
         );
     }
+    if let Some((tap_clause, untap_clause)) = normalized.split_once(". ")
+        && (untap_clause
+            .eq_ignore_ascii_case("permanent can't untap during its controller's next untap step.")
+            || untap_clause.eq_ignore_ascii_case(
+                "permanent can't untap during its controller's next untap step",
+            )
+            || untap_clause
+                .eq_ignore_ascii_case("land can't untap during its controller's next untap step.")
+            || untap_clause.eq_ignore_ascii_case(
+                "land can't untap during its controller's next untap step",
+            ))
+    {
+        let tap_lower = tap_clause.to_ascii_lowercase();
+        if tap_lower.contains("tap target creature")
+            || tap_lower.contains("tap up to one target creature")
+        {
+            normalized = format!(
+                "{tap_clause}. That creature doesn't untap during its controller's next untap step."
+            );
+        } else if tap_lower.contains("tap target land")
+            || tap_lower.contains("tap up to one target land")
+        {
+            normalized = format!(
+                "{tap_clause}. That land doesn't untap during its controller's next untap step."
+            );
+        } else if tap_lower.contains("tap target nonland permanent")
+            || tap_lower.contains("tap up to one target nonland permanent")
+            || tap_lower.contains("tap target permanent")
+            || tap_lower.contains("tap up to one target permanent")
+        {
+            normalized = format!(
+                "{tap_clause}. That permanent doesn't untap during its controller's next untap step."
+            );
+        }
+    }
     if normalized.contains("Add 1 mana of commander's color identity") {
         normalized = normalized.replace(
             "Add 1 mana of commander's color identity",
@@ -1188,6 +1223,26 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
                     &format!("You get {symbols}"),
                 );
         }
+    }
+    for life in 1usize..=20 {
+        let amount = life.to_string();
+        normalized = normalized
+            .replace(
+                &format!("you may lose {amount} life. If you do"),
+                &format!("you may pay {amount} life. If you do"),
+            )
+            .replace(
+                &format!("You may lose {amount} life. If you do"),
+                &format!("You may pay {amount} life. If you do"),
+            )
+            .replace(
+                &format!("you may lose {amount} life and "),
+                &format!("you may pay {amount} life and "),
+            )
+            .replace(
+                &format!("You may lose {amount} life and "),
+                &format!("You may pay {amount} life and "),
+            );
     }
     if let Some((left, right)) = normalized.split_once(": ")
         && matches!(
@@ -3696,7 +3751,9 @@ fn is_generic_owned_card_search_filter(filter: &ObjectFilter) -> bool {
         && !filter.tapped
         && !filter.untapped
         && !filter.attacking
+        && !filter.nonattacking
         && !filter.blocking
+        && !filter.nonblocking
         && filter.power.is_none()
         && filter.toughness.is_none()
         && filter.mana_value.is_none()
@@ -3711,6 +3768,7 @@ fn is_generic_owned_card_search_filter(filter: &ObjectFilter) -> bool {
         && filter.custom_static_markers.is_empty()
         && filter.excluded_custom_static_markers.is_empty()
         && !filter.is_commander
+        && !filter.noncommander
         && filter.tagged_constraints.is_empty()
         && filter.specific.is_none()
         && !filter.source
@@ -5146,6 +5204,9 @@ fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
         crate::effect::Restriction::BeCountered(filter) => {
             format!("{} can't be countered", filter.description())
         }
+        crate::effect::Restriction::Transform(filter) => {
+            format!("{} can't transform", filter.description())
+        }
     }
 }
 
@@ -5575,13 +5636,14 @@ fn describe_exile_then_return(
     } else {
         " under its owner's control"
     };
+    let tapped_suffix = if move_back.enters_tapped { " tapped" } else { "" };
     let controller_suffix = match move_back.battlefield_controller {
         crate::effects::BattlefieldController::Preserve => "",
         crate::effects::BattlefieldController::Owner => owner_control_suffix,
         crate::effects::BattlefieldController::You => " under your control",
     };
     Some(format!(
-        "Exile {target}, then return {return_object} to the battlefield{controller_suffix}"
+        "Exile {target}, then return {return_object} to the battlefield{tapped_suffix}{controller_suffix}"
     ))
 }
 
@@ -6426,13 +6488,16 @@ fn describe_each_controlled_by_iterated(filter: &ObjectFilter) -> Option<String>
         && !filter.tapped
         && !filter.untapped
         && !filter.attacking
+        && !filter.nonattacking
         && !filter.blocking
+        && !filter.nonblocking
         && filter.zone.is_none()
         && filter.tagged_constraints.is_empty()
         && filter.targets_object.is_none()
         && filter.targets_player.is_none()
         && filter.custom_static_markers.is_empty()
         && filter.excluded_custom_static_markers.is_empty()
+        && !filter.noncommander
     {
         let words = filter
             .card_types
@@ -7075,8 +7140,14 @@ fn describe_search_choose_for_each(
         return None;
     }
 
-    let filter_text = choose.filter.description();
-    let selection_text = if choose.count.is_single() {
+    let filter_text = if choose.description.trim().is_empty()
+        || choose.description.trim().eq_ignore_ascii_case("objects")
+    {
+        choose.filter.description()
+    } else {
+        choose.description.trim().to_string()
+    };
+    let selection_text = if choose.count.max == Some(1) {
         with_indefinite_article(&filter_text)
     } else {
         let mut count_text = describe_choice_count(&choose.count);
@@ -7549,6 +7620,11 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 } else {
                     " under its owner's control"
                 };
+                let tapped_suffix = if move_to_zone.enters_tapped {
+                    " tapped"
+                } else {
+                    ""
+                };
                 let controller_suffix = match move_to_zone.battlefield_controller {
                     crate::effects::BattlefieldController::Preserve => "",
                     crate::effects::BattlefieldController::Owner => owner_control_suffix,
@@ -7557,9 +7633,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 if let crate::target::ChooseSpec::Tagged(tag) = &move_to_zone.target
                     && tag.as_str().starts_with("exiled_")
                 {
-                    format!("Return {target} to the battlefield{controller_suffix}")
+                    format!("Return {target} to the battlefield{tapped_suffix}{controller_suffix}")
                 } else {
-                    format!("Put {target} onto the battlefield{controller_suffix}")
+                    format!("Put {target} onto the battlefield{tapped_suffix}{controller_suffix}")
                 }
             }
             Zone::Stack => format!("Put {target} on the stack"),
@@ -7779,6 +7855,16 @@ fn describe_effect_impl(effect: &Effect) -> String {
             "Remove {} from {}",
             describe_put_counter_phrase(&remove_counters.count, remove_counters.counter_type),
             describe_choose_spec(&remove_counters.target)
+        );
+    }
+    if let Some(remove_up_to_counters) =
+        effect.downcast_ref::<crate::effects::RemoveUpToCountersEffect>()
+    {
+        return format!(
+            "Remove up to {} {} counter(s) from {}",
+            describe_value(&remove_up_to_counters.max_count),
+            describe_counter_type(remove_up_to_counters.counter_type),
+            describe_choose_spec(&remove_up_to_counters.target)
         );
     }
     if let Some(move_counters) = effect.downcast_ref::<crate::effects::MoveAllCountersEffect>() {
@@ -8224,9 +8310,12 @@ fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(shuffle_gy) =
         effect.downcast_ref::<crate::effects::ShuffleGraveyardIntoLibraryEffect>()
     {
+        let subject = describe_player_filter(&shuffle_gy.player);
+        let verb = player_verb(&subject, "shuffle", "shuffles");
         return format!(
-            "{} shuffles {} graveyard into {} library",
-            describe_player_filter(&shuffle_gy.player),
+            "{} {} {} graveyard into {} library",
+            subject,
+            verb,
             describe_possessive_player_filter(&shuffle_gy.player),
             describe_possessive_player_filter(&shuffle_gy.player)
         );
@@ -10039,22 +10128,39 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
             AlternativeCastingMethod::Miracle { cost } => {
                 out.push(format!("Miracle {}", cost.to_oracle()));
             }
+            AlternativeCastingMethod::Flashback { cost } => {
+                out.push(format!("Flashback {}", cost.to_oracle()));
+            }
+            AlternativeCastingMethod::JumpStart => {
+                out.push("Jump-start".to_string());
+            }
             AlternativeCastingMethod::Escape { cost, exile_count } => {
                 let count_text = small_number_word(*exile_count)
                     .map(str::to_string)
                     .unwrap_or_else(|| exile_count.to_string());
                 if let Some(cost) = cost {
                     out.push(format!(
-                        "Escape {}. Exile {count_text} other cards from your graveyard",
+                        "Escape—{}, Exile {count_text} other cards from your graveyard",
                         cost.to_oracle()
                     ));
                 } else {
                     out.push(format!(
-                        "Escape. Exile {count_text} other cards from your graveyard"
+                        "Escape—Exile {count_text} other cards from your graveyard"
                     ));
                 }
             }
             other => {
+                if other.name().eq_ignore_ascii_case("Parsed alternative cost") {
+                    if let Some(cost) = other.mana_cost() {
+                        out.push(format!(
+                            "You may pay {} rather than pay this spell's mana cost",
+                            cost.to_oracle()
+                        ));
+                    } else {
+                        out.push("You may cast this spell rather than pay its mana cost".to_string());
+                    }
+                    continue;
+                }
                 if let Some(cost) = other.mana_cost() {
                     out.push(format!(
                         "Alternative cast {}: {} {}",
@@ -10286,6 +10392,7 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
         && oracle_lower.contains("this aura deals");
     let has_when_this_siege_enters = oracle_lower.contains("when this siege enters");
     let has_when_this_saga_enters = oracle_lower.contains("when this saga enters");
+    let has_when_this_vehicle_enters = oracle_lower.contains("when this vehicle enters");
     let has_this_equipment = oracle_lower.contains("this equipment");
     let has_when_this_enchantment_enters = oracle_lower.contains("when this enchantment enters");
     let has_greeds_gambit_triplet = oracle_lower
@@ -10336,6 +10443,12 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
         }
         if let Some(rest) = replaced.strip_prefix("This enters ") {
             replaced = format!("{self_ref_cap} enters {rest}");
+        }
+        if let Some(rest) = replaced.strip_prefix("Enters the battlefield with ") {
+            replaced = format!("{self_ref_cap} enters with {rest}");
+        }
+        if let Some(rest) = replaced.strip_prefix("enters the battlefield with ") {
+            replaced = format!("{self_ref} enters with {rest}");
         }
         let mut phrased = normalize_common_semantic_phrasing(&replaced);
         if has_graveyard_activation {
@@ -10506,6 +10619,13 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
                 .replace("when this enchantment enters, ", "when this Saga enters, ")
                 .replace("When this permanent enters, ", "When this Saga enters, ")
                 .replace("when this permanent enters, ", "when this Saga enters, ");
+        }
+        if has_when_this_vehicle_enters {
+            phrased = phrased
+                .replace("When this artifact enters, ", "When this Vehicle enters, ")
+                .replace("when this artifact enters, ", "when this Vehicle enters, ")
+                .replace("When this permanent enters, ", "When this Vehicle enters, ")
+                .replace("when this permanent enters, ", "when this Vehicle enters, ");
         }
         if has_when_this_enchantment_enters {
             phrased = phrased
@@ -11922,15 +12042,34 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     }
     if normalized_lower == "enters the battlefield with 1 +1/+1 counter(s)."
         || normalized_lower == "enters the battlefield with 1 +1/+1 counter(s)"
+        || normalized_lower == "this creature enters with 1 +1/+1 counter(s)."
+        || normalized_lower == "this creature enters with 1 +1/+1 counter(s)"
     {
         return "This creature enters with a +1/+1 counter on it.".to_string();
     }
     if normalized_lower == "enters the battlefield with 5 +1/+1 counter(s)."
         || normalized_lower == "enters the battlefield with 5 +1/+1 counter(s)"
+        || normalized_lower == "this creature enters with 5 +1/+1 counter(s)."
+        || normalized_lower == "this creature enters with 5 +1/+1 counter(s)"
     {
         return "This creature enters with five +1/+1 counters on it.".to_string();
     }
     if let Some(count) = strip_prefix_ascii_ci(&normalized, "Enters the battlefield with ")
+        .and_then(|rest| {
+            rest.strip_suffix(" +1/+1 counter(s).")
+                .or_else(|| rest.strip_suffix(" +1/+1 counter(s)"))
+        })
+    {
+        let count = count.trim();
+        let rendered_count = render_small_number_or_raw(count);
+        let counter_word = if count == "1" || count.eq_ignore_ascii_case("one") {
+            "counter"
+        } else {
+            "counters"
+        };
+        return format!("This creature enters with {rendered_count} +1/+1 {counter_word} on it.");
+    }
+    if let Some(count) = strip_prefix_ascii_ci(&normalized, "This creature enters with ")
         .and_then(|rest| {
             rest.strip_suffix(" +1/+1 counter(s).")
                 .or_else(|| rest.strip_suffix(" +1/+1 counter(s)"))
@@ -12552,6 +12691,7 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         .replace("target opponent's permanent", "target permanent an opponent controls")
         .replace("target opponent's nonartifact creature", "target nonartifact creature an opponent controls")
         .replace("target opponent's attacking/blocking creature", "target attacking or blocking creature an opponent controls")
+        .replace("attacking/blocking", "attacking or blocking")
         .replace(
             "target player's creature can't untap until your next turn",
             "target creature doesn't untap during its controller's next untap step",
@@ -12583,6 +12723,54 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         .replace(
             "When this creature enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step",
             "When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            "tap target creature an opponent controls. permanent can't untap during its controller's next untap step.",
+            "tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step.",
+        )
+        .replace(
+            "tap target creature an opponent controls. permanent can't untap during its controller's next untap step",
+            "tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            "tap target creature. permanent can't untap during its controller's next untap step.",
+            "tap target creature. That creature doesn't untap during its controller's next untap step.",
+        )
+        .replace(
+            "tap target creature. permanent can't untap during its controller's next untap step",
+            "tap target creature. That creature doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            "tap target nonland permanent an opponent controls. permanent can't untap during its controller's next untap step.",
+            "tap target nonland permanent an opponent controls. That permanent doesn't untap during its controller's next untap step.",
+        )
+        .replace(
+            "tap target nonland permanent an opponent controls. permanent can't untap during its controller's next untap step",
+            "tap target nonland permanent an opponent controls. That permanent doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            "tap target land an opponent controls. land can't untap during its controller's next untap step.",
+            "tap target land an opponent controls. That land doesn't untap during its controller's next untap step.",
+        )
+        .replace(
+            "tap target land an opponent controls. land can't untap during its controller's next untap step",
+            "tap target land an opponent controls. That land doesn't untap during its controller's next untap step",
+        )
+        .replace(
+            ", put it on top of library, then shuffle",
+            ", then shuffle and put that card on top",
+        )
+        .replace(
+            ", put it on top of your library, then shuffle",
+            ", then shuffle and put that card on top",
+        )
+        .replace(
+            ", put the card on top of library, then shuffle",
+            ", then shuffle and put that card on top",
+        )
+        .replace(
+            ", put the card on top of your library, then shuffle",
+            ", then shuffle and put that card on top",
         )
         .replace(
             "it gains Can attack as though it didn't have defender until end of turn",
@@ -12619,6 +12807,16 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         .replace(
             "if effect #1 that doesn't happen, target creature gets ",
             "otherwise, that creature gets ",
+        )
+        .replace("unless target player pays ", "unless they pay ")
+        .replace("Unless target player pays ", "Unless they pay ")
+        .replace(
+            "you may Untap target creature. Gain control of it until end of turn. it gains Haste until end of turn.",
+            "you may untap target creature and gain control of it until end of turn. That creature gains haste until end of turn.",
+        )
+        .replace(
+            "you may Untap target creature. Gain control of it until end of turn. it gains Haste until end of turn",
+            "you may untap target creature and gain control of it until end of turn. That creature gains haste until end of turn",
         )
         .replace(
             "I, II — Put a +1/+1 counter on each of up to one target creature.",
@@ -13695,8 +13893,17 @@ fn merge_adjacent_subject_predicate_lines(lines: Vec<String>) -> Vec<String> {
             if let Some(subject) = left
                 .strip_suffix(" enters tapped")
                 .or_else(|| left.strip_suffix(" enter tapped"))
-                && let Some(counter_clause) = right.strip_prefix("Enters the battlefield with ")
             {
+                let counter_clause = right
+                    .strip_prefix("Enters the battlefield with ")
+                    .or_else(|| {
+                        let singular = format!("{subject} enters with ");
+                        let plural = format!("{subject} enter with ");
+                        right
+                            .strip_prefix(&singular)
+                            .or_else(|| right.strip_prefix(&plural))
+                    });
+                if let Some(counter_clause) = counter_clause {
                 let subject = subject.trim();
                 if !subject.is_empty() {
                     let enter_verb = if subject_is_plural(subject) {
@@ -13709,6 +13916,7 @@ fn merge_adjacent_subject_predicate_lines(lines: Vec<String>) -> Vec<String> {
                     ));
                     idx += 2;
                     continue;
+                }
                 }
             }
         }
@@ -14136,6 +14344,13 @@ fn normalize_sentence_surface_style(line: &str) -> String {
         .to_string();
     normalized = normalized.replace('\u{00a0}', " ");
     normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+    normalized = normalize_ward_cost_surface(&normalized);
+    if let Some(rewritten) = normalize_search_discard_then_shuffle_surface(&normalized) {
+        return rewritten;
+    }
+    if let Some(rewritten) = normalize_discard_random_then_discard_surface(&normalized) {
+        return rewritten;
+    }
     if let Some(rewritten) = normalize_choose_exact_return_cost_clause(&normalized) {
         normalized = rewritten;
     }
@@ -14670,6 +14885,27 @@ fn normalize_sentence_surface_style(line: &str) -> String {
             }
         }
     }
+    if let Some((prelude, graveyard_tail)) =
+        split_once_ascii_ci(&normalized, ". Shuffle that object's owner's library. ")
+        && let Some(move_clause) =
+            strip_suffix_ascii_ci(prelude.trim(), " on the bottom of its owner's library")
+        && let Some((prefix, moved_cards)) = split_once_ascii_ci(move_clause.trim(), "Put ")
+            .or_else(|| split_once_ascii_ci(move_clause.trim(), "put "))
+    {
+        let graveyard_tail = graveyard_tail.trim();
+        if graveyard_tail.eq_ignore_ascii_case("you shuffle your graveyard into your library.")
+            || graveyard_tail.eq_ignore_ascii_case("you shuffle your graveyard into your library")
+        {
+            let prefix = prefix.trim_end();
+            let moved_cards = moved_cards.trim();
+            if prefix.is_empty() {
+                return format!("Shuffle {moved_cards} and your graveyard into their owner's library.");
+            }
+            return format!(
+                "{prefix} Shuffle {moved_cards} and your graveyard into their owner's library."
+            );
+        }
+    }
     if let Some(rest) = normalized
         .strip_prefix("For each player, if that player controls ")
         .or_else(|| normalized.strip_prefix("for each player, if that player controls "))
@@ -15133,6 +15369,173 @@ fn normalize_sentence_surface_style(line: &str) -> String {
     normalized
 }
 
+fn normalize_search_discard_then_shuffle_surface(line: &str) -> Option<String> {
+    let (prefix, body) = if let Some(rest) = line.strip_prefix("Spell effects: ") {
+        ("Spell effects: ", rest)
+    } else {
+        ("", line)
+    };
+
+    let trimmed = body.trim();
+    let sentence = trimmed.trim_end_matches('.');
+    let parts: Vec<&str> = sentence.split(". ").collect();
+    if parts.len() != 3 {
+        return None;
+    }
+
+    let search_clause = parts[0].trim();
+    let discard_clause = parts[1].trim();
+    let shuffle_clause = parts[2].trim();
+
+    let search_lower = search_clause.to_ascii_lowercase();
+    let discard_lower = discard_clause.to_ascii_lowercase();
+    let shuffle_lower = shuffle_clause.to_ascii_lowercase();
+
+    if !search_lower.starts_with("search ")
+        || !search_lower.contains(" put ")
+        || !(discard_lower.starts_with("you discard ") || discard_lower.starts_with("discard "))
+        || shuffle_lower != "shuffle your library"
+    {
+        return None;
+    }
+
+    let discard_text = discard_clause
+        .strip_prefix("you ")
+        .or_else(|| discard_clause.strip_prefix("You "))
+        .unwrap_or(discard_clause)
+        .trim();
+
+    Some(format!(
+        "{prefix}{search_clause}, {discard_text}, then shuffle."
+    ))
+}
+
+fn normalize_discard_random_then_discard_surface(line: &str) -> Option<String> {
+    let (prefix, body) = if let Some(rest) = line.strip_prefix("Spell effects: ") {
+        ("Spell effects: ", rest)
+    } else {
+        ("", line)
+    };
+
+    let sentence = body.trim().trim_end_matches('.');
+    let parts: Vec<&str> = sentence.split(". ").collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let first = parts[0].trim();
+    let second = parts[1].trim();
+    let first_lower = first.to_ascii_lowercase();
+    let second_lower = second.to_ascii_lowercase();
+
+    let first_suffix = " discards a card at random";
+    let second_suffix = " discards a card";
+    if !first_lower.ends_with(first_suffix) || !second_lower.ends_with(second_suffix) {
+        return None;
+    }
+
+    let first_subject = first[..first.len() - first_suffix.len()].trim();
+    let second_subject = second[..second.len() - second_suffix.len()].trim();
+    if !first_subject.eq_ignore_ascii_case(second_subject) {
+        return None;
+    }
+
+    Some(format!(
+        "{prefix}{first_subject} discards a card at random, then discards a card."
+    ))
+}
+
+fn normalize_ward_cost_surface(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+
+    for pattern in [
+        "ward exile an artifact or creature or enchantment or land or planeswalker or battle,",
+        "ward exile a artifact or creature or enchantment or land or planeswalker or battle,",
+    ] {
+        if let Some(idx) = lower.find(pattern) {
+            let prefix = trimmed[..idx].trim_end();
+            if prefix.is_empty() {
+                return "Ward—Sacrifice a permanent.".to_string();
+            }
+            return format!("{prefix} Ward—Sacrifice a permanent.");
+        }
+    }
+
+    if lower.starts_with("ward effect(discardeffect") {
+        let mut count = 1u32;
+        if let Some(start) = lower.find("count: fixed(")
+            && let Some(end_rel) = lower[start + "count: fixed(".len()..].find(')')
+        {
+            let digits = &lower[start + "count: fixed(".len()..start + "count: fixed(".len() + end_rel];
+            if let Ok(parsed) = digits.parse::<u32>() {
+                count = parsed.max(1);
+            }
+        }
+        if count == 1 {
+            return "Ward—Discard a card".to_string();
+        }
+        return format!("Ward—Discard {count} cards");
+    }
+
+    if lower.starts_with("ward exile a ")
+        && lower.contains("effect(sacrificeeffect")
+        && lower.contains("mana_value: some(")
+        && lower.contains("greaterthanorequal(")
+        && let Some(start) = lower.find("greaterthanorequal(")
+        && let Some(end_rel) = lower[start + "greaterthanorequal(".len()..].find(')')
+    {
+        let amount = &lower[start + "greaterthanorequal(".len()..start + "greaterthanorequal(".len() + end_rel];
+        if let Ok(parsed) = amount.trim().parse::<u32>() {
+            return format!("Ward—Sacrifice a permanent with mana value {parsed} or greater.");
+        }
+    }
+
+    if lower.starts_with("ward exile a ")
+        && lower.contains(" with mana value ")
+        && lower.contains(", effect(sacrificeeffect")
+        && let Some(comma_idx) = trimmed.find(", Effect(")
+        && comma_idx > "Ward Exile a ".len()
+    {
+        let sacrificed = trimmed["Ward Exile a ".len()..comma_idx].trim();
+        if let Some((_, mana_tail)) = sacrificed.rsplit_once(" with mana value ") {
+            return format!("Ward—Sacrifice a permanent with mana value {}", mana_tail.trim());
+        }
+    }
+
+    if lower.starts_with("ward exile a ")
+        && let Some(comma_idx) = trimmed.find(',')
+        && comma_idx > "Ward Exile a ".len()
+    {
+        let sacrificed = trimmed["Ward Exile a ".len()..comma_idx].trim();
+        if !sacrificed.is_empty() && !sacrificed.contains(" or ") {
+            return format!("Ward—Sacrifice a {sacrificed}");
+        }
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("Ward Pay ") {
+        return format!("Ward—Pay {}", rest.trim());
+    }
+    if let Some(rest) = trimmed.strip_prefix("Ward Discard ") {
+        return format!("Ward—Discard {}", rest.trim());
+    }
+    if let Some(rest) = trimmed.strip_prefix("Ward Sacrifice ") {
+        return format!("Ward—Sacrifice {}", rest.trim());
+    }
+    if trimmed.starts_with("Ward {")
+        && trimmed.contains(',')
+        && let Some(rest) = trimmed.strip_prefix("Ward ")
+    {
+        return format!("Ward—{}", rest.trim());
+    }
+
+    trimmed.to_string()
+}
+
 fn card_self_subject_for_oracle_lines(def: &CardDefinition) -> &'static str {
     use crate::types::CardType;
 
@@ -15444,6 +15847,15 @@ fn format_cost_words(words: &[&str]) -> Option<String> {
             }
             break;
         }
+        if word == "discard" {
+            let tail = words[idx + 1..].join(" ");
+            if tail.is_empty() {
+                parts.push("Discard".to_string());
+            } else {
+                parts.push(format!("Discard {tail}"));
+            }
+            break;
+        }
         return None;
     }
     if parts.is_empty() {
@@ -15527,7 +15939,13 @@ fn normalize_granted_activated_ability_clause(text: &str) -> Option<String> {
 
     if !cost_words
         .iter()
-        .any(|word| *word == "t" || is_cost_symbol_word(word) || *word == "sacrifice")
+        .any(|word| {
+            *word == "t"
+                || *word == "sacrifice"
+                || *word == "discard"
+                || is_cost_symbol_word(word)
+                || word.chars().all(|ch| ch.is_ascii_digit())
+        })
     {
         return None;
     }
@@ -16448,10 +16866,16 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
     if let Some(rest) = trimmed.strip_prefix("Sacrifice this creature: This creature deals ") {
         return format!("Sacrifice this creature: It deals {rest}");
     }
-    if trimmed.starts_with("This land enters with ")
-        && trimmed.contains(" charge counters")
-        && !trimmed.ends_with(" on it")
+    if (trimmed.starts_with("This land enters with ")
+        || trimmed.starts_with("This artifact enters with ")
+        || trimmed.starts_with("This creature enters with ")
+        || trimmed.starts_with("This permanent enters with "))
+        && trimmed.contains("counter")
+        && !trimmed.contains(" on it")
     {
+        if let Some(prefix) = trimmed.strip_suffix('.') {
+            return format!("{prefix} on it.");
+        }
         return format!("{trimmed} on it");
     }
     if let Some(after_this) = trimmed
@@ -17663,6 +18087,28 @@ mod tests {
     fn normalizes_draw_two_then_proliferate_sentence() {
         let normalized = normalize_sentence_surface_style("You draw two cards. Proliferate.");
         assert_eq!(normalized, "Draw two cards, then proliferate.");
+    }
+
+    #[test]
+    fn normalizes_search_discard_then_shuffle_sentence() {
+        let normalized = normalize_sentence_surface_style(
+            "Spell effects: Search your library for a card, put it into your hand. you discard a card at random. Shuffle your library.",
+        );
+        assert_eq!(
+            normalized,
+            "Spell effects: Search your library for a card, put it into your hand, discard a card at random, then shuffle."
+        );
+    }
+
+    #[test]
+    fn normalizes_discard_random_then_discard_sentence() {
+        let normalized = normalize_sentence_surface_style(
+            "Spell effects: Target opponent discards a card at random. target opponent discards a card.",
+        );
+        assert_eq!(
+            normalized,
+            "Spell effects: Target opponent discards a card at random, then discards a card."
+        );
     }
 
     #[test]
@@ -19531,6 +19977,28 @@ mod tests {
         assert_eq!(
             normalized,
             "When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step."
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_named_trigger_tap_lock_clause() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Triggered ability 3: When Abominable Treefolk enters, tap target creature an opponent controls. permanent can't untap during its controller's next untap step.",
+        );
+        assert_eq!(
+            normalized,
+            "Triggered ability 3: When Abominable Treefolk enters, tap target creature an opponent controls. That creature doesn't untap during its controller's next untap step."
+        );
+    }
+
+    #[test]
+    fn common_semantic_phrasing_normalizes_spell_effect_tap_lock_clause() {
+        let normalized = normalize_common_semantic_phrasing(
+            "Spell effects: Tap target creature. permanent can't untap during its controller's next untap step.",
+        );
+        assert_eq!(
+            normalized,
+            "Spell effects: Tap target creature. That creature doesn't untap during its controller's next untap step."
         );
     }
 

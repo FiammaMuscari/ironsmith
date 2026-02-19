@@ -1011,7 +1011,9 @@ impl StaticAbilityKind for EnterTappedForFilter {
             && !filter.tapped
             && !filter.untapped
             && !filter.attacking
+            && !filter.nonattacking
             && !filter.blocking
+            && !filter.nonblocking
             && filter.controller.is_none()
             && filter.owner.is_none()
             && matches!(filter.zone, None | Some(Zone::Battlefield))
@@ -1019,7 +1021,8 @@ impl StaticAbilityKind for EnterTappedForFilter {
             && filter.targets_object.is_none()
             && filter.targets_player.is_none()
             && filter.custom_static_markers.is_empty()
-            && filter.excluded_custom_static_markers.is_empty();
+            && filter.excluded_custom_static_markers.is_empty()
+            && !filter.noncommander;
 
         let has_all_permanent_types = {
             let required = [

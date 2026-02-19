@@ -1133,6 +1133,10 @@ impl StaticAbility {
         Self::new(PermanentsCantBeSacrificed)
     }
 
+    pub fn restriction(restriction: crate::effect::Restriction, display: String) -> Self {
+        Self::new(RuleRestriction::new(restriction, display))
+    }
+
     pub fn can_be_commander() -> Self {
         Self::new(CanBeCommander)
     }

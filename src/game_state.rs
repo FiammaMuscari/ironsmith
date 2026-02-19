@@ -205,6 +205,10 @@ pub struct CantEffectTracker {
     /// Permanents that can't be countered while on the stack.
     /// Example: Vexing Shusher, Prowling Serpopard
     pub cant_be_countered: HashSet<ObjectId>,
+
+    /// Permanents that can't transform.
+    /// Example: "Non-Human Werewolves you control can't transform."
+    pub cant_transform: HashSet<ObjectId>,
 }
 
 #[derive(Debug, Clone)]
@@ -321,6 +325,7 @@ impl CantEffectTracker {
         self.cant_win_game.extend(other.cant_win_game);
         self.cant_be_targeted.extend(other.cant_be_targeted);
         self.cant_be_countered.extend(other.cant_be_countered);
+        self.cant_transform.extend(other.cant_transform);
     }
 
     /// Clear all tracked "can't" effects.
@@ -344,6 +349,7 @@ impl CantEffectTracker {
         self.cant_win_game.clear();
         self.cant_be_targeted.clear();
         self.cant_be_countered.clear();
+        self.cant_transform.clear();
     }
 
     /// Check if a player can gain life.
@@ -439,6 +445,11 @@ impl CantEffectTracker {
     /// Check if a spell on the stack can be countered by effects.
     pub fn can_be_countered(&self, spell: ObjectId) -> bool {
         !self.cant_be_countered.contains(&spell)
+    }
+
+    /// Check if a permanent can transform.
+    pub fn can_transform(&self, permanent: ObjectId) -> bool {
+        !self.cant_transform.contains(&permanent)
     }
 
     /// Add a player to the "can't gain life" set.
@@ -1229,6 +1240,11 @@ impl GameState {
     /// Can this spell on the stack be countered?
     pub fn can_be_countered(&self, spell: ObjectId) -> bool {
         self.cant_effects.can_be_countered(spell)
+    }
+
+    /// Can this permanent transform?
+    pub fn can_transform(&self, permanent: ObjectId) -> bool {
+        self.cant_effects.can_transform(permanent)
     }
 
     /// Adds an object to the game.
@@ -3423,6 +3439,10 @@ mod tests {
         assert!(game.can_be_countered(obj_id));
         game.cant_effects.cant_be_countered.insert(obj_id);
         assert!(!game.can_be_countered(obj_id));
+
+        assert!(game.can_transform(obj_id));
+        game.cant_effects.cant_transform.insert(obj_id);
+        assert!(!game.can_transform(obj_id));
     }
 
     #[test]
@@ -3450,6 +3470,7 @@ mod tests {
         tracker.cant_be_destroyed.insert(object);
         tracker.cant_be_blocked.insert(object);
         tracker.cant_be_countered.insert(object);
+        tracker.cant_transform.insert(object);
         tracker.damage_cant_be_prevented = true;
 
         // Verify all are populated
@@ -3470,6 +3491,7 @@ mod tests {
         assert!(!tracker.cant_be_destroyed.is_empty());
         assert!(!tracker.cant_be_blocked.is_empty());
         assert!(!tracker.cant_be_countered.is_empty());
+        assert!(!tracker.cant_transform.is_empty());
         assert!(tracker.damage_cant_be_prevented);
 
         // Clear everything
@@ -3540,6 +3562,10 @@ mod tests {
         assert!(
             tracker.cant_be_countered.is_empty(),
             "cant_be_countered should be cleared"
+        );
+        assert!(
+            tracker.cant_transform.is_empty(),
+            "cant_transform should be cleared"
         );
         assert!(
             !tracker.damage_cant_be_prevented,

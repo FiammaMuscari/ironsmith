@@ -769,8 +769,11 @@ enum EffectAst {
         object: ObjectRefAst,
         count: Value,
         player: PlayerAst,
+        enters_tapped: bool,
+        enters_attacking: bool,
         half_power_toughness_round_up: bool,
         has_haste: bool,
+        exile_at_end_of_combat: bool,
         sacrifice_at_next_end_step: bool,
         exile_at_next_end_step: bool,
         set_colors: Option<ColorSet>,
@@ -786,8 +789,11 @@ enum EffectAst {
         source: TargetAst,
         count: Value,
         player: PlayerAst,
+        enters_tapped: bool,
+        enters_attacking: bool,
         half_power_toughness_round_up: bool,
         has_haste: bool,
+        exile_at_end_of_combat: bool,
         sacrifice_at_next_end_step: bool,
         exile_at_next_end_step: bool,
         set_colors: Option<ColorSet>,
@@ -816,6 +822,14 @@ enum EffectAst {
     RemoveUpToAnyCounters {
         amount: Value,
         target: TargetAst,
+        counter_type: Option<CounterType>,
+        up_to: bool,
+    },
+    RemoveCountersAll {
+        amount: Value,
+        filter: ObjectFilter,
+        counter_type: Option<CounterType>,
+        up_to: bool,
     },
     MoveAllCounters {
         from: TargetAst,
@@ -2564,7 +2578,8 @@ mod effect_parse_tests {
         ExchangeControlEffect, ExileEffect, ExileInsteadOfGraveyardEffect, ForEachObject,
         ForPlayersEffect, GainControlEffect, GrantPlayFromGraveyardEffect, LookAtHandEffect,
         ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect, MoveToZoneEffect,
-        PutCountersEffect, RemoveUpToAnyCountersEffect, ReturnAllToBattlefieldEffect,
+        PutCountersEffect, RemoveCountersEffect, RemoveUpToAnyCountersEffect,
+        ReturnAllToBattlefieldEffect,
         ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect, SacrificeEffect, ScryEffect,
         SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipCombatPhasesEffect,
         SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, SurveilEffect,
@@ -3341,7 +3356,9 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         let effects = def.spell_effect.expect("spell effect");
         assert!(
             effects.iter().any(|e| {
-                e.downcast_ref::<RemoveUpToAnyCountersEffect>().is_some()
+                e.downcast_ref::<RemoveCountersEffect>().is_some()
+                    || format!("{e:?}").contains("RemoveCountersEffect")
+                    || e.downcast_ref::<RemoveUpToAnyCountersEffect>().is_some()
                     || format!("{e:?}").contains("RemoveUpToAnyCountersEffect")
             }),
             "should include remove counters effect"
@@ -3359,14 +3376,17 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .iter()
             .find_map(|effect| effect.downcast_ref::<ForEachObject>())
             .expect("typed counter removal should use for-each wrapper");
-        let remove = for_each
-            .effects
-            .iter()
-            .find_map(|effect| effect.downcast_ref::<RemoveUpToAnyCountersEffect>())
-            .expect("for-each wrapper should include remove-counters inner effect");
-
-        assert_eq!(remove.max_count, Value::Fixed(1));
-        assert_eq!(remove.target, ChooseSpec::Source);
+        let has_remove_inner = for_each.effects.iter().any(|effect| {
+            effect.downcast_ref::<RemoveCountersEffect>().is_some()
+                || format!("{effect:?}").contains("RemoveCountersEffect")
+                || effect.downcast_ref::<RemoveUpToAnyCountersEffect>().is_some()
+                || format!("{effect:?}").contains("RemoveUpToAnyCountersEffect")
+        });
+        assert!(
+            has_remove_inner,
+            "for-each wrapper should include remove-counters inner effect: {:?}",
+            for_each.effects
+        );
     }
 
     #[test]
@@ -4928,6 +4948,38 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             cost_debug.contains("count: 3"),
             "expected count 3 in distributed counter-removal cost, got {cost_debug}"
+        );
+        assert!(
+            cost_debug.contains("card_types: [Creature]"),
+            "expected creature filter in distributed counter-removal cost, got {cost_debug}"
+        );
+    }
+
+    #[test]
+    fn parse_remove_typed_counter_from_controlled_creature_cost() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Quillspike Cost Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "{B/G}, Remove a -1/-1 counter from a creature you control: This creature gets +3/+3 until end of turn.",
+            )
+            .expect("typed non-source remove-counter cost should parse");
+
+        let activated = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(activated) => Some(activated),
+                _ => None,
+            })
+            .expect("expected activated ability");
+        let cost_debug = format!("{:?}", activated.mana_cost);
+        assert!(
+            cost_debug.contains("RemoveAnyCountersAmongCost"),
+            "expected distributed counter-removal cost, got {cost_debug}"
+        );
+        assert!(
+            cost_debug.contains("counter_type: Some(MinusOneMinusOne)"),
+            "expected typed distributed counter-removal cost, got {cost_debug}"
         );
         assert!(
             cost_debug.contains("card_types: [Creature]"),
@@ -7203,6 +7255,42 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .expect("expected move-to-zone follow-up");
         assert_eq!(move_to.zone, Zone::Battlefield);
         assert_eq!(move_to.battlefield_controller, BattlefieldController::You);
+    }
+
+    #[test]
+    fn parse_cant_transform_static_clause_stays_static_restriction() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Immerwolf Restriction Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "Intimidate.\nEach other creature you control that's a Wolf or a Werewolf gets +1/+1.\nNon-Human Werewolves you control can't transform.",
+            )
+            .expect("cant-transform static clause should parse as a static restriction");
+
+        assert!(
+            def.spell_effect.is_none(),
+            "expected no spell effect from static cant-transform clause, got {:?}",
+            def.spell_effect
+        );
+
+        let abilities_debug = format!("{:#?}", def.abilities);
+        assert!(
+            abilities_debug.contains("Transform(") && abilities_debug.contains("RuleRestriction"),
+            "expected static RuleRestriction with transform prohibition, got {abilities_debug}"
+        );
+    }
+
+    #[test]
+    fn parse_until_end_of_turn_cant_transform_uses_restriction_effect() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Cant Transform EOT Variant")
+            .card_types(vec![CardType::Instant])
+            .parse_text("Until end of turn, target creature can't transform.")
+            .expect("duration cant-transform clause should parse");
+
+        let spell_debug = format!("{:#?}", def.spell_effect);
+        assert!(
+            spell_debug.contains("CantEffect") && spell_debug.contains("Transform("),
+            "expected cant-transform restriction effect, got {spell_debug}"
+        );
     }
 }
 

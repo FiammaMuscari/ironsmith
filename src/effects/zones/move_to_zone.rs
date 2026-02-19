@@ -42,6 +42,8 @@ pub struct MoveToZoneEffect {
     pub to_top: bool,
     /// Controller override when the destination is the battlefield.
     pub battlefield_controller: BattlefieldController,
+    /// If moving to the battlefield, the permanent enters tapped.
+    pub enters_tapped: bool,
 }
 
 impl MoveToZoneEffect {
@@ -52,6 +54,7 @@ impl MoveToZoneEffect {
             zone,
             to_top,
             battlefield_controller: BattlefieldController::Preserve,
+            enters_tapped: false,
         }
     }
 
@@ -82,6 +85,11 @@ impl MoveToZoneEffect {
 
     pub fn under_you_control(mut self) -> Self {
         self.battlefield_controller = BattlefieldController::You;
+        self
+    }
+
+    pub fn tapped(mut self) -> Self {
+        self.enters_tapped = true;
         self
     }
 }
@@ -147,6 +155,9 @@ impl EffectExecutor for MoveToZoneEffect {
                                         new_obj.controller = ctx.controller;
                                     }
                                 }
+                            }
+                            if self.enters_tapped && !result.enters_tapped {
+                                game.tap(result.new_id);
                             }
                             return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
                                 result.new_id,

@@ -6,11 +6,12 @@ use crate::decision::FallbackStrategy;
 use crate::decisions::{
     CounterRemovalSpec, DistributeSpec, NumberSpec, make_decision_with_fallback,
 };
-use crate::filter::FilterContext;
+use crate::filter::{FilterContext, PlayerFilter};
 use crate::game_state::{GameState, Target};
 use crate::ids::ObjectId;
 use crate::object::CounterType;
 use crate::target::ObjectFilter;
+use crate::types::CardType;
 use crate::zone::Zone;
 use std::collections::HashMap;
 
@@ -362,12 +363,24 @@ pub struct RemoveAnyCountersAmongCost {
     pub count: u32,
     /// Which permanents can have counters removed.
     pub filter: ObjectFilter,
+    /// Optional counter type restriction.
+    pub counter_type: Option<CounterType>,
 }
 
 impl RemoveAnyCountersAmongCost {
     /// Create a new remove-counters-among cost.
     pub fn new(count: u32, filter: ObjectFilter) -> Self {
-        Self { count, filter }
+        Self {
+            count,
+            filter,
+            counter_type: None,
+        }
+    }
+
+    /// Restrict this cost to a specific counter type.
+    pub fn with_counter_type(mut self, counter_type: Option<CounterType>) -> Self {
+        self.counter_type = counter_type;
+        self
     }
 
     fn valid_targets(&self, game: &GameState, ctx: &CostContext) -> Vec<ObjectId> {
@@ -382,8 +395,12 @@ impl RemoveAnyCountersAmongCost {
                 let Some(obj) = game.object(*id) else {
                     return false;
                 };
-                self.filter.matches(obj, &filter_ctx, game)
-                    && obj.counters.values().copied().sum::<u32>() > 0
+                let available = if let Some(counter_type) = self.counter_type {
+                    obj.counters.get(&counter_type).copied().unwrap_or(0)
+                } else {
+                    obj.counters.values().copied().sum::<u32>()
+                };
+                self.filter.matches(obj, &filter_ctx, game) && available > 0
             })
             .collect()
     }
@@ -392,7 +409,13 @@ impl RemoveAnyCountersAmongCost {
         self.valid_targets(game, ctx)
             .iter()
             .filter_map(|id| game.object(*id))
-            .map(|obj| obj.counters.values().copied().sum::<u32>())
+            .map(|obj| {
+                if let Some(counter_type) = self.counter_type {
+                    obj.counters.get(&counter_type).copied().unwrap_or(0)
+                } else {
+                    obj.counters.values().copied().sum::<u32>()
+                }
+            })
             .sum()
     }
 }
@@ -446,7 +469,13 @@ impl CostPayer for RemoveAnyCountersAmongCost {
                 }
                 let available_total = game
                     .object(*object_id)
-                    .map(|obj| obj.counters.values().copied().sum::<u32>())
+                    .map(|obj| {
+                        if let Some(counter_type) = self.counter_type {
+                            obj.counters.get(&counter_type).copied().unwrap_or(0)
+                        } else {
+                            obj.counters.values().copied().sum::<u32>()
+                        }
+                    })
                     .unwrap_or(0);
                 let already_allocated = allocations.get(object_id).copied().unwrap_or(0);
                 let free_capacity = available_total.saturating_sub(already_allocated);
@@ -468,56 +497,76 @@ impl CostPayer for RemoveAnyCountersAmongCost {
                 continue;
             }
 
-            let available_counters: Vec<(CounterType, u32)> = game
-                .object(object_id)
-                .map(|obj| {
-                    obj.counters
-                        .iter()
-                        .filter(|(_, count)| **count > 0)
-                        .map(|(counter_type, count)| (*counter_type, *count))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let available_total: u32 = available_counters.iter().map(|(_, count)| *count).sum();
-            if available_total < amount_for_target {
-                return Err(CostPaymentError::InsufficientCounters);
-            }
-
-            let selections = make_decision_with_fallback(
-                game,
-                &mut ctx.decision_maker,
-                ctx.payer,
-                Some(ctx.source),
-                CounterRemovalSpec::new(
-                    ctx.source,
-                    object_id,
-                    amount_for_target,
-                    available_counters,
-                ),
-                FallbackStrategy::Maximum,
-            );
-
-            let mut removed_from_target = 0u32;
-            for (counter_type, requested) in selections {
-                if removed_from_target >= amount_for_target {
-                    break;
+            let removed_from_target = if let Some(counter_type) = self.counter_type {
+                let available_total = game
+                    .object(object_id)
+                    .and_then(|obj| obj.counters.get(&counter_type).copied())
+                    .unwrap_or(0);
+                if available_total < amount_for_target {
+                    return Err(CostPaymentError::InsufficientCounters);
                 }
-                let remaining = amount_for_target - removed_from_target;
-                let to_remove = requested.min(remaining);
-                if to_remove == 0 {
-                    continue;
-                }
-                if let Some((removed, _event)) = game.remove_counters(
+                game.remove_counters(
                     object_id,
                     counter_type,
-                    to_remove,
+                    amount_for_target,
                     Some(ctx.source),
                     Some(ctx.payer),
-                ) {
-                    removed_from_target += removed;
-                    removed_total += removed;
+                )
+                .map(|(removed, _event)| removed)
+                .unwrap_or(0)
+            } else {
+                let available_counters: Vec<(CounterType, u32)> = game
+                    .object(object_id)
+                    .map(|obj| {
+                        obj.counters
+                            .iter()
+                            .filter(|(_, count)| **count > 0)
+                            .map(|(counter_type, count)| (*counter_type, *count))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let available_total: u32 = available_counters.iter().map(|(_, count)| *count).sum();
+                if available_total < amount_for_target {
+                    return Err(CostPaymentError::InsufficientCounters);
                 }
-            }
+
+                let selections = make_decision_with_fallback(
+                    game,
+                    &mut ctx.decision_maker,
+                    ctx.payer,
+                    Some(ctx.source),
+                    CounterRemovalSpec::new(
+                        ctx.source,
+                        object_id,
+                        amount_for_target,
+                        available_counters,
+                    ),
+                    FallbackStrategy::Maximum,
+                );
+
+                let mut removed_from_target = 0u32;
+                for (counter_type, requested) in selections {
+                    if removed_from_target >= amount_for_target {
+                        break;
+                    }
+                    let remaining = amount_for_target - removed_from_target;
+                    let to_remove = requested.min(remaining);
+                    if to_remove == 0 {
+                        continue;
+                    }
+                    if let Some((removed, _event)) = game.remove_counters(
+                        object_id,
+                        counter_type,
+                        to_remove,
+                        Some(ctx.source),
+                        Some(ctx.payer),
+                    ) {
+                        removed_from_target += removed;
+                    }
+                }
+                removed_from_target
+            };
+            removed_total += removed_from_target;
 
             if removed_from_target != amount_for_target {
                 return Err(CostPaymentError::InsufficientCounters);
@@ -542,13 +591,24 @@ impl CostPayer for RemoveAnyCountersAmongCost {
     }
 
     fn display(&self) -> String {
-        if self.count == 1 {
-            "Remove a counter from among permanents you control".to_string()
-        } else {
-            format!(
-                "Remove {} counters from among permanents you control",
-                self.count
-            )
+        let target_phrase_single = remove_counters_target_phrase(&self.filter, false);
+        let target_phrase_plural = remove_counters_target_phrase(&self.filter, true);
+        match (self.count, self.counter_type) {
+            (1, Some(counter_type)) => {
+                let counter_name = format_counter_type(&counter_type);
+                format!("Remove a {} counter from {}", counter_name, target_phrase_single)
+            }
+            (count, Some(counter_type)) => {
+                let counter_name = format_counter_type(&counter_type);
+                format!(
+                    "Remove {} {} counters from among {}",
+                    count, counter_name, target_phrase_plural
+                )
+            }
+            (1, None) => format!("Remove a counter from {}", target_phrase_single),
+            (count, None) => {
+                format!("Remove {} counters from among {}", count, target_phrase_plural)
+            }
         }
     }
 
@@ -597,6 +657,90 @@ fn format_counter_type(counter_type: &CounterType) -> &'static str {
         CounterType::Luck => "luck",
         // Match any other counter types with a generic name
         _ => "counter",
+    }
+}
+
+fn remove_counters_target_phrase(filter: &ObjectFilter, plural: bool) -> String {
+    if is_simple_nonland_permanent_you_control_filter(filter) {
+        return if plural {
+            "nonland permanents you control".to_string()
+        } else {
+            "a nonland permanent you control".to_string()
+        };
+    }
+
+    let Some(card_type) = simple_you_controlled_battlefield_card_type(filter) else {
+        return "permanents you control".to_string();
+    };
+    let noun = if plural {
+        card_type_name_plural(card_type)
+    } else {
+        card_type_name_singular(card_type)
+    };
+    if plural {
+        format!("{noun} you control")
+    } else {
+        format!("a {noun} you control")
+    }
+}
+
+fn simple_you_controlled_battlefield_card_type(filter: &ObjectFilter) -> Option<CardType> {
+    if filter.card_types.len() != 1 {
+        return None;
+    }
+
+    let mut expected = ObjectFilter::default();
+    expected.zone = Some(Zone::Battlefield);
+    expected.controller = Some(PlayerFilter::You);
+    expected.card_types = vec![filter.card_types[0]];
+    if *filter == expected {
+        Some(filter.card_types[0])
+    } else {
+        None
+    }
+}
+
+fn is_simple_nonland_permanent_you_control_filter(filter: &ObjectFilter) -> bool {
+    let mut expected = ObjectFilter::default();
+    expected.zone = Some(Zone::Battlefield);
+    expected.controller = Some(PlayerFilter::You);
+    expected.card_types = vec![
+        CardType::Artifact,
+        CardType::Creature,
+        CardType::Enchantment,
+        CardType::Land,
+        CardType::Planeswalker,
+        CardType::Battle,
+    ];
+    expected.excluded_card_types = vec![CardType::Land];
+    *filter == expected
+}
+
+fn card_type_name_singular(card_type: CardType) -> &'static str {
+    match card_type {
+        CardType::Land => "land",
+        CardType::Creature => "creature",
+        CardType::Artifact => "artifact",
+        CardType::Enchantment => "enchantment",
+        CardType::Planeswalker => "planeswalker",
+        CardType::Instant => "instant",
+        CardType::Sorcery => "sorcery",
+        CardType::Battle => "battle",
+        CardType::Kindred => "kindred",
+    }
+}
+
+fn card_type_name_plural(card_type: CardType) -> &'static str {
+    match card_type {
+        CardType::Land => "lands",
+        CardType::Creature => "creatures",
+        CardType::Artifact => "artifacts",
+        CardType::Enchantment => "enchantments",
+        CardType::Planeswalker => "planeswalkers",
+        CardType::Instant => "instants",
+        CardType::Sorcery => "sorceries",
+        CardType::Battle => "battles",
+        CardType::Kindred => "kindred cards",
     }
 }
 
@@ -852,5 +996,49 @@ mod tests {
         let result = cost.pay(&mut game, &mut ctx);
         assert_eq!(result, Ok(CostPaymentResult::Paid));
         assert_eq!(game.counter_count(card_id, CounterType::PlusOnePlusOne), 1);
+    }
+
+    #[test]
+    fn test_remove_typed_counters_among_cannot_pay_without_type() {
+        let mut game = create_test_game();
+        let alice = PlayerId::from_index(0);
+
+        let card = simple_card("A", 1);
+        let card_id = game.create_object_from_card(&card, alice, Zone::Battlefield);
+        if let Some(obj) = game.object_mut(card_id) {
+            obj.counters.insert(CounterType::Charge, 2);
+        }
+
+        let cost = RemoveAnyCountersAmongCost::new(1, ObjectFilter::creature().you_control())
+            .with_counter_type(Some(CounterType::PlusOnePlusOne));
+        let mut dm = crate::decision::AutoPassDecisionMaker;
+        let ctx = CostContext::new(card_id, alice, &mut dm);
+        assert_eq!(
+            cost.can_pay(&game, &ctx),
+            Err(CostPaymentError::InsufficientCounters)
+        );
+    }
+
+    #[test]
+    fn test_remove_typed_counters_among_pay_removes_only_typed_counters() {
+        let mut game = create_test_game();
+        let alice = PlayerId::from_index(0);
+
+        let card = simple_card("A", 1);
+        let card_id = game.create_object_from_card(&card, alice, Zone::Battlefield);
+        if let Some(obj) = game.object_mut(card_id) {
+            obj.counters.insert(CounterType::PlusOnePlusOne, 3);
+            obj.counters.insert(CounterType::Charge, 2);
+        }
+
+        let cost = RemoveAnyCountersAmongCost::new(2, ObjectFilter::creature().you_control())
+            .with_counter_type(Some(CounterType::PlusOnePlusOne));
+        let mut dm = crate::decision::AutoPassDecisionMaker;
+        let mut ctx = CostContext::new(card_id, alice, &mut dm);
+
+        let result = cost.pay(&mut game, &mut ctx);
+        assert_eq!(result, Ok(CostPaymentResult::Paid));
+        assert_eq!(game.counter_count(card_id, CounterType::PlusOnePlusOne), 1);
+        assert_eq!(game.counter_count(card_id, CounterType::Charge), 2);
     }
 }

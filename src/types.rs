@@ -153,6 +153,7 @@ pub enum Subtype {
     Pegasus,
     Phyrexian,
     Phoenix,
+    Pincher,
     Pilot,
     Pirate,
     Plant,
@@ -423,6 +424,7 @@ impl Subtype {
                 | Subtype::Pegasus
                 | Subtype::Phyrexian
                 | Subtype::Phoenix
+                | Subtype::Pincher
                 | Subtype::Pilot
                 | Subtype::Pirate
                 | Subtype::Plant

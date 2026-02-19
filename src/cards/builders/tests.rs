@@ -8147,6 +8147,24 @@ fn parse_ward_pay_life_line_as_static_marker() {
 }
 
 #[test]
+fn parse_ward_mana_and_life_line_as_static_ability() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Ward Hybrid Cost Variant")
+        .parse_text("Ward—{2}, Pay 2 life.")
+        .expect("ward mixed-cost line should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    let rendered_lower = rendered.to_ascii_lowercase();
+    assert!(
+        rendered_lower.contains("ward"),
+        "expected ward text in compiled output, got {rendered}"
+    );
+    assert!(
+        !rendered_lower.contains("you lose 2 life"),
+        "ward mixed cost should not lower as standalone lose-life spell effect, got {rendered}"
+    );
+}
+
+#[test]
 fn render_if_they_dont_uses_negative_may_condition() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Umbilicus Variant")
         .parse_text(
@@ -8518,6 +8536,29 @@ fn parse_search_basic_triple_and_gain_life_keeps_all_components() {
     assert!(
         rendered.contains("gain 1 life"),
         "expected trailing life gain clause, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_search_put_discard_random_then_shuffle_keeps_discard_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Gamble Variant")
+        .parse_text(
+            "Search your library for a card, put that card into your hand, discard a card at random, then shuffle.",
+        )
+        .expect("search-discard-random-then-shuffle clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("search your library for a card"),
+        "expected search-library clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("discard a card at random"),
+        "expected discard-at-random clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("shuffle"),
+        "expected shuffle clause to remain, got {rendered}"
     );
 }
 
