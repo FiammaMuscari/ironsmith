@@ -346,6 +346,16 @@ fn collect_line_infos(
     mut builder: CardDefinitionBuilder,
     text: &str,
 ) -> Result<(CardDefinitionBuilder, ParseAnnotations, Vec<LineInfo>), CardTextError> {
+    fn normalize_card_name_for_self_reference(name: &str) -> String {
+        let lower = name.to_ascii_lowercase();
+        let bytes = lower.as_bytes();
+        if bytes.len() > 2 && bytes[1] == b'-' && bytes[0].is_ascii_alphabetic() {
+            lower[2..].to_string()
+        } else {
+            lower
+        }
+    }
+
     let card_name = builder.card_builder.name_ref().to_string();
     let short_name = card_name
         .split(',')
@@ -353,8 +363,8 @@ fn collect_line_infos(
         .unwrap_or(card_name.as_str())
         .trim()
         .to_string();
-    let full_lower = card_name.to_ascii_lowercase();
-    let short_lower = short_name.to_ascii_lowercase();
+    let full_lower = normalize_card_name_for_self_reference(card_name.as_str());
+    let short_lower = normalize_card_name_for_self_reference(short_name.as_str());
 
     let mut annotations = ParseAnnotations::default();
     let mut line_infos = Vec::new();

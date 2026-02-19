@@ -10478,18 +10478,27 @@ fn card_self_reference_phrase(def: &CardDefinition) -> &'static str {
 fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String {
     let self_ref = card_self_reference_phrase(def);
     let self_ref_cap = capitalize_first(self_ref);
+    fn strip_rebalance_prefix(name: &str) -> &str {
+        let trimmed = name.trim();
+        let bytes = trimmed.as_bytes();
+        if bytes.len() > 2 && bytes[1] == b'-' && bytes[0].is_ascii_alphabetic() {
+            trimmed[2..].trim()
+        } else {
+            trimmed
+        }
+    }
     let display_name = {
         let full = def.card.name.trim();
         if full.is_empty() {
             String::new()
         } else {
             let left_half = full.split("//").next().map(str::trim).unwrap_or(full);
-            left_half
+            let short = left_half
                 .split(',')
                 .next()
                 .map(str::trim)
-                .unwrap_or(left_half)
-                .to_string()
+                .unwrap_or(left_half);
+            strip_rebalance_prefix(short).to_string()
         }
     };
     let oracle_mentions_name = {
@@ -10508,8 +10517,10 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
                 .next()
                 .map(str::trim)
                 .unwrap_or(left_half);
+            let rebalance_short = strip_rebalance_prefix(short_name);
             oracle_text.contains(&full_name)
                 || (short_name.len() >= 3 && oracle_text.contains(short_name))
+                || (rebalance_short.len() >= 3 && oracle_text.contains(rebalance_short))
         }
     };
     let has_graveyard_activation = card_has_graveyard_activated_ability(def);

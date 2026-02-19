@@ -1528,6 +1528,24 @@ fn render_trigger_uses_card_name_when_oracle_uses_name() {
 }
 
 #[test]
+fn parse_alchemy_prefixed_name_still_resolves_self_reference_triggers() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "A-Oran-Rief Ooze")
+        .card_types(vec![CardType::Creature])
+        .parse_text("When Oran-Rief Ooze enters, put a +1/+1 counter on target creature you control.")
+        .expect("alchemy-prefixed source name should normalize to self reference");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("enters, put a +1/+1 counter on target creature you control"),
+        "expected enters trigger body to stay intact, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("Whenever a Ooze enters"),
+        "alchemy prefix should not degrade source trigger to subtype filter: {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_bolster_trigger_without_fallback_marker() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bolster Trigger Probe")
         .card_types(vec![CardType::Creature])
