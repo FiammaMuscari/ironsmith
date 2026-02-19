@@ -11120,8 +11120,19 @@ fn parse_spell_activity_trigger(tokens: &[Token]) -> Result<Option<TriggerSpec>,
         &["from", "anywhere", "other", "than", "your", "hand"],
     ) || contains_word_sequence(
         &clause_words,
+        &["from", "anywhere", "other", "than", "their", "hand"],
+    ) || contains_word_sequence(
+        &clause_words,
         &["from", "anywhere", "other", "than", "hand"],
-    );
+    ) || clause_words
+        .windows(4)
+        .position(|window| window == ["from", "anywhere", "other", "than"])
+        .is_some_and(|idx| {
+            clause_words[idx + 4..]
+                .iter()
+                .take(4)
+                .any(|word| *word == "hand")
+        });
 
     let parse_filter = |filter_tokens: &[Token]| -> Result<Option<ObjectFilter>, CardTextError> {
         let filter_tokens = if let Some(idx) = filter_tokens
