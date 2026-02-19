@@ -3,49 +3,63 @@ Allied Teamwork
 Akul the Unrepentant
 Angelic Shield
 Angler Turtle
+Arahbo, the First Fang
 Ancestral Katana
 Anthem of Champions
 Arc Blade
 Asceticism
+Ashling, Rekindled // Ashling, Rimebound
 Atrocious Experiment
 Banners Raised
 Bar the Door
 Birchlore Rangers
+Brass Squire
 Burn Away
 Burn Bright
+Cadaverous Bloom
 Charge
 Charnel Serenade
 Chorus of Woe
 Collective Blessing
+Copperhorn Scout
+Creeping Trailblazer
 Cyclical Evolution
 Cyclops of Eternal Fury
 Dakkon Blackblade
+Dauntless Dourbark
 Death Pit Offering
 Desperate Charge
 Dictate of Heliod
 Durkwood Baloth
+Emperor Crocodile
 Emblem of the Warmind
 End the Festivities
 Ethereal Guidance
 Fabrication Module
+Fade Away
 Festering March
 Fire Nation's Conquest
 Fires of Yavimaya
 Flowstone Surge
+Flamerush Rider
 Fortifying Provisions
 Gaea's Anthem
 Gate to Phyrexia
 Glorious Anthem
 Glorious Charge
 Goblin Chainwhirler
+Gnostro, Voice of the Crags
 Goblin Warchief
 Graf Harvest
 Guild Summit
 Hammer of Purphoros
 Heartless Summoning
+Heat Shimmer
 Hold the Gates
 Inspired Charge
 Inspiring Refrain
+Immerwolf
+Killing Wave
 Kiss of the Amesha
 Knight of Old Benalia
 Llanowar Sentinel
@@ -57,7 +71,9 @@ Maelstrom Wanderer
 Makindi Stampede // Makindi Mesas
 Master Splicer
 Merrow Commerce
+Mirror Mockery
 Mox Tantalite
+Mutilate
 Nova Cleric
 Ogre Slumlord
 Path of Anger's Flame
@@ -66,6 +82,7 @@ Provisions Merchant
 Quintorius, Field Historian
 Rashel, Fist of Torm
 Reality Strobe
+Radiating Lightning
 Righteous Charge
 Rising of the Day
 Roiling Terrain
@@ -74,6 +91,7 @@ Root Greevil
 Sandman, Shifting Scoundrel
 Sarkhan's Unsealing
 Scare Tactics
+Selfless Cathar
 Sea God's Scorn
 Shield Wall
 Sol Talisman
@@ -85,6 +103,7 @@ Sticky Fingers
 Strategic Betrayal
 Temur Ascendancy
 Thunderhead Gunner
+Tormod's Crypt
 Tuktuk Rubblefort
 Veiling Oddity
 Virtuous Charge
@@ -92,3 +111,4 @@ Vitalizing Wind
 Warrior's Charge
 Warrior's Honor
 Wash Out
+Where Ancients Tread

@@ -5030,6 +5030,31 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_modal_activated_header_x_clause_rewrites_mode_x_values() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Gnostro Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "{T}: Choose one. X is the number of spells you've cast this turn.\n• Scry X.\n• This creature deals X damage to target creature.\n• You gain X life.",
+            )
+            .expect("modal activated header with X clause should parse");
+
+        let activated = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(activated) => Some(activated),
+                _ => None,
+            })
+            .expect("expected activated ability");
+        let effect_debug = format!("{:?}", activated.effects);
+        assert!(
+            effect_debug.contains("SpellsCastThisTurn(\n                                                        You,\n                                                    )")
+                || effect_debug.contains("SpellsCastThisTurn(You)"),
+            "expected mode X values to resolve to spells-cast count, got {effect_debug}"
+        );
+    }
+
+    #[test]
     fn parse_remove_charge_counter_from_this_artifact_cost() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Ox Cart Variant")
             .card_types(vec![CardType::Artifact])

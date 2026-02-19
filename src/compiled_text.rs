@@ -9777,6 +9777,19 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
                 line.push_str(": ");
                 line.push_str(&describe_effect_list(&activated.effects));
             }
+            if let Some(x_clause) = extract_activated_x_is_clause(ability.text.as_deref()) {
+                let line_lower = line.to_ascii_lowercase();
+                let clause_lower = x_clause.to_ascii_lowercase();
+                if !line_lower.contains(clause_lower.as_str()) {
+                    if !inject_x_clause_into_modal_heading(&mut line, &x_clause) {
+                        while line.ends_with('.') {
+                            line.pop();
+                        }
+                        line.push_str(". ");
+                        line.push_str(&x_clause);
+                    }
+                }
+            }
             let restriction_clauses = collect_activation_restriction_clauses(
                 &activated.timing,
                 &activated.additional_restrictions,
@@ -9836,6 +9849,87 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
             vec![line]
         }
     }
+}
+
+fn extract_activated_x_is_clause(text: Option<&str>) -> Option<String> {
+    let text = text?.trim();
+    let lower = text.to_ascii_lowercase();
+    let idx = lower.find("x is ")?;
+    let clause = text[idx..].trim().trim_end_matches('.').trim();
+    if clause.is_empty() {
+        None
+    } else {
+        Some(clause.to_string())
+    }
+}
+
+fn inject_x_clause_into_modal_heading(line: &mut String, x_clause: &str) -> bool {
+    let direct_replacements = vec![
+        (
+            "Choose one —\n• ",
+            format!("Choose one. {x_clause}\n• "),
+        ),
+        (
+            "Choose one -\n• ",
+            format!("Choose one. {x_clause}\n• "),
+        ),
+        (
+            "choose one —\n• ",
+            format!("choose one. {x_clause}\n• "),
+        ),
+        (
+            "choose one -\n• ",
+            format!("choose one. {x_clause}\n• "),
+        ),
+        (
+            "Choose one or both —\n• ",
+            format!("Choose one or both. {x_clause}\n• "),
+        ),
+        (
+            "Choose one or both -\n• ",
+            format!("Choose one or both. {x_clause}\n• "),
+        ),
+        (
+            "Choose one or more —\n• ",
+            format!("Choose one or more. {x_clause}\n• "),
+        ),
+        (
+            "Choose one or more -\n• ",
+            format!("Choose one or more. {x_clause}\n• "),
+        ),
+    ];
+    for (marker, replacement) in direct_replacements {
+        if line.contains(marker) {
+            *line = line.replacen(marker, replacement.as_str(), 1);
+            return true;
+        }
+    }
+
+    for marker in [
+        "Choose one —",
+        "Choose one -",
+        "choose one —",
+        "choose one -",
+        "Choose one or both —",
+        "Choose one or both -",
+        "choose one or both —",
+        "choose one or both -",
+        "Choose one or more —",
+        "Choose one or more -",
+        "choose one or more —",
+        "choose one or more -",
+    ] {
+        if line.contains(marker) {
+            let replacement = if marker.contains(" —") {
+                marker.replacen(" —", format!(". {x_clause} —").as_str(), 1)
+            } else {
+                marker.replacen(" -", format!(". {x_clause} -").as_str(), 1)
+            };
+            *line = line.replacen(marker, replacement.as_str(), 1);
+            return true;
+        }
+    }
+    false
 }
 
 fn describe_mana_activation_condition(condition: &crate::ability::ManaAbilityCondition) -> String {

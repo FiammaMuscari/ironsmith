@@ -8,6 +8,7 @@ struct ModalHeader {
     commander_allows_both: bool,
     trigger: Option<TriggerSpec>,
     activated: Option<ModalActivatedHeader>,
+    x_replacement: Option<Value>,
     prefix_effects: Vec<Effect>,
     prefix_choices: Vec<ChooseSpec>,
     modal_gate: Option<ModalGate>,
@@ -109,7 +110,7 @@ pub(super) fn parse_text_with_annotations(
         if let Some(pending) = pending_modal.as_mut() {
             if is_bullet_line(info.raw_line.as_str()) {
                 let tokens = tokenize_line(&info.normalized.normalized, info.line_index);
-                let effects_ast = match parse_effect_sentences(&tokens) {
+                let mut effects_ast = match parse_effect_sentences(&tokens) {
                     Ok(effects_ast) => effects_ast,
                     Err(err) if allow_unsupported => {
                         builder = push_unsupported_marker(
@@ -136,6 +137,25 @@ pub(super) fn parse_text_with_annotations(
                         "modal bullet line produced no effects: '{}'",
                         info.raw_line
                     )));
+                }
+
+                if let Some(replacement) = pending.header.x_replacement.as_ref()
+                    && let Err(err) = replace_modal_header_x_in_effects_ast(
+                        &mut effects_ast,
+                        replacement,
+                        pending.header.line_text.as_str(),
+                    )
+                {
+                    if allow_unsupported {
+                        builder = push_unsupported_marker(
+                            builder,
+                            info.raw_line.as_str(),
+                            format!("{err:?}"),
+                        );
+                        idx += 1;
+                        continue;
+                    }
+                    return Err(err);
                 }
 
                 collect_tag_spans_from_effects_with_context(
@@ -837,6 +857,7 @@ fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextEr
 
     let mut trigger = None;
     let mut activated = None;
+    let x_replacement = parse_modal_header_x_replacement(&tokens, choose_idx);
     let mut effect_start_idx = 0usize;
     if let Some(colon_idx) = tokens
         .iter()
@@ -911,11 +932,173 @@ fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextEr
         commander_allows_both,
         trigger,
         activated,
+        x_replacement,
         prefix_effects,
         prefix_choices,
         modal_gate,
         line_text: info.raw_line.clone(),
     }))
+}
+
+fn parse_modal_header_x_replacement(tokens: &[Token], choose_idx: usize) -> Option<Value> {
+    let choose_tail = tokens.get(choose_idx + 1..)?;
+    let choose_tail_words = words(choose_tail);
+    let x_word_idx = choose_tail_words.iter().position(|word| *word == "x")?;
+    if choose_tail_words.get(x_word_idx + 1).copied() != Some("is") {
+        return None;
+    }
+
+    let x_token_idx = token_index_for_word_index(choose_tail, x_word_idx)?;
+    let x_clause_tokens = trim_commas(&choose_tail[x_token_idx..]);
+    parse_x_is_value_clause(&x_clause_tokens)
+}
+
+fn parse_x_is_value_clause(tokens: &[Token]) -> Option<Value> {
+    let words = words(tokens);
+    if !words.starts_with(&["x", "is"]) {
+        return None;
+    }
+
+    if (words.contains(&"spell") || words.contains(&"spells"))
+        && (words.contains(&"cast") || words.contains(&"casts"))
+        && words.contains(&"turn")
+    {
+        let player = if words
+            .iter()
+            .any(|word| matches!(*word, "you" | "your" | "youve"))
+        {
+            PlayerFilter::You
+        } else if words
+            .iter()
+            .any(|word| matches!(*word, "opponent" | "opponents"))
+        {
+            PlayerFilter::Opponent
+        } else {
+            PlayerFilter::Any
+        };
+        return Some(Value::SpellsCastThisTurn(player));
+    }
+
+    let mut with_where = Vec::with_capacity(tokens.len() + 1);
+    with_where.push(Token::Word("where".to_string(), TextSpan::synthetic()));
+    with_where.extend_from_slice(tokens);
+    parse_where_x_value_clause(&with_where)
+}
+
+fn replace_modal_header_x_in_effects_ast(
+    effects: &mut [EffectAst],
+    replacement: &Value,
+    clause: &str,
+) -> Result<(), CardTextError> {
+    for effect in effects {
+        replace_modal_header_x_in_effect_ast(effect, replacement, clause)?;
+    }
+    Ok(())
+}
+
+fn replace_modal_header_x_in_value(
+    value: &mut Value,
+    replacement: &Value,
+    clause: &str,
+) -> Result<(), CardTextError> {
+    if !value_contains_unbound_x(value) {
+        return Ok(());
+    }
+    *value = replace_unbound_x_with_value(value.clone(), replacement, clause)?;
+    Ok(())
+}
+
+fn replace_modal_header_x_in_effect_ast(
+    effect: &mut EffectAst,
+    replacement: &Value,
+    clause: &str,
+) -> Result<(), CardTextError> {
+    match effect {
+        EffectAst::DealDamage { amount, .. }
+        | EffectAst::DealDamageEach { amount, .. }
+        | EffectAst::Draw { count: amount, .. }
+        | EffectAst::LoseLife { amount, .. }
+        | EffectAst::GainLife { amount, .. }
+        | EffectAst::PreventDamage { amount, .. }
+        | EffectAst::PreventDamageEach { amount, .. }
+        | EffectAst::Scry { count: amount, .. }
+        | EffectAst::Surveil { count: amount, .. }
+        | EffectAst::Discard { count: amount, .. }
+        | EffectAst::Mill { count: amount, .. }
+        | EffectAst::PutCounters { count: amount, .. }
+        | EffectAst::PutCountersAll { count: amount, .. }
+        | EffectAst::RemoveUpToAnyCounters { amount, .. }
+        | EffectAst::RemoveCountersAll { amount, .. }
+        | EffectAst::SetLifeTotal { amount, .. }
+        | EffectAst::PoisonCounters { count: amount, .. }
+        | EffectAst::EnergyCounters { count: amount, .. }
+        | EffectAst::AddManaScaled { amount, .. }
+        | EffectAst::AddManaAnyColor { amount, .. }
+        | EffectAst::AddManaAnyOneColor { amount, .. }
+        | EffectAst::AddManaChosenColor { amount, .. }
+        | EffectAst::AddManaFromLandCouldProduce { amount, .. }
+        | EffectAst::AddManaCommanderIdentity { amount, .. }
+        | EffectAst::CreateToken { count: amount, .. }
+        | EffectAst::CreateTokenCopy { count: amount, .. }
+        | EffectAst::CreateTokenCopyFromSource { count: amount, .. }
+        | EffectAst::CreateTokenWithMods { count: amount, .. }
+        | EffectAst::Monstrosity { amount, .. } => {
+            replace_modal_header_x_in_value(amount, replacement, clause)?;
+        }
+        EffectAst::Pump {
+            power, toughness, ..
+        }
+        | EffectAst::SetBasePowerToughness {
+            power, toughness, ..
+        }
+        | EffectAst::PumpAll {
+            power, toughness, ..
+        } => {
+            replace_modal_header_x_in_value(power, replacement, clause)?;
+            replace_modal_header_x_in_value(toughness, replacement, clause)?;
+        }
+        EffectAst::SetBasePower { power, .. } => {
+            replace_modal_header_x_in_value(power, replacement, clause)?;
+        }
+        EffectAst::May { effects }
+        | EffectAst::MayByPlayer { effects, .. }
+        | EffectAst::MayByTaggedController { effects, .. }
+        | EffectAst::IfResult { effects, .. }
+        | EffectAst::ForEachOpponent { effects }
+        | EffectAst::ForEachPlayer { effects }
+        | EffectAst::ForEachObject { effects, .. }
+        | EffectAst::ForEachTagged { effects, .. }
+        | EffectAst::ForEachOpponentDoesNot { effects }
+        | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDid { effects }
+        | EffectAst::ForEachPlayerDid { effects }
+        | EffectAst::ForEachTaggedPlayer { effects, .. }
+        | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
+        | EffectAst::DelayedUntilEndOfCombat { effects }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
+        | EffectAst::UnlessPays { effects, .. }
+        | EffectAst::VoteOption { effects, .. } => {
+            replace_modal_header_x_in_effects_ast(effects, replacement, clause)?;
+        }
+        EffectAst::UnlessAction {
+            effects,
+            alternative,
+            ..
+        } => {
+            replace_modal_header_x_in_effects_ast(effects, replacement, clause)?;
+            replace_modal_header_x_in_effects_ast(alternative, replacement, clause)?;
+        }
+        EffectAst::Conditional {
+            if_true, if_false, ..
+        } => {
+            replace_modal_header_x_in_effects_ast(if_true, replacement, clause)?;
+            replace_modal_header_x_in_effects_ast(if_false, replacement, clause)?;
+        }
+        _ => {}
+    }
+
+    Ok(())
 }
 
 fn parse_modal_header_prefix_effects(
@@ -1069,6 +1252,7 @@ fn finalize_pending_modal(
         commander_allows_both,
         trigger,
         activated,
+        x_replacement: _,
         prefix_effects,
         prefix_choices,
         modal_gate,
