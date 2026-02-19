@@ -554,6 +554,9 @@ pub struct ObjectFilter {
     /// If set, only match this specific object ID.
     pub specific: Option<ObjectId>,
 
+    /// If non-empty, object must match at least one nested filter.
+    pub any_of: Vec<ObjectFilter>,
+
     /// If true, only match the source object from the current filter context.
     pub source: bool,
 }
@@ -1113,6 +1116,15 @@ impl ObjectFilter {
             return false;
         }
 
+        if !self.any_of.is_empty()
+            && !self
+                .any_of
+                .iter()
+                .any(|filter| filter.matches_internal(object, ctx, game, allow_calculated_pt))
+        {
+            return false;
+        }
+
         if self.entered_since_your_last_turn_ended && !game.is_summoning_sick(object.id) {
             return false;
         }
@@ -1646,6 +1658,15 @@ impl ObjectFilter {
             return false;
         }
 
+        if !self.any_of.is_empty()
+            && !self
+                .any_of
+                .iter()
+                .any(|filter| filter.matches_snapshot(snapshot, ctx, game))
+        {
+            return false;
+        }
+
         if self.source
             && ctx
                 .source
@@ -2134,6 +2155,15 @@ impl ObjectFilter {
     ///
     /// Used primarily for trigger display text.
     pub fn description(&self) -> String {
+        if !self.any_of.is_empty() {
+            return self
+                .any_of
+                .iter()
+                .map(ObjectFilter::description)
+                .collect::<Vec<_>>()
+                .join(" or ");
+        }
+
         let mut parts = Vec::new();
         let mut post_noun_qualifiers: Vec<String> = Vec::new();
         let append_token_after_type = self.token;
@@ -2910,6 +2940,11 @@ fn object_has_static_ability_id(object: &Object, ability_id: StaticAbilityId) ->
 fn object_has_custom_static_marker(object: &Object, marker: &str) -> bool {
     use crate::ability::AbilityKind;
 
+    let normalized_marker = marker.trim().to_ascii_lowercase();
+    if matches!(normalized_marker.as_str(), "mana ability" | "mana abilities") {
+        return object_has_mana_ability(object);
+    }
+
     let has_regular = object.abilities.iter().any(|ability| {
         if let AbilityKind::Static(static_ability) = &ability.kind {
             static_ability.id() == StaticAbilityId::Custom
@@ -2933,6 +2968,14 @@ fn object_has_custom_static_marker(object: &Object, marker: &str) -> bool {
     object.level_granted_abilities().iter().any(|ability| {
         ability.id() == StaticAbilityId::Custom && ability.display().eq_ignore_ascii_case(marker)
     })
+}
+
+fn object_has_mana_ability(object: &Object) -> bool {
+    use crate::ability::AbilityKind;
+    object
+        .abilities
+        .iter()
+        .any(|ability| matches!(&ability.kind, AbilityKind::Mana(_)))
 }
 
 fn object_has_tap_activated_ability(object: &Object) -> bool {
@@ -2965,6 +3008,11 @@ fn snapshot_has_custom_static_marker(
 ) -> bool {
     use crate::ability::AbilityKind;
 
+    let normalized_marker = marker.trim().to_ascii_lowercase();
+    if matches!(normalized_marker.as_str(), "mana ability" | "mana abilities") {
+        return snapshot_has_mana_ability(snapshot);
+    }
+
     snapshot.abilities.iter().any(|ability| {
         if let AbilityKind::Static(static_ability) = &ability.kind
             && static_ability.id() == StaticAbilityId::Custom
@@ -2974,6 +3022,14 @@ fn snapshot_has_custom_static_marker(
         }
         ability_text_has_custom_marker(ability, marker)
     })
+}
+
+fn snapshot_has_mana_ability(snapshot: &crate::snapshot::ObjectSnapshot) -> bool {
+    use crate::ability::AbilityKind;
+    snapshot
+        .abilities
+        .iter()
+        .any(|ability| matches!(&ability.kind, AbilityKind::Mana(_)))
 }
 
 fn ability_text_has_custom_marker(ability: &crate::ability::Ability, marker: &str) -> bool {

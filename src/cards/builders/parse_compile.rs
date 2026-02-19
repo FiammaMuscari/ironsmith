@@ -4939,6 +4939,12 @@ fn token_definition_for(name: &str) -> Option<CardDefinition> {
         if words.contains(&"reach") {
             builder = builder.reach();
         }
+        if words.contains(&"banding") {
+            builder = builder.with_ability(Ability::static_ability(StaticAbility::custom(
+                "banding",
+                "banding".to_string(),
+            )));
+        }
         if words.contains(&"hexproof") {
             builder = builder.hexproof();
         }

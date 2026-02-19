@@ -17901,6 +17901,50 @@ fn parse_gain_ability_to_source_sentence(
     Ok(None)
 }
 
+fn parse_search_library_disjunction_filter(filter_tokens: &[Token]) -> Option<ObjectFilter> {
+    let segments = split_on_or(filter_tokens);
+    if segments.len() < 2 {
+        return None;
+    }
+
+    let mut branches = Vec::new();
+    for segment in segments {
+        let trimmed = trim_commas(&segment);
+        if trimmed.is_empty() {
+            return None;
+        }
+        let Ok(filter) = parse_object_filter(&trimmed, false) else {
+            return None;
+        };
+        branches.push(filter);
+    }
+
+    if branches.len() < 2 {
+        return None;
+    }
+
+    let mut filter = ObjectFilter::default();
+    filter.any_of = branches;
+    Some(filter)
+}
+
+fn normalize_search_library_filter(filter: &mut ObjectFilter) {
+    filter.zone = None;
+    if filter.subtypes.iter().any(|subtype| {
+        matches!(
+            subtype,
+            Subtype::Plains | Subtype::Island | Subtype::Swamp | Subtype::Mountain | Subtype::Forest
+        )
+    }) && !filter.card_types.contains(&CardType::Land)
+    {
+        filter.card_types.push(CardType::Land);
+    }
+
+    for nested in &mut filter.any_of {
+        normalize_search_library_filter(nested);
+    }
+}
+
 fn parse_search_library_sentence(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -18074,6 +18118,20 @@ fn parse_search_library_sentence(
         base_filter
     } else if filter_words.len() == 1 && (filter_words[0] == "card" || filter_words[0] == "cards") {
         ObjectFilter::default()
+    } else if filter_words.contains(&"mana")
+        && filter_words.contains(&"ability")
+        && filter_words.contains(&"or")
+    {
+        if let Some(disjunction_filter) = parse_search_library_disjunction_filter(filter_tokens) {
+            disjunction_filter
+        } else {
+            parse_object_filter(filter_tokens, false).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported search filter in search-library sentence (clause: '{}')",
+                    words_all.join(" ")
+                ))
+            })?
+        }
     } else {
         parse_object_filter(filter_tokens, false).map_err(|_| {
             CardTextError::ParseError(format!(
@@ -18082,20 +18140,7 @@ fn parse_search_library_sentence(
             ))
         })?
     };
-    filter.zone = None;
-    if filter.subtypes.iter().any(|subtype| {
-        matches!(
-            subtype,
-            Subtype::Plains
-                | Subtype::Island
-                | Subtype::Swamp
-                | Subtype::Mountain
-                | Subtype::Forest
-        )
-    }) && !filter.card_types.contains(&CardType::Land)
-    {
-        filter.card_types.push(CardType::Land);
-    }
+    normalize_search_library_filter(&mut filter);
 
     if words_all.contains(&"mana") && words_all.contains(&"cost") {
         filter.has_mana_cost = true;
@@ -29283,7 +29328,8 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         || !filter.excluded_custom_static_markers.is_empty()
         || !filter.tagged_constraints.is_empty()
         || filter.targets_player.is_some()
-        || filter.targets_object.is_some();
+        || filter.targets_object.is_some()
+        || !filter.any_of.is_empty();
 
     if !has_constraints {
         return Err(CardTextError::ParseError(format!(
@@ -29333,7 +29379,8 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         || filter.colors.is_some()
         || !filter.tagged_constraints.is_empty()
         || filter.targets_player.is_some()
-        || filter.targets_object.is_some();
+        || filter.targets_object.is_some()
+        || !filter.any_of.is_empty();
     if !has_object_identity {
         return Err(CardTextError::ParseError(format!(
             "unsupported target phrase lacking object selector (clause: '{}')",
@@ -29665,6 +29712,12 @@ fn parse_filter_keyword_constraint_words(
 ) -> Option<(FilterKeywordConstraint, usize)> {
     if words.is_empty() {
         return None;
+    }
+    if words.len() >= 2
+        && words[0] == "mana"
+        && matches!(words[1], "ability" | "abilities")
+    {
+        return Some((FilterKeywordConstraint::Marker("mana ability"), 2));
     }
     if words[0] == "cycling" || words[0].ends_with("cycling") {
         return Some((FilterKeywordConstraint::Marker("cycling"), 1));

@@ -2643,7 +2643,7 @@ fn test_parse_exile_up_to_one_single_disjunction_stays_single_choice() {
             )
             .expect("parse single-disjunction exile");
 
-    let effects = def.spell_effect.expect("spell effects");
+    let effects = def.spell_effect.as_ref().expect("spell effects");
     let debug = format!("{effects:?}");
     let choose_count = debug.matches("ChooseObjectsEffect").count();
     assert!(
@@ -6256,6 +6256,34 @@ fn render_search_library_for_card_uses_card_noun() {
 }
 
 #[test]
+fn parse_search_filter_artifact_with_mana_ability_or_basic_land() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Moonsilver Key Variant")
+        .card_types(vec![CardType::Artifact])
+        .parse_text(
+            "{1}, {T}, Sacrifice this artifact: Search your library for an artifact card with a mana ability or a basic land card, reveal it, put it into your hand, then shuffle.",
+        )
+        .expect("artifact-with-mana-ability-or-basic-land search should parse");
+
+    let abilities_debug = format!("{:?}", def.abilities);
+    assert!(
+        abilities_debug.contains("any_of: [ObjectFilter"),
+        "expected disjunctive search filter branches, got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug.contains("custom_static_markers: [\"mana ability\"]")
+            && abilities_debug.contains("supertypes: [Basic]")
+            && abilities_debug.contains("card_types: [Land]"),
+        "expected mana-ability and basic-land branch constraints, got {abilities_debug}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("artifact with mana ability or basic land"),
+        "expected disjunctive search wording, got {rendered}"
+    );
+}
+
+#[test]
 fn render_powerstone_token_name() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Powerstone Variant")
         .parse_text("Create a tapped Powerstone token.")
@@ -6264,6 +6292,26 @@ fn render_powerstone_token_name() {
     assert!(
         joined.contains("powerstone artifact token") && joined.contains("tapped"),
         "expected powerstone token name in compiled text, got {joined}"
+    );
+}
+
+#[test]
+fn parse_token_with_banding_keyword_modifier() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Errand of Duty Variant")
+        .parse_text("Create a 1/1 white Knight creature token with banding.")
+        .expect("token with banding modifier should parse");
+
+    let effects = def.spell_effect.expect("spell effects");
+    let debug = format!("{effects:?}");
+    assert!(
+        debug.contains("custom_id: \"banding\""),
+        "expected created token to keep banding marker ability, got {debug}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("token with banding"),
+        "expected compiled text to include banding token modifier, got {rendered}"
     );
 }
 

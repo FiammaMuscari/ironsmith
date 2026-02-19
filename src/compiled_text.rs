@@ -3771,6 +3771,7 @@ fn is_generic_owned_card_search_filter(filter: &ObjectFilter) -> bool {
         && !filter.noncommander
         && filter.tagged_constraints.is_empty()
         && filter.specific.is_none()
+        && filter.any_of.is_empty()
         && !filter.source
 }
 
