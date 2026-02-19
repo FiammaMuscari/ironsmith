@@ -1,9 +1,7 @@
 //! Schedule source sacrifice when a tagged object leaves the battlefield.
 
 use crate::effect::{Effect, EffectOutcome};
-use crate::effects::{
-    EffectExecutor, ScheduleEffectsWhenTaggedLeavesEffect,
-};
+use crate::effects::{EffectExecutor, ScheduleEffectsWhenTaggedLeavesEffect};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::tag::TagKey;
@@ -45,4 +43,3 @@ impl EffectExecutor for SacrificeSourceWhenTaggedLeavesEffect {
         Box::new(self.clone())
     }
 }
-

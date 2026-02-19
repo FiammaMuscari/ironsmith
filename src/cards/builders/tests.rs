@@ -1531,7 +1531,9 @@ fn render_trigger_uses_card_name_when_oracle_uses_name() {
 fn parse_alchemy_prefixed_name_still_resolves_self_reference_triggers() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "A-Oran-Rief Ooze")
         .card_types(vec![CardType::Creature])
-        .parse_text("When Oran-Rief Ooze enters, put a +1/+1 counter on target creature you control.")
+        .parse_text(
+            "When Oran-Rief Ooze enters, put a +1/+1 counter on target creature you control.",
+        )
         .expect("alchemy-prefixed source name should normalize to self reference");
 
     let rendered = compiled_lines(&def).join(" ");
@@ -3156,7 +3158,11 @@ fn parse_exile_numbered_cards_from_graveyard_preserves_choice_count() {
         .expect("expected choose-objects prelude for counted exile");
     assert_eq!(choose.zone, crate::zone::Zone::Graveyard);
     assert_eq!(choose.count.min, 4, "expected exact exile count of four");
-    assert_eq!(choose.count.max, Some(4), "expected max exile count of four");
+    assert_eq!(
+        choose.count.max,
+        Some(4),
+        "expected max exile count of four"
+    );
     assert_eq!(
         choose.chooser,
         crate::filter::PlayerFilter::You,

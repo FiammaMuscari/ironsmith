@@ -54,18 +54,8 @@ impl EffectExecutor for FightEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         // Get both targets from resolved targets
-        if ctx.targets.len() < 2 {
+        let Some((creature1_id, creature2_id)) = ctx.resolve_two_object_targets() else {
             return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
-        }
-
-        let creature1_id = match &ctx.targets[0] {
-            ResolvedTarget::Object(id) => *id,
-            _ => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
-        };
-
-        let creature2_id = match &ctx.targets[1] {
-            ResolvedTarget::Object(id) => *id,
-            _ => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
         };
 
         // Use calculated power so continuous effects (pumps/shrinks) are respected.
@@ -75,21 +65,24 @@ impl EffectExecutor for FightEffect {
         // Each creature deals damage equal to its power to the other.
         // Decompose into two DealDamage effects and aggregate outcomes.
         let mut outcomes = Vec::new();
-        let original_targets = ctx.targets.clone();
 
         if power1 > 0 {
-            ctx.targets = vec![ResolvedTarget::Object(creature2_id)];
-            let effect = Effect::deal_damage(power1 as i32, ChooseSpec::AnyTarget);
-            outcomes.push(execute_effect(game, &effect, ctx)?);
+            let outcome =
+                ctx.with_temp_targets(vec![ResolvedTarget::Object(creature2_id)], |ctx| {
+                    let effect = Effect::deal_damage(power1 as i32, ChooseSpec::AnyTarget);
+                    execute_effect(game, &effect, ctx)
+                })?;
+            outcomes.push(outcome);
         }
 
         if power2 > 0 {
-            ctx.targets = vec![ResolvedTarget::Object(creature1_id)];
-            let effect = Effect::deal_damage(power2 as i32, ChooseSpec::AnyTarget);
-            outcomes.push(execute_effect(game, &effect, ctx)?);
+            let outcome =
+                ctx.with_temp_targets(vec![ResolvedTarget::Object(creature1_id)], |ctx| {
+                    let effect = Effect::deal_damage(power2 as i32, ChooseSpec::AnyTarget);
+                    execute_effect(game, &effect, ctx)
+                })?;
+            outcomes.push(outcome);
         }
-
-        ctx.targets = original_targets;
 
         Ok(EffectOutcome::aggregate(outcomes))
     }

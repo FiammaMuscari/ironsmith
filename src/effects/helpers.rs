@@ -6,7 +6,7 @@
 //! - Target finding and validation
 
 use crate::cost::OptionalCostsPaid;
-use crate::effect::{EventValueSpec, Value};
+use crate::effect::{EffectOutcome, EffectResult, EventValueSpec, Value};
 use crate::events::DamageEvent;
 use crate::events::combat::{CreatureAttackedEvent, CreatureBecameBlockedEvent};
 use crate::events::life::LifeGainEvent;
@@ -611,22 +611,20 @@ pub fn resolve_player_from_spec(
             }
             resolve_player_filter(game, filter, ctx)
         }
-        ChooseSpec::AttackedPlayerOrPlaneswalker => {
-            match attacked_target_from_trigger(ctx) {
-                Some(AttackEventTarget::Player(player_id)) => Ok(player_id),
-                Some(AttackEventTarget::Planeswalker(planeswalker_id)) => {
-                    let planeswalker = game
-                        .object(planeswalker_id)
-                        .ok_or(ExecutionError::ObjectNotFound(planeswalker_id))?;
-                    Ok(planeswalker.controller)
-                }
-                None => ctx.defending_player.ok_or_else(|| {
-                    ExecutionError::UnresolvableValue(
-                        "Attacked player/planeswalker not set".to_string(),
-                    )
-                }),
+        ChooseSpec::AttackedPlayerOrPlaneswalker => match attacked_target_from_trigger(ctx) {
+            Some(AttackEventTarget::Player(player_id)) => Ok(player_id),
+            Some(AttackEventTarget::Planeswalker(planeswalker_id)) => {
+                let planeswalker = game
+                    .object(planeswalker_id)
+                    .ok_or(ExecutionError::ObjectNotFound(planeswalker_id))?;
+                Ok(planeswalker.controller)
             }
-        }
+            None => ctx.defending_player.ok_or_else(|| {
+                ExecutionError::UnresolvableValue(
+                    "Attacked player/planeswalker not set".to_string(),
+                )
+            }),
+        },
 
         // Source controller ("you" on a permanent's ability)
         ChooseSpec::SourceController => Ok(ctx.controller),
@@ -851,6 +849,44 @@ pub fn find_target_player(targets: &[ResolvedTarget]) -> Result<PlayerId, Execut
     Err(ExecutionError::InvalidTarget)
 }
 
+/// Normalize object selections returned by a decision maker.
+///
+/// This guarantees:
+/// - at most `required` objects are returned,
+/// - every object is from `candidates`,
+/// - there are no duplicates,
+/// - if fewer than `required` valid selections were provided, the remainder is
+///   filled deterministically from `candidates` order.
+pub fn normalize_object_selection(
+    chosen: Vec<ObjectId>,
+    candidates: &[ObjectId],
+    required: usize,
+) -> Vec<ObjectId> {
+    let mut selected = Vec::with_capacity(required);
+
+    for id in chosen {
+        if selected.len() == required {
+            break;
+        }
+        if candidates.contains(&id) && !selected.contains(&id) {
+            selected.push(id);
+        }
+    }
+
+    if selected.len() < required {
+        for &id in candidates {
+            if selected.len() == required {
+                break;
+            }
+            if !selected.contains(&id) {
+                selected.push(id);
+            }
+        }
+    }
+
+    selected
+}
+
 // ============================================================================
 // Target Validation
 // ============================================================================
@@ -907,6 +943,94 @@ fn resolve_primary_object_from_value_spec(
         .first()
         .copied()
         .ok_or(ExecutionError::InvalidTarget)
+}
+
+/// Result shaping policy for applying operations to selected objects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectApplyResultPolicy {
+    /// Return `Count(applied_count)`.
+    CountApplied,
+    /// Return `Resolved` when at least one object was selected, else `TargetInvalid`.
+    ///
+    /// This preserves single-target semantics used by effects that resolve even when
+    /// a selected object is no longer present or no state change occurred.
+    SingleTargetResolvedOrInvalid,
+}
+
+/// Summary from applying an operation across selected objects.
+#[derive(Debug)]
+pub struct ObjectApplyResult {
+    pub selected_count: usize,
+    pub applied_count: usize,
+    pub outcome: EffectOutcome,
+}
+
+/// Resolve objects from `spec`, apply an operation per object, and shape the result.
+pub fn apply_to_selected_objects(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    spec: &ChooseSpec,
+    result_policy: ObjectApplyResultPolicy,
+    mut apply: impl FnMut(
+        &mut GameState,
+        &mut ExecutionContext,
+        ObjectId,
+    ) -> Result<bool, ExecutionError>,
+) -> Result<ObjectApplyResult, ExecutionError> {
+    let objects = resolve_objects_from_spec(game, spec, ctx)?;
+    let selected_count = objects.len();
+    let mut applied_count = 0usize;
+
+    for object_id in objects {
+        if apply(game, ctx, object_id)? {
+            applied_count += 1;
+        }
+    }
+
+    let outcome = match result_policy {
+        ObjectApplyResultPolicy::CountApplied => EffectOutcome::count(applied_count as i32),
+        ObjectApplyResultPolicy::SingleTargetResolvedOrInvalid => {
+            if selected_count > 0 {
+                EffectOutcome::resolved()
+            } else {
+                EffectOutcome::from_result(EffectResult::TargetInvalid)
+            }
+        }
+    };
+
+    Ok(ObjectApplyResult {
+        selected_count,
+        applied_count,
+        outcome,
+    })
+}
+
+/// Apply a single-target object operation using `ctx.targets` semantics.
+///
+/// This preserves the common single-target behavior:
+/// - first object target is used,
+/// - `None` means success (`Resolved`),
+/// - `Some(result)` means short-circuit with that result,
+/// - no object targets means `TargetInvalid`.
+pub fn apply_single_target_object_from_context(
+    game: &mut GameState,
+    ctx: &mut ExecutionContext,
+    mut apply: impl FnMut(
+        &mut GameState,
+        &mut ExecutionContext,
+        ObjectId,
+    ) -> Result<Option<EffectResult>, ExecutionError>,
+) -> Result<EffectOutcome, ExecutionError> {
+    for target in ctx.targets.clone() {
+        if let ResolvedTarget::Object(object_id) = target {
+            if let Some(result) = apply(game, ctx, object_id)? {
+                return Ok(EffectOutcome::from_result(result));
+            }
+            return Ok(EffectOutcome::resolved());
+        }
+    }
+
+    Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
 }
 
 /// Resolve a ChooseSpec to a list of ObjectIds.
@@ -1250,26 +1374,24 @@ pub fn resolve_players_from_spec(
             let filter_ctx = ctx.filter_context(game);
             resolve_player_filter_to_list(game, filter, &filter_ctx, ctx)
         }
-        ChooseSpec::AttackedPlayerOrPlaneswalker => {
-            match attacked_target_from_trigger(ctx) {
-                Some(AttackEventTarget::Player(player_id)) => Ok(vec![player_id]),
-                Some(AttackEventTarget::Planeswalker(planeswalker_id)) => {
-                    let planeswalker = game
-                        .object(planeswalker_id)
-                        .ok_or(ExecutionError::ObjectNotFound(planeswalker_id))?;
-                    Ok(vec![planeswalker.controller])
-                }
-                None => {
-                    if let Some(defending) = ctx.defending_player {
-                        Ok(vec![defending])
-                    } else {
-                        Err(ExecutionError::UnresolvableValue(
-                            "Attacked player/planeswalker not set".to_string(),
-                        ))
-                    }
+        ChooseSpec::AttackedPlayerOrPlaneswalker => match attacked_target_from_trigger(ctx) {
+            Some(AttackEventTarget::Player(player_id)) => Ok(vec![player_id]),
+            Some(AttackEventTarget::Planeswalker(planeswalker_id)) => {
+                let planeswalker = game
+                    .object(planeswalker_id)
+                    .ok_or(ExecutionError::ObjectNotFound(planeswalker_id))?;
+                Ok(vec![planeswalker.controller])
+            }
+            None => {
+                if let Some(defending) = ctx.defending_player {
+                    Ok(vec![defending])
+                } else {
+                    Err(ExecutionError::UnresolvableValue(
+                        "Attacked player/planeswalker not set".to_string(),
+                    ))
                 }
             }
-        }
+        },
 
         // Each player matching filter
         ChooseSpec::EachPlayer(filter) => {
@@ -1469,5 +1591,139 @@ mod tests {
         let player_id = PlayerId(1);
         let targets = vec![ResolvedTarget::Player(player_id)];
         assert_eq!(find_target_player(&targets).unwrap(), player_id);
+    }
+
+    #[test]
+    fn test_normalize_object_selection_filters_invalid_and_dedups() {
+        let candidates = vec![ObjectId(1), ObjectId(2), ObjectId(3)];
+        let chosen = vec![ObjectId(2), ObjectId(99), ObjectId(2), ObjectId(3)];
+
+        let selected = normalize_object_selection(chosen, &candidates, 2);
+        assert_eq!(selected, vec![ObjectId(2), ObjectId(3)]);
+    }
+
+    #[test]
+    fn test_normalize_object_selection_fills_missing_required() {
+        let candidates = vec![ObjectId(10), ObjectId(11), ObjectId(12)];
+        let chosen = vec![ObjectId(11)];
+
+        let selected = normalize_object_selection(chosen, &candidates, 3);
+        assert_eq!(selected, vec![ObjectId(11), ObjectId(10), ObjectId(12)]);
+    }
+
+    #[test]
+    fn test_apply_to_selected_objects_count_policy() {
+        let mut game = new_test_game();
+        let player_id = game.players[0].id;
+        let source_id = game.new_object_id();
+        let target_1 = game.new_object_id();
+        let target_2 = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source_id, player_id).with_targets(vec![
+            ResolvedTarget::Object(target_1),
+            ResolvedTarget::Object(target_2),
+        ]);
+
+        let spec = ChooseSpec::target(ChooseSpec::creature())
+            .with_count(crate::effect::ChoiceCount::any_number());
+        let mut seen = Vec::new();
+        let result = apply_to_selected_objects(
+            &mut game,
+            &mut ctx,
+            &spec,
+            ObjectApplyResultPolicy::CountApplied,
+            |_game, _ctx, object_id| {
+                seen.push(object_id);
+                Ok(object_id == target_1)
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.selected_count, 2);
+        assert_eq!(result.applied_count, 1);
+        assert_eq!(result.outcome.result, EffectResult::Count(1));
+        assert_eq!(seen, vec![target_1, target_2]);
+    }
+
+    #[test]
+    fn test_apply_to_selected_objects_single_target_policy_resolves_when_selected() {
+        let mut game = new_test_game();
+        let player_id = game.players[0].id;
+        let source_id = game.new_object_id();
+        let target_id = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source_id, player_id)
+            .with_targets(vec![ResolvedTarget::Object(target_id)]);
+
+        let spec = ChooseSpec::target(ChooseSpec::creature());
+        let result = apply_to_selected_objects(
+            &mut game,
+            &mut ctx,
+            &spec,
+            ObjectApplyResultPolicy::SingleTargetResolvedOrInvalid,
+            |_game, _ctx, _object_id| Ok(false),
+        )
+        .unwrap();
+
+        assert_eq!(result.selected_count, 1);
+        assert_eq!(result.applied_count, 0);
+        assert_eq!(result.outcome.result, EffectResult::Resolved);
+    }
+
+    #[test]
+    fn test_apply_single_target_object_from_context_resolves_on_none() {
+        let mut game = new_test_game();
+        let player_id = game.players[0].id;
+        let source_id = game.new_object_id();
+        let target_id = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source_id, player_id)
+            .with_targets(vec![ResolvedTarget::Object(target_id)]);
+
+        let outcome = apply_single_target_object_from_context(
+            &mut game,
+            &mut ctx,
+            |_game, _ctx, object_id| {
+                assert_eq!(object_id, target_id);
+                Ok(None)
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.result, EffectResult::Resolved);
+    }
+
+    #[test]
+    fn test_apply_single_target_object_from_context_propagates_custom_result() {
+        let mut game = new_test_game();
+        let player_id = game.players[0].id;
+        let source_id = game.new_object_id();
+        let target_id = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source_id, player_id)
+            .with_targets(vec![ResolvedTarget::Object(target_id)]);
+
+        let outcome = apply_single_target_object_from_context(
+            &mut game,
+            &mut ctx,
+            |_game, _ctx, _object_id| Ok(Some(EffectResult::Prevented)),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.result, EffectResult::Prevented);
+    }
+
+    #[test]
+    fn test_apply_single_target_object_from_context_target_invalid_without_object_target() {
+        let mut game = new_test_game();
+        let player_id = game.players[0].id;
+        let source_id = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source_id, player_id)
+            .with_targets(vec![ResolvedTarget::Player(PlayerId(1))]);
+
+        let outcome = apply_single_target_object_from_context(
+            &mut game,
+            &mut ctx,
+            |_game, _ctx, _object_id| Ok(None),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.result, EffectResult::TargetInvalid);
     }
 }

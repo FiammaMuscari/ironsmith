@@ -1,12 +1,15 @@
 //! Prevent damage effect implementation.
 
+use super::prevention_helpers::{
+    PreventionTargetResolveMode, register_prevention_shield, resolve_prevention_target_from_spec,
+};
 use crate::effect::{EffectOutcome, Until, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_value;
-use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
+use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
-use crate::prevention::{DamageFilter, PreventionShield, PreventionTarget};
-use crate::target::{ChooseSpec, PlayerFilter};
+use crate::prevention::DamageFilter;
+use crate::target::ChooseSpec;
 
 /// Effect that prevents N damage to a target.
 ///
@@ -76,21 +79,20 @@ impl EffectExecutor for PreventDamageEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let amount = resolve_value(game, &self.amount, ctx)?.max(0) as u32;
 
-        // Resolve the target for the prevention shield
-        let protected = resolve_prevention_target(game, &self.target, ctx)?;
-
-        // Create the prevention shield
-        let shield = PreventionShield::new(
-            ctx.source,
-            ctx.controller,
+        let protected = resolve_prevention_target_from_spec(
+            game,
+            &self.target,
+            ctx,
+            PreventionTargetResolveMode::LegacyDamageFallback,
+        )?;
+        register_prevention_shield(
+            game,
+            ctx,
             protected,
             Some(amount),
             self.duration.clone(),
-        )
-        .with_filter(self.damage_filter.clone());
-
-        // Add the shield to the prevention effect manager
-        game.prevention_effects.add_shield(shield);
+            self.damage_filter.clone(),
+        );
 
         Ok(EffectOutcome::resolved())
     }
@@ -108,107 +110,12 @@ impl EffectExecutor for PreventDamageEffect {
     }
 }
 
-/// Resolve a ChooseSpec to a PreventionTarget.
-fn resolve_prevention_target(
-    game: &GameState,
-    target_spec: &ChooseSpec,
-    ctx: &ExecutionContext,
-) -> Result<PreventionTarget, ExecutionError> {
-    match target_spec {
-        ChooseSpec::Source => Ok(PreventionTarget::Permanent(ctx.source)),
-
-        ChooseSpec::SourceController => Ok(PreventionTarget::Player(ctx.controller)),
-
-        ChooseSpec::Player(filter) => {
-            match filter {
-                PlayerFilter::You => Ok(PreventionTarget::You),
-                PlayerFilter::Opponent => {
-                    // For "target opponent", use the first target player
-                    for target in &ctx.targets {
-                        if let ResolvedTarget::Player(player_id) = target {
-                            return Ok(PreventionTarget::Player(*player_id));
-                        }
-                    }
-                    Err(ExecutionError::InvalidTarget)
-                }
-                PlayerFilter::Specific(id) => Ok(PreventionTarget::Player(*id)),
-                PlayerFilter::Any => {
-                    // Use selected target
-                    for target in &ctx.targets {
-                        if let ResolvedTarget::Player(player_id) = target {
-                            return Ok(PreventionTarget::Player(*player_id));
-                        }
-                    }
-                    Err(ExecutionError::InvalidTarget)
-                }
-                _ => {
-                    // For other filters, try to find a matching target
-                    for target in &ctx.targets {
-                        if let ResolvedTarget::Player(player_id) = target {
-                            return Ok(PreventionTarget::Player(*player_id));
-                        }
-                    }
-                    Err(ExecutionError::InvalidTarget)
-                }
-            }
-        }
-
-        ChooseSpec::Object(filter) => {
-            // For object filters, use a specific permanent if one is targeted
-            for target in &ctx.targets {
-                if let ResolvedTarget::Object(object_id) = target {
-                    return Ok(PreventionTarget::Permanent(*object_id));
-                }
-            }
-            // Fallback to filter-based target
-            Ok(PreventionTarget::PermanentsMatching(filter.clone()))
-        }
-
-        ChooseSpec::AnyTarget => {
-            // Check for any type of target
-            if let Some(target) = ctx.targets.first() {
-                match target {
-                    ResolvedTarget::Object(object_id) => {
-                        return Ok(PreventionTarget::Permanent(*object_id));
-                    }
-                    ResolvedTarget::Player(player_id) => {
-                        return Ok(PreventionTarget::Player(*player_id));
-                    }
-                }
-            }
-            Err(ExecutionError::InvalidTarget)
-        }
-
-        ChooseSpec::SourceOwner => {
-            if let Some(source) = game.object(ctx.source) {
-                Ok(PreventionTarget::Player(source.owner))
-            } else {
-                Err(ExecutionError::ObjectNotFound(ctx.source))
-            }
-        }
-
-        _ => {
-            // For other target specs, try resolved targets
-            if let Some(target) = ctx.targets.first() {
-                match target {
-                    ResolvedTarget::Object(object_id) => {
-                        return Ok(PreventionTarget::Permanent(*object_id));
-                    }
-                    ResolvedTarget::Player(player_id) => {
-                        return Ok(PreventionTarget::Player(*player_id));
-                    }
-                }
-            }
-            Err(ExecutionError::InvalidTarget)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
     use crate::effect::EffectResult;
+    use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;

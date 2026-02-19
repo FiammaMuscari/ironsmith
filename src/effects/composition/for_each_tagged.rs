@@ -66,26 +66,19 @@ impl EffectExecutor for ForEachTaggedEffect {
 
         let mut outcomes = Vec::new();
 
-        // Save originals to restore after
-        let original_iterated_object = ctx.iterated_object;
-        let original_iterated_player = ctx.iterated_player;
-
         for snapshot in &snapshots {
-            // Set the iterated object for this iteration
-            ctx.iterated_object = Some(snapshot.object_id);
-            // Also expose this object's controller as the iterated player.
-            // This lets inner effects naturally say "its controller" via IteratedPlayer.
-            ctx.iterated_player = Some(snapshot.controller);
-
-            // Execute all inner effects for this object
-            for effect in &self.effects {
-                outcomes.push(execute_effect(game, effect, ctx)?);
-            }
+            ctx.with_temp_iterated_object(Some(snapshot.object_id), |ctx| {
+                // Also expose this object's controller as the iterated player.
+                // This lets inner effects naturally say "its controller" via IteratedPlayer.
+                ctx.with_temp_iterated_player(Some(snapshot.controller), |ctx| {
+                    // Execute all inner effects for this object
+                    for effect in &self.effects {
+                        outcomes.push(execute_effect(game, effect, ctx)?);
+                    }
+                    Ok::<(), ExecutionError>(())
+                })
+            })?;
         }
-
-        // Restore originals
-        ctx.iterated_object = original_iterated_object;
-        ctx.iterated_player = original_iterated_player;
 
         Ok(EffectOutcome::aggregate(outcomes))
     }
@@ -156,32 +149,26 @@ impl EffectExecutor for ForEachControllerOfTaggedEffect {
 
         let mut outcomes = Vec::new();
 
-        // Save originals to restore after
-        let original_iterated_player = ctx.iterated_player;
-
         // Sort by player index for deterministic ordering
         let mut controller_counts: Vec<(PlayerId, usize)> = counts.into_iter().collect();
         controller_counts.sort_by_key(|(p, _)| p.0);
 
         for (controller, count) in controller_counts {
-            // Set the iterated player for this iteration
-            ctx.iterated_player = Some(controller);
+            ctx.with_temp_iterated_player(Some(controller), |ctx| {
+                // Store the count in effect_results so Value::TaggedCount can retrieve it
+                // We use a special EffectId for this purpose
+                ctx.effect_results.insert(
+                    crate::effect::EffectId::TAGGED_COUNT,
+                    EffectResult::Count(count as i32),
+                );
 
-            // Store the count in effect_results so Value::TaggedCount can retrieve it
-            // We use a special EffectId for this purpose
-            ctx.effect_results.insert(
-                crate::effect::EffectId::TAGGED_COUNT,
-                EffectResult::Count(count as i32),
-            );
-
-            // Execute all inner effects for this controller
-            for effect in &self.effects {
-                outcomes.push(execute_effect(game, effect, ctx)?);
-            }
+                // Execute all inner effects for this controller
+                for effect in &self.effects {
+                    outcomes.push(execute_effect(game, effect, ctx)?);
+                }
+                Ok::<(), ExecutionError>(())
+            })?;
         }
-
-        // Restore originals
-        ctx.iterated_player = original_iterated_player;
         ctx.effect_results
             .remove(&crate::effect::EffectId::TAGGED_COUNT);
 
@@ -247,21 +234,15 @@ impl EffectExecutor for ForEachTaggedPlayerEffect {
 
         let mut outcomes = Vec::new();
 
-        // Save the original iterated_player to restore after
-        let original_iterated_player = ctx.iterated_player;
-
         for player_id in &players {
-            // Set the iterated player for this iteration
-            ctx.iterated_player = Some(*player_id);
-
-            // Execute all inner effects for this player
-            for effect in &self.effects {
-                outcomes.push(execute_effect(game, effect, ctx)?);
-            }
+            ctx.with_temp_iterated_player(Some(*player_id), |ctx| {
+                // Execute all inner effects for this player
+                for effect in &self.effects {
+                    outcomes.push(execute_effect(game, effect, ctx)?);
+                }
+                Ok::<(), ExecutionError>(())
+            })?;
         }
-
-        // Restore the original iterated_player
-        ctx.iterated_player = original_iterated_player;
 
         Ok(EffectOutcome::aggregate(outcomes))
     }

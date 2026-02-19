@@ -3,7 +3,7 @@
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::DrawCardsEffect;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::{normalize_object_selection, resolve_objects_from_spec};
 use crate::events::cause::EventCause;
 use crate::events::{KeywordActionEvent, KeywordActionKind};
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -84,7 +84,7 @@ impl EffectExecutor for ConniveEffect {
                 );
                 let chosen: Vec<_> =
                     make_decision(game, ctx.decision_maker, controller, Some(ctx.source), spec);
-                let selected = normalize_selection(chosen, &hand_cards, 1);
+                let selected = normalize_object_selection(chosen, &hand_cards, 1);
                 if let Some(card_to_discard) = selected.first().copied() {
                     let discarded_nonland = game
                         .object(card_to_discard)
@@ -130,36 +130,6 @@ impl EffectExecutor for ConniveEffect {
     fn target_description(&self) -> &'static str {
         "creature to connive"
     }
-}
-
-fn normalize_selection(
-    chosen: Vec<ObjectId>,
-    candidates: &[ObjectId],
-    required: usize,
-) -> Vec<ObjectId> {
-    let mut selected = Vec::with_capacity(required);
-
-    for id in chosen {
-        if selected.len() == required {
-            break;
-        }
-        if candidates.contains(&id) && !selected.contains(&id) {
-            selected.push(id);
-        }
-    }
-
-    if selected.len() < required {
-        for &id in candidates {
-            if selected.len() == required {
-                break;
-            }
-            if !selected.contains(&id) {
-                selected.push(id);
-            }
-        }
-    }
-
-    selected
 }
 
 #[cfg(test)]

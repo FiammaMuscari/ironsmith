@@ -2941,7 +2941,10 @@ fn object_has_custom_static_marker(object: &Object, marker: &str) -> bool {
     use crate::ability::AbilityKind;
 
     let normalized_marker = marker.trim().to_ascii_lowercase();
-    if matches!(normalized_marker.as_str(), "mana ability" | "mana abilities") {
+    if matches!(
+        normalized_marker.as_str(),
+        "mana ability" | "mana abilities"
+    ) {
         return object_has_mana_ability(object);
     }
 
@@ -3009,7 +3012,10 @@ fn snapshot_has_custom_static_marker(
     use crate::ability::AbilityKind;
 
     let normalized_marker = marker.trim().to_ascii_lowercase();
-    if matches!(normalized_marker.as_str(), "mana ability" | "mana abilities") {
+    if matches!(
+        normalized_marker.as_str(),
+        "mana ability" | "mana abilities"
+    ) {
         return snapshot_has_mana_ability(snapshot);
     }
 

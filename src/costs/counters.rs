@@ -596,7 +596,10 @@ impl CostPayer for RemoveAnyCountersAmongCost {
         match (self.count, self.counter_type) {
             (1, Some(counter_type)) => {
                 let counter_name = format_counter_type(&counter_type);
-                format!("Remove a {} counter from {}", counter_name, target_phrase_single)
+                format!(
+                    "Remove a {} counter from {}",
+                    counter_name, target_phrase_single
+                )
             }
             (count, Some(counter_type)) => {
                 let counter_name = format_counter_type(&counter_type);
@@ -607,7 +610,10 @@ impl CostPayer for RemoveAnyCountersAmongCost {
             }
             (1, None) => format!("Remove a counter from {}", target_phrase_single),
             (count, None) => {
-                format!("Remove {} counters from among {}", count, target_phrase_plural)
+                format!(
+                    "Remove {} counters from among {}",
+                    count, target_phrase_plural
+                )
             }
         }
     }

@@ -1,19 +1,17 @@
 //! Create token effect implementation.
 
 use crate::cards::CardDefinition;
-use crate::effect::{Effect, EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_value;
-use crate::effects::{
-    EffectExecutor, EnterAttackingEffect, SacrificeTargetEffect, ScheduleDelayedTriggerEffect,
-};
-use crate::events::EnterBattlefieldEvent;
-use crate::events::zones::ZoneChangeEvent;
-use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget, execute_effect};
+use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::object::Object;
-use crate::target::{ChooseSpec, PlayerFilter};
-use crate::triggers::{Trigger, TriggerEvent};
-use crate::zone::Zone;
+use crate::target::PlayerFilter;
+
+use super::lifecycle::{
+    TokenCleanupOptions, TokenEntryOptions, apply_token_battlefield_entry, schedule_token_cleanup,
+};
 
 /// Effect that creates token creatures or other token permanents.
 ///
@@ -156,93 +154,35 @@ impl EffectExecutor for CreateTokenEffect {
         let controller_id =
             crate::effects::helpers::resolve_player_filter(game, &self.controller, ctx)?;
         let count = resolve_value(game, &self.count, ctx)?.max(0) as usize;
+        let cleanup_options = TokenCleanupOptions::new(
+            self.exile_at_end_of_combat,
+            self.sacrifice_at_next_end_step,
+            self.exile_at_next_end_step,
+        );
+        let entry_options = TokenEntryOptions::new(self.enters_tapped, self.enters_attacking);
 
         let mut created_ids = Vec::with_capacity(count);
         let mut events = Vec::with_capacity(count);
 
-        let original_targets = ctx.targets.clone();
-
         for _ in 0..count {
             let id = game.new_object_id();
             let token_obj = Object::from_token_definition(id, &self.token, controller_id);
-
-            // Track creature ETBs for trap conditions
-            if token_obj.is_creature() {
-                *game
-                    .creatures_entered_this_turn
-                    .entry(controller_id)
-                    .or_insert(0) += 1;
-            }
+            let token_is_creature = token_obj.is_creature();
 
             game.add_object(token_obj);
-
-            // Apply entry modifications (must be after add_object so object exists for extension maps)
-            if self.enters_tapped {
-                game.tap(id);
-            }
-            // Tokens always have summoning sickness
-            game.set_summoning_sick(id);
-
             created_ids.push(id);
-
-            // Emit primitive zone-change ETB event plus ETB-tapped event.
-            events.push(TriggerEvent::new(ZoneChangeEvent::new(
+            apply_token_battlefield_entry(
+                game,
+                ctx,
                 id,
-                Zone::Stack,
-                Zone::Battlefield,
-                None,
-            )));
-            let etb_event = if self.enters_tapped {
-                TriggerEvent::new(EnterBattlefieldEvent::tapped(id, Zone::Stack))
-            } else {
-                TriggerEvent::new(EnterBattlefieldEvent::new(id, Zone::Stack))
-            };
-            events.push(etb_event);
+                controller_id,
+                token_is_creature,
+                entry_options,
+                &mut events,
+            )?;
 
-            // Handle enters_attacking - add directly to combat if in combat
-            if self.enters_attacking {
-                ctx.targets = vec![ResolvedTarget::Object(id)];
-                let enter_attacking = EnterAttackingEffect::new(ChooseSpec::AnyTarget);
-                let _ = execute_effect(game, &Effect::new(enter_attacking), ctx)?;
-            }
-
-            // Handle exile at end of combat
-            if self.exile_at_end_of_combat {
-                let schedule = ScheduleDelayedTriggerEffect::new(
-                    Trigger::end_of_combat(),
-                    vec![Effect::exile(ChooseSpec::SpecificObject(id))],
-                    true,
-                    vec![id],
-                    PlayerFilter::Specific(controller_id),
-                );
-                let _ = execute_effect(game, &Effect::new(schedule), ctx)?;
-            }
-
-            if self.sacrifice_at_next_end_step {
-                let schedule = ScheduleDelayedTriggerEffect::new(
-                    Trigger::beginning_of_end_step(PlayerFilter::Any),
-                    vec![Effect::new(SacrificeTargetEffect::new(
-                        ChooseSpec::SpecificObject(id),
-                    ))],
-                    true,
-                    vec![id],
-                    PlayerFilter::Specific(controller_id),
-                );
-                let _ = execute_effect(game, &Effect::new(schedule), ctx)?;
-            }
-            if self.exile_at_next_end_step {
-                let schedule = ScheduleDelayedTriggerEffect::new(
-                    Trigger::beginning_of_end_step(PlayerFilter::Any),
-                    vec![Effect::exile(ChooseSpec::SpecificObject(id))],
-                    true,
-                    vec![id],
-                    PlayerFilter::Specific(controller_id),
-                );
-                let _ = execute_effect(game, &Effect::new(schedule), ctx)?;
-            }
+            schedule_token_cleanup(game, ctx, id, controller_id, cleanup_options)?;
         }
-
-        ctx.targets = original_targets;
 
         Ok(EffectOutcome::from_result(EffectResult::Objects(created_ids)).with_events(events))
     }

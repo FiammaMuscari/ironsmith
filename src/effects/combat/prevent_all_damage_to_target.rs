@@ -1,11 +1,13 @@
 //! Prevent all damage to a specific target effect implementation.
 
+use super::prevention_helpers::{
+    PreventionTargetResolveMode, register_prevention_shield, resolve_prevention_target_from_spec,
+};
 use crate::effect::{EffectOutcome, EffectResult, Until};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{resolve_objects_from_spec, resolve_players_from_spec};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
-use crate::prevention::{DamageFilter, PreventionShield, PreventionTarget};
+use crate::prevention::DamageFilter;
 use crate::target::ChooseSpec;
 
 /// Effect that prevents all damage to a chosen target for a duration.
@@ -46,16 +48,20 @@ impl EffectExecutor for PreventAllDamageToTargetEffect {
             return Ok(EffectOutcome::from_result(EffectResult::Prevented));
         }
 
-        let protected = resolve_prevention_target(game, &self.target, ctx)?;
-        let shield = PreventionShield::new(
-            ctx.source,
-            ctx.controller,
+        let protected = resolve_prevention_target_from_spec(
+            game,
+            &self.target,
+            ctx,
+            PreventionTargetResolveMode::StrictSelection,
+        )?;
+        register_prevention_shield(
+            game,
+            ctx,
             protected,
             None,
             self.duration.clone(),
-        )
-        .with_filter(self.damage_filter.clone());
-        game.prevention_effects.add_shield(shield);
+            self.damage_filter.clone(),
+        );
 
         Ok(EffectOutcome::resolved())
     }
@@ -71,22 +77,4 @@ impl EffectExecutor for PreventAllDamageToTargetEffect {
     fn target_description(&self) -> &'static str {
         "target to protect from all damage"
     }
-}
-
-fn resolve_prevention_target(
-    game: &GameState,
-    target_spec: &ChooseSpec,
-    ctx: &ExecutionContext,
-) -> Result<PreventionTarget, ExecutionError> {
-    if let Ok(objects) = resolve_objects_from_spec(game, target_spec, ctx)
-        && let Some(object_id) = objects.first()
-    {
-        return Ok(PreventionTarget::Permanent(*object_id));
-    }
-    if let Ok(players) = resolve_players_from_spec(game, target_spec, ctx)
-        && let Some(player_id) = players.first()
-    {
-        return Ok(PreventionTarget::Player(*player_id));
-    }
-    Err(ExecutionError::InvalidTarget)
 }

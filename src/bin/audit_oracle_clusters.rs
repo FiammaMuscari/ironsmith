@@ -714,7 +714,12 @@ fn normalize_create_named_token_article_for_compare(line: &str) -> String {
     if let Some(idx) = lower.find(marker) {
         let head = &line[..idx];
         let tail = &line[idx + marker.len()..];
-        if tail.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) && tail.contains(", a ") {
+        if tail
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+            && tail.contains(", a ")
+        {
             return format!("{}create {}", head, tail);
         }
     }

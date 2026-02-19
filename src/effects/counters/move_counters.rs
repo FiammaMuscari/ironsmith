@@ -3,7 +3,7 @@
 use crate::effect::{EffectOutcome, EffectResult, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_value;
-use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
+use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::object::CounterType;
 use crate::target::ChooseSpec;
@@ -76,18 +76,8 @@ impl EffectExecutor for MoveCountersEffect {
         let count = resolve_value(game, &self.count, ctx)?.max(0) as u32;
 
         // Get from and to targets from resolved targets
-        if ctx.targets.len() < 2 {
+        let Some((from_id, to_id)) = ctx.resolve_two_object_targets() else {
             return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
-        }
-
-        let from_id = match &ctx.targets[0] {
-            ResolvedTarget::Object(id) => *id,
-            _ => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
-        };
-
-        let to_id = match &ctx.targets[1] {
-            ResolvedTarget::Object(id) => *id,
-            _ => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
         };
 
         // Get current counter count on source
@@ -146,6 +136,7 @@ impl EffectExecutor for MoveCountersEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;

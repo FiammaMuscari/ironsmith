@@ -1,12 +1,14 @@
 //! Return all matching cards to the battlefield.
 
+use super::battlefield_entry::{
+    BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
+};
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::{ChooseSpec, ObjectFilter};
-use crate::zone::Zone;
 
 /// Effect that returns all matching cards to the battlefield.
 ///
@@ -38,23 +40,18 @@ impl EffectExecutor for ReturnAllToBattlefieldEffect {
 
         let mut returned_count = 0;
         for object_id in objects {
-            let Some(owner) = game.object(object_id).map(|obj| obj.owner) else {
+            if game.object(object_id).is_none() {
                 continue;
-            };
+            }
 
-            if let Some(result) = game.move_object_with_etb_processing_with_dm(
+            let outcome = move_to_battlefield_with_options(
+                game,
+                ctx,
                 object_id,
-                Zone::Battlefield,
-                &mut ctx.decision_maker,
-            ) {
-                let new_id = result.new_id;
-                if let Some(obj) = game.object_mut(new_id) {
-                    // Oracle wording for these clauses uses owners' control.
-                    obj.controller = owner;
-                }
-                if self.tapped && !result.enters_tapped {
-                    game.tap(new_id);
-                }
+                BattlefieldEntryOptions::owner(self.tapped),
+            );
+
+            if matches!(outcome, BattlefieldEntryOutcome::Moved(_)) {
                 returned_count += 1;
             }
         }

@@ -3,7 +3,7 @@
 use crate::continuous::{EffectTarget, Modification};
 use crate::effect::{Effect, EffectOutcome, EffectResult, Until};
 use crate::effects::{ApplyContinuousEffect, EffectExecutor};
-use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget, execute_effect};
+use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
 
@@ -59,18 +59,8 @@ impl EffectExecutor for ExchangeControlEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        if ctx.targets.len() < 2 {
+        let Some((perm1_id, perm2_id)) = ctx.resolve_two_object_targets() else {
             return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
-        }
-
-        let perm1_id = match &ctx.targets[0] {
-            ResolvedTarget::Object(id) => *id,
-            _ => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
-        };
-
-        let perm2_id = match &ctx.targets[1] {
-            ResolvedTarget::Object(id) => *id,
-            _ => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
         };
 
         // Get current controllers
@@ -110,6 +100,7 @@ impl EffectExecutor for ExchangeControlEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;

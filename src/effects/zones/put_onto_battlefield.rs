@@ -1,12 +1,14 @@
 //! Put onto battlefield effect implementation.
 
+use super::battlefield_entry::{
+    BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
+};
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{find_target_object, resolve_player_filter};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::{ChooseSpec, ObjectRef, PlayerFilter};
-use crate::zone::Zone;
 
 /// Effect that puts a target card onto the battlefield.
 ///
@@ -75,30 +77,23 @@ impl EffectExecutor for PutOntoBattlefieldEffect {
             .object(target_id)
             .ok_or(ExecutionError::ObjectNotFound(target_id))?;
 
-        // Move to battlefield with ETB event processing (handles replacement effects)
-        if let Some(result) = game.move_object_with_etb_processing_with_dm(
+        let outcome = move_to_battlefield_with_options(
+            game,
+            ctx,
             target_id,
-            Zone::Battlefield,
-            &mut ctx.decision_maker,
-        ) {
-            let new_id = result.new_id;
+            BattlefieldEntryOptions::specific(controller_id, self.tapped),
+        );
 
-            // Set controller
-            if let Some(obj) = game.object_mut(new_id) {
-                obj.controller = controller_id;
+        match outcome {
+            BattlefieldEntryOutcome::Moved(new_id) => {
+                Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                    new_id,
+                ])))
             }
-
-            // Apply tapped from effect (in addition to any ETB replacement effects)
-            if self.tapped && !result.enters_tapped {
-                game.tap(new_id);
+            BattlefieldEntryOutcome::Prevented => {
+                // ETB was prevented entirely (e.g., "if this would enter, exile it instead")
+                Ok(EffectOutcome::from_result(EffectResult::Impossible))
             }
-
-            Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
-                new_id,
-            ])))
-        } else {
-            // ETB was prevented entirely (e.g., "if this would enter, exile it instead")
-            Ok(EffectOutcome::from_result(EffectResult::Impossible))
         }
     }
 
@@ -125,6 +120,7 @@ mod tests {
     use crate::object::Object;
     use crate::target::ObjectFilter;
     use crate::types::CardType;
+    use crate::zone::Zone;
 
     fn setup_game() -> GameState {
         GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)

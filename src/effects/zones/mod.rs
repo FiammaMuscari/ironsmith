@@ -3,6 +3,7 @@
 //! This module contains effects that move objects between zones,
 //! such as destroy, exile, sacrifice, and return to hand.
 
+mod battlefield_entry;
 mod destroy;
 mod exile;
 mod exile_from_hand_as_cost;

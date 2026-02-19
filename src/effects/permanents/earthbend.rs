@@ -75,21 +75,21 @@ impl EffectExecutor for EarthbendEffect {
         let _ = execute_effect(game, &Effect::new(haste_effect), ctx)?;
 
         let mut events = Vec::new();
-        let original_targets = ctx.targets.clone();
-        ctx.targets = vec![ResolvedTarget::Object(target_id)];
-        let counters_effect = PutCountersEffect::new(
-            CounterType::PlusOnePlusOne,
-            self.counters,
-            ChooseSpec::AnyTarget,
-        );
-        let counters_outcome = execute_effect(game, &Effect::new(counters_effect), ctx)?;
+        let counters_outcome =
+            ctx.with_temp_targets(vec![ResolvedTarget::Object(target_id)], |ctx| {
+                let counters_effect = PutCountersEffect::new(
+                    CounterType::PlusOnePlusOne,
+                    self.counters,
+                    ChooseSpec::AnyTarget,
+                );
+                execute_effect(game, &Effect::new(counters_effect), ctx)
+            })?;
         if let crate::effect::EffectResult::Count(count) = counters_outcome.result
             && count > 0
         {
             game.continuous_effects.record_counter_change(target_id);
         }
         events.extend(counters_outcome.events);
-        ctx.targets = original_targets;
 
         let schedule = ScheduleDelayedTriggerEffect::new(
             Trigger::this_dies_or_is_exiled(),

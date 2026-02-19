@@ -53,7 +53,9 @@ impl EffectExecutor for AttachToEffect {
         }
 
         // Detach from previous parent if needed.
-        let previous_parent = game.object(ctx.source).and_then(|source| source.attached_to);
+        let previous_parent = game
+            .object(ctx.source)
+            .and_then(|source| source.attached_to);
         if let Some(previous_parent) = previous_parent
             && previous_parent != target_id
             && let Some(parent) = game.object_mut(previous_parent)

@@ -3142,7 +3142,8 @@ impl GameState {
         self.phased_out.remove(&id);
         self.imprinted_cards.remove(&id);
         self.chosen_colors.remove(&id);
-        self.chosen_modes_by_ability.retain(|(source, _), _| *source != id);
+        self.chosen_modes_by_ability
+            .retain(|(source, _), _| *source != id);
         self.chosen_modes_by_ability_this_turn
             .retain(|(source, _), _| *source != id);
         // Note: saga_final_chapter_resolved and commanders persist across zone changes

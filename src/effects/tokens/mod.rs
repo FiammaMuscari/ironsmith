@@ -7,6 +7,7 @@
 mod create_token;
 mod create_token_copy;
 mod investigate;
+mod lifecycle;
 
 pub use create_token::CreateTokenEffect;
 pub use create_token_copy::CreateTokenCopyEffect;

@@ -1,24 +1,22 @@
 //! Create token copy effect implementation.
 
-use crate::ability::Ability;
 use crate::card::PtValue;
 use crate::color::ColorSet;
-use crate::effect::{Effect, EffectOutcome, EffectResult, Value};
+use crate::effect::{EffectOutcome, EffectResult, Value};
+use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_objects_from_spec, resolve_value};
-use crate::effects::{
-    EffectExecutor, EnterAttackingEffect, GrantObjectAbilityEffect, SacrificeTargetEffect,
-    ScheduleDelayedTriggerEffect,
-};
-use crate::events::EnterBattlefieldEvent;
-use crate::events::zones::ZoneChangeEvent;
-use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget, execute_effect};
+use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::object::Object;
 use crate::static_abilities::StaticAbility;
 use crate::target::{ChooseSpec, PlayerFilter};
-use crate::triggers::{Trigger, TriggerEvent};
 use crate::types::{CardType, Subtype, Supertype};
 use crate::zone::Zone;
+
+use super::lifecycle::{
+    TokenCleanupOptions, TokenEntryOptions, apply_token_battlefield_entry,
+    grant_token_static_abilities, schedule_token_cleanup,
+};
 
 /// Effect that creates a token copy of a permanent.
 ///
@@ -271,10 +269,21 @@ impl EffectExecutor for CreateTokenCopyEffect {
         let Some(target_object) = target_object else {
             return Err(ExecutionError::ObjectNotFound(target_id));
         };
+        let cleanup_options = TokenCleanupOptions::new(
+            self.exile_at_end_of_combat,
+            self.sacrifice_at_next_end_step,
+            self.exile_at_next_end_step,
+        );
+        let entry_options = TokenEntryOptions::new(self.enters_tapped, self.enters_attacking);
+        let mut static_abilities_to_grant =
+            Vec::with_capacity(self.granted_static_abilities.len() + usize::from(self.has_haste));
+        if self.has_haste {
+            static_abilities_to_grant.push(StaticAbility::haste());
+        }
+        static_abilities_to_grant.extend(self.granted_static_abilities.iter().cloned());
 
         let mut created_ids = Vec::with_capacity(count);
         let mut events = Vec::with_capacity(count);
-        let original_targets = ctx.targets.clone();
 
         let target_for_stats = &target_object;
         let (half_power, half_toughness) = match self.pt_adjustment {
@@ -333,102 +342,23 @@ impl EffectExecutor for CreateTokenCopyEffect {
                     .supertypes
                     .retain(|supertype| !self.removed_supertypes.contains(supertype));
             }
-
-            // Track creature ETBs for trap conditions
-            if token.is_creature() {
-                *game
-                    .creatures_entered_this_turn
-                    .entry(controller_id)
-                    .or_insert(0) += 1;
-            }
+            let token_is_creature = token.is_creature();
 
             game.add_object(token);
-
-            // Apply modifications (must be after add_object for extension maps)
-            if self.enters_tapped {
-                game.tap(id);
-            }
-            // Tokens always have summoning sickness
-            game.set_summoning_sick(id);
-
             created_ids.push(id);
-
-            // Emit primitive zone-change ETB event plus ETB-tapped event.
-            events.push(TriggerEvent::new(ZoneChangeEvent::new(
+            apply_token_battlefield_entry(
+                game,
+                ctx,
                 id,
-                Zone::Stack,
-                Zone::Battlefield,
-                None,
-            )));
-            let etb_event = if self.enters_tapped {
-                TriggerEvent::new(EnterBattlefieldEvent::tapped(id, Zone::Stack))
-            } else {
-                TriggerEvent::new(EnterBattlefieldEvent::new(id, Zone::Stack))
-            };
-            events.push(etb_event);
+                controller_id,
+                token_is_creature,
+                entry_options,
+                &mut events,
+            )?;
 
-            // Handle enters_attacking - add directly to combat if in combat
-            if self.enters_attacking {
-                ctx.targets = vec![ResolvedTarget::Object(id)];
-                let enter_attacking = EnterAttackingEffect::new(ChooseSpec::AnyTarget);
-                let _ = execute_effect(game, &Effect::new(enter_attacking), ctx)?;
-            }
-
-            // Handle exile at end of combat
-            if self.exile_at_end_of_combat {
-                let schedule = ScheduleDelayedTriggerEffect::new(
-                    Trigger::end_of_combat(),
-                    vec![Effect::exile(ChooseSpec::SpecificObject(id))],
-                    true,
-                    vec![id],
-                    PlayerFilter::Specific(controller_id),
-                );
-                let _ = execute_effect(game, &Effect::new(schedule), ctx)?;
-            }
-
-            if self.sacrifice_at_next_end_step {
-                let schedule = ScheduleDelayedTriggerEffect::new(
-                    Trigger::beginning_of_end_step(PlayerFilter::Any),
-                    vec![Effect::new(SacrificeTargetEffect::new(
-                        ChooseSpec::SpecificObject(id),
-                    ))],
-                    true,
-                    vec![id],
-                    PlayerFilter::Specific(controller_id),
-                );
-                let _ = execute_effect(game, &Effect::new(schedule), ctx)?;
-            }
-            if self.exile_at_next_end_step {
-                let schedule = ScheduleDelayedTriggerEffect::new(
-                    Trigger::beginning_of_end_step(PlayerFilter::Any),
-                    vec![Effect::exile(ChooseSpec::SpecificObject(id))],
-                    true,
-                    vec![id],
-                    PlayerFilter::Specific(controller_id),
-                );
-                let _ = execute_effect(game, &Effect::new(schedule), ctx)?;
-            }
-
-            // Apply haste via the shared GrantObjectAbilityEffect primitive.
-            if self.has_haste {
-                ctx.targets = vec![ResolvedTarget::Object(id)];
-                let grant_effect = GrantObjectAbilityEffect::new(
-                    Ability::static_ability(StaticAbility::haste()),
-                    ChooseSpec::AnyTarget,
-                );
-                let _ = execute_effect(game, &Effect::new(grant_effect), ctx)?;
-            }
-            for static_ability in &self.granted_static_abilities {
-                ctx.targets = vec![ResolvedTarget::Object(id)];
-                let grant_effect = GrantObjectAbilityEffect::new(
-                    Ability::static_ability(static_ability.clone()),
-                    ChooseSpec::AnyTarget,
-                );
-                let _ = execute_effect(game, &Effect::new(grant_effect), ctx)?;
-            }
+            schedule_token_cleanup(game, ctx, id, controller_id, cleanup_options)?;
+            grant_token_static_abilities(game, ctx, id, &static_abilities_to_grant)?;
         }
-
-        ctx.targets = original_targets;
 
         Ok(EffectOutcome::from_result(EffectResult::Objects(created_ids)).with_events(events))
     }

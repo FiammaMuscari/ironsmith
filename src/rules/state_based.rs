@@ -320,10 +320,9 @@ fn check_role_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
             if Some(role_id) == keep_role {
                 continue;
             }
-            if !actions
-                .iter()
-                .any(|action| matches!(action, StateBasedAction::AuraFallsOff(id) if *id == role_id))
-            {
+            if !actions.iter().any(
+                |action| matches!(action, StateBasedAction::AuraFallsOff(id) if *id == role_id),
+            ) {
                 actions.push(StateBasedAction::AuraFallsOff(role_id));
             }
         }

@@ -866,19 +866,14 @@ fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextEr
     let same_mode_more_than_once = token_words
         .windows(5)
         .any(|window| window == ["same", "mode", "more", "than", "once"]);
-    let mode_must_be_unchosen_this_turn = token_words
-        .windows(6)
-        .any(|window| {
-            window == ["that", "hasnt", "been", "chosen", "this", "turn"]
-                || window == ["that", "hasn't", "been", "chosen", "this", "turn"]
-        })
-        || token_words
-            .windows(7)
-            .any(|window| window == ["that", "has", "not", "been", "chosen", "this", "turn"]);
+    let mode_must_be_unchosen_this_turn = token_words.windows(6).any(|window| {
+        window == ["that", "hasnt", "been", "chosen", "this", "turn"]
+            || window == ["that", "hasn't", "been", "chosen", "this", "turn"]
+    }) || token_words
+        .windows(7)
+        .any(|window| window == ["that", "has", "not", "been", "chosen", "this", "turn"]);
     let mode_must_be_unchosen = mode_must_be_unchosen_this_turn
-        || token_words
-        .windows(4)
-        .any(|window| {
+        || token_words.windows(4).any(|window| {
             window == ["that", "hasnt", "been", "chosen"]
                 || window == ["that", "hasn't", "been", "chosen"]
         })

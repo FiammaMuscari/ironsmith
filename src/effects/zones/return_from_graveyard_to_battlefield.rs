@@ -1,5 +1,8 @@
 //! Return from graveyard to battlefield effect implementation.
 
+use super::battlefield_entry::{
+    BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
+};
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::find_target_object;
@@ -84,25 +87,23 @@ impl EffectExecutor for ReturnFromGraveyardToBattlefieldEffect {
             return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
         }
 
-        // Move to battlefield with ETB event processing (handles replacement effects)
-        if let Some(result) = game.move_object_with_etb_processing_with_dm(
+        let outcome = move_to_battlefield_with_options(
+            game,
+            ctx,
             target_id,
-            Zone::Battlefield,
-            &mut ctx.decision_maker,
-        ) {
-            let new_id = result.new_id;
+            BattlefieldEntryOptions::preserve(self.tapped),
+        );
 
-            // Apply tapped from effect (in addition to any ETB replacement effects)
-            if self.tapped && !result.enters_tapped {
-                game.tap(new_id);
+        match outcome {
+            BattlefieldEntryOutcome::Moved(new_id) => {
+                Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                    new_id,
+                ])))
             }
-
-            Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
-                new_id,
-            ])))
-        } else {
-            // ETB was prevented entirely
-            Ok(EffectOutcome::from_result(EffectResult::Impossible))
+            BattlefieldEntryOutcome::Prevented => {
+                // ETB was prevented entirely
+                Ok(EffectOutcome::from_result(EffectResult::Impossible))
+            }
         }
     }
 

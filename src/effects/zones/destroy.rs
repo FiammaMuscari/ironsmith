@@ -2,7 +2,9 @@
 
 use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::{
+    ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
+};
 use crate::event_processor::{EventOutcome, process_destroy};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -95,36 +97,28 @@ impl EffectExecutor for DestroyEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         // Handle targeted effects with special single-target behavior
         if self.spec.is_target() && self.spec.is_single() {
-            // Original single-target behavior
-            for target in ctx.targets.clone() {
-                if let crate::executor::ResolvedTarget::Object(object_id) = target {
-                    if let Some(result) = Self::destroy_object(game, ctx, object_id)? {
-                        return Ok(EffectOutcome::from_result(result));
-                    }
-                    return Ok(EffectOutcome::resolved());
-                }
-            }
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return apply_single_target_object_from_context(game, ctx, |game, ctx, object_id| {
+                Self::destroy_object(game, ctx, object_id)
+            });
         }
 
-        // For all/multi-target effects, use resolve_objects_from_spec
-        let objects = match resolve_objects_from_spec(game, &self.spec, ctx) {
-            Ok(objs) => objs,
+        // For all/multi-target effects, count only successful destructions.
+        let apply_result = match apply_to_selected_objects(
+            game,
+            ctx,
+            &self.spec,
+            ObjectApplyResultPolicy::CountApplied,
+            |game, ctx, object_id| {
+                let result =
+                    process_destroy(game, object_id, Some(ctx.source), &mut ctx.decision_maker);
+                Ok(matches!(result, EventOutcome::Proceed(_)))
+            },
+        ) {
+            Ok(result) => result,
             Err(_) => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
         };
 
-        let mut destroyed_count = 0;
-        for object_id in objects {
-            let result =
-                process_destroy(game, object_id, Some(ctx.source), &mut ctx.decision_maker);
-
-            // For "all" effects, count only actual destructions
-            if matches!(result, EventOutcome::Proceed(_)) {
-                destroyed_count += 1;
-            }
-        }
-
-        Ok(EffectOutcome::count(destroyed_count))
+        Ok(apply_result.outcome)
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {

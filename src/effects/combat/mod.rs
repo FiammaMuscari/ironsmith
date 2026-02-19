@@ -21,6 +21,7 @@ mod prevent_all_combat_damage_from;
 mod prevent_all_damage;
 mod prevent_all_damage_to_target;
 mod prevent_damage;
+mod prevention_helpers;
 mod set_base_power_toughness;
 
 pub use enter_attacking::EnterAttackingEffect;

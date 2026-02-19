@@ -7,7 +7,9 @@ use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::tag::TagKey;
 use crate::target::PlayerFilter;
-use crate::triggers::{DelayedTrigger, Trigger};
+use crate::triggers::Trigger;
+
+use super::trigger_queue::{DelayedTriggerConfig, queue_delayed_trigger};
 
 /// Determines which object should be treated as the source when the delayed
 /// trigger resolves.
@@ -58,20 +60,18 @@ impl EffectExecutor for ScheduleEffectsWhenTaggedLeavesEffect {
 
         let mut scheduled = 0i32;
         for snapshot in tagged {
-            let delayed = DelayedTrigger {
-                trigger: Trigger::this_leaves_battlefield(),
-                effects: self.effects.clone(),
-                one_shot: true,
-                not_before_turn: None,
-                expires_at_turn: None,
-                target_objects: vec![snapshot.object_id],
-                ability_source: match self.ability_source {
-                    TaggedLeavesAbilitySource::WatchedObject => None,
-                    TaggedLeavesAbilitySource::CurrentSource => Some(ctx.source),
-                },
-                controller: controller_id,
-            };
-            game.delayed_triggers.push(delayed);
+            let delayed = DelayedTriggerConfig::new(
+                Trigger::this_leaves_battlefield(),
+                self.effects.clone(),
+                true,
+                vec![snapshot.object_id],
+                controller_id,
+            )
+            .with_ability_source(match self.ability_source {
+                TaggedLeavesAbilitySource::WatchedObject => None,
+                TaggedLeavesAbilitySource::CurrentSource => Some(ctx.source),
+            });
+            queue_delayed_trigger(game, delayed);
             scheduled += 1;
         }
 
@@ -82,4 +82,3 @@ impl EffectExecutor for ScheduleEffectsWhenTaggedLeavesEffect {
         Box::new(self.clone())
     }
 }
-

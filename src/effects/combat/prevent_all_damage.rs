@@ -1,10 +1,11 @@
 //! Prevent all damage effect implementation.
 
+use super::prevention_helpers::register_prevention_shield;
 use crate::effect::{EffectOutcome, EffectResult, Until};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
-use crate::prevention::{DamageFilter, PreventionShield, PreventionShieldId, PreventionTarget};
+use crate::prevention::{DamageFilter, PreventionTarget};
 use crate::target::ObjectFilter;
 
 /// Effect that prevents all damage until end of turn.
@@ -99,19 +100,14 @@ impl EffectExecutor for PreventAllDamageEffect {
             return Ok(EffectOutcome::from_result(EffectResult::Prevented));
         }
 
-        // Create a prevention shield that prevents all damage
-        let shield = PreventionShield {
-            id: PreventionShieldId::new(0), // Will be set by manager
-            source: ctx.source,
-            controller: ctx.controller,
-            protected: self.target.clone(),
-            amount_remaining: None, // Unlimited prevention
-            duration: self.until.clone(),
-            damage_filter: self.damage_filter.clone(),
-            created_turn: game.turn.turn_number,
-        };
-
-        game.prevention_effects.add_shield(shield);
+        register_prevention_shield(
+            game,
+            ctx,
+            self.target.clone(),
+            None,
+            self.until.clone(),
+            self.damage_filter.clone(),
+        );
 
         Ok(EffectOutcome::resolved())
     }

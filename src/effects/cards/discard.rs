@@ -2,7 +2,7 @@
 
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{resolve_player_filter, resolve_value};
+use crate::effects::helpers::{normalize_object_selection, resolve_player_filter, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::filter::ObjectFilter;
 use crate::game_state::GameState;
@@ -131,7 +131,7 @@ impl EffectExecutor for DiscardEffect {
             );
             let chosen: Vec<_> =
                 make_decision(game, ctx.decision_maker, player_id, Some(ctx.source), spec);
-            normalize_selection(chosen, &hand_cards, required)
+            normalize_object_selection(chosen, &hand_cards, required)
         };
 
         // Discard each card using the event system
@@ -157,36 +157,6 @@ impl EffectExecutor for DiscardEffect {
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
     }
-}
-
-fn normalize_selection(
-    chosen: Vec<crate::ids::ObjectId>,
-    candidates: &[crate::ids::ObjectId],
-    required: usize,
-) -> Vec<crate::ids::ObjectId> {
-    let mut selected = Vec::with_capacity(required);
-
-    for id in chosen {
-        if selected.len() == required {
-            break;
-        }
-        if candidates.contains(&id) && !selected.contains(&id) {
-            selected.push(id);
-        }
-    }
-
-    if selected.len() < required {
-        for &id in candidates {
-            if selected.len() == required {
-                break;
-            }
-            if !selected.contains(&id) {
-                selected.push(id);
-            }
-        }
-    }
-
-    selected
 }
 
 #[cfg(test)]

@@ -77,23 +77,20 @@ impl EffectExecutor for ReturnFromGraveyardOrExileToBattlefieldEffect {
             return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
         };
 
-        let original_targets = ctx.targets.clone();
-        ctx.targets = vec![ResolvedTarget::Object(target_id)];
+        let outcome = ctx.with_temp_targets(vec![ResolvedTarget::Object(target_id)], |ctx| {
+            let zone = game
+                .object(target_id)
+                .map(|obj| obj.zone)
+                .unwrap_or(Zone::Graveyard);
+            let target_spec = ChooseSpec::card_in_zone(zone);
 
-        let zone = game
-            .object(target_id)
-            .map(|obj| obj.zone)
-            .unwrap_or(Zone::Graveyard);
-        let target_spec = ChooseSpec::card_in_zone(zone);
-
-        let put_effect = PutOntoBattlefieldEffect::new(
-            target_spec,
-            self.tapped,
-            PlayerFilter::OwnerOf(ObjectRef::Target),
-        );
-        let outcome = execute_effect(game, &Effect::new(put_effect), ctx)?;
-
-        ctx.targets = original_targets;
+            let put_effect = PutOntoBattlefieldEffect::new(
+                target_spec,
+                self.tapped,
+                PlayerFilter::OwnerOf(ObjectRef::Target),
+            );
+            execute_effect(game, &Effect::new(put_effect), ctx)
+        })?;
 
         let EffectOutcome { result, events } = outcome;
 

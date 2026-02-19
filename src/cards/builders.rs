@@ -2607,11 +2607,10 @@ mod effect_parse_tests {
         ForPlayersEffect, GainControlEffect, GrantPlayFromGraveyardEffect, LookAtHandEffect,
         ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect, MoveToZoneEffect,
         PutCountersEffect, RemoveCountersEffect, RemoveUpToAnyCountersEffect,
-        ReturnAllToBattlefieldEffect,
-        ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect, SacrificeEffect, ScryEffect,
-        SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipCombatPhasesEffect,
-        SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, SurveilEffect,
-        TapEffect, TargetOnlyEffect, TransformEffect,
+        ReturnAllToBattlefieldEffect, ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect,
+        SacrificeEffect, ScryEffect, SetBasePowerToughnessEffect, SetLifeTotalEffect,
+        SkipCombatPhasesEffect, SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect,
+        SkipTurnEffect, SurveilEffect, TapEffect, TargetOnlyEffect, TransformEffect,
     };
     use crate::ids::CardId;
     use crate::mana::{ManaCost, ManaSymbol};
@@ -3407,7 +3406,9 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         let has_remove_inner = for_each.effects.iter().any(|effect| {
             effect.downcast_ref::<RemoveCountersEffect>().is_some()
                 || format!("{effect:?}").contains("RemoveCountersEffect")
-                || effect.downcast_ref::<RemoveUpToAnyCountersEffect>().is_some()
+                || effect
+                    .downcast_ref::<RemoveUpToAnyCountersEffect>()
+                    .is_some()
                 || format!("{effect:?}").contains("RemoveUpToAnyCountersEffect")
         });
         assert!(

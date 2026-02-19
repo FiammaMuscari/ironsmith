@@ -2,7 +2,9 @@
 
 use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::{
+    ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
+};
 use crate::event_processor::{EventOutcome, process_zone_change};
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
 use crate::game_state::GameState;
@@ -151,16 +153,11 @@ impl EffectExecutor for ExileEffect {
         if self.spec.is_target() && self.uses_ctx_targets() {
             let count = self.spec.count();
             if count.is_single() {
-                // Original single-target behavior
-                for target in ctx.targets.clone() {
-                    if let ResolvedTarget::Object(object_id) = target {
-                        if let Some(result) = Self::exile_object(game, ctx, object_id)? {
-                            return Ok(EffectOutcome::from_result(result));
-                        }
-                        return Ok(EffectOutcome::resolved());
-                    }
-                }
-                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                return apply_single_target_object_from_context(
+                    game,
+                    ctx,
+                    |game, ctx, object_id| Self::exile_object(game, ctx, object_id),
+                );
             }
             // Multi-target with count - handle "any number" specially
             if count.min == 0 {
@@ -178,21 +175,26 @@ impl EffectExecutor for ExileEffect {
         }
 
         // For all/non-targeted effects and special specs (Tagged, Source, etc.),
-        // use resolve_objects_from_spec which handles them correctly
-        let objects = match resolve_objects_from_spec(game, &self.spec, ctx) {
-            Ok(objs) => objs,
+        // count successful moves to exile.
+        let apply_result = match apply_to_selected_objects(
+            game,
+            ctx,
+            &self.spec,
+            ObjectApplyResultPolicy::CountApplied,
+            |game, ctx, object_id| {
+                if let Some(new_id) = game.move_object(object_id, Zone::Exile) {
+                    game.add_exiled_with_source_link(ctx.source, new_id);
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            },
+        ) {
+            Ok(result) => result,
             Err(_) => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
         };
 
-        let mut exiled_count = 0;
-        for object_id in objects {
-            if let Some(new_id) = game.move_object(object_id, Zone::Exile) {
-                game.add_exiled_with_source_link(ctx.source, new_id);
-                exiled_count += 1;
-            }
-        }
-
-        Ok(EffectOutcome::count(exiled_count))
+        Ok(apply_result.outcome)
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {

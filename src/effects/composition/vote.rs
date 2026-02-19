@@ -273,56 +273,52 @@ impl EffectExecutor for VoteEffect {
         // Execute effects for each vote, setting iterated_player to the voter.
         // This enables effects like Expropriate's "choose a permanent owned by the voter".
         let mut outcomes = Vec::new();
-        let original_iterated_player = ctx.iterated_player;
         let mut token_batches: Vec<BTreeMap<PlayerId, Vec<ObjectId>>> =
             vec![BTreeMap::new(); self.options.len()];
 
         for vote in &votes {
             if let Some(option) = self.options.get(vote.option_index) {
-                // Set iterated_player to the voter for this vote
-                ctx.iterated_player = Some(vote.player);
+                ctx.with_temp_iterated_player(Some(vote.player), |ctx| {
+                    for effect in &option.effects_per_vote {
+                        let is_investigate = effect.downcast_ref::<InvestigateEffect>().is_some();
+                        let mut outcome = execute_effect(game, effect, ctx)?;
 
-                for effect in &option.effects_per_vote {
-                    let is_investigate = effect.downcast_ref::<InvestigateEffect>().is_some();
-                    let mut outcome = execute_effect(game, effect, ctx)?;
+                        if !is_investigate && !outcome.events.is_empty() {
+                            let mut filtered_events = Vec::with_capacity(outcome.events.len());
+                            let batches = token_batches
+                                .get_mut(vote.option_index)
+                                .expect("vote option index should be valid");
 
-                    if !is_investigate && !outcome.events.is_empty() {
-                        let mut filtered_events = Vec::with_capacity(outcome.events.len());
-                        let batches = token_batches
-                            .get_mut(vote.option_index)
-                            .expect("vote option index should be valid");
-
-                        for event in outcome.events {
-                            if event.kind() == EventKind::ZoneChange
-                                && let Some(zc) = event.downcast::<ZoneChangeEvent>()
-                                && zc.to == Zone::Battlefield
-                                && zc.objects.iter().all(|&id| {
-                                    game.object(id)
-                                        .map(|obj| matches!(obj.kind, ObjectKind::Token))
-                                        .unwrap_or(false)
-                                })
-                            {
-                                for &id in &zc.objects {
-                                    if let Some(obj) = game.object(id) {
-                                        batches.entry(obj.controller).or_default().push(id);
+                            for event in outcome.events {
+                                if event.kind() == EventKind::ZoneChange
+                                    && let Some(zc) = event.downcast::<ZoneChangeEvent>()
+                                    && zc.to == Zone::Battlefield
+                                    && zc.objects.iter().all(|&id| {
+                                        game.object(id)
+                                            .map(|obj| matches!(obj.kind, ObjectKind::Token))
+                                            .unwrap_or(false)
+                                    })
+                                {
+                                    for &id in &zc.objects {
+                                        if let Some(obj) = game.object(id) {
+                                            batches.entry(obj.controller).or_default().push(id);
+                                        }
                                     }
+                                    continue;
                                 }
-                                continue;
+
+                                filtered_events.push(event);
                             }
 
-                            filtered_events.push(event);
+                            outcome.events = filtered_events;
                         }
 
-                        outcome.events = filtered_events;
+                        outcomes.push(outcome);
                     }
-
-                    outcomes.push(outcome);
-                }
+                    Ok::<(), ExecutionError>(())
+                })?;
             }
         }
-
-        // Restore the original iterated_player
-        ctx.iterated_player = original_iterated_player;
 
         let mut outcome = EffectOutcome::aggregate(outcomes);
         let cause = EventCause::from_effect(ctx.source, ctx.controller);

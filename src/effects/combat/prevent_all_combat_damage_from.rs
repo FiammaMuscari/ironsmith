@@ -1,11 +1,12 @@
 //! Prevent all combat damage from a chosen source.
 
+use super::prevention_helpers::register_prevention_shield;
 use crate::effect::{EffectOutcome, Until};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
-use crate::prevention::{DamageFilter, PreventionShield, PreventionTarget};
+use crate::prevention::{DamageFilter, PreventionTarget};
 use crate::target::ChooseSpec;
 
 /// Effect that prevents all combat damage from a chosen source.
@@ -40,16 +41,14 @@ impl EffectExecutor for PreventAllCombatDamageFromEffect {
         let mut filter = DamageFilter::combat();
         filter.from_specific_source = Some(source_id);
 
-        let shield = PreventionShield::new(
-            ctx.source,
-            ctx.controller,
+        register_prevention_shield(
+            game,
+            ctx,
             PreventionTarget::All,
             None,
             self.until.clone(),
-        )
-        .with_filter(filter);
-
-        game.prevention_effects.add_shield(shield);
+            filter,
+        );
         Ok(EffectOutcome::resolved())
     }
 

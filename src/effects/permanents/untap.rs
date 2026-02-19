@@ -1,8 +1,8 @@
 //! Untap effect implementation.
 
-use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
+use crate::effect::{ChoiceCount, EffectOutcome};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::{ObjectApplyResultPolicy, apply_to_selected_objects};
 use crate::events::PermanentUntappedEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -68,37 +68,30 @@ impl EffectExecutor for UntapEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let objects = resolve_objects_from_spec(game, &self.spec, ctx)?;
-
-        if objects.is_empty() {
-            return Ok(EffectOutcome::count(0));
-        }
-
-        let mut untapped_count = 0;
         let mut events = Vec::new();
-        for object_id in objects {
-            if game.object(object_id).is_some() && game.is_tapped(object_id) {
-                game.untap(object_id);
-                untapped_count += 1;
-                events.push(TriggerEvent::new(PermanentUntappedEvent::new(object_id)));
-            }
-        }
-
-        // For targeted single-target effects, return Resolved/TargetInvalid
-        // For all effects, return Count
-        if self.spec.is_target() && self.spec.is_single() {
-            // Single targeted effect - check if target existed
-            let target_count = resolve_objects_from_spec(game, &self.spec, ctx)
-                .map(|v| v.len())
-                .unwrap_or(0);
-            if target_count > 0 {
-                Ok(EffectOutcome::resolved().with_events(events))
-            } else {
-                Ok(EffectOutcome::from_result(EffectResult::TargetInvalid).with_events(events))
-            }
+        let result_policy = if self.spec.is_target() && self.spec.is_single() {
+            ObjectApplyResultPolicy::SingleTargetResolvedOrInvalid
         } else {
-            Ok(EffectOutcome::count(untapped_count).with_events(events))
-        }
+            ObjectApplyResultPolicy::CountApplied
+        };
+
+        let apply_result = apply_to_selected_objects(
+            game,
+            ctx,
+            &self.spec,
+            result_policy,
+            |game, _ctx, object_id| {
+                if game.object(object_id).is_some() && game.is_tapped(object_id) {
+                    game.untap(object_id);
+                    events.push(TriggerEvent::new(PermanentUntappedEvent::new(object_id)));
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            },
+        )?;
+
+        Ok(apply_result.outcome.with_events(events))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {

@@ -55,17 +55,17 @@ impl EffectExecutor for ForEachObject {
             .collect();
 
         let mut outcomes = Vec::new();
-        let original_iterated_object = ctx.iterated_object;
 
         // Execute the effects once for each matching object and expose that object via
         // ctx.iterated_object for inner effects using ChooseSpec::Iterated.
         for object_id in &matching {
-            ctx.iterated_object = Some(*object_id);
-            for effect in &self.effects {
-                outcomes.push(execute_effect(game, effect, ctx)?);
-            }
+            ctx.with_temp_iterated_object(Some(*object_id), |ctx| {
+                for effect in &self.effects {
+                    outcomes.push(execute_effect(game, effect, ctx)?);
+                }
+                Ok::<(), ExecutionError>(())
+            })?;
         }
-        ctx.iterated_object = original_iterated_object;
 
         Ok(EffectOutcome::aggregate(outcomes))
     }

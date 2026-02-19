@@ -209,10 +209,9 @@ impl EffectExecutor for ChooseModeEffect {
         };
         let is_mode_legal = |mode_idx: usize| {
             is_mode_available(mode_idx)
-                && self
-                    .modes
-                    .get(mode_idx)
-                    .is_some_and(|mode| Self::check_mode_legal(game, mode, ctx.controller, ctx.source))
+                && self.modes.get(mode_idx).is_some_and(|mode| {
+                    Self::check_mode_legal(game, mode, ctx.controller, ctx.source)
+                })
         };
 
         // Per MTG rule 601.2b, modes are chosen during casting (before targets).
@@ -229,11 +228,7 @@ impl EffectExecutor for ChooseModeEffect {
                 .iter()
                 .enumerate()
                 .map(|(i, mode)| {
-                    ModeOption::with_legality(
-                        i,
-                        mode.description.clone(),
-                        is_mode_legal(i),
-                    )
+                    ModeOption::with_legality(i, mode.description.clone(), is_mode_legal(i))
                 })
                 .collect();
 
@@ -325,9 +320,9 @@ mod tests {
     use crate::ability::Ability;
     use crate::card::CardBuilder;
     use crate::cost::TotalCost;
-    use crate::ids::CardId;
     use crate::effect::Effect;
     use crate::effect::EffectResult;
+    use crate::ids::CardId;
     use crate::ids::PlayerId;
     use crate::types::CardType;
     use crate::zone::Zone;

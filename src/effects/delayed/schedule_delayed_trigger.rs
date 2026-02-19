@@ -7,7 +7,9 @@ use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::tag::TagKey;
 use crate::target::{ObjectFilter, PlayerFilter};
-use crate::triggers::{DelayedTrigger, Trigger};
+use crate::triggers::Trigger;
+
+use super::trigger_queue::{DelayedTriggerConfig, queue_delayed_trigger};
 
 /// Effect that schedules a delayed trigger.
 #[derive(Debug, Clone, PartialEq)]
@@ -100,50 +102,47 @@ impl EffectExecutor for ScheduleDelayedTriggerEffect {
                 {
                     continue;
                 }
-                let delayed = DelayedTrigger {
-                    trigger: self.trigger.clone(),
-                    effects: self.effects.clone(),
-                    one_shot: self.one_shot,
-                    not_before_turn: if self.start_next_turn {
-                        Some(game.turn.turn_number.saturating_add(1))
-                    } else {
-                        None
-                    },
-                    expires_at_turn: if self.until_end_of_turn {
-                        Some(game.turn.turn_number)
-                    } else {
-                        None
-                    },
-                    target_objects: vec![snapshot.object_id],
-                    ability_source: None,
-                    controller: controller_id,
-                };
-                game.delayed_triggers.push(delayed);
+                let delayed = DelayedTriggerConfig::new(
+                    self.trigger.clone(),
+                    self.effects.clone(),
+                    self.one_shot,
+                    vec![snapshot.object_id],
+                    controller_id,
+                )
+                .with_not_before_turn(if self.start_next_turn {
+                    Some(game.turn.turn_number.saturating_add(1))
+                } else {
+                    None
+                })
+                .with_expires_at_turn(if self.until_end_of_turn {
+                    Some(game.turn.turn_number)
+                } else {
+                    None
+                });
+                queue_delayed_trigger(game, delayed);
                 matched += 1;
             }
             return Ok(EffectOutcome::count(matched));
         }
 
-        let delayed = DelayedTrigger {
-            trigger: self.trigger.clone(),
-            effects: self.effects.clone(),
-            one_shot: self.one_shot,
-            not_before_turn: if self.start_next_turn {
-                Some(game.turn.turn_number.saturating_add(1))
-            } else {
-                None
-            },
-            expires_at_turn: if self.until_end_of_turn {
-                Some(game.turn.turn_number)
-            } else {
-                None
-            },
-            target_objects: self.target_objects.clone(),
-            ability_source: None,
-            controller: controller_id,
-        };
-
-        game.delayed_triggers.push(delayed);
+        let delayed = DelayedTriggerConfig::new(
+            self.trigger.clone(),
+            self.effects.clone(),
+            self.one_shot,
+            self.target_objects.clone(),
+            controller_id,
+        )
+        .with_not_before_turn(if self.start_next_turn {
+            Some(game.turn.turn_number.saturating_add(1))
+        } else {
+            None
+        })
+        .with_expires_at_turn(if self.until_end_of_turn {
+            Some(game.turn.turn_number)
+        } else {
+            None
+        });
+        queue_delayed_trigger(game, delayed);
 
         Ok(EffectOutcome::resolved())
     }

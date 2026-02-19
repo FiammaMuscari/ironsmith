@@ -299,6 +299,57 @@ impl<'a> ExecutionContext<'a> {
         self
     }
 
+    /// Temporarily override `targets` while running a closure, then restore.
+    pub fn with_temp_targets<R>(
+        &mut self,
+        targets: Vec<ResolvedTarget>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let original_targets = std::mem::replace(&mut self.targets, targets);
+        let result = f(self);
+        self.targets = original_targets;
+        result
+    }
+
+    /// Temporarily override `iterated_player` while running a closure, then restore.
+    pub fn with_temp_iterated_player<R>(
+        &mut self,
+        iterated_player: Option<PlayerId>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let original_iterated_player =
+            std::mem::replace(&mut self.iterated_player, iterated_player);
+        let result = f(self);
+        self.iterated_player = original_iterated_player;
+        result
+    }
+
+    /// Temporarily override `iterated_object` while running a closure, then restore.
+    pub fn with_temp_iterated_object<R>(
+        &mut self,
+        iterated_object: Option<ObjectId>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let original_iterated_object =
+            std::mem::replace(&mut self.iterated_object, iterated_object);
+        let result = f(self);
+        self.iterated_object = original_iterated_object;
+        result
+    }
+
+    /// Resolve the first two context targets as object IDs.
+    pub fn resolve_two_object_targets(&self) -> Option<(ObjectId, ObjectId)> {
+        let first = match self.targets.first()? {
+            ResolvedTarget::Object(id) => *id,
+            _ => return None,
+        };
+        let second = match self.targets.get(1)? {
+            ResolvedTarget::Object(id) => *id,
+            _ => return None,
+        };
+        Some((first, second))
+    }
+
     /// Set source snapshot for source-LKI lookups.
     pub fn with_source_snapshot(mut self, snapshot: ObjectSnapshot) -> Self {
         self.source_snapshot = Some(snapshot);
@@ -1381,6 +1432,127 @@ mod tests {
             .build();
 
         game.create_object_from_card(&card, owner, Zone::Battlefield)
+    }
+
+    #[test]
+    fn test_with_temp_targets_restores_on_success() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let original_target = game.new_object_id();
+        let temporary_target = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice)
+            .with_targets(vec![ResolvedTarget::Object(original_target)]);
+
+        let result = ctx.with_temp_targets(vec![ResolvedTarget::Object(temporary_target)], |ctx| {
+            assert_eq!(ctx.targets, vec![ResolvedTarget::Object(temporary_target)]);
+            EffectResult::Count(1)
+        });
+
+        assert_eq!(result, EffectResult::Count(1));
+        assert_eq!(ctx.targets, vec![ResolvedTarget::Object(original_target)]);
+    }
+
+    #[test]
+    fn test_with_temp_targets_restores_on_error() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let original_target = game.new_object_id();
+        let temporary_target = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice)
+            .with_targets(vec![ResolvedTarget::Object(original_target)]);
+
+        let result: Result<(), ExecutionError> =
+            ctx.with_temp_targets(vec![ResolvedTarget::Object(temporary_target)], |ctx| {
+                assert_eq!(ctx.targets, vec![ResolvedTarget::Object(temporary_target)]);
+                Err(ExecutionError::Impossible("boom".to_string()))
+            });
+
+        assert_eq!(result, Err(ExecutionError::Impossible("boom".to_string())));
+        assert_eq!(ctx.targets, vec![ResolvedTarget::Object(original_target)]);
+    }
+
+    #[test]
+    fn test_with_temp_iterated_player_restores_on_error() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        ctx.iterated_player = Some(alice);
+
+        let result: Result<(), ExecutionError> = ctx.with_temp_iterated_player(Some(bob), |ctx| {
+            assert_eq!(ctx.iterated_player, Some(bob));
+            Err(ExecutionError::Impossible("player error".to_string()))
+        });
+
+        assert_eq!(
+            result,
+            Err(ExecutionError::Impossible("player error".to_string()))
+        );
+        assert_eq!(ctx.iterated_player, Some(alice));
+    }
+
+    #[test]
+    fn test_with_temp_iterated_object_restores_on_success() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let original_object = game.new_object_id();
+        let temporary_object = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        ctx.iterated_object = Some(original_object);
+
+        let result = ctx.with_temp_iterated_object(Some(temporary_object), |ctx| {
+            assert_eq!(ctx.iterated_object, Some(temporary_object));
+            7
+        });
+
+        assert_eq!(result, 7);
+        assert_eq!(ctx.iterated_object, Some(original_object));
+    }
+
+    #[test]
+    fn test_resolve_two_object_targets_success() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let first = game.new_object_id();
+        let second = game.new_object_id();
+        let ctx = ExecutionContext::new_default(source, alice).with_targets(vec![
+            ResolvedTarget::Object(first),
+            ResolvedTarget::Object(second),
+        ]);
+
+        assert_eq!(ctx.resolve_two_object_targets(), Some((first, second)));
+    }
+
+    #[test]
+    fn test_resolve_two_object_targets_requires_two_targets() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let first = game.new_object_id();
+        let ctx = ExecutionContext::new_default(source, alice)
+            .with_targets(vec![ResolvedTarget::Object(first)]);
+
+        assert_eq!(ctx.resolve_two_object_targets(), None);
+    }
+
+    #[test]
+    fn test_resolve_two_object_targets_requires_object_targets() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let source = game.new_object_id();
+        let first = game.new_object_id();
+        let ctx = ExecutionContext::new_default(source, alice).with_targets(vec![
+            ResolvedTarget::Object(first),
+            ResolvedTarget::Player(bob),
+        ]);
+
+        assert_eq!(ctx.resolve_two_object_targets(), None);
     }
 
     #[test]

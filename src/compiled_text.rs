@@ -993,7 +993,10 @@ fn normalize_pump_and_gain_until_end_of_turn(line: &str) -> Option<String> {
 
 fn normalize_create_named_token_article(line: &str) -> String {
     if let Some((head, tail)) = split_once_ascii_ci(line, "create a ")
-        && tail.chars().next().is_some_and(|ch| ch.is_ascii_uppercase())
+        && tail
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
         && tail.contains(", a ")
     {
         return format!("{}create {}", head, tail);
@@ -1118,9 +1121,8 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
             )
             || untap_clause
                 .eq_ignore_ascii_case("land can't untap during its controller's next untap step.")
-            || untap_clause.eq_ignore_ascii_case(
-                "land can't untap during its controller's next untap step",
-            ))
+            || untap_clause
+                .eq_ignore_ascii_case("land can't untap during its controller's next untap step"))
     {
         let tap_lower = tap_clause.to_ascii_lowercase();
         if tap_lower.contains("tap target creature")
@@ -4683,8 +4685,12 @@ fn describe_compact_keyword_choice(effect: &Effect) -> Option<String> {
         if mode.effects.len() != 1 {
             return None;
         }
-        if let Some(grant_target) = mode.effects[0].downcast_ref::<crate::effects::GrantAbilitiesTargetEffect>() {
-            if !matches!(grant_target.duration, Until::EndOfTurn) || grant_target.abilities.len() != 1 {
+        if let Some(grant_target) =
+            mode.effects[0].downcast_ref::<crate::effects::GrantAbilitiesTargetEffect>()
+        {
+            if !matches!(grant_target.duration, Until::EndOfTurn)
+                || grant_target.abilities.len() != 1
+            {
                 return None;
             }
             let mode_subject = describe_choose_spec(&grant_target.target);
@@ -4699,7 +4705,9 @@ fn describe_compact_keyword_choice(effect: &Effect) -> Option<String> {
             abilities.push(grant_target.abilities[0].display().to_ascii_lowercase());
             continue;
         }
-        if let Some(grant_all) = mode.effects[0].downcast_ref::<crate::effects::GrantAbilitiesAllEffect>() {
+        if let Some(grant_all) =
+            mode.effects[0].downcast_ref::<crate::effects::GrantAbilitiesAllEffect>()
+        {
             if !grant_all.filter.source
                 || !matches!(grant_all.duration, Until::EndOfTurn)
                 || grant_all.abilities.len() != 1
@@ -4812,7 +4820,10 @@ fn describe_value(value: &Value) -> String {
             format!("{multiplier} times the number of {}", filter.description())
         }
         Value::BasicLandTypesAmong(filter) => {
-            format!("the number of basic land types among {}", filter.description())
+            format!(
+                "the number of basic land types among {}",
+                filter.description()
+            )
         }
         Value::CreaturesDiedThisTurn => "the number of creatures that died this turn".to_string(),
         Value::CountPlayers(filter) => format!("the number of {}", describe_player_filter(filter)),
@@ -5877,7 +5888,11 @@ fn describe_exile_then_return(
     } else {
         " under its owner's control"
     };
-    let tapped_suffix = if move_back.enters_tapped { " tapped" } else { "" };
+    let tapped_suffix = if move_back.enters_tapped {
+        " tapped"
+    } else {
+        ""
+    };
     let controller_suffix = match move_back.battlefield_controller {
         crate::effects::BattlefieldController::Preserve => "",
         crate::effects::BattlefieldController::Owner => owner_control_suffix,
@@ -7992,7 +8007,11 @@ fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(exile_when_source_leaves) =
         effect.downcast_ref::<crate::effects::ExileTaggedWhenSourceLeavesEffect>()
     {
-        if exile_when_source_leaves.tag.as_str().starts_with("created_") {
+        if exile_when_source_leaves
+            .tag
+            .as_str()
+            .starts_with("created_")
+        {
             return "Exile that token when this permanent leaves the battlefield".to_string();
         }
         let tagged = ChooseSpec::Tagged(exile_when_source_leaves.tag.clone());
@@ -10218,22 +10237,10 @@ fn extract_activated_x_is_clause(text: Option<&str>) -> Option<String> {
 
 fn inject_x_clause_into_modal_heading(line: &mut String, x_clause: &str) -> bool {
     let direct_replacements = vec![
-        (
-            "Choose one —\n• ",
-            format!("Choose one. {x_clause}\n• "),
-        ),
-        (
-            "Choose one -\n• ",
-            format!("Choose one. {x_clause}\n• "),
-        ),
-        (
-            "choose one —\n• ",
-            format!("choose one. {x_clause}\n• "),
-        ),
-        (
-            "choose one -\n• ",
-            format!("choose one. {x_clause}\n• "),
-        ),
+        ("Choose one —\n• ", format!("Choose one. {x_clause}\n• ")),
+        ("Choose one -\n• ", format!("Choose one. {x_clause}\n• ")),
+        ("choose one —\n• ", format!("choose one. {x_clause}\n• ")),
+        ("choose one -\n• ", format!("choose one. {x_clause}\n• ")),
         (
             "Choose one or both —\n• ",
             format!("Choose one or both. {x_clause}\n• "),
@@ -10604,7 +10611,9 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
                             cost.to_oracle()
                         ));
                     } else {
-                        out.push("You may cast this spell rather than pay its mana cost".to_string());
+                        out.push(
+                            "You may cast this spell rather than pay its mana cost".to_string(),
+                        );
                     }
                     continue;
                 }
@@ -11882,9 +11891,7 @@ fn rewrite_granted_triggered_ability_quote(text: &str) -> Option<String> {
         return Some(format!("{} has \"{}.\"", subject.trim(), body));
     }
     if let Some((subject, body)) = text.split_once(" gains when ")
-        && body
-            .to_ascii_lowercase()
-            .contains("wicked role token")
+        && body.to_ascii_lowercase().contains("wicked role token")
     {
         let (body_core, until_suffix) = split_until_end_of_turn_suffix(body);
         let body = insert_trigger_comma_if_missing(&normalize_granted_trigger_body(body_core));
@@ -12599,8 +12606,8 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         };
         return format!("This creature enters with {rendered_count} +1/+1 {counter_word} on it.");
     }
-    if let Some(count) = strip_prefix_ascii_ci(&normalized, "This creature enters with ")
-        .and_then(|rest| {
+    if let Some(count) =
+        strip_prefix_ascii_ci(&normalized, "This creature enters with ").and_then(|rest| {
             rest.strip_suffix(" +1/+1 counter(s).")
                 .or_else(|| rest.strip_suffix(" +1/+1 counter(s)"))
         })
@@ -14424,29 +14431,30 @@ fn merge_adjacent_subject_predicate_lines(lines: Vec<String>) -> Vec<String> {
                 .strip_suffix(" enters tapped")
                 .or_else(|| left.strip_suffix(" enter tapped"))
             {
-                let counter_clause = right
-                    .strip_prefix("Enters the battlefield with ")
-                    .or_else(|| {
-                        let singular = format!("{subject} enters with ");
-                        let plural = format!("{subject} enter with ");
-                        right
-                            .strip_prefix(&singular)
-                            .or_else(|| right.strip_prefix(&plural))
-                    });
+                let counter_clause =
+                    right
+                        .strip_prefix("Enters the battlefield with ")
+                        .or_else(|| {
+                            let singular = format!("{subject} enters with ");
+                            let plural = format!("{subject} enter with ");
+                            right
+                                .strip_prefix(&singular)
+                                .or_else(|| right.strip_prefix(&plural))
+                        });
                 if let Some(counter_clause) = counter_clause {
-                let subject = subject.trim();
-                if !subject.is_empty() {
-                    let enter_verb = if subject_is_plural(subject) {
-                        "enter"
-                    } else {
-                        "enters"
-                    };
-                    merged.push(format!(
-                        "{subject} {enter_verb} tapped with {counter_clause}"
-                    ));
-                    idx += 2;
-                    continue;
-                }
+                    let subject = subject.trim();
+                    if !subject.is_empty() {
+                        let enter_verb = if subject_is_plural(subject) {
+                            "enter"
+                        } else {
+                            "enters"
+                        };
+                        merged.push(format!(
+                            "{subject} {enter_verb} tapped with {counter_clause}"
+                        ));
+                        idx += 2;
+                        continue;
+                    }
                 }
             }
         }
@@ -15429,7 +15437,9 @@ fn normalize_sentence_surface_style(line: &str) -> String {
             let prefix = prefix.trim_end();
             let moved_cards = moved_cards.trim();
             if prefix.is_empty() {
-                return format!("Shuffle {moved_cards} and your graveyard into their owner's library.");
+                return format!(
+                    "Shuffle {moved_cards} and your graveyard into their owner's library."
+                );
             }
             return format!(
                 "{prefix} Shuffle {moved_cards} and your graveyard into their owner's library."
@@ -16001,7 +16011,8 @@ fn normalize_ward_cost_surface(text: &str) -> String {
         if let Some(start) = lower.find("count: fixed(")
             && let Some(end_rel) = lower[start + "count: fixed(".len()..].find(')')
         {
-            let digits = &lower[start + "count: fixed(".len()..start + "count: fixed(".len() + end_rel];
+            let digits =
+                &lower[start + "count: fixed(".len()..start + "count: fixed(".len() + end_rel];
             if let Ok(parsed) = digits.parse::<u32>() {
                 count = parsed.max(1);
             }
@@ -16019,7 +16030,8 @@ fn normalize_ward_cost_surface(text: &str) -> String {
         && let Some(start) = lower.find("greaterthanorequal(")
         && let Some(end_rel) = lower[start + "greaterthanorequal(".len()..].find(')')
     {
-        let amount = &lower[start + "greaterthanorequal(".len()..start + "greaterthanorequal(".len() + end_rel];
+        let amount = &lower
+            [start + "greaterthanorequal(".len()..start + "greaterthanorequal(".len() + end_rel];
         if let Ok(parsed) = amount.trim().parse::<u32>() {
             return format!("Ward—Sacrifice a permanent with mana value {parsed} or greater.");
         }
@@ -16033,7 +16045,10 @@ fn normalize_ward_cost_surface(text: &str) -> String {
     {
         let sacrificed = trimmed["Ward Exile a ".len()..comma_idx].trim();
         if let Some((_, mana_tail)) = sacrificed.rsplit_once(" with mana value ") {
-            return format!("Ward—Sacrifice a permanent with mana value {}", mana_tail.trim());
+            return format!(
+                "Ward—Sacrifice a permanent with mana value {}",
+                mana_tail.trim()
+            );
         }
     }
 
@@ -16467,16 +16482,13 @@ fn normalize_granted_activated_ability_clause(text: &str) -> Option<String> {
     let cost_words = &words[..effect_idx];
     let effect_words = &words[effect_idx..];
 
-    if !cost_words
-        .iter()
-        .any(|word| {
-            *word == "t"
-                || *word == "sacrifice"
-                || *word == "discard"
-                || is_cost_symbol_word(word)
-                || word.chars().all(|ch| ch.is_ascii_digit())
-        })
-    {
+    if !cost_words.iter().any(|word| {
+        *word == "t"
+            || *word == "sacrifice"
+            || *word == "discard"
+            || is_cost_symbol_word(word)
+            || word.chars().all(|ch| ch.is_ascii_digit())
+    }) {
         return None;
     }
 

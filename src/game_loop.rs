@@ -7956,14 +7956,15 @@ pub fn apply_blocker_declarations(
     // Generate "becomes blocked" triggers for blocked attackers
     for (attacker_id, blockers) in &combat.blockers {
         if !blockers.is_empty() {
-            let attack_target = get_attack_target(combat, *attacker_id).map(|target| match target {
-                AttackTarget::Player(player_id) => {
-                    crate::triggers::AttackEventTarget::Player(*player_id)
-                }
-                AttackTarget::Planeswalker(planeswalker_id) => {
-                    crate::triggers::AttackEventTarget::Planeswalker(*planeswalker_id)
-                }
-            });
+            let attack_target =
+                get_attack_target(combat, *attacker_id).map(|target| match target {
+                    AttackTarget::Player(player_id) => {
+                        crate::triggers::AttackEventTarget::Player(*player_id)
+                    }
+                    AttackTarget::Planeswalker(planeswalker_id) => {
+                        crate::triggers::AttackEventTarget::Planeswalker(*planeswalker_id)
+                    }
+                });
             let event = TriggerEvent::new(match attack_target {
                 Some(target) => CreatureBecameBlockedEvent::with_target(
                     *attacker_id,

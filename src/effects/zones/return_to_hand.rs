@@ -2,9 +2,11 @@
 
 use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::resolve_objects_from_spec;
+use crate::effects::helpers::{
+    ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
+};
 use crate::event_processor::{EventOutcome, process_zone_change};
-use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
+use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::{ChooseSpec, ObjectFilter};
 use crate::zone::Zone;
@@ -123,32 +125,24 @@ impl EffectExecutor for ReturnToHandEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         // Handle targeted effects with special single-target behavior
         if self.spec.is_target() && self.spec.is_single() {
-            // Original single-target behavior
-            for target in ctx.targets.clone() {
-                if let ResolvedTarget::Object(object_id) = target {
-                    if let Some(result) = Self::return_object(game, ctx, object_id)? {
-                        return Ok(EffectOutcome::from_result(result));
-                    }
-                    return Ok(EffectOutcome::resolved());
-                }
-            }
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            return apply_single_target_object_from_context(game, ctx, |game, ctx, object_id| {
+                Self::return_object(game, ctx, object_id)
+            });
         }
 
-        // For all/multi-target effects, use resolve_objects_from_spec
-        let objects = match resolve_objects_from_spec(game, &self.spec, ctx) {
-            Ok(objs) => objs,
+        // For all/multi-target effects, count successful moves to hand.
+        let apply_result = match apply_to_selected_objects(
+            game,
+            ctx,
+            &self.spec,
+            ObjectApplyResultPolicy::CountApplied,
+            |game, _ctx, object_id| Ok(game.move_object(object_id, Zone::Hand).is_some()),
+        ) {
+            Ok(result) => result,
             Err(_) => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
         };
 
-        let mut returned_count = 0;
-        for object_id in objects {
-            if game.move_object(object_id, Zone::Hand).is_some() {
-                returned_count += 1;
-            }
-        }
-
-        Ok(EffectOutcome::count(returned_count))
+        Ok(apply_result.outcome)
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
@@ -180,6 +174,7 @@ impl EffectExecutor for ReturnToHandEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;

@@ -65,12 +65,15 @@ impl EffectExecutor for MonstrosityEffect {
 
         // Put N +1/+1 counters on it and mark as monstrous
         if n_value > 0 {
-            let original_targets = ctx.targets.clone();
-            ctx.targets = vec![ResolvedTarget::Object(source_id)];
-            let counters_effect =
-                PutCountersEffect::new(CounterType::PlusOnePlusOne, n_value, ChooseSpec::AnyTarget);
-            let counters_outcome = execute_effect(game, &Effect::new(counters_effect), ctx)?;
-            ctx.targets = original_targets;
+            let counters_outcome =
+                ctx.with_temp_targets(vec![ResolvedTarget::Object(source_id)], |ctx| {
+                    let counters_effect = PutCountersEffect::new(
+                        CounterType::PlusOnePlusOne,
+                        n_value,
+                        ChooseSpec::AnyTarget,
+                    );
+                    execute_effect(game, &Effect::new(counters_effect), ctx)
+                })?;
 
             if let EffectResult::Count(n) = counters_outcome.result
                 && n > 0

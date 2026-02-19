@@ -70,21 +70,15 @@ impl EffectExecutor for ForPlayersEffect {
 
         let mut outcomes = Vec::new();
 
-        // Save the original iterated_player to restore after
-        let original_iterated_player = ctx.iterated_player;
-
         for player_id in players {
-            // Set the iterated player for this iteration
-            ctx.iterated_player = Some(player_id);
-
-            // Execute all inner effects for this player
-            for effect in &self.effects {
-                outcomes.push(execute_effect(game, effect, ctx)?);
-            }
+            ctx.with_temp_iterated_player(Some(player_id), |ctx| {
+                // Execute all inner effects for this player
+                for effect in &self.effects {
+                    outcomes.push(execute_effect(game, effect, ctx)?);
+                }
+                Ok::<(), ExecutionError>(())
+            })?;
         }
-
-        // Restore the original iterated_player
-        ctx.iterated_player = original_iterated_player;
 
         Ok(EffectOutcome::aggregate(outcomes))
     }
