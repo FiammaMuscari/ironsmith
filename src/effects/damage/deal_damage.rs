@@ -8,11 +8,13 @@ use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_value;
 use crate::event_processor::process_damage_with_event_with_source_snapshot;
 use crate::events::DamageEvent;
+use crate::events::combat::{CreatureAttackedEvent, CreatureBecameBlockedEvent};
 use crate::events::LifeLossEvent;
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
 use crate::game_event::DamageTarget;
 use crate::game_state::GameState;
 use crate::target::{ChooseSpec, PlayerFilter};
+use crate::triggers::AttackEventTarget;
 use crate::triggers::TriggerEvent;
 use crate::types::CardType;
 
@@ -166,6 +168,83 @@ impl EffectExecutor for DealDamageEffect {
             return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
         }
 
+        if let ChooseSpec::AttackedPlayerOrPlaneswalker = &self.target {
+            let attacked_target = ctx
+                .triggering_event
+                .as_ref()
+                .and_then(|event| {
+                    if let Some(attacked) = event.downcast::<CreatureAttackedEvent>() {
+                        return Some(attacked.target);
+                    }
+                    if let Some(blocked) = event.downcast::<CreatureBecameBlockedEvent>() {
+                        return blocked.attack_target;
+                    }
+                    None
+                })
+                .or_else(|| ctx.defending_player.map(AttackEventTarget::Player));
+
+            let Some(attacked_target) = attacked_target else {
+                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            };
+
+            match attacked_target {
+                AttackEventTarget::Player(player_id) => {
+                    let (final_damage, was_prevented) =
+                        process_damage_with_event_with_source_snapshot(
+                            game,
+                            ctx.source,
+                            DamageTarget::Player(player_id),
+                            amount,
+                            self.source_is_combat,
+                            ctx.source_snapshot.as_ref(),
+                        );
+
+                    if was_prevented {
+                        return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+                    }
+
+                    let life_loss = apply_player_life_change(game, player_id, final_damage);
+                    return Ok(make_outcome(
+                        final_damage,
+                        DamageTarget::Player(player_id),
+                        life_loss,
+                    ));
+                }
+                AttackEventTarget::Planeswalker(object_id) => {
+                    if !game
+                        .object(object_id)
+                        .is_some_and(|obj| obj.has_card_type(CardType::Planeswalker))
+                    {
+                        return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                    }
+
+                    let (final_damage, was_prevented) =
+                        process_damage_with_event_with_source_snapshot(
+                            game,
+                            ctx.source,
+                            DamageTarget::Object(object_id),
+                            amount,
+                            self.source_is_combat,
+                            ctx.source_snapshot.as_ref(),
+                        );
+
+                    if was_prevented {
+                        return Ok(EffectOutcome::from_result(EffectResult::Prevented));
+                    }
+
+                    if final_damage > 0 {
+                        game.mark_damage(object_id, final_damage);
+                    }
+
+                    return Ok(make_outcome(
+                        final_damage,
+                        DamageTarget::Object(object_id),
+                        0,
+                    ));
+                }
+            }
+        }
+
         // Handle SourceController - deal damage to the controller of the source (e.g., Ancient Tomb)
         if let ChooseSpec::SourceController = &self.target {
             let controller = ctx.controller;
@@ -258,7 +337,11 @@ impl EffectExecutor for DealDamageEffect {
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
-        Some(&self.target)
+        if self.target.is_target() {
+            Some(&self.target)
+        } else {
+            None
+        }
     }
 
     fn target_description(&self) -> &'static str {

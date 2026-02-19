@@ -8,7 +8,7 @@
 use crate::cost::OptionalCostsPaid;
 use crate::effect::{EventValueSpec, Value};
 use crate::events::DamageEvent;
-use crate::events::combat::CreatureBecameBlockedEvent;
+use crate::events::combat::{CreatureAttackedEvent, CreatureBecameBlockedEvent};
 use crate::events::life::LifeGainEvent;
 use crate::events::life::LifeLossEvent;
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
@@ -16,6 +16,7 @@ use crate::game_event::DamageTarget;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::target::{ChooseSpec, FilterContext, ObjectRef, PlayerFilter};
+use crate::triggers::AttackEventTarget;
 use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
 
@@ -568,6 +569,17 @@ pub fn resolve_value(
 ///
 /// This is the primary way to resolve "which player" from a ChooseSpec.
 /// Handles targeting, filters, and special references.
+fn attacked_target_from_trigger(ctx: &ExecutionContext) -> Option<AttackEventTarget> {
+    let triggering_event = ctx.triggering_event.as_ref()?;
+    if let Some(event) = triggering_event.downcast::<CreatureAttackedEvent>() {
+        return Some(event.target);
+    }
+    if let Some(event) = triggering_event.downcast::<CreatureBecameBlockedEvent>() {
+        return event.attack_target;
+    }
+    None
+}
+
 pub fn resolve_player_from_spec(
     game: &GameState,
     spec: &ChooseSpec,
@@ -598,6 +610,22 @@ pub fn resolve_player_from_spec(
                 }
             }
             resolve_player_filter(game, filter, ctx)
+        }
+        ChooseSpec::AttackedPlayerOrPlaneswalker => {
+            match attacked_target_from_trigger(ctx) {
+                Some(AttackEventTarget::Player(player_id)) => Ok(player_id),
+                Some(AttackEventTarget::Planeswalker(planeswalker_id)) => {
+                    let planeswalker = game
+                        .object(planeswalker_id)
+                        .ok_or(ExecutionError::ObjectNotFound(planeswalker_id))?;
+                    Ok(planeswalker.controller)
+                }
+                None => ctx.defending_player.ok_or_else(|| {
+                    ExecutionError::UnresolvableValue(
+                        "Attacked player/planeswalker not set".to_string(),
+                    )
+                }),
+            }
         }
 
         // Source controller ("you" on a permanent's ability)
@@ -893,8 +921,8 @@ pub fn resolve_objects_from_spec(
     ctx: &ExecutionContext,
 ) -> Result<Vec<ObjectId>, ExecutionError> {
     match spec {
-        // Target/WithCount wrappers - handle special cases then fall back to ctx.targets
-        ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
+        // Target wrapper - handle special cases then fall back to ctx.targets
+        ChooseSpec::Target(inner) => {
             // Handle special cases where target is embedded in the spec
             match inner.base() {
                 ChooseSpec::SpecificObject(id) => {
@@ -934,6 +962,70 @@ pub fn resolve_objects_from_spec(
             }
 
             Ok(objects)
+        }
+        ChooseSpec::WithCount(inner, count) => {
+            if inner.is_target() {
+                return resolve_objects_from_spec(game, inner, ctx);
+            }
+
+            if let ChooseSpec::Object(filter) = inner.base() {
+                let filter_ctx = ctx.filter_context(game);
+                let candidate_ids: Vec<ObjectId> = match filter.zone {
+                    Some(Zone::Battlefield) => game.battlefield.clone(),
+                    Some(Zone::Graveyard) => game
+                        .players
+                        .iter()
+                        .flat_map(|player| player.graveyard.iter().copied())
+                        .collect(),
+                    Some(Zone::Hand) => game
+                        .players
+                        .iter()
+                        .flat_map(|player| player.hand.iter().copied())
+                        .collect(),
+                    Some(Zone::Library) => game
+                        .players
+                        .iter()
+                        .flat_map(|player| player.library.iter().copied())
+                        .collect(),
+                    Some(Zone::Stack) => game.stack.iter().map(|entry| entry.object_id).collect(),
+                    Some(Zone::Exile) => game.exile.clone(),
+                    Some(Zone::Command) => game.command_zone.clone(),
+                    None => game
+                        .battlefield
+                        .iter()
+                        .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
+                        .filter(|(_, obj)| filter.matches(obj, &filter_ctx, game))
+                        .map(|(id, _)| id)
+                        .collect(),
+                };
+
+                let mut objects: Vec<ObjectId> = candidate_ids
+                    .iter()
+                    .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
+                    .filter(|(_, obj)| filter.matches(obj, &filter_ctx, game))
+                    .map(|(id, _)| id)
+                    .collect();
+
+                if objects.is_empty() {
+                    return Err(ExecutionError::InvalidTarget);
+                }
+
+                let max = if count.is_dynamic_x() {
+                    ctx.x_value
+                        .map(|x| x as usize)
+                        .or(count.max)
+                        .unwrap_or(objects.len())
+                } else {
+                    count.max.unwrap_or(objects.len())
+                };
+                objects.truncate(max);
+                if objects.len() < count.min {
+                    return Err(ExecutionError::InvalidTarget);
+                }
+                return Ok(objects);
+            }
+
+            resolve_objects_from_spec(game, inner, ctx)
         }
 
         // Object filter (non-targeted choice) - generally supplied via previous selection,
@@ -1021,6 +1113,14 @@ pub fn resolve_objects_from_spec(
             }
 
             Ok(objects)
+        }
+        ChooseSpec::AttackedPlayerOrPlaneswalker => {
+            if let Some(AttackEventTarget::Planeswalker(planeswalker_id)) =
+                attacked_target_from_trigger(ctx)
+            {
+                return Ok(vec![planeswalker_id]);
+            }
+            Err(ExecutionError::InvalidTarget)
         }
 
         // All matching - filter battlefield
@@ -1149,6 +1249,26 @@ pub fn resolve_players_from_spec(
             // Fall back to filter resolution
             let filter_ctx = ctx.filter_context(game);
             resolve_player_filter_to_list(game, filter, &filter_ctx, ctx)
+        }
+        ChooseSpec::AttackedPlayerOrPlaneswalker => {
+            match attacked_target_from_trigger(ctx) {
+                Some(AttackEventTarget::Player(player_id)) => Ok(vec![player_id]),
+                Some(AttackEventTarget::Planeswalker(planeswalker_id)) => {
+                    let planeswalker = game
+                        .object(planeswalker_id)
+                        .ok_or(ExecutionError::ObjectNotFound(planeswalker_id))?;
+                    Ok(vec![planeswalker.controller])
+                }
+                None => {
+                    if let Some(defending) = ctx.defending_player {
+                        Ok(vec![defending])
+                    } else {
+                        Err(ExecutionError::UnresolvableValue(
+                            "Attacked player/planeswalker not set".to_string(),
+                        ))
+                    }
+                }
+            }
         }
 
         // Each player matching filter

@@ -170,6 +170,7 @@ pub fn requires_target_selection(spec: &ChooseSpec) -> bool {
         | ChooseSpec::PlayerOrPlaneswalker(_)
         | ChooseSpec::Player(_)
         | ChooseSpec::Object(_) => true,
+        ChooseSpec::AttackedPlayerOrPlaneswalker => false,
         // These don't require selection - they're resolved at execution time
         _ => false,
     }
@@ -373,7 +374,7 @@ fn apply_keyword_payment_tags_for_resolution(
 fn drain_pending_trigger_events(game: &mut GameState, trigger_queue: &mut TriggerQueue) {
     let pending_events = game.take_pending_trigger_events();
     for event in pending_events {
-        queue_triggers_from_event(game, trigger_queue, event, false);
+        queue_triggers_from_event(game, trigger_queue, event, true);
     }
 }
 
@@ -525,6 +526,7 @@ pub fn compute_legal_targets(
             }
             targets
         }
+        ChooseSpec::AttackedPlayerOrPlaneswalker => Vec::new(),
         ChooseSpec::Player(filter) => {
             let mut targets = Vec::new();
             for player in &game.players {
@@ -7620,7 +7622,7 @@ fn create_triggered_stack_entry_with_targets(
 /// Convert a triggered ability entry to a stack entry.
 fn triggered_to_stack_entry(game: &GameState, trigger: &TriggeredAbilityEntry) -> StackEntry {
     use crate::events::EventKind;
-    use crate::events::combat::CreatureAttackedEvent;
+    use crate::events::combat::{CreatureAttackedEvent, CreatureBecameBlockedEvent};
     use crate::events::zones::ZoneChangeEvent;
     use crate::triggers::AttackEventTarget;
 
@@ -7662,9 +7664,34 @@ fn triggered_to_stack_entry(game: &GameState, trigger: &TriggeredAbilityEntry) -
     // Extract defending player from combat triggers
     if trigger.triggering_event.kind() == EventKind::CreatureAttacked
         && let Some(attacked) = trigger.triggering_event.downcast::<CreatureAttackedEvent>()
-        && let AttackEventTarget::Player(player_id) = attacked.target
     {
-        entry = entry.with_defending_player(player_id);
+        match attacked.target {
+            AttackEventTarget::Player(player_id) => {
+                entry = entry.with_defending_player(player_id);
+            }
+            AttackEventTarget::Planeswalker(planeswalker_id) => {
+                if let Some(planeswalker) = game.object(planeswalker_id) {
+                    entry = entry.with_defending_player(planeswalker.controller);
+                }
+            }
+        }
+    }
+    if trigger.triggering_event.kind() == EventKind::CreatureBecameBlocked
+        && let Some(blocked) = trigger
+            .triggering_event
+            .downcast::<CreatureBecameBlockedEvent>()
+        && let Some(target) = blocked.attack_target
+    {
+        match target {
+            AttackEventTarget::Player(player_id) => {
+                entry = entry.with_defending_player(player_id);
+            }
+            AttackEventTarget::Planeswalker(planeswalker_id) => {
+                if let Some(planeswalker) = game.object(planeswalker_id) {
+                    entry = entry.with_defending_player(planeswalker.controller);
+                }
+            }
+        }
     }
 
     // Check if this is a saga's final chapter ability.
@@ -7928,10 +7955,22 @@ pub fn apply_blocker_declarations(
     // Generate "becomes blocked" triggers for blocked attackers
     for (attacker_id, blockers) in &combat.blockers {
         if !blockers.is_empty() {
-            let event = TriggerEvent::new(CreatureBecameBlockedEvent::new(
-                *attacker_id,
-                blockers.len() as u32,
-            ));
+            let attack_target = get_attack_target(combat, *attacker_id).map(|target| match target {
+                AttackTarget::Player(player_id) => {
+                    crate::triggers::AttackEventTarget::Player(*player_id)
+                }
+                AttackTarget::Planeswalker(planeswalker_id) => {
+                    crate::triggers::AttackEventTarget::Planeswalker(*planeswalker_id)
+                }
+            });
+            let event = TriggerEvent::new(match attack_target {
+                Some(target) => CreatureBecameBlockedEvent::with_target(
+                    *attacker_id,
+                    blockers.len() as u32,
+                    target,
+                ),
+                None => CreatureBecameBlockedEvent::new(*attacker_id, blockers.len() as u32),
+            });
             let triggers = check_triggers(game, &event);
             for trigger in triggers {
                 trigger_queue.add(trigger);
@@ -8331,6 +8370,102 @@ mod tests {
             game.damage_to_players_this_turn
                 .get(&PlayerId::from_index(1)),
             Some(&3)
+        );
+    }
+
+    #[test]
+    fn test_drain_pending_events_checks_delayed_zone_change_triggers() {
+        let mut game = setup_game();
+        let mut trigger_queue = TriggerQueue::new();
+        let alice = PlayerId::from_index(0);
+
+        let stangg_id = create_creature(&mut game, "Stangg", alice, 3, 4);
+        let twin_id = create_creature(&mut game, "Stangg Twin", alice, 3, 4);
+
+        game.delayed_triggers.push(crate::triggers::DelayedTrigger {
+            trigger: Trigger::this_leaves_battlefield(),
+            effects: vec![Effect::move_to_zone(
+                ChooseSpec::SpecificObject(twin_id),
+                Zone::Exile,
+                true,
+            )],
+            one_shot: true,
+            not_before_turn: None,
+            expires_at_turn: None,
+            target_objects: vec![stangg_id],
+            controller: alice,
+        });
+
+        let moved = game.move_object(stangg_id, Zone::Graveyard);
+        assert!(moved.is_some(), "expected Stangg to move to graveyard");
+        assert!(
+            !game.pending_trigger_events.is_empty(),
+            "moving Stangg off battlefield should queue a zone-change trigger event"
+        );
+
+        drain_pending_trigger_events(&mut game, &mut trigger_queue);
+
+        assert!(
+            !trigger_queue.entries.is_empty(),
+            "pending zone-change events should check delayed triggers"
+        );
+        assert_eq!(
+            trigger_queue.entries[0].source, stangg_id,
+            "delayed trigger source should be the leaving permanent"
+        );
+
+        put_triggers_on_stack(&mut game, &mut trigger_queue)
+            .expect("delayed trigger should be put on stack");
+        assert_eq!(
+            game.stack.len(),
+            1,
+            "expected delayed trigger ability on stack"
+        );
+
+        resolve_stack_entry(&mut game).expect("delayed trigger should resolve");
+
+        assert!(
+            !game.battlefield.contains(&twin_id),
+            "Stangg Twin should no longer be on battlefield after delayed exile resolves"
+        );
+    }
+
+    #[test]
+    fn test_pending_zone_change_still_drives_non_delayed_triggered_abilities() {
+        let mut game = setup_game();
+        let mut trigger_queue = TriggerQueue::new();
+        let alice = PlayerId::from_index(0);
+
+        let stangg_id = create_creature(&mut game, "Stangg", alice, 3, 4);
+        let twin_id = create_creature(&mut game, "Stangg Twin", alice, 3, 4);
+
+        if let Some(stangg) = game.object_mut(stangg_id) {
+            let filter = ObjectFilter::default().token().named("Stangg Twin");
+            stangg.abilities.push(Ability::triggered(
+                Trigger::leaves_battlefield(filter),
+                vec![Effect::sacrifice_source()],
+            ));
+        } else {
+            panic!("expected Stangg object to exist");
+        }
+
+        let moved = game.move_object(twin_id, Zone::Graveyard);
+        assert!(moved.is_some(), "expected Stangg Twin to move to graveyard");
+
+        drain_pending_trigger_events(&mut game, &mut trigger_queue);
+        put_triggers_on_stack(&mut game, &mut trigger_queue)
+            .expect("triggered ability should be put on stack");
+        assert_eq!(
+            game.stack.len(),
+            1,
+            "expected sacrifice trigger on stack after Stangg Twin left"
+        );
+
+        resolve_stack_entry(&mut game).expect("sacrifice trigger should resolve");
+
+        assert!(
+            !game.battlefield.contains(&stangg_id),
+            "Stangg should be sacrificed when Stangg Twin leaves the battlefield"
         );
     }
 

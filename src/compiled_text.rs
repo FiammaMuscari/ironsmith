@@ -1072,6 +1072,23 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     if let Some(rewritten) = normalize_sacrifice_implied_choice(&normalized) {
         normalized = rewritten;
     }
+    if let Some((left, right)) = normalized.split_once(". ") {
+        let left_trimmed = left.trim_end_matches('.');
+        let right_trimmed = right.trim();
+        let left_lower = left_trimmed.to_ascii_lowercase();
+        let right_lower = right_trimmed.to_ascii_lowercase();
+
+        if left_lower.contains("if you do,")
+            && left_lower.contains(" gets ")
+            && right_lower.starts_with("deal ")
+        {
+            if let Some(rest) = right_trimmed.strip_prefix("Deal ") {
+                normalized = format!("{left_trimmed} and deals {rest}");
+            } else if let Some(rest) = right_trimmed.strip_prefix("deal ") {
+                normalized = format!("{left_trimmed} and deals {rest}");
+            }
+        }
+    }
     if let Some((tap_clause, untap_clause)) = normalized.split_once(". ")
         && tap_clause.to_ascii_lowercase().starts_with("tap up to ")
         && tap_clause
@@ -4001,6 +4018,9 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
             }
         }
         ChooseSpec::AnyTarget => "any target".to_string(),
+        ChooseSpec::AttackedPlayerOrPlaneswalker => {
+            "the player or planeswalker it's attacking".to_string()
+        }
         ChooseSpec::PlayerOrPlaneswalker(filter) => match filter {
             PlayerFilter::Opponent => "target opponent or planeswalker".to_string(),
             PlayerFilter::Any => "target player or planeswalker".to_string(),
@@ -4275,6 +4295,9 @@ fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
             PlayerFilter::Any => "target player or planeswalker".to_string(),
             other => format!("target {} or planeswalker", describe_player_filter(other)),
         },
+        ChooseSpec::AttackedPlayerOrPlaneswalker => {
+            "the player or planeswalker it's attacking".to_string()
+        }
         ChooseSpec::All(filter) => {
             if filter.zone == Some(Zone::Graveyard) {
                 let text = filter.description();
@@ -4754,14 +4777,14 @@ fn describe_value(value: &Value) -> String {
         Value::ColorsOfManaSpentToCastThisSpell => {
             "the number of colors of mana spent to cast this spell".to_string()
         }
-        Value::EffectValue(id) => format!("the count result of effect #{}", id.0),
-        Value::EffectValueOffset(id, offset) => {
+        Value::EffectValue(_) => "X".to_string(),
+        Value::EffectValueOffset(_, offset) => {
             if *offset == 0 {
-                format!("the count result of effect #{}", id.0)
+                "X".to_string()
             } else if *offset > 0 {
-                format!("the count result of effect #{} plus {}", id.0, offset)
+                format!("X plus {}", offset)
             } else {
-                format!("the count result of effect #{} minus {}", id.0, -offset)
+                format!("X minus {}", -offset)
             }
         }
         Value::EventValue(EventValueSpec::Amount)
@@ -4836,6 +4859,10 @@ fn describe_signed_value(value: &Value) -> String {
                 format!("+{factor}*X")
             }
         }
+        Value::EffectValue(_) => "+X".to_string(),
+        Value::EffectValueOffset(_, offset) if *offset == 0 => "+X".to_string(),
+        Value::EffectValueOffset(_, offset) if *offset > 0 => format!("+X plus {offset}"),
+        Value::EffectValueOffset(_, offset) => format!("+X minus {}", -offset),
         Value::Fixed(n) => n.to_string(),
         _ => describe_value(value),
     }
@@ -6155,6 +6182,12 @@ fn pluralize_word(word: &str) -> String {
     if word.chars().last().is_some_and(|ch| ch.is_ascii_digit()) {
         return word.to_string();
     }
+    if let Some((prefix, last)) = word.rsplit_once(' ')
+        && !prefix.is_empty()
+        && !last.is_empty()
+    {
+        return format!("{prefix} {}", pluralize_word(last));
+    }
     let lower = word.to_ascii_lowercase();
     if lower == "elf" {
         return if word
@@ -6177,6 +6210,9 @@ fn pluralize_word(word: &str) -> String {
         } else {
             "dwarves".to_string()
         };
+    }
+    if lower == "myr" {
+        return word.to_string();
     }
     if lower.ends_with('y')
         && lower.len() > 1
@@ -7872,6 +7908,18 @@ fn describe_effect_impl(effect: &Effect) -> String {
         return format!(
             "Exile {} {duration}",
             describe_choose_spec(&exile_until.spec)
+        );
+    }
+    if let Some(exile_when_source_leaves) =
+        effect.downcast_ref::<crate::effects::ExileTaggedWhenSourceLeavesEffect>()
+    {
+        if exile_when_source_leaves.tag.as_str().starts_with("created_") {
+            return "Exile that token when this permanent leaves the battlefield".to_string();
+        }
+        let tagged = ChooseSpec::Tagged(exile_when_source_leaves.tag.clone());
+        return format!(
+            "Exile {} when this permanent leaves the battlefield",
+            describe_choose_spec(&tagged)
         );
     }
     if let Some(destroy) = effect.downcast_ref::<crate::effects::DestroyEffect>() {
@@ -10603,6 +10651,13 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
 fn card_self_reference_phrase(def: &CardDefinition) -> &'static str {
     if def.card.is_creature() {
         "this creature"
+    } else if def
+        .card
+        .subtypes
+        .iter()
+        .any(|subtype| matches!(subtype, crate::types::Subtype::Vehicle))
+    {
+        "this Vehicle"
     } else if def.card.is_instant() || def.card.is_sorcery() {
         "this spell"
     } else if def

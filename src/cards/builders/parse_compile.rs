@@ -237,6 +237,7 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::TapOrUntap { target }
         | EffectAst::Destroy { target }
         | EffectAst::Exile { target }
+        | EffectAst::ExileWhenSourceLeaves { target }
         | EffectAst::ExileUntilSourceLeaves { target }
         | EffectAst::LookAtHand { target }
         | EffectAst::Transform { target }
@@ -422,6 +423,7 @@ fn target_references_tag(target: &TargetAst, tag: &str) -> bool {
             player_filter_references_tag(filter, tag)
         }
         TargetAst::WithCount(inner, _) => target_references_tag(inner, tag),
+        TargetAst::AttackedPlayerOrPlaneswalker(_) => false,
         TargetAst::Source(_) | TargetAst::AnyTarget(_) | TargetAst::Spell(_) => false,
     }
 }
@@ -603,6 +605,7 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::TapOrUntap { target }
         | EffectAst::Destroy { target }
         | EffectAst::Exile { target }
+        | EffectAst::ExileWhenSourceLeaves { target }
         | EffectAst::ExileUntilSourceLeaves { target }
         | EffectAst::LookAtHand { target }
         | EffectAst::Transform { target }
@@ -1003,6 +1006,7 @@ fn collect_tag_spans_from_effect(
         | EffectAst::TapOrUntap { target }
         | EffectAst::Destroy { target }
         | EffectAst::Exile { target }
+        | EffectAst::ExileWhenSourceLeaves { target }
         | EffectAst::ExileUntilSourceLeaves { target }
         | EffectAst::LookAtHand { target }
         | EffectAst::Transform { target }
@@ -1337,6 +1341,7 @@ struct CompileContextState {
     last_effect_id: Option<EffectId>,
     last_object_tag: Option<String>,
     last_player_filter: Option<PlayerFilter>,
+    bind_unbound_x_to_last_effect: bool,
 }
 
 impl CompileContextState {
@@ -1346,6 +1351,7 @@ impl CompileContextState {
             last_effect_id: ctx.last_effect_id,
             last_object_tag: ctx.last_object_tag.clone(),
             last_player_filter: ctx.last_player_filter.clone(),
+            bind_unbound_x_to_last_effect: ctx.bind_unbound_x_to_last_effect,
         }
     }
 
@@ -1354,6 +1360,7 @@ impl CompileContextState {
         ctx.last_effect_id = self.last_effect_id;
         ctx.last_object_tag = self.last_object_tag;
         ctx.last_player_filter = self.last_player_filter;
+        ctx.bind_unbound_x_to_last_effect = self.bind_unbound_x_to_last_effect;
     }
 }
 
@@ -1378,18 +1385,6 @@ fn compile_effects_preserving_last_effect(
     ctx: &mut CompileContext,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
     let saved_last_effect = ctx.last_effect_id;
-    let result = compile_effects(effects, ctx);
-    ctx.last_effect_id = saved_last_effect;
-    result
-}
-
-fn compile_effects_with_temporary_last_effect(
-    effects: &[EffectAst],
-    ctx: &mut CompileContext,
-    last_effect_id: Option<EffectId>,
-) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
-    let saved_last_effect = ctx.last_effect_id;
-    ctx.last_effect_id = last_effect_id;
     let result = compile_effects(effects, ctx);
     ctx.last_effect_id = saved_last_effect;
     result
@@ -1713,9 +1708,10 @@ fn compile_effect(
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
     match effect {
         EffectAst::DealDamage { amount, target } => {
+            let resolved_amount = resolve_value_it_tag(amount, ctx)?;
             let (effects, choices) =
                 compile_tagged_effect_for_target(target, ctx, "damaged", |spec| {
-                    Effect::deal_damage(amount.clone(), spec)
+                    Effect::deal_damage(resolved_amount.clone(), spec)
                 })?;
             if let TargetAst::Player(filter, _) | TargetAst::PlayerOrPlaneswalker(filter, _) =
                 target
@@ -1788,11 +1784,13 @@ fn compile_effect(
             Ok((vec![effect], choices))
         }
         EffectAst::DealDamageEach { amount, filter } => {
+            let resolved_amount = resolve_value_it_tag(amount, ctx)?;
+            let resolved_filter = resolve_it_tag(filter, ctx)?;
             let tag = ctx.next_tag("damaged");
             ctx.last_object_tag = Some(tag.clone());
             let effect = Effect::for_each(
-                filter.clone(),
-                vec![Effect::deal_damage(amount.clone(), ChooseSpec::Iterated).tag(tag)],
+                resolved_filter,
+                vec![Effect::deal_damage(resolved_amount, ChooseSpec::Iterated).tag(tag)],
             );
             Ok((vec![effect], Vec::new()))
         }
@@ -2864,8 +2862,14 @@ fn compile_effect(
             let condition = ctx.last_effect_id.ok_or_else(|| {
                 CardTextError::ParseError("missing prior effect for if clause".to_string())
             })?;
-            let (inner_effects, inner_choices) =
-                compile_effects_with_temporary_last_effect(effects, ctx, None)?;
+            let (inner_effects, inner_choices) = with_preserved_compile_context(
+                ctx,
+                |ctx| {
+                    ctx.last_effect_id = Some(condition);
+                    ctx.bind_unbound_x_to_last_effect = true;
+                },
+                |ctx| compile_effects(effects, ctx),
+            )?;
             let predicate = match predicate {
                 IfResultPredicate::Did => EffectPredicate::Happened,
                 IfResultPredicate::DidNot => EffectPredicate::DidNotHappen,
@@ -3067,6 +3071,20 @@ fn compile_effect(
                 effect = effect.tag(tag.clone());
                 ctx.last_object_tag = Some(tag);
             }
+            Ok((vec![effect], choices))
+        }
+        EffectAst::ExileWhenSourceLeaves { target } => {
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let ChooseSpec::Tagged(tag) = spec.base() else {
+                return Err(CardTextError::ParseError(
+                    "cannot compile 'exile ... when this source leaves' without tagged context"
+                        .to_string(),
+                ));
+            };
+            let effect = Effect::new(crate::effects::ExileTaggedWhenSourceLeavesEffect::new(
+                tag.clone(),
+                PlayerFilter::You,
+            ));
             Ok((vec![effect], choices))
         }
         EffectAst::ExileUntilSourceLeaves { target } => {
@@ -3328,7 +3346,13 @@ fn compile_effect(
             if *exile_at_next_end_step {
                 effect = effect.exile_at_next_end_step();
             }
-            Ok((vec![Effect::new(effect)], Vec::new()))
+            let mut effect = Effect::new(effect);
+            if ctx.auto_tag_object_targets {
+                let tag = ctx.next_tag("created");
+                ctx.last_object_tag = Some(tag.clone());
+                effect = effect.tag(tag);
+            }
+            Ok((vec![effect], Vec::new()))
         }
         EffectAst::CreateToken {
             name,
@@ -3344,6 +3368,12 @@ fn compile_effect(
             } else {
                 Effect::create_tokens_player(token, count, player_filter)
             };
+            let mut effect = effect;
+            if ctx.auto_tag_object_targets {
+                let tag = ctx.next_tag("created");
+                ctx.last_object_tag = Some(tag.clone());
+                effect = effect.tag(tag);
+            }
             Ok((vec![effect], Vec::new()))
         }
         EffectAst::CreateTokenCopy {
@@ -3556,19 +3586,23 @@ fn compile_effect(
             toughness,
             target,
             duration,
-        } => compile_tagged_effect_for_target(target, ctx, "pumped", |spec| {
-            Effect::new(
-                crate::effects::ApplyContinuousEffect::with_spec_runtime(
-                    spec,
-                    crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
-                        power: power.clone(),
-                        toughness: toughness.clone(),
-                    },
-                    duration.clone(),
+        } => {
+            let resolved_power = resolve_value_it_tag(power, ctx)?;
+            let resolved_toughness = resolve_value_it_tag(toughness, ctx)?;
+            compile_tagged_effect_for_target(target, ctx, "pumped", |spec| {
+                Effect::new(
+                    crate::effects::ApplyContinuousEffect::with_spec_runtime(
+                        spec,
+                        crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
+                            power: resolved_power.clone(),
+                            toughness: resolved_toughness.clone(),
+                        },
+                        duration.clone(),
+                    )
+                    .require_creature_target(),
                 )
-                .require_creature_target(),
-            )
-        }),
+            })
+        }
         EffectAst::SetBasePowerToughness {
             power,
             toughness,
@@ -4064,6 +4098,7 @@ fn resolve_choose_spec_it_tag(
         ChooseSpec::PlayerOrPlaneswalker(filter) => {
             Ok(ChooseSpec::PlayerOrPlaneswalker(filter.clone()))
         }
+        ChooseSpec::AttackedPlayerOrPlaneswalker => Ok(ChooseSpec::AttackedPlayerOrPlaneswalker),
         ChooseSpec::SpecificObject(id) => Ok(ChooseSpec::SpecificObject(*id)),
         ChooseSpec::SpecificPlayer(id) => Ok(ChooseSpec::SpecificPlayer(*id)),
         ChooseSpec::AnyTarget => Ok(ChooseSpec::AnyTarget),
@@ -4077,6 +4112,13 @@ fn resolve_choose_spec_it_tag(
 
 fn resolve_value_it_tag(value: &Value, ctx: &CompileContext) -> Result<Value, CardTextError> {
     match value {
+        Value::X if ctx.bind_unbound_x_to_last_effect => {
+            if let Some(id) = ctx.last_effect_id {
+                Ok(Value::EffectValue(id))
+            } else {
+                Ok(Value::X)
+            }
+        }
         Value::Add(left, right) => Ok(Value::Add(
             Box::new(resolve_value_it_tag(left, ctx)?),
             Box::new(resolve_value_it_tag(right, ctx)?),
@@ -5442,6 +5484,7 @@ fn choose_spec_for_target(target: &TargetAst) -> ChooseSpec {
         TargetAst::PlayerOrPlaneswalker(filter, _) => {
             ChooseSpec::PlayerOrPlaneswalker(filter.clone())
         }
+        TargetAst::AttackedPlayerOrPlaneswalker(_) => ChooseSpec::AttackedPlayerOrPlaneswalker,
         TargetAst::Spell(_) => ChooseSpec::target_spell(),
         TargetAst::Player(filter, explicit_target_span) => {
             if *filter == PlayerFilter::You {

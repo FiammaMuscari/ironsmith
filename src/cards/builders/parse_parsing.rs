@@ -11431,15 +11431,11 @@ fn parse_sentence_exile_that_token_when_source_leaves(
         return None;
     }
 
-    let (created_name, created_player) = last_created_token_info(prior_effects)?;
-    let token_name = linked_token_name_from_create_name(created_name.as_str())?;
+    let (created_name, _created_player) = last_created_token_info(prior_effects)?;
+    let _token_name = linked_token_name_from_create_name(created_name.as_str())?;
 
-    let mut filter = ObjectFilter::default().token().named(token_name);
-    if let Some(controller) = controller_filter_for_token_player(created_player) {
-        filter.controller = Some(controller);
-    }
-    Some(EffectAst::ExileUntilSourceLeaves {
-        target: TargetAst::Object(filter, span_from_tokens(tokens), None),
+    Some(EffectAst::ExileWhenSourceLeaves {
+        target: TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(tokens)),
     })
 }
 
@@ -12843,6 +12839,61 @@ fn parse_sentence_put_counter_sequence(
                         distributed: false,
                     });
                 }
+                return Ok(Some(effects));
+            }
+        }
+    }
+
+    // Handle "put ... counter on X and it gains ... until end of turn."
+    if let Some(and_idx) = tokens
+        .windows(2)
+        .position(|window| window[0].is_word("and") && window[1].is_word("it"))
+    {
+        let first_clause = trim_commas(&tokens[1..and_idx]);
+        let second_clause = trim_commas(&tokens[and_idx + 1..]);
+        if !first_clause.is_empty()
+            && !second_clause.is_empty()
+            && second_clause.iter().any(|token| {
+                token.is_word("gain")
+                    || token.is_word("gains")
+                    || token.is_word("has")
+                    || token.is_word("have")
+            })
+            && let Ok(first) = parse_put_counters(&first_clause)
+            && let Some(mut gain_effects) = parse_gain_ability_sentence(&second_clause)?
+        {
+            let source_target = match &first {
+                EffectAst::PutCounters { target, .. } => Some(target.clone()),
+                EffectAst::Conditional { if_true, .. }
+                    if if_true.len() == 1
+                        && matches!(if_true.first(), Some(EffectAst::PutCounters { .. })) =>
+                {
+                    if let Some(EffectAst::PutCounters { target, .. }) = if_true.first() {
+                        Some(target.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+
+            if let Some(source_target) = source_target {
+                for effect in &mut gain_effects {
+                    match effect {
+                        EffectAst::Pump { target, .. }
+                        | EffectAst::GrantAbilitiesToTarget { target, .. } => {
+                            if let TargetAst::Tagged(tag, _) = target
+                                && tag.as_str() == IT_TAG
+                            {
+                                *target = source_target.clone();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                let mut effects = vec![first];
+                effects.append(&mut gain_effects);
                 return Ok(Some(effects));
             }
         }
@@ -28016,15 +28067,69 @@ fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
         }
     }
 
-    if tokens.get(idx).is_some_and(|token| token.is_word("x"))
-        && tokens
+    if tokens.get(idx).is_some_and(|token| token.is_word("x")) {
+        let next_is_target = tokens
             .get(idx + 1)
-            .is_some_and(|token| token.is_word("target"))
-    {
-        // Preserve explicit X-target wording while reusing open-ended target
-        // selection internals.
-        target_count = Some(ChoiceCount::dynamic_x());
-        idx += 1;
+            .is_some_and(|token| token.is_word("target"));
+        let mut object_selector_idx = idx + 1;
+        while tokens
+            .get(object_selector_idx)
+            .and_then(Token::as_word)
+            .is_some_and(|word| {
+                matches!(
+                    word,
+                    "tapped"
+                        | "untapped"
+                        | "attacking"
+                        | "nonattacking"
+                        | "blocking"
+                        | "nonblocking"
+                        | "non"
+                        | "other"
+                        | "another"
+                        | "nonartifact"
+                        | "noncreature"
+                        | "nonland"
+                        | "nontoken"
+                        | "legendary"
+                        | "basic"
+                )
+            })
+        {
+            object_selector_idx += 1;
+        }
+        let next_is_object_selector = tokens
+            .get(object_selector_idx)
+            .and_then(Token::as_word)
+            .is_some_and(|word| {
+                matches!(
+                    word,
+                    "card"
+                        | "cards"
+                        | "permanent"
+                        | "permanents"
+                        | "creature"
+                        | "creatures"
+                        | "spell"
+                        | "spells"
+                        | "source"
+                        | "sources"
+                        | "token"
+                        | "tokens"
+                ) || parse_card_type(word).is_some()
+                    || parse_non_type(word).is_some()
+                    || parse_subtype_word(word).is_some()
+                    || word
+                        .strip_suffix('s')
+                        .and_then(parse_subtype_word)
+                        .is_some()
+            });
+        if next_is_target || next_is_object_selector {
+            // Preserve explicit/implicit X-count wording while reusing open-ended
+            // target selection internals.
+            target_count = Some(ChoiceCount::dynamic_x());
+            idx += 1;
+        }
     }
 
     if tokens.get(idx).is_some_and(|token| token.is_word("on")) {
@@ -28300,6 +28405,26 @@ fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
         ));
     }
 
+    let player_or_planeswalker_its_attacking = remaining_words.windows(3).any(|window| {
+        matches!(
+            window,
+            ["player", "or", "planeswalker"]
+                | ["players", "or", "planeswalkers"]
+                | ["planeswalker", "or", "player"]
+                | ["planeswalkers", "or", "players"]
+        )
+    }) && remaining_words.contains(&"attacking")
+        && (remaining_words.contains(&"its")
+            || remaining_words.contains(&"it")
+            || remaining_words.contains(&"thats")
+            || remaining_words.contains(&"that"));
+    if player_or_planeswalker_its_attacking {
+        return Ok(wrap_target_count(
+            TargetAst::AttackedPlayerOrPlaneswalker(target_span),
+            target_count,
+        ));
+    }
+
     let player_or_planeswalker = remaining_words.windows(3).any(|window| {
         matches!(
             window,
@@ -28441,7 +28566,7 @@ fn is_source_reference_words(words: &[&str]) -> bool {
 
     match words[1] {
         "source" | "spell" | "permanent" | "card" | "creature" => true,
-        other => parse_card_type(other).is_some(),
+        other => parse_card_type(other).is_some() || parse_subtype_word(other).is_some(),
     }
 }
 
@@ -30362,6 +30487,7 @@ struct CompileContext {
     iterated_player: bool,
     auto_tag_object_targets: bool,
     allow_life_event_value: bool,
+    bind_unbound_x_to_last_effect: bool,
 }
 
 impl CompileContext {
@@ -30375,6 +30501,7 @@ impl CompileContext {
             iterated_player: false,
             auto_tag_object_targets: false,
             allow_life_event_value: false,
+            bind_unbound_x_to_last_effect: false,
         }
     }
 

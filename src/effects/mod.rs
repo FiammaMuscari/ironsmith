@@ -88,7 +88,7 @@ pub use counters::{
     RemoveCountersEffect, RemoveUpToAnyCountersEffect, RemoveUpToCountersEffect,
 };
 pub use damage::{ClearDamageEffect, DealDamageEffect};
-pub use delayed::ScheduleDelayedTriggerEffect;
+pub use delayed::{ExileTaggedWhenSourceLeavesEffect, ScheduleDelayedTriggerEffect};
 pub use life::{ExchangeLifeTotalsEffect, GainLifeEffect, LoseLifeEffect, SetLifeTotalEffect};
 pub use mana::{
     AddColorlessManaEffect, AddManaEffect, AddManaFromCommanderColorIdentityEffect,

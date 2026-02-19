@@ -4873,6 +4873,98 @@ fn parse_attacks_trigger_targeting_defending_player_creature_keeps_controller_fi
 }
 
 #[test]
+fn parse_attacks_damage_to_its_attacked_player_or_planeswalker_is_not_targeted() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Scorch Spitter Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Whenever this creature attacks, it deals 1 damage to the player or planeswalker it's attacking.",
+        )
+        .expect("attacked-player-or-planeswalker damage clause should parse");
+
+    let debug = format!("{:#?}", def);
+    assert!(
+        debug.contains("AttackedPlayerOrPlaneswalker"),
+        "expected attacked-player-or-planeswalker choose spec in compiled ability, got {debug}"
+    );
+    assert!(
+        debug.contains("choices: []"),
+        "expected no target choices for attacked-player damage clause, got {debug}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("deals 1 damage to the player or planeswalker it's attacking"),
+        "expected non-target attacked-player wording in compiled text, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_tap_x_untapped_in_if_you_do_binds_followup_x_to_effect_result() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Myr Battlesphere Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Whenever this creature attacks, you may tap X untapped Myr you control. If you do, this creature gets +X/+0 until end of turn and deals X damage to the player or planeswalker it's attacking.",
+        )
+        .expect("myr-battlesphere style tapped-count clause should parse");
+
+    let debug = format!("{:#?}", def);
+    assert!(
+        debug.contains("WithCount"),
+        "expected counted tap spec in compiled ability, got {debug}"
+    );
+    assert!(
+        debug.contains("dynamic_x: true"),
+        "expected dynamic X count on tap selector, got {debug}"
+    );
+    assert!(
+        debug.contains("EffectValue"),
+        "expected follow-up X values to bind to prior effect result, got {debug}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("you may tap x untapped myr you control"),
+        "expected tap-X wording to be preserved in compiled text, got {rendered}"
+    );
+    assert!(
+        rendered.contains("gets +x/+0 until end of turn")
+            && rendered.contains("deals x damage to the player or planeswalker it's attacking"),
+        "expected follow-up X references in compiled text, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_put_counter_then_it_gains_uses_same_subject_target() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Mukotai Soulripper Variant")
+        .card_types(vec![CardType::Artifact, CardType::Creature])
+        .subtypes(vec![Subtype::Vehicle])
+        .parse_text(
+            "Whenever this Vehicle attacks, you may sacrifice another artifact or creature. If you do, put a +1/+1 counter on this Vehicle and it gains menace until end of turn.",
+        )
+        .expect("put-counter then it-gains clause should parse");
+
+    let debug = format!("{:#?}", def);
+    assert!(
+        debug.contains("PutCounters"),
+        "expected +1/+1 counter effect to remain present, got {debug}"
+    );
+    assert!(
+        !debug.contains("GrantAbilitiesAll"),
+        "expected gain clause to stay target-bound, not all Vehicles, got {debug}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("put a +1/+1 counter on this vehicle"),
+        "expected counter clause to be preserved, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("vehicles gain menace"),
+        "expected menace to apply to this Vehicle only, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_attached_gets_plus_and_attacks_each_combat_if_able_keeps_both_statics() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Furor Variant")
         .card_types(vec![CardType::Enchantment])

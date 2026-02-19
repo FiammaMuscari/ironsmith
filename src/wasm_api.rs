@@ -5553,6 +5553,9 @@ fn describe_choose_spec(
                 strip_leading_article(&describe_player_filter(filter, tagged_subjects))
             ),
         },
+        crate::target::ChooseSpec::AttackedPlayerOrPlaneswalker => {
+            "the player or planeswalker it's attacking".to_string()
+        }
         crate::target::ChooseSpec::AnyTarget => "any target".to_string(),
         crate::target::ChooseSpec::Source => "this source".to_string(),
         crate::target::ChooseSpec::SourceController => "you".to_string(),
@@ -5632,6 +5635,12 @@ fn describe_value(
         crate::effect::Value::Count(filter) => {
             format!(
                 "the number of {}",
+                pluralize_noun_phrase(&filter.description())
+            )
+        }
+        crate::effect::Value::BasicLandTypesAmong(filter) => {
+            format!(
+                "the number of basic land types among {}",
                 pluralize_noun_phrase(&filter.description())
             )
         }

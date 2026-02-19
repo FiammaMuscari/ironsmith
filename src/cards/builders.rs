@@ -276,6 +276,7 @@ enum TargetAst {
     Source(Option<TextSpan>),
     AnyTarget(Option<TextSpan>),
     PlayerOrPlaneswalker(PlayerFilter, Option<TextSpan>),
+    AttackedPlayerOrPlaneswalker(Option<TextSpan>),
     Spell(Option<TextSpan>),
     Player(PlayerFilter, Option<TextSpan>),
     Object(ObjectFilter, Option<TextSpan>, Option<TextSpan>),
@@ -755,6 +756,9 @@ enum EffectAst {
         target: TargetAst,
     },
     Exile {
+        target: TargetAst,
+    },
+    ExileWhenSourceLeaves {
         target: TargetAst,
     },
     ExileUntilSourceLeaves {
@@ -5677,6 +5681,24 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .parse_text(oracle)
             .expect("parse Stangg linked-token leave clauses");
 
+        let stangg_etb = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered)
+                    if format!("{:?}", triggered.effects).contains("CreateTokenEffect") =>
+                {
+                    Some(triggered)
+                }
+                _ => None,
+            })
+            .expect("expected Stangg ETB trigger");
+        assert!(
+            stangg_etb.choices.is_empty(),
+            "linked token exile clause should not add target choices, got {:?}",
+            stangg_etb.choices
+        );
+
         let joined = compiled_lines(&def).join(" ");
         assert!(
             joined.contains("Stangg Twin"),
@@ -5691,9 +5713,8 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
 
         let abilities_debug = format!("{:?}", def.abilities);
         assert!(
-            abilities_debug.contains("ExileUntil")
-                || abilities_debug.contains("ExileUntilDuration"),
-            "expected exile-until-source-leaves effect in raw ability debug, got {abilities_debug}"
+            abilities_debug.contains("ExileTaggedWhenSourceLeavesEffect"),
+            "expected delayed source-leaves exile scheduler in raw ability debug, got {abilities_debug}"
         );
         assert!(
             abilities_debug.contains("leaves_battlefield")

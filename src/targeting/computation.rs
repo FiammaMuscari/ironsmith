@@ -208,6 +208,7 @@ pub fn compute_legal_targets(
         ChooseSpec::PlayerOrPlaneswalker(filter) => {
             compute_player_or_planeswalker_targets(game, filter, caster, source_id)
         }
+        ChooseSpec::AttackedPlayerOrPlaneswalker => Vec::new(),
         ChooseSpec::Player(filter) => compute_player_targets(game, filter, caster),
         ChooseSpec::Object(filter) => compute_object_targets(game, filter, caster, source_id),
         // These don't require selection - they're resolved at execution time

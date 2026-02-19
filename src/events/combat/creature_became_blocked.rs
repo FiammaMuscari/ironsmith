@@ -6,6 +6,7 @@ use crate::events::traits::{EventKind, GameEventType};
 use crate::game_state::{GameState, Target};
 use crate::ids::{ObjectId, PlayerId};
 use crate::snapshot::ObjectSnapshot;
+use crate::triggers::AttackEventTarget;
 
 /// A creature became blocked event.
 ///
@@ -17,6 +18,8 @@ pub struct CreatureBecameBlockedEvent {
     pub attacker: ObjectId,
     /// Number of creatures currently blocking the attacker.
     pub blocker_count: u32,
+    /// What the attacker is attacking, if known at trigger generation time.
+    pub attack_target: Option<AttackEventTarget>,
 }
 
 impl CreatureBecameBlockedEvent {
@@ -25,6 +28,19 @@ impl CreatureBecameBlockedEvent {
         Self {
             attacker,
             blocker_count,
+            attack_target: None,
+        }
+    }
+
+    pub fn with_target(
+        attacker: ObjectId,
+        blocker_count: u32,
+        attack_target: AttackEventTarget,
+    ) -> Self {
+        Self {
+            attacker,
+            blocker_count,
+            attack_target: Some(attack_target),
         }
     }
 }
@@ -61,7 +77,10 @@ impl GameEventType for CreatureBecameBlockedEvent {
     }
 
     fn player(&self) -> Option<PlayerId> {
-        None
+        match self.attack_target {
+            Some(AttackEventTarget::Player(player_id)) => Some(player_id),
+            _ => None,
+        }
     }
 
     fn controller(&self) -> Option<PlayerId> {
@@ -82,6 +101,7 @@ mod tests {
         let event = CreatureBecameBlockedEvent::new(ObjectId::from_raw(1), 2);
         assert_eq!(event.attacker, ObjectId::from_raw(1));
         assert_eq!(event.blocker_count, 2);
+        assert_eq!(event.attack_target, None);
     }
 
     #[test]

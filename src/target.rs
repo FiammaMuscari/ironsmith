@@ -64,6 +64,12 @@ pub enum ChooseSpec {
     /// "target player or planeswalker".
     PlayerOrPlaneswalker(PlayerFilter),
 
+    /// The player or planeswalker the source creature is attacking.
+    ///
+    /// This is a non-targeting reference used by text like
+    /// "it deals damage to the player or planeswalker it's attacking."
+    AttackedPlayerOrPlaneswalker,
+
     /// The source of this ability/effect ("this permanent", "this spell")
     Source,
 
