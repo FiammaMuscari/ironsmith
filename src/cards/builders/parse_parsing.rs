@@ -27458,6 +27458,21 @@ fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
             .get(object_selector_idx)
             .and_then(Token::as_word)
             .is_some_and(|word| {
+                matches!(
+                    word,
+                    "card"
+                        | "cards"
+                        | "permanent"
+                        | "permanents"
+                        | "creature"
+                        | "creatures"
+                        | "spell"
+                        | "spells"
+                        | "source"
+                        | "sources"
+                        | "token"
+                        | "tokens"
+                ) ||
                 parse_card_type(word).is_some()
                     || parse_non_type(word).is_some()
                     || parse_subtype_word(word).is_some()

@@ -3058,6 +3058,59 @@ fn render_exile_from_graveyard_uses_from_preposition() {
 }
 
 #[test]
+fn parse_exile_numbered_cards_from_graveyard_preserves_choice_count() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Ruthless Radrat Exile Probe")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Exile four cards from your graveyard.")
+        .expect("numbered graveyard exile clause should parse");
+
+    let effects = def
+        .spell_effect
+        .as_ref()
+        .expect("spell should have compiled effects");
+    let choose = effects
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<crate::effects::ChooseObjectsEffect>())
+        .expect("expected choose-objects prelude for counted exile");
+    assert_eq!(choose.zone, crate::zone::Zone::Graveyard);
+    assert_eq!(choose.count.min, 4, "expected exact exile count of four");
+    assert_eq!(choose.count.max, Some(4), "expected max exile count of four");
+    assert_eq!(
+        choose.chooser,
+        crate::filter::PlayerFilter::You,
+        "expected source controller chooser"
+    );
+    assert_eq!(
+        choose.filter.owner,
+        Some(crate::filter::PlayerFilter::You),
+        "expected your-graveyard ownership filter"
+    );
+
+    let exile = effects
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<crate::effects::ExileEffect>())
+        .expect("expected exile effect following choose-objects prelude");
+    assert!(
+        matches!(
+            exile.spec.base(),
+            crate::target::ChooseSpec::Tagged(tag) if tag.as_str() == choose.tag.as_str()
+        ),
+        "expected exile to use chosen card tag, got {:?}",
+        exile.spec
+    );
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Exile four cards from your graveyard"),
+        "expected counted graveyard exile wording, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("target four cards"),
+        "counted graveyard exile should not gain an implicit target keyword: {rendered}"
+    );
+}
+
+#[test]
 fn parse_lose_life_for_each_with_multiplier_uses_scaled_count_value() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Rain of Daggers Variant")
         .card_types(vec![CardType::Sorcery])
