@@ -22432,7 +22432,26 @@ fn parse_for_each_player_clause(tokens: &[Token]) -> Result<Option<EffectAst>, C
                 clause_words.join(" ")
             )));
         }
-        let filter = parse_object_filter(&filter_tokens, false)?;
+        let filter_words = words(&filter_tokens);
+        let (controls_most, normalized_filter_tokens) =
+            if filter_words.starts_with(&["the", "most"]) {
+                let start_idx = token_index_for_word_index(&filter_tokens, 2)
+                    .unwrap_or(filter_tokens.len());
+                (true, trim_commas(&filter_tokens[start_idx..]))
+            } else if filter_words.starts_with(&["most"]) {
+                let start_idx = token_index_for_word_index(&filter_tokens, 1)
+                    .unwrap_or(filter_tokens.len());
+                (true, trim_commas(&filter_tokens[start_idx..]))
+            } else {
+                (false, filter_tokens)
+            };
+        if normalized_filter_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing object filter after 'most' (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let filter = parse_object_filter(&normalized_filter_tokens, false)?;
 
         let effect_tokens = trim_commas(&inner_tokens[effect_start..]);
         let branch_effects = if effect_tokens.iter().any(|token| token.is_word("may")) {
@@ -22445,11 +22464,19 @@ fn parse_for_each_player_clause(tokens: &[Token]) -> Result<Option<EffectAst>, C
             parse_effect_chain_inner(&effect_tokens)?
         };
 
-        let effects = vec![EffectAst::Conditional {
-            predicate: PredicateAst::PlayerControls {
+        let predicate = if controls_most {
+            PredicateAst::PlayerControlsMost {
                 player: PlayerAst::That,
                 filter,
-            },
+            }
+        } else {
+            PredicateAst::PlayerControls {
+                player: PlayerAst::That,
+                filter,
+            }
+        };
+        let effects = vec![EffectAst::Conditional {
+            predicate,
             if_true: branch_effects,
             if_false: Vec::new(),
         }];

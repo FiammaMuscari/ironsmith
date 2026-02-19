@@ -5302,6 +5302,17 @@ fn describe_condition(condition: &Condition) -> String {
                 filter.description()
             )
         }
+        Condition::PlayerControlsMost { player, filter } => {
+            let mut subject = strip_indefinite_article(&filter.description()).to_string();
+            if !subject.ends_with('s') {
+                subject.push('s');
+            }
+            format!(
+                "{} controls the most {}",
+                describe_player_filter(player),
+                subject
+            )
+        }
         Condition::PlayerHasLessLifeThanYou { player } => {
             format!("{} has less life than you", describe_player_filter(player))
         }

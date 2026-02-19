@@ -1163,6 +1163,13 @@ pub enum Condition {
         filter: ObjectFilter,
     },
 
+    /// A specific player controls the greatest number of objects matching filter
+    /// (ties count as "most").
+    PlayerControlsMost {
+        player: PlayerFilter,
+        filter: ObjectFilter,
+    },
+
     /// A specific player has less life than you.
     PlayerHasLessLifeThanYou { player: PlayerFilter },
 

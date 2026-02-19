@@ -170,6 +170,40 @@ fn evaluate_condition_simple(
                 .filter(|obj| obj.controller == player_id)
                 .any(|obj| filter.matches(obj, &ctx, game))
         }
+        Condition::PlayerControlsMost { player, filter } => {
+            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
+                return false;
+            };
+
+            let count_for = |candidate: PlayerId| {
+                let opponents: Vec<PlayerId> = game
+                    .players
+                    .iter()
+                    .filter(|p| p.id != candidate)
+                    .map(|p| p.id)
+                    .collect();
+                let mut ctx =
+                    crate::filter::FilterContext::new(candidate).with_opponents(opponents);
+                if *player == PlayerFilter::IteratedPlayer {
+                    ctx = ctx.with_iterated_player(Some(candidate));
+                }
+                game.battlefield
+                    .iter()
+                    .filter_map(|&id| game.object(id))
+                    .filter(|obj| obj.controller == candidate)
+                    .filter(|obj| filter.matches(obj, &ctx, game))
+                    .count()
+            };
+
+            let current = count_for(player_id);
+            let max_count = game
+                .players
+                .iter()
+                .map(|p| count_for(p.id))
+                .max()
+                .unwrap_or(0);
+            current == max_count
+        }
         Condition::PlayerHasLessLifeThanYou { player } => {
             let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
                 return false;
@@ -343,6 +377,27 @@ fn evaluate_condition(
                 .filter(|obj| obj.controller == player_id)
                 .any(|obj| filter.matches(obj, &filter_ctx, game));
             Ok(has_matching)
+        }
+        Condition::PlayerControlsMost { player, filter } => {
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            let count_for = |candidate: PlayerId| {
+                let mut filter_ctx = ctx.filter_context(game);
+                filter_ctx.iterated_player = Some(candidate);
+                game.battlefield
+                    .iter()
+                    .filter_map(|&id| game.object(id))
+                    .filter(|obj| obj.controller == candidate)
+                    .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                    .count()
+            };
+            let current = count_for(player_id);
+            let max_count = game
+                .players
+                .iter()
+                .map(|player| count_for(player.id))
+                .max()
+                .unwrap_or(0);
+            Ok(current == max_count)
         }
         Condition::PlayerHasLessLifeThanYou { player } => {
             let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;

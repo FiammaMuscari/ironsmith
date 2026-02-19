@@ -3243,6 +3243,13 @@ fn describe_condition(
                 strip_leading_article(&filter.description())
             )
         }
+        crate::effect::Condition::PlayerControlsMost { player, filter } => {
+            format!(
+                "{} controls the most {}",
+                describe_player_filter(player, tagged_subjects),
+                pluralize_noun_phrase(strip_leading_article(&filter.description()))
+            )
+        }
         crate::effect::Condition::PlayerHasLessLifeThanYou { player } => {
             format!(
                 "{} has less life than you",
