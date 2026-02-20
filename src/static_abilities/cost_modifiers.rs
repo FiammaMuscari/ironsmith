@@ -7,6 +7,7 @@ use crate::ability::SpellFilter;
 use crate::color::{Color, ColorSet};
 use crate::effect::Value;
 use crate::filter::{AlternativeCastKind, Comparison};
+use crate::object::CounterType;
 use crate::target::PlayerFilter;
 use crate::types::CardType;
 
@@ -111,6 +112,39 @@ fn describe_alternative_cast_kind(kind: AlternativeCastKind) -> &'static str {
     }
 }
 
+fn describe_counter_type(counter_type: CounterType) -> &'static str {
+    match counter_type {
+        CounterType::PlusOnePlusOne => "+1/+1",
+        CounterType::MinusOneMinusOne => "-1/-1",
+        CounterType::DoubleStrike => "double strike",
+        CounterType::FirstStrike => "first strike",
+        CounterType::Deathtouch => "deathtouch",
+        CounterType::Flying => "flying",
+        CounterType::Haste => "haste",
+        CounterType::Hexproof => "hexproof",
+        CounterType::Indestructible => "indestructible",
+        CounterType::Lifelink => "lifelink",
+        CounterType::Menace => "menace",
+        CounterType::Reach => "reach",
+        CounterType::Trample => "trample",
+        CounterType::Vigilance => "vigilance",
+        CounterType::Loyalty => "loyalty",
+        CounterType::Charge => "charge",
+        CounterType::Stun => "stun",
+        CounterType::Depletion => "depletion",
+        CounterType::Storage => "storage",
+        CounterType::Ki => "ki",
+        CounterType::Energy => "energy",
+        CounterType::Age => "age",
+        CounterType::Finality => "finality",
+        CounterType::Time => "time",
+        CounterType::Brain => "brain",
+        CounterType::Level => "level",
+        CounterType::Lore => "lore",
+        _ => "counter",
+    }
+}
+
 fn describe_cost_modifier_amount(amount: &Value) -> (String, Option<String>) {
     match amount {
         Value::Fixed(n) => (format!("{{{n}}}"), None),
@@ -118,6 +152,13 @@ fn describe_cost_modifier_amount(amount: &Value) -> (String, Option<String>) {
         Value::Count(filter) => (
             "{1}".to_string(),
             Some(format!("for each {}", filter.description())),
+        ),
+        Value::CountersOnSource(counter_type) => (
+            "{1}".to_string(),
+            Some(format!(
+                "for each {} counter on this permanent",
+                describe_counter_type(*counter_type)
+            )),
         ),
         Value::CardTypesInGraveyard(player) => {
             let owner = match player {

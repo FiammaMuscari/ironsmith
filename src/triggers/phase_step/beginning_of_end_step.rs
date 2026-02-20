@@ -48,6 +48,9 @@ impl TriggerMatcher for BeginningOfEndStepTrigger {
             PlayerFilter::You => "At the beginning of your end step".to_string(),
             PlayerFilter::Any => "At the beginning of each player's end step".to_string(),
             PlayerFilter::Opponent => "At the beginning of each opponent's end step".to_string(),
+            PlayerFilter::Target(_) | PlayerFilter::IteratedPlayer => {
+                "At the beginning of that player's end step".to_string()
+            }
             _ => format!("At the beginning of {:?}'s end step", self.player),
         }
     }

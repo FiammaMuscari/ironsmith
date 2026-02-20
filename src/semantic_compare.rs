@@ -319,6 +319,75 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         normalized =
             "Target opponent exiles a creature they control and their graveyard.".to_string();
     }
+    for (from, to) in [
+        (
+            "Exile all cards from target player's graveyard",
+            "Exile target player's graveyard",
+        ),
+        (
+            "Exile all cards in target player's graveyard",
+            "Exile target player's graveyard",
+        ),
+        (
+            "Exile all card from target player's graveyard",
+            "Exile target player's graveyard",
+        ),
+        (
+            "Exile all card in target player's graveyard",
+            "Exile target player's graveyard",
+        ),
+        (
+            "Exile all cards from target player's graveyards",
+            "Exile target player's graveyard",
+        ),
+        (
+            "Exile all cards in target player's graveyards",
+            "Exile target player's graveyard",
+        ),
+        (
+            "Exile all card from target player's graveyards",
+            "Exile target player's graveyard",
+        ),
+        (
+            "Exile all card in target player's graveyards",
+            "Exile target player's graveyard",
+        ),
+        (
+            "Exile all cards from target opponent's graveyard",
+            "Exile target opponent's graveyard",
+        ),
+        (
+            "Exile all cards in target opponent's graveyard",
+            "Exile target opponent's graveyard",
+        ),
+        (
+            "Exile all card from target opponent's graveyard",
+            "Exile target opponent's graveyard",
+        ),
+        (
+            "Exile all card in target opponent's graveyard",
+            "Exile target opponent's graveyard",
+        ),
+        (
+            "Exile all cards from target opponent's graveyards",
+            "Exile target opponent's graveyard",
+        ),
+        (
+            "Exile all cards in target opponent's graveyards",
+            "Exile target opponent's graveyard",
+        ),
+        (
+            "Exile all card from target opponent's graveyards",
+            "Exile target opponent's graveyard",
+        ),
+        (
+            "Exile all card in target opponent's graveyards",
+            "Exile target opponent's graveyard",
+        ),
+    ] {
+        normalized = normalized.replace(from, to);
+        normalized = normalized.replace(&from.to_ascii_lowercase(), &to.to_ascii_lowercase());
+    }
     normalized = normalized.replace(
         "Whenever another creature enters under your control",
         "Whenever another creature you control enters",
@@ -1882,6 +1951,24 @@ mod tests {
         assert!(
             !mismatch,
             "expected no mismatch for opponent creature+graveyard exile phrasing"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_target_player_exile_graveyard_phrasing() {
+        let oracle = "Exile target player's graveyard.";
+        let compiled = vec![String::from(
+            "Spell effects: Exile all cards from target player's graveyard.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, None);
+        assert!(
+            similarity >= 0.99,
+            "expected target-player graveyard exile normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for target-player graveyard exile phrasing"
         );
     }
 

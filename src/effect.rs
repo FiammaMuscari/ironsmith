@@ -540,6 +540,9 @@ pub enum Value {
     /// The number of players matching a filter
     CountPlayers(PlayerFilter),
 
+    /// The size of a player's party (max one each of Cleric, Rogue, Warrior, Wizard).
+    PartySize(PlayerFilter),
+
     /// The power of the source creature
     SourcePower,
 
@@ -1177,6 +1180,13 @@ pub enum Condition {
         filter: ObjectFilter,
     },
 
+    /// A specific player controls at least `count` objects matching filter.
+    PlayerControlsAtLeast {
+        player: PlayerFilter,
+        filter: ObjectFilter,
+        count: u32,
+    },
+
     /// A specific player controls the greatest number of objects matching filter
     /// (ties count as "most").
     PlayerControlsMost {
@@ -1570,12 +1580,37 @@ impl Effect {
 
     /// Create a "counter unless pays" effect.
     pub fn counter_unless_pays(target: ChooseSpec, mana: Vec<ManaSymbol>) -> Self {
+        Self::counter_unless_pays_with_life(target, mana, None)
+    }
+
+    /// Create a "counter unless pays [mana] and [life]" effect.
+    pub fn counter_unless_pays_with_life(
+        target: ChooseSpec,
+        mana: Vec<ManaSymbol>,
+        life: Option<Value>,
+    ) -> Self {
+        Self::counter_unless_pays_with_life_and_additional(target, mana, life, None)
+    }
+
+    /// Create a "counter unless pays [mana] and optional dynamic additional generic mana" effect.
+    pub fn counter_unless_pays_with_life_and_additional(
+        target: ChooseSpec,
+        mana: Vec<ManaSymbol>,
+        life: Option<Value>,
+        additional_generic: Option<Value>,
+    ) -> Self {
         let player = match target.base() {
             ChooseSpec::SpecificObject(id) => PlayerFilter::ControllerOf(ObjectRef::Specific(*id)),
             ChooseSpec::Tagged(tag) => PlayerFilter::ControllerOf(ObjectRef::Tagged(tag.clone())),
             _ => PlayerFilter::ControllerOf(ObjectRef::Target),
         };
-        Self::unless_pays(vec![Self::counter(target)], player, mana)
+        Self::unless_pays_with_life_and_additional(
+            vec![Self::counter(target)],
+            player,
+            mana,
+            life,
+            additional_generic,
+        )
     }
 
     /// Create a "copy target spell" effect.
@@ -2238,8 +2273,36 @@ impl Effect {
     /// )
     /// ```
     pub fn unless_pays(effects: Vec<Effect>, player: PlayerFilter, mana: Vec<ManaSymbol>) -> Self {
+        Self::unless_pays_with_life(effects, player, mana, None)
+    }
+
+    /// "X unless you/they pay {mana} and/or life" - execute effects unless paid.
+    pub fn unless_pays_with_life(
+        effects: Vec<Effect>,
+        player: PlayerFilter,
+        mana: Vec<ManaSymbol>,
+        life: Option<Value>,
+    ) -> Self {
+        Self::unless_pays_with_life_and_additional(effects, player, mana, life, None)
+    }
+
+    /// "X unless you/they pay {mana}, optional life, and optional dynamic additional generic mana"
+    /// - execute effects unless paid.
+    pub fn unless_pays_with_life_and_additional(
+        effects: Vec<Effect>,
+        player: PlayerFilter,
+        mana: Vec<ManaSymbol>,
+        life: Option<Value>,
+        additional_generic: Option<Value>,
+    ) -> Self {
         use crate::effects::UnlessPaysEffect;
-        Self::new(UnlessPaysEffect::new(effects, player, mana))
+        Self::new(UnlessPaysEffect::new_with_life_and_additional(
+            effects,
+            player,
+            mana,
+            life,
+            additional_generic,
+        ))
     }
 
     /// "X unless you/they [action]" - execute effects unless the player performs an action.

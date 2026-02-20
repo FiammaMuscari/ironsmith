@@ -196,9 +196,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args(&root_dir).map_err(std::io::Error::other)?;
     let reports_dir = resolve_reports_dir(&args.reports_dir, &root_dir)?;
 
-    let false_positives_file = root_dir
+    let root_false_positives_file = root_dir.join("semantic_false_positives.txt");
+    let legacy_false_positives_file = root_dir
         .join("scripts")
         .join("semantic_false_positives.txt");
+    let false_positives_file = if root_false_positives_file.exists() {
+        root_false_positives_file
+    } else {
+        legacy_false_positives_file
+    };
     let timestamp = now_utc_timestamp()?;
     let safe_threshold = args.threshold.replace('.', "_");
     let run_id = format!("{safe_threshold}_{}_{}", args.dims, timestamp);

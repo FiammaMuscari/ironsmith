@@ -274,7 +274,14 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
         ));
     }
 
-    let colors = describe_token_color_words(card.colors(), card.is_creature());
+    let explicit_colorless = token.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(static_ability)
+                if static_ability.id() == crate::static_abilities::StaticAbilityId::MakeColorless
+        )
+    });
+    let colors = describe_token_color_words(card.colors(), card.is_creature() || explicit_colorless);
     if !colors.is_empty() {
         parts.push(colors);
     }
@@ -306,7 +313,7 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
             && name_lower != "token"
             && name_lower != subtype_text.to_ascii_lowercase()
             && !name_matches_any_subtype;
-        let use_name_for_creature = card.is_creature() && name_is_distinct;
+        let use_name_for_creature = false;
         let use_name_for_noncreature = !card.is_creature() && name_is_distinct;
         if use_name_for_creature {
             creature_name_prefix = Some(card.name.clone());
@@ -341,6 +348,9 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
     for ability in &token.abilities {
         match &ability.kind {
             AbilityKind::Static(static_ability) => {
+                if static_ability.id() == crate::static_abilities::StaticAbilityId::MakeColorless {
+                    continue;
+                }
                 if static_ability.is_keyword() {
                     keyword_texts.push(static_ability.display().to_ascii_lowercase());
                     continue;
@@ -1064,12 +1074,10 @@ fn normalize_same_name_search_bundle_clause(line: &str) -> Option<String> {
     let rest_after_shuffle =
         strip_prefix_ascii_ci(rest_after_shuffle, "Shuffle its controller's library.")?;
 
-    let normalized_search_clause = search_clause
-        .trim()
-        .replace(
-            "permanent with the same name as that object cards",
-            "cards with the same name as that object",
-        );
+    let normalized_search_clause = search_clause.trim().replace(
+        "permanent with the same name as that object cards",
+        "cards with the same name as that object",
+    );
     let normalized_search_clause = strip_suffix_ascii_ci(&normalized_search_clause, ", exile them")
         .or_else(|| strip_suffix_ascii_ci(&normalized_search_clause, " and exile them"))
         .unwrap_or(&normalized_search_clause)
@@ -1108,8 +1116,11 @@ fn normalize_repeated_dynamic_buff(line: &str) -> Option<String> {
     if !remainder.is_empty() && remainder != "." {
         let rest = remainder.trim_start_matches('.').trim();
         if !rest.is_empty() {
-            rewritten.push(' ');
-            rewritten.push_str(rest);
+            let lower_rest = rest.to_ascii_lowercase();
+            if !lower_rest.starts_with("x is ") && !lower_rest.starts_with("where x is ") {
+                rewritten.push(' ');
+                rewritten.push_str(rest);
+            }
         }
     }
     Some(rewritten)
@@ -2638,6 +2649,115 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     {
         return "Exile all graveyards".to_string();
     }
+    if lower_normalized == "exile all card in target opponent's graveyard"
+        || lower_normalized == "exile all card in target opponent's graveyard."
+        || lower_normalized == "exile all card in target opponent's graveyards"
+        || lower_normalized == "exile all card in target opponent's graveyards."
+        || lower_normalized == "exile all card from target opponent's graveyard"
+        || lower_normalized == "exile all card from target opponent's graveyard."
+        || lower_normalized == "exile all cards from target opponent's graveyard"
+        || lower_normalized == "exile all cards from target opponent's graveyard."
+        || lower_normalized == "exile all card from target opponent's graveyards"
+        || lower_normalized == "exile all card from target opponent's graveyards."
+        || lower_normalized == "exile all cards from target opponent's graveyards"
+        || lower_normalized == "exile all cards from target opponent's graveyards."
+    {
+        return "Exile target opponent's graveyard".to_string();
+    }
+    if lower_normalized == "exile all card in target player's graveyard"
+        || lower_normalized == "exile all card in target player's graveyard."
+        || lower_normalized == "exile all card in target player's graveyards"
+        || lower_normalized == "exile all card in target player's graveyards."
+        || lower_normalized == "exile all card from target player's graveyard"
+        || lower_normalized == "exile all card from target player's graveyard."
+        || lower_normalized == "exile all cards from target player's graveyard"
+        || lower_normalized == "exile all cards from target player's graveyard."
+        || lower_normalized == "exile all card from target player's graveyards"
+        || lower_normalized == "exile all card from target player's graveyards."
+        || lower_normalized == "exile all cards from target player's graveyards"
+        || lower_normalized == "exile all cards from target player's graveyards."
+    {
+        return "Exile target player's graveyard".to_string();
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all card in target opponent's graveyard. ")
+    {
+        return format!("Exile target opponent's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all card in target opponent's graveyards. ")
+    {
+        return format!("Exile target opponent's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all card from target opponent's graveyard. ")
+    {
+        return format!("Exile target opponent's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all cards from target opponent's graveyard. ")
+    {
+        return format!("Exile target opponent's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all card from target opponent's graveyards. ")
+    {
+        return format!("Exile target opponent's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all cards from target opponent's graveyards. ")
+    {
+        return format!("Exile target opponent's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all card in target player's graveyard. ") {
+        return format!("Exile target player's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all card in target player's graveyards. ")
+    {
+        return format!("Exile target player's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all card from target player's graveyard. ")
+    {
+        return format!("Exile target player's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all cards from target player's graveyard. ")
+    {
+        return format!("Exile target player's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all card from target player's graveyards. ")
+    {
+        return format!("Exile target player's graveyard. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("Exile all cards from target player's graveyards. ")
+    {
+        return format!("Exile target player's graveyard. {rest}");
+    }
+    normalized = normalized.replace(
+        "Exile all cards from target opponent's graveyard",
+        "Exile target opponent's graveyard",
+    );
+    normalized = normalized.replace(
+        "exile all cards from target opponent's graveyard",
+        "exile target opponent's graveyard",
+    );
+    normalized = normalized.replace(
+        "Exile all cards from target opponent's graveyards",
+        "Exile target opponent's graveyard",
+    );
+    normalized = normalized.replace(
+        "exile all cards from target opponent's graveyards",
+        "exile target opponent's graveyard",
+    );
+    normalized = normalized.replace(
+        "Exile all cards from target player's graveyard",
+        "Exile target player's graveyard",
+    );
+    normalized = normalized.replace(
+        "exile all cards from target player's graveyard",
+        "exile target player's graveyard",
+    );
+    normalized = normalized.replace(
+        "Exile all cards from target player's graveyards",
+        "Exile target player's graveyard",
+    );
+    normalized = normalized.replace(
+        "exile all cards from target player's graveyards",
+        "exile target player's graveyard",
+    );
     if lower_normalized == "permanents enter the battlefield tapped"
         || lower_normalized == "permanents enter the battlefield tapped."
     {
@@ -3103,6 +3223,25 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         return "Whenever this creature becomes blocked, defending player discards a card"
             .to_string();
     }
+    for lead in ["Whenever", "whenever"] {
+        for owner_phrase in ["you don't own", "you dont own"] {
+            let marker = format!("{lead} you cast a {owner_phrase}, for each ");
+            if let Some(rest) = normalized.strip_prefix(&marker) {
+                for tail in [
+                    " spell, Put a +1/+1 counter on that object.",
+                    " spell, put a +1/+1 counter on that object.",
+                    " spell, Put a +1/+1 counter on that object",
+                    " spell, put a +1/+1 counter on that object",
+                ] {
+                    if let Some(filter) = rest.strip_suffix(tail) {
+                        return format!(
+                            "Whenever you cast a spell you don't own, put a +1/+1 counter on each {filter}."
+                        );
+                    }
+                }
+            }
+        }
+    }
     if let Some(rest) = normalized.strip_prefix("Whenever you cast spell ") {
         if let Some((kind, tail)) = rest.split_once(',') {
             let kind = kind.trim();
@@ -3161,6 +3300,52 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     }
     if let Some(rest) = normalized.strip_prefix("Whenever you cast spell with mana value ") {
         return format!("Whenever you cast a spell with mana value {rest}");
+    }
+    for owner_phrase in ["you don't own", "you dont own"] {
+        let marker = format!("Whenever you cast a {owner_phrase}, for each ");
+        if let Some((head, rest)) = normalized.split_once(&marker) {
+            for tail in [
+                " spell, Put a +1/+1 counter on that object.",
+                " spell, put a +1/+1 counter on that object.",
+                " spell, Put a +1/+1 counter on that object",
+                " spell, put a +1/+1 counter on that object",
+            ] {
+                if let Some(filter) = rest.strip_suffix(tail) {
+                    return format!(
+                        "{head}Whenever you cast a spell you don't own, put a +1/+1 counter on each {filter}."
+                    );
+                }
+            }
+        }
+    }
+    if let Some(rest) = normalized.strip_prefix("Whenever one or more ")
+        && let Some(tail) = rest.strip_suffix(
+            " deal combat damage to a player: Exile card in that player's library. If that doesn't happen, create a Treasure token.",
+        )
+    {
+        return format!(
+            "Whenever one or more {tail} deal combat damage to a player, exile the top card of that player's library. If you don't, create a Treasure token."
+        );
+    }
+    if let Some((prefix, rest)) = normalized.split_once(" have the first ")
+        && let Some((kind, tail)) = rest.split_once(" spell you cast each turn costs ")
+        && let Some(amount) = tail.strip_suffix(" less to cast")
+        && let Ok(amount) = amount.trim().parse::<u32>()
+    {
+        return format!(
+            "{prefix} have \"The first {} spell you cast each turn costs {{{amount}}} less to cast.\"",
+            capitalize_first(kind.trim())
+        );
+    }
+    if let Some((prefix, rest)) = normalized.split_once(" has the first ")
+        && let Some((kind, tail)) = rest.split_once(" spell you cast each turn costs ")
+        && let Some(amount) = tail.strip_suffix(" less to cast")
+        && let Ok(amount) = amount.trim().parse::<u32>()
+    {
+        return format!(
+            "{prefix} has \"The first {} spell you cast each turn costs {{{amount}}} less to cast.\"",
+            capitalize_first(kind.trim())
+        );
     }
     if normalized == "When this creature enters, you sacrifice a creature" {
         return "When this creature enters, sacrifice a creature".to_string();
@@ -4025,6 +4210,27 @@ fn describe_object_count(value: &Value) -> String {
     }
 }
 
+fn describe_count_filter_value_subject(filter: &ObjectFilter) -> String {
+    let mut subject = strip_indefinite_article(&filter.description())
+        .trim()
+        .to_string();
+    subject = pluralize_noun_phrase(&subject);
+
+    let mentions_location = subject.contains(" in ") || subject.contains(" on ");
+    let mentions_controller_or_owner = subject.contains(" controls") || subject.contains(" owns");
+    let is_combat_restricted =
+        filter.attacking || filter.nonattacking || filter.blocking || filter.nonblocking;
+    if filter.zone == Some(Zone::Battlefield)
+        && !mentions_location
+        && !mentions_controller_or_owner
+        && !is_combat_restricted
+    {
+        subject.push_str(" on the battlefield");
+    }
+
+    subject
+}
+
 fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
     let mut bare = filter.clone();
     let controller = bare.controller.clone();
@@ -4043,12 +4249,28 @@ fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
     } else if let Some(rest) = lower_subject.strip_prefix("another ") {
         subject = format!("other {}", rest.trim());
     }
+    if let Some(action) = describe_tagged_this_way_action(filter) {
+        if action == "exiled" {
+            if let Some(head) = subject.strip_suffix(" in exile") {
+                subject = head.trim().to_string();
+            } else if let Some((head, tail)) = subject.split_once(" in exile ") {
+                subject = format!("{} {}", head.trim(), tail.trim());
+            }
+        }
+        subject = format!("{subject} {action} this way");
+    }
 
     let controller_suffix = match controller {
         Some(PlayerFilter::You) => Some("you control"),
         Some(PlayerFilter::NotYou) => Some("you don't control"),
         Some(PlayerFilter::Opponent) => Some("an opponent controls"),
         Some(PlayerFilter::Any) => Some("a player controls"),
+        Some(PlayerFilter::Active) => Some("active player controls"),
+        Some(PlayerFilter::Defending) => Some("defending player controls"),
+        Some(PlayerFilter::Attacking) => Some("attacking player controls"),
+        Some(PlayerFilter::DamagedPlayer) => Some("damaged player controls"),
+        Some(PlayerFilter::Teammate) => Some("a teammate controls"),
+        Some(PlayerFilter::Specific(_)) => Some("that player controls"),
         Some(PlayerFilter::Target(_)) | Some(PlayerFilter::IteratedPlayer) => Some("they control"),
         _ => None,
     };
@@ -4061,6 +4283,12 @@ fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
         Some(PlayerFilter::NotYou) => Some("you don't own"),
         Some(PlayerFilter::Opponent) => Some("an opponent owns"),
         Some(PlayerFilter::Any) => Some("a player owns"),
+        Some(PlayerFilter::Active) => Some("active player owns"),
+        Some(PlayerFilter::Defending) => Some("defending player owns"),
+        Some(PlayerFilter::Attacking) => Some("attacking player owns"),
+        Some(PlayerFilter::DamagedPlayer) => Some("damaged player owns"),
+        Some(PlayerFilter::Teammate) => Some("a teammate owns"),
+        Some(PlayerFilter::Specific(_)) => Some("that player owns"),
         Some(PlayerFilter::Target(_)) | Some(PlayerFilter::IteratedPlayer) => Some("they own"),
         _ => None,
     };
@@ -4341,6 +4569,18 @@ fn hand_owner_from_spec(spec: &ChooseSpec) -> Option<Option<PlayerFilter>> {
     owner_for_zone_from_spec(spec, Zone::Hand)
 }
 
+fn is_you_owned_battlefield_object_spec(spec: &ChooseSpec) -> bool {
+    match spec {
+        ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
+            is_you_owned_battlefield_object_spec(inner)
+        }
+        ChooseSpec::Object(filter) | ChooseSpec::All(filter) => {
+            filter.zone == Some(Zone::Battlefield) && filter.owner == Some(PlayerFilter::You)
+        }
+        _ => false,
+    }
+}
+
 fn describe_card_choice_count(count: ChoiceCount) -> String {
     if count.is_dynamic_x() {
         return "X cards".to_string();
@@ -4573,6 +4813,18 @@ fn describe_search_selection_with_cards(selection: &str) -> String {
     let selection = selection.trim();
     if selection.is_empty() {
         return "a card".to_string();
+    }
+    if let Some((head, tail)) = selection.split_once(" with mana value ") {
+        let head = head.trim();
+        let value = tail.trim_end_matches(" card").trim();
+        if !head.is_empty() && !value.is_empty() {
+            let head_with_card = if head.ends_with(" card") || head.ends_with(" cards") {
+                head.to_string()
+            } else {
+                format!("{} card", with_indefinite_article(head))
+            };
+            return format!("{head_with_card} with mana value {value}");
+        }
     }
     if selection.contains(" card") {
         return selection.to_string();
@@ -4934,7 +5186,13 @@ fn describe_value(value: &Value) -> String {
     match value {
         Value::Fixed(n) => n.to_string(),
         Value::Add(left, right) => {
-            format!("{} plus {}", describe_value(left), describe_value(right))
+            if let Value::Fixed(n) = right.as_ref()
+                && *n < 0
+            {
+                format!("{} minus {}", describe_value(left), n.abs())
+            } else {
+                format!("{} plus {}", describe_value(left), describe_value(right))
+            }
         }
         Value::X => "X".to_string(),
         Value::XTimes(factor) => {
@@ -4946,18 +5204,29 @@ fn describe_value(value: &Value) -> String {
                 format!("{factor}*X")
             }
         }
-        Value::Count(filter) => format!("the number of {}", filter.description()),
+        Value::Count(filter) => {
+            format!(
+                "the number of {}",
+                describe_count_filter_value_subject(filter)
+            )
+        }
         Value::CountScaled(filter, multiplier) => {
-            format!("{multiplier} times the number of {}", filter.description())
+            format!(
+                "{multiplier} times the number of {}",
+                describe_count_filter_value_subject(filter)
+            )
         }
         Value::BasicLandTypesAmong(filter) => {
             format!(
-                "the number of basic land types among {}",
-                filter.description()
+                "the number of {}",
+                describe_basic_land_types_among(filter)
             )
         }
         Value::CreaturesDiedThisTurn => "the number of creatures that died this turn".to_string(),
         Value::CountPlayers(filter) => format!("the number of {}", describe_player_filter(filter)),
+        Value::PartySize(filter) => {
+            format!("the number of creatures in {} party", describe_possessive_player_filter(filter))
+        }
         Value::SourcePower => "this source's power".to_string(),
         Value::SourceToughness => "this source's toughness".to_string(),
         Value::PowerOf(spec) => format!("{} power", describe_possessive_choose_spec(spec)),
@@ -5069,6 +5338,22 @@ fn describe_value(value: &Value) -> String {
     }
 }
 
+fn party_size_multiplier(value: &Value) -> Option<(PlayerFilter, i32)> {
+    match value {
+        Value::PartySize(filter) => Some((filter.clone(), 1)),
+        Value::Add(left, right) => {
+            let (left_filter, left_mult) = party_size_multiplier(left)?;
+            let (right_filter, right_mult) = party_size_multiplier(right)?;
+            if left_filter == right_filter {
+                Some((left_filter, left_mult + right_mult))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn describe_signed_value(value: &Value) -> String {
     match value {
         Value::Fixed(n) if *n >= 0 => format!("+{n}"),
@@ -5095,6 +5380,50 @@ fn describe_toughness_delta_with_power_context(power: &Value, toughness: &Value)
     } else {
         describe_signed_value(toughness)
     }
+}
+
+fn describe_dynamic_runtime_pt_with_where_x(
+    target: &str,
+    plural_target: bool,
+    power: &Value,
+    toughness: &Value,
+    until: &Until,
+) -> Option<String> {
+    if matches!(until, Until::Forever) {
+        return None;
+    }
+    let until_text = describe_until(until);
+    if until_text.is_empty() {
+        return None;
+    }
+
+    let power_text = describe_value(power);
+    let toughness_text = describe_value(toughness);
+    let gets = if plural_target { "get" } else { "gets" };
+    let power_text_lower = power_text.to_ascii_lowercase();
+    let toughness_text_lower = toughness_text.to_ascii_lowercase();
+
+    let power_is_count_like = !matches!(power, Value::Fixed(_)) && power_text_lower.contains("number of");
+    let toughness_is_count_like =
+        !matches!(toughness, Value::Fixed(_)) && toughness_text_lower.contains("number of");
+
+    if power_is_count_like && toughness_is_count_like && power_text == toughness_text {
+        return Some(format!(
+            "{target} {gets} +X/+X {until_text}, where X is {power_text}"
+        ));
+    }
+    if power_is_count_like && matches!(toughness, Value::Fixed(0)) {
+        return Some(format!(
+            "{target} {gets} +X/+0 {until_text}, where X is {power_text}"
+        ));
+    }
+    if toughness_is_count_like && matches!(power, Value::Fixed(0)) {
+        return Some(format!(
+            "{target} {gets} +0/+X {until_text}, where X is {toughness_text}"
+        ));
+    }
+
+    None
 }
 
 fn describe_signed_i32(value: i32) -> String {
@@ -5339,6 +5668,22 @@ fn describe_apply_continuous_effect(
             text.push(' ');
             text.push_str(&describe_until(&effect.until));
         }
+        return Some(text);
+    }
+    if effect.modification.is_none()
+        && effect.additional_modifications.is_empty()
+        && let [crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
+            power,
+            toughness,
+        }] = effect.runtime_modifications.as_slice()
+        && let Some(text) = describe_dynamic_runtime_pt_with_where_x(
+            target.as_str(),
+            plural_target,
+            power,
+            toughness,
+            &effect.until,
+        )
+    {
         return Some(text);
     }
 
@@ -5604,6 +5949,40 @@ fn describe_comparison(cmp: &Comparison) -> String {
     }
 }
 
+fn basic_land_types_multiplier(value: &Value) -> Option<(&ObjectFilter, i32)> {
+    match value {
+        Value::BasicLandTypesAmong(filter) => Some((filter, 1)),
+        Value::Add(left, right) => {
+            let (left_filter, left_mult) = basic_land_types_multiplier(left)?;
+            let (right_filter, right_mult) = basic_land_types_multiplier(right)?;
+            if left_filter == right_filter {
+                Some((left_filter, left_mult + right_mult))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn describe_basic_land_type_scope(filter: &ObjectFilter) -> String {
+    let lands = describe_for_each_filter(filter);
+    if lands == "land" {
+        return "lands".to_string();
+    }
+    if let Some(rest) = lands.strip_prefix("land ") {
+        return format!("lands {rest}");
+    }
+    if let Some(rest) = lands.strip_prefix("a land ") {
+        return format!("lands {rest}");
+    }
+    lands
+}
+
+fn describe_basic_land_types_among(filter: &ObjectFilter) -> String {
+    format!("basic land type among {}", describe_basic_land_type_scope(filter))
+}
+
 fn describe_effect_predicate(predicate: &EffectPredicate) -> String {
     match predicate {
         EffectPredicate::Succeeded => "succeeded".to_string(),
@@ -5638,6 +6017,33 @@ fn describe_condition(condition: &Condition) -> String {
                 subject,
                 player_verb(&subject, "control", "controls"),
                 described_filter.description()
+            )
+        }
+        Condition::PlayerControlsAtLeast {
+            player,
+            filter,
+            count,
+        } => {
+            let subject = describe_player_filter(player);
+            let mut described_filter = filter.clone();
+            if described_filter
+                .controller
+                .as_ref()
+                .is_some_and(|controller| controller == player)
+            {
+                described_filter.controller = None;
+            }
+            let described = strip_indefinite_article(&described_filter.description()).to_string();
+            let noun = pluralize_noun_phrase(&described);
+            let count_text = small_number_word(*count)
+                .map(str::to_string)
+                .unwrap_or_else(|| count.to_string());
+            format!(
+                "{} {} {} or more {}",
+                subject,
+                player_verb(&subject, "control", "controls"),
+                count_text,
+                noun
             )
         }
         Condition::PlayerControlsMost { player, filter } => {
@@ -5745,6 +6151,21 @@ fn describe_condition(condition: &Condition) -> String {
                 }
                 let described = described_filter.description();
                 let object_text = strip_indefinite_article(&described);
+                let references_tagged_object =
+                    described_filter.tagged_constraints.iter().any(|constraint| {
+                        matches!(
+                            constraint.relation,
+                            crate::filter::TaggedOpbjectRelation::IsTaggedObject
+                        )
+                    });
+                if references_tagged_object {
+                    return format!(
+                        "{} {} neither {}",
+                        subject,
+                        player_verb(&subject, "control", "controls"),
+                        object_text
+                    );
+                }
                 format!(
                     "{} {} no {}",
                     subject,
@@ -6158,8 +6579,91 @@ fn describe_inline_ability(ability: &Ability) -> String {
         AbilityKind::Triggered(triggered) => {
             format!("a triggered ability ({})", triggered.trigger.display())
         }
-        AbilityKind::Activated(_) => "an activated ability".to_string(),
-        AbilityKind::Mana(_) => "a mana ability".to_string(),
+        AbilityKind::Activated(activated) => {
+            let mut line = String::new();
+            let mut pre = Vec::new();
+            if !activated.mana_cost.costs().is_empty() {
+                pre.push(describe_cost_list(activated.mana_cost.costs()));
+            }
+            if !activated.choices.is_empty() {
+                pre.push(format!(
+                    "choose {}",
+                    activated
+                        .choices
+                        .iter()
+                        .map(describe_choose_spec)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if !pre.is_empty() {
+                line.push_str(&pre.join(", "));
+            }
+            if !activated.effects.is_empty() {
+                if !line.is_empty() {
+                    line.push_str(": ");
+                }
+                line.push_str(&describe_effect_list(&activated.effects));
+            }
+            let restriction_clauses = collect_activation_restriction_clauses(
+                &activated.timing,
+                &activated.additional_restrictions,
+            );
+            if !restriction_clauses.is_empty() {
+                if !line.is_empty() {
+                    line.push_str(". ");
+                }
+                line.push_str(&join_activation_restriction_clauses(&restriction_clauses));
+            }
+            if line.is_empty() {
+                "an activated ability".to_string()
+            } else {
+                line
+            }
+        }
+        AbilityKind::Mana(mana_ability) => {
+            let mut line = String::new();
+            if !mana_ability.mana_cost.costs().is_empty() {
+                line.push_str(&describe_cost_list(mana_ability.mana_cost.costs()));
+            }
+            let mut payload = String::new();
+            if !mana_ability.mana.is_empty() {
+                payload.push_str("Add ");
+                payload.push_str(
+                    &mana_ability
+                        .mana
+                        .iter()
+                        .copied()
+                        .map(describe_mana_symbol)
+                        .collect::<Vec<_>>()
+                        .join(""),
+                );
+            } else if let Some(effects) = &mana_ability.effects
+                && !effects.is_empty()
+            {
+                payload.push_str(&describe_effect_list(effects));
+            }
+            if !payload.is_empty() {
+                if !line.is_empty() {
+                    line.push_str(": ");
+                }
+                line.push_str(&payload);
+            }
+            if let Some(condition) = &mana_ability.activation_condition {
+                let clause = describe_mana_activation_condition(condition);
+                if !clause.is_empty() {
+                    if !line.is_empty() {
+                        line.push_str(". ");
+                    }
+                    line.push_str(&clause);
+                }
+            }
+            if line.is_empty() {
+                "a mana ability".to_string()
+            } else {
+                line
+            }
+        }
     }
 }
 
@@ -6403,6 +6907,43 @@ fn describe_for_each_double_counters(for_each: &crate::effects::ForEachObject) -
     ))
 }
 
+fn describe_for_each_tagged_this_way_subject(filter: &ObjectFilter) -> Option<String> {
+    let action = filter.tagged_constraints.iter().find_map(|constraint| {
+        if constraint.relation != crate::filter::TaggedOpbjectRelation::IsTaggedObject {
+            return None;
+        }
+        let tag = constraint.tag.as_str();
+        if tag.starts_with("exiled_") {
+            Some("exiled")
+        } else if tag.starts_with("destroyed_") {
+            Some("destroyed")
+        } else if tag.starts_with("sacrificed_") {
+            Some("sacrificed")
+        } else if tag.starts_with("discarded_") {
+            Some("discarded")
+        } else if tag.starts_with("milled_") {
+            Some("milled")
+        } else {
+            None
+        }
+    })?;
+
+    let mut subject = strip_indefinite_article(&filter.description()).to_string();
+    if action == "exiled" {
+        if let Some(head) = subject.strip_suffix(" in exile") {
+            subject = head.trim().to_string();
+        } else if let Some((head, tail)) = subject.split_once(" in exile ") {
+            subject = format!("{} {}", head.trim(), tail.trim());
+        }
+    }
+    let subject = subject.trim();
+    if subject.is_empty() {
+        return None;
+    }
+
+    Some(format!("For each {subject} {action} this way"))
+}
+
 fn normalize_put_counter_number_for_each(line: &str) -> Option<String> {
     let (before, after) = split_once_ascii_ci(line, "put the number of ")?;
     let (count_and_counter, after_target) = after.split_once(" counter(s) on ")?;
@@ -6488,6 +7029,17 @@ fn pluralize_word(word: &str) -> String {
     if lower == "myr" {
         return word.to_string();
     }
+    if lower == "mouse" {
+        return if word
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+        {
+            "Mice".to_string()
+        } else {
+            "mice".to_string()
+        };
+    }
     if lower.ends_with('y')
         && lower.len() > 1
         && !matches!(
@@ -6555,6 +7107,16 @@ fn pluralize_noun_phrase(phrase: &str) -> String {
         " target player owns",
         " that player controls",
         " that player owns",
+        " active player controls",
+        " active player owns",
+        " defending player controls",
+        " defending player owns",
+        " attacking player controls",
+        " attacking player owns",
+        " damaged player controls",
+        " damaged player owns",
+        " a teammate controls",
+        " a teammate owns",
         " in your graveyard",
         " in target player's graveyard",
         " in that player's graveyard",
@@ -6955,6 +7517,16 @@ fn describe_for_each_filter(filter: &ObjectFilter) -> String {
             base = format!("{rest} on the battlefield");
         }
     }
+    if let Some(action) = describe_tagged_this_way_action(filter) {
+        if action == "exiled" {
+            if let Some(head) = base.strip_suffix(" in exile") {
+                base = head.trim().to_string();
+            } else if let Some((head, tail)) = base.split_once(" in exile ") {
+                base = format!("{} {}", head.trim(), tail.trim());
+            }
+        }
+        base = format!("{base} {action} this way");
+    }
 
     if let Some(controller) = &filter.controller {
         if matches!(controller, PlayerFilter::You) {
@@ -6963,6 +7535,31 @@ fn describe_for_each_filter(filter: &ObjectFilter) -> String {
         return format!("{base} {} controls", describe_player_filter(controller));
     }
     base
+}
+
+fn describe_tagged_this_way_action(filter: &ObjectFilter) -> Option<&'static str> {
+    filter.tagged_constraints.iter().find_map(|constraint| {
+        if constraint.relation != crate::filter::TaggedOpbjectRelation::IsTaggedObject {
+            return None;
+        }
+        let tag = constraint.tag.as_str();
+        if tag == "__it__" && filter.zone == Some(Zone::Exile) {
+            return Some("exiled");
+        }
+        if tag.starts_with("exiled_") {
+            Some("exiled")
+        } else if tag.starts_with("destroyed_") {
+            Some("destroyed")
+        } else if tag.starts_with("sacrificed_") {
+            Some("sacrificed")
+        } else if tag.starts_with("discarded_") {
+            Some("discarded")
+        } else if tag.starts_with("milled_") {
+            Some("milled")
+        } else {
+            None
+        }
+    })
 }
 
 fn describe_each_controlled_by_iterated(filter: &ObjectFilter) -> Option<String> {
@@ -7051,34 +7648,51 @@ fn describe_for_players_damage_and_controlled_damage(
 }
 
 fn describe_draw_for_each(draw: &crate::effects::DrawCardsEffect) -> Option<String> {
-    let Value::Count(filter) = &draw.count else {
-        return None;
-    };
     let player = describe_player_filter(&draw.player);
     let verb = player_verb(&player, "draw", "draws");
-    Some(format!(
-        "{player} {verb} a card for each {}",
-        describe_for_each_filter(filter)
-    ))
+    match &draw.count {
+        Value::Count(filter) => Some(format!(
+            "{player} {verb} a card for each {}",
+            describe_for_each_filter(filter)
+        )),
+        Value::CountersOnSource(counter_type) => Some(format!(
+            "{player} {verb} a card for each {} counter on this permanent",
+            describe_counter_type(*counter_type)
+        )),
+        Value::CountersOn(spec, Some(counter_type)) => Some(format!(
+            "{player} {verb} a card for each {} counter on {}",
+            describe_counter_type(*counter_type),
+            describe_choose_spec(spec)
+        )),
+        Value::CountersOn(spec, None) => Some(format!(
+            "{player} {verb} a card for each counter on {}",
+            describe_choose_spec(spec)
+        )),
+        Value::BasicLandTypesAmong(filter) => Some(format!(
+            "{player} {verb} a card for each {}",
+            describe_basic_land_types_among(filter)
+        )),
+        _ => None,
+    }
 }
 
 fn describe_create_for_each_count(value: &Value) -> Option<String> {
     match value {
         Value::Count(filter) => Some(describe_for_each_filter(filter)),
-        Value::BasicLandTypesAmong(filter) => {
-            let lands = describe_for_each_filter(filter);
-            let lands = if lands == "land" {
-                "lands".to_string()
-            } else if let Some(rest) = lands.strip_prefix("land ") {
-                format!("lands {rest}")
-            } else {
-                lands
-            };
-            Some(format!("basic land type among {lands}"))
-        }
+        Value::BasicLandTypesAmong(filter) => Some(describe_basic_land_types_among(filter)),
         Value::CreaturesDiedThisTurn => Some("creature that died this turn".to_string()),
         _ => None,
     }
+}
+
+fn value_is_iterated_object_count(value: &Value) -> bool {
+    let Value::Count(filter) = value else {
+        return false;
+    };
+    filter.tagged_constraints.iter().any(|constraint| {
+        constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
+            && constraint.tag.as_str() == "__it__"
+    })
 }
 
 fn describe_compact_token_count(value: &Value, token_name: &str) -> String {
@@ -8023,6 +8637,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
         if let Some(compact) = describe_for_each_double_counters(for_each) {
             return compact;
         }
+        if let Some(subject) = describe_for_each_tagged_this_way_subject(&for_each.filter) {
+            return format!("{subject}, {}", describe_effect_list(&for_each.effects));
+        }
         let description = for_each.filter.description();
         let filter_text = strip_indefinite_article(&description);
         return format!(
@@ -8339,6 +8956,79 @@ fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(unless_pays) = effect.downcast_ref::<crate::effects::UnlessPaysEffect>() {
         let payer = describe_player_filter(&unless_pays.player);
         let pay_verb = player_verb(&payer, "pay", "pays");
+        let mana_text = unless_pays
+            .mana
+            .iter()
+            .copied()
+            .map(describe_mana_symbol)
+            .collect::<Vec<_>>()
+            .join("");
+        let has_base_mana = !mana_text.is_empty();
+        let additional_subject = |filter: &ObjectFilter| {
+            let mut subject = filter.description();
+            if filter.zone == Some(Zone::Graveyard)
+                && filter.owner.is_none()
+                && subject.ends_with(" in graveyard")
+            {
+                subject = subject.replacen(" in graveyard", " in each graveyard", 1);
+            }
+            subject
+                .strip_prefix("a ")
+                .or_else(|| subject.strip_prefix("an "))
+                .unwrap_or(subject.as_str())
+                .to_string()
+        };
+        let additional_text = match unless_pays.additional_generic.as_ref() {
+            Some(Value::Count(filter)) => {
+                let subject = additional_subject(filter);
+                if has_base_mana {
+                    format!("plus an additional {{1}} for each {subject}")
+                } else {
+                    format!("{{1}} for each {subject}")
+                }
+            }
+            Some(Value::CountScaled(filter, multiplier)) if *multiplier > 0 => {
+                let subject = additional_subject(filter);
+                if has_base_mana {
+                    format!("plus an additional {{{multiplier}}} for each {subject}")
+                } else {
+                    format!("{{{multiplier}}} for each {subject}")
+                }
+            }
+            Some(Value::PartySize(PlayerFilter::You)) => {
+                if has_base_mana {
+                    "plus an additional {1} for each creature in your party".to_string()
+                } else {
+                    "{1} for each creature in your party".to_string()
+                }
+            }
+            Some(Value::BasicLandTypesAmong(filter)) => {
+                let lands = describe_basic_land_type_scope(filter);
+                if has_base_mana {
+                    format!("plus {{1}} for each basic land type among {lands}")
+                } else {
+                    format!("{{1}} for each basic land type among {lands}")
+                }
+            }
+            Some(value) => format!("plus {}", describe_value(value)),
+            None => String::new(),
+        };
+        let mut payment_text = mana_text.clone();
+        if !additional_text.is_empty() {
+            if payment_text.is_empty() {
+                payment_text = additional_text.clone();
+            } else {
+                payment_text.push(' ');
+                payment_text.push_str(&additional_text);
+            }
+        }
+        if let Some(life) = &unless_pays.life {
+            if payment_text.is_empty() {
+                payment_text = format!("{} life", describe_value(life));
+            } else {
+                payment_text = format!("{payment_text} and {} life", describe_value(life));
+            }
+        }
         if unless_pays.effects.len() == 1
             && let Some(counter) =
                 unless_pays.effects[0].downcast_ref::<crate::effects::CounterEffect>()
@@ -8348,25 +9038,15 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 describe_choose_spec(&counter.target),
                 payer,
                 pay_verb,
-                unless_pays
-                    .mana
-                    .iter()
-                    .copied()
-                    .map(describe_mana_symbol)
-                    .collect::<Vec<_>>()
-                    .join("")
+                payment_text
             );
         }
 
         let inner_text = describe_effect_list(&unless_pays.effects);
-        let mana_text = unless_pays
-            .mana
-            .iter()
-            .copied()
-            .map(describe_mana_symbol)
-            .collect::<Vec<_>>()
-            .join("");
-        return format!("{} unless {} {} {}", inner_text, payer, pay_verb, mana_text);
+        return format!(
+            "{} unless {} {} {}",
+            inner_text, payer, pay_verb, payment_text
+        );
     }
     if let Some(unless_action) = effect.downcast_ref::<crate::effects::UnlessActionEffect>() {
         let inner_text = describe_effect_list(&unless_action.effects);
@@ -8424,7 +9104,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
             return format!(
                 "Put a {} counter on {target} for each {}",
                 describe_counter_type(put_counters.counter_type),
-                filter.description()
+                describe_for_each_count_filter(filter)
             );
         }
         return format!(
@@ -8521,6 +9201,62 @@ fn describe_effect_impl(effect: &Effect) -> String {
     }
     if let Some(gain) = effect.downcast_ref::<crate::effects::GainLifeEffect>() {
         let player = describe_choose_spec(&gain.player);
+        if let Value::CountersOnSource(counter_type) = &gain.amount {
+            return format!(
+                "{} {} 1 life for each {} counter on this permanent",
+                player,
+                player_verb(&player, "gain", "gains"),
+                describe_counter_type(*counter_type)
+            );
+        }
+        if let Value::Add(left, right) = &gain.amount
+            && let (Value::CountersOnSource(left_counter), Value::CountersOnSource(right_counter)) =
+                (left.as_ref(), right.as_ref())
+            && left_counter == right_counter
+        {
+            return format!(
+                "{} {} 2 life for each {} counter on this permanent",
+                player,
+                player_verb(&player, "gain", "gains"),
+                describe_counter_type(*left_counter)
+            );
+        }
+        if let Some((party_filter, multiplier)) = party_size_multiplier(&gain.amount) {
+            let party_owner = describe_possessive_player_filter(&party_filter);
+            if multiplier <= 1 {
+                return format!(
+                    "{} {} 1 life for each creature in {} party",
+                    player,
+                    player_verb(&player, "gain", "gains"),
+                    party_owner
+                );
+            }
+            return format!(
+                "{} {} {} life for each creature in {} party",
+                player,
+                player_verb(&player, "gain", "gains"),
+                multiplier,
+                party_owner
+            );
+        }
+        if let Some((filter, multiplier)) = basic_land_types_multiplier(&gain.amount) {
+            let among = describe_basic_land_types_among(filter);
+            if multiplier <= 1 {
+                return format!(
+                    "{} {} 1 life for each {}",
+                    player,
+                    player_verb(&player, "gain", "gains"),
+                    among
+                );
+            }
+            return format!(
+                "{} {} {} life for each {}",
+                player,
+                player_verb(&player, "gain", "gains"),
+                multiplier,
+                among
+            );
+        }
         if let Value::Count(filter) = &gain.amount {
             return format!(
                 "{} {} 1 life for each {}",
@@ -8565,6 +9301,44 @@ fn describe_effect_impl(effect: &Effect) -> String {
     }
     if let Some(lose) = effect.downcast_ref::<crate::effects::LoseLifeEffect>() {
         let player = describe_choose_spec(&lose.player);
+        if let Value::CountersOnSource(counter_type) = &lose.amount {
+            return format!(
+                "{} {} 1 life for each {} counter on this permanent",
+                player,
+                player_verb(&player, "lose", "loses"),
+                describe_counter_type(*counter_type)
+            );
+        }
+        if let Value::Add(left, right) = &lose.amount
+            && let (Value::CountersOnSource(left_counter), Value::CountersOnSource(right_counter)) =
+                (left.as_ref(), right.as_ref())
+            && left_counter == right_counter
+        {
+            return format!(
+                "{} {} 2 life for each {} counter on this permanent",
+                player,
+                player_verb(&player, "lose", "loses"),
+                describe_counter_type(*left_counter)
+            );
+        }
+        if let Some((party_filter, multiplier)) = party_size_multiplier(&lose.amount) {
+            let party_owner = describe_possessive_player_filter(&party_filter);
+            if multiplier <= 1 {
+                return format!(
+                    "{} {} 1 life for each creature in {} party",
+                    player,
+                    player_verb(&player, "lose", "loses"),
+                    party_owner
+                );
+            }
+            return format!(
+                "{} {} {} life for each creature in {} party",
+                player,
+                player_verb(&player, "lose", "loses"),
+                multiplier,
+                party_owner
+            );
+        }
         if let Value::Count(filter) = &lose.amount {
             return format!(
                 "{} {} 1 life for each {}",
@@ -8676,6 +9450,49 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 "Add {} for each {} to {}",
                 mana_text,
                 filter.description(),
+                describe_mana_pool_owner(&add_scaled.player)
+            );
+        }
+        if let Value::CountersOnSource(counter_type) = &add_scaled.amount {
+            return format!(
+                "Add {} for each {} counter on this source to {}",
+                mana_text,
+                describe_counter_type(*counter_type),
+                describe_mana_pool_owner(&add_scaled.player)
+            );
+        }
+        if let Value::CountersOn(spec, Some(counter_type)) = &add_scaled.amount {
+            return format!(
+                "Add {} for each {} counter on {} to {}",
+                mana_text,
+                describe_counter_type(*counter_type),
+                describe_choose_spec(spec),
+                describe_mana_pool_owner(&add_scaled.player)
+            );
+        }
+        if let Value::CountersOn(spec, None) = &add_scaled.amount {
+            return format!(
+                "Add {} for each counter on {} to {}",
+                mana_text,
+                describe_choose_spec(spec),
+                describe_mana_pool_owner(&add_scaled.player)
+            );
+        }
+        if let Some((party_filter, multiplier)) = party_size_multiplier(&add_scaled.amount) {
+            let party_owner = describe_possessive_player_filter(&party_filter);
+            if multiplier <= 1 {
+                return format!(
+                    "Add {} for each creature in {} party to {}",
+                    mana_text,
+                    party_owner,
+                    describe_mana_pool_owner(&add_scaled.player)
+                );
+            }
+            return format!(
+                "Add {} {} times for each creature in {} party to {}",
+                mana_text,
+                multiplier,
+                party_owner,
                 describe_mana_pool_owner(&add_scaled.player)
             );
         }
@@ -8866,6 +9683,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
             };
             return format!("Return {target_text} from {from_text} to {to_text}");
         }
+        if is_you_owned_battlefield_object_spec(&return_to_hand.spec) {
+            return format!("Return {} to your hand", describe_choose_spec(&return_to_hand.spec));
+        }
         return format!(
             "Return {} to {}",
             describe_choose_spec(&return_to_hand.spec),
@@ -8931,7 +9751,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
         let filter_desc = if is_generic_owned_card_search_filter(&search_library.filter) {
             "a card".to_string()
         } else {
-            search_library.filter.description()
+            describe_search_selection_with_cards(&search_library.filter.description())
         };
         if search_library.reveal && search_library.destination != Zone::Battlefield {
             return format!(
@@ -9031,6 +9851,26 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 describe_choose_spec(&modify_pt.target),
                 describe_until(&modify_pt.duration),
                 power_text
+            );
+        }
+        if !matches!(modify_pt.power, Value::Fixed(_))
+            && matches!(modify_pt.toughness, Value::Fixed(0))
+        {
+            return format!(
+                "{} gets +X/+0 {}, where X is {}",
+                describe_choose_spec(&modify_pt.target),
+                describe_until(&modify_pt.duration),
+                power_text
+            );
+        }
+        if !matches!(modify_pt.toughness, Value::Fixed(_))
+            && matches!(modify_pt.power, Value::Fixed(0))
+        {
+            return format!(
+                "{} gets +0/+X {}, where X is {}",
+                describe_choose_spec(&modify_pt.target),
+                describe_until(&modify_pt.duration),
+                toughness_text
             );
         }
         return format!(
@@ -9310,6 +10150,34 @@ fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(create_token) = effect.downcast_ref::<crate::effects::CreateTokenEffect>() {
         if let Some(compact) = describe_compact_create_token(create_token) {
             return compact;
+        }
+        if value_is_iterated_object_count(&create_token.count) {
+            let token_blueprint = describe_token_blueprint(&create_token.token);
+            let mut text = if matches!(create_token.controller, PlayerFilter::You) {
+                format!("Create 1 {token_blueprint}")
+            } else {
+                format!(
+                    "Create 1 {} under {} control",
+                    token_blueprint,
+                    describe_possessive_player_filter(&create_token.controller)
+                )
+            };
+            if create_token.enters_tapped {
+                text.push_str(", tapped");
+            }
+            if create_token.enters_attacking {
+                text.push_str(", attacking");
+            }
+            if create_token.exile_at_end_of_combat {
+                text.push_str(", and exile them at end of combat");
+            }
+            if create_token.sacrifice_at_next_end_step {
+                text.push_str(", and sacrifice it at the beginning of the next end step");
+            }
+            if create_token.exile_at_next_end_step {
+                text.push_str(", and exile it at the beginning of the next end step");
+            }
+            return text;
         }
         if let Some(for_each_count) = describe_create_for_each_count(&create_token.count) {
             let token_blueprint = describe_token_blueprint(&create_token.token);
@@ -9953,6 +10821,19 @@ fn describe_effect_impl(effect: &Effect) -> String {
         trigger_text = cleanup_decompiled_text(&trigger_text);
         let trigger_lower = trigger_text.to_ascii_lowercase();
         let delayed_text = lowercase_first(&describe_effect_list(&schedule.effects));
+        if schedule.one_shot && schedule.start_next_turn {
+            if trigger_lower.contains("that player's end step")
+                || trigger_lower.contains("target player's end step")
+            {
+                return format!(
+                    "At the beginning of the end step of that player's next turn, {delayed_text}"
+                );
+            }
+            if trigger_lower.contains("your end step") {
+                return format!("At the beginning of your next end step, {delayed_text}");
+            }
+            return format!("At the beginning of the next end step, {delayed_text}");
+        }
         if schedule.one_shot
             && (trigger_lower.contains("beginning of each player's end step")
                 || trigger_lower.contains("beginning of end step"))
@@ -10313,6 +11194,14 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
                 }
                 return lines;
             }
+            if static_ability.id() == crate::static_abilities::StaticAbilityId::Custom
+                && let Some(text) = ability.text.as_deref()
+            {
+                let normalized = normalize_sentence_surface_style(text.trim());
+                if !normalized.is_empty() {
+                    return vec![format!("Static ability {index}: {normalized}")];
+                }
+            }
             vec![format!(
                 "Static ability {index}: {}",
                 static_ability.display()
@@ -10398,7 +11287,10 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
             if let Some(x_clause) = extract_activated_x_is_clause(ability.text.as_deref()) {
                 let line_lower = line.to_ascii_lowercase();
                 let clause_lower = x_clause.to_ascii_lowercase();
-                if !line_lower.contains(clause_lower.as_str()) {
+                let line_already_has_x_clause = line_lower.contains("where x is ")
+                    || line_lower.contains(". x is ")
+                    || line_lower.ends_with(" x is");
+                if !line_already_has_x_clause && !line_lower.contains(clause_lower.as_str()) {
                     if !inject_x_clause_into_modal_heading(&mut line, &x_clause) {
                         while line.ends_with('.') {
                             line.pop();
@@ -11442,6 +12334,7 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
         normalized_body = normalize_spell_self_exile(def, &normalized_body);
         normalized_body = normalize_for_each_clause_surface(normalized_body);
         normalized_body = normalize_known_low_tail_phrase(&normalized_body);
+        normalized_body = normalize_each_opponent_dynamic_life_exchange(&normalized_body);
         normalized_body = normalize_triggered_self_deals_damage_phrase(def, &normalized_body);
         normalized_body = normalize_gain_life_plus_phrase(&normalized_body);
         if oracle_has_fall_greatest_power {
@@ -11482,6 +12375,7 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
     normalized = normalize_spell_self_exile(def, &normalized);
     normalized = normalize_for_each_clause_surface(normalized);
     normalized = normalize_known_low_tail_phrase(&normalized);
+    normalized = normalize_each_opponent_dynamic_life_exchange(&normalized);
     normalized = normalize_triggered_self_deals_damage_phrase(def, &normalized);
     normalized = normalize_gain_life_plus_phrase(&normalized);
     if oracle_has_fall_greatest_power {
@@ -11534,7 +12428,51 @@ fn normalize_gain_life_plus_phrase(text: &str) -> String {
     trimmed.to_string()
 }
 
+fn normalize_each_opponent_dynamic_life_exchange(text: &str) -> String {
+    let trimmed = text.trim();
+
+    if let Some((prefix, rest)) = trimmed.split_once(", for each opponent, that player loses ")
+        && let Some((loss, gain)) = rest.split_once(" and you gain ")
+        && let Some(normalized) = normalize_each_opponent_life_exchange_clause(loss, gain)
+    {
+        return format!("{prefix}, {normalized}");
+    }
+    if let Some((prefix, rest)) = trimmed.split_once(", For each opponent, that player loses ")
+        && let Some((loss, gain)) = rest.split_once(" and you gain ")
+        && let Some(normalized) = normalize_each_opponent_life_exchange_clause(loss, gain)
+    {
+        return format!("{prefix}, {normalized}");
+    }
+    if let Some(rest) = trimmed.strip_prefix("For each opponent, that player loses ")
+        && let Some((loss, gain)) = rest.split_once(" and you gain ")
+        && let Some(normalized) = normalize_each_opponent_life_exchange_clause(loss, gain)
+    {
+        return capitalize_first(&normalized);
+    }
+
+    trimmed.to_string()
+}
+
 fn normalize_for_each_clause_surface(text: String) -> String {
+    let normalize_target_players_verbs = |mut value: String| {
+        for (from, to) in [
+            ("Target players each gains ", "Target players each gain "),
+            ("Target players each draws ", "Target players each draw "),
+            ("Target players each discards ", "Target players each discard "),
+            ("Target players each mills ", "Target players each mill "),
+            ("Target players each loses ", "Target players each lose "),
+            ("Target players each sacrifices ", "Target players each sacrifice "),
+            ("target players each gains ", "target players each gain "),
+            ("target players each draws ", "target players each draw "),
+            ("target players each discards ", "target players each discard "),
+            ("target players each mills ", "target players each mill "),
+            ("target players each loses ", "target players each lose "),
+            ("target players each sacrifices ", "target players each sacrifice "),
+        ] {
+            value = value.replace(from, to);
+        }
+        value
+    };
     let normalize_for_each_may_first = |first: &str| {
         let mut normalized = first.trim().trim_end_matches('.').to_string();
         if let Some(rest) = normalized.strip_prefix("sacrifices ") {
@@ -11655,7 +12593,62 @@ fn normalize_for_each_clause_surface(text: String) -> String {
             discard_tail.trim_end_matches('.')
         );
     }
-    text
+    if let Some((prefix, rest)) = text
+        .split_once("For each target player, that player ")
+        .or_else(|| text.split_once("for each target player, that player "))
+    {
+        let subject = if prefix.is_empty() {
+            "Target players each"
+        } else {
+            "target players each"
+        };
+        if let Some((first, second)) = rest
+            .split_once(". For each target player, that player ")
+            .or_else(|| rest.split_once(". for each target player, that player "))
+        {
+            let first = first.trim().trim_end_matches('.');
+            let second = second.trim().trim_end_matches('.');
+            return normalize_target_players_verbs(format!(
+                "{prefix}{subject} {first} and {second}."
+            ));
+        }
+        return normalize_target_players_verbs(format!("{prefix}{subject} {}", rest.trim()));
+    }
+    let original = text.clone();
+    let mut fallback = text;
+    if fallback.contains("For each target player, that player ")
+        || fallback.contains("for each target player, that player ")
+    {
+        fallback = fallback.replace(
+            "For each target player, that player ",
+            "Target players each ",
+        );
+        fallback = fallback.replace(
+            "for each target player, that player ",
+            "target players each ",
+        );
+    }
+    if let Some(rest) = fallback.strip_prefix("Choose any number of target players. ")
+        && let Some(each_rest) = rest.strip_prefix("target players each ")
+    {
+        return normalize_target_players_verbs(format!(
+            "Any number of target players each {}",
+            each_rest.trim()
+        ));
+    }
+    if let Some(rest) = fallback.strip_prefix("Choose two target players. ")
+        && let Some(each_rest) = rest.strip_prefix("target players each ")
+    {
+        return normalize_target_players_verbs(format!(
+            "Two target players each {}",
+            each_rest.trim()
+        ));
+    }
+    fallback = normalize_target_players_verbs(fallback);
+    if fallback != original {
+        return fallback;
+    }
+    original
 }
 
 fn normalize_triggered_self_deals_damage_phrase(def: &CardDefinition, text: &str) -> String {
@@ -11667,6 +12660,31 @@ fn normalize_triggered_self_deals_damage_phrase(def: &CardDefinition, text: &str
         return format!("Whenever a creature attacks, {source} deals {amount} damage to it.");
     }
     text.to_string()
+}
+
+fn normalize_each_opponent_life_exchange_clause(loss: &str, gain: &str) -> Option<String> {
+    let loss = loss.trim().trim_end_matches('.');
+    let gain = gain.trim().trim_end_matches('.');
+
+    let for_each = loss.strip_prefix("1 life for each ")?;
+    if !gain.eq_ignore_ascii_case(loss) {
+        return None;
+    }
+
+    let count_subject = if for_each.trim_end().ends_with(" in your party")
+        && for_each.trim_start().starts_with("creature ")
+    {
+        for_each
+            .trim()
+            .replacen("creature ", "creatures ", 1)
+    } else {
+        pluralize_noun_phrase(for_each.trim())
+    };
+
+    Some(format!(
+        "each opponent loses X life and you gain X life, where X is the number of {}",
+        count_subject
+    ))
 }
 
 fn normalize_known_low_tail_phrase(text: &str) -> String {
@@ -11822,6 +12840,11 @@ fn normalize_known_low_tail_phrase(text: &str) -> String {
             right.trim().trim_end_matches('.')
         );
     }
+    if trimmed.contains("loses loses ") || trimmed.contains("gain one life") {
+        return trimmed
+            .replace("loses loses ", "loses ")
+            .replace("gain one life", "gain 1 life");
+    }
 
     trimmed.to_string()
 }
@@ -11931,6 +12954,56 @@ fn normalize_compiled_post_pass_phrase(text: &str) -> String {
     }
 
     normalize_compiled_post_pass_effect(&normalized)
+}
+
+fn normalize_you_cast_spell_you_dont_own_counter_line(text: &str) -> Option<String> {
+    let (head, rest) = split_once_ascii_ci(text, "Whenever you cast a ")?;
+    let (owner_phrase, rest) = split_once_ascii_ci(rest, ", for each ")?;
+    let owner_phrase = owner_phrase.trim();
+    if !matches!(
+        owner_phrase,
+        "you don't own" | "you dont own" | "you don’t own"
+    ) {
+        return None;
+    }
+    let (filter, rest) = split_once_ascii_ci(rest, " spell, ")?;
+    let put_tail = strip_prefix_ascii_ci(rest, "Put a +1/+1 counter on that object")
+        .or_else(|| strip_prefix_ascii_ci(rest, "put a +1/+1 counter on that object"))?;
+    let mut rewritten = format!(
+        "{head}Whenever you cast a spell you don't own, put a +1/+1 counter on each {}",
+        filter.trim()
+    );
+    let put_tail = put_tail.trim();
+    if put_tail.is_empty() {
+        rewritten.push('.');
+    } else if put_tail.starts_with('.') {
+        rewritten.push_str(put_tail);
+    } else {
+        rewritten.push_str(". ");
+        rewritten.push_str(put_tail);
+    }
+    Some(rewritten)
+}
+
+fn normalize_one_or_more_combat_damage_treasure_line(text: &str) -> Option<String> {
+    let (head, rest) = split_once_ascii_ci(text, "Whenever one or more ")?;
+    let marker =
+        " deal combat damage to a player: Exile card in that player's library. If that doesn't happen, create a Treasure token";
+    let (subject, tail) = split_once_ascii_ci(rest, marker)?;
+    let mut rewritten = format!(
+        "{head}Whenever one or more {} deal combat damage to a player, exile the top card of that player's library. If you don't, create a Treasure token",
+        subject.trim()
+    );
+    let tail = tail.trim();
+    if tail.is_empty() {
+        rewritten.push('.');
+    } else if tail.starts_with('.') {
+        rewritten.push_str(tail);
+    } else {
+        rewritten.push_str(". ");
+        rewritten.push_str(tail);
+    }
+    Some(rewritten)
 }
 
 fn normalize_create_one_under_control_list(clauses: &[&str]) -> Option<String> {
@@ -12184,6 +13257,12 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     let mut normalized = text.trim().to_string();
     if normalized.is_empty() {
         return normalized;
+    }
+    if let Some(rewritten) = normalize_you_cast_spell_you_dont_own_counter_line(&normalized) {
+        normalized = rewritten;
+    }
+    if let Some(rewritten) = normalize_one_or_more_combat_damage_treasure_line(&normalized) {
+        normalized = rewritten;
     }
     let lower_normalized = normalized.to_ascii_lowercase();
     if lower_normalized
@@ -12541,6 +13620,35 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     {
         let mut rewritten = format!(
             "{prefix}. At the beginning of the next end step, return those cards to their owners' hands"
+        );
+        let rest = rest.trim();
+        if let Some(tail) = rest.strip_prefix('.') {
+            let tail = tail.trim();
+            if !tail.is_empty() {
+                rewritten.push_str(". ");
+                rewritten.push_str(tail);
+            } else {
+                rewritten.push('.');
+            }
+        } else if !rest.is_empty() {
+            rewritten.push(' ');
+            rewritten.push_str(rest);
+        } else {
+            rewritten.push('.');
+        }
+        return normalize_compiled_post_pass_effect(&rewritten);
+    }
+    if let Some((prefix, rest)) = split_once_ascii_ci(
+        &normalized,
+        ". At the beginning of the end step of that player's next turn, return it to its owner's hand",
+    ) && prefix
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("exile all ")
+        && prefix.to_ascii_lowercase().contains(" from their hand")
+    {
+        let mut rewritten = format!(
+            "{prefix}. At the beginning of the end step of that player's next turn, that player returns those cards to their hand"
         );
         let rest = rest.trim();
         if let Some(tail) = rest.strip_prefix('.') {
@@ -17289,6 +18397,30 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             gain_tail.0, gain_tail.1
         );
     }
+    if let Some(loss_tail) = trimmed.strip_prefix("For each opponent, that player loses ")
+        && let Some((loss, gain)) = loss_tail.split_once(" and you gain ")
+    {
+        if let Some(normalized) = normalize_each_opponent_life_exchange_clause(loss, gain) {
+            return capitalize_first(&normalized);
+        }
+        return format!("Each opponent loses {loss} and you gain {gain}");
+    }
+    if let Some((prefix, rest)) = trimmed.split_once(", for each opponent, that player loses ")
+        && let Some((loss, gain)) = rest.split_once(" and you gain ")
+    {
+        if let Some(normalized) = normalize_each_opponent_life_exchange_clause(loss, gain) {
+            return format!("{prefix}, {normalized}");
+        }
+        return format!("{prefix}, each opponent loses {loss} and you gain {gain}");
+    }
+    if let Some((prefix, rest)) = trimmed.split_once(", For each opponent, that player loses ")
+        && let Some((loss, gain)) = rest.split_once(" and you gain ")
+    {
+        if let Some(normalized) = normalize_each_opponent_life_exchange_clause(loss, gain) {
+            return format!("{prefix}, {normalized}");
+        }
+        return format!("{prefix}, each opponent loses {loss} and you gain {gain}");
+    }
     if let Some(rest) = trimmed.strip_prefix("For each creature or planeswalker, Deal ")
         && let Some(amount) = rest.strip_suffix(" damage to that object")
     {
@@ -19155,6 +20287,25 @@ mod tests {
         let normalized =
             normalize_sentence_surface_style("For each opponent, that player discards 2 cards.");
         assert_eq!(normalized, "Each opponent discards two cards.");
+    }
+
+    #[test]
+    fn normalizes_for_each_target_player_single_clause_sentence() {
+        let normalized = normalize_sentence_surface_style(
+            "For each target player, that player gains 6 life.",
+        );
+        assert_eq!(normalized, "Target players each gain 6 life.");
+    }
+
+    #[test]
+    fn normalizes_for_each_target_player_repeated_clause_sentence() {
+        let normalized = normalize_sentence_surface_style(
+            "For each target player, that player mills a card. For each target player, that player loses 1 life.",
+        );
+        assert_eq!(
+            normalized,
+            "Target players each mill a card and loses 1 life."
+        );
     }
 
     #[test]
@@ -21092,6 +22243,17 @@ mod tests {
     }
 
     #[test]
+    fn known_low_tail_normalizes_each_opponent_dynamic_loss_gain_to_x_clause() {
+        let normalized = normalize_known_low_tail_phrase(
+            "At the beginning of your first main phase, for each opponent, that player loses 1 life for each Shrine you control and you gain 1 life for each Shrine you control.",
+        );
+        assert_eq!(
+            normalized,
+            "At the beginning of your first main phase, each opponent loses X life and you gain X life, where X is the number of Shrines you control"
+        );
+    }
+
+    #[test]
     fn post_pass_normalizes_repeated_return_subtype_chain_to_do_same_for() {
         let normalized = normalize_compiled_post_pass_effect(
             "Return card Pirate from your graveyard to your hand. Return card Vampire from your graveyard to your hand. Return card Dinosaur from your graveyard to your hand. Return card Merfolk from your graveyard to your hand.",
@@ -21110,6 +22272,53 @@ mod tests {
         assert_eq!(
             normalized,
             "When Stangg enters, create Stangg Twin, a legendary 3/4 red and green Human Warrior creature token. Exile that token when this permanent leaves the battlefield. Sacrifice this permanent when that token leaves the battlefield."
+        );
+    }
+
+    #[test]
+    fn post_pass_normalizes_vaan_spellcast_counter_line() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Whenever you cast a you don't own, for each Scout or Pirate or Rogue you control spell, Put a +1/+1 counter on that object.",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever you cast a spell you don't own, put a +1/+1 counter on each Scout or Pirate or Rogue you control."
+        );
+    }
+
+    #[test]
+    fn post_pass_normalizes_vaan_combat_damage_treasure_line() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Whenever one or more Scout or Pirate or Rogue you control deal combat damage to a player: Exile card in that player's library. If that doesn't happen, create a Treasure token.",
+        );
+        assert_eq!(
+            normalized,
+            "Whenever one or more Scout or Pirate or Rogue you control deal combat damage to a player, exile the top card of that player's library. If you don't, create a Treasure token."
+        );
+    }
+
+    #[test]
+    fn token_blueprint_renders_explicit_colorless_noncreature_artifact() {
+        let token = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Cragflame",
+        )
+        .token()
+        .card_types(vec![crate::types::CardType::Artifact])
+        .subtypes(vec![crate::types::Subtype::Equipment])
+        .with_ability(crate::ability::Ability::static_ability(
+            crate::static_abilities::StaticAbility::make_colorless(crate::filter::ObjectFilter::source()),
+        ))
+        .build();
+
+        let rendered = super::describe_token_blueprint(&token).to_ascii_lowercase();
+        assert!(
+            rendered.contains("colorless"),
+            "expected explicit colorless in noncreature token text, got {rendered}"
+        );
+        assert!(
+            !rendered.contains("is colorless"),
+            "expected colorless marker not to render as an extra rules-text clause, got {rendered}"
         );
     }
 }

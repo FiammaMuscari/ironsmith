@@ -298,6 +298,16 @@ enum PredicateAst {
         player: PlayerAst,
         filter: ObjectFilter,
     },
+    PlayerControlsAtLeast {
+        player: PlayerAst,
+        filter: ObjectFilter,
+        count: u32,
+    },
+    PlayerControlsOrHasCardInGraveyard {
+        player: PlayerAst,
+        control_filter: ObjectFilter,
+        graveyard_filter: ObjectFilter,
+    },
     PlayerControlsNo {
         player: PlayerAst,
         filter: ObjectFilter,
@@ -367,6 +377,8 @@ enum EffectAst {
     CounterUnlessPays {
         target: TargetAst,
         mana: Vec<ManaSymbol>,
+        life: Option<Value>,
+        additional_generic: Option<Value>,
     },
     UnlessPays {
         effects: Vec<EffectAst>,
@@ -714,6 +726,10 @@ enum EffectAst {
         effects: Vec<EffectAst>,
     },
     ForEachPlayer {
+        effects: Vec<EffectAst>,
+    },
+    ForEachTargetPlayers {
+        count: ChoiceCount,
         effects: Vec<EffectAst>,
     },
     ForEachObject {

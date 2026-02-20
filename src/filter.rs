@@ -2618,19 +2618,33 @@ impl ObjectFilter {
             return format!("{} not named {}", parts.join(" "), name);
         }
 
-        if let Some(ref power) = self.power {
+        if let (Some(power), Some(toughness)) = (&self.power, &self.toughness)
+            && let (Comparison::Equal(power_value), Comparison::Equal(toughness_value)) =
+                (power, toughness)
+            && self.power_reference == self.toughness_reference
+        {
             let label = match self.power_reference {
-                PtReference::Effective => "power",
-                PtReference::Base => "base power",
+                PtReference::Effective => "power and toughness",
+                PtReference::Base => "base power and toughness",
             };
-            parts.push(format!("with {label} {}", describe_comparison(power)));
-        }
-        if let Some(ref toughness) = self.toughness {
-            let label = match self.toughness_reference {
-                PtReference::Effective => "toughness",
-                PtReference::Base => "base toughness",
-            };
-            parts.push(format!("with {label} {}", describe_comparison(toughness)));
+            parts.push(format!(
+                "with {label} {power_value}/{toughness_value}"
+            ));
+        } else {
+            if let Some(ref power) = self.power {
+                let label = match self.power_reference {
+                    PtReference::Effective => "power",
+                    PtReference::Base => "base power",
+                };
+                parts.push(format!("with {label} {}", describe_comparison(power)));
+            }
+            if let Some(ref toughness) = self.toughness {
+                let label = match self.toughness_reference {
+                    PtReference::Effective => "toughness",
+                    PtReference::Base => "base toughness",
+                };
+                parts.push(format!("with {label} {}", describe_comparison(toughness)));
+            }
         }
         if let Some(ref mana_value) = self.mana_value {
             parts.push(format!(
@@ -2707,11 +2721,24 @@ impl ObjectFilter {
                 // Avoid adding it to reduce render-only mismatches.
             }
         }
-        if let Some(suffix) = controller_suffix {
-            parts.push(suffix);
-        }
-        if let Some(suffix) = owner_suffix {
-            parts.push(suffix);
+        match (controller_suffix, owner_suffix) {
+            (Some(controller), Some(owner))
+                if controller == "you control" && owner == "you own" =>
+            {
+                parts.push("you both own and control".to_string());
+            }
+            (Some(controller), Some(owner))
+                if controller == "that player controls" && owner == "that player owns" =>
+            {
+                parts.push("that player both owns and controls".to_string());
+            }
+            (Some(controller), Some(owner)) => {
+                parts.push(controller);
+                parts.push(owner);
+            }
+            (Some(controller), None) => parts.push(controller),
+            (None, Some(owner)) => parts.push(owner),
+            (None, None) => {}
         }
 
         let mut target_fragments = Vec::new();

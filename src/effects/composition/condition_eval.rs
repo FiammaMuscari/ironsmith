@@ -3,6 +3,7 @@ use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId, StableId};
 use crate::target::PlayerFilter;
+use crate::zone::Zone;
 
 /// Condition evaluation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +69,37 @@ pub fn evaluate_condition_resolution(
     )
 }
 
+fn condition_candidate_ids_for_zone(game: &GameState, zone: Option<Zone>) -> Vec<ObjectId> {
+    match zone {
+        Some(Zone::Battlefield) | None => game.battlefield.clone(),
+        Some(Zone::Graveyard) => game
+            .players
+            .iter()
+            .flat_map(|player| player.graveyard.iter().copied())
+            .collect(),
+        Some(Zone::Hand) => game
+            .players
+            .iter()
+            .flat_map(|player| player.hand.iter().copied())
+            .collect(),
+        Some(Zone::Library) => game
+            .players
+            .iter()
+            .flat_map(|player| player.library.iter().copied())
+            .collect(),
+        Some(Zone::Stack) => game.stack.iter().map(|entry| entry.object_id).collect(),
+        Some(Zone::Exile) => game.exile.clone(),
+        Some(Zone::Command) => game.command_zone.clone(),
+    }
+}
+
+fn condition_object_matches_player_zone(obj: &crate::object::Object, player_id: PlayerId, zone: Option<Zone>) -> bool {
+    match zone {
+        Some(Zone::Battlefield) | None => obj.controller == player_id,
+        _ => obj.owner == player_id,
+    }
+}
+
 /// Evaluate a condition with minimal context (for cast-time evaluation).
 ///
 /// This simplified version is used during spell casting to evaluate conditions
@@ -116,11 +148,37 @@ fn evaluate_condition_simple(
             if *player == PlayerFilter::IteratedPlayer {
                 ctx = ctx.with_iterated_player(Some(player_id));
             }
-            game.battlefield
+            condition_candidate_ids_for_zone(game, filter.zone)
                 .iter()
                 .filter_map(|&id| game.object(id))
-                .filter(|obj| obj.controller == player_id)
+                .filter(|obj| condition_object_matches_player_zone(obj, player_id, filter.zone))
                 .any(|obj| filter.matches(obj, &ctx, game))
+        }
+        Condition::PlayerControlsAtLeast {
+            player,
+            filter,
+            count,
+        } => {
+            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
+                return false;
+            };
+            let opponents: Vec<PlayerId> = game
+                .players
+                .iter()
+                .filter(|p| p.id != player_id)
+                .map(|p| p.id)
+                .collect();
+            let mut ctx = crate::filter::FilterContext::new(player_id).with_opponents(opponents);
+            if *player == PlayerFilter::IteratedPlayer {
+                ctx = ctx.with_iterated_player(Some(player_id));
+            }
+            let matches = condition_candidate_ids_for_zone(game, filter.zone)
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| condition_object_matches_player_zone(obj, player_id, filter.zone))
+                .filter(|obj| filter.matches(obj, &ctx, game))
+                .count();
+            matches >= *count as usize
         }
         Condition::PlayerControlsMost { player, filter } => {
             let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
@@ -139,10 +197,10 @@ fn evaluate_condition_simple(
                 if *player == PlayerFilter::IteratedPlayer {
                     ctx = ctx.with_iterated_player(Some(candidate));
                 }
-                game.battlefield
+                condition_candidate_ids_for_zone(game, filter.zone)
                     .iter()
                     .filter_map(|&id| game.object(id))
-                    .filter(|obj| obj.controller == candidate)
+                    .filter(|obj| condition_object_matches_player_zone(obj, candidate, filter.zone))
                     .filter(|obj| filter.matches(obj, &ctx, game))
                     .count()
             };
@@ -322,23 +380,38 @@ fn evaluate_condition(
             let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
             let mut filter_ctx = ctx.filter_context(game);
             filter_ctx.iterated_player = Some(player_id);
-            let has_matching = game
-                .battlefield
+            let has_matching = condition_candidate_ids_for_zone(game, filter.zone)
                 .iter()
                 .filter_map(|&id| game.object(id))
-                .filter(|obj| obj.controller == player_id)
+                .filter(|obj| condition_object_matches_player_zone(obj, player_id, filter.zone))
                 .any(|obj| filter.matches(obj, &filter_ctx, game));
             Ok(has_matching)
+        }
+        Condition::PlayerControlsAtLeast {
+            player,
+            filter,
+            count,
+        } => {
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            let mut filter_ctx = ctx.filter_context(game);
+            filter_ctx.iterated_player = Some(player_id);
+            let matches = condition_candidate_ids_for_zone(game, filter.zone)
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| condition_object_matches_player_zone(obj, player_id, filter.zone))
+                .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                .count();
+            Ok(matches >= *count as usize)
         }
         Condition::PlayerControlsMost { player, filter } => {
             let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
             let count_for = |candidate: PlayerId| {
                 let mut filter_ctx = ctx.filter_context(game);
                 filter_ctx.iterated_player = Some(candidate);
-                game.battlefield
+                condition_candidate_ids_for_zone(game, filter.zone)
                     .iter()
                     .filter_map(|&id| game.object(id))
-                    .filter(|obj| obj.controller == candidate)
+                    .filter(|obj| condition_object_matches_player_zone(obj, candidate, filter.zone))
                     .filter(|obj| filter.matches(obj, &filter_ctx, game))
                     .count()
             };

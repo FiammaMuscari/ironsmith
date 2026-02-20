@@ -2,7 +2,9 @@ use super::*;
 use crate::ability::AbilityKind;
 use crate::color::Color;
 use crate::compiled_text::{compiled_lines, oracle_like_lines};
-use crate::effects::{AddManaEffect, CreateTokenEffect, ReturnFromGraveyardToHandEffect};
+use crate::effects::{
+    AddManaEffect, CreateTokenEffect, GainLifeEffect, ReturnFromGraveyardToHandEffect,
+};
 use crate::static_abilities::StaticAbilityId;
 use crate::target::{ChooseSpec, PlayerFilter};
 
@@ -1782,6 +1784,51 @@ fn test_counter_unless_pays_rendering() {
 }
 
 #[test]
+fn test_counter_unless_pays_and_life_rendering() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Mundungu Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{T}: Counter target spell unless its controller pays {1} and 1 life.")
+        .expect("parse counter-unless-pay-and-life probe");
+
+    let rendered = compiled_lines(&def).join(" | ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("counter target spell unless its controller pays {1} and 1 life"),
+        "expected counter-unless-pay-and-life text in compiled output, got {rendered}"
+    );
+}
+
+#[test]
+fn test_counter_unless_pays_domain_rendering() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Evasive Action Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Counter target spell unless its controller pays {1} for each basic land type among lands you control.",
+        )
+        .expect("parse domain counter-unless-pay probe");
+
+    let rendered = compiled_lines(&def).join(" | ").to_ascii_lowercase();
+    assert!(
+        rendered.contains(
+            "counter target spell unless its controller pays {1} for each basic land type among lands you control"
+        ),
+        "expected domain counter-unless-pay text in compiled output, got {rendered}"
+    );
+}
+
+#[test]
+fn test_return_target_permanent_you_both_own_and_control_rendering() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Obelisk Probe")
+        .card_types(vec![CardType::Artifact])
+        .parse_text("{6}, {T}: Return target permanent you both own and control to your hand.")
+        .expect("parse return-own-control probe");
+
+    let rendered = compiled_lines(&def).join(" | ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("return target permanent you both own and control to your hand"),
+        "expected own/control target restriction in compiled output, got {rendered}"
+    );
+}
+
 fn test_power_damage_exchange_rendering() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Power Exchange Probe")
         .card_types(vec![CardType::Creature])
@@ -3949,6 +3996,48 @@ fn parse_dark_deal_that_many_minus_one_keeps_prior_effect_reference() {
 }
 
 #[test]
+fn parse_where_x_is_count_minus_fixed_preserves_negative_offset() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Ivory Tower Variant")
+        .parse_text("At the beginning of your upkeep, you gain X life, where X is the number of cards in your hand minus 4.")
+        .expect("where-x count-minus-fixed clause should parse");
+
+    let triggered = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Triggered(triggered) => Some(triggered),
+            _ => None,
+        })
+        .expect("expected upkeep triggered ability");
+    let gain = triggered
+        .effects
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<GainLifeEffect>())
+        .expect("expected gain-life effect");
+
+    let crate::effect::Value::Add(left, right) = &gain.amount else {
+        panic!("expected additive life gain amount, got {:?}", gain.amount);
+    };
+    assert!(
+        matches!(
+            left.as_ref(),
+            crate::effect::Value::CardsInHand(PlayerFilter::You)
+        ),
+        "expected left side to count cards in hand, got {left:?}"
+    );
+    assert!(
+        matches!(right.as_ref(), crate::effect::Value::Fixed(-4)),
+        "expected minus-four offset, got {right:?}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("minus 4"),
+        "expected compiled text to preserve minus-four offset, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_hellion_eruption_that_many_keeps_prior_effect_reference() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Hellion Eruption Variant")
         .parse_text("Sacrifice all creatures you control, then create that many 4/4 red Hellion creature tokens.")
@@ -5663,6 +5752,194 @@ fn parse_deathpact_style_token_activation_is_preserved() {
 }
 
 #[test]
+fn parse_llanowar_mentor_token_keeps_tap_for_green_mana_ability() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Llanowar Mentor Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "{G}, {T}, Discard a card: Create a 1/1 green Elf Druid creature token named Llanowar Elves. It has \"{T}: Add {G}.\"",
+        )
+        .expect("llanowar mentor token reminder should parse");
+
+    let activated = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) => Some(activated),
+            _ => None,
+        })
+        .expect("expected activated ability");
+    let create = activated
+        .effects
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<CreateTokenEffect>())
+        .expect("expected token creation effect");
+    let has_green_tap_mana = create.token.abilities.iter().any(|ability| {
+        let AbilityKind::Activated(activated) = &ability.kind else {
+            return false;
+        };
+        activated.effects.iter().any(|effect| {
+            effect
+                .downcast_ref::<AddManaEffect>()
+                .is_some_and(|add| add.mana == vec![ManaSymbol::Green])
+        })
+    });
+    assert!(
+        has_green_tap_mana,
+        "expected created token to keep '{T}: Add {{G}}' ability, got {:#?}",
+        create.token.abilities
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("{t}: add {g}"),
+        "expected compiled text to show token mana ability, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_sparkspitter_token_reminder_sets_next_end_step_sacrifice() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Sparkspitter Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "{R}, {T}, Discard a card: Create a 3/1 red Elemental creature token named Spark Elemental. It has trample, haste, and \"At the beginning of the end step, sacrifice this token.\"",
+        )
+        .expect("sparkspitter token reminder should parse");
+
+    let activated = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) => Some(activated),
+            _ => None,
+        })
+        .expect("expected activated ability");
+    let create = activated
+        .effects
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<CreateTokenEffect>())
+        .expect("expected token creation effect");
+
+    assert!(
+        create.sacrifice_at_next_end_step,
+        "expected token to be marked for next-end-step sacrifice, got {create:#?}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("sacrifice")
+            && rendered.contains("end step")
+            && rendered.contains("trample")
+            && rendered.contains("haste"),
+        "expected compiled text to preserve token keywords and delayed sacrifice, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_construct_token_with_for_each_artifact_text_keeps_single_token_and_cda() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Urza Construct Variant")
+        .card_types(vec![CardType::Artifact])
+        .parse_text("{2}, {T}: Create a 0/0 colorless Construct artifact creature token with \"This token gets +1/+1 for each artifact you control.\"")
+        .expect("construct token with inline for-each artifact text should parse");
+
+    let activated = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) => Some(activated),
+            _ => None,
+        })
+        .expect("expected activated ability");
+    let create = activated
+        .effects
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<CreateTokenEffect>())
+        .expect("expected token creation effect");
+    assert!(
+        matches!(create.count, crate::effect::Value::Fixed(1)),
+        "expected exactly one token to be created, got {:?}",
+        create.count
+    );
+    let has_cda = create.token.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(static_ability)
+                if static_ability.id() == StaticAbilityId::CharacteristicDefiningPT
+        )
+    });
+    assert!(
+        has_cda,
+        "expected Construct token to keep +1/+1-for-each-artifact behavior, got {:#?}",
+        create.token.abilities
+    );
+}
+
+#[test]
+fn parse_construct_token_with_single_quoted_rules_text_keeps_cda() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Construct Quote Variant")
+        .parse_text(
+            "Create a 0/0 colorless Construct artifact creature token with 'This token gets +1/+1 for each artifact you control.'",
+        )
+        .expect("single-quoted Construct token text should parse");
+
+    let create = def
+        .spell_effect
+        .as_ref()
+        .and_then(|effects| {
+            effects
+                .iter()
+                .find_map(|effect| effect.downcast_ref::<CreateTokenEffect>())
+        })
+        .expect("expected spell create-token effect");
+    let has_cda = create.token.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(static_ability)
+                if static_ability.id() == StaticAbilityId::CharacteristicDefiningPT
+        )
+    });
+    assert!(
+        has_cda,
+        "expected Construct token to keep dynamic +1/+1 scaling text, got {:#?}",
+        create.token.abilities
+    );
+}
+
+#[test]
+fn parse_sound_the_call_token_does_not_misread_named_card_reference_as_token_name() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Sound the Call Variant")
+        .parse_text(
+            "Create a 1/1 green Wolf creature token. It has \"This token gets +1/+1 for each card named Sound the Call in each graveyard.\"",
+        )
+        .expect("sound-the-call token reminder should parse");
+
+    let create = def
+        .spell_effect
+        .as_ref()
+        .and_then(|effects| {
+            effects
+                .iter()
+                .find_map(|effect| effect.downcast_ref::<CreateTokenEffect>())
+        })
+        .expect("expected spell create-token effect");
+    assert_eq!(
+        create.token.name(),
+        "Wolf",
+        "token name should remain subtype-derived Wolf, not reminder-card-name text"
+    );
+    let has_scaling = create.token.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(static_ability) if static_ability.id() == StaticAbilityId::Anthem
+        )
+    });
+    assert!(
+        has_scaling,
+        "expected token to keep +1/+1-for-each-named-card ability, got {:#?}",
+        create.token.abilities
+    );
+}
+
+#[test]
 fn parse_ozox_nested_token_return_keeps_named_card_literal() {
     let canonical = |name: &str| {
         name.chars()
@@ -6288,7 +6565,21 @@ fn parse_counter_unless_where_x_fails_strictly() {
 }
 
 #[test]
-fn parse_counter_unless_plus_additional_stops_at_first_mana_segment() {
+fn parse_gain_x_plus_life_with_where_clause_binds_x_value() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "An-Havva Inn Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("You gain X plus 1 life, where X is the number of green creatures on the battlefield.")
+        .expect("gain-x-plus-life with where clause should parse");
+
+    let joined = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("where x is the number of green creatures"),
+        "expected where-x binding to remain in compiled text, got {joined}"
+    );
+}
+
+#[test]
+fn parse_counter_unless_plus_additional_keeps_dynamic_payment_clause() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Spell Stutter Variant")
         .card_types(vec![CardType::Instant])
         .parse_text(
@@ -6296,10 +6587,11 @@ fn parse_counter_unless_plus_additional_stops_at_first_mana_segment() {
         )
         .expect("parse counter-unless-plus-additional clause");
 
-    let joined = oracle_like_lines(&def).join(" ");
+    let joined = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        joined.contains("pays {2}") && !joined.contains("{2}{1}"),
-        "expected base payment segment to remain unduplicated, got {joined}"
+        joined.contains("pays {2}")
+            && joined.contains("plus an additional {1} for each faerie you control"),
+        "expected dynamic additional payment clause to be preserved, got {joined}"
     );
 }
 
@@ -7403,6 +7695,72 @@ fn parse_trigger_with_comma_separated_list_does_not_split_early() {
     assert!(
         rendered.contains("aura") && rendered.contains("equipment") && rendered.contains("vehicle"),
         "expected trigger list to include aura/equipment/vehicle, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_trigger_with_and_or_subtype_list_keeps_effect_split_on_trigger_delimiter() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Vaan Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Whenever one or more Scouts, Pirates, and/or Rogues you control deal combat damage to a player, exile the top card of that player's library. You may cast it. If you don't, create a Treasure token.")
+        .expect("and/or subtype trigger list should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("exile the top card of that player's library")
+            && rendered.contains("create a treasure token"),
+        "expected exile/create sequence to remain on the triggered effect, got {rendered}"
+    );
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        !abilities_debug.contains("unimplemented_trigger"),
+        "expected no fallback custom trigger for and/or subtype list, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_other_mice_anthem_renders_irregular_plural() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Mabel Anthem Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Other Mice you control get +1/+1.")
+        .expect("mice anthem should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("other mice you control get +1/+1"),
+        "expected irregular 'mice' plural in rendered anthem, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("mouses"),
+        "expected not to render as 'mouses', got {rendered}"
+    );
+}
+
+#[test]
+fn parse_mabel_token_preserves_colorless_and_equipment_payload() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Mabel Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "When Mabel enters, create Cragflame, a legendary colorless Equipment artifact token with \"Equipped creature gets +1/+1 and has vigilance, trample, and haste\" and equip {2}.",
+        )
+        .expect("mabel token payload should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("colorless equipment artifact token"),
+        "expected explicit colorless equipment token rendering, got {rendered}"
+    );
+    assert!(
+        rendered.contains("equipped creature gets +1/+1")
+            && rendered.contains("vigilance")
+            && rendered.contains("trample")
+            && rendered.contains("haste"),
+        "expected equipped creature granted stats/keywords in token text, got {rendered}"
+    );
+    assert!(
+        rendered.contains("equip {2}") || rendered.contains("equip 2"),
+        "expected equip payload to remain on token, got {rendered}"
     );
 }
 

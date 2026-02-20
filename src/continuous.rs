@@ -2611,6 +2611,7 @@ fn resolve_value_with_context(
         // Return 0 as fallback (these are rare in continuous effects anyway)
         Value::XTimes(_)
         | Value::CountPlayers(_)
+        | Value::PartySize(_)
         | Value::Devotion { .. }
         | Value::ColorsOfManaSpentToCastThisSpell
         | Value::CountersOn(_, _)

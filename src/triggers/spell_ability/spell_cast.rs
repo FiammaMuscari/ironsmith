@@ -298,6 +298,22 @@ fn describe_spell_filter(filter: &ObjectFilter) -> String {
     }
 
     let fallback = filter.description();
+    if filter.zone == Some(Zone::Stack) {
+        match fallback.as_str() {
+            "you own"
+            | "you don't own"
+            | "an opponent owns"
+            | "a player owns"
+            | "active player owns"
+            | "defending player owns"
+            | "attacking player owns"
+            | "damaged player owns"
+            | "a teammate owns"
+            | "that player owns"
+            | "they own" => return format!("a spell {fallback}"),
+            _ => {}
+        }
+    }
     if fallback == "permanent" {
         "a spell".to_string()
     } else if fallback.to_ascii_lowercase().contains("spell") {

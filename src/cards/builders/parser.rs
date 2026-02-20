@@ -245,53 +245,57 @@ pub(super) fn parse_text_with_annotations(
         let mut handled_restrictions_for_new_ability = false;
 
         if !parsed_portion.is_empty() {
-            let line_text = parsed_portion.join(". ");
-            let parsed = match parse_line(&line_text, info.line_index) {
-                Ok(parsed) => parsed,
-                Err(err) if allow_unsupported => {
-                    let reason = format!("{err:?}");
-                    let short_reason = reason
-                        .split(" (clause:")
-                        .next()
-                        .unwrap_or(reason.as_str())
-                        .split(" (line:")
-                        .next()
-                        .unwrap_or(reason.as_str())
-                        .trim()
-                        .to_string();
-                    let marker = StaticAbility::custom(
-                        "unsupported_line",
-                        format!(
-                            "Unsupported parser line fallback: {} ({})",
-                            info.raw_line.trim(),
-                            short_reason
-                        ),
-                    );
-                    LineAst::StaticAbility(marker)
-                }
-                Err(err) => return Err(err),
-            };
+            let parse_chunks =
+                split_trigger_sentence_chunks(&parsed_portion, info.line_index);
+            for line_text in parse_chunks {
+                let parsed = match parse_line(&line_text, info.line_index) {
+                    Ok(parsed) => parsed,
+                    Err(err) if allow_unsupported => {
+                        let reason = format!("{err:?}");
+                        let short_reason = reason
+                            .split(" (clause:")
+                            .next()
+                            .unwrap_or(reason.as_str())
+                            .split(" (line:")
+                            .next()
+                            .unwrap_or(reason.as_str())
+                            .trim()
+                            .to_string();
+                        let marker = StaticAbility::custom(
+                            "unsupported_line",
+                            format!(
+                                "Unsupported parser line fallback: {} ({})",
+                                info.raw_line.trim(),
+                                short_reason
+                            ),
+                        );
+                        LineAst::StaticAbility(marker)
+                    }
+                    Err(err) => return Err(err),
+                };
 
-            let mut handled_followup_statement = false;
-            if let LineAst::Statement { effects } = &parsed {
-                if apply_instead_followup_statement_to_last_ability(
-                    &mut builder,
-                    last_restrictable_ability,
-                    effects,
-                    info,
-                    allow_unsupported,
-                    &mut annotations,
-                )? {
-                    handled_followup_statement = true;
-                    handled_restrictions_for_new_ability = true;
+                let mut handled_followup_statement = false;
+                if let LineAst::Statement { effects } = &parsed {
+                    if apply_instead_followup_statement_to_last_ability(
+                        &mut builder,
+                        last_restrictable_ability,
+                        effects,
+                        info,
+                        allow_unsupported,
+                        &mut annotations,
+                    )? {
+                        handled_followup_statement = true;
+                        handled_restrictions_for_new_ability = true;
+                    }
                 }
-            }
 
-            if !handled_followup_statement {
+                if handled_followup_statement {
+                    continue;
+                }
+
                 let abilities_before = builder.abilities.len();
                 collect_tag_spans_from_line(&parsed, &mut annotations, &info.normalized);
-                builder =
-                    apply_line_ast(builder, parsed, info, allow_unsupported, &mut annotations)?;
+                builder = apply_line_ast(builder, parsed, info, allow_unsupported, &mut annotations)?;
                 let abilities_after = builder.abilities.len();
 
                 for ability_idx in abilities_before..abilities_after {
@@ -1443,6 +1447,39 @@ fn split_sentences_for_parse(line: &str, _line_index: usize) -> Vec<String> {
     }
 
     sentences
+}
+
+fn sentence_starts_with_trigger_intro(sentence: &str, line_index: usize) -> bool {
+    let tokens = tokenize_line(sentence, line_index);
+    tokens
+        .first()
+        .is_some_and(|token| token.is_word("when") || token.is_word("whenever"))
+        || is_at_trigger_intro(&tokens, 0)
+}
+
+fn split_trigger_sentence_chunks(sentences: &[String], line_index: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = Vec::new();
+    let mut current_starts_with_trigger = false;
+
+    for sentence in sentences {
+        let sentence_starts_with_trigger = sentence_starts_with_trigger_intro(sentence, line_index);
+        if !current.is_empty() && current_starts_with_trigger && sentence_starts_with_trigger {
+            chunks.push(current.join(". "));
+            current.clear();
+            current_starts_with_trigger = false;
+        }
+        if current.is_empty() {
+            current_starts_with_trigger = sentence_starts_with_trigger;
+        }
+        current.push(sentence.clone());
+    }
+
+    if !current.is_empty() {
+        chunks.push(current.join(". "));
+    }
+
+    chunks
 }
 
 fn queue_restriction(

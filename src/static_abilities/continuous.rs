@@ -243,6 +243,17 @@ fn pluralized_subject_text(filter: &ObjectFilter) -> String {
 
 fn simple_pluralize(word: &str) -> String {
     let lower = word.to_ascii_lowercase();
+    if lower == "mouse" {
+        return if word
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+        {
+            "Mice".to_string()
+        } else {
+            "mice".to_string()
+        };
+    }
     if lower.ends_with('s')
         || lower.ends_with('x')
         || lower.ends_with('z')

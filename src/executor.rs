@@ -724,6 +724,34 @@ pub fn resolve_value(
                 .count();
             Ok(count as i32)
         }
+        Value::PartySize(player_filter) => {
+            let player_id = resolve_player_filter(game, player_filter, ctx)?;
+            let has_role = |role: crate::types::Subtype| {
+                game.battlefield
+                    .iter()
+                    .filter_map(|&id| game.object(id))
+                    .any(|obj| {
+                        obj.controller == player_id
+                            && obj.has_card_type(crate::types::CardType::Creature)
+                            && obj.has_subtype(role)
+                    })
+            };
+
+            let mut size = 0i32;
+            if has_role(crate::types::Subtype::Cleric) {
+                size += 1;
+            }
+            if has_role(crate::types::Subtype::Rogue) {
+                size += 1;
+            }
+            if has_role(crate::types::Subtype::Warrior) {
+                size += 1;
+            }
+            if has_role(crate::types::Subtype::Wizard) {
+                size += 1;
+            }
+            Ok(size)
+        }
 
         Value::SourcePower => {
             let obj = game

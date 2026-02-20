@@ -954,6 +954,7 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::BasicLandTypesAmong(_)
         | Value::CreaturesDiedThisTurn
         | Value::CountPlayers(_)
+        | Value::PartySize(_)
         | Value::Devotion { .. }
         | Value::ColorsOfManaSpentToCastThisSpell
         | Value::ManaValueOf(_)

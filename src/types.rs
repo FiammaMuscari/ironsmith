@@ -29,6 +29,7 @@ pub enum Subtype {
     Forest,
 
     // Non-basic land types
+    Desert,
     Urzas,
     Cave,
     Gate,
@@ -303,8 +304,11 @@ impl Subtype {
                 | Subtype::Mountain
                 | Subtype::Forest
                 // Non-basic land types
+                | Subtype::Desert
                 | Subtype::Urzas
                 | Subtype::Cave
+                | Subtype::Gate
+                | Subtype::Locus
         )
     }
 
