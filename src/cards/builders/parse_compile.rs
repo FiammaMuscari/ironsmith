@@ -254,10 +254,10 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::Untap { target }
         | EffectAst::TapOrUntap { target }
         | EffectAst::Destroy { target }
-        | EffectAst::Exile { target }
+        | EffectAst::Exile { target, .. }
         | EffectAst::ExileWhenSourceLeaves { target }
         | EffectAst::SacrificeSourceWhenLeaves { target }
-        | EffectAst::ExileUntilSourceLeaves { target }
+        | EffectAst::ExileUntilSourceLeaves { target, .. }
         | EffectAst::LookAtHand { target }
         | EffectAst::Transform { target }
         | EffectAst::Regenerate { target }
@@ -298,7 +298,7 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::RegenerateAll { filter }
         | EffectAst::DestroyAll { filter }
         | EffectAst::DestroyAllOfChosenColor { filter }
-        | EffectAst::ExileAll { filter }
+        | EffectAst::ExileAll { filter, .. }
         | EffectAst::PreventDamageEach { filter, .. }
         | EffectAst::ReturnAllToHand { filter }
         | EffectAst::ReturnAllToHandOfChosenColor { filter }
@@ -630,10 +630,10 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::Untap { target }
         | EffectAst::TapOrUntap { target }
         | EffectAst::Destroy { target }
-        | EffectAst::Exile { target }
+        | EffectAst::Exile { target, .. }
         | EffectAst::ExileWhenSourceLeaves { target }
         | EffectAst::SacrificeSourceWhenLeaves { target }
-        | EffectAst::ExileUntilSourceLeaves { target }
+        | EffectAst::ExileUntilSourceLeaves { target, .. }
         | EffectAst::LookAtHand { target }
         | EffectAst::Transform { target }
         | EffectAst::Regenerate { target }
@@ -676,7 +676,7 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::RegenerateAll { filter }
         | EffectAst::DestroyAll { filter }
         | EffectAst::DestroyAllOfChosenColor { filter }
-        | EffectAst::ExileAll { filter }
+        | EffectAst::ExileAll { filter, .. }
         | EffectAst::PreventDamageEach { filter, .. }
         | EffectAst::ReturnAllToHand { filter }
         | EffectAst::ReturnAllToHandOfChosenColor { filter }
@@ -1039,10 +1039,10 @@ fn collect_tag_spans_from_effect(
         | EffectAst::Untap { target }
         | EffectAst::TapOrUntap { target }
         | EffectAst::Destroy { target }
-        | EffectAst::Exile { target }
+        | EffectAst::Exile { target, .. }
         | EffectAst::ExileWhenSourceLeaves { target }
         | EffectAst::SacrificeSourceWhenLeaves { target }
-        | EffectAst::ExileUntilSourceLeaves { target }
+        | EffectAst::ExileUntilSourceLeaves { target, .. }
         | EffectAst::LookAtHand { target }
         | EffectAst::Transform { target }
         | EffectAst::Regenerate { target }
@@ -1722,6 +1722,7 @@ fn hand_exile_filter_and_count(
 
 fn lower_hand_exile_target(
     target: &TargetAst,
+    face_down: bool,
     ctx: &mut CompileContext,
 ) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
     let Some((mut filter, count)) = hand_exile_filter_and_count(target, ctx)? else {
@@ -1754,14 +1755,16 @@ fn lower_hand_exile_target(
         crate::effects::ChooseObjectsEffect::new(filter, count, chooser, tag_key.clone())
             .in_zone(Zone::Hand),
     ));
-    prelude.push(Effect::new(crate::effects::ExileEffect::with_spec(
-        ChooseSpec::Tagged(tag_key),
-    )));
+    prelude.push(Effect::new(
+        crate::effects::ExileEffect::with_spec(ChooseSpec::Tagged(tag_key))
+            .with_face_down(face_down),
+    ));
     Ok(Some((prelude, choices)))
 }
 
 fn lower_counted_non_target_exile_target(
     target: &TargetAst,
+    face_down: bool,
     ctx: &mut CompileContext,
 ) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
     let (filter, count) = match target {
@@ -1818,14 +1821,16 @@ fn lower_counted_non_target_exile_target(
         tag_key.clone(),
     )
     .in_zone(choice_zone)));
-    prelude.push(Effect::new(crate::effects::ExileEffect::with_spec(
-        ChooseSpec::Tagged(tag_key),
-    )));
+    prelude.push(Effect::new(
+        crate::effects::ExileEffect::with_spec(ChooseSpec::Tagged(tag_key))
+            .with_face_down(face_down),
+    ));
     Ok(Some((prelude, choices)))
 }
 
 fn lower_single_non_target_exile_target(
     target: &TargetAst,
+    face_down: bool,
     ctx: &mut CompileContext,
 ) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
     let (filter, count) = match target {
@@ -1878,9 +1883,10 @@ fn lower_single_non_target_exile_target(
         .top_only();
 
     prelude.push(Effect::new(choose));
-    prelude.push(Effect::new(crate::effects::ExileEffect::with_spec(
-        ChooseSpec::Tagged(tag_key),
-    )));
+    prelude.push(Effect::new(
+        crate::effects::ExileEffect::with_spec(ChooseSpec::Tagged(tag_key))
+            .with_face_down(face_down),
+    ));
     Ok(Some((prelude, choices)))
 }
 
@@ -3254,7 +3260,7 @@ fn compile_effect(
             prelude.push(Effect::choose_one(modes));
             Ok((prelude, choices))
         }
-        EffectAst::ExileAll { filter } => {
+        EffectAst::ExileAll { filter, face_down } => {
             let resolved_filter = resolve_it_tag(filter, ctx)?;
             let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
             if let Some(player_filter) = infer_player_filter_from_object_filter(&resolved_filter) {
@@ -3266,7 +3272,9 @@ fn compile_effect(
                     crate::filter::TaggedOpbjectRelation::SameNameAsTagged
                 )
             });
-            let mut effect = Effect::exile_all(resolved_filter);
+            let mut effect = Effect::new(
+                crate::effects::ExileEffect::all(resolved_filter).with_face_down(*face_down),
+            );
             if ctx.auto_tag_object_targets && !keep_last_object_tag {
                 let tag = ctx.next_tag("exiled");
                 effect = effect.tag(tag.clone());
@@ -3275,21 +3283,26 @@ fn compile_effect(
             prelude.push(effect);
             Ok((prelude, choices))
         }
-        EffectAst::Exile { target } => {
-            if let Some(compiled) = lower_hand_exile_target(target, ctx)? {
+        EffectAst::Exile { target, face_down } => {
+            if let Some(compiled) = lower_hand_exile_target(target, *face_down, ctx)? {
                 return Ok(compiled);
             }
-            if let Some(compiled) = lower_counted_non_target_exile_target(target, ctx)? {
+            if let Some(compiled) = lower_counted_non_target_exile_target(target, *face_down, ctx)?
+            {
                 return Ok(compiled);
             }
-            if let Some(compiled) = lower_single_non_target_exile_target(target, ctx)? {
+            if let Some(compiled) =
+                lower_single_non_target_exile_target(target, *face_down, ctx)?
+            {
                 return Ok(compiled);
             }
             let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
-            let mut effect = if spec.count().is_single() {
+            let mut effect = if spec.count().is_single() && !*face_down {
                 Effect::move_to_zone(spec.clone(), Zone::Exile, true)
             } else {
-                Effect::exile(spec.clone())
+                Effect::new(
+                    crate::effects::ExileEffect::with_spec(spec.clone()).with_face_down(*face_down),
+                )
             };
             if spec.is_target() {
                 let tag = ctx.next_tag("exiled");
@@ -3330,9 +3343,12 @@ fn compile_effect(
             );
             Ok((vec![effect], choices))
         }
-        EffectAst::ExileUntilSourceLeaves { target } => {
+        EffectAst::ExileUntilSourceLeaves { target, face_down } => {
             let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
-            let mut effect = Effect::exile_until_source_leaves(spec.clone());
+            let mut effect = Effect::new(
+                crate::effects::ExileUntilEffect::source_leaves(spec.clone())
+                    .with_face_down(*face_down),
+            );
             if spec.is_target() {
                 let tag = ctx.next_tag("exiled");
                 effect = effect.tag(tag.clone());

@@ -28,6 +28,8 @@ pub struct ExileUntilEffect {
     pub duration: ExileUntilDuration,
     /// Zone to return cards to when the duration expires.
     pub return_zone: Zone,
+    /// Whether exiled cards should be turned face down.
+    pub face_down: bool,
 }
 
 impl ExileUntilEffect {
@@ -37,7 +39,14 @@ impl ExileUntilEffect {
             spec,
             duration,
             return_zone: Zone::Battlefield,
+            face_down: false,
         }
+    }
+
+    /// Mark exiled cards as face down.
+    pub fn with_face_down(mut self, face_down: bool) -> Self {
+        self.face_down = face_down;
+        self
     }
 
     /// Exile until this source leaves the battlefield.
@@ -56,6 +65,9 @@ impl EffectExecutor for ExileUntilEffect {
         let mut exiled_count = 0_i32;
         for object_id in objects {
             if let Some(new_id) = game.move_object(object_id, Zone::Exile) {
+                if self.face_down {
+                    game.set_face_down(new_id);
+                }
                 game.add_exiled_with_source_link(ctx.source, new_id);
                 exiled_count += 1;
             }

@@ -31,33 +31,38 @@ use crate::zone::Zone;
 pub struct ExileEffect {
     /// What to exile - can be targeted, all matching, source, etc.
     pub spec: ChooseSpec,
+    /// Whether exiled objects should be turned face down in exile.
+    pub face_down: bool,
 }
 
 impl ExileEffect {
     /// Create an exile effect with a custom spec.
     pub fn with_spec(spec: ChooseSpec) -> Self {
-        Self { spec }
+        Self {
+            spec,
+            face_down: false,
+        }
+    }
+
+    /// Mark exiled cards as face down.
+    pub fn with_face_down(mut self, face_down: bool) -> Self {
+        self.face_down = face_down;
+        self
     }
 
     /// Create a targeted exile effect (single target).
     pub fn target(spec: ChooseSpec) -> Self {
-        Self {
-            spec: ChooseSpec::target(spec),
-        }
+        Self::with_spec(ChooseSpec::target(spec))
     }
 
     /// Create a targeted exile effect with a specific target count.
     pub fn targets(spec: ChooseSpec, count: ChoiceCount) -> Self {
-        Self {
-            spec: ChooseSpec::target(spec).with_count(count),
-        }
+        Self::with_spec(ChooseSpec::target(spec).with_count(count))
     }
 
     /// Create a non-targeted exile effect for all matching permanents.
     pub fn all(filter: ObjectFilter) -> Self {
-        Self {
-            spec: ChooseSpec::all(filter),
-        }
+        Self::with_spec(ChooseSpec::all(filter))
     }
 
     /// Create an exile effect targeting a single creature.
@@ -77,9 +82,7 @@ impl ExileEffect {
 
     /// Create an exile effect for a specific object.
     pub fn specific(object_id: crate::ids::ObjectId) -> Self {
-        Self {
-            spec: ChooseSpec::SpecificObject(object_id),
-        }
+        Self::with_spec(ChooseSpec::SpecificObject(object_id))
     }
 
     /// Helper for convenience constructors that mirror ExileAllEffect.
@@ -97,6 +100,7 @@ impl ExileEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
         object_id: crate::ids::ObjectId,
+        face_down: bool,
     ) -> Result<Option<EffectResult>, ExecutionError> {
         if let Some(obj) = game.object(object_id) {
             let from_zone = obj.zone;
@@ -116,6 +120,9 @@ impl ExileEffect {
                     if let Some(new_id) = game.move_object(object_id, final_zone)
                         && final_zone == Zone::Exile
                     {
+                        if face_down {
+                            game.set_face_down(new_id);
+                        }
                         game.add_exiled_with_source_link(ctx.source, new_id);
                     }
                     return Ok(None); // Successfully exiled
@@ -156,7 +163,7 @@ impl EffectExecutor for ExileEffect {
                 return apply_single_target_object_from_context(
                     game,
                     ctx,
-                    |game, ctx, object_id| Self::exile_object(game, ctx, object_id),
+                    |game, ctx, object_id| Self::exile_object(game, ctx, object_id, self.face_down),
                 );
             }
             // Multi-target with count - handle "any number" specially
@@ -165,7 +172,7 @@ impl EffectExecutor for ExileEffect {
                 let mut exiled_count = 0;
                 for target in ctx.targets.clone() {
                     if let ResolvedTarget::Object(object_id) = target
-                        && Self::exile_object(game, ctx, object_id)?.is_none()
+                        && Self::exile_object(game, ctx, object_id, self.face_down)?.is_none()
                     {
                         exiled_count += 1;
                     }
@@ -183,6 +190,9 @@ impl EffectExecutor for ExileEffect {
             ObjectApplyResultPolicy::CountApplied,
             |game, ctx, object_id| {
                 if let Some(new_id) = game.move_object(object_id, Zone::Exile) {
+                    if self.face_down {
+                        game.set_face_down(new_id);
+                    }
                     game.add_exiled_with_source_link(ctx.source, new_id);
                     Ok(true)
                 } else {

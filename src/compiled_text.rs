@@ -504,10 +504,14 @@ fn looks_like_trigger_condition(head: &str) -> bool {
         " attack",
         " blocks",
         " block",
+        " plays ",
+        " play ",
         " enters",
         " enter",
         " dies",
         " die",
+        " leaves",
+        " is put into ",
         " becomes",
         " become",
         " is tapped for mana",
@@ -527,7 +531,15 @@ fn looks_like_trigger_condition(head: &str) -> bool {
 }
 
 fn normalize_trigger_colon_clause(line: &str) -> Option<String> {
-    let (head, tail) = line.split_once(": ")?;
+    let (line_prefix, body) = if let Some((prefix, rest)) = line.split_once(": ")
+        && is_render_heading_prefix(prefix)
+    {
+        (Some(prefix.trim()), rest.trim())
+    } else {
+        (None, line)
+    };
+
+    let (head, tail) = body.split_once(": ")?;
     let normalized_head = if let Some(rest) = head.strip_prefix("You ") {
         format!("you {rest}")
     } else {
@@ -551,17 +563,23 @@ fn normalize_trigger_colon_clause(line: &str) -> Option<String> {
         tail.to_string()
     };
 
-    if lower_head.starts_with("the beginning ") {
-        Some(format!("At {normalized_head}, {normalized_tail}"))
+    let mapped = if lower_head.starts_with("the beginning ") {
+        format!("At {normalized_head}, {normalized_tail}")
     } else if lower_head.starts_with("when ")
         || lower_head.starts_with("whenever ")
         || lower_head.starts_with("at the beginning ")
     {
-        Some(format!("{normalized_head}, {normalized_tail}"))
+        format!("{normalized_head}, {normalized_tail}")
     } else if lower_head.starts_with("you control no other ") {
-        Some(format!("When {normalized_head}, {normalized_tail}"))
+        format!("When {normalized_head}, {normalized_tail}")
     } else {
-        Some(format!("Whenever {normalized_head}, {normalized_tail}"))
+        format!("Whenever {normalized_head}, {normalized_tail}")
+    };
+
+    if let Some(prefix) = line_prefix {
+        Some(format!("{prefix}: {mapped}"))
+    } else {
+        Some(mapped)
     }
 }
 
@@ -4257,6 +4275,12 @@ fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
             } else if let Some((head, tail)) = subject.split_once(" in exile ") {
                 subject = format!("{} {}", head.trim(), tail.trim());
             }
+        } else if action == "revealed" {
+            if let Some(head) = subject.strip_suffix(" permanent") {
+                subject = format!("{} card", head.trim());
+            } else if let Some(head) = subject.strip_suffix(" permanents") {
+                subject = format!("{} cards", head.trim());
+            }
         }
         subject = format!("{subject} {action} this way");
     }
@@ -7560,6 +7584,12 @@ fn describe_for_each_filter(filter: &ObjectFilter) -> String {
             } else if let Some((head, tail)) = base.split_once(" in exile ") {
                 base = format!("{} {}", head.trim(), tail.trim());
             }
+        } else if action == "revealed" {
+            if let Some(head) = base.strip_suffix(" permanent") {
+                base = format!("{} card", head.trim());
+            } else if let Some(head) = base.strip_suffix(" permanents") {
+                base = format!("{} cards", head.trim());
+            }
         }
         base = format!("{base} {action} this way");
     }
@@ -7584,6 +7614,8 @@ fn describe_tagged_this_way_action(filter: &ObjectFilter) -> Option<&'static str
         }
         if tag.starts_with("exiled_") {
             Some("exiled")
+        } else if tag.starts_with("revealed_") {
+            Some("revealed")
         } else if tag.starts_with("destroyed_") {
             Some("destroyed")
         } else if tag.starts_with("sacrificed_") {
@@ -7894,7 +7926,10 @@ fn describe_choose_then_exile(
             describe_possessive_player_filter(&choose.chooser)
         )
     };
-    Some(format!("{chooser} {verb} {chosen} {origin}"))
+    let face_down_suffix = if exile.face_down { " face down" } else { "" };
+    Some(format!(
+        "{chooser} {verb} {chosen} {origin}{face_down_suffix}"
+    ))
 }
 
 fn move_to_library_uses_chosen_tag(
@@ -7983,7 +8018,7 @@ fn describe_look_at_top_then_choose_exile(
     if !exile_uses_chosen_tag(&exile.spec, choose.tag.as_str()) {
         return None;
     }
-    describe_look_at_top_then_choose_exile_text(look_at_top, choose)
+    describe_look_at_top_then_choose_exile_text(look_at_top, choose, exile.face_down)
 }
 
 fn describe_look_at_top_then_choose_move_to_exile(
@@ -7994,12 +8029,13 @@ fn describe_look_at_top_then_choose_move_to_exile(
     if !move_to_exile_uses_chosen_tag(move_to_zone, choose.tag.as_str()) {
         return None;
     }
-    describe_look_at_top_then_choose_exile_text(look_at_top, choose)
+    describe_look_at_top_then_choose_exile_text(look_at_top, choose, false)
 }
 
 fn describe_look_at_top_then_choose_exile_text(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     choose: &crate::effects::ChooseObjectsEffect,
+    face_down: bool,
 ) -> Option<String> {
     if choose.zone != Zone::Library || choose.is_search || !choose.count.is_single() {
         return None;
@@ -8028,8 +8064,9 @@ fn describe_look_at_top_then_choose_exile_text(
     } else {
         "one of them"
     };
+    let face_down_suffix = if face_down { " face down" } else { "" };
     Some(format!(
-        "Look at the top {count_text} {noun} of {owner} library, then exile {exile_ref}"
+        "Look at the top {count_text} {noun} of {owner} library, then exile {exile_ref}{face_down_suffix}"
     ))
 }
 
@@ -8889,7 +8926,8 @@ fn describe_effect_impl(effect: &Effect) -> String {
         return text;
     }
     if let Some(exile) = effect.downcast_ref::<crate::effects::ExileEffect>() {
-        return format!("Exile {}", describe_choose_spec(&exile.spec));
+        let face_down_suffix = if exile.face_down { " face down" } else { "" };
+        return format!("Exile {}{face_down_suffix}", describe_choose_spec(&exile.spec));
     }
     if let Some(exile_until) = effect.downcast_ref::<crate::effects::ExileUntilEffect>() {
         let duration = match exile_until.duration {
@@ -8899,8 +8937,13 @@ fn describe_effect_impl(effect: &Effect) -> String {
             crate::effects::ExileUntilDuration::NextEndStep => "until the next end step",
             crate::effects::ExileUntilDuration::EndOfCombat => "until end of combat",
         };
+        let face_down_suffix = if exile_until.face_down {
+            " face down"
+        } else {
+            ""
+        };
         return format!(
-            "Exile {} {duration}",
+            "Exile {}{face_down_suffix} {duration}",
             describe_choose_spec(&exile_until.spec)
         );
     }
@@ -9960,14 +10003,24 @@ fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(modify_pt_each) =
         effect.downcast_ref::<crate::effects::ModifyPowerToughnessForEachEffect>()
     {
+        let (target_text, gets_verb) = match modify_pt_each.target.base() {
+            ChooseSpec::Object(filter) => {
+                let filter_text = pluralize_noun_phrase(strip_indefinite_article(
+                    &filter.description(),
+                ));
+                (filter_text, "get")
+            }
+            _ => (describe_choose_spec(&modify_pt_each.target), "gets"),
+        };
         let each_text = if let Value::Count(filter) = &modify_pt_each.count {
             describe_for_each_count_filter(filter)
         } else {
             describe_value(&modify_pt_each.count)
         };
         return format!(
-            "{} gets +{} / +{} for each {} {}",
-            describe_choose_spec(&modify_pt_each.target),
+            "{} {} +{} / +{} for each {} {}",
+            target_text,
+            gets_verb,
             modify_pt_each.power_per,
             modify_pt_each.toughness_per,
             each_text,
@@ -12359,7 +12412,15 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
                     "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
                 )
                 .replace(
+                    "Whenever this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures.",
+                    "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
+                )
+                .replace(
                     "When this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures",
+                    "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures",
+                )
+                .replace(
+                    "Whenever this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures",
                     "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures",
                 );
         }
@@ -12422,6 +12483,10 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
                 .replace(
                     "When this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures.",
                     "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
+                )
+                .replace(
+                    "Whenever this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures.",
+                    "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
                 );
         }
         return format!("{}: {}", prefix.trim(), normalized_body);
@@ -12462,6 +12527,10 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
             )
             .replace(
                 "When this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures.",
+                "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
+            )
+            .replace(
+                "Whenever this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures.",
                 "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
             );
     }
@@ -12515,6 +12584,50 @@ fn normalize_each_opponent_dynamic_life_exchange(text: &str) -> String {
 }
 
 fn normalize_for_each_clause_surface(text: String) -> String {
+    let normalize_for_each_subject = |subject: &str| {
+        subject
+            .trim()
+            .trim_end_matches('.')
+            .replace("that player's ", "their ")
+            .replace("target player's ", "their ")
+            .replace("the active player's ", "their ")
+            .replace("a player's ", "their ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
+    };
+    let collapse_redundant_for_each_create =
+        |prefix: &str, iter_subject: &str, action: &str| -> Option<String> {
+            let create_tail = strip_prefix_ascii_ci(action.trim(), "Create ")?;
+            let (token_text, count_subject) = split_once_ascii_ci(create_tail, " for each ")?;
+            if normalize_for_each_subject(iter_subject) != normalize_for_each_subject(count_subject) {
+                return None;
+            }
+            let head = if prefix.is_empty() {
+                String::new()
+            } else {
+                format!("{prefix}, ")
+            };
+            Some(format!(
+                "{head}Create {} for each {}.",
+                token_text.trim().trim_end_matches('.'),
+                count_subject.trim().trim_end_matches('.')
+            ))
+        };
+    if let Some(rest) = strip_prefix_ascii_ci(&text, "For each ")
+        && let Some((iter_subject, action)) = split_once_ascii_ci(rest, ", ")
+        && let Some(collapsed) = collapse_redundant_for_each_create("", iter_subject, action)
+    {
+        return collapsed;
+    }
+    if let Some((prefix, rest)) = split_once_ascii_ci(&text, ", for each ")
+        && let Some((iter_subject, action)) = split_once_ascii_ci(rest, ", ")
+        && let Some(collapsed) = collapse_redundant_for_each_create(prefix.trim(), iter_subject, action)
+    {
+        return collapsed;
+    }
+
     let normalize_target_players_verbs = |mut value: String| {
         for (from, to) in [
             ("Target players each gains ", "Target players each gain "),
@@ -12902,10 +13015,21 @@ fn normalize_known_low_tail_phrase(text: &str) -> String {
         && let Some(cards) = strip_prefix_ascii_ci(left.trim(), "Each player returns each ")
             .and_then(|tail| {
                 strip_suffix_ascii_ci(tail, " from their graveyard to the battlefield")
+                    .or_else(|| {
+                        strip_suffix_ascii_ci(tail, " from that player's graveyard to the battlefield")
+                    })
             })
             .or_else(|| {
                 strip_prefix_ascii_ci(left.trim(), "For each player, Return all ").and_then(
-                    |tail| strip_suffix_ascii_ci(tail, " from their graveyard to the battlefield"),
+                    |tail| {
+                        strip_suffix_ascii_ci(tail, " from their graveyard to the battlefield")
+                            .or_else(|| {
+                                strip_suffix_ascii_ci(
+                                    tail,
+                                    " from that player's graveyard to the battlefield",
+                                )
+                            })
+                    },
                 )
             })
         && let Some(counter_text) = strip_prefix_ascii_ci(right.trim(), "Put a ")

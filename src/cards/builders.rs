@@ -796,6 +796,7 @@ enum EffectAst {
     },
     Exile {
         target: TargetAst,
+        face_down: bool,
     },
     ExileWhenSourceLeaves {
         target: TargetAst,
@@ -805,9 +806,11 @@ enum EffectAst {
     },
     ExileUntilSourceLeaves {
         target: TargetAst,
+        face_down: bool,
     },
     ExileAll {
         filter: ObjectFilter,
+        face_down: bool,
     },
     LookAtHand {
         target: TargetAst,
