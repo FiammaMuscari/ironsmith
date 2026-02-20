@@ -529,6 +529,27 @@ fn preserve_keyword_prefix_for_parse(prefix: &str) -> bool {
     )
 }
 
+fn starts_with_if_clause(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed == "if" || trimmed.starts_with("if ")
+}
+
+fn is_generic_ability_label_prefix(prefix: &str) -> bool {
+    let words: Vec<&str> = prefix
+        .split_whitespace()
+        .map(|word| word.trim_matches(|ch: char| !ch.is_ascii_alphanumeric()))
+        .filter(|word| !word.is_empty())
+        .collect();
+    if words.is_empty() || words.len() > 4 {
+        return false;
+    }
+
+    words.iter().all(|word| {
+        word.chars().all(|ch| ch.is_ascii_alphanumeric())
+            && word.chars().any(|ch| ch.is_ascii_alphabetic())
+    })
+}
+
 fn strip_labeled_ability_word_prefix_with_map(text: &str, map: &[usize]) -> (String, Vec<usize>) {
     let separator = text
         .find('—')
@@ -539,9 +560,6 @@ fn strip_labeled_ability_word_prefix_with_map(text: &str, map: &[usize]) -> (Str
     };
 
     let prefix = text[..sep_idx].trim();
-    if !is_labeled_ability_word_prefix(prefix) {
-        return (text.to_string(), map.to_vec());
-    }
     if preserve_keyword_prefix_for_parse(prefix) {
         return (text.to_string(), map.to_vec());
     }
@@ -563,6 +581,13 @@ fn strip_labeled_ability_word_prefix_with_map(text: &str, map: &[usize]) -> (Str
     }
 
     let remainder = text[remainder_start..].to_string();
+    let strip_known_label = is_labeled_ability_word_prefix(prefix);
+    let strip_generic_conditional_label =
+        starts_with_if_clause(&remainder) && is_generic_ability_label_prefix(prefix);
+    if !strip_known_label && !strip_generic_conditional_label {
+        return (text.to_string(), map.to_vec());
+    }
+
     let remainder_char_start = text[..remainder_start].chars().count();
     let remainder_map = if remainder_char_start < map.len() {
         map[remainder_char_start..].to_vec()
@@ -2095,6 +2120,9 @@ fn parse_static_ability_line(
         return Ok(Some(vec![ability]));
     }
     if let Some(ability) = parse_library_of_leng_discard_replacement_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
+    if let Some(ability) = parse_draw_replace_exile_top_face_down_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
     if let Some(ability) = parse_toph_first_metalbender_line(tokens)? {
@@ -6577,6 +6605,31 @@ fn parse_library_of_leng_discard_replacement_line(
 
     if has_effect_causes && has_discard && has_top && has_library && has_instead && has_graveyard {
         return Ok(Some(StaticAbility::library_of_leng_discard_replacement()));
+    }
+
+    Ok(None)
+}
+
+fn parse_draw_replace_exile_top_face_down_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    if words.len() < 6 {
+        return Ok(None);
+    }
+
+    if !words.starts_with(&["if", "you", "would", "draw", "a", "card"]) {
+        return Ok(None);
+    }
+
+    let has_exile = words.contains(&"exile");
+    let has_top_card = words.windows(2).any(|window| window == ["top", "card"]);
+    let has_library = words.contains(&"library");
+    let has_face_down = words.windows(2).any(|window| window == ["face", "down"]);
+    let has_instead = words.contains(&"instead");
+
+    if has_exile && has_top_card && has_library && has_face_down && has_instead {
+        return Ok(Some(StaticAbility::draw_replacement_exile_top_face_down()));
     }
 
     Ok(None)
@@ -12886,6 +12939,7 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
                             span,
                             None,
                         ),
+                        face_down: false,
                     }],
                 };
             }
@@ -14640,6 +14694,7 @@ fn parse_exile_source_with_counters_sentence(
     Ok(Some(vec![
         EffectAst::Exile {
             target: source_target.clone(),
+            face_down: false,
         },
         EffectAst::PutCounters {
             counter_type,
@@ -17889,10 +17944,12 @@ fn parse_same_name_target_fanout_sentence(
             if until_source_leaves {
                 EffectAst::ExileUntilSourceLeaves {
                     target: first_target,
+                    face_down: false,
                 }
             } else {
                 EffectAst::Exile {
                     target: first_target,
+                    face_down: false,
                 }
             }
         }
@@ -17908,9 +17965,13 @@ fn parse_same_name_target_fanout_sentence(
             if until_source_leaves {
                 EffectAst::ExileUntilSourceLeaves {
                     target: TargetAst::Object(filter, None, None),
+                    face_down: false,
                 }
             } else {
-                EffectAst::ExileAll { filter }
+                EffectAst::ExileAll {
+                    filter,
+                    face_down: false,
+                }
             }
         }
         "return" => EffectAst::ReturnAllToHand { filter },
@@ -18026,12 +18087,16 @@ fn parse_shared_color_target_fanout_sentence(
         } else {
             EffectAst::Exile {
                 target: first_target,
+                face_down: false,
             }
         };
         let second_effect = if verb == "destroy" {
             EffectAst::DestroyAll { filter }
         } else {
-            EffectAst::ExileAll { filter }
+            EffectAst::ExileAll {
+                filter,
+                face_down: false,
+            }
         };
         return Ok(Some(vec![first_effect, second_effect]));
     }
@@ -18321,7 +18386,10 @@ fn parse_destroy_or_exile_all_split_sentence(
         })?;
         let effect = match verb {
             Verb::Destroy => EffectAst::DestroyAll { filter },
-            Verb::Exile => EffectAst::ExileAll { filter },
+            Verb::Exile => EffectAst::ExileAll {
+                filter,
+                face_down: false,
+            },
             _ => {
                 return Err(CardTextError::ParseError(
                     "unsupported split all clause verb".to_string(),
@@ -18515,6 +18583,7 @@ fn parse_exile_up_to_one_each_target_type_sentence(
         .collect();
     effects.push(EffectAst::Exile {
         target: TargetAst::Tagged(tag, None),
+        face_down: false,
     });
 
     Ok(Some(effects))
@@ -18616,6 +18685,7 @@ fn parse_look_at_top_then_exile_one_sentence(
         },
         EffectAst::Exile {
             target: TargetAst::Tagged(chosen_tag, None),
+            face_down: false,
         },
     ]))
 }
@@ -20136,6 +20206,7 @@ fn parse_search_library_sentence(
             }
             effects.push(EffectAst::ExileAll {
                 filter: zone_filter,
+                face_down: false,
             });
         }
     }
@@ -20475,9 +20546,11 @@ fn parse_exile_hand_and_graveyard_bundle_sentence(
     Ok(Some(vec![
         EffectAst::ExileAll {
             filter: first_filter,
+            face_down: false,
         },
         EffectAst::ExileAll {
             filter: second_filter,
+            face_down: false,
         },
     ]))
 }
@@ -20544,9 +20617,11 @@ fn parse_target_player_exiles_creature_and_graveyard_sentence(
         },
         EffectAst::Exile {
             target: TargetAst::Tagged(TagKey::from(IT_TAG), None),
+            face_down: false,
         },
         EffectAst::ExileAll {
             filter: graveyard_filter,
+            face_down: false,
         },
     ]))
 }
@@ -22242,6 +22317,7 @@ fn parse_sentence_exile_target_creature_with_greatest_power(
     let target = parse_target_phrase(&target_tokens)?;
     let exile = EffectAst::Exile {
         target: target.clone(),
+        face_down: false,
     };
     let effect = EffectAst::Conditional {
         predicate: PredicateAst::TargetHasGreatestPowerAmongCreatures,
@@ -22591,7 +22667,7 @@ fn collapse_token_copy_next_end_step_exile_followup(effects: &mut Vec<EffectAst>
             ) => target_is_generic_token_filter(target),
             (
                 EffectAst::CreateTokenCopy { .. } | EffectAst::CreateTokenCopyFromSource { .. },
-                EffectAst::Exile { target },
+                EffectAst::Exile { target, .. },
             ) => target_is_generic_token_filter(target),
             _ => false,
         };
@@ -22644,7 +22720,7 @@ fn collapse_token_copy_end_of_combat_exile_followup(effects: &mut Vec<EffectAst>
                 EffectAst::CreateTokenCopy { .. }
                 | EffectAst::CreateTokenCopyFromSource { .. }
                 | EffectAst::CreateTokenWithMods { .. },
-                EffectAst::Exile { target },
+                EffectAst::Exile { target, .. },
             ) => target_is_generic_token_filter(target),
             (
                 EffectAst::CreateTokenCopy { .. }
@@ -22928,12 +23004,12 @@ fn explicit_player_for_carry(effect: &EffectAst) -> Option<CarryContext> {
     if matches!(effect, EffectAst::ForEachOpponent { .. }) {
         return Some(CarryContext::ForEachOpponent);
     }
-    if let EffectAst::Exile { target } | EffectAst::ExileUntilSourceLeaves { target } = effect
+    if let EffectAst::Exile { target, .. } | EffectAst::ExileUntilSourceLeaves { target, .. } = effect
         && let Some(player) = player_owner_filter_from_target_for_carry(target)
     {
         return Some(CarryContext::Player(player));
     }
-    if let EffectAst::ExileAll { filter } = effect
+    if let EffectAst::ExileAll { filter, .. } = effect
         && let Some(owner) = filter.owner.as_ref()
         && let Some(player) = player_ast_from_filter_for_carry(owner)
     {
@@ -29191,6 +29267,28 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
         .windows(2)
         .position(|window| window == ["for", "each"]);
     let for_each_idx = raw_for_each_idx.filter(|idx| {
+        let prefix_words = &tail_words[..*idx];
+        let looks_like_token_rules_text = prefix_words
+            .windows(2)
+            .any(|window| {
+                matches!(
+                    window,
+                    ["it", "has"]
+                        | ["it", "gains"]
+                        | ["it", "gets"]
+                        | ["this", "token"]
+                        | ["that", "token"]
+                )
+            })
+            || (prefix_words.contains(&"token")
+                && (prefix_words.contains(&"has")
+                    || prefix_words.contains(&"have")
+                    || prefix_words.contains(&"gets")
+                    || prefix_words.contains(&"gains")));
+        if looks_like_token_rules_text {
+            return false;
+        }
+
         let Some(with_idx) = with_idx else {
             return true;
         };
@@ -29226,8 +29324,8 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
         });
         !has_rules_text_hint
     });
-    let mut for_each_count_value: Option<Value> = None;
-    let mut for_each_wrap_filter: Option<ObjectFilter> = None;
+    let mut for_each_dynamic_count: Option<Value> = None;
+    let mut for_each_object_filter: Option<ObjectFilter> = None;
     if let Some(for_each_idx) = for_each_idx {
         let filter_tokens = &tail_tokens[for_each_idx + 2..];
         if filter_tokens.is_empty() {
@@ -29237,15 +29335,28 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
             )));
         }
         if let Some(dynamic) = parse_create_for_each_dynamic_count(filter_tokens) {
-            for_each_count_value = Some(dynamic);
+            for_each_dynamic_count = Some(dynamic);
         } else {
             let filter = parse_object_filter(filter_tokens, false)?;
-            for_each_count_value = Some(Value::Count(filter.clone()));
-            for_each_wrap_filter = Some(filter);
+            for_each_object_filter = Some(filter);
         }
     }
-    let wrap_for_each = |effect: EffectAst| {
-        if let Some(filter) = for_each_wrap_filter.clone() {
+    let resolve_create_count = |references_iterated_object: bool| {
+        if let Some(dynamic) = for_each_dynamic_count.clone() {
+            return dynamic;
+        }
+        if let Some(filter) = for_each_object_filter.clone() {
+            if references_iterated_object {
+                return count_value.clone();
+            }
+            return Value::Count(filter);
+        }
+        count_value.clone()
+    };
+    let wrap_for_each_when_needed = |effect: EffectAst, references_iterated_object: bool| {
+        if references_iterated_object
+            && let Some(filter) = for_each_object_filter.clone()
+        {
             EffectAst::ForEachObject {
                 filter,
                 effects: vec![effect],
@@ -29332,9 +29443,10 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                 enters_attacking = parsed_attacking;
                 if !source_tokens.is_empty() {
                     let source = parse_target_phrase(&source_tokens)?;
-                    let create = wrap_for_each(EffectAst::CreateTokenCopyFromSource {
+                    let references_iterated_object = target_references_it(&source);
+                    let create = EffectAst::CreateTokenCopyFromSource {
                         source,
-                        count: count_value.clone(),
+                        count: resolve_create_count(references_iterated_object),
                         player,
                         enters_tapped,
                         enters_attacking,
@@ -29351,13 +29463,17 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                         removed_supertypes,
                         set_base_power_toughness,
                         granted_abilities,
-                    });
-                    return Ok(wrap_delayed_create(create));
+                    };
+                    return Ok(wrap_delayed_create(wrap_for_each_when_needed(
+                        create,
+                        references_iterated_object,
+                    )));
                 }
             }
-            let create = wrap_for_each(EffectAst::CreateTokenCopy {
+            let references_iterated_object = true;
+            let create = EffectAst::CreateTokenCopy {
                 object: ObjectRefAst::It,
-                count: count_value.clone(),
+                count: resolve_create_count(references_iterated_object),
                 player,
                 enters_tapped,
                 enters_attacking,
@@ -29374,8 +29490,11 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                 removed_supertypes,
                 set_base_power_toughness,
                 granted_abilities,
-            });
-            return Ok(wrap_delayed_create(create));
+            };
+            return Ok(wrap_delayed_create(wrap_for_each_when_needed(
+                create,
+                references_iterated_object,
+            )));
         }
         return Err(CardTextError::ParseError(
             "create clause missing token name".to_string(),
@@ -29460,13 +29579,12 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
     attacking |= tail_words.contains(&"attacking");
     let (sacrifice_at_next_end_step, exile_at_next_end_step) =
         parse_next_end_step_token_delay_flags(&tail_words);
-    if let Some(count_override) = for_each_count_value {
-        count_value = count_override;
-    }
-
+    let references_iterated_object = attached_to_target
+        .as_ref()
+        .is_some_and(target_references_it);
     let create = EffectAst::CreateTokenWithMods {
         name,
-        count: count_value,
+        count: resolve_create_count(references_iterated_object),
         player,
         attached_to: attached_to_target,
         tapped,
@@ -29475,7 +29593,10 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
         sacrifice_at_next_end_step,
         exile_at_next_end_step,
     };
-    Ok(wrap_delayed_create(wrap_for_each(create)))
+    Ok(wrap_delayed_create(wrap_for_each_when_needed(
+        create,
+        references_iterated_object,
+    )))
 }
 
 fn parse_create_for_each_dynamic_count(tokens: &[Token]) -> Option<Value> {
@@ -29767,6 +29888,7 @@ fn apply_except_filter_exclusions(base: &mut ObjectFilter, exception: &ObjectFil
 
 fn parse_exile(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
     let (tokens, until_source_leaves) = split_until_source_leaves_tail(tokens);
+    let (tokens, face_down) = split_exile_face_down_suffix(tokens);
     let clause_words = words(tokens);
     let has_face_down_manifest_tail = (clause_words.contains(&"face-down")
         || clause_words.contains(&"facedown")
@@ -29783,6 +29905,7 @@ fn parse_exile(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAs
         tokens,
         subject,
         until_source_leaves,
+        face_down,
     )? {
         return Ok(effect);
     }
@@ -29793,18 +29916,20 @@ fn parse_exile(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAs
         return Ok(if until_source_leaves {
             EffectAst::ExileUntilSourceLeaves {
                 target: TargetAst::Object(filter, None, None),
+                face_down,
             }
         } else {
-            EffectAst::ExileAll { filter }
+            EffectAst::ExileAll { filter, face_down }
         });
     }
     if let Some(filter) = parse_target_player_graveyard_filter(tokens) {
         return Ok(if until_source_leaves {
             EffectAst::ExileUntilSourceLeaves {
                 target: TargetAst::Object(filter, None, None),
+                face_down,
             }
         } else {
-            EffectAst::ExileAll { filter }
+            EffectAst::ExileAll { filter, face_down }
         });
     }
 
@@ -29879,9 +30004,9 @@ fn parse_exile(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAs
         return Ok(EffectAst::Conditional {
             predicate,
             if_true: vec![if until_source_leaves {
-                EffectAst::ExileUntilSourceLeaves { target }
+                EffectAst::ExileUntilSourceLeaves { target, face_down }
             } else {
-                EffectAst::Exile { target }
+                EffectAst::Exile { target, face_down }
             }],
             if_false: Vec::new(),
         });
@@ -29890,9 +30015,9 @@ fn parse_exile(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAs
     let mut target = parse_target_phrase(tokens)?;
     apply_exile_subject_hand_owner_context(&mut target, subject);
     Ok(if until_source_leaves {
-        EffectAst::ExileUntilSourceLeaves { target }
+        EffectAst::ExileUntilSourceLeaves { target, face_down }
     } else {
-        EffectAst::Exile { target }
+        EffectAst::Exile { target, face_down }
     })
 }
 
@@ -29900,6 +30025,7 @@ fn parse_same_name_exile_hand_and_graveyard_clause(
     tokens: &[Token],
     subject: Option<SubjectAst>,
     until_source_leaves: bool,
+    face_down: bool,
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     if !clause_words.starts_with(&["all", "cards"])
@@ -29965,9 +30091,10 @@ fn parse_same_name_exile_hand_and_graveyard_clause(
     Ok(Some(if until_source_leaves {
         EffectAst::ExileUntilSourceLeaves {
             target: TargetAst::Object(filter, None, None),
+            face_down,
         }
     } else {
-        EffectAst::ExileAll { filter }
+        EffectAst::ExileAll { filter, face_down }
     }))
 }
 
@@ -29988,6 +30115,27 @@ fn split_until_source_leaves_tail(tokens: &[Token]) -> (&[Token], bool) {
     } else {
         (tokens, false)
     }
+}
+
+fn split_exile_face_down_suffix(tokens: &[Token]) -> (&[Token], bool) {
+    if tokens.is_empty() {
+        return (tokens, false);
+    }
+
+    let mut end = tokens.len();
+    if end > 0 && tokens[end - 1].is_word("instead") {
+        end -= 1;
+    }
+
+    if end > 0 && (tokens[end - 1].is_word("face-down") || tokens[end - 1].is_word("facedown")) {
+        return (&tokens[..end - 1], true);
+    }
+
+    if end >= 2 && tokens[end - 2].is_word("face") && tokens[end - 1].is_word("down") {
+        return (&tokens[..end - 2], true);
+    }
+
+    (tokens, false)
 }
 
 fn parse_target_player_graveyard_filter(tokens: &[Token]) -> Option<ObjectFilter> {

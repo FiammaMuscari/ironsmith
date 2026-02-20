@@ -1106,6 +1106,10 @@ impl StaticAbility {
         Self::new(LibraryOfLengDiscardReplacement)
     }
 
+    pub fn draw_replacement_exile_top_face_down() -> Self {
+        Self::new(DrawReplacementExileTopFaceDown)
+    }
+
     pub fn players_cant_gain_life() -> Self {
         Self::new(PlayersCantGainLife)
     }

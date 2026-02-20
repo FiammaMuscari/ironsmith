@@ -6335,6 +6335,29 @@ fn parse_boast_ability_with_prior_sentence_still_keeps_prefix() {
 }
 
 #[test]
+fn parse_binding_contract_label_into_draw_replacement_static_ability() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Asmodeus Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Binding Contract — If you would draw a card, exile the top card of your library face down instead.",
+        )
+        .expect("parse binding contract static replacement line");
+
+    let static_ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        static_ids.contains(&StaticAbilityId::DrawReplacementExileTopFaceDown),
+        "expected draw replacement static ability, got {static_ids:?}"
+    );
+}
+
+#[test]
 fn parse_gain_life_for_each_clause() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Life Harvest Variant")
         .card_types(vec![CardType::Instant])

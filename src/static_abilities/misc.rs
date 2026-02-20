@@ -5,8 +5,8 @@
 use super::{ChooseColorAsEntersSpec, StaticAbilityId, StaticAbilityKind};
 use crate::ability::LevelAbility;
 use crate::color::Color;
-use crate::effect::Value;
-use crate::events::cards::matchers::WouldDiscardMatcher;
+use crate::effect::{Effect, Value};
+use crate::events::cards::matchers::{WouldDiscardMatcher, WouldDrawCardMatcher};
 use crate::events::damage::matchers::DamageToPlayerOrObjectMatcher;
 use crate::events::traits::{EventKind, ReplacementMatcher, ReplacementPriority, downcast_event};
 use crate::events::zones::matchers::{
@@ -19,7 +19,7 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaCost;
 use crate::object::CounterType;
 use crate::replacement::{RedirectTarget, RedirectWhich, ReplacementAction, ReplacementEffect};
-use crate::target::{ObjectFilter, PlayerFilter};
+use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::zone::Zone;
 
 fn describe_counter_type(counter_type: CounterType) -> String {
@@ -1435,6 +1435,46 @@ impl StaticAbilityKind for LibraryOfLengDiscardReplacement {
     }
 }
 
+/// "If you would draw a card, exile the top card of your library face down instead."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DrawReplacementExileTopFaceDown;
+
+impl StaticAbilityKind for DrawReplacementExileTopFaceDown {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::DrawReplacementExileTopFaceDown
+    }
+
+    fn display(&self) -> String {
+        "If you would draw a card, exile the top card of your library face down instead."
+            .to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        const TOP_CARD_TAG: &str = "draw_replacement_top_card";
+
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            WouldDrawCardMatcher::you(),
+            ReplacementAction::Instead(vec![
+                Effect::reveal_top(PlayerFilter::You, TOP_CARD_TAG),
+                Effect::new(
+                    crate::effects::ExileEffect::with_spec(ChooseSpec::tagged(TOP_CARD_TAG))
+                        .with_face_down(true),
+                ),
+            ]),
+        ))
+    }
+}
+
 // =============================================================================
 // Interactive ETB Replacement Abilities (Unified System)
 // =============================================================================
@@ -1618,6 +1658,20 @@ mod tests {
     fn test_no_maximum_hand_size() {
         let ability = NoMaximumHandSize;
         assert_eq!(ability.id(), StaticAbilityId::NoMaximumHandSize);
+    }
+
+    #[test]
+    fn test_draw_replacement_exile_top_face_down() {
+        let ability = DrawReplacementExileTopFaceDown;
+        assert_eq!(ability.id(), StaticAbilityId::DrawReplacementExileTopFaceDown);
+
+        let replacement = ability
+            .generate_replacement_effect(ObjectId::from_raw(1), PlayerId::from_index(0))
+            .expect("draw replacement should create replacement effect");
+        assert!(
+            matches!(replacement.replacement, ReplacementAction::Instead(_)),
+            "expected draw replacement to use an Instead action"
+        );
     }
 
     #[test]

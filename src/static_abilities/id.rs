@@ -132,6 +132,7 @@ pub enum StaticAbilityId {
     LevelAbilities,
     NoMaximumHandSize,
     LibraryOfLengDiscardReplacement,
+    DrawReplacementExileTopFaceDown,
     StartingLifeBonus,
     BuybackCostReduction,
     LegendRuleDoesntApply,
