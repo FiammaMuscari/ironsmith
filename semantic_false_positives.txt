@@ -343,3 +343,4 @@ Minion Reflector
 Helm of the Host
 Lullmage Mentor
 Sygg, Wanderwine Wisdom // Sygg, Wanderbrine Shield
+Swallow Whole
