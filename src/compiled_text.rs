@@ -6355,14 +6355,37 @@ fn describe_effect_list(effects: &[Effect]) -> String {
         })
         .collect::<Vec<_>>();
 
+    fn apply_continuous_for_compaction(
+        effect: &Effect,
+    ) -> Option<&crate::effects::ApplyContinuousEffect> {
+        if let Some(apply) = effect.downcast_ref::<crate::effects::ApplyContinuousEffect>() {
+            return Some(apply);
+        }
+        if let Some(tag_all) = effect.downcast_ref::<crate::effects::TagAllEffect>()
+            && is_implicit_reference_tag(tag_all.tag.as_str())
+            && let Some(apply) = tag_all
+                .effect
+                .downcast_ref::<crate::effects::ApplyContinuousEffect>()
+        {
+            return Some(apply);
+        }
+        if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>()
+            && is_implicit_reference_tag(tagged.tag.as_str())
+            && let Some(apply) = tagged
+                .effect
+                .downcast_ref::<crate::effects::ApplyContinuousEffect>()
+        {
+            return Some(apply);
+        }
+        None
+    }
+
     let mut parts = Vec::new();
     let mut idx = 0usize;
     while idx < filtered.len() {
         if idx + 1 < filtered.len()
-            && let Some(first_apply) =
-                filtered[idx].downcast_ref::<crate::effects::ApplyContinuousEffect>()
-            && let Some(second_apply) =
-                filtered[idx + 1].downcast_ref::<crate::effects::ApplyContinuousEffect>()
+            && let Some(first_apply) = apply_continuous_for_compaction(filtered[idx])
+            && let Some(second_apply) = apply_continuous_for_compaction(filtered[idx + 1])
             && let Some(compact) = describe_compact_apply_continuous_pair(first_apply, second_apply)
         {
             parts.push(compact);
