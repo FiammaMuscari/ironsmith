@@ -12108,10 +12108,20 @@ fn is_round_up_each_time_sentence(tokens: &[Token]) -> bool {
     words.starts_with(&["round", "up", "each", "time"])
 }
 
-fn is_may_cast_it_sentence(tokens: &[Token]) -> bool {
+enum MayCastItVerb {
+    Cast,
+    Play,
+}
+
+fn parse_may_cast_it_sentence(tokens: &[Token]) -> Option<MayCastItVerb> {
     let clause_words = words(tokens);
-    clause_words.as_slice() == ["you", "may", "cast", "it"]
-        || clause_words.as_slice() == ["you", "may", "play", "it"]
+    if clause_words.as_slice() == ["you", "may", "cast", "it"] {
+        return Some(MayCastItVerb::Cast);
+    }
+    if clause_words.as_slice() == ["you", "may", "play", "it"] {
+        return Some(MayCastItVerb::Play);
+    }
+    None
 }
 
 fn token_name_mentions_eldrazi_spawn_or_scion(name: &str) -> bool {
@@ -12819,10 +12829,15 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
         }
         parser_trace("parse_effect_sentences:sentence", &sentence_tokens);
 
-        // We don't yet model one-shot "You may cast it" permissions as executable effects.
-        // Treat this sentence as non-semantic so surrounding exile/if-you-don't clauses still parse.
-        if is_may_cast_it_sentence(&sentence_tokens) {
-            parser_trace("parse_effect_sentences:may-cast-it-sentence-ignored", &sentence_tokens);
+        if let Some(verb) = parse_may_cast_it_sentence(&sentence_tokens) {
+            parser_trace("parse_effect_sentences:may-cast-it-sentence", &sentence_tokens);
+            let allow_land = matches!(verb, MayCastItVerb::Play);
+            effects.push(EffectAst::May {
+                effects: vec![EffectAst::CastTagged {
+                    tag: TagKey::from(IT_TAG),
+                    allow_land,
+                }],
+            });
             sentence_idx += 1;
             continue;
         }

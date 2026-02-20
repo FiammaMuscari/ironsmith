@@ -10130,6 +10130,11 @@ fn describe_effect_impl(effect: &Effect) -> String {
             else_text
         );
     }
+    if let Some(cast_tagged) = effect.downcast_ref::<crate::effects::CastTaggedEffect>() {
+        let verb = if cast_tagged.allow_land { "play" } else { "cast" };
+        let spec = crate::target::ChooseSpec::Tagged(cast_tagged.tag.clone());
+        return format!("{verb} {}", describe_choose_spec(&spec));
+    }
     if let Some(may) = effect.downcast_ref::<crate::effects::MayEffect>() {
         if let Some(decider) = may.decider.as_ref() {
             let who = describe_player_filter(decider);

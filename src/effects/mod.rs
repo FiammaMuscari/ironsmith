@@ -103,10 +103,11 @@ pub use permanents::{
     MonstrosityEffect, RegenerateEffect, TapEffect, TransformEffect, UntapEffect,
 };
 pub use player::{
-    ControlPlayerEffect, CreateEmblemEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect,
-    ExperienceCountersEffect, ExtraTurnEffect, GrantEffect, GrantPlayFromGraveyardEffect,
-    LoseTheGameEffect, PayEnergyEffect, PoisonCountersEffect, SkipCombatPhasesEffect,
-    SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, WinTheGameEffect,
+    CastTaggedEffect, ControlPlayerEffect, CreateEmblemEffect, EnergyCountersEffect,
+    ExileInsteadOfGraveyardEffect, ExperienceCountersEffect, ExtraTurnEffect, GrantEffect,
+    GrantPlayFromGraveyardEffect, LoseTheGameEffect, PayEnergyEffect, PoisonCountersEffect,
+    SkipCombatPhasesEffect, SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect,
+    WinTheGameEffect,
 };
 pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};
 pub use restrictions::CantEffect;

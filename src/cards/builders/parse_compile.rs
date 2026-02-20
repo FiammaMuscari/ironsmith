@@ -2472,6 +2472,21 @@ fn compile_effect(
             let effect = Effect::grant_play_from_graveyard_until_eot(player_filter);
             Ok((vec![effect], Vec::new()))
         }
+        EffectAst::CastTagged { tag, allow_land } => {
+            let resolved_tag = if tag.as_str() == IT_TAG {
+                TagKey::from(
+                    ctx.last_object_tag.clone().ok_or_else(|| {
+                        CardTextError::ParseError(
+                            "unable to resolve 'it' without prior reference".to_string(),
+                        )
+                    })?,
+                )
+            } else {
+                tag.clone()
+            };
+            let effect = Effect::cast_tagged(resolved_tag, *allow_land);
+            Ok((vec![effect], Vec::new()))
+        }
         EffectAst::ExileInsteadOfGraveyardThisTurn { player } => {
             let player_filter = resolve_non_target_player_filter(*player, ctx)?;
             let effect = Effect::exile_instead_of_graveyard_this_turn(player_filter);

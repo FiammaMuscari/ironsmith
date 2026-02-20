@@ -2866,6 +2866,21 @@ impl Effect {
         Self::new(MayCastForMiracleCostEffect::new())
     }
 
+    /// Cast a previously tagged card immediately.
+    ///
+    /// This is used for one-shot "You may cast it" patterns where a prior
+    /// effect tagged the card to be cast.
+    pub fn cast_tagged(tag: impl Into<crate::tag::TagKey>, allow_land: bool) -> Self {
+        use crate::effects::CastTaggedEffect;
+        let effect = CastTaggedEffect::new(tag);
+        let effect = if allow_land {
+            effect.allow_land()
+        } else {
+            effect
+        };
+        Self::new(effect)
+    }
+
     // === Voting Effects ===
 
     /// Create a vote effect for council's dilemma and similar mechanics.

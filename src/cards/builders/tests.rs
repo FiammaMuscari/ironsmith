@@ -7888,6 +7888,7 @@ fn parse_trigger_with_and_or_subtype_list_keeps_effect_split_on_trigger_delimite
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
         rendered.contains("exile the top card of that player's library")
+            && rendered.contains("you may cast it")
             && rendered.contains("create a treasure token"),
         "expected exile/create sequence to remain on the triggered effect, got {rendered}"
     );

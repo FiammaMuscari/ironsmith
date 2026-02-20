@@ -5,6 +5,7 @@
 //! win/lose conditions, turn manipulation, and emblem creation.
 
 mod control_player;
+mod cast_tagged;
 mod create_emblem;
 mod energy_counters;
 mod exile_instead_of_graveyard;
@@ -23,6 +24,7 @@ mod skip_turn;
 mod win_the_game;
 
 pub use control_player::ControlPlayerEffect;
+pub use cast_tagged::CastTaggedEffect;
 pub use create_emblem::CreateEmblemEffect;
 pub use energy_counters::EnergyCountersEffect;
 pub use exile_instead_of_graveyard::ExileInsteadOfGraveyardEffect;
