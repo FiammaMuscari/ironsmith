@@ -367,6 +367,45 @@ fn capitalize_fallback_with_parenthetical_title_case(text: &str) -> String {
     out
 }
 
+fn strip_implicit_you_control_in_sacrifice_phrases(text: &str) -> String {
+    // "Sacrifice a/an <permanent> you control" is rules-equivalent to
+    // "Sacrifice a/an <permanent>" since sacrificing is limited to permanents
+    // you control. Normalize this for semantic comparison to avoid false
+    // mismatches from redundant controller phrasing.
+    //
+    // This is intentionally narrow: only remove " you control" in the clause
+    // segment following a sacrifice verb, and reset at obvious clause
+    // boundaries.
+    let mut out = String::with_capacity(text.len());
+    let lower = text.to_ascii_lowercase();
+    let mut idx = 0usize;
+    let mut in_sacrifice = false;
+    while idx < text.len() {
+        let ch = text[idx..].chars().next().unwrap();
+        if matches!(ch, '.' | ';' | ':' | ',' | '\n') {
+            in_sacrifice = false;
+            out.push(ch);
+            idx += ch.len_utf8();
+            continue;
+        }
+
+        if in_sacrifice {
+            if lower[idx..].starts_with(" you control") {
+                idx += " you control".len();
+                continue;
+            }
+        } else if lower[idx..].starts_with("sacrifice")
+            || lower[idx..].starts_with("sacrifices")
+        {
+            in_sacrifice = true;
+        }
+
+        out.push(ch);
+        idx += ch.len_utf8();
+    }
+    out
+}
+
 fn looks_like_reminder_quote(content: &str) -> bool {
     let lower = content
         .trim()
@@ -845,6 +884,7 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
                 .to_string();
         }
     }
+    normalized = strip_implicit_you_control_in_sacrifice_phrases(&normalized);
     // Split common "can't lose / can't win" conjunction into separate clauses so
     // cards that render them as separate static abilities still align with oracle.
     normalized = normalized
