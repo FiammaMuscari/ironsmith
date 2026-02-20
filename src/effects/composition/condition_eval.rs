@@ -93,7 +93,11 @@ fn condition_candidate_ids_for_zone(game: &GameState, zone: Option<Zone>) -> Vec
     }
 }
 
-fn condition_object_matches_player_zone(obj: &crate::object::Object, player_id: PlayerId, zone: Option<Zone>) -> bool {
+fn condition_object_matches_player_zone(
+    obj: &crate::object::Object,
+    player_id: PlayerId,
+    zone: Option<Zone>,
+) -> bool {
     match zone {
         Some(Zone::Battlefield) | None => obj.controller == player_id,
         _ => obj.owner == player_id,
@@ -739,7 +743,11 @@ fn evaluate_condition(
             };
             Ok(filter.matches_snapshot(snapshot, &filter_ctx, game))
         }
-        Condition::PlayerTaggedObjectMatches { player, tag, filter } => {
+        Condition::PlayerTaggedObjectMatches {
+            player,
+            tag,
+            filter,
+        } => {
             let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
             let Some(tagged) = ctx.get_tagged_all(tag.as_str()) else {
                 return Ok(false);

@@ -103,8 +103,13 @@ fn check_dependency_relationship(
         | (Modification::RemoveAllAbilities, Modification::AddCombatDamageDrawAbility)
         | (Modification::RemoveAllAbilitiesExceptMana, Modification::AddAbility(_))
         | (Modification::RemoveAllAbilitiesExceptMana, Modification::AddAbilityGeneric(_))
-        | (Modification::RemoveAllAbilitiesExceptMana, Modification::CopyActivatedAbilities { .. })
-        | (Modification::RemoveAllAbilitiesExceptMana, Modification::AddCombatDamageDrawAbility) => true,
+        | (
+            Modification::RemoveAllAbilitiesExceptMana,
+            Modification::CopyActivatedAbilities { .. },
+        )
+        | (Modification::RemoveAllAbilitiesExceptMana, Modification::AddCombatDamageDrawAbility) => {
+            true
+        }
 
         // Granting abilities does not depend on a later removal.
         (Modification::AddAbility(_), Modification::RemoveAllAbilities)
@@ -113,8 +118,13 @@ fn check_dependency_relationship(
         | (Modification::AddCombatDamageDrawAbility, Modification::RemoveAllAbilities)
         | (Modification::AddAbility(_), Modification::RemoveAllAbilitiesExceptMana)
         | (Modification::AddAbilityGeneric(_), Modification::RemoveAllAbilitiesExceptMana)
-        | (Modification::CopyActivatedAbilities { .. }, Modification::RemoveAllAbilitiesExceptMana)
-        | (Modification::AddCombatDamageDrawAbility, Modification::RemoveAllAbilitiesExceptMana) => false,
+        | (
+            Modification::CopyActivatedAbilities { .. },
+            Modification::RemoveAllAbilitiesExceptMana,
+        )
+        | (Modification::AddCombatDamageDrawAbility, Modification::RemoveAllAbilitiesExceptMana) => {
+            false
+        }
 
         // If B removes specific abilities and A grants that ability
         (Modification::AddAbility(ability_a), Modification::RemoveAbility(ability_b)) => {

@@ -8267,15 +8267,15 @@ fn is_land_subtype(subtype: Subtype) -> bool {
 }
 
 fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardTextError> {
-    let words = words(tokens);
-    if words.first().copied() != Some("equip") {
+    let clause_words = words(tokens);
+    if clause_words.first().copied() != Some("equip") {
         return Ok(None);
     }
 
     let mut symbols = Vec::new();
     let mut saw_zero = false;
     let mut saw_non_symbol = false;
-    for word in words.iter().skip(1) {
+    for word in clause_words.iter().skip(1) {
         if let Ok(symbol) = parse_mana_symbol(word) {
             if matches!(symbol, ManaSymbol::Generic(0)) {
                 saw_zero = true;
@@ -8288,7 +8288,37 @@ fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardTextE
     }
 
     if saw_non_symbol {
-        return Ok(None);
+        let cost_tokens = trim_commas(&tokens[1..]);
+        if cost_tokens.is_empty() {
+            return Err(CardTextError::ParseError(
+                "equip missing activation cost".to_string(),
+            ));
+        }
+        let (total_cost, cost_effects) = parse_activation_cost(&cost_tokens)?;
+        let total_cost = crate::ability::merge_cost_effects(total_cost, cost_effects);
+        let tail_words = words(&cost_tokens);
+        if tail_words.is_empty() {
+            return Err(CardTextError::ParseError(
+                "equip missing activation cost".to_string(),
+            ));
+        }
+        let equip_text = format!("Equip—{}", keyword_title(&tail_words.join(" ")));
+        let target = ChooseSpec::target(ChooseSpec::Object(ObjectFilter::creature().you_control()));
+
+        return Ok(Some(ParsedAbility {
+            ability: Ability {
+                kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
+                    mana_cost: total_cost,
+                    effects: vec![Effect::attach_to(target.clone())],
+                    choices: vec![target.clone()],
+                    timing: ActivationTiming::SorcerySpeed,
+                    additional_restrictions: vec![],
+                }),
+                functional_zones: vec![Zone::Battlefield],
+                text: Some(equip_text),
+            },
+            effects_ast: None,
+        }));
     }
 
     if symbols.is_empty() && !saw_zero {
@@ -8424,6 +8454,24 @@ fn parse_activation_cost(tokens: &[Token]) -> Result<(TotalCost, Vec<Effect>), C
 
         if segment_words[0] == "pay" {
             if segment_words.contains(&"life") {
+                // "Pay N life for each card in your hand." (Hand of Vecna)
+                if segment_words.len() == 9
+                    && segment_words[2] == "life"
+                    && segment_words[3] == "for"
+                    && segment_words[4] == "each"
+                    && matches!(segment_words[5], "card" | "cards")
+                    && segment_words[6] == "in"
+                    && segment_words[7] == "your"
+                    && segment_words[8] == "hand"
+                    && let Some((per_card, used)) = parse_number(&segment[1..])
+                    && used == 1
+                {
+                    explicit_costs.push(crate::costs::Cost::new(
+                        crate::costs::LifePerCardInHandCost::new(per_card),
+                    ));
+                    continue;
+                }
+
                 let amount = parse_number(&segment[1..]).ok_or_else(|| {
                     CardTextError::ParseError("unable to parse pay life cost".to_string())
                 })?;

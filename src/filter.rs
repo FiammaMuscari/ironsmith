@@ -2668,9 +2668,7 @@ impl ObjectFilter {
                 PtReference::Effective => "power and toughness",
                 PtReference::Base => "base power and toughness",
             };
-            parts.push(format!(
-                "with {label} {power_value}/{toughness_value}"
-            ));
+            parts.push(format!("with {label} {power_value}/{toughness_value}"));
         } else {
             if let Some(ref power) = self.power {
                 let label = match self.power_reference {

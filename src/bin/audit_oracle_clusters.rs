@@ -394,9 +394,7 @@ fn strip_implicit_you_control_in_sacrifice_phrases(text: &str) -> String {
                 idx += " you control".len();
                 continue;
             }
-        } else if lower[idx..].starts_with("sacrifice")
-            || lower[idx..].starts_with("sacrifices")
-        {
+        } else if lower[idx..].starts_with("sacrifice") || lower[idx..].starts_with("sacrifices") {
             in_sacrifice = true;
         }
 
@@ -3980,9 +3978,7 @@ fn compare_semantics(
     let normalized_oracle = normalize_card_self_references(oracle_text, card_name);
     let normalized_compiled_lines = compiled_lines
         .iter()
-        .map(|line| {
-            normalize_card_self_references(line, card_name)
-        })
+        .map(|line| normalize_card_self_references(line, card_name))
         .collect::<Vec<_>>();
     let stripped_compiled_lines = normalized_compiled_lines
         .iter()

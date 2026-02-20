@@ -1673,7 +1673,10 @@ mod tests {
     #[test]
     fn test_draw_replacement_exile_top_face_down() {
         let ability = DrawReplacementExileTopFaceDown;
-        assert_eq!(ability.id(), StaticAbilityId::DrawReplacementExileTopFaceDown);
+        assert_eq!(
+            ability.id(),
+            StaticAbilityId::DrawReplacementExileTopFaceDown
+        );
 
         let replacement = ability
             .generate_replacement_effect(ObjectId::from_raw(1), PlayerId::from_index(0))

@@ -71,7 +71,10 @@ impl TriggerMatcher for PlayerDrawsNthCardEachTurnTrigger {
             PlayerFilter::Specific(_) | PlayerFilter::IteratedPlayer => {
                 format!("Whenever that player draws their {ordinal} card each turn")
             }
-            _ => format!("Whenever {:?} draws their {ordinal} card each turn", self.player),
+            _ => format!(
+                "Whenever {:?} draws their {ordinal} card each turn",
+                self.player
+            ),
         }
     }
 
@@ -115,8 +118,7 @@ mod tests {
         let source_id = ObjectId::from_raw(1);
 
         game.cards_drawn_this_turn.insert(alice, 2);
-        let event =
-            TriggerEvent::new(CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false));
+        let event = TriggerEvent::new(CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false));
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let trigger = PlayerDrawsNthCardEachTurnTrigger::new(PlayerFilter::You, 2);
@@ -148,8 +150,7 @@ mod tests {
         let source_id = ObjectId::from_raw(1);
 
         game.cards_drawn_this_turn.insert(alice, 3);
-        let event =
-            TriggerEvent::new(CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false));
+        let event = TriggerEvent::new(CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false));
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let trigger = PlayerDrawsNthCardEachTurnTrigger::new(PlayerFilter::You, 2);

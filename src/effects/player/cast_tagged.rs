@@ -103,7 +103,9 @@ impl EffectExecutor for CastTaggedEffect {
                 }
                 copy_obj.zone = Zone::Battlefield;
                 game.add_object(copy_obj);
-                return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![copy_id])));
+                return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                    copy_id,
+                ])));
             }
 
             if !self.without_paying_mana_cost
@@ -122,7 +124,9 @@ impl EffectExecutor for CastTaggedEffect {
             stack_entry.source_stable_id = Some(stable_id);
             stack_entry.source_name = Some(card_name);
             game.push_to_stack(stack_entry);
-            return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![copy_id])));
+            return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                copy_id,
+            ])));
         }
 
         if is_land {
@@ -137,7 +141,9 @@ impl EffectExecutor for CastTaggedEffect {
             if let Some(new_obj) = game.object_mut(new_id) {
                 new_obj.controller = ctx.controller;
             }
-            return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![new_id])));
+            return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                new_id,
+            ])));
         }
 
         let caster = ctx.controller;
@@ -185,7 +191,9 @@ impl EffectExecutor for CastTaggedEffect {
         };
 
         game.push_to_stack(stack_entry);
-        Ok(EffectOutcome::from_result(EffectResult::Objects(vec![new_id])))
+        Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+            new_id,
+        ])))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {

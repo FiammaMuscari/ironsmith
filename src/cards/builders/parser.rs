@@ -245,8 +245,7 @@ pub(super) fn parse_text_with_annotations(
         let mut handled_restrictions_for_new_ability = false;
 
         if !parsed_portion.is_empty() {
-            let parse_chunks =
-                split_trigger_sentence_chunks(&parsed_portion, info.line_index);
+            let parse_chunks = split_trigger_sentence_chunks(&parsed_portion, info.line_index);
             for line_text in parse_chunks {
                 let parsed = match parse_line(&line_text, info.line_index) {
                     Ok(parsed) => parsed,
@@ -295,7 +294,8 @@ pub(super) fn parse_text_with_annotations(
 
                 let abilities_before = builder.abilities.len();
                 collect_tag_spans_from_line(&parsed, &mut annotations, &info.normalized);
-                builder = apply_line_ast(builder, parsed, info, allow_unsupported, &mut annotations)?;
+                builder =
+                    apply_line_ast(builder, parsed, info, allow_unsupported, &mut annotations)?;
                 let abilities_after = builder.abilities.len();
 
                 for ability_idx in abilities_before..abilities_after {

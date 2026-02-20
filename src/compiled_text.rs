@@ -281,7 +281,8 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
                 if static_ability.id() == crate::static_abilities::StaticAbilityId::MakeColorless
         )
     });
-    let colors = describe_token_color_words(card.colors(), card.is_creature() || explicit_colorless);
+    let colors =
+        describe_token_color_words(card.colors(), card.is_creature() || explicit_colorless);
     if !colors.is_empty() {
         parts.push(colors);
     }
@@ -2718,8 +2719,7 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     {
         return "Exile target player's graveyard".to_string();
     }
-    if let Some(rest) = normalized.strip_prefix("Exile all card in target opponent's graveyard. ")
-    {
+    if let Some(rest) = normalized.strip_prefix("Exile all card in target opponent's graveyard. ") {
         return format!("Exile target opponent's graveyard. {rest}");
     }
     if let Some(rest) = normalized.strip_prefix("Exile all card in target opponent's graveyards. ")
@@ -2730,27 +2730,28 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     {
         return format!("Exile target opponent's graveyard. {rest}");
     }
-    if let Some(rest) = normalized.strip_prefix("Exile all cards from target opponent's graveyard. ")
+    if let Some(rest) =
+        normalized.strip_prefix("Exile all cards from target opponent's graveyard. ")
     {
         return format!("Exile target opponent's graveyard. {rest}");
     }
-    if let Some(rest) = normalized.strip_prefix("Exile all card from target opponent's graveyards. ")
+    if let Some(rest) =
+        normalized.strip_prefix("Exile all card from target opponent's graveyards. ")
     {
         return format!("Exile target opponent's graveyard. {rest}");
     }
-    if let Some(rest) = normalized.strip_prefix("Exile all cards from target opponent's graveyards. ")
+    if let Some(rest) =
+        normalized.strip_prefix("Exile all cards from target opponent's graveyards. ")
     {
         return format!("Exile target opponent's graveyard. {rest}");
     }
     if let Some(rest) = normalized.strip_prefix("Exile all card in target player's graveyard. ") {
         return format!("Exile target player's graveyard. {rest}");
     }
-    if let Some(rest) = normalized.strip_prefix("Exile all card in target player's graveyards. ")
-    {
+    if let Some(rest) = normalized.strip_prefix("Exile all card in target player's graveyards. ") {
         return format!("Exile target player's graveyard. {rest}");
     }
-    if let Some(rest) = normalized.strip_prefix("Exile all card from target player's graveyard. ")
-    {
+    if let Some(rest) = normalized.strip_prefix("Exile all card from target player's graveyard. ") {
         return format!("Exile target player's graveyard. {rest}");
     }
     if let Some(rest) = normalized.strip_prefix("Exile all cards from target player's graveyard. ")
@@ -5263,10 +5264,7 @@ fn describe_value(value: &Value) -> String {
             )
         }
         Value::BasicLandTypesAmong(filter) => {
-            format!(
-                "the number of {}",
-                describe_basic_land_types_among(filter)
-            )
+            format!("the number of {}", describe_basic_land_types_among(filter))
         }
         Value::ColorsAmong(filter) => {
             format!("the number of {}", describe_colors_among(filter))
@@ -5274,7 +5272,10 @@ fn describe_value(value: &Value) -> String {
         Value::CreaturesDiedThisTurn => "the number of creatures that died this turn".to_string(),
         Value::CountPlayers(filter) => format!("the number of {}", describe_player_filter(filter)),
         Value::PartySize(filter) => {
-            format!("the number of creatures in {} party", describe_possessive_player_filter(filter))
+            format!(
+                "the number of creatures in {} party",
+                describe_possessive_player_filter(filter)
+            )
         }
         Value::SourcePower => "this source's power".to_string(),
         Value::SourceToughness => "this source's toughness".to_string(),
@@ -5452,7 +5453,8 @@ fn describe_dynamic_runtime_pt_with_where_x(
     let power_text_lower = power_text.to_ascii_lowercase();
     let toughness_text_lower = toughness_text.to_ascii_lowercase();
 
-    let power_is_count_like = !matches!(power, Value::Fixed(_)) && power_text_lower.contains("number of");
+    let power_is_count_like =
+        !matches!(power, Value::Fixed(_)) && power_text_lower.contains("number of");
     let toughness_is_count_like =
         !matches!(toughness, Value::Fixed(_)) && toughness_text_lower.contains("number of");
 
@@ -5721,10 +5723,12 @@ fn describe_apply_continuous_effect(
     }
     if effect.modification.is_none()
         && effect.additional_modifications.is_empty()
-        && let [crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
-            power,
-            toughness,
-        }] = effect.runtime_modifications.as_slice()
+        && let [
+            crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
+                power,
+                toughness,
+            },
+        ] = effect.runtime_modifications.as_slice()
         && let Some(text) = describe_dynamic_runtime_pt_with_where_x(
             target.as_str(),
             plural_target,
@@ -6029,7 +6033,10 @@ fn describe_basic_land_type_scope(filter: &ObjectFilter) -> String {
 }
 
 fn describe_basic_land_types_among(filter: &ObjectFilter) -> String {
-    format!("basic land type among {}", describe_basic_land_type_scope(filter))
+    format!(
+        "basic land type among {}",
+        describe_basic_land_type_scope(filter)
+    )
 }
 
 fn describe_colors_among(filter: &ObjectFilter) -> String {
@@ -6068,7 +6075,11 @@ fn describe_player_relative_condition(condition: &Condition) -> Option<String> {
             }
             Some("tapped a land for mana this turn".to_string())
         }
-        Condition::PlayerTaggedObjectMatches { player, tag, filter } => {
+        Condition::PlayerTaggedObjectMatches {
+            player,
+            tag,
+            filter,
+        } => {
             if *player != PlayerFilter::IteratedPlayer {
                 return None;
             }
@@ -8300,18 +8311,17 @@ fn describe_where_x_basis(value: &Value) -> Option<String> {
             "the number of {}",
             pluralize_noun_phrase(&describe_for_each_count_filter(filter))
         )),
-        Value::BasicLandTypesAmong(filter) => {
-            Some(format!("the number of {}", describe_basic_land_types_among(filter)))
-        }
+        Value::BasicLandTypesAmong(filter) => Some(format!(
+            "the number of {}",
+            describe_basic_land_types_among(filter)
+        )),
         Value::ColorsAmong(filter) => {
             Some(format!("the number of {}", describe_colors_among(filter)))
         }
-        Value::CountScaled(filter, multiplier) if *multiplier == 1 => {
-            Some(format!(
-                "the number of {}",
-                pluralize_noun_phrase(&describe_for_each_count_filter(filter))
-            ))
-        }
+        Value::CountScaled(filter, multiplier) if *multiplier == 1 => Some(format!(
+            "the number of {}",
+            pluralize_noun_phrase(&describe_for_each_count_filter(filter))
+        )),
         _ => {
             let rendered = describe_value(value);
             if rendered.starts_with("the number of ") {
@@ -8944,14 +8954,15 @@ fn describe_effect_impl(effect: &Effect) -> String {
             let player_filter_text = describe_player_filter(&for_players.filter);
             let each_player = strip_leading_article(&player_filter_text);
             if conditional.if_true.len() == 1
-                && let Some(damage) = conditional.if_true[0]
-                    .downcast_ref::<crate::effects::DealDamageEffect>()
-                && matches!(damage.target, ChooseSpec::Player(PlayerFilter::IteratedPlayer))
+                && let Some(damage) =
+                    conditional.if_true[0].downcast_ref::<crate::effects::DealDamageEffect>()
+                && matches!(
+                    damage.target,
+                    ChooseSpec::Player(PlayerFilter::IteratedPlayer)
+                )
             {
                 let amount_text = describe_value(&damage.amount);
-                return format!(
-                    "Deal {amount_text} damage to each {each_player} who {relative}"
-                );
+                return format!("Deal {amount_text} damage to each {each_player} who {relative}");
             }
             let mut inner = describe_effect_list(&conditional.if_true);
             if let Some(rest) = inner.strip_prefix("that player ") {
@@ -9141,7 +9152,10 @@ fn describe_effect_impl(effect: &Effect) -> String {
     }
     if let Some(exile) = effect.downcast_ref::<crate::effects::ExileEffect>() {
         let face_down_suffix = if exile.face_down { " face down" } else { "" };
-        return format!("Exile {}{face_down_suffix}", describe_choose_spec(&exile.spec));
+        return format!(
+            "Exile {}{face_down_suffix}",
+            describe_choose_spec(&exile.spec)
+        );
     }
     if let Some(exile_until) = effect.downcast_ref::<crate::effects::ExileUntilEffect>() {
         let duration = match exile_until.duration {
@@ -10001,7 +10015,10 @@ fn describe_effect_impl(effect: &Effect) -> String {
             return format!("Return {target_text} from {from_text} to {to_text}");
         }
         if is_you_owned_battlefield_object_spec(&return_to_hand.spec) {
-            return format!("Return {} to your hand", describe_choose_spec(&return_to_hand.spec));
+            return format!(
+                "Return {} to your hand",
+                describe_choose_spec(&return_to_hand.spec)
+            );
         }
         return format!(
             "Return {} to {}",
@@ -10351,7 +10368,11 @@ fn describe_effect_impl(effect: &Effect) -> String {
         );
     }
     if let Some(cast_tagged) = effect.downcast_ref::<crate::effects::CastTaggedEffect>() {
-        let verb = if cast_tagged.allow_land { "play" } else { "cast" };
+        let verb = if cast_tagged.allow_land {
+            "play"
+        } else {
+            "cast"
+        };
         let spec = crate::target::ChooseSpec::Tagged(cast_tagged.tag.clone());
         let target = if cast_tagged.as_copy {
             if cast_tagged.tag.as_str() == "it" {
@@ -11226,9 +11247,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
     {
         let player = describe_player_filter(&grant_play.player);
         let graveyard_owner = describe_possessive_player_filter(&grant_play.player);
-        return format!(
-            "{player} may play lands and cast spells from {graveyard_owner} graveyard"
-        );
+        return format!("{player} may play lands and cast spells from {graveyard_owner} graveyard");
     }
     if let Some(control_player) = effect.downcast_ref::<crate::effects::ControlPlayerEffect>() {
         return format!(
@@ -11373,7 +11392,10 @@ fn describe_keyword_ability(ability: &Ability) -> Option<String> {
     {
         return Some(format!("Cycling—Pay {} life", words[2]));
     }
-    if words.first().copied() == Some("equip") {
+    let is_equip_keyword = words.first().is_some_and(|word| {
+        *word == "equip" || word.starts_with("equip—") || word.starts_with("equip-")
+    });
+    if is_equip_keyword {
         let mut rendered = if raw_text.eq_ignore_ascii_case("equip") {
             "Equip".to_string()
         } else {
@@ -12839,7 +12861,8 @@ fn normalize_for_each_clause_surface(text: String) -> String {
         |prefix: &str, iter_subject: &str, action: &str| -> Option<String> {
             let create_tail = strip_prefix_ascii_ci(action.trim(), "Create ")?;
             let (token_text, count_subject) = split_once_ascii_ci(create_tail, " for each ")?;
-            if normalize_for_each_subject(iter_subject) != normalize_for_each_subject(count_subject) {
+            if normalize_for_each_subject(iter_subject) != normalize_for_each_subject(count_subject)
+            {
                 return None;
             }
             let head = if prefix.is_empty() {
@@ -12861,7 +12884,8 @@ fn normalize_for_each_clause_surface(text: String) -> String {
     }
     if let Some((prefix, rest)) = split_once_ascii_ci(&text, ", for each ")
         && let Some((iter_subject, action)) = split_once_ascii_ci(rest, ", ")
-        && let Some(collapsed) = collapse_redundant_for_each_create(prefix.trim(), iter_subject, action)
+        && let Some(collapsed) =
+            collapse_redundant_for_each_create(prefix.trim(), iter_subject, action)
     {
         return collapsed;
     }
@@ -12870,16 +12894,28 @@ fn normalize_for_each_clause_surface(text: String) -> String {
         for (from, to) in [
             ("Target players each gains ", "Target players each gain "),
             ("Target players each draws ", "Target players each draw "),
-            ("Target players each discards ", "Target players each discard "),
+            (
+                "Target players each discards ",
+                "Target players each discard ",
+            ),
             ("Target players each mills ", "Target players each mill "),
             ("Target players each loses ", "Target players each lose "),
-            ("Target players each sacrifices ", "Target players each sacrifice "),
+            (
+                "Target players each sacrifices ",
+                "Target players each sacrifice ",
+            ),
             ("target players each gains ", "target players each gain "),
             ("target players each draws ", "target players each draw "),
-            ("target players each discards ", "target players each discard "),
+            (
+                "target players each discards ",
+                "target players each discard ",
+            ),
             ("target players each mills ", "target players each mill "),
             ("target players each loses ", "target players each lose "),
-            ("target players each sacrifices ", "target players each sacrifice "),
+            (
+                "target players each sacrifices ",
+                "target players each sacrifice ",
+            ),
         ] {
             value = value.replace(from, to);
         }
@@ -13091,9 +13127,7 @@ fn normalize_for_each_clause_surface(text: String) -> String {
         } else {
             "each player"
         };
-        return format!(
-            "{prefix}{each_player} may {first}. For each player who does, {second}"
-        );
+        return format!("{prefix}{each_player} may {first}. For each player who does, {second}");
     }
     if let Some((prefix, rest)) = text
         .split_once("For each opponent, You may ")
@@ -13123,9 +13157,7 @@ fn normalize_for_each_clause_surface(text: String) -> String {
         } else {
             "each player"
         };
-        return format!(
-            "{prefix}{each_player} may {first}. For each player who does, {second}"
-        );
+        return format!("{prefix}{each_player} may {first}. For each player who does, {second}");
     }
     if let Some((prefix, rest)) = text
         .split_once("For each opponent, that player may ")
@@ -13233,9 +13265,7 @@ fn normalize_each_opponent_life_exchange_clause(loss: &str, gain: &str) -> Optio
     let count_subject = if for_each.trim_end().ends_with(" in your party")
         && for_each.trim_start().starts_with("creature ")
     {
-        for_each
-            .trim()
-            .replacen("creature ", "creatures ", 1)
+        for_each.trim().replacen("creature ", "creatures ", 1)
     } else {
         pluralize_noun_phrase(for_each.trim())
     };
@@ -13252,10 +13282,14 @@ fn normalize_known_low_tail_phrase(text: &str) -> String {
     if let Some((left, right)) = split_once_ascii_ci(trimmed, ". ")
         && let Some(cards) = strip_prefix_ascii_ci(left.trim(), "Each player returns each ")
             .and_then(|tail| {
-                strip_suffix_ascii_ci(tail, " from their graveyard to the battlefield")
-                    .or_else(|| {
-                        strip_suffix_ascii_ci(tail, " from that player's graveyard to the battlefield")
-                    })
+                strip_suffix_ascii_ci(tail, " from their graveyard to the battlefield").or_else(
+                    || {
+                        strip_suffix_ascii_ci(
+                            tail,
+                            " from that player's graveyard to the battlefield",
+                        )
+                    },
+                )
             })
             .or_else(|| {
                 strip_prefix_ascii_ci(left.trim(), "For each player, Return all ").and_then(
@@ -13557,8 +13591,7 @@ fn normalize_you_cast_spell_you_dont_own_counter_line(text: &str) -> Option<Stri
 
 fn normalize_one_or_more_combat_damage_treasure_line(text: &str) -> Option<String> {
     let (head, rest) = split_once_ascii_ci(text, "Whenever one or more ")?;
-    let marker =
-        " deal combat damage to a player: Exile card in that player's library. If that doesn't happen, create a Treasure token";
+    let marker = " deal combat damage to a player: Exile card in that player's library. If that doesn't happen, create a Treasure token";
     let (subject, tail) = split_once_ascii_ci(rest, marker)?;
     let mut rewritten = format!(
         "{head}Whenever one or more {} deal combat damage to a player, exile the top card of that player's library. If you don't, create a Treasure token",
@@ -15607,7 +15640,10 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
             " in target player's graveyard",
             " from target player's graveyard",
         )
-        .replace(" in that player's graveyard", " from that player's graveyard")
+        .replace(
+            " in that player's graveyard",
+            " from that player's graveyard",
+        )
         .replace(
             "Exile all land card from target player's graveyard",
             "Exile all land cards from target player's graveyard",
@@ -18639,20 +18675,18 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
     ) {
         if let Some(tail) = rest.strip_prefix(". ") {
             if let Some(nonland_tail) = tail.strip_prefix("For each nonland permanent, ") {
-                let (per_nonland_clause, trailing) = if let Some((head, after)) =
-                    nonland_tail.split_once(". ")
-                {
-                    (head, Some(after))
-                } else {
-                    (nonland_tail, None)
-                };
-                let per_nonland_clause = if let Some(create_rest) =
-                    per_nonland_clause.strip_prefix("Create ")
-                {
-                    format!("you create {create_rest}")
-                } else {
-                    lowercase_first(per_nonland_clause)
-                };
+                let (per_nonland_clause, trailing) =
+                    if let Some((head, after)) = nonland_tail.split_once(". ") {
+                        (head, Some(after))
+                    } else {
+                        (nonland_tail, None)
+                    };
+                let per_nonland_clause =
+                    if let Some(create_rest) = per_nonland_clause.strip_prefix("Create ") {
+                        format!("you create {create_rest}")
+                    } else {
+                        lowercase_first(per_nonland_clause)
+                    };
 
                 let mut normalized = format!(
                     "Each player reveals the top card of their library. For each nonland card revealed this way, {per_nonland_clause}"
@@ -20043,50 +20077,17 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
             "you may that player mills ",
             "you may have that player mill ",
         )
-        .replace(
-            "that player may loses ",
-            "that player may lose ",
-        )
-        .replace(
-            "that player may discards ",
-            "that player may discard ",
-        )
-        .replace(
-            "that player may draws ",
-            "that player may draw ",
-        )
-        .replace(
-            "that player may scries ",
-            "that player may scry ",
-        )
-        .replace(
-            "that player may mills ",
-            "that player may mill ",
-        )
-        .replace(
-            "that player may sacrifices ",
-            "that player may sacrifice ",
-        )
-        .replace(
-            "that player may gains ",
-            "that player may gain ",
-        )
-        .replace(
-            "that player may reveals ",
-            "that player may reveal ",
-        )
-        .replace(
-            "that player may shuffles ",
-            "that player may shuffle ",
-        )
-        .replace(
-            "that player may puts ",
-            "that player may put ",
-        )
-        .replace(
-            "that player may Put ",
-            "that player may put ",
-        );
+        .replace("that player may loses ", "that player may lose ")
+        .replace("that player may discards ", "that player may discard ")
+        .replace("that player may draws ", "that player may draw ")
+        .replace("that player may scries ", "that player may scry ")
+        .replace("that player may mills ", "that player may mill ")
+        .replace("that player may sacrifices ", "that player may sacrifice ")
+        .replace("that player may gains ", "that player may gain ")
+        .replace("that player may reveals ", "that player may reveal ")
+        .replace("that player may shuffles ", "that player may shuffle ")
+        .replace("that player may puts ", "that player may put ")
+        .replace("that player may Put ", "that player may put ");
     normalized = normalize_common_semantic_phrasing(&normalized);
     normalized = normalize_zero_pt_prefix(&normalized);
     if normalized.ends_with(" as long as it's your turn")
@@ -20970,9 +20971,8 @@ mod tests {
 
     #[test]
     fn normalizes_for_each_target_player_single_clause_sentence() {
-        let normalized = normalize_sentence_surface_style(
-            "For each target player, that player gains 6 life.",
-        );
+        let normalized =
+            normalize_sentence_surface_style("For each target player, that player gains 6 life.");
         assert_eq!(normalized, "Target players each gain 6 life.");
     }
 
@@ -22978,17 +22978,17 @@ mod tests {
 
     #[test]
     fn token_blueprint_renders_explicit_colorless_noncreature_artifact() {
-        let token = crate::cards::CardDefinitionBuilder::new(
-            crate::ids::CardId::new(),
-            "Cragflame",
-        )
-        .token()
-        .card_types(vec![crate::types::CardType::Artifact])
-        .subtypes(vec![crate::types::Subtype::Equipment])
-        .with_ability(crate::ability::Ability::static_ability(
-            crate::static_abilities::StaticAbility::make_colorless(crate::filter::ObjectFilter::source()),
-        ))
-        .build();
+        let token =
+            crate::cards::CardDefinitionBuilder::new(crate::ids::CardId::new(), "Cragflame")
+                .token()
+                .card_types(vec![crate::types::CardType::Artifact])
+                .subtypes(vec![crate::types::Subtype::Equipment])
+                .with_ability(crate::ability::Ability::static_ability(
+                    crate::static_abilities::StaticAbility::make_colorless(
+                        crate::filter::ObjectFilter::source(),
+                    ),
+                ))
+                .build();
 
         let rendered = super::describe_token_blueprint(&token).to_ascii_lowercase();
         assert!(

@@ -1441,7 +1441,9 @@ fn apply_modification_to_chars(
             *abilities_removed = true;
         }
         Modification::RemoveAllAbilitiesExceptMana => {
-            chars.abilities.retain(|ability| matches!(ability.kind, AbilityKind::Mana(_)));
+            chars
+                .abilities
+                .retain(|ability| matches!(ability.kind, AbilityKind::Mana(_)));
             chars.static_abilities.clear();
             *abilities_removed = true;
         }
@@ -1934,7 +1936,9 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
                     abilities_removed = true;
                 }
                 Modification::RemoveAllAbilitiesExceptMana => {
-                    chars.abilities.retain(|ability| matches!(ability.kind, AbilityKind::Mana(_)));
+                    chars
+                        .abilities
+                        .retain(|ability| matches!(ability.kind, AbilityKind::Mana(_)));
                     chars.static_abilities.clear();
                     abilities_removed = true;
                 }

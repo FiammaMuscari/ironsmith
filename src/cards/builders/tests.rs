@@ -6748,7 +6748,9 @@ fn parse_counter_unless_where_x_fails_strictly() {
 fn parse_gain_x_plus_life_with_where_clause_binds_x_value() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "An-Havva Inn Variant")
         .card_types(vec![CardType::Sorcery])
-        .parse_text("You gain X plus 1 life, where X is the number of green creatures on the battlefield.")
+        .parse_text(
+            "You gain X plus 1 life, where X is the number of green creatures on the battlefield.",
+        )
         .expect("gain-x-plus-life with where clause should parse");
 
     let joined = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
@@ -8394,8 +8396,7 @@ fn parse_put_counters_equal_to_that_creatures_power() {
 
     let abilities_debug = format!("{:#?}", def.abilities);
     assert!(
-        abilities_debug.contains("PowerOf")
-            || abilities_debug.contains("that creature's power"),
+        abilities_debug.contains("PowerOf") || abilities_debug.contains("that creature's power"),
         "expected dynamic power-based counter amount, got {abilities_debug}"
     );
 }

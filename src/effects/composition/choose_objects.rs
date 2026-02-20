@@ -217,7 +217,9 @@ impl EffectExecutor for ChooseObjectsEffect {
                         game.players
                             .iter()
                             .map(|player| player.id)
-                            .filter(|player_id| owner_filter.matches_player(*player_id, &filter_ctx))
+                            .filter(|player_id| {
+                                owner_filter.matches_player(*player_id, &filter_ctx)
+                            })
                             .collect()
                     } else {
                         vec![chooser_id]

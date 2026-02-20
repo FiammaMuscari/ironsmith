@@ -6246,18 +6246,17 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .find_map(|effect| effect.downcast_ref::<ForEachObject>())
             .expect("expected ForEachObject for nonland revealed card fanout");
         assert!(
-            for_each
-                .filter
-                .tagged_constraints
-                .iter()
-                .any(|constraint| {
-                    constraint.relation == TaggedOpbjectRelation::IsTaggedObject
-                        && constraint.tag.as_str() == "revealed_0"
-                }),
+            for_each.filter.tagged_constraints.iter().any(|constraint| {
+                constraint.relation == TaggedOpbjectRelation::IsTaggedObject
+                    && constraint.tag.as_str() == "revealed_0"
+            }),
             "expected revealed-this-way fanout to reference revealed tag, got {for_each:?}"
         );
         assert!(
-            for_each.filter.excluded_card_types.contains(&CardType::Land),
+            for_each
+                .filter
+                .excluded_card_types
+                .contains(&CardType::Land),
             "expected nonland constraint on revealed cards, got {for_each:?}"
         );
     }

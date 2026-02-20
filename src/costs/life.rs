@@ -21,6 +21,77 @@ impl LifeCost {
     }
 }
 
+/// A life payment cost whose amount is `per_card * (cards in your hand)`.
+///
+/// Used for patterns like: "Pay 1 life for each card in your hand."
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifePerCardInHandCost {
+    pub per_card: u32,
+}
+
+impl LifePerCardInHandCost {
+    pub fn new(per_card: u32) -> Self {
+        Self { per_card }
+    }
+}
+
+impl CostPayer for LifePerCardInHandCost {
+    fn can_pay(&self, game: &GameState, ctx: &CostContext) -> Result<(), CostPaymentError> {
+        let player = game
+            .player(ctx.payer)
+            .ok_or(CostPaymentError::PlayerNotFound)?;
+
+        let needed = (player.hand.len() as u32).saturating_mul(self.per_card);
+        if player.life < (needed as i32) {
+            return Err(CostPaymentError::InsufficientLife);
+        }
+
+        Ok(())
+    }
+
+    fn pay(
+        &self,
+        game: &mut GameState,
+        ctx: &mut CostContext,
+    ) -> Result<CostPaymentResult, CostPaymentError> {
+        // Verify we can still pay
+        self.can_pay(game, ctx)?;
+
+        let needed = game
+            .player(ctx.payer)
+            .map(|p| (p.hand.len() as u32).saturating_mul(self.per_card))
+            .unwrap_or(0);
+
+        if let Some(player) = game.player_mut(ctx.payer) {
+            player.life -= needed as i32;
+        }
+
+        Ok(CostPaymentResult::Paid)
+    }
+
+    fn clone_box(&self) -> Box<dyn CostPayer> {
+        Box::new(self.clone())
+    }
+
+    fn display(&self) -> String {
+        // Mirror the oracle phrasing ("for each card...") even when per_card != 1.
+        if self.per_card == 1 {
+            "Pay 1 life for each card in your hand".to_string()
+        } else {
+            format!("Pay {} life for each card in your hand", self.per_card)
+        }
+    }
+
+    fn is_life_cost(&self) -> bool {
+        true
+    }
+
+    fn life_amount(&self) -> Option<u32> {
+        // Dynamic based on hand size.
+        None
+    }
+}
+
 impl CostPayer for LifeCost {
     fn can_pay(&self, game: &GameState, ctx: &CostContext) -> Result<(), CostPaymentError> {
         let player = game
@@ -193,5 +264,42 @@ mod tests {
         let cloned = cost.clone_box();
         assert!(format!("{:?}", cloned).contains("LifeCost"));
         assert!(format!("{:?}", cloned).contains("3"));
+    }
+
+    #[test]
+    fn test_life_per_card_in_hand_display() {
+        assert_eq!(
+            LifePerCardInHandCost::new(1).display(),
+            "Pay 1 life for each card in your hand"
+        );
+        assert_eq!(
+            LifePerCardInHandCost::new(2).display(),
+            "Pay 2 life for each card in your hand"
+        );
+    }
+
+    #[test]
+    fn test_life_per_card_in_hand_can_pay_and_pay() {
+        let mut game = create_test_game();
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(1);
+
+        // Give Alice 3 cards in hand
+        if let Some(player) = game.player_mut(alice) {
+            player.hand.extend([
+                ObjectId::from_raw(10),
+                ObjectId::from_raw(11),
+                ObjectId::from_raw(12),
+            ]);
+            player.life = 10;
+        }
+
+        let cost = LifePerCardInHandCost::new(1);
+        let mut dm = crate::decision::AutoPassDecisionMaker;
+        let mut ctx = CostContext::new(source, alice, &mut dm);
+
+        assert!(cost.can_pay(&game, &ctx).is_ok());
+        assert_eq!(cost.pay(&mut game, &mut ctx), Ok(CostPaymentResult::Paid));
+        assert_eq!(game.player(alice).unwrap().life, 7);
     }
 }

@@ -54,9 +54,7 @@ impl EffectExecutor for ForEachObject {
                 .filter
                 .tagged_constraints
                 .iter()
-                .all(|constraint| {
-                    constraint.relation == TaggedOpbjectRelation::IsTaggedObject
-                });
+                .all(|constraint| constraint.relation == TaggedOpbjectRelation::IsTaggedObject);
 
         let candidate_ids: Vec<_> = if has_only_is_tagged_constraints {
             let mut seen = HashSet::new();
@@ -266,7 +264,8 @@ mod tests {
             alice,
             vec![CardType::Creature],
         );
-        let revealed_land = create_library_card(&mut game, "Revealed Land", alice, vec![CardType::Land]);
+        let revealed_land =
+            create_library_card(&mut game, "Revealed Land", alice, vec![CardType::Land]);
 
         ctx.tag_object(
             "revealed_0",

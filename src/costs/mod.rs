@@ -75,7 +75,7 @@ pub use discard::{DiscardCost, DiscardHandCost, DiscardSourceCost};
 pub use effect::EffectCost;
 pub use energy::EnergyCost;
 pub use exile::{ExileFromGraveyardCost, ExileFromHandCost, ExileSelfCost};
-pub use life::LifeCost;
+pub use life::{LifeCost, LifePerCardInHandCost};
 pub use mana::ManaPaymentCost;
 pub use mill::MillCost;
 pub use return_to_hand::{ReturnSelfToHandCost, ReturnToHandCost};

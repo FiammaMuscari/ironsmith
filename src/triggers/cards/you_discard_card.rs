@@ -130,7 +130,13 @@ mod tests {
         let trigger = YouDiscardCardTrigger::new(PlayerFilter::You, Some(creature_filter));
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        assert!(trigger.matches(&TriggerEvent::new(CardDiscardedEvent::new(alice, creature)), &ctx));
-        assert!(!trigger.matches(&TriggerEvent::new(CardDiscardedEvent::new(alice, land)), &ctx));
+        assert!(trigger.matches(
+            &TriggerEvent::new(CardDiscardedEvent::new(alice, creature)),
+            &ctx
+        ));
+        assert!(!trigger.matches(
+            &TriggerEvent::new(CardDiscardedEvent::new(alice, land)),
+            &ctx
+        ));
     }
 }
