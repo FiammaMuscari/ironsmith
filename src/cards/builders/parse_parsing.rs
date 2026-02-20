@@ -1103,6 +1103,10 @@ fn split_segments_on_comma_then(segments: Vec<Vec<Token>>) -> Vec<Vec<Token>> {
                         && after_words
                             .windows(2)
                             .any(|window| window == ["on", "it"] || window == ["on", "them"]);
+                let allow_put_into_hand_followup = has_back_ref
+                    && (after_words.starts_with(&["put"]) || after_words.starts_with(&["puts"]))
+                    && after_words.contains(&"into")
+                    && after_words.contains(&"hand");
                 if has_effect_head && (!has_back_ref || allow_backref_split) {
                     split_point = Some(i);
                     break;
@@ -1122,6 +1126,9 @@ fn split_segments_on_comma_then(segments: Vec<Vec<Token>>) -> Vec<Vec<Token>> {
                     split_point = Some(i);
                     break;
                 } else if has_effect_head && allow_return_with_counter_followup {
+                    split_point = Some(i);
+                    break;
+                } else if has_effect_head && allow_put_into_hand_followup {
                     split_point = Some(i);
                     break;
                 }
@@ -5512,6 +5519,16 @@ fn parse_where_x_is_number_of_filter_value(tokens: &[Token]) -> Option<Value> {
         }
         let scope_filter = parse_object_filter(scope_tokens, false).ok()?;
         return Some(Value::BasicLandTypesAmong(scope_filter));
+    }
+    if filter_words.starts_with(&["color", "among"])
+        || filter_words.starts_with(&["colors", "among"])
+    {
+        let mut scope_tokens = &filter_tokens[2..];
+        if scope_tokens.first().is_some_and(|token| token.is_word("the")) {
+            scope_tokens = &scope_tokens[1..];
+        }
+        let scope_filter = parse_object_filter(scope_tokens, false).ok()?;
+        return Some(Value::ColorsAmong(scope_filter));
     }
     let filter = parse_object_filter(filter_tokens, false).ok()?;
     Some(Value::Count(filter))
@@ -12127,15 +12144,89 @@ enum MayCastItVerb {
     Play,
 }
 
-fn parse_may_cast_it_sentence(tokens: &[Token]) -> Option<MayCastItVerb> {
-    let clause_words = words(tokens);
-    if clause_words.as_slice() == ["you", "may", "cast", "it"] {
-        return Some(MayCastItVerb::Cast);
+struct MayCastTaggedSpec {
+    verb: MayCastItVerb,
+    as_copy: bool,
+    without_paying_mana_cost: bool,
+}
+
+fn parse_may_cast_it_sentence(tokens: &[Token]) -> Option<MayCastTaggedSpec> {
+    let mut clause_words = words(tokens);
+    while clause_words
+        .first()
+        .is_some_and(|word| *word == "then" || *word == "and")
+    {
+        clause_words.remove(0);
     }
-    if clause_words.as_slice() == ["you", "may", "play", "it"] {
-        return Some(MayCastItVerb::Play);
+
+    if clause_words.starts_with(&["if", "you", "do"]) {
+        clause_words = clause_words[3..].to_vec();
+        while clause_words
+            .first()
+            .is_some_and(|word| *word == "then" || *word == "and")
+        {
+            clause_words.remove(0);
+        }
+    }
+
+    if clause_words.len() < 4 || clause_words[0] != "you" || clause_words[1] != "may" {
+        return None;
+    }
+
+    let verb = match clause_words[2] {
+        "cast" => MayCastItVerb::Cast,
+        "play" => MayCastItVerb::Play,
+        _ => return None,
+    };
+
+    let rest = &clause_words[3..];
+    let (as_copy, consumed) = if rest.starts_with(&["it"]) {
+        (false, 1usize)
+    } else if rest.starts_with(&["the", "copy"])
+        || rest.starts_with(&["that", "copy"])
+        || rest.starts_with(&["a", "copy"])
+    {
+        (true, 2usize)
+    } else {
+        return None;
+    };
+
+    let tail = &rest[consumed..];
+    if tail.is_empty() {
+        return Some(MayCastTaggedSpec {
+            verb,
+            as_copy,
+            without_paying_mana_cost: false,
+        });
+    }
+    if tail == ["without", "paying", "its", "mana", "cost"] {
+        return Some(MayCastTaggedSpec {
+            verb,
+            as_copy,
+            without_paying_mana_cost: true,
+        });
     }
     None
+}
+
+fn build_may_cast_tagged_effect(spec: &MayCastTaggedSpec) -> EffectAst {
+    EffectAst::May {
+        effects: vec![EffectAst::CastTagged {
+            tag: TagKey::from(IT_TAG),
+            allow_land: matches!(spec.verb, MayCastItVerb::Play),
+            as_copy: spec.as_copy,
+            without_paying_mana_cost: spec.without_paying_mana_cost,
+        }],
+    }
+}
+
+fn is_simple_copy_reference_sentence(tokens: &[Token]) -> bool {
+    let clause_words = words(tokens);
+    clause_words.as_slice() == ["copy", "it"]
+        || clause_words.as_slice() == ["copy", "this"]
+        || clause_words.as_slice() == ["copy", "that"]
+        || clause_words.as_slice() == ["copy", "that", "card"]
+        || clause_words.as_slice() == ["copy", "the", "exiled", "card"]
 }
 
 fn token_name_mentions_eldrazi_spawn_or_scion(name: &str) -> bool {
@@ -12843,15 +12934,25 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
         }
         parser_trace("parse_effect_sentences:sentence", &sentence_tokens);
 
-        if let Some(verb) = parse_may_cast_it_sentence(&sentence_tokens) {
+        if sentence_idx + 1 < sentences.len() && is_simple_copy_reference_sentence(&sentence_tokens)
+        {
+            let next_tokens = strip_embedded_token_rules_text(&sentences[sentence_idx + 1]);
+            if let Some(spec) = parse_may_cast_it_sentence(&next_tokens)
+                && spec.as_copy
+            {
+                parser_trace(
+                    "parse_effect_sentences:copy-reference-next-may-cast-copy",
+                    &sentence_tokens,
+                );
+                effects.push(build_may_cast_tagged_effect(&spec));
+                sentence_idx += 2;
+                continue;
+            }
+        }
+
+        if let Some(spec) = parse_may_cast_it_sentence(&sentence_tokens) {
             parser_trace("parse_effect_sentences:may-cast-it-sentence", &sentence_tokens);
-            let allow_land = matches!(verb, MayCastItVerb::Play);
-            effects.push(EffectAst::May {
-                effects: vec![EffectAst::CastTagged {
-                    tag: TagKey::from(IT_TAG),
-                    allow_land,
-                }],
-            });
+            effects.push(build_may_cast_tagged_effect(&spec));
             sentence_idx += 1;
             continue;
         }
@@ -23166,7 +23267,8 @@ fn explicit_player_for_carry(effect: &EffectAst) -> Option<CarryContext> {
         | EffectAst::PoisonCounters { player, .. }
         | EffectAst::EnergyCounters { player, .. }
         | EffectAst::RevealTop { player }
-        | EffectAst::RevealHand { player } => *player,
+        | EffectAst::RevealHand { player }
+        | EffectAst::PutIntoHand { player, .. } => *player,
         _ => return None,
     };
 
@@ -23191,7 +23293,8 @@ fn effect_uses_implicit_player(effect: &EffectAst) -> bool {
         | EffectAst::PoisonCounters { player, .. }
         | EffectAst::EnergyCounters { player, .. }
         | EffectAst::RevealTop { player }
-        | EffectAst::RevealHand { player } => matches!(*player, PlayerAst::Implicit),
+        | EffectAst::RevealHand { player }
+        | EffectAst::PutIntoHand { player, .. } => matches!(*player, PlayerAst::Implicit),
         _ => false,
     }
 }
@@ -23210,7 +23313,8 @@ fn maybe_apply_carried_player(effect: &mut EffectAst, carried_context: CarryCont
             | EffectAst::PoisonCounters { player, .. }
             | EffectAst::EnergyCounters { player, .. }
             | EffectAst::RevealTop { player }
-            | EffectAst::RevealHand { player } => {
+            | EffectAst::RevealHand { player }
+            | EffectAst::PutIntoHand { player, .. } => {
                 if matches!(*player, PlayerAst::Implicit) {
                     *player = carried_player;
                 }
@@ -23361,6 +23465,10 @@ fn bind_implicit_player_context(effect: &mut EffectAst, player: PlayerAst) {
         | EffectAst::RevealHand {
             player: effect_player,
         }
+        | EffectAst::PutIntoHand {
+            player: effect_player,
+            ..
+        }
         | EffectAst::PayMana {
             player: effect_player,
             ..
@@ -23394,10 +23502,6 @@ fn bind_implicit_player_context(effect: &mut EffectAst, player: PlayerAst) {
             ..
         }
         | EffectAst::AddManaCommanderIdentity {
-            player: effect_player,
-            ..
-        }
-        | EffectAst::PutIntoHand {
             player: effect_player,
             ..
         }
@@ -24647,6 +24751,21 @@ fn parse_get_for_each_count_value(tokens: &[Token]) -> Result<Option<Value>, Car
         let filter = parse_object_filter(scope_tokens, false)?;
         return Ok(Some(Value::BasicLandTypesAmong(filter)));
     }
+    if filter_words.starts_with(&["color", "among"])
+        || filter_words.starts_with(&["colors", "among"])
+    {
+        let mut scope_tokens = &filter_tokens[2..];
+        if scope_tokens.first().is_some_and(|token| token.is_word("the")) {
+            scope_tokens = &scope_tokens[1..];
+        }
+        if scope_tokens.is_empty() {
+            return Err(CardTextError::ParseError(
+                "missing scope after 'color among' in gets clause".to_string(),
+            ));
+        }
+        let filter = parse_object_filter(scope_tokens, false)?;
+        return Ok(Some(Value::ColorsAmong(filter)));
+    }
 
     Ok(Some(Value::Count(parse_object_filter(filter_tokens, other)?)))
 }
@@ -25529,6 +25648,14 @@ fn parse_copy_spell_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTe
             Some("it") | Some("this") | Some("that")
         );
     if simple_copy_reference {
+        if let Some(then_idx) = tokens.iter().position(|token| token.is_word("then")) {
+            let tail_tokens = trim_commas(&tokens[then_idx + 1..]);
+            if let Some(spec) = parse_may_cast_it_sentence(&tail_tokens)
+                && spec.as_copy
+            {
+                return Ok(Some(build_may_cast_tagged_effect(&spec)));
+            }
+        }
         let base = EffectAst::CopySpell {
             target: TargetAst::Source(None),
             count: Value::Fixed(1),
@@ -32247,6 +32374,49 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     let has_same_mana_value = all_words
         .windows(4)
         .any(|window| window == ["same", "mana", "value", "as"]);
+    let has_lte_mana_value_as_tagged = all_words.windows(8).any(|window| {
+        matches!(
+            window,
+            ["equal", "or", "lesser", "mana", "value", "than", "that", "spell"]
+                | ["equal", "or", "lesser", "mana", "value", "than", "that", "card"]
+                | ["equal", "or", "lesser", "mana", "value", "than", "that", "object"]
+        )
+    }) || all_words.windows(9).any(|window| {
+        matches!(
+            window,
+            [
+                "less",
+                "than",
+                "or",
+                "equal",
+                "to",
+                "that",
+                "spells",
+                "mana",
+                "value",
+            ] | [
+                "less",
+                "than",
+                "or",
+                "equal",
+                "to",
+                "that",
+                "cards",
+                "mana",
+                "value",
+            ] | [
+                "less",
+                "than",
+                "or",
+                "equal",
+                "to",
+                "that",
+                "objects",
+                "mana",
+                "value",
+            ]
+        )
+    });
     let references_sacrifice_cost_object = all_words.windows(3).any(|window| {
         matches!(
             window,
@@ -32309,6 +32479,12 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         filter.tagged_constraints.push(TaggedObjectConstraint {
             tag: IT_TAG.into(),
             relation: TaggedOpbjectRelation::SameManaValueAsTagged,
+        });
+    }
+    if has_lte_mana_value_as_tagged && references_it_for_mana_value {
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag: IT_TAG.into(),
+            relation: TaggedOpbjectRelation::ManaValueLteTagged,
         });
     }
     if has_same_name_as_tagged_object {

@@ -578,6 +578,8 @@ enum EffectAst {
     CastTagged {
         tag: TagKey,
         allow_land: bool,
+        as_copy: bool,
+        without_paying_mana_cost: bool,
     },
     ExileInsteadOfGraveyardThisTurn {
         player: PlayerAst,

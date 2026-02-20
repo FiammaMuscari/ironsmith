@@ -2562,7 +2562,12 @@ fn compile_effect(
             let effect = Effect::grant_play_from_graveyard_until_eot(player_filter);
             Ok((vec![effect], Vec::new()))
         }
-        EffectAst::CastTagged { tag, allow_land } => {
+        EffectAst::CastTagged {
+            tag,
+            allow_land,
+            as_copy,
+            without_paying_mana_cost,
+        } => {
             let resolved_tag = if tag.as_str() == IT_TAG {
                 TagKey::from(
                     ctx.last_object_tag.clone().ok_or_else(|| {
@@ -2574,7 +2579,12 @@ fn compile_effect(
             } else {
                 tag.clone()
             };
-            let effect = Effect::cast_tagged(resolved_tag, *allow_land);
+            let effect = Effect::cast_tagged(
+                resolved_tag,
+                *allow_land,
+                *as_copy,
+                *without_paying_mana_cost,
+            );
             Ok((vec![effect], Vec::new()))
         }
         EffectAst::ExileInsteadOfGraveyardThisTurn { player } => {
@@ -4713,6 +4723,10 @@ fn resolve_value_it_tag(value: &Value, ctx: &CompileContext) -> Result<Value, Ca
             resolve_it_tag(filter, ctx)?,
             *multiplier,
         )),
+        Value::BasicLandTypesAmong(filter) => {
+            Ok(Value::BasicLandTypesAmong(resolve_it_tag(filter, ctx)?))
+        }
+        Value::ColorsAmong(filter) => Ok(Value::ColorsAmong(resolve_it_tag(filter, ctx)?)),
         Value::PowerOf(spec) => Ok(Value::PowerOf(Box::new(resolve_choose_spec_it_tag(
             spec, ctx,
         )?))),

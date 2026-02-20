@@ -5268,6 +5268,9 @@ fn describe_value(value: &Value) -> String {
                 describe_basic_land_types_among(filter)
             )
         }
+        Value::ColorsAmong(filter) => {
+            format!("the number of {}", describe_colors_among(filter))
+        }
         Value::CreaturesDiedThisTurn => "the number of creatures that died this turn".to_string(),
         Value::CountPlayers(filter) => format!("the number of {}", describe_player_filter(filter)),
         Value::PartySize(filter) => {
@@ -6027,6 +6030,10 @@ fn describe_basic_land_type_scope(filter: &ObjectFilter) -> String {
 
 fn describe_basic_land_types_among(filter: &ObjectFilter) -> String {
     format!("basic land type among {}", describe_basic_land_type_scope(filter))
+}
+
+fn describe_colors_among(filter: &ObjectFilter) -> String {
+    format!("color among {}", describe_for_each_filter(filter))
 }
 
 fn describe_effect_predicate(predicate: &EffectPredicate) -> String {
@@ -7834,6 +7841,10 @@ fn describe_draw_for_each(draw: &crate::effects::DrawCardsEffect) -> Option<Stri
             "{player} {verb} a card for each {}",
             describe_basic_land_types_among(filter)
         )),
+        Value::ColorsAmong(filter) => Some(format!(
+            "{player} {verb} a card for each {}",
+            describe_colors_among(filter)
+        )),
         _ => None,
     }
 }
@@ -7842,6 +7853,7 @@ fn describe_create_for_each_count(value: &Value) -> Option<String> {
     match value {
         Value::Count(filter) => Some(describe_for_each_filter(filter)),
         Value::BasicLandTypesAmong(filter) => Some(describe_basic_land_types_among(filter)),
+        Value::ColorsAmong(filter) => Some(describe_colors_among(filter)),
         Value::CreaturesDiedThisTurn => Some("creature that died this turn".to_string()),
         _ => None,
     }
@@ -7890,6 +7902,12 @@ fn describe_compact_token_count(value: &Value, token_name: &str) -> String {
                 lands
             };
             format!("a {token_name} token for each basic land type among {lands}")
+        }
+        Value::ColorsAmong(filter) => {
+            format!(
+                "a {token_name} token for each color among {}",
+                describe_for_each_filter(filter)
+            )
         }
         Value::CreaturesDiedThisTurn => {
             format!("a {token_name} token for each creature that died this turn")
@@ -8284,6 +8302,9 @@ fn describe_where_x_basis(value: &Value) -> Option<String> {
         )),
         Value::BasicLandTypesAmong(filter) => {
             Some(format!("the number of {}", describe_basic_land_types_among(filter)))
+        }
+        Value::ColorsAmong(filter) => {
+            Some(format!("the number of {}", describe_colors_among(filter)))
         }
         Value::CountScaled(filter, multiplier) if *multiplier == 1 => {
             Some(format!(
@@ -9298,6 +9319,14 @@ fn describe_effect_impl(effect: &Effect) -> String {
                     format!("{{1}} for each basic land type among {lands}")
                 }
             }
+            Some(Value::ColorsAmong(filter)) => {
+                let scope = describe_for_each_filter(filter);
+                if has_base_mana {
+                    format!("plus {{1}} for each color among {scope}")
+                } else {
+                    format!("{{1}} for each color among {scope}")
+                }
+            }
             Some(value) => format!("plus {}", describe_value(value)),
             None => String::new(),
         };
@@ -10205,6 +10234,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
         let each_text = match &modify_pt_each.count {
             Value::Count(filter) => describe_for_each_count_filter(filter),
             Value::BasicLandTypesAmong(filter) => describe_basic_land_types_among(filter),
+            Value::ColorsAmong(filter) => describe_colors_among(filter),
             _ => describe_value(&modify_pt_each.count),
         };
         return format!(
@@ -10323,7 +10353,20 @@ fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(cast_tagged) = effect.downcast_ref::<crate::effects::CastTaggedEffect>() {
         let verb = if cast_tagged.allow_land { "play" } else { "cast" };
         let spec = crate::target::ChooseSpec::Tagged(cast_tagged.tag.clone());
-        return format!("{verb} {}", describe_choose_spec(&spec));
+        let target = if cast_tagged.as_copy {
+            if cast_tagged.tag.as_str() == "it" {
+                "a copy of it".to_string()
+            } else {
+                format!("a copy of {}", describe_choose_spec(&spec))
+            }
+        } else {
+            describe_choose_spec(&spec)
+        };
+        let mut text = format!("{verb} {target}");
+        if cast_tagged.without_paying_mana_cost {
+            text.push_str(" without paying its mana cost");
+        }
+        return text;
     }
     if let Some(may) = effect.downcast_ref::<crate::effects::MayEffect>() {
         if let Some(decider) = may.decider.as_ref() {

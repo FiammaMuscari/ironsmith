@@ -17,6 +17,8 @@ use crate::zone::Zone;
 pub struct CastTaggedEffect {
     pub tag: TagKey,
     pub allow_land: bool,
+    pub as_copy: bool,
+    pub without_paying_mana_cost: bool,
 }
 
 impl CastTaggedEffect {
@@ -25,12 +27,26 @@ impl CastTaggedEffect {
         Self {
             tag: tag.into(),
             allow_land: false,
+            as_copy: false,
+            without_paying_mana_cost: false,
         }
     }
 
     /// Allow playing a tagged land (best-effort, ignores ownership restrictions).
     pub fn allow_land(mut self) -> Self {
         self.allow_land = true;
+        self
+    }
+
+    /// Cast a copy of the tagged object instead of the tagged object itself.
+    pub fn as_copy(mut self) -> Self {
+        self.as_copy = true;
+        self
+    }
+
+    /// Cast without paying mana cost.
+    pub fn without_paying_mana_cost(mut self) -> Self {
+        self.without_paying_mana_cost = true;
         self
     }
 }
@@ -70,6 +86,45 @@ impl EffectExecutor for CastTaggedEffect {
             )
         };
 
+        if self.as_copy {
+            let caster = ctx.controller;
+            let copy_id = game.new_object_id();
+
+            let source_obj = match game.object(object_id) {
+                Some(obj) => obj.clone(),
+                None => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),
+            };
+            let mut copy_obj = crate::object::Object::token_copy_of(&source_obj, copy_id, caster);
+            copy_obj.controller = caster;
+
+            if is_land {
+                if !self.allow_land {
+                    return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                }
+                copy_obj.zone = Zone::Battlefield;
+                game.add_object(copy_obj);
+                return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![copy_id])));
+            }
+
+            if !self.without_paying_mana_cost
+                && let Some(cost) = mana_cost.as_ref()
+            {
+                if !game.can_pay_mana_cost(caster, None, cost, 0) {
+                    return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+                }
+                let _ = game.try_pay_mana_cost(caster, None, cost, 0);
+            }
+
+            copy_obj.zone = Zone::Stack;
+            game.add_object(copy_obj);
+
+            let mut stack_entry = StackEntry::new(copy_id, caster);
+            stack_entry.source_stable_id = Some(stable_id);
+            stack_entry.source_name = Some(card_name);
+            game.push_to_stack(stack_entry);
+            return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![copy_id])));
+        }
+
         if is_land {
             if !self.allow_land {
                 return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
@@ -86,7 +141,9 @@ impl EffectExecutor for CastTaggedEffect {
         }
 
         let caster = ctx.controller;
-        if let Some(cost) = mana_cost.as_ref() {
+        if !self.without_paying_mana_cost
+            && let Some(cost) = mana_cost.as_ref()
+        {
             if !game.can_pay_mana_cost(caster, None, cost, 0) {
                 return Ok(EffectOutcome::from_result(EffectResult::Impossible));
             }

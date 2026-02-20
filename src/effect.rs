@@ -534,6 +534,9 @@ pub enum Value {
     /// Number of distinct basic land types among objects matching a filter.
     BasicLandTypesAmong(ObjectFilter),
 
+    /// Number of distinct colors among objects matching a filter.
+    ColorsAmong(ObjectFilter),
+
     /// Number of creatures that have died this turn.
     CreaturesDiedThisTurn,
 
@@ -2880,11 +2883,22 @@ impl Effect {
     ///
     /// This is used for one-shot "You may cast it" patterns where a prior
     /// effect tagged the card to be cast.
-    pub fn cast_tagged(tag: impl Into<crate::tag::TagKey>, allow_land: bool) -> Self {
+    pub fn cast_tagged(
+        tag: impl Into<crate::tag::TagKey>,
+        allow_land: bool,
+        as_copy: bool,
+        without_paying_mana_cost: bool,
+    ) -> Self {
         use crate::effects::CastTaggedEffect;
         let effect = CastTaggedEffect::new(tag);
         let effect = if allow_land {
             effect.allow_land()
+        } else {
+            effect
+        };
+        let effect = if as_copy { effect.as_copy() } else { effect };
+        let effect = if without_paying_mana_cost {
+            effect.without_paying_mana_cost()
         } else {
             effect
         };

@@ -712,6 +712,34 @@ pub fn resolve_value(
             }
             Ok(seen.len() as i32)
         }
+        Value::ColorsAmong(filter) => {
+            let filter_ctx = ctx.filter_context(game);
+            let mut has_white = false;
+            let mut has_blue = false;
+            let mut has_black = false;
+            let mut has_red = false;
+            let mut has_green = false;
+
+            for obj in game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| filter.matches(obj, &filter_ctx, game))
+            {
+                let colors = obj.colors();
+                has_white |= colors.contains(crate::color::Color::White);
+                has_blue |= colors.contains(crate::color::Color::Blue);
+                has_black |= colors.contains(crate::color::Color::Black);
+                has_red |= colors.contains(crate::color::Color::Red);
+                has_green |= colors.contains(crate::color::Color::Green);
+            }
+
+            Ok((has_white as i32)
+                + (has_blue as i32)
+                + (has_black as i32)
+                + (has_red as i32)
+                + (has_green as i32))
+        }
         Value::CreaturesDiedThisTurn => Ok(game.creatures_died_this_turn as i32),
 
         Value::CountPlayers(player_filter) => {
