@@ -5470,17 +5470,20 @@ fn parse_where_x_value_clause(tokens: &[Token]) -> Option<Value> {
 }
 
 fn parse_where_x_is_number_of_filter_value(tokens: &[Token]) -> Option<Value> {
-    let words = words(tokens);
-    if !words.starts_with(&["where", "x", "is"]) {
+    let clause_words = words(tokens);
+    if !clause_words.starts_with(&["where", "x", "is"]) {
         return None;
     }
 
-    if words.contains(&"creature") && words.contains(&"type") && words.contains(&"common") {
+    if clause_words.contains(&"creature")
+        && clause_words.contains(&"type")
+        && clause_words.contains(&"common")
+    {
         return None;
     }
 
-    let number_idx = words.iter().position(|word| *word == "number")?;
-    if words.get(number_idx + 1).copied() != Some("of") {
+    let number_idx = clause_words.iter().position(|word| *word == "number")?;
+    if clause_words.get(number_idx + 1).copied() != Some("of") {
         return None;
     }
 
@@ -5499,6 +5502,17 @@ fn parse_where_x_is_number_of_filter_value(tokens: &[Token]) -> Option<Value> {
     }
     let object_start_token_idx = object_start_token_idx?;
     let filter_tokens = &tokens[object_start_token_idx..];
+    let filter_words = words(filter_tokens);
+    if filter_words.starts_with(&["basic", "land", "type", "among"])
+        || filter_words.starts_with(&["basic", "land", "types", "among"])
+    {
+        let mut scope_tokens = &filter_tokens[4..];
+        if scope_tokens.first().is_some_and(|token| token.is_word("the")) {
+            scope_tokens = &scope_tokens[1..];
+        }
+        let scope_filter = parse_object_filter(scope_tokens, false).ok()?;
+        return Some(Value::BasicLandTypesAmong(scope_filter));
+    }
     let filter = parse_object_filter(filter_tokens, false).ok()?;
     Some(Value::Count(filter))
 }
@@ -13070,6 +13084,108 @@ fn replace_it_damage_target_in_effects(effects: &mut [EffectAst], target: &Targe
     }
 }
 
+fn replace_unbound_x_in_damage_effects(
+    effects: &mut [EffectAst],
+    replacement: &Value,
+    clause: &str,
+) -> Result<(), CardTextError> {
+    for effect in effects {
+        replace_unbound_x_in_damage_effect(effect, replacement, clause)?;
+    }
+    Ok(())
+}
+
+fn replace_unbound_x_in_damage_effect(
+    effect: &mut EffectAst,
+    replacement: &Value,
+    clause: &str,
+) -> Result<(), CardTextError> {
+    match effect {
+        EffectAst::DealDamage { amount, .. }
+        | EffectAst::DealDamageEach { amount, .. }
+        | EffectAst::GainLife { amount, .. }
+        | EffectAst::LoseLife { amount, .. } => {
+            if value_contains_unbound_x(amount) {
+                *amount = replace_unbound_x_with_value(amount.clone(), replacement, clause)?;
+            }
+        }
+        EffectAst::Conditional {
+            if_true, if_false, ..
+        } => {
+            replace_unbound_x_in_damage_effects(if_true, replacement, clause)?;
+            replace_unbound_x_in_damage_effects(if_false, replacement, clause)?;
+        }
+        EffectAst::UnlessPays { effects, .. }
+        | EffectAst::May { effects }
+        | EffectAst::MayByPlayer { effects, .. }
+        | EffectAst::MayByTaggedController { effects, .. }
+        | EffectAst::IfResult { effects, .. }
+        | EffectAst::ForEachOpponent { effects }
+        | EffectAst::ForEachPlayer { effects }
+        | EffectAst::ForEachTargetPlayers { effects, .. }
+        | EffectAst::ForEachObject { effects, .. }
+        | EffectAst::ForEachTagged { effects, .. }
+        | EffectAst::ForEachPlayerDoesNot { effects, .. }
+        | EffectAst::ForEachOpponentDoesNot { effects, .. }
+        | EffectAst::ForEachPlayerDid { effects, .. }
+        | EffectAst::ForEachOpponentDid { effects, .. }
+        | EffectAst::ForEachTaggedPlayer { effects, .. }
+        | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
+        | EffectAst::DelayedUntilEndOfCombat { effects }
+        | EffectAst::DelayedTriggerThisTurn { effects, .. }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
+        | EffectAst::VoteOption { effects, .. } => {
+            replace_unbound_x_in_damage_effects(effects, replacement, clause)?;
+        }
+        EffectAst::UnlessAction {
+            effects,
+            alternative,
+            ..
+        } => {
+            replace_unbound_x_in_damage_effects(effects, replacement, clause)?;
+            replace_unbound_x_in_damage_effects(alternative, replacement, clause)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn apply_where_x_to_damage_amounts(
+    tokens: &[Token],
+    effects: &mut [EffectAst],
+) -> Result<(), CardTextError> {
+    let clause_words = words(tokens);
+    let has_deal_x = clause_words.windows(3).any(|window| {
+        (window[0] == "deal" || window[0] == "deals") && window[1] == "x" && window[2] == "damage"
+    });
+    let has_x_life = clause_words.windows(3).any(|window| {
+        (window[0] == "gain"
+            || window[0] == "gains"
+            || window[0] == "lose"
+            || window[0] == "loses")
+            && window[1] == "x"
+            && window[2] == "life"
+    });
+    if !has_deal_x && !has_x_life {
+        return Ok(());
+    }
+    let Some(where_idx) = clause_words
+        .windows(3)
+        .position(|window| window == ["where", "x", "is"])
+    else {
+        return Ok(());
+    };
+    let Some(where_token_idx) = token_index_for_word_index(tokens, where_idx) else {
+        return Ok(());
+    };
+    let where_tokens = &tokens[where_token_idx..];
+    let Some(where_value) = parse_where_x_value_clause(where_tokens) else {
+        return Ok(());
+    };
+    replace_unbound_x_in_damage_effects(effects, &where_value, &clause_words.join(" "))
+}
+
 fn replace_it_damage_target(effect: &mut EffectAst, target: &TargetAst) {
     match effect {
         EffectAst::DealDamage {
@@ -16776,7 +16892,9 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
         )));
     }
 
-    parse_effect_chain(tokens)
+    let mut effects = parse_effect_chain(tokens)?;
+    apply_where_x_to_damage_amounts(tokens, &mut effects)?;
+    Ok(effects)
 }
 
 fn is_enters_as_copy_clause(words: &[&str]) -> bool {

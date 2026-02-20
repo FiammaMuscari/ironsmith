@@ -6560,6 +6560,24 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             continue;
         }
         if idx + 1 < filtered.len()
+            && let Some(deal) = filtered[idx].downcast_ref::<crate::effects::DealDamageEffect>()
+            && let Some(gain) = filtered[idx + 1].downcast_ref::<crate::effects::GainLifeEffect>()
+            && let Some(compact) = describe_deal_damage_then_gain_life(deal, gain)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < filtered.len()
+            && let Some(lose) = filtered[idx].downcast_ref::<crate::effects::LoseLifeEffect>()
+            && let Some(gain) = filtered[idx + 1].downcast_ref::<crate::effects::GainLifeEffect>()
+            && let Some(compact) = describe_lose_life_then_gain_life(lose, gain)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < filtered.len()
             && let Some(gain) = filtered[idx].downcast_ref::<crate::effects::GainLifeEffect>()
             && let Some(scry) = filtered[idx + 1].downcast_ref::<crate::effects::ScryEffect>()
             && let Some(compact) = describe_gain_life_then_scry(gain, scry)
@@ -8255,6 +8273,77 @@ fn describe_scry_then_draw(
         describe_value(&scry.count),
         player_verb(&player, "draw", "draws"),
         describe_card_count(&draw.count)
+    ))
+}
+
+fn describe_where_x_basis(value: &Value) -> Option<String> {
+    match value {
+        Value::Count(filter) => Some(format!(
+            "the number of {}",
+            pluralize_noun_phrase(&describe_for_each_count_filter(filter))
+        )),
+        Value::BasicLandTypesAmong(filter) => {
+            Some(format!("the number of {}", describe_basic_land_types_among(filter)))
+        }
+        Value::CountScaled(filter, multiplier) if *multiplier == 1 => {
+            Some(format!(
+                "the number of {}",
+                pluralize_noun_phrase(&describe_for_each_count_filter(filter))
+            ))
+        }
+        _ => {
+            let rendered = describe_value(value);
+            if rendered.starts_with("the number of ") {
+                Some(rendered)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn describe_deal_damage_then_gain_life(
+    deal: &crate::effects::DealDamageEffect,
+    gain: &crate::effects::GainLifeEffect,
+) -> Option<String> {
+    let where_x = if deal.amount == gain.amount {
+        describe_where_x_basis(&deal.amount)
+    } else if matches!(deal.amount, Value::X) {
+        describe_where_x_basis(&gain.amount)
+    } else if matches!(gain.amount, Value::X) {
+        describe_where_x_basis(&deal.amount)
+    } else {
+        None
+    }?;
+
+    let target = describe_choose_spec(&deal.target);
+    let player = describe_choose_spec(&gain.player);
+    Some(format!(
+        "Deal X damage to {target} and {player} {} X life, where X is {where_x}",
+        player_verb(&player, "gain", "gains")
+    ))
+}
+
+fn describe_lose_life_then_gain_life(
+    lose: &crate::effects::LoseLifeEffect,
+    gain: &crate::effects::GainLifeEffect,
+) -> Option<String> {
+    let where_x = if lose.amount == gain.amount {
+        describe_where_x_basis(&lose.amount)
+    } else if matches!(lose.amount, Value::X) {
+        describe_where_x_basis(&gain.amount)
+    } else if matches!(gain.amount, Value::X) {
+        describe_where_x_basis(&lose.amount)
+    } else {
+        None
+    }?;
+
+    let lose_player = describe_choose_spec(&lose.player);
+    let gain_player = describe_choose_spec(&gain.player);
+    Some(format!(
+        "{lose_player} {} X life and {gain_player} {} X life, where X is {where_x}",
+        player_verb(&lose_player, "lose", "loses"),
+        player_verb(&gain_player, "gain", "gains")
     ))
 }
 
