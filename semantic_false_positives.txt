@@ -262,3 +262,6 @@ Edgewall Innkeeper
 Tale of Tinúviel
 Zombie Master
 This Town Ain't Big Enough
+Shadow of Doubt
+Flaring Pain
+Change of Heart
