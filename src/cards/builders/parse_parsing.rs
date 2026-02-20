@@ -22656,6 +22656,7 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
     {
         let mut filter_start = 2usize;
         let mut min_count: Option<u32> = None;
+        let mut exact_count: Option<u32> = None;
         if let Some(raw_count) = filtered.get(2)
             && let Some(parsed_count) = parse_named_number(raw_count)
             && filtered.get(3).copied() == Some("or")
@@ -22663,6 +22664,12 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
         {
             min_count = Some(parsed_count);
             filter_start = 5;
+        } else if filtered.get(2).copied() == Some("exactly")
+            && let Some(raw_count) = filtered.get(3)
+            && let Some(parsed_count) = parse_named_number(raw_count)
+        {
+            exact_count = Some(parsed_count);
+            filter_start = 4;
         } else if filtered.get(2).copied() == Some("at")
             && filtered.get(3).copied() == Some("least")
             && let Some(raw_count) = filtered.get(4)
@@ -22689,6 +22696,13 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
             .is_some_and(|token| token.is_word("another") || token.is_word("other"));
         if let Ok(mut filter) = parse_object_filter(&control_tokens, other) {
             filter.controller = Some(PlayerFilter::You);
+            if let Some(count) = exact_count {
+                return Ok(PredicateAst::PlayerControlsExactly {
+                    player: PlayerAst::You,
+                    filter,
+                    count,
+                });
+            }
             if let Some(count) = min_count
                 && count > 1
             {
