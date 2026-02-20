@@ -3918,11 +3918,7 @@ fn compare_semantics(
     let normalized_compiled_lines = compiled_lines
         .iter()
         .map(|line| {
-            let mut normalized = normalize_card_self_references(line, card_name);
-            normalized = normalized
-                .replace(" you control", "")
-                .replace(" You control", "");
-            normalized
+            normalize_card_self_references(line, card_name)
         })
         .collect::<Vec<_>>();
     let stripped_compiled_lines = normalized_compiled_lines
