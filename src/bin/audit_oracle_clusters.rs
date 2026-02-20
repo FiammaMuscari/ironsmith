@@ -845,6 +845,17 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
                 .to_string();
         }
     }
+    // Split common "can't lose / can't win" conjunction into separate clauses so
+    // cards that render them as separate static abilities still align with oracle.
+    normalized = normalized
+        .replace(
+            "You can't lose the game and your opponents can't win the game",
+            "You can't lose the game. Your opponents can't win the game",
+        )
+        .replace(
+            "you can't lose the game and your opponents can't win the game",
+            "you can't lose the game. your opponents can't win the game",
+        );
     normalized = normalize_create_named_token_article_for_compare(&normalized);
     normalized = normalize_exile_named_token_until_source_leaves_for_compare(&normalized);
     normalized = normalize_granted_named_token_leaves_sacrifice_source_for_compare(&normalized);
@@ -871,6 +882,18 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
             "Counter target artifact or enchantment spell",
             "Counter target artifact or enchantment",
         );
+    // Normalize awkward "For each player, that player ..." phrasing into a single subject.
+    // This keeps semantics identical while improving clause alignment with oracle text.
+    for (from, to) in [
+        ("For each player, that player ", "Each player "),
+        ("for each player, that player ", "each player "),
+        ("For each opponent, that player ", "Each opponent "),
+        ("for each opponent, that player ", "each opponent "),
+    ] {
+        if normalized.starts_with(from) {
+            normalized = normalized.replacen(from, to, 1);
+        }
+    }
     for (from, to) in [
         ("For each player, ", "Each player "),
         ("for each player, ", "each player "),
