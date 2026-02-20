@@ -13091,7 +13091,14 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
         // If a token-copy modifier sentinel didn't apply (no preceding CreateTokenCopy),
         // convert it to a proper effect on the tagged "it" object.
         for effect in &mut sentence_effects {
-            if matches!(effect, EffectAst::TokenCopyGainHasteUntilEot) {
+            if matches!(effect, EffectAst::TokenCopyHasHaste) {
+                let span = span_from_tokens(&sentence);
+                *effect = EffectAst::GrantAbilitiesToTarget {
+                    target: TargetAst::Tagged(TagKey::from(IT_TAG), span),
+                    abilities: vec![StaticAbility::haste()],
+                    duration: Until::Forever,
+                };
+            } else if matches!(effect, EffectAst::TokenCopyGainHasteUntilEot) {
                 let span = span_from_tokens(&sentence);
                 *effect = EffectAst::GrantAbilitiesToTarget {
                     target: TargetAst::Tagged(TagKey::from(IT_TAG), span),
@@ -13493,7 +13500,7 @@ fn try_apply_token_copy_followup(
 
     let Some((haste, sacrifice, exile_next_end_step, exile_end_of_combat)) =
         (match sentence_effects.first() {
-        Some(EffectAst::TokenCopyGainHasteUntilEot) => Some((true, false, false, false)),
+        Some(EffectAst::TokenCopyHasHaste) => Some((true, false, false, false)),
         Some(EffectAst::TokenCopySacrificeAtNextEndStep) => Some((false, true, false, false)),
         Some(EffectAst::TokenCopyExileAtNextEndStep) => Some((false, false, true, false)),
         Some(EffectAst::ExileThatTokenAtEndOfCombat) => Some((false, false, false, true)),
@@ -17130,15 +17137,21 @@ fn parse_token_copy_modifier_sentence(tokens: &[Token]) -> Option<EffectAst> {
         .filter(|word| !is_article(word))
         .collect();
 
-    let is_exact_haste_followup = matches!(
+    let is_gain_haste_until_eot = matches!(
         filtered.as_slice(),
         ["it", "gains", "haste", "until", "end", "of", "turn"]
             | ["they", "gain", "haste", "until", "end", "of", "turn"]
-            | ["it", "has", "haste"]
-            | ["they", "have", "haste"]
     );
-    if is_exact_haste_followup {
+    if is_gain_haste_until_eot {
         return Some(EffectAst::TokenCopyGainHasteUntilEot);
+    }
+
+    let is_has_haste = matches!(
+        filtered.as_slice(),
+        ["it", "has", "haste"] | ["they", "have", "haste"]
+    );
+    if is_has_haste {
+        return Some(EffectAst::TokenCopyHasHaste);
     }
 
     if filtered.starts_with(&["sacrifice", "it"]) || filtered.starts_with(&["sacrifice", "them"]) {

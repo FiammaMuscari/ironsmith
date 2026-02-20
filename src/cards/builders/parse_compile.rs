@@ -3924,7 +3924,13 @@ fn compile_effect(
             for ability in granted_abilities {
                 effect = effect.grant_static_ability(ability.clone());
             }
-            Ok((vec![Effect::new(effect)], Vec::new()))
+            let mut effect = Effect::new(effect);
+            if ctx.auto_tag_object_targets {
+                let tag = ctx.next_tag("created");
+                ctx.last_object_tag = Some(tag.clone());
+                effect = effect.tag(tag);
+            }
+            Ok((vec![effect], Vec::new()))
         }
         EffectAst::CreateTokenCopyFromSource {
             source,
@@ -3948,62 +3954,66 @@ fn compile_effect(
         } => {
             let count = resolve_value_it_tag(count, ctx)?;
             let player_filter = resolve_non_target_player_filter(*player, ctx)?;
-            compile_effect_for_target(source, ctx, |source_spec| {
-                let mut effect = crate::effects::CreateTokenCopyEffect::new(
-                    source_spec,
-                    count.clone(),
-                    player_filter,
-                );
-                if *enters_tapped {
-                    effect = effect.enters_tapped(true);
-                }
-                if *enters_attacking {
-                    effect = effect.attacking(true);
-                }
-                if *half_power_toughness_round_up {
-                    effect = effect.half_power_toughness_round_up();
-                }
-                if *has_haste {
-                    effect = effect.haste(true);
-                }
-                if *exile_at_end_of_combat {
-                    effect = effect.exile_at_eoc(true);
-                }
-                if *sacrifice_at_next_end_step {
-                    effect = effect.sacrifice_at_next_end_step(true);
-                }
-                if *exile_at_next_end_step {
-                    effect = effect.exile_at_next_end_step(true);
-                }
-                if let Some(colors) = set_colors {
-                    effect = effect.set_colors(*colors);
-                }
-                if let Some(card_types) = set_card_types {
-                    effect = effect.set_card_types(card_types.clone());
-                }
-                if let Some(subtypes) = set_subtypes {
-                    effect = effect.set_subtypes(subtypes.clone());
-                }
-                for card_type in added_card_types {
-                    effect = effect.added_card_type(*card_type);
-                }
-                for subtype in added_subtypes {
-                    effect = effect.added_subtype(*subtype);
-                }
-                for supertype in removed_supertypes {
-                    effect = effect.removed_supertype(*supertype);
-                }
-                if let Some((power, toughness)) = set_base_power_toughness {
-                    effect = effect.set_base_power_toughness(*power, *toughness);
-                }
-                for ability in granted_abilities {
-                    effect = effect.grant_static_ability(ability.clone());
-                }
-                Effect::new(effect)
-            })
+            let (source_spec, choices) = resolve_target_spec_with_choices(source, ctx)?;
+            let mut effect =
+                crate::effects::CreateTokenCopyEffect::new(source_spec, count, player_filter);
+            if *enters_tapped {
+                effect = effect.enters_tapped(true);
+            }
+            if *enters_attacking {
+                effect = effect.attacking(true);
+            }
+            if *half_power_toughness_round_up {
+                effect = effect.half_power_toughness_round_up();
+            }
+            if *has_haste {
+                effect = effect.haste(true);
+            }
+            if *exile_at_end_of_combat {
+                effect = effect.exile_at_eoc(true);
+            }
+            if *sacrifice_at_next_end_step {
+                effect = effect.sacrifice_at_next_end_step(true);
+            }
+            if *exile_at_next_end_step {
+                effect = effect.exile_at_next_end_step(true);
+            }
+            if let Some(colors) = set_colors {
+                effect = effect.set_colors(*colors);
+            }
+            if let Some(card_types) = set_card_types {
+                effect = effect.set_card_types(card_types.clone());
+            }
+            if let Some(subtypes) = set_subtypes {
+                effect = effect.set_subtypes(subtypes.clone());
+            }
+            for card_type in added_card_types {
+                effect = effect.added_card_type(*card_type);
+            }
+            for subtype in added_subtypes {
+                effect = effect.added_subtype(*subtype);
+            }
+            for supertype in removed_supertypes {
+                effect = effect.removed_supertype(*supertype);
+            }
+            if let Some((power, toughness)) = set_base_power_toughness {
+                effect = effect.set_base_power_toughness(*power, *toughness);
+            }
+            for ability in granted_abilities {
+                effect = effect.grant_static_ability(ability.clone());
+            }
+
+            let mut effect = Effect::new(effect);
+            if ctx.auto_tag_object_targets {
+                let tag = ctx.next_tag("created");
+                ctx.last_object_tag = Some(tag.clone());
+                effect = effect.tag(tag);
+            }
+            Ok((vec![effect], choices))
         }
         EffectAst::ExileThatTokenAtEndOfCombat => Ok((Vec::new(), Vec::new())),
-        EffectAst::TokenCopyGainHasteUntilEot
+        EffectAst::TokenCopyHasHaste
+        | EffectAst::TokenCopyGainHasteUntilEot
         | EffectAst::TokenCopySacrificeAtNextEndStep
         | EffectAst::TokenCopyExileAtNextEndStep => Ok((Vec::new(), Vec::new())),
         EffectAst::Monstrosity { amount } => {

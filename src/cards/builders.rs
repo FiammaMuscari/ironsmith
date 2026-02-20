@@ -1007,6 +1007,7 @@ enum EffectAst {
         count: u32,
         optional: bool,
     },
+    TokenCopyHasHaste,
     TokenCopyGainHasteUntilEot,
     TokenCopySacrificeAtNextEndStep,
     TokenCopyExileAtNextEndStep,
