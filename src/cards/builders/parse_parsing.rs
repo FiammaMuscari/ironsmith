@@ -14340,10 +14340,136 @@ fn parse_return_with_counters_on_it_sentence(
     Ok(Some(effects))
 }
 
+fn parse_put_onto_battlefield_with_counters_on_it_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    if !tokens
+        .first()
+        .is_some_and(|token| token.is_word("put") || token.is_word("puts"))
+    {
+        return Ok(None);
+    }
+
+    let Some(onto_idx) = tokens.iter().position(|token| token.is_word("onto")) else {
+        return Ok(None);
+    };
+    if onto_idx <= 1 {
+        return Ok(None);
+    }
+
+    let target_tokens = trim_commas(&tokens[1..onto_idx]);
+    if target_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing put target before destination (clause: '{}')",
+            words(tokens).join(" ")
+        )));
+    }
+
+    let destination_tokens = trim_commas(&tokens[onto_idx + 1..]);
+    if destination_tokens.is_empty() {
+        return Ok(None);
+    }
+    if !words(&destination_tokens).contains(&"battlefield") {
+        return Ok(None);
+    }
+
+    let Some(with_idx) = destination_tokens.iter().position(|token| token.is_word("with")) else {
+        return Ok(None);
+    };
+    if with_idx + 1 >= destination_tokens.len() {
+        return Ok(None);
+    }
+
+    let base_destination_words: Vec<&str> = words(&destination_tokens[..with_idx])
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    if base_destination_words.first() != Some(&"battlefield") {
+        return Ok(None);
+    }
+
+    let destination_tail = &base_destination_words[1..];
+    let supported_control_tail = destination_tail.is_empty()
+        || destination_tail == ["under", "your", "control"]
+        || destination_tail == ["under", "its", "owners", "control"]
+        || destination_tail == ["under", "their", "owners", "control"]
+        || destination_tail == ["under", "that", "players", "control"];
+    if !supported_control_tail {
+        return Ok(None);
+    }
+    let battlefield_controller = if destination_tail == ["under", "your", "control"] {
+        ReturnControllerAst::You
+    } else if destination_tail == ["under", "its", "owners", "control"]
+        || destination_tail == ["under", "their", "owners", "control"]
+        || destination_tail == ["under", "that", "players", "control"]
+    {
+        ReturnControllerAst::Owner
+    } else {
+        ReturnControllerAst::Preserve
+    };
+
+    let counter_clause_tokens = trim_commas(&destination_tokens[with_idx + 1..]);
+    let Some(on_idx) = counter_clause_tokens.iter().rposition(|token| token.is_word("on")) else {
+        return Ok(None);
+    };
+    if on_idx + 1 >= counter_clause_tokens.len() {
+        return Ok(None);
+    }
+
+    let on_target_words = words(&counter_clause_tokens[on_idx + 1..]);
+    if on_target_words != ["it"] && on_target_words != ["them"] {
+        return Ok(None);
+    }
+
+    let descriptor_tokens = trim_commas(&counter_clause_tokens[..on_idx]);
+    let descriptor_words = words(&descriptor_tokens);
+    if descriptor_tokens.is_empty() || !descriptor_words.contains(&"counter") {
+        return Ok(None);
+    }
+
+    let mut descriptors = Vec::new();
+    for descriptor in split_on_and(&descriptor_tokens) {
+        let descriptor = trim_commas(&descriptor);
+        if descriptor.is_empty() {
+            continue;
+        }
+        descriptors.push(descriptor);
+    }
+    if descriptors.is_empty() {
+        return Ok(None);
+    }
+
+    let mut effects = vec![EffectAst::MoveToZone {
+        target: parse_target_phrase(&target_tokens)?,
+        zone: Zone::Battlefield,
+        to_top: false,
+        battlefield_controller,
+    }];
+    let tagged_target = TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(tokens));
+    for descriptor in descriptors {
+        let (count, counter_type) = parse_counter_descriptor(&descriptor)?;
+        effects.push(EffectAst::PutCounters {
+            counter_type,
+            count: Value::Fixed(count as i32),
+            target: tagged_target.clone(),
+            target_count: None,
+            distributed: false,
+        });
+    }
+
+    Ok(Some(effects))
+}
+
 fn parse_sentence_return_with_counters_on_it(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     parse_return_with_counters_on_it_sentence(tokens)
+}
+
+fn parse_sentence_put_onto_battlefield_with_counters_on_it(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    parse_put_onto_battlefield_with_counters_on_it_sentence(tokens)
 }
 
 fn replace_target_subtype(target: &mut TargetAst, subtype: Subtype) -> bool {
@@ -22831,6 +22957,10 @@ fn parse_effect_chain_inner(tokens: &[Token]) -> Result<Vec<EffectAst>, CardText
     let mut carried_context: Option<CarryContext> = None;
     for segment in segments {
         let segment_effects = if let Some(effects) = parse_sentence_return_with_counters_on_it(&segment)? {
+            Some(effects)
+        } else if let Some(effects) =
+            parse_sentence_put_onto_battlefield_with_counters_on_it(&segment)?
+        {
             Some(effects)
         } else {
             parse_sentence_exile_source_with_counters(&segment)?

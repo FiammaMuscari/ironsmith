@@ -1451,10 +1451,52 @@ fn split_sentences_for_parse(line: &str, _line_index: usize) -> Vec<String> {
 
 fn sentence_starts_with_trigger_intro(sentence: &str, line_index: usize) -> bool {
     let tokens = tokenize_line(sentence, line_index);
+    // "At the beginning of the next end step, ..." is almost always a delayed trigger created
+    // by a prior effect clause, not a new printed triggered ability. Avoid splitting such
+    // sentences into their own parse chunk so they can be parsed as delayed effects.
+    if looks_like_delayed_next_end_step_intro(&tokens) {
+        return false;
+    }
     tokens
         .first()
         .is_some_and(|token| token.is_word("when") || token.is_word("whenever"))
         || is_at_trigger_intro(&tokens, 0)
+}
+
+fn looks_like_delayed_next_end_step_intro(tokens: &[Token]) -> bool {
+    let mut idx = 0usize;
+    if !tokens.get(idx).is_some_and(|token| token.is_word("at")) {
+        return false;
+    }
+    idx += 1;
+
+    if tokens.get(idx).is_some_and(|token| token.is_word("the")) {
+        idx += 1;
+    }
+    if !tokens
+        .get(idx)
+        .is_some_and(|token| token.is_word("beginning"))
+    {
+        return false;
+    }
+    idx += 1;
+    if !tokens.get(idx).is_some_and(|token| token.is_word("of")) {
+        return false;
+    }
+    idx += 1;
+
+    if tokens.get(idx).is_some_and(|token| token.is_word("the")) {
+        idx += 1;
+    }
+    if tokens.get(idx).is_some_and(|token| token.is_word("your")) {
+        idx += 1;
+    }
+
+    if !tokens.get(idx).is_some_and(|token| token.is_word("next")) {
+        return false;
+    }
+    tokens.get(idx + 1).is_some_and(|token| token.is_word("end"))
+        && tokens.get(idx + 2).is_some_and(|token| token.is_word("step"))
 }
 
 fn split_trigger_sentence_chunks(sentences: &[String], line_index: usize) -> Vec<String> {
