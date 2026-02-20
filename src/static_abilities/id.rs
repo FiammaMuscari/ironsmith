@@ -63,6 +63,7 @@ pub enum StaticAbilityId {
     GrantAbility,
     RemoveAbilityForFilter,
     RemoveAllAbilitiesForFilter,
+    RemoveAllAbilitiesExceptManaForFilter,
     SetBasePowerToughnessForFilter,
     EquipmentGrant,
     BloodMoon,
@@ -257,6 +258,7 @@ impl StaticAbilityId {
             Anthem
                 | GrantAbility
                 | RemoveAllAbilitiesForFilter
+                | RemoveAllAbilitiesExceptManaForFilter
                 | SetBasePowerToughnessForFilter
                 | EquipmentGrant
                 | GrantObjectAbilityForFilter

@@ -961,6 +961,53 @@ impl StaticAbilityKind for RemoveAllAbilitiesForFilter {
     }
 }
 
+/// Remove all non-mana abilities: "Lands lose all abilities except mana abilities"
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoveAllAbilitiesExceptManaForFilter {
+    /// Filter for which permanents lose non-mana abilities.
+    pub filter: ObjectFilter,
+}
+
+impl RemoveAllAbilitiesExceptManaForFilter {
+    pub fn new(filter: ObjectFilter) -> Self {
+        Self { filter }
+    }
+}
+
+impl StaticAbilityKind for RemoveAllAbilitiesExceptManaForFilter {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::RemoveAllAbilitiesExceptManaForFilter
+    }
+
+    fn display(&self) -> String {
+        format!(
+            "{} lose all abilities except mana abilities",
+            pluralized_subject_text(&self.filter)
+        )
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn generate_effects(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+        _game: &GameState,
+    ) -> Vec<ContinuousEffect> {
+        vec![
+            ContinuousEffect::new(
+                source,
+                controller,
+                EffectTarget::Filter(self.filter.clone()),
+                Modification::RemoveAllAbilitiesExceptMana,
+            )
+            .with_source_type(EffectSourceType::StaticAbility),
+        ]
+    }
+}
+
 /// Set base P/T: "... have base power and toughness N/M"
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetBasePowerToughnessForFilter {
@@ -2175,6 +2222,24 @@ mod tests {
         assert!(matches!(
             effects[0].modification,
             Modification::RemoveAllAbilities
+        ));
+    }
+
+    #[test]
+    fn test_remove_all_abilities_except_mana_for_filter() {
+        let ability = RemoveAllAbilitiesExceptManaForFilter::new(ObjectFilter::land());
+        assert_eq!(
+            ability.id(),
+            StaticAbilityId::RemoveAllAbilitiesExceptManaForFilter
+        );
+
+        let game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let effects =
+            ability.generate_effects(ObjectId::from_raw(1), PlayerId::from_index(0), &game);
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(
+            effects[0].modification,
+            Modification::RemoveAllAbilitiesExceptMana
         ));
     }
 

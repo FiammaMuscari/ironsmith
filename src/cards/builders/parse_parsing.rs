@@ -4011,7 +4011,14 @@ fn parse_lose_all_abilities_and_transform_base_pt_line(
         }
     }
 
-    let mut abilities = vec![StaticAbility::remove_all_abilities(filter.clone())];
+    let has_except_mana = words
+        .windows(3)
+        .any(|window| window == ["except", "mana", "abilities"]);
+    let mut abilities = vec![if has_except_mana {
+        StaticAbility::remove_all_abilities_except_mana(filter.clone())
+    } else {
+        StaticAbility::remove_all_abilities(filter.clone())
+    }];
 
     if !set_card_types.is_empty() {
         abilities.push(StaticAbility::set_card_types(
@@ -4072,7 +4079,14 @@ fn parse_lose_all_abilities_and_base_pt_line(
         ))
     })?;
 
-    let mut abilities = vec![StaticAbility::remove_all_abilities(filter.clone())];
+    let has_except_mana = words
+        .windows(3)
+        .any(|window| window == ["except", "mana", "abilities"]);
+    let mut abilities = vec![if has_except_mana {
+        StaticAbility::remove_all_abilities_except_mana(filter.clone())
+    } else {
+        StaticAbility::remove_all_abilities(filter.clone())
+    }];
 
     let have_idx = words
         .iter()

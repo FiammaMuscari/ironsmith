@@ -8344,3 +8344,17 @@ fn parse_exile_top_card_of_target_library_preserves_top_card_selection() {
         "expected top-card wording to remain explicit, got {rendered}"
     );
 }
+
+#[test]
+fn parse_lose_all_abilities_except_mana_static_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Blood Sun Variant")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("All lands lose all abilities except mana abilities.")
+        .expect("lose-all-except-mana clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("lose all abilities except mana abilities"),
+        "expected explicit except-mana wording, got {rendered}"
+    );
+}

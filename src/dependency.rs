@@ -100,13 +100,21 @@ fn check_dependency_relationship(
         (Modification::RemoveAllAbilities, Modification::AddAbility(_))
         | (Modification::RemoveAllAbilities, Modification::AddAbilityGeneric(_))
         | (Modification::RemoveAllAbilities, Modification::CopyActivatedAbilities { .. })
-        | (Modification::RemoveAllAbilities, Modification::AddCombatDamageDrawAbility) => true,
+        | (Modification::RemoveAllAbilities, Modification::AddCombatDamageDrawAbility)
+        | (Modification::RemoveAllAbilitiesExceptMana, Modification::AddAbility(_))
+        | (Modification::RemoveAllAbilitiesExceptMana, Modification::AddAbilityGeneric(_))
+        | (Modification::RemoveAllAbilitiesExceptMana, Modification::CopyActivatedAbilities { .. })
+        | (Modification::RemoveAllAbilitiesExceptMana, Modification::AddCombatDamageDrawAbility) => true,
 
         // Granting abilities does not depend on a later removal.
         (Modification::AddAbility(_), Modification::RemoveAllAbilities)
         | (Modification::AddAbilityGeneric(_), Modification::RemoveAllAbilities)
         | (Modification::CopyActivatedAbilities { .. }, Modification::RemoveAllAbilities)
-        | (Modification::AddCombatDamageDrawAbility, Modification::RemoveAllAbilities) => false,
+        | (Modification::AddCombatDamageDrawAbility, Modification::RemoveAllAbilities)
+        | (Modification::AddAbility(_), Modification::RemoveAllAbilitiesExceptMana)
+        | (Modification::AddAbilityGeneric(_), Modification::RemoveAllAbilitiesExceptMana)
+        | (Modification::CopyActivatedAbilities { .. }, Modification::RemoveAllAbilitiesExceptMana)
+        | (Modification::AddCombatDamageDrawAbility, Modification::RemoveAllAbilitiesExceptMana) => false,
 
         // If B removes specific abilities and A grants that ability
         (Modification::AddAbility(ability_a), Modification::RemoveAbility(ability_b)) => {
@@ -880,6 +888,11 @@ fn apply_modification_to_chars_for_dependency(
         }
         Modification::RemoveAllAbilities => {
             chars.abilities.clear();
+        }
+        Modification::RemoveAllAbilitiesExceptMana => {
+            chars
+                .abilities
+                .retain(|ability| matches!(ability.kind, crate::ability::AbilityKind::Mana(_)));
         }
         Modification::ModifyPower(delta) => {
             if let Some(ref mut p) = chars.power {

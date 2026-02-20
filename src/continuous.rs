@@ -298,6 +298,9 @@ pub enum Modification {
     /// Remove all abilities
     RemoveAllAbilities,
 
+    /// Remove all non-mana abilities
+    RemoveAllAbilitiesExceptMana,
+
     /// Grant "can't be blocked"
     CantBeBlocked,
 
@@ -368,6 +371,7 @@ impl Modification {
             | Modification::AddCombatDamageDrawAbility
             | Modification::RemoveAbility(_)
             | Modification::RemoveAllAbilities
+            | Modification::RemoveAllAbilitiesExceptMana
             | Modification::CantBeBlocked
             | Modification::CantAttack
             | Modification::CantBlock
@@ -1436,6 +1440,11 @@ fn apply_modification_to_chars(
             chars.static_abilities.clear();
             *abilities_removed = true;
         }
+        Modification::RemoveAllAbilitiesExceptMana => {
+            chars.abilities.retain(|ability| matches!(ability.kind, AbilityKind::Mana(_)));
+            chars.static_abilities.clear();
+            *abilities_removed = true;
+        }
 
         // Layer 7a: Characteristic-defining P/T
         Modification::SetPower { value, sublayer }
@@ -1921,6 +1930,11 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
                 }
                 Modification::RemoveAllAbilities => {
                     chars.abilities.clear();
+                    chars.static_abilities.clear();
+                    abilities_removed = true;
+                }
+                Modification::RemoveAllAbilitiesExceptMana => {
+                    chars.abilities.retain(|ability| matches!(ability.kind, AbilityKind::Mana(_)));
                     chars.static_abilities.clear();
                     abilities_removed = true;
                 }

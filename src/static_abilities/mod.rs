@@ -927,6 +927,10 @@ impl StaticAbility {
         Self::new(RemoveAllAbilitiesForFilter::new(filter))
     }
 
+    pub fn remove_all_abilities_except_mana(filter: crate::target::ObjectFilter) -> Self {
+        Self::new(RemoveAllAbilitiesExceptManaForFilter::new(filter))
+    }
+
     pub fn set_base_power_toughness(
         filter: crate::target::ObjectFilter,
         power: i32,
