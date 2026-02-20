@@ -21836,7 +21836,15 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
             filter_start = 5;
         }
 
-        let control_tokens = filtered[filter_start..]
+        let mut control_words = filtered[filter_start..].to_vec();
+        let mut requires_different_powers = false;
+        if control_words.ends_with(&["with", "different", "powers"])
+            || control_words.ends_with(&["with", "different", "power"])
+        {
+            requires_different_powers = true;
+            control_words.truncate(control_words.len().saturating_sub(3));
+        }
+        let control_tokens = control_words
             .iter()
             .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
@@ -21848,6 +21856,13 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
             if let Some(count) = min_count
                 && count > 1
             {
+                if requires_different_powers {
+                    return Ok(PredicateAst::PlayerControlsAtLeastWithDifferentPowers {
+                        player: PlayerAst::You,
+                        filter,
+                        count,
+                    });
+                }
                 return Ok(PredicateAst::PlayerControlsAtLeast {
                     player: PlayerAst::You,
                     filter,
@@ -25986,7 +26001,18 @@ fn parse_instead_if_control_predicate(
             break;
         }
     }
-    let filter_tokens = trim_commas(filter_tokens);
+    let mut filter_tokens = trim_commas(filter_tokens);
+    let filter_words = words(&filter_tokens);
+    let mut requires_different_powers = false;
+    if filter_words.ends_with(&["with", "different", "powers"])
+        || filter_words.ends_with(&["with", "different", "power"])
+    {
+        requires_different_powers = true;
+        let cut_word_idx = filter_words.len().saturating_sub(3);
+        let cut_token_idx =
+            token_index_for_word_index(&filter_tokens, cut_word_idx).unwrap_or(filter_tokens.len());
+        filter_tokens = trim_commas(&filter_tokens[..cut_token_idx]);
+    }
     if filter_tokens.is_empty() {
         return Ok(None);
     }
@@ -25996,6 +26022,13 @@ fn parse_instead_if_control_predicate(
         .is_some_and(|token| token.is_word("another") || token.is_word("other"));
     let filter = parse_object_filter(&filter_tokens, other)?;
     if let Some(count) = min_count {
+        if requires_different_powers {
+            return Ok(Some(PredicateAst::PlayerControlsAtLeastWithDifferentPowers {
+                player: PlayerAst::You,
+                filter,
+                count,
+            }));
+        }
         Ok(Some(PredicateAst::PlayerControlsAtLeast {
             player: PlayerAst::You,
             filter,

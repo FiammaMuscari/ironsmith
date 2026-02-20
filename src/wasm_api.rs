@@ -3243,6 +3243,28 @@ fn describe_condition(
                 strip_leading_article(&filter.description())
             )
         }
+        crate::effect::Condition::PlayerControlsAtLeast {
+            player,
+            filter,
+            count,
+        } => {
+            let noun = pluralize_noun_phrase(strip_leading_article(&filter.description()));
+            format!(
+                "{} controls {count} or more {noun}",
+                describe_player_filter(player, tagged_subjects)
+            )
+        }
+        crate::effect::Condition::PlayerControlsAtLeastWithDifferentPowers {
+            player,
+            filter,
+            count,
+        } => {
+            let noun = pluralize_noun_phrase(strip_leading_article(&filter.description()));
+            format!(
+                "{} controls {count} or more {noun} with different powers",
+                describe_player_filter(player, tagged_subjects)
+            )
+        }
         crate::effect::Condition::PlayerControlsMost { player, filter } => {
             format!(
                 "{} controls the most {}",

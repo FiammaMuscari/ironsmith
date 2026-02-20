@@ -414,6 +414,22 @@ fn test_parse_labeled_leading_condition_with_gets_and_has() {
 }
 
 #[test]
+fn test_parse_coven_condition_uses_different_power_predicate() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Coven Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Coven — At the beginning of combat on your turn, if you control three or more creatures with different powers, this creature gains trample until end of turn.",
+        )
+        .expect("parse coven condition with different powers");
+
+    let debug = format!("{:#?}", def.abilities);
+    assert!(
+        debug.contains("PlayerControlsAtLeastWithDifferentPowers"),
+        "expected coven predicate to require different powers, got {debug}"
+    );
+}
+
+#[test]
 fn test_parse_target_player_may_copy_this_spell_and_choose_new_targets() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Reverberate Variant")
             .card_types(vec![CardType::Sorcery])
@@ -2056,6 +2072,68 @@ fn test_each_player_who_did_this_way_compiles_to_per_player_if_result() {
     assert!(
         debug.contains("IfEffect") && debug.contains("GainLifeEffect"),
         "expected per-player follow-up gain-life conditional, got {debug}"
+    );
+}
+
+#[test]
+fn test_for_each_opponent_who_does_merges_into_per_opponent_if_result() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Tempting Contract Variant")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text(
+            "At the beginning of your upkeep, each opponent may create a Treasure token. For each opponent who does, you create a Treasure token.",
+        )
+        .expect("parse each-opponent-who-does trigger");
+
+    let triggered = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Triggered(triggered) => Some(triggered),
+            _ => None,
+        })
+        .expect("expected triggered ability");
+
+    let debug = format!("{:?}", triggered.effects);
+    let for_players_count = debug.matches("ForPlayersEffect").count();
+    assert_eq!(
+        for_players_count, 1,
+        "expected merged per-opponent wrapper, got {debug}"
+    );
+    assert!(
+        debug.contains("IfEffect"),
+        "expected merged follow-up to compile as IfEffect, got {debug}"
+    );
+    assert!(
+        debug.contains("controller: IteratedPlayer"),
+        "expected optional antecedent token controller to remain per-opponent, got {debug}"
+    );
+    assert!(
+        debug.contains("controller: You"),
+        "expected follow-up token creation to stay on you, got {debug}"
+    );
+}
+
+#[test]
+fn test_for_each_opponent_who_does_binds_implicit_followup_to_you() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Tempting Offer Variant")
+        .parse_text(
+            "Each opponent may create a Treasure token. For each opponent who does, create a Treasure token.",
+        )
+        .expect("parse each-opponent-who-does implicit follow-up");
+
+    let spell_effects = def.spell_effect.as_ref().expect("spell effects");
+    let debug = format!("{:?}", spell_effects);
+    assert!(
+        debug.contains("ForPlayersEffect"),
+        "expected per-opponent wrapper, got {debug}"
+    );
+    assert!(
+        debug.contains("IfEffect"),
+        "expected follow-up to compile as IfEffect, got {debug}"
+    );
+    assert!(
+        debug.contains("controller: You"),
+        "expected implicit follow-up token creation to bind to you, got {debug}"
     );
 }
 

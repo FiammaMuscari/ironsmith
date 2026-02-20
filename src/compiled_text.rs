@@ -6046,6 +6046,33 @@ fn describe_condition(condition: &Condition) -> String {
                 noun
             )
         }
+        Condition::PlayerControlsAtLeastWithDifferentPowers {
+            player,
+            filter,
+            count,
+        } => {
+            let subject = describe_player_filter(player);
+            let mut described_filter = filter.clone();
+            if described_filter
+                .controller
+                .as_ref()
+                .is_some_and(|controller| controller == player)
+            {
+                described_filter.controller = None;
+            }
+            let described = strip_indefinite_article(&described_filter.description()).to_string();
+            let noun = pluralize_noun_phrase(&described);
+            let count_text = small_number_word(*count)
+                .map(str::to_string)
+                .unwrap_or_else(|| count.to_string());
+            format!(
+                "{} {} {} or more {} with different powers",
+                subject,
+                player_verb(&subject, "control", "controls"),
+                count_text,
+                noun
+            )
+        }
         Condition::PlayerControlsMost { player, filter } => {
             let controller = describe_player_filter(player);
             let mut described_filter = filter.clone();
@@ -6919,6 +6946,8 @@ fn describe_for_each_tagged_this_way_subject(filter: &ObjectFilter) -> Option<St
             Some("destroyed")
         } else if tag.starts_with("sacrificed_") {
             Some("sacrificed")
+        } else if tag.starts_with("revealed_") {
+            Some("revealed")
         } else if tag.starts_with("discarded_") {
             Some("discarded")
         } else if tag.starts_with("milled_") {
@@ -6934,6 +6963,12 @@ fn describe_for_each_tagged_this_way_subject(filter: &ObjectFilter) -> Option<St
             subject = head.trim().to_string();
         } else if let Some((head, tail)) = subject.split_once(" in exile ") {
             subject = format!("{} {}", head.trim(), tail.trim());
+        }
+    } else if action == "revealed" {
+        if let Some(head) = subject.strip_suffix(" permanent") {
+            subject = format!("{} card", head.trim());
+        } else if let Some(head) = subject.strip_suffix(" permanents") {
+            subject = format!("{} cards", head.trim());
         }
     }
     let subject = subject.trim();
@@ -8676,6 +8711,22 @@ fn describe_effect_impl(effect: &Effect) -> String {
         if let Some(compact) = describe_for_players_damage_and_controlled_damage(for_players) {
             return compact;
         }
+        if for_players.effects.len() == 1
+            && let Some(may) = for_players.effects[0].downcast_ref::<crate::effects::MayEffect>()
+            && may.decider.is_none()
+        {
+            let player_filter_text = describe_player_filter(&for_players.filter);
+            let each_player = strip_leading_article(&player_filter_text);
+            let mut inner = describe_effect_list(&may.effects);
+            if let Some(rest) = inner.strip_prefix("that player ") {
+                inner = rest.to_string();
+            }
+            if let Some(rest) = inner.strip_prefix("you ") {
+                inner = rest.to_string();
+            }
+            inner = normalize_you_verb_phrase(&inner);
+            return format!("For each {each_player}, that player may {inner}");
+        }
         let player_filter_text = describe_player_filter(&for_players.filter);
         let each_player = strip_leading_article(&player_filter_text);
         return format!(
@@ -10036,6 +10087,14 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 inner = inner["you ".len()..].to_string();
             }
             if who == "you" {
+                if let Some(rest) = inner.strip_prefix("that player ") {
+                    let normalized = normalize_you_verb_phrase(rest);
+                    return format!("you may have that player {normalized}");
+                }
+                if let Some(rest) = inner.strip_prefix("target player ") {
+                    let normalized = normalize_you_verb_phrase(rest);
+                    return format!("you may have target player {normalized}");
+                }
                 inner = normalize_you_verb_phrase(&inner);
             }
             return format!("{who} may {inner}");
@@ -12475,8 +12534,21 @@ fn normalize_for_each_clause_surface(text: String) -> String {
     };
     let normalize_for_each_may_first = |first: &str| {
         let mut normalized = first.trim().trim_end_matches('.').to_string();
+        if let Some(rest) = normalized.strip_prefix("that player ") {
+            normalized = rest.to_string();
+        }
         if let Some(rest) = normalized.strip_prefix("sacrifices ") {
             normalized = format!("sacrifice {rest}");
+        }
+        if let Some(rest) = normalized.strip_prefix("Create ")
+            && let Some(token_text) = rest.strip_suffix(" under that player's control")
+        {
+            normalized = format!("create {token_text}");
+        }
+        if let Some(rest) = normalized.strip_prefix("create ")
+            && let Some(token_text) = rest.strip_suffix(" under that player's control")
+        {
+            normalized = format!("create {token_text}");
         }
         normalized = normalized.replace(
             "a permanent that shares a card type with that object that player controls",
@@ -12490,7 +12562,7 @@ fn normalize_for_each_clause_surface(text: String) -> String {
             "that player controls and shares a card type with it",
             "that shares a card type with it",
         );
-        normalized
+        normalize_you_verb_phrase(&normalized)
     };
     let normalize_for_each_may_second = |second: &str| {
         let mut normalized = second.trim().trim_end_matches('.').to_string();
@@ -12520,6 +12592,76 @@ fn normalize_for_each_clause_surface(text: String) -> String {
         }
         action.to_string()
     };
+    let normalize_for_each_then_clause = |action: &str| {
+        let mut normalized = action.trim().trim_end_matches('.').to_string();
+        if let Some(rest) = normalized.strip_prefix("you ") {
+            normalized = rest.to_string();
+        }
+        if let Some(rest) = normalized.strip_prefix("Create ") {
+            normalized = format!("create {rest}");
+        }
+        normalize_you_verb_phrase(&normalized)
+    };
+    let format_for_each_did_followup = |clause: String| {
+        if clause.starts_with("For each ")
+            || clause.starts_with("for each ")
+            || clause.starts_with("that player ")
+        {
+            clause
+        } else {
+            format!("you {clause}")
+        }
+    };
+    let normalize_for_each_effect_id_condition =
+        |input: &str, subject: &str, who_phrase: &str| -> Option<String> {
+            let marker = format!("{subject}, if effect #");
+            let (prefix, rest) = input.split_once(&marker)?;
+            if let Some((_, action)) = rest.split_once(" happened, ") {
+                return Some(format!("{prefix}{subject} {who_phrase}, {}", action.trim()));
+            }
+            if let Some((_, action)) = rest.split_once(" that doesn't happen, ") {
+                return Some(format!("{prefix}{subject} who doesn't, {}", action.trim()));
+            }
+            None
+        };
+    if let Some(rewritten) =
+        normalize_for_each_effect_id_condition(&text, "For each opponent", "who does")
+    {
+        return rewritten;
+    }
+    if let Some(rewritten) =
+        normalize_for_each_effect_id_condition(&text, "for each opponent", "who does")
+    {
+        return rewritten;
+    }
+    if let Some(rewritten) =
+        normalize_for_each_effect_id_condition(&text, "For each player", "who does")
+    {
+        return rewritten;
+    }
+    if let Some(rewritten) =
+        normalize_for_each_effect_id_condition(&text, "for each player", "who does")
+    {
+        return rewritten;
+    }
+    if let Some((prefix, rest)) =
+        text.split_once("Each player may discard their hand. that player draws ")
+        && let Some((count, tail)) = rest.split_once(" cards. For each opponent who does, ")
+    {
+        return format!(
+            "{prefix}Each player may discard their hand and draw {count} cards. For each opponent who does, {}",
+            tail.trim()
+        );
+    }
+    if let Some((prefix, rest)) =
+        text.split_once("each player may discard their hand. that player draws ")
+        && let Some((count, tail)) = rest.split_once(" cards. For each opponent who does, ")
+    {
+        return format!(
+            "{prefix}each player may discard their hand and draw {count} cards. For each opponent who does, {}",
+            tail.trim()
+        );
+    }
     if let Some((prefix, rest)) = text
         .split_once("For each player, You may that player ")
         .or_else(|| text.split_once("for each player, You may that player "))
@@ -12582,6 +12724,70 @@ fn normalize_for_each_clause_surface(text: String) -> String {
         };
         return format!(
             "{prefix}{each_opponent} may {first}. For each opponent who does, that player {second}"
+        );
+    }
+    if let Some((prefix, rest)) = text
+        .split_once("For each player, You may ")
+        .or_else(|| text.split_once("for each player, You may "))
+        && let Some((first, second)) = rest.split_once(". If you do, ")
+    {
+        let first = normalize_for_each_may_first(first);
+        let second = format_for_each_did_followup(normalize_for_each_then_clause(second));
+        let each_player = if prefix.is_empty() {
+            "Each player"
+        } else {
+            "each player"
+        };
+        return format!(
+            "{prefix}{each_player} may {first}. For each player who does, {second}"
+        );
+    }
+    if let Some((prefix, rest)) = text
+        .split_once("For each opponent, You may ")
+        .or_else(|| text.split_once("for each opponent, You may "))
+        && let Some((first, second)) = rest.split_once(". If you do, ")
+    {
+        let first = normalize_for_each_may_first(first);
+        let second = format_for_each_did_followup(normalize_for_each_then_clause(second));
+        let each_opponent = if prefix.is_empty() {
+            "Each opponent"
+        } else {
+            "each opponent"
+        };
+        return format!(
+            "{prefix}{each_opponent} may {first}. For each opponent who does, {second}"
+        );
+    }
+    if let Some((prefix, rest)) = text
+        .split_once("For each player, that player may ")
+        .or_else(|| text.split_once("for each player, that player may "))
+        && let Some((first, second)) = rest.split_once(". If they do, ")
+    {
+        let first = normalize_for_each_may_first(first);
+        let second = format_for_each_did_followup(normalize_for_each_then_clause(second));
+        let each_player = if prefix.is_empty() {
+            "Each player"
+        } else {
+            "each player"
+        };
+        return format!(
+            "{prefix}{each_player} may {first}. For each player who does, {second}"
+        );
+    }
+    if let Some((prefix, rest)) = text
+        .split_once("For each opponent, that player may ")
+        .or_else(|| text.split_once("for each opponent, that player may "))
+        && let Some((first, second)) = rest.split_once(". If they do, ")
+    {
+        let first = normalize_for_each_may_first(first);
+        let second = format_for_each_did_followup(normalize_for_each_then_clause(second));
+        let each_opponent = if prefix.is_empty() {
+            "Each opponent"
+        } else {
+            "each opponent"
+        };
+        return format!(
+            "{prefix}{each_opponent} may {first}. For each opponent who does, {second}"
         );
     }
     if let Some((prefix, rest)) = text.split_once("For each opponent, Deal ")
@@ -18068,6 +18274,35 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
         "For each player, Reveal the top card of that player's library and tag it as 'revealed_0'",
     ) {
         if let Some(tail) = rest.strip_prefix(". ") {
+            if let Some(nonland_tail) = tail.strip_prefix("For each nonland permanent, ") {
+                let (per_nonland_clause, trailing) = if let Some((head, after)) =
+                    nonland_tail.split_once(". ")
+                {
+                    (head, Some(after))
+                } else {
+                    (nonland_tail, None)
+                };
+                let per_nonland_clause = if let Some(create_rest) =
+                    per_nonland_clause.strip_prefix("Create ")
+                {
+                    format!("you create {create_rest}")
+                } else {
+                    lowercase_first(per_nonland_clause)
+                };
+
+                let mut normalized = format!(
+                    "Each player reveals the top card of their library. For each nonland card revealed this way, {per_nonland_clause}"
+                );
+                if let Some(trailing) = trailing {
+                    if trailing.eq_ignore_ascii_case("Each player draws a card") {
+                        normalized.push_str(". Then each player draws a card");
+                    } else {
+                        normalized.push_str(". ");
+                        normalized.push_str(trailing);
+                    }
+                }
+                return normalized;
+            }
             if tail.is_empty() {
                 return "Each player reveals the top card of their library".to_string();
             }
@@ -19407,6 +19642,86 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
         .replace(
             "you may target creature reveals ",
             "you may have target creature reveal ",
+        )
+        .replace(
+            "For each player, You may that player ",
+            "For each player, that player may ",
+        )
+        .replace(
+            "For each opponent, You may that player ",
+            "For each opponent, that player may ",
+        )
+        .replace(
+            "for each player, you may that player ",
+            "for each player, that player may ",
+        )
+        .replace(
+            "for each opponent, you may that player ",
+            "for each opponent, that player may ",
+        )
+        .replace(
+            "you may that player loses ",
+            "you may have that player lose ",
+        )
+        .replace(
+            "you may that player discards ",
+            "you may have that player discard ",
+        )
+        .replace(
+            "you may that player draws ",
+            "you may have that player draw ",
+        )
+        .replace(
+            "you may that player scries ",
+            "you may have that player scry ",
+        )
+        .replace(
+            "you may that player mills ",
+            "you may have that player mill ",
+        )
+        .replace(
+            "that player may loses ",
+            "that player may lose ",
+        )
+        .replace(
+            "that player may discards ",
+            "that player may discard ",
+        )
+        .replace(
+            "that player may draws ",
+            "that player may draw ",
+        )
+        .replace(
+            "that player may scries ",
+            "that player may scry ",
+        )
+        .replace(
+            "that player may mills ",
+            "that player may mill ",
+        )
+        .replace(
+            "that player may sacrifices ",
+            "that player may sacrifice ",
+        )
+        .replace(
+            "that player may gains ",
+            "that player may gain ",
+        )
+        .replace(
+            "that player may reveals ",
+            "that player may reveal ",
+        )
+        .replace(
+            "that player may shuffles ",
+            "that player may shuffle ",
+        )
+        .replace(
+            "that player may puts ",
+            "that player may put ",
+        )
+        .replace(
+            "that player may Put ",
+            "that player may put ",
         );
     normalized = normalize_common_semantic_phrasing(&normalized);
     normalized = normalize_zero_pt_prefix(&normalized);

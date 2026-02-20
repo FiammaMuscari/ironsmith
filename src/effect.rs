@@ -1187,6 +1187,14 @@ pub enum Condition {
         count: u32,
     },
 
+    /// A specific player controls at least `count` objects matching filter
+    /// with distinct power values.
+    PlayerControlsAtLeastWithDifferentPowers {
+        player: PlayerFilter,
+        filter: ObjectFilter,
+        count: u32,
+    },
+
     /// A specific player controls the greatest number of objects matching filter
     /// (ties count as "most").
     PlayerControlsMost {

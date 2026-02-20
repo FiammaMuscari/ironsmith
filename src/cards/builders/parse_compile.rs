@@ -1146,6 +1146,33 @@ fn compile_if_do_with_opponent_doesnt(
         let (effects, choices) = compile_effect(&merged, ctx)?;
         return Ok(Some((effects, choices)));
     }
+    if let EffectAst::ForEachPlayer {
+        effects: player_effects,
+    } = first
+    {
+        let first_ast = EffectAst::ForEachPlayer {
+            effects: player_effects.clone(),
+        };
+        let (mut first_effects, mut choices) = compile_effect(&first_ast, ctx)?;
+        let id = if let Some(last) = first_effects.pop() {
+            let id = ctx.next_effect_id();
+            first_effects.push(Effect::with_id(id.0, last));
+            id
+        } else {
+            return Err(CardTextError::ParseError(
+                "missing per-player antecedent effect for if-you-don't follow-up".to_string(),
+            ));
+        };
+
+        let (inner_effects, inner_choices) =
+            compile_effects_in_iterated_player_context(second_effects, ctx, None)?;
+        for choice in inner_choices {
+            push_choice(&mut choices, choice);
+        }
+        let conditional = Effect::if_then(id, EffectPredicate::DidNotHappen, inner_effects);
+        first_effects.push(Effect::for_each_opponent(vec![conditional]));
+        return Ok(Some((first_effects, choices)));
+    }
 
     let EffectAst::IfResult {
         predicate: IfResultPredicate::Did,
@@ -1267,6 +1294,33 @@ fn compile_if_do_with_opponent_did(
         };
         let (effects, choices) = compile_effect(&merged, ctx)?;
         return Ok(Some((effects, choices)));
+    }
+    if let EffectAst::ForEachPlayer {
+        effects: player_effects,
+    } = first
+    {
+        let first_ast = EffectAst::ForEachPlayer {
+            effects: player_effects.clone(),
+        };
+        let (mut first_effects, mut choices) = compile_effect(&first_ast, ctx)?;
+        let id = if let Some(last) = first_effects.pop() {
+            let id = ctx.next_effect_id();
+            first_effects.push(Effect::with_id(id.0, last));
+            id
+        } else {
+            return Err(CardTextError::ParseError(
+                "missing per-player antecedent effect for if-you-do follow-up".to_string(),
+            ));
+        };
+
+        let (inner_effects, inner_choices) =
+            compile_effects_in_iterated_player_context(second_effects, ctx, None)?;
+        for choice in inner_choices {
+            push_choice(&mut choices, choice);
+        }
+        let conditional = Effect::if_then(id, EffectPredicate::Happened, inner_effects);
+        first_effects.push(Effect::for_each_opponent(vec![conditional]));
+        return Ok(Some((first_effects, choices)));
     }
 
     let EffectAst::IfResult {
@@ -1422,17 +1476,24 @@ fn compile_effects_in_iterated_player_context(
     ctx: &mut CompileContext,
     tagged_object: Option<String>,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
-    with_preserved_compile_context(
-        ctx,
-        |ctx| {
-            ctx.iterated_player = true;
-            ctx.last_effect_id = None;
-            if let Some(tag) = tagged_object {
-                ctx.last_object_tag = Some(tag);
-            }
-        },
-        |ctx| compile_effects(effects, ctx),
-    )
+    let saved = CompileContextState::capture(ctx);
+    ctx.iterated_player = true;
+    ctx.last_effect_id = None;
+    if let Some(tag) = tagged_object.clone() {
+        ctx.last_object_tag = Some(tag);
+    }
+
+    let result = compile_effects(effects, ctx);
+    let produced_last_tag = if tagged_object.is_none() {
+        ctx.last_object_tag.clone()
+    } else {
+        None
+    };
+    saved.restore(ctx);
+    if let Some(tag) = produced_last_tag {
+        ctx.last_object_tag = Some(tag);
+    }
+    result
 }
 
 fn force_implicit_vote_token_controller_you(effects: &mut [EffectAst]) {
@@ -3351,6 +3412,20 @@ fn compile_effect(
                     let mut resolved = resolve_it_tag(filter, ctx)?;
                     resolved.zone = None;
                     Condition::PlayerControlsAtLeast {
+                        player,
+                        filter: resolved,
+                        count: *count,
+                    }
+                }
+                PredicateAst::PlayerControlsAtLeastWithDifferentPowers {
+                    player,
+                    filter,
+                    count,
+                } => {
+                    let player = resolve_non_target_player_filter(*player, ctx)?;
+                    let mut resolved = resolve_it_tag(filter, ctx)?;
+                    resolved.zone = None;
+                    Condition::PlayerControlsAtLeastWithDifferentPowers {
                         player,
                         filter: resolved,
                         count: *count,

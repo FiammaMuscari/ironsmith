@@ -303,6 +303,11 @@ enum PredicateAst {
         filter: ObjectFilter,
         count: u32,
     },
+    PlayerControlsAtLeastWithDifferentPowers {
+        player: PlayerAst,
+        filter: ObjectFilter,
+        count: u32,
+    },
     PlayerControlsOrHasCardInGraveyard {
         player: PlayerAst,
         control_filter: ObjectFilter,
@@ -6194,6 +6199,36 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .expect("expected move-to-zone follow-up");
         assert_eq!(move_to.zone, Zone::Battlefield);
         assert_eq!(move_to.battlefield_controller, BattlefieldController::You);
+    }
+
+    #[test]
+    fn parse_parley_revealed_this_way_uses_tagged_nonland_filter() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Parley Variant")
+            .parse_text(
+                "Each player reveals the top card of their library. For each nonland card revealed this way, you create a 3/3 green Elephant creature token. Then each player draws a card.",
+            )
+            .expect("parley revealed-this-way sentence should parse");
+
+        let effects = def.spell_effect.as_ref().expect("spell effects");
+        let for_each = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<ForEachObject>())
+            .expect("expected ForEachObject for nonland revealed card fanout");
+        assert!(
+            for_each
+                .filter
+                .tagged_constraints
+                .iter()
+                .any(|constraint| {
+                    constraint.relation == TaggedOpbjectRelation::IsTaggedObject
+                        && constraint.tag.as_str() == "revealed_0"
+                }),
+            "expected revealed-this-way fanout to reference revealed tag, got {for_each:?}"
+        );
+        assert!(
+            for_each.filter.excluded_card_types.contains(&CardType::Land),
+            "expected nonland constraint on revealed cards, got {for_each:?}"
+        );
     }
 
     #[test]
