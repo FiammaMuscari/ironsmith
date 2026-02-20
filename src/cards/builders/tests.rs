@@ -8224,6 +8224,24 @@ fn parse_one_or_more_attack_trigger_preserves_one_or_more_compiled_text() {
 }
 
 #[test]
+fn parse_mount_or_vehicle_attack_trigger_keeps_both_subjects() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Mount Vehicle Attack Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Whenever a Mount or Vehicle you control attacks, draw a card.")
+        .expect("mount-or-vehicle attack trigger should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        !abilities_debug.contains("unimplemented_trigger"),
+        "expected no fallback custom trigger for mount-or-vehicle attack clause, got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug.contains("Mount") && abilities_debug.contains("Vehicle"),
+        "expected both subtypes in attack trigger filter, got {abilities_debug}"
+    );
+}
+
+#[test]
 fn parse_one_or_more_enters_trigger_uses_batch_count_mode() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "One Or More Enter Variant")
         .card_types(vec![CardType::Creature])
@@ -8275,5 +8293,40 @@ fn parse_return_up_to_one_subtype_list_target_stays_single_clause() {
         !rendered.contains("return card rogue from your graveyard")
             && !rendered.contains("return card warrior from your graveyard"),
         "expected no synthetic per-subtype return clauses, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_draw_second_card_each_turn_trigger_is_not_custom() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Second Draw Trigger Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Whenever you draw your second card each turn, target Detective can't be blocked this turn.",
+        )
+        .expect("second-card draw trigger should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        !abilities_debug.contains("unimplemented_trigger"),
+        "expected no fallback custom trigger for second-card draw trigger, got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug.contains("PlayerDrawsNthCardEachTurnTrigger")
+            || abilities_debug.contains("draws their second card each turn"),
+        "expected nth-card draw trigger matcher, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_draw_third_card_each_turn_trigger_supports_higher_ordinals() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Third Draw Trigger Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Whenever you draw your third card each turn, draw a card.")
+        .expect("third-card draw trigger should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        abilities_debug.contains("card_number: 3"),
+        "expected third-card ordinal to compile as card_number=3, got {abilities_debug}"
     );
 }

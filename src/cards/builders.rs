@@ -213,6 +213,10 @@ enum TriggerSpec {
     PlayerLosesLife(PlayerFilter),
     YouDrawCard,
     PlayerDrawsCard(PlayerFilter),
+    PlayerDrawsNthCardEachTurn {
+        player: PlayerFilter,
+        card_number: u32,
+    },
     PlayerDiscardsCard {
         player: PlayerFilter,
         filter: Option<ObjectFilter>,

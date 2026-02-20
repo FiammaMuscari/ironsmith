@@ -460,6 +460,11 @@ impl Trigger {
         Self::new(PlayerDrawsCardTrigger::new(player))
     }
 
+    /// Create a "whenever [player] draws their Nth card each turn" trigger.
+    pub fn player_draws_nth_card_each_turn(player: PlayerFilter, card_number: u32) -> Self {
+        Self::new(PlayerDrawsNthCardEachTurnTrigger::new(player, card_number))
+    }
+
     /// Create a "whenever you discard a card" trigger.
     pub fn you_discard_card() -> Self {
         Self::new(YouDiscardCardTrigger::new(PlayerFilter::You, None))

@@ -10677,10 +10677,7 @@ fn split_trigger_or_index(tokens: &[Token]) -> Option<usize> {
             && tokens
                 .get(idx + 1)
                 .and_then(Token::as_word)
-                .is_some_and(objectish_word)
-            && tokens
-                .iter()
-                .any(|token| matches!(token, Token::Comma(_)));
+                .is_some_and(objectish_word);
         let and_or_list_or = tokens
             .get(idx - 1)
             .is_some_and(|prev| prev.is_word("and"))
@@ -11182,6 +11179,22 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
         }
     }
 
+    if let Some(draw_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("draw") || token.is_word("draws"))
+    {
+        let subject = &words[..draw_idx];
+        if let Some(player) = parse_trigger_subject_player_filter(subject) {
+            let tail = &words[draw_idx + 1..];
+            if let Some(card_number) = parse_exact_draw_count_each_turn(tail) {
+                return Ok(TriggerSpec::PlayerDrawsNthCardEachTurn {
+                    player,
+                    card_number,
+                });
+            }
+        }
+    }
+
     if words.ends_with(&["draw", "a", "card"]) || words.ends_with(&["draws", "a", "card"]) {
         let subject = &words[..words.len().saturating_sub(3)];
         if subject == ["you"] {
@@ -11656,6 +11669,37 @@ fn parse_exact_spell_count_each_turn(words: &[&str]) -> Option<u32> {
             || contains_word_sequence(words, &["your", ordinal, "spell", "this", "turn"])
             || contains_word_sequence(words, &["their", ordinal, "spell", "this", "turn"])
             || contains_word_sequence(words, &[ordinal, "spell", "each", "turn"])
+        {
+            return Some(count);
+        }
+    }
+    None
+}
+
+fn parse_exact_draw_count_each_turn(words: &[&str]) -> Option<u32> {
+    for (ordinal, count) in [
+        ("second", 2u32),
+        ("third", 3u32),
+        ("fourth", 4u32),
+        ("fifth", 5u32),
+        ("sixth", 6u32),
+        ("seventh", 7u32),
+        ("eighth", 8u32),
+        ("ninth", 9u32),
+        ("tenth", 10u32),
+    ] {
+        if contains_word_sequence(words, &[ordinal, "card", "each", "turn"])
+            || contains_word_sequence(words, &[ordinal, "cards", "each", "turn"])
+            || contains_word_sequence(words, &["your", ordinal, "card", "each", "turn"])
+            || contains_word_sequence(words, &["your", ordinal, "cards", "each", "turn"])
+            || contains_word_sequence(words, &["their", ordinal, "card", "each", "turn"])
+            || contains_word_sequence(words, &["their", ordinal, "cards", "each", "turn"])
+            || contains_word_sequence(words, &[ordinal, "card", "this", "turn"])
+            || contains_word_sequence(words, &[ordinal, "cards", "this", "turn"])
+            || contains_word_sequence(words, &["your", ordinal, "card", "this", "turn"])
+            || contains_word_sequence(words, &["your", ordinal, "cards", "this", "turn"])
+            || contains_word_sequence(words, &["their", ordinal, "card", "this", "turn"])
+            || contains_word_sequence(words, &["their", ordinal, "cards", "this", "turn"])
         {
             return Some(count);
         }
