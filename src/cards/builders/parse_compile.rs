@@ -1778,7 +1778,7 @@ fn lower_counted_non_target_exile_target(
 
     let mut resolved_filter = resolve_it_tag(filter, ctx)?;
     let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
-    if !matches!(choice_zone, Zone::Graveyard | Zone::Library) {
+    if choice_zone != Zone::Library {
         return Ok(None);
     }
 
@@ -1818,6 +1818,66 @@ fn lower_counted_non_target_exile_target(
         tag_key.clone(),
     )
     .in_zone(choice_zone)));
+    prelude.push(Effect::new(crate::effects::ExileEffect::with_spec(
+        ChooseSpec::Tagged(tag_key),
+    )));
+    Ok(Some((prelude, choices)))
+}
+
+fn lower_single_non_target_exile_target(
+    target: &TargetAst,
+    ctx: &mut CompileContext,
+) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
+    let (filter, count) = match target {
+        TargetAst::Object(filter, explicit_target_span, _)
+            if explicit_target_span.is_none() =>
+        {
+            (filter, ChoiceCount::exactly(1))
+        }
+        TargetAst::WithCount(inner, count) if count.is_single() => match inner.as_ref() {
+            TargetAst::Object(filter, explicit_target_span, _)
+                if explicit_target_span.is_none() =>
+            {
+                (filter, *count)
+            }
+            _ => return Ok(None),
+        },
+        _ => return Ok(None),
+    };
+
+    let mut resolved_filter = resolve_it_tag(filter, ctx)?;
+    let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
+    if choice_zone != Zone::Library {
+        return Ok(None);
+    }
+
+    let mut chooser = resolved_filter
+        .owner
+        .clone()
+        .or_else(|| resolved_filter.controller.clone())
+        .unwrap_or(PlayerFilter::You);
+
+    if ctx.iterated_player && matches!(chooser, PlayerFilter::Target(_)) {
+        chooser = PlayerFilter::IteratedPlayer;
+        if matches!(resolved_filter.owner, Some(PlayerFilter::Target(_))) {
+            resolved_filter.owner = Some(PlayerFilter::IteratedPlayer);
+        }
+        if matches!(resolved_filter.controller, Some(PlayerFilter::Target(_))) {
+            resolved_filter.controller = Some(PlayerFilter::IteratedPlayer);
+        }
+    }
+
+    let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
+    let tag = ctx.next_tag("exiled");
+    let tag_key: TagKey = tag.as_str().into();
+    ctx.last_object_tag = Some(tag.clone());
+    ctx.last_player_filter = Some(chooser.clone());
+
+    let choose = crate::effects::ChooseObjectsEffect::new(resolved_filter, count, chooser, tag_key.clone())
+        .in_zone(choice_zone)
+        .top_only();
+
+    prelude.push(Effect::new(choose));
     prelude.push(Effect::new(crate::effects::ExileEffect::with_spec(
         ChooseSpec::Tagged(tag_key),
     )));
@@ -3220,6 +3280,9 @@ fn compile_effect(
                 return Ok(compiled);
             }
             if let Some(compiled) = lower_counted_non_target_exile_target(target, ctx)? {
+                return Ok(compiled);
+            }
+            if let Some(compiled) = lower_single_non_target_exile_target(target, ctx)? {
                 return Ok(compiled);
             }
             let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;

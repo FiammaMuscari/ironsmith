@@ -8330,3 +8330,17 @@ fn parse_draw_third_card_each_turn_trigger_supports_higher_ordinals() {
         "expected third-card ordinal to compile as card_number=3, got {abilities_debug}"
     );
 }
+
+#[test]
+fn parse_exile_top_card_of_target_library_preserves_top_card_selection() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Top Card Exile Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{T}: Exile the top card of target player's library.")
+        .expect("top-card exile should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("exile the top card of target player's library"),
+        "expected top-card wording to remain explicit, got {rendered}"
+    );
+}
