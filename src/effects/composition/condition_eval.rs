@@ -144,8 +144,9 @@ fn evaluate_condition_simple(
         .filter(|p| p.id != controller)
         .map(|p| p.id)
         .collect();
-    let filter_ctx =
-        crate::filter::FilterContext::new(controller).with_opponents(opponents.clone());
+    let filter_ctx = crate::filter::FilterContext::new(controller)
+        .with_source(source)
+        .with_opponents(opponents.clone());
 
     match condition {
         Condition::YouControl(filter) => game
@@ -170,7 +171,9 @@ fn evaluate_condition_simple(
                 .filter(|p| p.id != player_id)
                 .map(|p| p.id)
                 .collect();
-            let mut ctx = crate::filter::FilterContext::new(player_id).with_opponents(opponents);
+            let mut ctx = crate::filter::FilterContext::new(player_id)
+                .with_source(source)
+                .with_opponents(opponents);
             if *player == PlayerFilter::IteratedPlayer {
                 ctx = ctx.with_iterated_player(Some(player_id));
             }
@@ -179,6 +182,41 @@ fn evaluate_condition_simple(
                 .filter_map(|&id| game.object(id))
                 .filter(|obj| condition_object_matches_player_zone(obj, player_id, filter.zone))
                 .any(|obj| filter.matches(obj, &ctx, game))
+        }
+        Condition::PlayerOwnsCardNamedInZones { player, name, zones } => {
+            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
+                return false;
+            };
+            let opponents: Vec<PlayerId> = game
+                .players
+                .iter()
+                .filter(|p| p.id != player_id)
+                .map(|p| p.id)
+                .collect();
+            let mut ctx = crate::filter::FilterContext::new(player_id)
+                .with_source(source)
+                .with_opponents(opponents);
+            if *player == PlayerFilter::IteratedPlayer {
+                ctx = ctx.with_iterated_player(Some(player_id));
+            }
+
+            if zones.is_empty() {
+                return false;
+            }
+
+            let mut filter = crate::target::ObjectFilter::default().named(name.clone());
+            for zone in zones {
+                filter.zone = Some(*zone);
+                let has_matching = condition_candidate_ids_for_zone(game, Some(*zone))
+                    .iter()
+                    .filter_map(|&id| game.object(id))
+                    .filter(|obj| obj.owner == player_id)
+                    .any(|obj| filter.matches(obj, &ctx, game));
+                if !has_matching {
+                    return false;
+                }
+            }
+            true
         }
         Condition::PlayerControlsAtLeast {
             player,
@@ -194,7 +232,9 @@ fn evaluate_condition_simple(
                 .filter(|p| p.id != player_id)
                 .map(|p| p.id)
                 .collect();
-            let mut ctx = crate::filter::FilterContext::new(player_id).with_opponents(opponents);
+            let mut ctx = crate::filter::FilterContext::new(player_id)
+                .with_source(source)
+                .with_opponents(opponents);
             if *player == PlayerFilter::IteratedPlayer {
                 ctx = ctx.with_iterated_player(Some(player_id));
             }
@@ -205,6 +245,34 @@ fn evaluate_condition_simple(
                 .filter(|obj| filter.matches(obj, &ctx, game))
                 .count();
             matches >= *count as usize
+        }
+        Condition::PlayerControlsExactly {
+            player,
+            filter,
+            count,
+        } => {
+            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
+                return false;
+            };
+            let opponents: Vec<PlayerId> = game
+                .players
+                .iter()
+                .filter(|p| p.id != player_id)
+                .map(|p| p.id)
+                .collect();
+            let mut ctx = crate::filter::FilterContext::new(player_id)
+                .with_source(source)
+                .with_opponents(opponents);
+            if *player == PlayerFilter::IteratedPlayer {
+                ctx = ctx.with_iterated_player(Some(player_id));
+            }
+            let matches = condition_candidate_ids_for_zone(game, filter.zone)
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| condition_object_matches_player_zone(obj, player_id, filter.zone))
+                .filter(|obj| filter.matches(obj, &ctx, game))
+                .count();
+            matches == *count as usize
         }
         Condition::PlayerControlsAtLeastWithDifferentPowers {
             player,
@@ -220,7 +288,9 @@ fn evaluate_condition_simple(
                 .filter(|p| p.id != player_id)
                 .map(|p| p.id)
                 .collect();
-            let mut ctx = crate::filter::FilterContext::new(player_id).with_opponents(opponents);
+            let mut ctx = crate::filter::FilterContext::new(player_id)
+                .with_source(source)
+                .with_opponents(opponents);
             if *player == PlayerFilter::IteratedPlayer {
                 ctx = ctx.with_iterated_player(Some(player_id));
             }
@@ -238,8 +308,9 @@ fn evaluate_condition_simple(
                     .filter(|p| p.id != candidate)
                     .map(|p| p.id)
                     .collect();
-                let mut ctx =
-                    crate::filter::FilterContext::new(candidate).with_opponents(opponents);
+                let mut ctx = crate::filter::FilterContext::new(candidate)
+                    .with_source(source)
+                    .with_opponents(opponents);
                 if *player == PlayerFilter::IteratedPlayer {
                     ctx = ctx.with_iterated_player(Some(candidate));
                 }
@@ -441,6 +512,30 @@ fn evaluate_condition(
                 .any(|obj| filter.matches(obj, &filter_ctx, game));
             Ok(has_matching)
         }
+        Condition::PlayerOwnsCardNamedInZones { player, name, zones } => {
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            let mut filter_ctx = ctx.filter_context(game);
+            filter_ctx.iterated_player = Some(player_id);
+
+            if zones.is_empty() {
+                return Ok(false);
+            }
+
+            let mut filter = crate::target::ObjectFilter::default().named(name.clone());
+            for zone in zones {
+                filter.zone = Some(*zone);
+                let has_matching = condition_candidate_ids_for_zone(game, Some(*zone))
+                    .iter()
+                    .filter_map(|&id| game.object(id))
+                    .filter(|obj| obj.owner == player_id)
+                    .any(|obj| filter.matches(obj, &filter_ctx, game));
+                if !has_matching {
+                    return Ok(false);
+                }
+            }
+
+            Ok(true)
+        }
         Condition::PlayerControlsAtLeast {
             player,
             filter,
@@ -456,6 +551,22 @@ fn evaluate_condition(
                 .filter(|obj| filter.matches(obj, &filter_ctx, game))
                 .count();
             Ok(matches >= *count as usize)
+        }
+        Condition::PlayerControlsExactly {
+            player,
+            filter,
+            count,
+        } => {
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            let mut filter_ctx = ctx.filter_context(game);
+            filter_ctx.iterated_player = Some(player_id);
+            let matches = condition_candidate_ids_for_zone(game, filter.zone)
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| condition_object_matches_player_zone(obj, player_id, filter.zone))
+                .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                .count();
+            Ok(matches == *count as usize)
         }
         Condition::PlayerControlsAtLeastWithDifferentPowers {
             player,

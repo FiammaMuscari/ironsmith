@@ -1190,6 +1190,13 @@ pub enum Condition {
         count: u32,
     },
 
+    /// A specific player controls exactly `count` objects matching filter.
+    PlayerControlsExactly {
+        player: PlayerFilter,
+        filter: ObjectFilter,
+        count: u32,
+    },
+
     /// A specific player controls at least `count` objects matching filter
     /// with distinct power values.
     PlayerControlsAtLeastWithDifferentPowers {
@@ -1294,6 +1301,13 @@ pub enum Condition {
         player: PlayerFilter,
         tag: TagKey,
         filter: ObjectFilter,
+    },
+
+    /// A player owns a card with the given name in each listed zone.
+    PlayerOwnsCardNamedInZones {
+        player: PlayerFilter,
+        name: String,
+        zones: Vec<Zone>,
     },
 
     /// Negate another condition

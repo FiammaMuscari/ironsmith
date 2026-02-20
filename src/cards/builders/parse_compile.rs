@@ -2370,6 +2370,13 @@ fn compile_effect(
             Effect::lose_the_game,
             Effect::lose_the_game_player,
         ),
+        EffectAst::WinGame { player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            Effect::win_the_game,
+            Effect::win_the_game_player,
+        ),
         EffectAst::PreventAllCombatDamage { duration } => Ok((
             vec![Effect::prevent_all_combat_damage(duration.clone())],
             Vec::new(),
@@ -3575,7 +3582,12 @@ fn compile_effect(
             } else {
                 ctx.last_object_tag = saved_last_tag.clone();
             }
-            let condition = match predicate {
+            fn compile_condition_from_predicate(
+                predicate: &PredicateAst,
+                ctx: &mut CompileContext,
+                saved_last_tag: &Option<String>,
+            ) -> Result<Condition, CardTextError> {
+                Ok(match predicate {
                 PredicateAst::ItIsLandCard => {
                     let tag = saved_last_tag.clone().ok_or_else(|| {
                         CardTextError::ParseError(
@@ -3641,6 +3653,20 @@ fn compile_effect(
                         count: *count,
                     }
                 }
+                PredicateAst::PlayerControlsExactly {
+                    player,
+                    filter,
+                    count,
+                } => {
+                    let player = resolve_non_target_player_filter(*player, ctx)?;
+                    let mut resolved = resolve_it_tag(filter, ctx)?;
+                    resolved.zone = None;
+                    Condition::PlayerControlsExactly {
+                        player,
+                        filter: resolved,
+                        count: *count,
+                    }
+                }
                 PredicateAst::PlayerControlsAtLeastWithDifferentPowers {
                     player,
                     filter,
@@ -3675,6 +3701,14 @@ fn compile_effect(
                         }),
                     )
                 }
+                PredicateAst::PlayerOwnsCardNamedInZones { player, name, zones } => {
+                    let player = resolve_non_target_player_filter(*player, ctx)?;
+                    Condition::PlayerOwnsCardNamedInZones {
+                        player,
+                        name: name.clone(),
+                        zones: zones.clone(),
+                    }
+                }
                 PredicateAst::PlayerControlsNo { player, filter } => {
                     let player = resolve_non_target_player_filter(*player, ctx)?;
                     let mut resolved = resolve_it_tag(filter, ctx)?;
@@ -3700,6 +3734,9 @@ fn compile_effect(
                 PredicateAst::PlayerTappedLandForManaThisTurn { player } => {
                     let player = resolve_non_target_player_filter(*player, ctx)?;
                     Condition::PlayerTappedLandForManaThisTurn { player }
+                }
+                PredicateAst::YouHaveNoCardsInHand => {
+                    Condition::Not(Box::new(Condition::CardsInHandOrMore(1)))
                 }
                 PredicateAst::SourceIsTapped => Condition::SourceIsTapped,
                 PredicateAst::SourceHasNoCounter(counter_type) => {
@@ -3736,7 +3773,15 @@ fn compile_effect(
                         symbol: *symbol,
                     }
                 }
-            };
+                PredicateAst::And(left, right) => {
+                    let left = compile_condition_from_predicate(left, ctx, saved_last_tag)?;
+                    let right = compile_condition_from_predicate(right, ctx, saved_last_tag)?;
+                    Condition::And(Box::new(left), Box::new(right))
+                }
+            })
+            }
+
+            let condition = compile_condition_from_predicate(predicate, ctx, &saved_last_tag)?;
             let effect = if false_effects.is_empty() {
                 Effect::conditional_only(condition, true_effects)
             } else {

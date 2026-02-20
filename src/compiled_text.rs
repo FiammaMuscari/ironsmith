@@ -489,6 +489,16 @@ fn small_number_word(n: u32) -> Option<&'static str> {
         8 => Some("eight"),
         9 => Some("nine"),
         10 => Some("ten"),
+        11 => Some("eleven"),
+        12 => Some("twelve"),
+        13 => Some("thirteen"),
+        14 => Some("fourteen"),
+        15 => Some("fifteen"),
+        16 => Some("sixteen"),
+        17 => Some("seventeen"),
+        18 => Some("eighteen"),
+        19 => Some("nineteen"),
+        20 => Some("twenty"),
         _ => None,
     }
 }
@@ -6141,6 +6151,37 @@ fn describe_condition(condition: &Condition) -> String {
                 noun
             )
         }
+        Condition::PlayerControlsExactly {
+            player,
+            filter,
+            count,
+        } => {
+            let subject = describe_player_filter(player);
+            let mut described_filter = filter.clone();
+            if described_filter
+                .controller
+                .as_ref()
+                .is_some_and(|controller| controller == player)
+            {
+                described_filter.controller = None;
+            }
+            let described = strip_indefinite_article(&described_filter.description()).to_string();
+            let noun = if *count == 1 {
+                described
+            } else {
+                pluralize_noun_phrase(&described)
+            };
+            let count_text = small_number_word(*count)
+                .map(str::to_string)
+                .unwrap_or_else(|| count.to_string());
+            format!(
+                "{} {} exactly {} {}",
+                subject,
+                player_verb(&subject, "control", "controls"),
+                count_text,
+                noun
+            )
+        }
         Condition::PlayerControlsAtLeastWithDifferentPowers {
             player,
             filter,
@@ -6278,6 +6319,30 @@ fn describe_condition(condition: &Condition) -> String {
                 )
             }
         }
+        Condition::PlayerOwnsCardNamedInZones { player, name, zones } => {
+            let subject = describe_player_filter(player);
+            let possessive = describe_possessive_player_filter(player);
+            let mut zone_phrases = Vec::new();
+            for zone in zones {
+                match zone {
+                    Zone::Exile => zone_phrases.push("in exile".to_string()),
+                    Zone::Hand => zone_phrases.push(format!("in {possessive} hand")),
+                    Zone::Graveyard => zone_phrases.push(format!("in {possessive} graveyard")),
+                    Zone::Library => zone_phrases.push(format!("in {possessive} library")),
+                    Zone::Battlefield => zone_phrases.push("on the battlefield".to_string()),
+                    Zone::Stack => zone_phrases.push("on the stack".to_string()),
+                    Zone::Command => zone_phrases.push("in the command zone".to_string()),
+                }
+            }
+            let zones_text = join_with_and(&zone_phrases);
+            format!(
+                "{} {} a card named {} {}",
+                subject,
+                player_verb(&subject, "own", "owns"),
+                name,
+                zones_text
+            )
+        }
         Condition::Not(inner) => {
             if let Condition::TargetSpellManaSpentToCastAtLeast {
                 amount: 1,
@@ -6285,6 +6350,8 @@ fn describe_condition(condition: &Condition) -> String {
             } = inner.as_ref()
             {
                 "no mana was spent to cast the target spell".to_string()
+            } else if let Condition::CardsInHandOrMore(1) = inner.as_ref() {
+                "you have no cards in hand".to_string()
             } else if let Condition::PlayerControls { player, filter } = inner.as_ref() {
                 let subject = describe_player_filter(player);
                 let mut described_filter = filter.clone();
@@ -6296,7 +6363,12 @@ fn describe_condition(condition: &Condition) -> String {
                     described_filter.controller = None;
                 }
                 let described = described_filter.description();
-                let object_text = strip_indefinite_article(&described);
+                let mut object_text = strip_indefinite_article(&described).to_string();
+                if let Some(rest) = object_text.strip_prefix("another ") {
+                    // "You control no other permanents" is substantially closer to oracle text than
+                    // the ungrammatical "You control no another permanent".
+                    object_text = format!("other {}", pluralize_noun_phrase(rest));
+                }
                 let references_tagged_object =
                     described_filter.tagged_constraints.iter().any(|constraint| {
                         matches!(
@@ -6323,18 +6395,12 @@ fn describe_condition(condition: &Condition) -> String {
             }
         }
         Condition::And(left, right) => {
-            format!(
-                "({}) and ({})",
-                describe_condition(left),
-                describe_condition(right)
-            )
+            // Avoid parentheses here: the semantic comparison pipeline strips parentheticals,
+            // and these are just internal grouping markers, not oracle reminder text.
+            format!("{} and {}", describe_condition(left), describe_condition(right))
         }
         Condition::Or(left, right) => {
-            format!(
-                "({}) or ({})",
-                describe_condition(left),
-                describe_condition(right)
-            )
+            format!("{} or {}", describe_condition(left), describe_condition(right))
         }
     }
 }
@@ -10899,6 +10965,10 @@ fn describe_effect_impl(effect: &Effect) -> String {
             player,
             player_verb(&player, "take", "takes")
         );
+    }
+    if let Some(win_game) = effect.downcast_ref::<crate::effects::WinTheGameEffect>() {
+        let player = describe_player_filter(&win_game.player);
+        return format!("{} {} the game", player, player_verb(&player, "win", "wins"));
     }
     if let Some(lose_game) = effect.downcast_ref::<crate::effects::LoseTheGameEffect>() {
         let player = describe_player_filter(&lose_game.player);

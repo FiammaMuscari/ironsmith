@@ -320,6 +320,11 @@ enum PredicateAst {
         filter: ObjectFilter,
         count: u32,
     },
+    PlayerControlsExactly {
+        player: PlayerAst,
+        filter: ObjectFilter,
+        count: u32,
+    },
     PlayerControlsAtLeastWithDifferentPowers {
         player: PlayerAst,
         filter: ObjectFilter,
@@ -329,6 +334,11 @@ enum PredicateAst {
         player: PlayerAst,
         control_filter: ObjectFilter,
         graveyard_filter: ObjectFilter,
+    },
+    PlayerOwnsCardNamedInZones {
+        player: PlayerAst,
+        name: String,
+        zones: Vec<Zone>,
     },
     PlayerControlsNo {
         player: PlayerAst,
@@ -344,6 +354,7 @@ enum PredicateAst {
     PlayerTappedLandForManaThisTurn {
         player: PlayerAst,
     },
+    YouHaveNoCardsInHand,
     SourceIsTapped,
     #[allow(dead_code)]
     SourceHasNoCounter(CounterType),
@@ -361,6 +372,7 @@ enum PredicateAst {
         amount: u32,
         symbol: Option<ManaSymbol>,
     },
+    And(Box<PredicateAst>, Box<PredicateAst>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -466,6 +478,9 @@ enum EffectAst {
         player: PlayerAst,
     },
     LoseGame {
+        player: PlayerAst,
+    },
+    WinGame {
         player: PlayerAst,
     },
     PreventAllCombatDamage {

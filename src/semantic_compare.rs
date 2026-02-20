@@ -396,6 +396,26 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         "whenever another creature enters under your control",
         "whenever another creature you control enters",
     );
+
+    // Canonicalize "no permanents other than this <type>" to "no other permanents".
+    // This wording difference is semantically irrelevant (it's a self-reference), but
+    // otherwise penalizes strict token overlap scoring.
+    for this_type in ["artifact", "creature", "enchantment", "land", "permanent"] {
+        for verb in ["control", "controls"] {
+            for punct in ["", ",", ".", ";"] {
+                let from = format!("{verb} no permanents other than this {this_type}{punct}");
+                let to = format!("{verb} no other permanents{punct}");
+                normalized = normalized.replace(&from, &to);
+                normalized = normalized.replace(&from.to_ascii_lowercase(), &to.to_ascii_lowercase());
+                let from_singular = format!("{verb} no permanent other than this {this_type}{punct}");
+                normalized = normalized.replace(&from_singular, &to);
+                normalized = normalized.replace(
+                    &from_singular.to_ascii_lowercase(),
+                    &to.to_ascii_lowercase(),
+                );
+            }
+        }
+    }
     normalized = normalized.replace(
         "Each creature you control gets ",
         "Creatures you control get ",
@@ -2024,6 +2044,42 @@ mod tests {
             !mismatch,
             "expected no mismatch for mill/draw/lose sentence split"
         );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_control_no_permanents_other_than_this_self_reference() {
+        let oracle = "At the beginning of your upkeep, if you control no permanents other than this enchantment and have no cards in hand, you win the game.";
+        let compiled = vec![String::from(
+            "Triggered ability 1: At the beginning of your upkeep, if you control no other permanents and you have no cards in hand, you win the game.",
+        )];
+        let (oracle_cov, compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, None);
+        if std::env::var("DEBUG_SEMANTIC_COMPARE").is_ok() {
+            eprintln!(
+                "oracle_cov={oracle_cov:.4} compiled_cov={compiled_cov:.4} similarity={similarity:.4} mismatch={mismatch}"
+            );
+        }
+        if similarity < 0.99 || mismatch {
+            let oracle_clauses = super::semantic_clauses(oracle);
+            let compiled_clauses = super::semantic_clauses(&compiled[0]);
+            let oracle_tokens = oracle_clauses
+                .iter()
+                .map(|clause| super::comparison_tokens(clause))
+                .collect::<Vec<_>>();
+            let compiled_tokens = compiled_clauses
+                .iter()
+                .map(|clause| super::comparison_tokens(clause))
+                .collect::<Vec<_>>();
+            eprintln!("oracle_clauses: {:?}", oracle_clauses);
+            eprintln!("compiled_clauses: {:?}", compiled_clauses);
+            eprintln!("oracle_tokens: {:?}", oracle_tokens);
+            eprintln!("compiled_tokens: {:?}", compiled_tokens);
+        }
+        assert!(
+            similarity >= 0.99,
+            "expected self-reference normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(!mismatch, "expected no mismatch for self-reference clause");
     }
 
     #[test]

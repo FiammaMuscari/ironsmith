@@ -974,6 +974,27 @@ fn split_common_semantic_conjunctions(line: &str) -> String {
         "whenever another creature enters under your control",
         "whenever another creature you control enters",
     );
+    // Canonicalize "no permanents other than this <type>" to "no other permanents".
+    // This self-reference wording difference is semantically irrelevant but can
+    // otherwise penalize strict token overlap scoring.
+    for this_type in ["artifact", "creature", "enchantment", "land", "permanent"] {
+        for verb in ["control", "controls"] {
+            for punct in ["", ",", ".", ";"] {
+                let from = format!("{verb} no permanents other than this {this_type}{punct}");
+                let to = format!("{verb} no other permanents{punct}");
+                normalized = normalized.replace(&from, &to);
+                normalized =
+                    normalized.replace(&from.to_ascii_lowercase(), &to.to_ascii_lowercase());
+                let from_singular =
+                    format!("{verb} no permanent other than this {this_type}{punct}");
+                normalized = normalized.replace(&from_singular, &to);
+                normalized = normalized.replace(
+                    &from_singular.to_ascii_lowercase(),
+                    &to.to_ascii_lowercase(),
+                );
+            }
+        }
+    }
     if normalized.starts_with("You draw ") {
         normalized = normalized.replace(" and you lose ", " and lose ");
         normalized = normalized.replace(" and you gain ", " and gain ");

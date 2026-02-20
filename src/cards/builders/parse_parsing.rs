@@ -7707,6 +7707,7 @@ fn parse_named_number(word: &str) -> Option<u32> {
     }
 
     match word {
+        "zero" => Some(0),
         "a" | "an" | "one" => Some(1),
         "two" => Some(2),
         "three" => Some(3),
@@ -7717,6 +7718,16 @@ fn parse_named_number(word: &str) -> Option<u32> {
         "eight" => Some(8),
         "nine" => Some(9),
         "ten" => Some(10),
+        "eleven" => Some(11),
+        "twelve" => Some(12),
+        "thirteen" => Some(13),
+        "fourteen" => Some(14),
+        "fifteen" => Some(15),
+        "sixteen" => Some(16),
+        "seventeen" => Some(17),
+        "eighteen" => Some(18),
+        "nineteen" => Some(19),
+        "twenty" => Some(20),
         _ => None,
     }
 }
@@ -22373,8 +22384,39 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
         ));
     }
 
+    // Handle simple conjunction predicates like "... and have no cards in hand".
+    if let Some(and_idx) = filtered.iter().position(|word| *word == "and")
+        && and_idx > 0
+        && and_idx + 1 < filtered.len()
+    {
+        let right_first = filtered.get(and_idx + 1).copied();
+        if matches!(right_first, Some("have") | Some("you")) {
+            let left_words = &filtered[..and_idx];
+            let mut right_words = filtered[and_idx + 1..].to_vec();
+            // Inherit the subject when omitted ("... and have ...").
+            if right_words.first().copied() == Some("have") {
+                right_words.insert(0, "you");
+            }
+            let left_tokens = left_words
+                .iter()
+                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .collect::<Vec<_>>();
+            let right_tokens = right_words
+                .iter()
+                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .collect::<Vec<_>>();
+            let left = parse_predicate(&left_tokens)?;
+            let right = parse_predicate(&right_tokens)?;
+            return Ok(PredicateAst::And(Box::new(left), Box::new(right)));
+        }
+    }
+
     if filtered.as_slice() == ["this", "tapped"] || filtered.as_slice() == ["thiss", "tapped"] {
         return Ok(PredicateAst::SourceIsTapped);
+    }
+
+    if filtered.as_slice() == ["you", "have", "no", "cards", "in", "hand"] {
+        return Ok(PredicateAst::YouHaveNoCardsInHand);
     }
 
     if filtered.as_slice() == ["you", "attacked", "this", "turn"] {
@@ -23935,6 +23977,9 @@ fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardText
     const PRIMITIVES: &[ClausePrimitive] = &[
         ClausePrimitive {
             parser: parse_copy_spell_clause,
+        },
+        ClausePrimitive {
+            parser: parse_win_the_game_clause,
         },
         ClausePrimitive {
             parser: parse_deal_damage_equal_to_power_clause,
@@ -25822,6 +25867,83 @@ fn parse_can_attack_as_though_no_defender_clause(
         target,
         abilities: vec![StaticAbility::can_attack_as_though_no_defender()],
         duration: Until::EndOfTurn,
+    }))
+}
+
+fn parse_win_the_game_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.len() < 4 {
+        return Ok(None);
+    }
+
+    if !clause_words.starts_with(&["you", "win", "the", "game"]) {
+        return Ok(None);
+    }
+
+    if clause_words.len() == 4 {
+        return Ok(Some(EffectAst::WinGame {
+            player: PlayerAst::You,
+        }));
+    }
+
+    if clause_words.get(4).copied() != Some("if") {
+        return Ok(None);
+    }
+
+    let if_tail = clause_words.get(5..).unwrap_or_default();
+    if if_tail.len() < 6
+        || if_tail[0] != "you"
+        || if_tail[1] != "own"
+        || !matches!(if_tail[2], "a" | "an" | "the")
+        || if_tail[3] != "card"
+        || if_tail[4] != "named"
+    {
+        return Ok(None);
+    }
+
+    let after_named = &if_tail[5..];
+    let Some(in_idx) = after_named.iter().position(|word| *word == "in") else {
+        return Ok(None);
+    };
+    if in_idx == 0 {
+        return Ok(None);
+    }
+
+    let name_words = &after_named[..in_idx];
+    let remainder = &after_named[in_idx..];
+
+    let has_exile = remainder.contains(&"exile");
+    let has_hand = remainder.contains(&"hand");
+    let has_graveyard = remainder.contains(&"graveyard");
+    let has_battlefield = remainder.contains(&"battlefield");
+    if !(has_exile && has_hand && has_graveyard && has_battlefield) {
+        return Ok(None);
+    }
+
+    let name = name_words
+        .iter()
+        .map(|word| title_case_token_word(word))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if name.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(EffectAst::Conditional {
+        predicate: PredicateAst::PlayerOwnsCardNamedInZones {
+            player: PlayerAst::You,
+            name,
+            zones: vec![
+                Zone::Exile,
+                Zone::Hand,
+                Zone::Graveyard,
+                Zone::Battlefield,
+            ],
+        },
+        if_true: vec![EffectAst::WinGame {
+            player: PlayerAst::You,
+        }],
+        if_false: Vec::new(),
     }))
 }
 
