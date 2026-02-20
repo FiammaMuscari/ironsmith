@@ -880,6 +880,38 @@ fn should_keep_and_for_attachment_object_list(current: &[Token], remaining: &[To
         || current_words.starts_with(&["gain", "control", "of", "all"])
 }
 
+fn should_keep_and_for_each_player_may_clause(current: &[Token], remaining: &[Token]) -> bool {
+    if current.is_empty() || remaining.is_empty() {
+        return false;
+    }
+    let current_words = words(current);
+    if current_words.is_empty() || !current_words.contains(&"may") {
+        return false;
+    }
+
+    let starts_for_each_player_or_opponent = current_words.starts_with(&["each", "player"])
+        || current_words.starts_with(&["each", "players"])
+        || current_words.starts_with(&["each", "opponent"])
+        || current_words.starts_with(&["each", "opponents"])
+        || current_words.starts_with(&["for", "each", "player"])
+        || current_words.starts_with(&["for", "each", "players"])
+        || current_words.starts_with(&["for", "each", "opponent"])
+        || current_words.starts_with(&["for", "each", "opponents"]);
+    if !starts_for_each_player_or_opponent {
+        return false;
+    }
+
+    let remaining_words = words(remaining);
+    if remaining_words.is_empty() {
+        return false;
+    }
+    if remaining_words.starts_with(&["for", "each"]) || remaining_words.starts_with(&["each"]) {
+        return false;
+    }
+
+    true
+}
+
 fn split_effect_chain_on_and(tokens: &[Token]) -> Vec<Vec<Token>> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
@@ -894,6 +926,7 @@ fn split_effect_chain_on_and(tokens: &[Token]) -> Vec<Vec<Token>> {
             if is_color_pair
                 || should_keep_and_for_token_rules(&current, &tokens[idx + 1..])
                 || should_keep_and_for_attachment_object_list(&current, &tokens[idx + 1..])
+                || should_keep_and_for_each_player_may_clause(&current, &tokens[idx + 1..])
             {
                 current.push(token.clone());
                 continue;
@@ -11429,6 +11462,28 @@ fn parse_exact_spell_count_each_turn(words: &[&str]) -> Option<u32> {
     None
 }
 
+fn has_first_spell_each_turn_pattern(words: &[&str]) -> bool {
+    let has_each_turn = contains_word_sequence(words, &["each", "turn"]);
+    let has_this_turn = contains_word_sequence(words, &["this", "turn"]);
+    if !has_each_turn && !has_this_turn {
+        return false;
+    }
+
+    for (idx, word) in words.iter().enumerate() {
+        if *word != "first" {
+            continue;
+        }
+        let window_end = (idx + 5).min(words.len());
+        if words[idx + 1..window_end]
+            .iter()
+            .any(|candidate| *candidate == "spell" || *candidate == "spells")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn parse_spell_activity_trigger(tokens: &[Token]) -> Result<Option<TriggerSpec>, CardTextError> {
     let clause_words = words(tokens);
     if !clause_words.contains(&"spell") && !clause_words.contains(&"spells") {
@@ -11466,7 +11521,10 @@ fn parse_spell_activity_trigger(tokens: &[Token]) -> Result<Option<TriggerSpec>,
         && clause_words.contains(&"spell")
         && clause_words.contains(&"casts")
         && clause_words.contains(&"turn"));
-    let exact_spells_this_turn = parse_exact_spell_count_each_turn(&clause_words);
+    let first_spell_each_turn = !has_other_than_first_spell_pattern
+        && has_first_spell_each_turn_pattern(&clause_words);
+    let exact_spells_this_turn = parse_exact_spell_count_each_turn(&clause_words)
+        .or_else(|| first_spell_each_turn.then_some(1));
     let min_spells_this_turn = if exact_spells_this_turn.is_some() {
         None
     } else if has_other_than_first_spell_pattern
@@ -21005,39 +21063,57 @@ fn parse_pt_value(raw: &str) -> Option<PtValue> {
 }
 
 fn parse_for_each_opponent_doesnt(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
-    let words = words(tokens);
-    if words.len() < 4 {
+    let mut clause_tokens = tokens;
+    let mut clause_words = words(clause_tokens);
+    if clause_words.first().copied() == Some("then") {
+        clause_tokens = &clause_tokens[1..];
+        clause_words = words(clause_tokens);
+    }
+    if clause_words.len() < 4 {
         return Ok(None);
     }
 
-    if !words.starts_with(&["for", "each", "opponent"])
-        && !words.starts_with(&["for", "each", "opponents"])
+    let start = if clause_words.starts_with(&["for", "each", "opponent"])
+        || clause_words.starts_with(&["for", "each", "opponents"])
     {
-        return Ok(None);
-    }
-
-    let Some((negation_idx, negation_len)) = negated_action_word_index(&words) else {
+        3
+    } else if clause_words.starts_with(&["each", "opponent"])
+        || clause_words.starts_with(&["each", "opponents"])
+    {
+        2
+    } else {
         return Ok(None);
     };
 
-    let effect_tokens = if let Some(comma_idx) = tokens
+    let inner_tokens = trim_commas(&clause_tokens[start..]);
+    let inner_words = words(&inner_tokens);
+    let starts_with_who = inner_words.first().copied() == Some("who");
+    let Some((negation_idx, negation_len)) = negated_action_word_index(&inner_words) else {
+        return Ok(None);
+    };
+    if !starts_with_who {
+        return Ok(None);
+    }
+
+    let effect_token_start = if let Some(comma_idx) = inner_tokens
         .iter()
         .position(|token| matches!(token, Token::Comma(_)))
     {
-        trim_commas(&tokens[comma_idx + 1..])
-    } else if let Some(this_way_idx) = words.windows(2).position(|pair| pair == ["this", "way"]) {
-        let effect_token_start = token_index_for_word_index(tokens, this_way_idx + 2)
-            .unwrap_or(tokens.len());
-        trim_commas(&tokens[effect_token_start..])
+        comma_idx + 1
+    } else if let Some(this_way_idx) = inner_words
+        .windows(2)
+        .position(|pair| pair == ["this", "way"])
+    {
+        token_index_for_word_index(&inner_tokens, this_way_idx + 2).unwrap_or(inner_tokens.len())
     } else {
-        let effect_token_start = token_index_for_word_index(tokens, negation_idx + negation_len)
-            .unwrap_or(tokens.len());
-        trim_commas(&tokens[effect_token_start..])
+        token_index_for_word_index(&inner_tokens, negation_idx + negation_len)
+            .unwrap_or(inner_tokens.len())
     };
+    let effect_tokens = trim_commas(&inner_tokens[effect_token_start..]);
     if effect_tokens.is_empty() {
         return Err(CardTextError::ParseError(format!(
             "missing effect in for each opponent who doesn't clause (clause: '{}')",
-            words.join(" ")
+            clause_words.join(" ")
         )));
     }
 
@@ -22456,6 +22532,43 @@ enum CarryContext {
     ForEachOpponent,
 }
 
+fn player_ast_from_filter_for_carry(filter: &PlayerFilter) -> Option<PlayerAst> {
+    match filter {
+        PlayerFilter::You => Some(PlayerAst::You),
+        PlayerFilter::Opponent => Some(PlayerAst::Opponent),
+        PlayerFilter::Any => Some(PlayerAst::Any),
+        PlayerFilter::IteratedPlayer => Some(PlayerAst::That),
+        PlayerFilter::Target(inner) => {
+            if matches!(inner.as_ref(), PlayerFilter::Opponent) {
+                Some(PlayerAst::TargetOpponent)
+            } else {
+                Some(PlayerAst::Target)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn player_owner_filter_from_target_for_carry(target: &TargetAst) -> Option<PlayerAst> {
+    match target {
+        TargetAst::Player(filter, _) => player_ast_from_filter_for_carry(filter),
+        TargetAst::Object(filter, _, _) => {
+            if !matches!(
+                filter.zone,
+                Some(Zone::Hand) | Some(Zone::Graveyard) | Some(Zone::Library) | Some(Zone::Exile)
+            ) {
+                return None;
+            }
+            filter
+                .owner
+                .as_ref()
+                .and_then(player_ast_from_filter_for_carry)
+        }
+        TargetAst::WithCount(inner, _) => player_owner_filter_from_target_for_carry(inner),
+        _ => None,
+    }
+}
+
 fn explicit_player_for_carry(effect: &EffectAst) -> Option<CarryContext> {
     if matches!(effect, EffectAst::ForEachPlayer { .. }) {
         return Some(CarryContext::ForEachPlayer);
@@ -22465,6 +22578,17 @@ fn explicit_player_for_carry(effect: &EffectAst) -> Option<CarryContext> {
     }
     if matches!(effect, EffectAst::ForEachOpponent { .. }) {
         return Some(CarryContext::ForEachOpponent);
+    }
+    if let EffectAst::Exile { target } | EffectAst::ExileUntilSourceLeaves { target } = effect
+        && let Some(player) = player_owner_filter_from_target_for_carry(target)
+    {
+        return Some(CarryContext::Player(player));
+    }
+    if let EffectAst::ExileAll { filter } = effect
+        && let Some(owner) = filter.owner.as_ref()
+        && let Some(player) = player_ast_from_filter_for_carry(owner)
+    {
+        return Some(CarryContext::Player(player));
     }
 
     let player = match effect {
@@ -23488,9 +23612,16 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
                     });
                 }
 
+                let has_counter_state_pronoun = subject_words.windows(3).any(|window| {
+                    matches!(window[0], "counter" | "counters")
+                        && window[1] == "on"
+                        && matches!(window[2], "it" | "them")
+                });
+                let has_disallowed_pronoun_reference =
+                    (subject_words.contains(&"it") || subject_words.contains(&"them"))
+                        && !has_counter_state_pronoun;
                 if !subject_words.contains(&"this")
-                    && !subject_words.contains(&"it")
-                    && !subject_words.contains(&"them")
+                    && !has_disallowed_pronoun_reference
                     && !has_demonstrative_object_reference(&subject_words)
                     && let Ok(filter) = parse_object_filter(subject_tokens, false)
                     && filter != ObjectFilter::default()
@@ -24112,6 +24243,33 @@ fn parse_for_each_opponent_clause(tokens: &[Token]) -> Result<Option<EffectAst>,
             }],
         }));
     }
+    if inner_words.first().copied() == Some("who")
+        && let Some((negation_idx, negation_len)) = negated_action_word_index(&inner_words)
+    {
+        let effect_token_start = if let Some(comma_idx) = inner_tokens
+            .iter()
+            .position(|token| matches!(token, Token::Comma(_)))
+        {
+            comma_idx + 1
+        } else if let Some(this_way_idx) = inner_words
+            .windows(2)
+            .position(|pair| pair == ["this", "way"])
+        {
+            token_index_for_word_index(&inner_tokens, this_way_idx + 2).unwrap_or(inner_tokens.len())
+        } else {
+            token_index_for_word_index(&inner_tokens, negation_idx + negation_len)
+                .unwrap_or(inner_tokens.len())
+        };
+        let effect_tokens = trim_commas(&inner_tokens[effect_token_start..]);
+        if effect_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing effect in for each opponent who doesn't clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let effects = parse_effect_chain_inner(&effect_tokens)?;
+        return Ok(Some(EffectAst::ForEachOpponentDoesNot { effects }));
+    }
 
     if inner_words.first().copied() == Some("who")
         && let Some(this_way_idx) = inner_words
@@ -24129,6 +24287,31 @@ fn parse_for_each_opponent_clause(tokens: &[Token]) -> Result<Option<EffectAst>,
             )));
         }
         let effects = parse_effect_chain_inner(&effect_tokens)?;
+        return Ok(Some(EffectAst::ForEachOpponentDid { effects }));
+    }
+    if inner_words.starts_with(&["who", "does"])
+        || inner_words.starts_with(&["who", "do"])
+        || inner_words.starts_with(&["who", "did"])
+    {
+        let effect_token_start = if let Some(comma_idx) = inner_tokens
+            .iter()
+            .position(|token| matches!(token, Token::Comma(_)))
+        {
+            comma_idx + 1
+        } else {
+            token_index_for_word_index(&inner_tokens, 2).unwrap_or(inner_tokens.len())
+        };
+        let effect_tokens = trim_commas(&inner_tokens[effect_token_start..]);
+        if effect_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing effect after 'each opponent who does' (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let mut effects = parse_effect_chain_inner(&effect_tokens)?;
+        for effect in &mut effects {
+            bind_implicit_player_context(effect, PlayerAst::You);
+        }
         return Ok(Some(EffectAst::ForEachOpponentDid { effects }));
     }
 
@@ -24321,6 +24504,33 @@ fn parse_for_each_player_clause(tokens: &[Token]) -> Result<Option<EffectAst>, C
 
     let inner_words = words(&inner_tokens);
     if inner_words.first().copied() == Some("who")
+        && let Some((negation_idx, negation_len)) = negated_action_word_index(&inner_words)
+    {
+        let effect_token_start = if let Some(comma_idx) = inner_tokens
+            .iter()
+            .position(|token| matches!(token, Token::Comma(_)))
+        {
+            comma_idx + 1
+        } else if let Some(this_way_idx) = inner_words
+            .windows(2)
+            .position(|pair| pair == ["this", "way"])
+        {
+            token_index_for_word_index(&inner_tokens, this_way_idx + 2).unwrap_or(inner_tokens.len())
+        } else {
+            token_index_for_word_index(&inner_tokens, negation_idx + negation_len)
+                .unwrap_or(inner_tokens.len())
+        };
+        let effect_tokens = trim_commas(&inner_tokens[effect_token_start..]);
+        if effect_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing effect in for each player who doesn't clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let effects = parse_effect_chain_inner(&effect_tokens)?;
+        return Ok(Some(EffectAst::ForEachPlayerDoesNot { effects }));
+    }
+    if inner_words.first().copied() == Some("who")
         && let Some(this_way_idx) = inner_words
             .windows(2)
             .position(|window| window == ["this", "way"])
@@ -24336,6 +24546,31 @@ fn parse_for_each_player_clause(tokens: &[Token]) -> Result<Option<EffectAst>, C
             )));
         }
         let effects = parse_effect_chain_inner(&effect_tokens)?;
+        return Ok(Some(EffectAst::ForEachPlayerDid { effects }));
+    }
+    if inner_words.starts_with(&["who", "does"])
+        || inner_words.starts_with(&["who", "do"])
+        || inner_words.starts_with(&["who", "did"])
+    {
+        let effect_token_start = if let Some(comma_idx) = inner_tokens
+            .iter()
+            .position(|token| matches!(token, Token::Comma(_)))
+        {
+            comma_idx + 1
+        } else {
+            token_index_for_word_index(&inner_tokens, 2).unwrap_or(inner_tokens.len())
+        };
+        let effect_tokens = trim_commas(&inner_tokens[effect_token_start..]);
+        if effect_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing effect after 'each player who does' (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let mut effects = parse_effect_chain_inner(&effect_tokens)?;
+        for effect in &mut effects {
+            bind_implicit_player_context(effect, PlayerAst::You);
+        }
         return Ok(Some(EffectAst::ForEachPlayerDid { effects }));
     }
 
@@ -25535,6 +25770,30 @@ fn parse_deal_damage_with_amount(
         || target_words.as_slice() == ["each", "opponents"]
     {
         return Ok(EffectAst::ForEachOpponent {
+            effects: vec![EffectAst::DealDamage {
+                amount: amount.clone(),
+                target: TargetAst::Player(PlayerFilter::IteratedPlayer, None),
+            }],
+        });
+    }
+    if target_words.starts_with(&["each", "opponent", "who"])
+        && target_words
+            .windows(2)
+            .any(|window| window == ["this", "way"])
+    {
+        return Ok(EffectAst::ForEachOpponentDid {
+            effects: vec![EffectAst::DealDamage {
+                amount: amount.clone(),
+                target: TargetAst::Player(PlayerFilter::IteratedPlayer, None),
+            }],
+        });
+    }
+    if target_words.starts_with(&["each", "player", "who"])
+        && target_words
+            .windows(2)
+            .any(|window| window == ["this", "way"])
+    {
+        return Ok(EffectAst::ForEachPlayerDid {
             effects: vec![EffectAst::DealDamage {
                 amount: amount.clone(),
                 target: TargetAst::Player(PlayerFilter::IteratedPlayer, None),
@@ -31063,6 +31322,7 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
             ["exiled", "this", "way"]
                 | ["destroyed", "this", "way"]
                 | ["sacrificed", "this", "way"]
+                | ["revealed", "this", "way"]
                 | ["discarded", "this", "way"]
                 | ["milled", "this", "way"]
         )
