@@ -2217,6 +2217,42 @@ fn test_for_each_opponent_who_does_binds_implicit_followup_to_you() {
 }
 
 #[test]
+fn test_each_player_tagged_followups_collapse_into_single_for_players_effect() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Duskmantle Seer Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("At the beginning of your upkeep, each player reveals the top card of their library, loses life equal to that card's mana value, then puts it into their hand.")
+        .expect("parse each-player tagged followups trigger");
+
+    let triggered = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Triggered(triggered) => Some(triggered),
+            _ => None,
+        })
+        .expect("expected triggered ability");
+
+    let debug = format!("{:?}", triggered.effects);
+    assert_eq!(
+        debug.matches("ForPlayersEffect").count(),
+        1,
+        "expected a single per-player wrapper for tagged followups, got {debug}"
+    );
+    assert!(
+        debug.contains("RevealTopEffect"),
+        "expected reveal-top effect in per-player wrapper, got {debug}"
+    );
+    assert!(
+        debug.contains("LoseLifeEffect"),
+        "expected lose-life effect in per-player wrapper, got {debug}"
+    );
+    assert!(
+        debug.contains("MoveToZoneEffect") && debug.contains("zone: Hand"),
+        "expected move-to-hand effect in per-player wrapper, got {debug}"
+    );
+}
+
+#[test]
 fn test_parse_trigger_without_comma() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "No Comma Trigger")
         .card_types(vec![CardType::Enchantment])
@@ -5942,7 +5978,7 @@ fn parse_llanowar_mentor_token_keeps_tap_for_green_mana_ability() {
     });
     assert!(
         has_green_tap_mana,
-        "expected created token to keep '{T}: Add {{G}}' ability, got {:#?}",
+        "expected created token to keep '{{T}}: Add {{G}}' ability, got {:#?}",
         create.token.abilities
     );
 

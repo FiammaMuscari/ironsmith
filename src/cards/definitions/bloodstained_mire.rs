@@ -125,17 +125,16 @@ mod tests {
 
         let ability = &def.abilities[0];
         if let AbilityKind::Activated(activated) = &ability.kind {
-            // Search is compiled as a direct SearchLibraryEffect
+            // Search is compiled as a composed sequence: choose from library, put onto battlefield, then shuffle.
             assert_eq!(activated.effects.len(), 1, "Should have 1 effect");
 
             let debug_str = format!("{:?}", activated.effects[0]);
             assert!(
-                debug_str.contains("SearchLibraryEffect"),
-                "Effect should be a SearchLibraryEffect"
-            );
-            assert!(
-                debug_str.contains("destination: Battlefield"),
-                "Search should put onto battlefield"
+                debug_str.contains("SequenceEffect")
+                    && debug_str.contains("ChooseObjectsEffect")
+                    && debug_str.contains("PutOntoBattlefieldEffect")
+                    && debug_str.contains("ShuffleLibraryEffect"),
+                "Effect should compose search->put->shuffle, got {debug_str}"
             );
         } else {
             panic!("Expected activated ability");
@@ -152,8 +151,8 @@ mod tests {
 
             // Verify the effect contains the right filter criteria via debug output
             assert!(
-                debug_str.contains("SearchLibraryEffect"),
-                "Should include SearchLibraryEffect"
+                debug_str.contains("ChooseObjectsEffect") && debug_str.contains("is_search: true"),
+                "Should include library search choice effect"
             );
             assert!(
                 debug_str.contains("Swamp"),
@@ -165,7 +164,11 @@ mod tests {
             );
             assert!(debug_str.contains("Land"), "Filter should be for lands");
             assert!(
-                debug_str.contains("Battlefield"),
+                debug_str.contains("Library"),
+                "Should search the library"
+            );
+            assert!(
+                debug_str.contains("PutOntoBattlefieldEffect") && debug_str.contains("Battlefield"),
                 "Destination should be battlefield"
             );
         } else {

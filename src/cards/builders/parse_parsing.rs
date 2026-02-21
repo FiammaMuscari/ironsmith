@@ -23054,9 +23054,52 @@ fn parse_effect_chain_inner(tokens: &[Token]) -> Result<Vec<EffectAst>, CardText
         }
         effects.push(effect);
     }
+    // If an "each player ..." clause is followed by additional implicit per-player
+    // clauses that reference "it/that <object>", we must keep them inside the same
+    // per-player iteration. Otherwise, tag-based "it" references will be overwritten
+    // across players (for example: Duskmantle Seer).
+    collapse_for_each_player_it_tag_followups(&mut effects);
     collapse_token_copy_next_end_step_exile_followup(&mut effects, tokens);
     collapse_token_copy_end_of_combat_exile_followup(&mut effects, tokens);
     Ok(effects)
+}
+
+fn collapse_for_each_player_it_tag_followups(effects: &mut Vec<EffectAst>) {
+    let mut idx = 0usize;
+    while idx + 1 < effects.len() {
+        let should_merge = match (&effects[idx], &effects[idx + 1]) {
+            (
+                EffectAst::ForEachPlayer { .. },
+                EffectAst::ForEachPlayer {
+                    effects: followup_effects,
+                },
+            ) => effects_reference_it_tag(followup_effects),
+            _ => false,
+        };
+
+        if !should_merge {
+            idx += 1;
+            continue;
+        }
+
+        let followup = effects.remove(idx + 1);
+        match (&mut effects[idx], followup) {
+            (
+                EffectAst::ForEachPlayer {
+                    effects: first_effects,
+                },
+                EffectAst::ForEachPlayer {
+                    effects: mut followup_effects,
+                },
+            ) => {
+                first_effects.append(&mut followup_effects);
+            }
+            _ => {
+                // Defensive: should be unreachable given should_merge checks.
+            }
+        }
+        // Re-check this index in case we have a longer chain of followups.
+    }
 }
 
 fn parse_effect_clause_with_trailing_if(tokens: &[Token]) -> Result<EffectAst, CardTextError> {

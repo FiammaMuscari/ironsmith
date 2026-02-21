@@ -6313,11 +6313,35 @@ fn describe_condition(condition: &Condition) -> String {
             }
         }
         Condition::YouControlCommander => "you control your commander".to_string(),
-        Condition::TaggedObjectMatches(tag, filter) => format!(
-            "the tagged object '{}' matches {}",
-            tag.as_str(),
-            filter.description()
-        ),
+        Condition::TaggedObjectMatches(tag, filter) => {
+            let desc = filter.description();
+            if is_implicit_reference_tag(tag.as_str()) {
+                // Keep implicit tags oracle-like: use pronouns rather than exposing tag keys.
+                let subject = if matches!(tag.as_str(), "triggering" | "damaged") {
+                    "that object"
+                } else {
+                    "it"
+                };
+                let stripped = strip_leading_article(&desc).to_ascii_lowercase();
+                let card_context = is_generated_internal_tag(tag.as_str())
+                    || tag.as_str().starts_with("exiled_")
+                    || tag.as_str().starts_with("revealed_");
+                if stripped == "land" {
+                    let noun = if card_context { "land card" } else { "land" };
+                    return format!("{subject} is a {noun}");
+                }
+                if stripped == "creature" {
+                    let noun = if card_context {
+                        "creature card"
+                    } else {
+                        "creature"
+                    };
+                    return format!("{subject} is a {noun}");
+                }
+                return format!("{subject} matches {desc}");
+            }
+            format!("the tagged object '{}' matches {desc}", tag.as_str())
+        }
         Condition::PlayerTaggedObjectMatches { player, tag, filter } => {
             if let Some(action) = tag_action_from_name(tag.as_str()) {
                 let object_text = with_indefinite_article(&filter.description());
@@ -9720,7 +9744,11 @@ fn describe_effect_impl(effect: &Effect) -> String {
         }
         if matches!(
             gain.amount,
-            Value::SourcePower | Value::SourceToughness | Value::PowerOf(_) | Value::ToughnessOf(_)
+            Value::SourcePower
+                | Value::SourceToughness
+                | Value::PowerOf(_)
+                | Value::ToughnessOf(_)
+                | Value::ManaValueOf(_)
         ) {
             return format!(
                 "{} {} life equal to {}",
@@ -9802,7 +9830,11 @@ fn describe_effect_impl(effect: &Effect) -> String {
         }
         if matches!(
             lose.amount,
-            Value::SourcePower | Value::SourceToughness | Value::PowerOf(_) | Value::ToughnessOf(_)
+            Value::SourcePower
+                | Value::SourceToughness
+                | Value::PowerOf(_)
+                | Value::ToughnessOf(_)
+                | Value::ManaValueOf(_)
         ) {
             return format!(
                 "{} {} life equal to {}",
@@ -10210,11 +10242,10 @@ fn describe_effect_impl(effect: &Effect) -> String {
     }
     if let Some(reveal_top) = effect.downcast_ref::<crate::effects::RevealTopEffect>() {
         let owner = describe_possessive_player_filter(&reveal_top.player);
-        let mut text = format!("Reveal the top card of {owner} library");
-        if let Some(tag) = &reveal_top.tag {
-            text.push_str(&format!(" and tag it as '{}'", tag.as_str()));
-        }
-        return text;
+        // Revealing the top card is the semantic action; internal tag keys are
+        // scaffolding for later "it/that card" references and should not leak
+        // into compiled text.
+        return format!("Reveal the top card of {owner} library");
     }
     if let Some(look_at_top) = effect.downcast_ref::<crate::effects::LookAtTopCardsEffect>() {
         let owner = describe_possessive_player_filter(&look_at_top.player);

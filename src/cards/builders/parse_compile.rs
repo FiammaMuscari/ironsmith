@@ -388,6 +388,7 @@ fn value_references_tag(value: &Value, tag: &str) -> bool {
             .iter()
             .any(|constraint| constraint.tag.as_str() == tag),
         Value::PowerOf(spec) | Value::ToughnessOf(spec) => choose_spec_references_tag(spec, tag),
+        Value::ManaValueOf(spec) => choose_spec_references_tag(spec, tag),
         Value::CountersOn(spec, _) => choose_spec_references_tag(spec, tag),
         _ => false,
     }
@@ -613,6 +614,9 @@ fn effect_references_its_controller(effect: &EffectAst) -> bool {
 
 fn effect_references_it_tag(effect: &EffectAst) -> bool {
     match effect {
+        EffectAst::DealDamage { amount, target } => {
+            target_references_tag(target, IT_TAG) || value_references_tag(amount, IT_TAG)
+        }
         EffectAst::Fight {
             creature1,
             creature2,
@@ -621,11 +625,40 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         EffectAst::DealDamageEqualToPower { source, target } => {
             target_references_tag(source, IT_TAG) || target_references_tag(target, IT_TAG)
         }
-        EffectAst::DealDamage { target, .. }
-        | EffectAst::Counter { target }
+        EffectAst::DealDamageEach { amount, filter } => {
+            value_references_tag(amount, IT_TAG)
+                || filter
+                    .tagged_constraints
+                    .iter()
+                    .any(|constraint| constraint.tag.as_str() == IT_TAG)
+        }
+        EffectAst::Draw { count, .. } => value_references_tag(count, IT_TAG),
+        EffectAst::LoseLife { amount, .. } | EffectAst::GainLife { amount, .. } => {
+            value_references_tag(amount, IT_TAG)
+        }
+        EffectAst::PreventDamage { amount, target, .. } => {
+            value_references_tag(amount, IT_TAG) || target_references_tag(target, IT_TAG)
+        }
+        EffectAst::PreventDamageEach { amount, filter, .. } => {
+            value_references_tag(amount, IT_TAG)
+                || filter
+                    .tagged_constraints
+                    .iter()
+                    .any(|constraint| constraint.tag.as_str() == IT_TAG)
+        }
+        EffectAst::PutCounters { count, target, .. } => {
+            value_references_tag(count, IT_TAG) || target_references_tag(target, IT_TAG)
+        }
+        EffectAst::PutCountersAll { count, filter, .. } => {
+            value_references_tag(count, IT_TAG)
+                || filter
+                    .tagged_constraints
+                    .iter()
+                    .any(|constraint| constraint.tag.as_str() == IT_TAG)
+        }
+        EffectAst::Counter { target }
         | EffectAst::Explore { target }
         | EffectAst::Goad { target }
-        | EffectAst::PutCounters { target, .. }
         | EffectAst::PutOrRemoveCounters { target, .. }
         | EffectAst::Tap { target }
         | EffectAst::Untap { target }
@@ -671,9 +704,7 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
                 || effects_reference_it_tag(if_true)
                 || effects_reference_it_tag(if_false)
         }
-        EffectAst::DealDamageEach { filter, .. }
-        | EffectAst::PutCountersAll { filter, .. }
-        | EffectAst::RemoveCountersAll { filter, .. }
+        EffectAst::RemoveCountersAll { filter, .. }
         | EffectAst::DoubleCountersOnEach { filter, .. }
         | EffectAst::TapAll { filter }
         | EffectAst::ChooseObjects { filter, .. }
@@ -683,7 +714,6 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::DestroyAll { filter }
         | EffectAst::DestroyAllOfChosenColor { filter }
         | EffectAst::ExileAll { filter, .. }
-        | EffectAst::PreventDamageEach { filter, .. }
         | EffectAst::ReturnAllToHand { filter }
         | EffectAst::ReturnAllToHandOfChosenColor { filter }
         | EffectAst::ReturnAllToBattlefield { filter, .. }
@@ -5453,6 +5483,9 @@ fn extract_leading_token_name_phrase(words: &[&str]) -> Option<String> {
         "a",
         "an",
         "the",
+        "legendary",
+        "snow",
+        "basic",
         "named",
         "with",
         "that",
