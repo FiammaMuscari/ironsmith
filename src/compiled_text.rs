@@ -9605,6 +9605,49 @@ fn describe_conditional_damage_instead(
     ))
 }
 
+fn describe_conditional_choose_both_instead(
+    conditional: &crate::effects::ConditionalEffect,
+) -> Option<String> {
+    if conditional.if_true.len() != 1 || conditional.if_false.len() != 1 {
+        return None;
+    }
+    let choose_true = conditional.if_true[0].downcast_ref::<crate::effects::ChooseModeEffect>()?;
+    let choose_false =
+        conditional.if_false[0].downcast_ref::<crate::effects::ChooseModeEffect>()?;
+
+    if choose_true.modes.len() != choose_false.modes.len()
+        || choose_true
+            .modes
+            .iter()
+            .zip(choose_false.modes.iter())
+            .any(|(left, right)| left.description.trim() != right.description.trim())
+    {
+        return None;
+    }
+
+    // Pattern: "Choose one. If <condition>, you may choose both instead."
+    if choose_true.choose_count != Value::Fixed(2)
+        || choose_true.min_choose_count.as_ref() != Some(&Value::Fixed(1))
+        || choose_false.choose_count != Value::Fixed(1)
+        || choose_false.min_choose_count.is_some()
+    {
+        return None;
+    }
+
+    let condition = describe_condition(&conditional.condition);
+    let mut out = format!("Choose one. If {condition}, you may choose both instead.");
+    for mode in &choose_true.modes {
+        let description = ensure_trailing_period(mode.description.trim());
+        if description.trim().is_empty() {
+            continue;
+        }
+        out.push('\n');
+        out.push_str("• ");
+        out.push_str(description.trim());
+    }
+    Some(out)
+}
+
 fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(sequence) = effect.downcast_ref::<crate::effects::SequenceEffect>() {
         if let Some(compact) = describe_search_sequence(sequence) {
@@ -11152,6 +11195,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
     }
     if let Some(conditional) = effect.downcast_ref::<crate::effects::ConditionalEffect>() {
         if let Some(compact) = describe_conditional_damage_instead(conditional) {
+            return compact;
+        }
+        if let Some(compact) = describe_conditional_choose_both_instead(conditional) {
             return compact;
         }
         let true_branch = describe_effect_list(&conditional.if_true);
