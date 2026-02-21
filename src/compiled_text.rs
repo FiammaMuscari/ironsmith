@@ -57,6 +57,16 @@ fn describe_player_filter(filter: &PlayerFilter) -> String {
     }
 }
 
+fn describe_player_set_filter(filter: &PlayerFilter) -> String {
+    match filter {
+        PlayerFilter::Opponent => "your opponents".to_string(),
+        PlayerFilter::Any => "players".to_string(),
+        PlayerFilter::NotYou => "players other than you".to_string(),
+        PlayerFilter::Teammate => "your teammates".to_string(),
+        _ => describe_player_filter(filter),
+    }
+}
+
 fn strip_leading_article(text: &str) -> &str {
     text.strip_prefix("a ")
         .or_else(|| text.strip_prefix("an "))
@@ -6020,31 +6030,31 @@ fn describe_prevention_target(target: &crate::prevention::PreventionTarget) -> &
 fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
     match restriction {
         crate::effect::Restriction::GainLife(filter) => {
-            format!("{} can't gain life", describe_player_filter(filter))
+            format!("{} can't gain life", describe_player_set_filter(filter))
         }
         crate::effect::Restriction::SearchLibraries(filter) => {
-            format!("{} can't search libraries", describe_player_filter(filter))
+            format!("{} can't search libraries", describe_player_set_filter(filter))
         }
         crate::effect::Restriction::CastSpells(filter) => {
-            format!("{} can't cast spells", describe_player_filter(filter))
+            format!("{} can't cast spells", describe_player_set_filter(filter))
         }
         crate::effect::Restriction::DrawCards(filter) => {
-            format!("{} can't draw cards", describe_player_filter(filter))
+            format!("{} can't draw cards", describe_player_set_filter(filter))
         }
         crate::effect::Restriction::DrawExtraCards(filter) => {
-            format!("{} can't draw extra cards", describe_player_filter(filter))
+            format!("{} can't draw extra cards", describe_player_set_filter(filter))
         }
         crate::effect::Restriction::ChangeLifeTotal(filter) => {
             format!(
                 "{} can't have life total changed",
-                describe_player_filter(filter)
+                describe_player_set_filter(filter)
             )
         }
         crate::effect::Restriction::LoseGame(filter) => {
-            format!("{} can't lose the game", describe_player_filter(filter))
+            format!("{} can't lose the game", describe_player_set_filter(filter))
         }
         crate::effect::Restriction::WinGame(filter) => {
-            format!("{} can't win the game", describe_player_filter(filter))
+            format!("{} can't win the game", describe_player_set_filter(filter))
         }
         crate::effect::Restriction::PreventDamage => "damage can't be prevented".to_string(),
         crate::effect::Restriction::Attack(filter) => {
@@ -11258,6 +11268,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
         );
     }
     if let Some(cant) = effect.downcast_ref::<crate::effects::CantEffect>() {
+        if cant.duration == Until::EndOfTurn {
+            return format!("{} this turn", describe_restriction(&cant.restriction));
+        }
         return format!(
             "{} {}",
             describe_restriction(&cant.restriction),
