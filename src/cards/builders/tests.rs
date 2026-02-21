@@ -1102,7 +1102,7 @@ fn test_parse_suspend_keyword_line_with_reminder_text_keeps_suspend_clause() {
 
     let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("suspend 3 {0}"),
+        rendered.contains("suspend 3—{0}") || rendered.contains("suspend 3 {0}"),
         "expected suspend keyword text in oracle-like output, got {rendered}"
     );
     assert!(

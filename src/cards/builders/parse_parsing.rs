@@ -10126,7 +10126,7 @@ fn marker_keyword_display(words: &[&str]) -> Option<String> {
         "suspend" => {
             let time = words.get(1)?.parse::<u32>().ok()?;
             let (cost, _) = leading_mana_symbols_to_oracle(&words[2..])?;
-            Some(format!("Suspend {time} {cost}"))
+            Some(format!("Suspend {time}—{cost}"))
         }
         "rebound" => Some("Rebound".to_string()),
         "squad" => {

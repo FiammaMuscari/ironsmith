@@ -11712,14 +11712,16 @@ fn describe_effect_impl(effect: &Effect) -> String {
     {
         let graveyard_owner = describe_possessive_player_filter(&exile_instead.player);
         return format!(
-            "If a card would be put into {graveyard_owner} graveyard, exile it instead"
+            "If a card would be put into {graveyard_owner} graveyard from anywhere this turn, exile that card instead"
         );
     }
     if let Some(grant_play) = effect.downcast_ref::<crate::effects::GrantPlayFromGraveyardEffect>()
     {
         let player = describe_player_filter(&grant_play.player);
         let graveyard_owner = describe_possessive_player_filter(&grant_play.player);
-        return format!("{player} may play lands and cast spells from {graveyard_owner} graveyard");
+        return format!(
+            "Until end of turn, {player} may play lands and cast spells from {graveyard_owner} graveyard"
+        );
     }
     if let Some(control_player) = effect.downcast_ref::<crate::effects::ControlPlayerEffect>() {
         return format!(
@@ -18646,9 +18648,14 @@ fn card_has_graveyard_activated_ability(def: &CardDefinition) -> bool {
         let zone_marked = ability.functional_zones.contains(&Zone::Graveyard);
         let text_marked = ability.text.as_ref().is_some_and(|text| {
             let lower = text.to_ascii_lowercase();
-            lower.contains("from your graveyard")
-                || lower.contains("in your graveyard")
-                || lower.contains("while this card is in your graveyard")
+            if lower.contains("while this card is in your graveyard") {
+                return true;
+            }
+            // Avoid false positives where the EFFECT references the graveyard (Yawgmoth's Will),
+            // but the activation itself happens on the battlefield. We only want to treat this as
+            // a graveyard activation if the COST/activation line mentions the graveyard.
+            let cost = lower.split_once(':').map(|(left, _)| left).unwrap_or(&lower);
+            cost.contains("from your graveyard") || cost.contains("in your graveyard")
         });
         is_activated && (zone_marked || text_marked)
     })
