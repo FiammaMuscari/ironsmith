@@ -6158,6 +6158,24 @@ fn describe_value(
         }
         crate::effect::Value::CardsInGraveyard(_) => "the number of cards in graveyard".to_string(),
         crate::effect::Value::SpellsCastThisTurn(_) => "spells cast this turn".to_string(),
+        crate::effect::Value::SpellsCastThisTurnMatching {
+            player,
+            filter,
+            exclude_source,
+        } => {
+            let base = pluralize_noun_phrase_ui(&describe_for_each_filter_ui(
+                filter,
+                tagged_subjects,
+            ));
+            let mut text = format!(
+                "the number of {base} cast this turn by {}",
+                describe_player_filter(player, tagged_subjects)
+            );
+            if *exclude_source {
+                text.push_str(" other than this spell");
+            }
+            text
+        }
         crate::effect::Value::SpellsCastBeforeThisTurn(_) => "spells cast before this".to_string(),
         crate::effect::Value::CardTypesInGraveyard(_) => {
             "the number of card types in graveyard".to_string()
