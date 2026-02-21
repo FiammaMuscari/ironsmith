@@ -12605,6 +12605,12 @@ fn describe_ability(
             )]
         }
         AbilityKind::Triggered(triggered) => {
+            if let Some(text) = ability.text.as_deref() {
+                let normalized = normalize_sentence_surface_style(text.trim());
+                if normalized.to_ascii_lowercase().starts_with("annihilator ") {
+                    return vec![format!("Keyword ability {index}: {normalized}")];
+                }
+            }
             let mut line = format!("Triggered ability {index}: {}", triggered.trigger.display());
             let mut clauses = Vec::new();
             if !triggered.choices.is_empty()
@@ -17719,6 +17725,7 @@ fn can_merge_subject_predicates(left_verb: &str, right_verb: &str) -> bool {
 
     (is_get(left_verb) && is_trait(right_verb))
         || (is_trait(left_verb) && is_get(right_verb))
+        || (is_trait(left_verb) && is_trait(right_verb))
         || ((left_verb == "gets" && right_verb == "is")
             || (left_verb == "is" && right_verb == "gets"))
         || (is_state(left_verb) && is_state(right_verb))
@@ -17907,8 +17914,24 @@ fn merge_adjacent_subject_predicate_lines(lines: Vec<String>) -> Vec<String> {
             && left_subject.eq_ignore_ascii_case(right_subject)
             && can_merge_subject_predicates(left_verb, right_verb)
         {
-            let left_rest = left_rest.trim_end_matches('.').trim();
-            let right_rest = right_rest.trim_end_matches('.').trim();
+            let left_raw = left_rest.trim_end_matches('.').trim();
+            let right_raw = right_rest.trim_end_matches('.').trim();
+            let is_trait = |verb: &str| matches!(verb, "has" | "have" | "gains" | "gain");
+            if is_trait(left_verb) && is_trait(right_verb) {
+                let left_lower = left_raw.to_ascii_lowercase();
+                let right_lower = right_raw.to_ascii_lowercase();
+                if left_lower.contains(" as long as ")
+                    || right_lower.contains(" as long as ")
+                    || left_lower.contains(" for as long as ")
+                    || right_lower.contains(" for as long as ")
+                {
+                    merged.push(lines[idx].clone());
+                    idx += 1;
+                    continue;
+                }
+            }
+            let left_rest = normalize_keyword_predicate_case(left_raw);
+            let right_rest = normalize_keyword_predicate_case(right_raw);
             merged.push(format!(
                 "{left_subject} {left_verb} {left_rest} and {right_verb} {right_rest}"
             ));
