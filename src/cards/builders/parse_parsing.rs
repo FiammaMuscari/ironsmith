@@ -24089,6 +24089,7 @@ enum Verb {
     Skip,
     Surveil,
     Shuffle,
+    Reorder,
     Pay,
     Goad,
 }
@@ -24547,6 +24548,7 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
             "skip",
             "surveil",
             "shuffle",
+            "reorder",
             "pay",
             "goad",
         ];
@@ -26518,6 +26520,7 @@ fn find_verb(tokens: &[Token]) -> Option<(Verb, usize)> {
             "skips" | "skip" => Verb::Skip,
             "surveils" | "surveil" => Verb::Surveil,
             "shuffles" | "shuffle" => Verb::Shuffle,
+            "reorders" | "reorder" => Verb::Reorder,
             "pays" | "pay" => Verb::Pay,
             "goads" | "goad" => Verb::Goad,
             _ => continue,
@@ -26705,9 +26708,50 @@ fn parse_effect_with_verb(
         Verb::Skip => parse_skip(tokens, subject),
         Verb::Surveil => parse_surveil(tokens, subject),
         Verb::Shuffle => parse_shuffle(tokens, subject),
+        Verb::Reorder => parse_reorder(tokens, subject),
         Verb::Pay => parse_pay(tokens, subject),
         Verb::Goad => parse_goad(tokens),
     }
+}
+
+fn parse_reorder(tokens: &[Token], _subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
+    let clause = words(tokens).join(" ");
+    let clause_words = words(tokens);
+    if clause_words.is_empty() {
+        return Err(CardTextError::ParseError(
+            "missing reorder target".to_string(),
+        ));
+    }
+
+    let (player, rest) = if clause_words.starts_with(&["your", "graveyard"]) {
+        (PlayerAst::You, &clause_words[2..])
+    } else if clause_words.starts_with(&["their", "graveyard"]) {
+        (PlayerAst::That, &clause_words[2..])
+    } else if clause_words.starts_with(&["that", "player", "graveyard"])
+        || clause_words.starts_with(&["that", "players", "graveyard"])
+    {
+        (PlayerAst::That, &clause_words[3..])
+    } else if clause_words.starts_with(&["its", "controller", "graveyard"])
+        || clause_words.starts_with(&["its", "controllers", "graveyard"])
+    {
+        (PlayerAst::ItsController, &clause_words[3..])
+    } else if clause_words.starts_with(&["its", "owner", "graveyard"])
+        || clause_words.starts_with(&["its", "owners", "graveyard"])
+    {
+        (PlayerAst::ItsOwner, &clause_words[3..])
+    } else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported reorder clause (clause: '{clause}')"
+        )));
+    };
+
+    if !rest.is_empty() && rest != ["as", "you", "choose"] {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported reorder clause tail (clause: '{clause}')"
+        )));
+    }
+
+    Ok(EffectAst::ReorderGraveyard { player })
 }
 
 fn parse_shuffle(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
@@ -29320,8 +29364,48 @@ fn parse_exchange(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         ));
     }
 
-    let filter = parse_object_filter(&tokens[idx..], false)?;
-    Ok(EffectAst::ExchangeControl { filter, count })
+    let mut shared_type = None;
+    let mut filter_tokens = &tokens[idx..];
+    let tail_words = words(filter_tokens);
+    if let Some(rel_word_idx) = tail_words.windows(2).position(|window| {
+        window[0] == "that" && matches!(window[1], "share" | "shares")
+    }) {
+        let rel_token_idx =
+            token_index_for_word_index(filter_tokens, rel_word_idx).unwrap_or(filter_tokens.len());
+        let (head, tail) = filter_tokens.split_at(rel_token_idx);
+        filter_tokens = head;
+
+        let share_words = words(tail);
+        let share_head = if share_words.starts_with(&["that", "share"]) {
+            &share_words[2..]
+        } else if share_words.starts_with(&["that", "shares"]) {
+            &share_words[2..]
+        } else {
+            &share_words[..]
+        };
+        let share_head = if share_head.first().copied() == Some("a") {
+            &share_head[1..]
+        } else {
+            share_head
+        };
+        if share_head.starts_with(&["permanent", "type"]) {
+            shared_type = Some(SharedTypeConstraintAst::PermanentType);
+        } else if share_head.starts_with(&["card", "type"]) {
+            shared_type = Some(SharedTypeConstraintAst::CardType);
+        } else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported exchange share-type clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+    }
+
+    let filter = parse_object_filter(filter_tokens, false)?;
+    Ok(EffectAst::ExchangeControl {
+        filter,
+        count,
+        shared_type,
+    })
 }
 
 fn parse_become(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {

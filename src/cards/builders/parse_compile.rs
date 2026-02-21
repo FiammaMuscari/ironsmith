@@ -3053,16 +3053,30 @@ fn compile_effect(
             }
             Ok((vec![effect], Vec::new()))
         }
-        EffectAst::ExchangeControl { filter, count } => {
-            let first = ChooseSpec::Object(filter.clone());
-            let second = ChooseSpec::Object(filter.clone());
-            let mut effect = Effect::exchange_control(first, second);
+        EffectAst::ExchangeControl {
+            filter,
+            count,
+            shared_type,
+        } => {
+            let targets = ChooseSpec::target(ChooseSpec::Object(filter.clone()))
+                .with_count(ChoiceCount::exactly(*count as usize));
+            let exchange = crate::effects::ExchangeControlEffect::new(targets.clone(), targets);
+            let exchange = if let Some(shared_type) = shared_type {
+                let constraint = match shared_type {
+                    SharedTypeConstraintAst::CardType => crate::effects::SharedTypeConstraint::CardType,
+                    SharedTypeConstraintAst::PermanentType => {
+                        crate::effects::SharedTypeConstraint::PermanentType
+                    }
+                };
+                exchange.with_shared_type(constraint)
+            } else {
+                exchange
+            };
+            let mut effect = Effect::new(exchange);
             let tag = ctx.next_tag("exchanged");
             effect = effect.tag(tag.clone());
             ctx.last_object_tag = Some(tag);
-            let target_spec = ChooseSpec::target(ChooseSpec::Object(filter.clone()))
-                .with_count(ChoiceCount::exactly(*count as usize));
-            Ok((vec![effect], vec![target_spec]))
+            Ok((vec![effect], Vec::new()))
         }
         EffectAst::SetLifeTotal { amount, player } => {
             compile_player_effect_from_filter(*player, ctx, true, |filter| {
@@ -4517,6 +4531,12 @@ fn compile_effect(
             ctx,
             true,
             Effect::shuffle_graveyard_into_library_player,
+        ),
+        EffectAst::ReorderGraveyard { player } => compile_player_effect_from_filter(
+            *player,
+            ctx,
+            true,
+            Effect::reorder_graveyard_player,
         ),
         EffectAst::ShuffleLibrary { player } => {
             compile_player_effect_from_filter(*player, ctx, true, Effect::shuffle_library_player)

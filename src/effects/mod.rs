@@ -82,7 +82,7 @@ pub use composition::{
     UnlessPaysEffect, VoteEffect, VoteOption, WithIdEffect,
 };
 pub use continuous::ApplyContinuousEffect;
-pub use control::{ExchangeControlEffect, GainControlEffect};
+pub use control::{ExchangeControlEffect, GainControlEffect, SharedTypeConstraint};
 pub use counters::{
     MoveAllCountersEffect, MoveCountersEffect, ProliferateEffect, PutCountersEffect,
     RemoveCountersEffect, RemoveUpToAnyCountersEffect, RemoveUpToCountersEffect,
@@ -116,7 +116,7 @@ pub use tokens::{CreateTokenCopyEffect, CreateTokenEffect, InvestigateEffect};
 pub use zones::{
     BattlefieldController, DestroyEffect, ExileEffect, ExileFromHandAsCostEffect,
     ExileUntilDuration, ExileUntilEffect, MoveToZoneEffect, PutOntoBattlefieldEffect,
-    ReturnAllToBattlefieldEffect, ReturnFromGraveyardOrExileToBattlefieldEffect,
+    ReorderGraveyardEffect, ReturnAllToBattlefieldEffect, ReturnFromGraveyardOrExileToBattlefieldEffect,
     ReturnFromGraveyardToBattlefieldEffect, ReturnFromGraveyardToHandEffect, ReturnToHandEffect,
     SacrificeEffect, SacrificeTargetEffect,
 };

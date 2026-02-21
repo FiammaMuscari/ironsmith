@@ -2,7 +2,6 @@
 
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::find_target_object;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -48,23 +47,70 @@ impl EffectExecutor for ReturnFromGraveyardToHandEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = find_target_object(&ctx.targets)?;
+        use rand::seq::SliceRandom;
 
-        // Verify target is in a graveyard
-        let obj = game
-            .object(target_id)
-            .ok_or(ExecutionError::ObjectNotFound(target_id))?;
+        let mut returned = Vec::new();
 
-        if obj.zone != Zone::Graveyard {
-            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+        if self.random {
+            let base = self.target.base();
+            let ChooseSpec::Object(filter) = base else {
+                return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            };
+            if filter.zone != Some(Zone::Graveyard) {
+                return Ok(EffectOutcome::from_result(EffectResult::Impossible));
+            }
+
+            let count = self.target.count();
+            let requested = if count.is_dynamic_x() {
+                0
+            } else {
+                count.max.unwrap_or(count.min)
+            };
+            if requested == 0 {
+                return Ok(EffectOutcome::from_result(EffectResult::Objects(Vec::new())));
+            }
+
+            let filter_ctx = ctx.filter_context(game);
+            let mut candidates: Vec<_> = game
+                .players
+                .iter()
+                .flat_map(|p| p.graveyard.iter().copied())
+                .filter(|id| {
+                    game.object(*id)
+                        .is_some_and(|obj| filter.matches(obj, &filter_ctx, game))
+                })
+                .collect();
+
+            candidates.shuffle(&mut rand::rng());
+            for id in candidates.into_iter().take(requested) {
+                if let Some(new_id) = game.move_object(id, Zone::Hand) {
+                    returned.push(new_id);
+                }
+            }
+
+            return Ok(EffectOutcome::from_result(EffectResult::Objects(returned)));
         }
 
-        if let Some(new_id) = game.move_object(target_id, Zone::Hand) {
-            Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
-                new_id,
-            ])))
+        // Non-random: return all resolved object targets that are still in a graveyard.
+        for target in &ctx.targets {
+            let crate::executor::ResolvedTarget::Object(target_id) = target else {
+                continue;
+            };
+            let Some(obj) = game.object(*target_id) else {
+                continue;
+            };
+            if obj.zone != Zone::Graveyard {
+                continue;
+            }
+            if let Some(new_id) = game.move_object(*target_id, Zone::Hand) {
+                returned.push(new_id);
+            }
+        }
+
+        if returned.is_empty() {
+            Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
         } else {
-            Ok(EffectOutcome::from_result(EffectResult::Impossible))
+            Ok(EffectOutcome::from_result(EffectResult::Objects(returned)))
         }
     }
 
@@ -73,7 +119,23 @@ impl EffectExecutor for ReturnFromGraveyardToHandEffect {
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
-        Some(&self.target)
+        if self.random {
+            None
+        } else if self.target.is_target() {
+            Some(&self.target)
+        } else {
+            None
+        }
+    }
+
+    fn get_target_count(&self) -> Option<crate::effect::ChoiceCount> {
+        if self.random {
+            None
+        } else if self.target.is_target() {
+            Some(self.target.count())
+        } else {
+            None
+        }
     }
 
     fn target_description(&self) -> &'static str {
@@ -197,10 +259,10 @@ mod tests {
         let mut ctx = ExecutionContext::new_default(source, alice);
 
         let effect = ReturnFromGraveyardToHandEffect::any_card();
-        let result = effect.execute(&mut game, &mut ctx);
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
 
-        // Should return error - no target
-        assert!(result.is_err());
+        // No resolved objects to return.
+        assert_eq!(result.result, EffectResult::TargetInvalid);
     }
 
     #[test]
@@ -213,6 +275,12 @@ mod tests {
     #[test]
     fn test_return_from_graveyard_get_target_spec() {
         let effect = ReturnFromGraveyardToHandEffect::any_card();
-        assert!(effect.get_target_spec().is_some());
+        assert!(effect.get_target_spec().is_none());
+
+        let targeted = ReturnFromGraveyardToHandEffect::new(
+            ChooseSpec::target(ChooseSpec::card_in_zone(Zone::Graveyard)),
+            false,
+        );
+        assert!(targeted.get_target_spec().is_some());
     }
 }

@@ -2715,6 +2715,12 @@ impl ObjectFilter {
                     parts.push(subtype_phrase);
                     parts.push(type_phrase);
                 }
+                (Some((type_is_card_type, type_phrase)), Some(subtype_phrase))
+                    if !type_is_card_type && type_phrase == "card" =>
+                {
+                    parts.push(subtype_phrase);
+                    parts.push(type_phrase);
+                }
                 (Some((_, type_phrase)), Some(subtype_phrase)) => {
                     parts.push(type_phrase);
                     parts.push(subtype_phrase);

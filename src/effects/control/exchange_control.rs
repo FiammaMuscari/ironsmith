@@ -6,6 +6,8 @@ use crate::effects::{ApplyContinuousEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
+use crate::types::CardType;
+use std::collections::HashSet;
 
 /// Effect that exchanges control of two permanents.
 ///
@@ -31,6 +33,14 @@ pub struct ExchangeControlEffect {
     pub permanent1: ChooseSpec,
     /// Second permanent to exchange.
     pub permanent2: ChooseSpec,
+    /// Optional targeting constraint that requires the two permanents to share a type.
+    pub shared_type: Option<SharedTypeConstraint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedTypeConstraint {
+    CardType,
+    PermanentType,
 }
 
 impl ExchangeControlEffect {
@@ -39,7 +49,13 @@ impl ExchangeControlEffect {
         Self {
             permanent1,
             permanent2,
+            shared_type: None,
         }
+    }
+
+    pub fn with_shared_type(mut self, constraint: SharedTypeConstraint) -> Self {
+        self.shared_type = Some(constraint);
+        self
     }
 
     /// Exchange control of two creatures.
@@ -62,6 +78,47 @@ impl EffectExecutor for ExchangeControlEffect {
         let Some((perm1_id, perm2_id)) = ctx.resolve_two_object_targets() else {
             return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
         };
+
+        if let Some(constraint) = self.shared_type {
+            let Some(obj1) = game.object(perm1_id) else {
+                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            };
+            let Some(obj2) = game.object(perm2_id) else {
+                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            };
+
+            let relevant = |ty: CardType| -> bool {
+                match constraint {
+                    SharedTypeConstraint::CardType => true,
+                    SharedTypeConstraint::PermanentType => matches!(
+                        ty,
+                        CardType::Artifact
+                            | CardType::Creature
+                            | CardType::Enchantment
+                            | CardType::Land
+                            | CardType::Planeswalker
+                            | CardType::Battle
+                    ),
+                }
+            };
+
+            let types1: HashSet<CardType> = obj1
+                .card_types
+                .iter()
+                .copied()
+                .filter(|ty| relevant(*ty))
+                .collect();
+            let shares_type = obj2
+                .card_types
+                .iter()
+                .copied()
+                .filter(|ty| relevant(*ty))
+                .any(|ty| types1.contains(&ty));
+
+            if !shares_type {
+                return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+            }
+        }
 
         // Get current controllers
         let controller1 = game.object(perm1_id).map(|o| o.controller);
@@ -93,6 +150,20 @@ impl EffectExecutor for ExchangeControlEffect {
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
+    }
+
+    fn get_target_spec(&self) -> Option<&ChooseSpec> {
+        if self.permanent1.is_target() {
+            Some(&self.permanent1)
+        } else if self.permanent2.is_target() {
+            Some(&self.permanent2)
+        } else {
+            None
+        }
+    }
+
+    fn get_target_count(&self) -> Option<crate::effect::ChoiceCount> {
+        self.get_target_spec().map(|spec| spec.count())
     }
 }
 

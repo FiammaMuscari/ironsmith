@@ -4190,7 +4190,15 @@ fn normalize_sliver_grant_clause(subject: &str, rest: &str) -> Option<String> {
 fn describe_card_count(value: &Value) -> String {
     match value {
         Value::Fixed(1) => "a card".to_string(),
-        Value::Fixed(n) => format!("{n} cards"),
+        Value::Fixed(n) => {
+            if *n >= 0 {
+                let n_u32 = *n as u32;
+                if let Some(word) = small_number_word(n_u32) {
+                    return format!("{word} cards");
+                }
+            }
+            format!("{n} cards")
+        }
         _ => {
             if let Some(backref) = describe_effect_count_backref(value) {
                 format!("{backref} cards")
@@ -4210,7 +4218,15 @@ fn describe_discard_count(value: &Value, filter: Option<&ObjectFilter>) -> Strin
     let plural_card_phrase = pluralize_discard_card_phrase(&card_phrase);
     match value {
         Value::Fixed(1) => format!("a {card_phrase}"),
-        Value::Fixed(n) => format!("{n} {plural_card_phrase}"),
+        Value::Fixed(n) => {
+            if *n >= 0 {
+                let n_u32 = *n as u32;
+                if let Some(word) = small_number_word(n_u32) {
+                    return format!("{word} {plural_card_phrase}");
+                }
+            }
+            format!("{n} {plural_card_phrase}")
+        }
         _ => {
             if let Some(backref) = describe_effect_count_backref(value) {
                 format!("{backref} {plural_card_phrase}")
@@ -4319,6 +4335,9 @@ fn is_generic_owned_card_search_filter(filter: &ObjectFilter) -> bool {
 fn describe_object_count(value: &Value) -> String {
     match value {
         Value::Fixed(1) => "a".to_string(),
+        Value::Fixed(n) if *n > 1 && *n <= 20 => small_number_word(*n as u32)
+            .map(str::to_string)
+            .unwrap_or_else(|| n.to_string()),
         _ => describe_value(value),
     }
 }
@@ -4434,32 +4453,41 @@ fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
     subject
 }
 
-fn describe_demonstrative_tagged_object_spec(spec: &ChooseSpec) -> Option<String> {
-    let ChooseSpec::Object(filter) = spec else {
-        return None;
-    };
-    let has_it_tag = filter.tagged_constraints.iter().any(|constraint| {
-        constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
-            && constraint.tag.as_str() == "__it__"
-    });
-    if !has_it_tag {
+fn describe_demonstrative_tagged_object_filter(
+    filter: &crate::filter::ObjectFilter,
+) -> Option<String> {
+    let implicit_constraints = filter
+        .tagged_constraints
+        .iter()
+        .filter(|constraint| {
+            constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
+                && is_implicit_reference_tag(constraint.tag.as_str())
+        })
+        .collect::<Vec<_>>();
+    if implicit_constraints.len() != 1 {
         return None;
     }
+    let implicit_tag = implicit_constraints[0].tag.as_str();
 
     let mut base = filter.clone();
     base.tagged_constraints.retain(|constraint| {
         !(constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
-            && constraint.tag.as_str() == "__it__")
+            && constraint.tag.as_str() == implicit_tag)
     });
 
-    let base_desc = strip_leading_article(&base.description())
-        .trim()
-        .to_string();
+    let base_desc = strip_leading_article(&base.description()).trim().to_string();
     if base_desc.is_empty() {
         Some("that object".to_string())
     } else {
         Some(format!("that {base_desc}"))
     }
+}
+
+fn describe_demonstrative_tagged_object_spec(spec: &ChooseSpec) -> Option<String> {
+    let ChooseSpec::Object(filter) = spec else {
+        return None;
+    };
+    describe_demonstrative_tagged_object_filter(filter)
 }
 
 fn describe_choose_spec(spec: &ChooseSpec) -> String {
@@ -4499,7 +4527,13 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
             PlayerFilter::Any => "target player or planeswalker".to_string(),
             other => format!("target {} or planeswalker", describe_player_filter(other)),
         },
-        ChooseSpec::Object(filter) => filter.description(),
+        ChooseSpec::Object(filter) => {
+            if let Some(tagged_text) = describe_demonstrative_tagged_object_filter(filter) {
+                tagged_text
+            } else {
+                ensure_indefinite_article(&filter.description())
+            }
+        }
         ChooseSpec::Player(filter) => describe_player_filter(filter),
         ChooseSpec::Source => "this source".to_string(),
         ChooseSpec::SourceController => "you".to_string(),
@@ -4760,6 +4794,9 @@ fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
             }
         }
         ChooseSpec::Object(filter) => {
+            if let Some(tagged_text) = describe_demonstrative_tagged_object_filter(filter) {
+                return tagged_text;
+            }
             if filter.zone == Some(Zone::Graveyard) {
                 let text = filter.description();
                 let suffix = match &filter.owner {
@@ -4775,11 +4812,11 @@ fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
                     }
                 };
                 if let Some(stripped) = text.strip_suffix(&suffix) {
-                    return stripped.to_string();
+                    return ensure_indefinite_article(stripped);
                 }
-                return text;
+                return ensure_indefinite_article(&text);
             }
-            filter.description()
+            ensure_indefinite_article(&filter.description())
         }
         ChooseSpec::PlayerOrPlaneswalker(filter) => match filter {
             PlayerFilter::Opponent => "target opponent or planeswalker".to_string(),
@@ -4856,29 +4893,43 @@ fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
                         }
                     }
                 } else {
-                    let singular_inner = inner_text.clone();
-                    let plural_inner = pluralize_noun_phrase(strip_leading_article(&inner_text));
+                    let base = strip_leading_article(&inner_text);
+                    let plural = pluralize_noun_phrase(base);
+                    let count_text = |n: usize| {
+                        small_number_word(n as u32)
+                            .map(str::to_string)
+                            .or_else(|| number_word(n as i32).map(str::to_string))
+                            .unwrap_or_else(|| n.to_string())
+                    };
                     if count.is_dynamic_x() {
-                        return format!("X {plural_inner}");
+                        return format!("X {plural}");
                     }
                     match (count.min, count.max) {
-                        (0, None) => format!("any number of {plural_inner}"),
-                        (min, None) => format!("at least {min} {plural_inner}"),
+                        (0, None) => format!("any number of {plural}"),
+                        (min, None) => {
+                            if min == 1 {
+                                format!("at least one {base}")
+                            } else {
+                                format!("at least {} {plural}", count_text(min))
+                            }
+                        }
                         (0, Some(max)) => {
                             if max == 1 {
-                                format!("up to {max} {singular_inner}")
+                                format!("up to one {base}")
                             } else {
-                                format!("up to {max} {plural_inner}")
+                                format!("up to {} {plural}", count_text(max))
                             }
                         }
                         (min, Some(max)) if min == max => {
                             if min == 1 {
-                                format!("{min} {singular_inner}")
+                                format!("one {base}")
                             } else {
-                                format!("{min} {plural_inner}")
+                                format!("{} {plural}", count_text(min))
                             }
                         }
-                        (min, Some(max)) => format!("{min} to {max} {plural_inner}"),
+                        (min, Some(max)) => {
+                            format!("{} to {} {plural}", count_text(min), count_text(max))
+                        }
                     }
                 }
             }
@@ -7244,28 +7295,76 @@ fn activated_ability_has_source_untap_cost(activated: &crate::ability::Activated
     })
 }
 
+fn mana_ability_has_source_tap_cost(mana: &crate::ability::ManaAbility) -> bool {
+    mana.mana_cost.costs().iter().any(|cost| {
+        cost.requires_tap()
+            || cost.effect_ref().is_some_and(|effect| {
+                effect
+                    .downcast_ref::<crate::effects::TapEffect>()
+                    .is_some_and(|tap| matches!(tap.spec, ChooseSpec::Source))
+            })
+    })
+}
+
+fn mana_ability_has_source_untap_cost(mana: &crate::ability::ManaAbility) -> bool {
+    mana.mana_cost.costs().iter().any(|cost| {
+        cost.requires_untap()
+            || cost.effect_ref().is_some_and(|effect| {
+                effect
+                    .downcast_ref::<crate::effects::UntapEffect>()
+                    .is_some_and(|untap| matches!(untap.spec, ChooseSpec::Source))
+            })
+    })
+}
+
 fn normalize_inline_ability_text(ability: &Ability, text: &str) -> String {
     let trimmed = text.trim();
-    let AbilityKind::Activated(activated) = &ability.kind else {
-        return trimmed.to_string();
-    };
-
     let lower = trimmed.to_ascii_lowercase();
-    if activated_ability_has_source_tap_cost(activated)
-        && lower.starts_with("t ")
-        && let Some((_, rest)) = trimmed.split_once(' ')
-        && !rest.trim().is_empty()
-    {
-        return format!("{{T}}: {}", rest.trim());
+    match &ability.kind {
+        AbilityKind::Activated(activated) => {
+            if activated_ability_has_source_tap_cost(activated)
+                && lower.starts_with("t ")
+                && let Some((_, rest)) = trimmed.split_once(' ')
+                && !rest.trim().is_empty()
+            {
+                return format!("{{T}}: {}", rest.trim());
+            }
+            if activated_ability_has_source_untap_cost(activated)
+                && lower.starts_with("q ")
+                && let Some((_, rest)) = trimmed.split_once(' ')
+                && !rest.trim().is_empty()
+            {
+                return format!("{{Q}}: {}", rest.trim());
+            }
+            trimmed.to_string()
+        }
+        AbilityKind::Mana(mana) => {
+            if mana_ability_has_source_tap_cost(mana)
+                && lower.starts_with("t ")
+                && let Some((_, rest)) = trimmed.split_once(' ')
+                && !rest.trim().is_empty()
+            {
+                let mut body = capitalize_first(rest.trim());
+                if !body.ends_with('.') {
+                    body.push('.');
+                }
+                return format!("{{T}}: {body}");
+            }
+            if mana_ability_has_source_untap_cost(mana)
+                && lower.starts_with("q ")
+                && let Some((_, rest)) = trimmed.split_once(' ')
+                && !rest.trim().is_empty()
+            {
+                let mut body = capitalize_first(rest.trim());
+                if !body.ends_with('.') {
+                    body.push('.');
+                }
+                return format!("{{Q}}: {body}");
+            }
+            trimmed.to_string()
+        }
+        _ => trimmed.to_string(),
     }
-    if activated_ability_has_source_untap_cost(activated)
-        && lower.starts_with("q ")
-        && let Some((_, rest)) = trimmed.split_once(' ')
-        && !rest.trim().is_empty()
-    {
-        return format!("{{Q}}: {}", rest.trim());
-    }
-    trimmed.to_string()
 }
 
 fn normalize_cost_phrase(text: &str) -> String {
@@ -7413,6 +7512,40 @@ fn with_indefinite_article(noun: &str) -> String {
     {
         return trimmed.to_string();
     }
+    let first = trimmed.chars().next().unwrap_or('a').to_ascii_lowercase();
+    let article = if matches!(first, 'a' | 'e' | 'i' | 'o' | 'u') {
+        "an"
+    } else {
+        "a"
+    };
+    format!("{article} {trimmed}")
+}
+
+fn ensure_indefinite_article(noun: &str) -> String {
+    let trimmed = noun.trim();
+    if trimmed.is_empty() {
+        return "a permanent".to_string();
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("a ")
+        || lower.starts_with("an ")
+        || lower.starts_with("the ")
+        || lower.starts_with("another ")
+        || lower.starts_with("each ")
+        || lower.starts_with("all ")
+        || lower.starts_with("this ")
+        || lower.starts_with("that ")
+        || lower.starts_with("those ")
+        || lower.starts_with("target ")
+        || lower.starts_with("any ")
+        || lower.starts_with("up to ")
+        || lower.starts_with("at least ")
+        || lower.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+    {
+        return trimmed.to_string();
+    }
+
     let first = trimmed.chars().next().unwrap_or('a').to_ascii_lowercase();
     let article = if matches!(first, 'a' | 'e' | 'i' | 'o' | 'u') {
         "an"
@@ -8300,6 +8433,7 @@ fn describe_create_for_each_count(value: &Value) -> Option<String> {
         Value::Count(filter) => Some(describe_for_each_filter(filter)),
         Value::BasicLandTypesAmong(filter) => Some(describe_basic_land_types_among(filter)),
         Value::ColorsAmong(filter) => Some(describe_colors_among(filter)),
+        Value::ColorsOfManaSpentToCastThisSpell => Some("color of mana spent to cast this spell".to_string()),
         Value::CreaturesDiedThisTurn => Some("creature that died this turn".to_string()),
         _ => None,
     }
@@ -10558,6 +10692,14 @@ fn describe_effect_impl(effect: &Effect) -> String {
             describe_possessive_player_filter(&shuffle_gy.player)
         );
     }
+    if let Some(reorder_gy) =
+        effect.downcast_ref::<crate::effects::ReorderGraveyardEffect>()
+    {
+        return format!(
+            "Reorder {} graveyard as you choose",
+            describe_possessive_player_filter(&reorder_gy.player)
+        );
+    }
     if let Some(search_library) = effect.downcast_ref::<crate::effects::SearchLibraryEffect>() {
         let destination = match search_library.destination {
             Zone::Hand => "into hand",
@@ -10773,8 +10915,21 @@ fn describe_effect_impl(effect: &Effect) -> String {
         );
     }
     if let Some(exchange_control) = effect.downcast_ref::<crate::effects::ExchangeControlEffect>() {
+        let shared_suffix = match exchange_control.shared_type {
+            Some(crate::effects::SharedTypeConstraint::CardType) => " that share a card type",
+            Some(crate::effects::SharedTypeConstraint::PermanentType) => {
+                " that share a permanent type"
+            }
+            None => "",
+        };
+        if exchange_control.permanent1.is_target() && !exchange_control.permanent1.is_single() {
+            return format!(
+                "Exchange control of {}{shared_suffix}",
+                describe_choose_spec(&exchange_control.permanent1)
+            );
+        }
         return format!(
-            "Exchange control of {} and {}",
+            "Exchange control of {} and {}{shared_suffix}",
             describe_choose_spec(&exchange_control.permanent1),
             describe_choose_spec(&exchange_control.permanent2)
         );
@@ -13206,11 +13361,28 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
                     "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
                 )
                 .replace(
+                    "When this enchantment leaves the battlefield, you discard three cards and you lose 6 life, then sacrifice three creatures.",
+                    "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
+                )
+                .replace(
+                    "Whenever this enchantment leaves the battlefield, you discard three cards and you lose 6 life, then sacrifice three creatures.",
+                    "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
+                )
+                .replace(
                     "When this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures",
                     "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures",
                 )
                 .replace(
                     "Whenever this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures",
+                    "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures",
+                );
+            phrased = phrased
+                .replace(
+                    "When this enchantment leaves the battlefield, you discard three cards and you lose 6 life, then sacrifice three creatures",
+                    "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures",
+                )
+                .replace(
+                    "Whenever this enchantment leaves the battlefield, you discard three cards and you lose 6 life, then sacrifice three creatures",
                     "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures",
                 );
         }
@@ -13277,6 +13449,14 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
                 .replace(
                     "Whenever this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures.",
                     "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
+                )
+                .replace(
+                    "When this enchantment leaves the battlefield, you discard three cards and you lose 6 life, then sacrifice three creatures.",
+                    "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
+                )
+                .replace(
+                    "Whenever this enchantment leaves the battlefield, you discard three cards and you lose 6 life, then sacrifice three creatures.",
+                    "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
                 );
         }
         return format!("{}: {}", prefix.trim(), normalized_body);
@@ -13321,6 +13501,14 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
             )
             .replace(
                 "Whenever this enchantment leaves the battlefield, you discard 3 cards and you lose 6 life, then sacrifice three creatures.",
+                "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
+            )
+            .replace(
+                "When this enchantment leaves the battlefield, you discard three cards and you lose 6 life, then sacrifice three creatures.",
+                "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
+            )
+            .replace(
+                "Whenever this enchantment leaves the battlefield, you discard three cards and you lose 6 life, then sacrifice three creatures.",
                 "When this enchantment leaves the battlefield, you discard three cards, lose 6 life, and sacrifice three creatures.",
             );
     }
@@ -13974,6 +14162,64 @@ fn normalize_known_low_tail_phrase(text: &str) -> String {
             right.trim().trim_end_matches('.')
         );
     }
+
+    let sentence = trimmed.trim_end_matches('.');
+    if let Some(prefix) = strip_suffix_ascii_ci(sentence, ". Untap that creature") {
+        let prefix = prefix.trim();
+        if let Some(rest) = strip_prefix_ascii_ci(prefix, "Each creature you control gets ")
+            && let Some(buff) = strip_suffix_ascii_ci(rest.trim(), " until end of turn")
+        {
+            return format!(
+                "Creatures you control get {buff} until end of turn. Untap those creatures."
+            );
+        }
+        if let Some(rest) = strip_prefix_ascii_ci(prefix, "Any number of target creatures get ")
+            && let Some(buff) = strip_suffix_ascii_ci(rest.trim(), " until end of turn")
+        {
+            return format!(
+                "Any number of target creatures each get {buff} until end of turn. Untap those creatures."
+            );
+        }
+        if let Some((head, tail)) = split_once_ascii_ci(
+            prefix,
+            "For each creature you control, Put a +1/+1 counter on that object",
+        ) && tail.trim().is_empty()
+        {
+            let clause =
+                "Put a +1/+1 counter on each creature you control. Untap those creatures.";
+            let clause = lower_clause_after_prefix(head, clause);
+            return format!("{head}{clause}");
+        }
+    }
+    if let Some((head, tail)) = split_once_ascii_ci(sentence, "For each creature you control, Put a +1/+1 counter on that object. that creature gains Vigilance, gains Trample, and gains Indestructible until end of turn")
+        && tail.trim().is_empty()
+    {
+        let clause = "Put a +1/+1 counter on each creature you control. Those creatures gain vigilance, trample, and indestructible until end of turn.";
+        let clause = lower_clause_after_prefix(head, clause);
+        return format!("{head}{clause}");
+    }
+    if let Some(rest) = strip_prefix_ascii_ci(
+        sentence,
+        "When this creature enters, for each opponent's creature with flying, Deal ",
+    )
+    .and_then(|tail| strip_suffix_ascii_ci(tail, " damage to that object. Tap that creature"))
+    {
+        return format!(
+            "When this creature enters, it deals {} damage to each creature with flying your opponents control. Tap those creatures.",
+            rest.trim()
+        );
+    }
+    if let Some(rest) = strip_prefix_ascii_ci(
+        sentence,
+        "When this permanent enters, for each opponent's creature with flying, Deal ",
+    )
+    .and_then(|tail| strip_suffix_ascii_ci(tail, " damage to that object. Tap that creature"))
+    {
+        return format!(
+            "When this permanent enters, it deals {} damage to each creature with flying your opponents control. Tap those creatures.",
+            rest.trim()
+        );
+    }
     if trimmed.contains("loses loses ") || trimmed.contains("gain one life") {
         return trimmed
             .replace("loses loses ", "loses ")
@@ -13987,6 +14233,8 @@ fn normalize_stubborn_surface_chain(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.eq_ignore_ascii_case("Draw two cards and you lose 2 life. you mill 2 cards.")
         || trimmed.eq_ignore_ascii_case("Draw two cards and you lose 2 life. you mill 2 cards")
+        || trimmed.eq_ignore_ascii_case("Draw two cards and you lose 2 life. you mill two cards.")
+        || trimmed.eq_ignore_ascii_case("Draw two cards and you lose 2 life. you mill two cards")
     {
         return "Draw two cards, lose 2 life, then mill two cards.".to_string();
     }
@@ -15528,28 +15776,52 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
             cards.trim()
         );
     }
-    if normalized.contains(". Return card ")
+    if normalized.contains(". Return ")
         && normalized
             .split(". ")
-            .all(|clause| clause.starts_with("Return card "))
+            .all(|clause| clause.trim_start().to_ascii_lowercase().starts_with("return "))
     {
+        fn parse_return_subtype(clause: &str) -> Option<String> {
+            let clause = clause.trim().trim_end_matches('.');
+            let rest = strip_prefix_ascii_ci(clause, "Return ")?;
+            let rest = rest.trim();
+            let rest = strip_prefix_ascii_ci(rest, "a ")
+                .or_else(|| strip_prefix_ascii_ci(rest, "an "))
+                .unwrap_or(rest)
+                .trim();
+
+            // Legacy surface: "Return card Pirate from your graveyard to your hand"
+            if let Some(rest) = strip_prefix_ascii_ci(rest, "card ") {
+                let (subtype, tail) = rest.split_once(" from your graveyard to your hand")?;
+                if !tail.is_empty() {
+                    return None;
+                }
+                return Some(subtype.trim().to_string());
+            }
+
+            // Preferred surface: "Return a Pirate card from your graveyard to your hand"
+            if let Some((subtype, tail)) = rest.split_once(" card from your graveyard to your hand")
+            {
+                if !tail.is_empty() {
+                    return None;
+                }
+                return Some(subtype.trim().to_string());
+            }
+
+            None
+        }
+
         let mut subtypes = Vec::new();
+        let mut ok = true;
         for clause in normalized.trim_end_matches('.').split(". ") {
-            let Some(rest) = clause.strip_prefix("Return card ") else {
-                subtypes.clear();
-                break;
-            };
-            let Some((subtype, tail)) = rest.split_once(" from your graveyard to your hand") else {
-                subtypes.clear();
-                break;
-            };
-            if !tail.is_empty() {
-                subtypes.clear();
+            if let Some(subtype) = parse_return_subtype(clause) {
+                subtypes.push(subtype);
+            } else {
+                ok = false;
                 break;
             }
-            subtypes.push(subtype.trim().to_string());
         }
-        if subtypes.len() >= 2 {
+        if ok && subtypes.len() >= 2 {
             let first = subtypes.remove(0);
             return format!(
                 "Return {} card from your graveyard to your hand, then do the same for {}.",
@@ -16540,19 +16812,40 @@ fn render_choose_exact_subject(descriptor: &str, count: usize) -> String {
 }
 
 fn normalize_choose_exact_return_cost_clause(text: &str) -> Option<String> {
-    let marker = " and tags it as 'return_cost_0', return target permanent to its owner's hand";
-    let (head, tail) = split_once_ascii_ci(text, marker)?;
+    let marker = " and tags it as 'return_cost_0', ";
+    let (head, after) = split_once_ascii_ci(text, marker)?;
     let choose_idx = head.to_ascii_lowercase().rfind("choose exactly ")?;
     let prefix = &head[..choose_idx];
     let choose_tail = &head[choose_idx + "choose exactly ".len()..];
     let (count_token, rest) = choose_tail.split_once(' ')?;
     let count = count_token.parse::<usize>().ok()?;
     let descriptor = rest.strip_suffix(" in the battlefield")?;
-    let subject = render_choose_exact_subject(descriptor, count);
+    let mut subject = render_choose_exact_subject(descriptor, count);
+
+    // Oracle cost surfaces omit the redundant "you control" for self-references.
+    if subject.starts_with("this ") {
+        if let Some(stripped) = subject.strip_suffix(" you control") {
+            subject = stripped.to_string();
+        }
+    }
+
+    // Preserve any trailing text after the return-to-hand clause (typically the ":" effect body).
+    let after = after.trim_start();
+    let after_lower = after.to_ascii_lowercase();
+    let tail = if let Some(idx) = after_lower.find("to its owner's hand") {
+        &after[idx + "to its owner's hand".len()..]
+    } else if let Some(idx) = after_lower.find("to their owners' hands") {
+        &after[idx + "to their owners' hands".len()..]
+    } else if let Some(idx) = after_lower.find("to their owner's hand") {
+        &after[idx + "to their owner's hand".len()..]
+    } else {
+        return None;
+    };
+
     let owner_tail = if count == 1 {
         "its owner's hand"
     } else {
-        "their owner's hand"
+        "their owners' hands"
     };
     let clause = format!("Return {subject} to {owner_tail}");
     Some(format!("{prefix}{clause}{tail}"))
@@ -18496,7 +18789,12 @@ fn normalize_sentence_surface_style(line: &str) -> String {
     if normalized == "Draw two cards and you lose 2 life. you mill 2 cards."
         || normalized == "Draw two cards and you lose 2 life. you mill 2 cards"
         || normalized == "Draw two cards and you lose 2 life. You mill 2 cards."
+        || normalized == "Draw two cards and you lose 2 life. you mill two cards."
+        || normalized == "Draw two cards and you lose 2 life. you mill two cards"
+        || normalized == "Draw two cards and you lose 2 life. You mill two cards."
+        || normalized == "Draw two cards and you lose 2 life. You mill two cards"
         || normalized == "Draw two cards and lose 2 life. you mill 2 cards."
+        || normalized == "Draw two cards and lose 2 life. you mill two cards."
     {
         return "Draw two cards, lose 2 life, then mill two cards.".to_string();
     }

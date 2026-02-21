@@ -383,6 +383,12 @@ enum ControlDurationAst {
     Forever,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SharedTypeConstraintAst {
+    CardType,
+    PermanentType,
+}
+
 #[derive(Debug, Clone)]
 enum EffectAst {
     DealDamage {
@@ -728,6 +734,7 @@ enum EffectAst {
     ExchangeControl {
         filter: ObjectFilter,
         count: u32,
+        shared_type: Option<SharedTypeConstraintAst>,
     },
     SetLifeTotal {
         amount: Value,
@@ -1005,6 +1012,9 @@ enum EffectAst {
         tapped: bool,
     },
     ShuffleGraveyardIntoLibrary {
+        player: PlayerAst,
+    },
+    ReorderGraveyard {
         player: PlayerAst,
     },
     #[allow(dead_code)]

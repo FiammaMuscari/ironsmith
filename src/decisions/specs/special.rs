@@ -7,7 +7,7 @@ use crate::color::Color;
 use crate::decision::FallbackStrategy;
 use crate::decisions::context::{
     ColorsContext, CountersContext, DecisionContext, DistributeContext, DistributeTarget,
-    PartitionContext, SelectOptionsContext, SelectableOption,
+    OrderContext, PartitionContext, SelectOptionsContext, SelectableOption,
 };
 use crate::decisions::spec::{DecisionPrimitive, DecisionSpec};
 use crate::game_state::{GameState, Target};
@@ -137,6 +137,67 @@ impl DecisionSpec for SurveilSpec {
             .collect();
 
         DecisionContext::Partition(PartitionContext::surveil(player, Some(self.source), cards))
+    }
+}
+
+// ============================================================================
+// OrderGraveyardSpec - Reorder a graveyard
+// ============================================================================
+
+/// Specification for ordering the cards in a graveyard.
+#[derive(Debug, Clone)]
+pub struct OrderGraveyardSpec {
+    /// The source of the effect.
+    pub source: ObjectId,
+    /// The cards in the graveyard (in current order).
+    pub cards: Vec<ObjectId>,
+}
+
+impl OrderGraveyardSpec {
+    pub fn new(source: ObjectId, cards: Vec<ObjectId>) -> Self {
+        Self { source, cards }
+    }
+}
+
+impl DecisionSpec for OrderGraveyardSpec {
+    type Response = Vec<ObjectId>;
+
+    fn description(&self) -> String {
+        "Reorder graveyard".to_string()
+    }
+
+    fn primitive(&self) -> DecisionPrimitive {
+        DecisionPrimitive::Order
+    }
+
+    fn default_response(&self, _strategy: FallbackStrategy) -> Vec<ObjectId> {
+        self.cards.clone()
+    }
+
+    fn build_context(
+        &self,
+        player: PlayerId,
+        _source: Option<ObjectId>,
+        game: &GameState,
+    ) -> DecisionContext {
+        let items: Vec<(ObjectId, String)> = self
+            .cards
+            .iter()
+            .map(|&id| {
+                let name = game
+                    .object(id)
+                    .map(|o| o.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                (id, name)
+            })
+            .collect();
+
+        DecisionContext::Order(OrderContext::new(
+            player,
+            Some(self.source),
+            "Reorder graveyard",
+            items,
+        ))
     }
 }
 
