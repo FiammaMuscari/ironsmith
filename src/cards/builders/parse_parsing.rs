@@ -10729,7 +10729,19 @@ fn rewrite_attached_controller_trigger_effect_tokens(
     let trigger_words = words(trigger_tokens);
     let references_enchanted_controller = trigger_words.windows(3).any(|window| {
         window[0] == "enchanted"
-            && matches!(window[1], "creature" | "creatures" | "permanent" | "permanents")
+            && matches!(
+                window[1],
+                "creature"
+                    | "creatures"
+                    | "permanent"
+                    | "permanents"
+                    | "artifact"
+                    | "artifacts"
+                    | "enchantment"
+                    | "enchantments"
+                    | "land"
+                    | "lands"
+            )
             && window[2] == "controller"
     });
     if !references_enchanted_controller {
@@ -11807,7 +11819,19 @@ fn parse_possessive_clause_player_filter(words: &[&str]) -> PlayerFilter {
     let has_attached_controller = |subject: &str| {
         words.windows(3).any(|window| {
             window[0] == subject
-                && matches!(window[1], "creature" | "creatures" | "permanent" | "permanents")
+                && matches!(
+                    window[1],
+                    "creature"
+                        | "creatures"
+                        | "permanent"
+                        | "permanents"
+                        | "artifact"
+                        | "artifacts"
+                        | "enchantment"
+                        | "enchantments"
+                        | "land"
+                        | "lands"
+                )
                 && window[2] == "controller"
         })
     };

@@ -51,7 +51,7 @@ impl TriggerMatcher for BeginningOfUpkeepTrigger {
             PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag))
                 if tag.as_str() == "enchanted" =>
             {
-                "At the beginning of the upkeep of enchanted creature's controller".to_string()
+                "At the beginning of the upkeep of enchanted permanent's controller".to_string()
             }
             PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag))
                 if tag.as_str() == "equipped" =>
@@ -75,6 +75,19 @@ fn player_filter_matches(filter: &PlayerFilter, player: PlayerId, ctx: &TriggerC
         PlayerFilter::Any => true,
         PlayerFilter::Specific(id) => player == *id,
         PlayerFilter::Active => player == ctx.game.turn.active_player,
+        PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag))
+            if matches!(tag.as_str(), "enchanted" | "equipped") =>
+        {
+            let Some(source) = ctx.game.object(ctx.source_id) else {
+                return false;
+            };
+            let Some(attached_to) = source.attached_to else {
+                return false;
+            };
+            ctx.game
+                .object(attached_to)
+                .is_some_and(|obj| obj.controller == player)
+        }
         _ => true, // Default to true for complex filters evaluated at runtime
     }
 }

@@ -12459,7 +12459,12 @@ fn choices_are_simple_targets(choices: &[ChooseSpec]) -> bool {
     choices.iter().all(is_simple_target)
 }
 
-fn describe_ability(index: usize, ability: &Ability, source_is_creature: bool) -> Vec<String> {
+fn describe_ability(
+    index: usize,
+    ability: &Ability,
+    subject: &str,
+    rewrite_it_deals: bool,
+) -> Vec<String> {
     if let Some(keyword) = describe_keyword_ability(ability) {
         return vec![format!("Keyword ability {index}: {keyword}")];
     }
@@ -12517,7 +12522,8 @@ fn describe_ability(index: usize, ability: &Ability, source_is_creature: bool) -
                 let effects = describe_effect_list(&triggered.effects);
                 clauses.push(rewrite_damage_phrases_for_permanent_abilities(
                     &effects,
-                    source_is_creature,
+                    subject,
+                    rewrite_it_deals,
                 ));
             }
             if !clauses.is_empty() {
@@ -12595,7 +12601,8 @@ fn describe_ability(index: usize, ability: &Ability, source_is_creature: bool) -
                 let effects = describe_effect_list(&activated.effects);
                 line.push_str(&rewrite_damage_phrases_for_permanent_abilities(
                     &effects,
-                    source_is_creature,
+                    subject,
+                    rewrite_it_deals,
                 ));
             }
             if let Some(x_clause) = extract_activated_x_is_clause(ability.text.as_deref()) {
@@ -12664,7 +12671,8 @@ fn describe_ability(index: usize, ability: &Ability, source_is_creature: bool) -
                 let effects = describe_effect_list(extra_effects);
                 line.push_str(&rewrite_damage_phrases_for_permanent_abilities(
                     &effects,
-                    source_is_creature,
+                    subject,
+                    rewrite_it_deals,
                 ));
             }
             if let Some(condition) = &mana_ability.activation_condition {
@@ -12679,18 +12687,24 @@ fn describe_ability(index: usize, ability: &Ability, source_is_creature: bool) -
     }
 }
 
-fn rewrite_damage_phrases_for_permanent_abilities(effect_text: &str, source_is_creature: bool) -> String {
-    let subject = if source_is_creature {
-        "this creature"
-    } else {
-        "this permanent"
-    };
-
+fn rewrite_damage_phrases_for_permanent_abilities(
+    effect_text: &str,
+    subject: &str,
+    rewrite_it_deals: bool,
+) -> String {
     if let Some(rest) = effect_text.strip_prefix("Deal ") {
         return format!("{subject} deals {rest}");
     }
     if let Some(rest) = effect_text.strip_prefix("deal ") {
         return format!("{subject} deals {rest}");
+    }
+    if rewrite_it_deals {
+        if let Some(rest) = effect_text.strip_prefix("It deals ") {
+            return format!("{subject} deals {rest}");
+        }
+        if let Some(rest) = effect_text.strip_prefix("it deals ") {
+            return format!("{subject} deals {rest}");
+        }
     }
 
     let mut out = effect_text.to_string();
@@ -12700,6 +12714,33 @@ fn rewrite_damage_phrases_for_permanent_abilities(effect_text: &str, source_is_c
     out = out.replace("You may deal ", &format!("You may have {subject} deal "));
     out = out.replace("you may deal ", &format!("you may have {subject} deal "));
     out
+}
+
+fn subject_for_card(card: &crate::card::Card) -> &'static str {
+    // Preserve oracle-like self-reference for common attached permanent subtypes.
+    if card.subtypes.contains(&Subtype::Aura) {
+        return "this Aura";
+    }
+    if card.subtypes.contains(&Subtype::Equipment) {
+        return "this Equipment";
+    }
+
+    let card_types = &card.card_types;
+    if card_types.contains(&CardType::Creature) {
+        "this creature"
+    } else if card_types.contains(&CardType::Artifact) {
+        "this artifact"
+    } else if card_types.contains(&CardType::Land) {
+        "this land"
+    } else if card_types.contains(&CardType::Planeswalker) {
+        "this planeswalker"
+    } else if card_types.contains(&CardType::Enchantment) {
+        "this enchantment"
+    } else if card_types.contains(&CardType::Battle) {
+        "this battle"
+    } else {
+        "this permanent"
+    }
 }
 
 fn extract_activated_x_is_clause(text: Option<&str>) -> Option<String> {
@@ -13080,7 +13121,12 @@ fn describe_optional_cost_line(cost: &crate::cost::OptionalCost) -> String {
 
 pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
     let mut out = Vec::new();
-    let source_is_creature = def.card.card_types.contains(&CardType::Creature);
+    let subject = subject_for_card(&def.card);
+    let rewrite_it_deals = def.card.card_types.contains(&CardType::Creature)
+        || def.card.card_types.contains(&CardType::Artifact)
+        || def.card.card_types.contains(&CardType::Land)
+        || def.card.card_types.contains(&CardType::Planeswalker)
+        || def.card.card_types.contains(&CardType::Battle);
     let has_attach_only_spell_effect = def.spell_effect.as_ref().is_some_and(|effects| {
         effects.len() == 1
             && effects[0]
@@ -13239,7 +13285,12 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
                     continue;
                 }
             }
-            output.extend(describe_ability(ability_idx + 1, ability, source_is_creature));
+            output.extend(describe_ability(
+                ability_idx + 1,
+                ability,
+                subject,
+                rewrite_it_deals,
+            ));
             ability_idx += 1;
         }
     };
