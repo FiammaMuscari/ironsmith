@@ -67,7 +67,10 @@ impl EffectExecutor for TaggedEffect {
 
         // Execute the inner effect
         let outcome = crate::executor::execute_effect(game, &self.effect, ctx)?;
-        apply_tagged_runtime_state(game, ctx, self.tag.clone(), &outcome, runtime);
+        apply_tagged_runtime_state(game, ctx, self.tag.clone(), &outcome, runtime.clone());
+        if self.tag.as_str() != "__it__" {
+            apply_tagged_runtime_state(game, ctx, TagKey::from("__it__"), &outcome, runtime);
+        }
 
         Ok(outcome)
     }

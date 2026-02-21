@@ -31626,7 +31626,7 @@ fn parse_same_name_exile_hand_and_graveyard_clause(
     face_down: bool,
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
-    if !clause_words.starts_with(&["all", "cards"])
+    if !(clause_words.starts_with(&["all", "cards"]) || clause_words.starts_with(&["all", "card"]))
         || !clause_words
             .windows(3)
             .any(|window| window == ["with", "that", "name"])
@@ -31789,10 +31789,17 @@ fn apply_exile_subject_owner_context(filter: &mut ObjectFilter, subject: Option<
     let Some(owner_filter) = exile_subject_owner_filter(subject) else {
         return;
     };
-    if !matches!(
+    let direct_zone_ok = matches!(
         filter.zone,
         Some(Zone::Hand) | Some(Zone::Graveyard) | Some(Zone::Library) | Some(Zone::Exile)
-    ) {
+    );
+    let any_of_zone_ok = filter.any_of.iter().any(|nested| {
+        matches!(
+            nested.zone,
+            Some(Zone::Hand) | Some(Zone::Graveyard) | Some(Zone::Library) | Some(Zone::Exile)
+        )
+    });
+    if !direct_zone_ok && !any_of_zone_ok {
         return;
     }
     match filter.owner {
@@ -31835,6 +31842,8 @@ fn exile_subject_owner_filter(subject: Option<SubjectAst>) -> Option<PlayerFilte
         Some(SubjectAst::Player(PlayerAst::TargetOpponent)) => {
             Some(PlayerFilter::Target(Box::new(PlayerFilter::Opponent)))
         }
+        Some(SubjectAst::Player(PlayerAst::That)) => Some(PlayerFilter::IteratedPlayer),
+        Some(SubjectAst::Player(PlayerAst::You)) => Some(PlayerFilter::You),
         _ => None,
     }
 }
