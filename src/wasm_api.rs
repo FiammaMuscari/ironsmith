@@ -864,16 +864,6 @@ impl DecisionView {
                     })
                     .collect(),
             },
-            _ => DecisionView::SelectOptions {
-                player: decision_context_player(ctx).0,
-                description: format!(
-                    "Decision type is not yet supported in web UI: {}",
-                    decision_context_kind(ctx)
-                ),
-                min: 0,
-                max: 0,
-                options: Vec::new(),
-            },
         }
     }
 }
@@ -6580,27 +6570,6 @@ fn unique_object_ids(ids: &[u64]) -> Vec<u64> {
         }
     }
     unique
-}
-
-fn decision_context_player(ctx: &DecisionContext) -> PlayerId {
-    match ctx {
-        DecisionContext::Boolean(context) => context.player,
-        DecisionContext::Number(context) => context.player,
-        DecisionContext::SelectObjects(context) => context.player,
-        DecisionContext::SelectOptions(context) => context.player,
-        DecisionContext::Modes(context) => context.player,
-        DecisionContext::HybridChoice(context) => context.player,
-        DecisionContext::Order(context) => context.player,
-        DecisionContext::Attackers(context) => context.player,
-        DecisionContext::Blockers(context) => context.player,
-        DecisionContext::Distribute(context) => context.player,
-        DecisionContext::Colors(context) => context.player,
-        DecisionContext::Counters(context) => context.player,
-        DecisionContext::Partition(context) => context.player,
-        DecisionContext::Proliferate(context) => context.player,
-        DecisionContext::Priority(context) => context.player,
-        DecisionContext::Targets(context) => context.player,
-    }
 }
 
 fn decision_context_kind(ctx: &DecisionContext) -> &'static str {

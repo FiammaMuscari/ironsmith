@@ -101,6 +101,9 @@ impl EffectExecutor for SacrificeEffect {
         let required = count.min(matching.len());
         let to_sacrifice = if required == 0 {
             Vec::new()
+        } else if required == matching.len() {
+            // No choice remains: all matching permanents must be sacrificed.
+            matching.clone()
         } else {
             let spec = ChooseObjectsSpec::new(
                 ctx.source,
