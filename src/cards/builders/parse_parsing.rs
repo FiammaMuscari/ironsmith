@@ -33543,6 +33543,7 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
             "monocolored" => filter.monocolored = true,
             "nonhistoric" => filter.nonhistoric = true,
             "historic" if !negated_historic_indices.contains(&idx) => filter.historic = true,
+            "modified" if !is_negated_word => filter.modified = true,
             _ => {}
         }
 

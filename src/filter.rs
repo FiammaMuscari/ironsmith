@@ -461,6 +461,12 @@ pub struct ObjectFilter {
     /// If true, must be nonhistoric
     pub nonhistoric: bool,
 
+    /// If true, must be modified.
+    ///
+    /// A creature is modified if it has a counter on it, is equipped, or is
+    /// enchanted by an Aura you control.
+    pub modified: bool,
+
     /// If true, must be a token
     pub token: bool,
 
@@ -909,6 +915,12 @@ impl ObjectFilter {
         self
     }
 
+    /// Require the object to be modified.
+    pub fn modified(mut self) -> Self {
+        self.modified = true;
+        self
+    }
+
     /// Require a specific name.
     pub fn named(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
@@ -1152,6 +1164,29 @@ impl ObjectFilter {
             && object.zone != *zone
         {
             return false;
+        }
+
+        if self.modified {
+            if object.zone != Zone::Battlefield || !object.card_types.contains(&CardType::Creature)
+            {
+                return false;
+            }
+
+            let has_counters = object.counters.values().any(|count| *count > 0);
+            let has_equipment = object.attachments.iter().any(|attachment_id| {
+                game.object(*attachment_id)
+                    .is_some_and(|attachment| attachment.subtypes.contains(&Subtype::Equipment))
+            });
+            let has_controlled_aura = ctx.you.is_some_and(|you| {
+                object.attachments.iter().any(|attachment_id| {
+                    game.object(*attachment_id).is_some_and(|attachment| {
+                        attachment.controller == you && attachment.subtypes.contains(&Subtype::Aura)
+                    })
+                })
+            });
+            if !(has_counters || has_equipment || has_controlled_aura) {
+                return false;
+            }
         }
 
         // Controller check
@@ -2262,19 +2297,24 @@ impl ObjectFilter {
         if self.source {
             parts.push("this".to_string());
         }
+        if self.modified {
+            parts.push("modified".to_string());
+        }
+
+        let has_leading_determiner = self.other || has_target_tag || self.source;
 
         // Handle controller
         if let Some(ref ctrl) = self.controller {
             match ctrl {
                 PlayerFilter::You => {
-                    if !self.other {
-                        parts.push("a".to_string());
+                    if !has_leading_determiner {
+                        parts.insert(0, "a".to_string());
                     }
                     controller_suffix = Some("you control".to_string());
                 }
                 PlayerFilter::NotYou => {
-                    if !self.other {
-                        parts.push("a".to_string());
+                    if !has_leading_determiner {
+                        parts.insert(0, "a".to_string());
                     }
                     controller_suffix = Some("you don't control".to_string());
                 }
@@ -2287,8 +2327,8 @@ impl ObjectFilter {
                 PlayerFilter::Attacking => parts.push("an attacking player's".to_string()),
                 PlayerFilter::DamagedPlayer => parts.push("the damaged player's".to_string()),
                 PlayerFilter::IteratedPlayer => {
-                    if !self.other {
-                        parts.push("a".to_string());
+                    if !has_leading_determiner {
+                        parts.insert(0, "a".to_string());
                     }
                     controller_suffix = Some("that player controls".to_string())
                 }
@@ -3384,6 +3424,12 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_description_includes_modified_state() {
+        let filter = ObjectFilter::creature().modified();
+        assert_eq!(filter.description(), "modified creature");
+    }
+
+    #[test]
     fn test_filter_description_includes_face_down_state() {
         let filter = ObjectFilter::creature().face_down();
         assert_eq!(filter.description(), "face-down creature");
@@ -3503,6 +3549,150 @@ mod tests {
         assert_eq!(
             filter.description(),
             "an opponent's commander creature you own"
+        );
+    }
+
+    fn setup_modified_filter_game() -> crate::game_state::GameState {
+        crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+    }
+
+    fn create_modified_test_creature(
+        game: &mut crate::game_state::GameState,
+        controller: PlayerId,
+    ) -> ObjectId {
+        use crate::card::{CardBuilder, PowerToughness};
+        use crate::ids::CardId;
+        use crate::types::{CardType, Subtype};
+        use crate::zone::Zone;
+
+        let card = CardBuilder::new(CardId::from_raw(1), "Test Creature")
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Bear])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        game.create_object_from_card(&card, controller, Zone::Battlefield)
+    }
+
+    fn create_modified_test_equipment(
+        game: &mut crate::game_state::GameState,
+        controller: PlayerId,
+    ) -> ObjectId {
+        use crate::card::CardBuilder;
+        use crate::ids::CardId;
+        use crate::types::{CardType, Subtype};
+        use crate::zone::Zone;
+
+        let card = CardBuilder::new(CardId::from_raw(2), "Test Equipment")
+            .card_types(vec![CardType::Artifact])
+            .subtypes(vec![Subtype::Equipment])
+            .build();
+        game.create_object_from_card(&card, controller, Zone::Battlefield)
+    }
+
+    fn create_modified_test_aura(
+        game: &mut crate::game_state::GameState,
+        controller: PlayerId,
+    ) -> ObjectId {
+        use crate::card::CardBuilder;
+        use crate::ids::CardId;
+        use crate::types::{CardType, Subtype};
+        use crate::zone::Zone;
+
+        let card = CardBuilder::new(CardId::from_raw(3), "Test Aura")
+            .card_types(vec![CardType::Enchantment])
+            .subtypes(vec![Subtype::Aura])
+            .build();
+        game.create_object_from_card(&card, controller, Zone::Battlefield)
+    }
+
+    #[test]
+    fn test_filter_matches_modified_by_counter() {
+        let mut game = setup_modified_filter_game();
+        let alice = PlayerId::from_index(0);
+        let creature_id = create_modified_test_creature(&mut game, alice);
+
+        let ctx = FilterContext::new(alice).with_source(creature_id);
+        let filter = ObjectFilter::creature().you_control().modified();
+
+        let creature = game.object(creature_id).expect("creature exists");
+        assert!(
+            !filter.matches(creature, &ctx, &game),
+            "unmodified creature should not match"
+        );
+
+        game.object_mut(creature_id)
+            .expect("creature exists")
+            .counters
+            .insert(CounterType::PlusOnePlusOne, 1);
+        let creature = game.object(creature_id).expect("creature exists");
+        assert!(
+            filter.matches(creature, &ctx, &game),
+            "creature with a counter should match"
+        );
+    }
+
+    #[test]
+    fn test_filter_matches_modified_by_equipment() {
+        let mut game = setup_modified_filter_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let creature_id = create_modified_test_creature(&mut game, alice);
+        let equipment_id = create_modified_test_equipment(&mut game, bob);
+
+        game.object_mut(creature_id)
+            .expect("creature exists")
+            .attachments
+            .push(equipment_id);
+
+        let ctx = FilterContext::new(alice).with_source(creature_id);
+        let filter = ObjectFilter::creature().you_control().modified();
+        let creature = game.object(creature_id).expect("creature exists");
+        assert!(
+            filter.matches(creature, &ctx, &game),
+            "equipped creature should match regardless of equipment controller"
+        );
+    }
+
+    #[test]
+    fn test_filter_matches_modified_by_controlled_aura() {
+        let mut game = setup_modified_filter_game();
+        let alice = PlayerId::from_index(0);
+        let creature_id = create_modified_test_creature(&mut game, alice);
+        let aura_id = create_modified_test_aura(&mut game, alice);
+
+        game.object_mut(creature_id)
+            .expect("creature exists")
+            .attachments
+            .push(aura_id);
+
+        let ctx = FilterContext::new(alice).with_source(creature_id);
+        let filter = ObjectFilter::creature().you_control().modified();
+        let creature = game.object(creature_id).expect("creature exists");
+        assert!(
+            filter.matches(creature, &ctx, &game),
+            "creature enchanted by an Aura you control should match"
+        );
+    }
+
+    #[test]
+    fn test_filter_does_not_match_modified_by_opponent_aura() {
+        let mut game = setup_modified_filter_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let creature_id = create_modified_test_creature(&mut game, alice);
+        let aura_id = create_modified_test_aura(&mut game, bob);
+
+        game.object_mut(creature_id)
+            .expect("creature exists")
+            .attachments
+            .push(aura_id);
+
+        let ctx = FilterContext::new(alice).with_source(creature_id);
+        let filter = ObjectFilter::creature().you_control().modified();
+        let creature = game.object(creature_id).expect("creature exists");
+        assert!(
+            !filter.matches(creature, &ctx, &game),
+            "Aura controlled by opponent should not make creature modified"
         );
     }
 
