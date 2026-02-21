@@ -911,10 +911,12 @@ enum EffectAst {
         tapped: bool,
         attacking: bool,
         exile_at_end_of_combat: bool,
+        sacrifice_at_end_of_combat: bool,
         sacrifice_at_next_end_step: bool,
         exile_at_next_end_step: bool,
     },
     ExileThatTokenAtEndOfCombat,
+    SacrificeThatTokenAtEndOfCombat,
     Monstrosity {
         amount: Value,
     },

@@ -309,6 +309,7 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
     }
     let mut parts = Vec::new();
     let mut creature_name_prefix: Option<String> = None;
+    let mut explicit_named_clause: Option<String> = None;
 
     if !card.supertypes.is_empty() {
         let supertypes = card
@@ -349,7 +350,16 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
         && !card.name.trim().is_empty()
         && card.name.to_ascii_lowercase() != "token"
     {
-        parts.push(card.name.clone());
+        // Prefer the oracle-style "artifact token named <Name>" for explicitly named tokens.
+        // (Common named tokens like Treasure/Clue/Food/Blood/Powerstone are handled elsewhere.)
+        if !matches!(
+            card.name.as_str(),
+            "Treasure" | "Clue" | "Food" | "Blood" | "Powerstone"
+        ) {
+            explicit_named_clause = Some(card.name.clone());
+        } else {
+            parts.push(card.name.clone());
+        }
     }
 
     if !card.subtypes.is_empty() {
@@ -370,8 +380,11 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
             && name_lower != "token"
             && name_lower != subtype_text.to_ascii_lowercase()
             && !name_matches_any_subtype;
+        if name_is_distinct {
+            explicit_named_clause = Some(card.name.clone());
+        }
         let use_name_for_creature = false;
-        let use_name_for_noncreature = !card.is_creature() && name_is_distinct;
+        let use_name_for_noncreature = false;
         if use_name_for_creature {
             creature_name_prefix = Some(card.name.clone());
             if !subtype_text.is_empty() {
@@ -400,6 +413,10 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
     parts.push("token".to_string());
 
     let mut text = parts.join(" ");
+    if let Some(name) = explicit_named_clause {
+        text.push_str(" named ");
+        text.push_str(&name);
+    }
     let mut keyword_texts = Vec::new();
     let mut extra_ability_texts = Vec::new();
     for ability in &token.abilities {
@@ -8562,6 +8579,7 @@ fn describe_compact_create_token(
     if create_token.enters_tapped
         || create_token.enters_attacking
         || create_token.exile_at_end_of_combat
+        || create_token.sacrifice_at_end_of_combat
         || create_token.sacrifice_at_next_end_step
         || create_token.exile_at_next_end_step
     {
@@ -11267,6 +11285,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
         let append_token_cleanup_sentences = |mut text: String| {
             if create_token.exile_at_end_of_combat {
                 text.push_str(&format!(". Exile {token_pronoun} at end of combat"));
+            }
+            if create_token.sacrifice_at_end_of_combat {
+                text.push_str(&format!(". Sacrifice {token_pronoun} at end of combat"));
             }
             if create_token.sacrifice_at_next_end_step {
                 text.push_str(&format!(

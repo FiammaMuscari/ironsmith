@@ -271,6 +271,7 @@ impl EffectExecutor for CreateTokenCopyEffect {
         };
         let cleanup_options = TokenCleanupOptions::new(
             self.exile_at_end_of_combat,
+            false,
             self.sacrifice_at_next_end_step,
             self.exile_at_next_end_step,
         );

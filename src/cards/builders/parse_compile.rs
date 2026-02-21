@@ -885,6 +885,7 @@ fn compile_effects(
                 attached_to,
                 tapped,
                 attacking,
+                sacrifice_at_end_of_combat,
                 sacrifice_at_next_end_step,
                 exile_at_next_end_step,
                 ..
@@ -899,6 +900,43 @@ fn compile_effects(
                 tapped: *tapped,
                 attacking: *attacking,
                 exile_at_end_of_combat: true,
+                sacrifice_at_end_of_combat: *sacrifice_at_end_of_combat,
+                sacrifice_at_next_end_step: *sacrifice_at_next_end_step,
+                exile_at_next_end_step: *exile_at_next_end_step,
+            };
+            let (effect_list, effect_choices) = compile_effect(&effect, ctx)?;
+            compiled.extend(effect_list);
+            for choice in effect_choices {
+                push_choice(&mut choices, choice);
+            }
+            idx += 2;
+            continue;
+        }
+
+        if idx + 1 < effects.len()
+            && let EffectAst::CreateTokenWithMods {
+                name,
+                count,
+                player,
+                attached_to,
+                tapped,
+                attacking,
+                exile_at_end_of_combat,
+                sacrifice_at_next_end_step,
+                exile_at_next_end_step,
+                ..
+            } = &effects[idx]
+            && matches!(effects[idx + 1], EffectAst::SacrificeThatTokenAtEndOfCombat)
+        {
+            let effect = EffectAst::CreateTokenWithMods {
+                name: name.clone(),
+                count: count.clone(),
+                player: *player,
+                attached_to: attached_to.clone(),
+                tapped: *tapped,
+                attacking: *attacking,
+                exile_at_end_of_combat: *exile_at_end_of_combat,
+                sacrifice_at_end_of_combat: true,
                 sacrifice_at_next_end_step: *sacrifice_at_next_end_step,
                 exile_at_next_end_step: *exile_at_next_end_step,
             };
@@ -3862,6 +3900,7 @@ fn compile_effect(
             tapped,
             attacking,
             exile_at_end_of_combat,
+            sacrifice_at_end_of_combat,
             sacrifice_at_next_end_step,
             exile_at_next_end_step,
         } => {
@@ -3882,6 +3921,9 @@ fn compile_effect(
             }
             if *exile_at_end_of_combat {
                 effect = effect.exile_at_end_of_combat();
+            }
+            if *sacrifice_at_end_of_combat {
+                effect = effect.sacrifice_at_end_of_combat();
             }
             if *sacrifice_at_next_end_step {
                 effect = effect.sacrifice_at_next_end_step();
@@ -4101,7 +4143,9 @@ fn compile_effect(
             }
             Ok((vec![effect], choices))
         }
-        EffectAst::ExileThatTokenAtEndOfCombat => Ok((Vec::new(), Vec::new())),
+        EffectAst::ExileThatTokenAtEndOfCombat | EffectAst::SacrificeThatTokenAtEndOfCombat => {
+            Ok((Vec::new(), Vec::new()))
+        }
         EffectAst::TokenCopyHasHaste
         | EffectAst::TokenCopyGainHasteUntilEot
         | EffectAst::TokenCopySacrificeAtNextEndStep
@@ -5335,6 +5379,7 @@ fn extract_named_card_name(words: &[&str], source_text: &str) -> Option<String> 
         "and",
         "with",
         "that",
+        "thats",
         "it",
         "at",
         "until",
@@ -5345,6 +5390,8 @@ fn extract_named_card_name(words: &[&str], source_text: &str) -> Option<String> 
         "this",
         "token",
         "tokens",
+        "tapped",
+        "attacking",
         "add",
         "sacrifice",
         "draw",
@@ -5358,6 +5405,19 @@ fn extract_named_card_name(words: &[&str], source_text: &str) -> Option<String> 
         "can",
         "attack",
         "block",
+        "flying",
+        "trample",
+        "haste",
+        "vigilance",
+        "menace",
+        "deathtouch",
+        "lifelink",
+        "reach",
+        "hexproof",
+        "indestructible",
+        "first",
+        "double",
+        "strike",
         "t",
         "w",
         "u",

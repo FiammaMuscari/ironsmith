@@ -23,6 +23,7 @@ use super::lifecycle::{
 /// * `enters_tapped` - Whether the tokens enter tapped
 /// * `enters_attacking` - Whether the tokens enter attacking
 /// * `exile_at_end_of_combat` - Whether to exile the tokens at end of combat
+/// * `sacrifice_at_end_of_combat` - Whether to sacrifice the tokens at end of combat
 /// * `sacrifice_at_next_end_step` - Whether to sacrifice the tokens at the
 ///   beginning of the next end step.
 /// * `exile_at_next_end_step` - Whether to exile the tokens at the beginning
@@ -69,6 +70,8 @@ pub struct CreateTokenEffect {
     pub enters_attacking: bool,
     /// Whether to exile the tokens at end of combat.
     pub exile_at_end_of_combat: bool,
+    /// Whether to sacrifice the tokens at end of combat.
+    pub sacrifice_at_end_of_combat: bool,
     /// Whether to sacrifice the tokens at the beginning of the next end step.
     pub sacrifice_at_next_end_step: bool,
     /// Whether to exile the tokens at the beginning of the next end step.
@@ -84,6 +87,7 @@ impl PartialEq for CreateTokenEffect {
             && self.enters_tapped == other.enters_tapped
             && self.enters_attacking == other.enters_attacking
             && self.exile_at_end_of_combat == other.exile_at_end_of_combat
+            && self.sacrifice_at_end_of_combat == other.sacrifice_at_end_of_combat
             && self.sacrifice_at_next_end_step == other.sacrifice_at_next_end_step
             && self.exile_at_next_end_step == other.exile_at_next_end_step
     }
@@ -99,6 +103,7 @@ impl CreateTokenEffect {
             enters_tapped: false,
             enters_attacking: false,
             exile_at_end_of_combat: false,
+            sacrifice_at_end_of_combat: false,
             sacrifice_at_next_end_step: false,
             exile_at_next_end_step: false,
         }
@@ -132,6 +137,12 @@ impl CreateTokenEffect {
         self
     }
 
+    /// Set whether to sacrifice the tokens at end of combat.
+    pub fn sacrifice_at_end_of_combat(mut self) -> Self {
+        self.sacrifice_at_end_of_combat = true;
+        self
+    }
+
     /// Set whether to sacrifice the tokens at the beginning of the next end step.
     pub fn sacrifice_at_next_end_step(mut self) -> Self {
         self.sacrifice_at_next_end_step = true;
@@ -156,6 +167,7 @@ impl EffectExecutor for CreateTokenEffect {
         let count = resolve_value(game, &self.count, ctx)?.max(0) as usize;
         let cleanup_options = TokenCleanupOptions::new(
             self.exile_at_end_of_combat,
+            self.sacrifice_at_end_of_combat,
             self.sacrifice_at_next_end_step,
             self.exile_at_next_end_step,
         );

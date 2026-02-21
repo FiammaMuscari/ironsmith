@@ -12657,6 +12657,7 @@ fn append_token_reminder_to_effect(
         EffectAst::CreateTokenWithMods {
             name,
             exile_at_end_of_combat,
+            sacrifice_at_end_of_combat,
             sacrifice_at_next_end_step,
             exile_at_next_end_step,
             ..
@@ -12677,6 +12678,11 @@ fn append_token_reminder_to_effect(
                 && is_end_of_combat_words(reminder_words);
             if exile_end_of_combat {
                 *exile_at_end_of_combat = true;
+            }
+            let sacrifice_end_of_combat = reminder_words.contains(&"sacrifice")
+                && is_end_of_combat_words(reminder_words);
+            if sacrifice_end_of_combat {
+                *sacrifice_at_end_of_combat = true;
             }
             true
         }
@@ -16097,6 +16103,15 @@ fn parse_sentence_exile_that_token_at_end_of_combat(
     Ok(None)
 }
 
+fn parse_sentence_sacrifice_that_token_at_end_of_combat(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    if is_sacrifice_that_token_at_end_of_combat(tokens) {
+        return Ok(Some(vec![EffectAst::SacrificeThatTokenAtEndOfCombat]));
+    }
+    Ok(None)
+}
+
 fn parse_sentence_take_extra_turn(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -16886,6 +16901,10 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "exile-that-token-end-of-combat",
         parser: parse_sentence_exile_that_token_at_end_of_combat,
+    },
+    SentencePrimitive {
+        name: "sacrifice-that-token-end-of-combat",
+        parser: parse_sentence_sacrifice_that_token_at_end_of_combat,
     },
     SentencePrimitive {
         name: "take-extra-turn",
@@ -18195,6 +18214,23 @@ fn is_exile_that_token_at_end_of_combat(tokens: &[Token]) -> bool {
         return false;
     }
     if words.first().copied() != Some("exile") || words.get(3).copied() != Some("at") {
+        return false;
+    }
+    if !matches!(words.get(1).copied(), Some("that" | "the" | "those")) {
+        return false;
+    }
+    if !matches!(words.get(2).copied(), Some("token" | "tokens")) {
+        return false;
+    }
+    words[4..] == ["end", "of", "combat"] || words[4..] == ["the", "end", "of", "combat"]
+}
+
+fn is_sacrifice_that_token_at_end_of_combat(tokens: &[Token]) -> bool {
+    let words = words(tokens);
+    if words.len() != 7 && words.len() != 8 {
+        return false;
+    }
+    if words.first().copied() != Some("sacrifice") || words.get(3).copied() != Some("at") {
         return false;
     }
     if !matches!(words.get(1).copied(), Some("that" | "the" | "those")) {
@@ -30586,7 +30622,7 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
             let after_named = &tail_words[named_idx + 1..range_end];
             let name_end = after_named
                 .iter()
-                .position(|word| matches!(*word, "with" | "that" | "which"))
+                .position(|word| matches!(*word, "with" | "that" | "which" | "thats"))
                 .map(|offset| named_idx + 1 + offset)
                 .unwrap_or(range_end);
             if named_idx + 1 < name_end {
@@ -30725,7 +30761,14 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
                         | "deal"
                 )
             });
-            let include_end = rules_text_start.unwrap_or(with_words.len());
+            let mut include_end = rules_text_start.unwrap_or(with_words.len());
+            if include_end > 0
+                && let Some(named_pos) = with_words[..include_end]
+                    .iter()
+                    .position(|word| *word == "named")
+            {
+                include_end = named_pos;
+            }
             let preserve_rules_tail = rules_text_start
                 .is_some_and(|start| start < with_words.len())
                 && with_words[include_end..].iter().any(|word| {
@@ -30793,6 +30836,7 @@ fn parse_create(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
         tapped,
         attacking,
         exile_at_end_of_combat: false,
+        sacrifice_at_end_of_combat: false,
         sacrifice_at_next_end_step,
         exile_at_next_end_step,
     };

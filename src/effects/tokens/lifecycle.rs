@@ -100,6 +100,7 @@ pub(crate) fn grant_token_static_abilities(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct TokenCleanupOptions {
     pub exile_at_end_of_combat: bool,
+    pub sacrifice_at_end_of_combat: bool,
     pub sacrifice_at_next_end_step: bool,
     pub exile_at_next_end_step: bool,
 }
@@ -107,11 +108,13 @@ pub(crate) struct TokenCleanupOptions {
 impl TokenCleanupOptions {
     pub fn new(
         exile_at_end_of_combat: bool,
+        sacrifice_at_end_of_combat: bool,
         sacrifice_at_next_end_step: bool,
         exile_at_next_end_step: bool,
     ) -> Self {
         Self {
             exile_at_end_of_combat,
+            sacrifice_at_end_of_combat,
             sacrifice_at_next_end_step,
             exile_at_next_end_step,
         }
@@ -134,6 +137,19 @@ pub(crate) fn schedule_token_cleanup(
             controller_id,
             Trigger::end_of_combat(),
             vec![Effect::exile(ChooseSpec::SpecificObject(token_id))],
+        )?;
+    }
+
+    if options.sacrifice_at_end_of_combat {
+        schedule_token_delayed_effect(
+            game,
+            ctx,
+            token_id,
+            controller_id,
+            Trigger::end_of_combat(),
+            vec![Effect::new(SacrificeTargetEffect::new(
+                ChooseSpec::SpecificObject(token_id),
+            ))],
         )?;
     }
 
@@ -233,7 +249,7 @@ mod tests {
             &mut ctx,
             token_id,
             bob,
-            TokenCleanupOptions::new(true, false, false),
+            TokenCleanupOptions::new(true, false, false, false),
         )
         .unwrap();
 
@@ -261,11 +277,11 @@ mod tests {
             &mut ctx,
             token_id,
             alice,
-            TokenCleanupOptions::new(true, true, true),
+            TokenCleanupOptions::new(true, true, true, true),
         )
         .unwrap();
 
-        assert_eq!(game.delayed_triggers.len(), 3);
+        assert_eq!(game.delayed_triggers.len(), 4);
         let end_of_combat_display = Trigger::end_of_combat().display();
         let end_step_display = Trigger::beginning_of_end_step(PlayerFilter::Any).display();
         let end_of_combat_count = game
@@ -278,7 +294,7 @@ mod tests {
             .iter()
             .filter(|delayed| delayed.trigger.display() == end_step_display)
             .count();
-        assert_eq!(end_of_combat_count, 1);
+        assert_eq!(end_of_combat_count, 2);
         assert_eq!(end_step_count, 2);
         for delayed in &game.delayed_triggers {
             assert!(delayed.one_shot);
