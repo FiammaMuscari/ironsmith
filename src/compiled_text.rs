@@ -12517,8 +12517,23 @@ fn describe_ability(index: usize, ability: &Ability) -> Vec<String> {
                 clauses.push(describe_effect_list(&triggered.effects));
             }
             if !clauses.is_empty() {
-                line.push_str(": ");
-                line.push_str(&clauses.join(": "));
+                // Oracle-style: "Whenever ..., if ..., ..." rather than "Whenever ...: If ..."
+                if clauses.len() == 1 {
+                    let only = clauses[0].trim_start();
+                    if let Some(rest) = only.strip_prefix("If ") {
+                        line.push_str(", if ");
+                        line.push_str(rest.trim_start());
+                    } else if let Some(rest) = only.strip_prefix("if ") {
+                        line.push_str(", if ");
+                        line.push_str(rest.trim_start());
+                    } else {
+                        line.push_str(": ");
+                        line.push_str(only);
+                    }
+                } else {
+                    line.push_str(": ");
+                    line.push_str(&clauses.join(": "));
+                }
             }
             if let Some(InterveningIfCondition::MaxTimesEachTurn(max)) =
                 triggered.intervening_if.as_ref()
