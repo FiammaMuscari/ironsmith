@@ -5329,10 +5329,18 @@ fn parse_token_mana_symbol(word: &str) -> Option<ManaSymbol> {
 }
 
 fn title_case_words(words: &[&str]) -> String {
+    let lowercase_words = [
+        "a", "an", "the", "and", "or", "but", "nor", "for", "so", "yet", "of", "in", "on", "at",
+        "to", "from", "with", "without", "by", "as", "into", "onto", "over", "under",
+    ];
     words
         .iter()
         .filter(|word| !word.is_empty())
-        .map(|word| {
+        .enumerate()
+        .map(|(idx, word)| {
+            if idx > 0 && lowercase_words.contains(word) {
+                return (*word).to_string();
+            }
             let mut chars = word.chars();
             if let Some(first) = chars.next() {
                 let mut out = first.to_uppercase().to_string();
@@ -5348,10 +5356,24 @@ fn title_case_words(words: &[&str]) -> String {
 }
 
 fn title_case_phrase_preserving_punctuation(phrase: &str) -> String {
+    let lowercase_words = [
+        "a", "an", "the", "and", "or", "but", "nor", "for", "so", "yet", "of", "in", "on", "at",
+        "to", "from", "with", "without", "by", "as", "into", "onto", "over", "under",
+    ];
     phrase
         .split_whitespace()
         .filter(|word| !word.is_empty())
-        .map(|word| {
+        .enumerate()
+        .map(|(idx, word)| {
+            let letters_only: String = word
+                .chars()
+                .filter(|ch| ch.is_ascii_alphabetic())
+                .map(|ch| ch.to_ascii_lowercase())
+                .collect();
+            let keep_lowercase = idx > 0 && lowercase_words.contains(&letters_only.as_str());
+            if keep_lowercase {
+                return word.to_string();
+            }
             let mut out = String::with_capacity(word.len());
             let mut uppercased = false;
             for ch in word.chars() {

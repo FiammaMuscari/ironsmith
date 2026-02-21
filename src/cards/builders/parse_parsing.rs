@@ -10153,10 +10153,27 @@ fn marker_keyword_display(words: &[&str]) -> Option<String> {
             let amount = words.get(1)?.parse::<u32>().ok()?;
             Some(format!("{title} {amount}"))
         }
-        "bestow" | "dash" | "disturb" | "echo" | "ninjutsu" | "outlast" | "scavenge"
-        | "unearth" | "specialize" | "spectacle" | "plot" | "disguise" | "flashback" => {
+        "bestow" | "dash" | "disturb" | "ninjutsu" | "outlast" | "scavenge" | "unearth"
+        | "specialize" | "spectacle" | "plot" | "disguise" | "flashback" => {
             let (cost, _) = leading_mana_symbols_to_oracle(&words[1..])?;
             Some(format!("{title} {cost}"))
+        }
+        "echo" => {
+            if let Some((cost, _)) = leading_mana_symbols_to_oracle(&words[1..]) {
+                return Some(format!("Echo {cost}"));
+            }
+            if words.len() > 1 {
+                let payload = words[1..].join(" ");
+                let mut chars = payload.chars();
+                let Some(first) = chars.next() else {
+                    return Some("Echo".to_string());
+                };
+                let mut normalized = String::new();
+                normalized.push(first.to_ascii_uppercase());
+                normalized.push_str(chars.as_str());
+                return Some(format!("Echo—{normalized}"));
+            }
+            Some("Echo".to_string())
         }
         "buyback" => {
             if let Some((cost, _)) = leading_mana_symbols_to_oracle(&words[1..]) {
@@ -28614,13 +28631,21 @@ fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
             {
                 predicate = None;
             }
-            let count = if let Some(dynamic) =
+            let mut count = if let Some(dynamic) =
                 parse_create_for_each_dynamic_count(&count_filter_tokens)
             {
                 dynamic
             } else {
                 Value::Count(parse_object_filter(&count_filter_tokens, false)?)
             };
+            if let Value::Fixed(multiplier) = count_value.clone()
+                && multiplier > 1
+            {
+                let base = count.clone();
+                for _ in 1..multiplier {
+                    count = Value::Add(Box::new(count), Box::new(base.clone()));
+                }
+            }
             let effect = EffectAst::PutCounters {
                 counter_type,
                 count,
@@ -30852,6 +30877,37 @@ fn parse_create_for_each_dynamic_count(tokens: &[Token]) -> Option<Value> {
         || clause_words.starts_with(&["creatures", "that", "died", "this", "turn"])
     {
         return Some(Value::CreaturesDiedThisTurn);
+    }
+    if (clause_words.contains(&"spell") || clause_words.contains(&"spells"))
+        && (clause_words.contains(&"cast") || clause_words.contains(&"casts"))
+        && clause_words.contains(&"turn")
+    {
+        let player = if clause_words
+            .iter()
+            .any(|word| matches!(*word, "you" | "your" | "youve"))
+        {
+            PlayerFilter::You
+        } else if clause_words
+            .iter()
+            .any(|word| matches!(*word, "opponent" | "opponents"))
+        {
+            PlayerFilter::Opponent
+        } else {
+            PlayerFilter::Any
+        };
+
+        let other_than_first = clause_words
+            .windows(4)
+            .any(|window| window == ["other", "than", "the", "first"]);
+        if other_than_first {
+            return Some(Value::Add(
+                Box::new(Value::SpellsCastThisTurn(player)),
+                Box::new(Value::Fixed(-1)),
+            ));
+        }
+        if clause_words.contains(&"this") && clause_words.contains(&"turn") {
+            return Some(Value::SpellsCastThisTurn(player));
+        }
     }
     if clause_words.starts_with(&["color", "of", "mana", "spent", "to", "cast", "this", "spell"])
         || clause_words

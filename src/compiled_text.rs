@@ -430,9 +430,11 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
                     continue;
                 }
                 if let Some(text) = ability.text.as_ref() {
-                    extra_ability_texts.push(text.trim().to_string());
+                    extra_ability_texts.push(quote_token_granted_ability_text(text));
                 } else {
-                    extra_ability_texts.push(static_ability.display());
+                    extra_ability_texts.push(quote_token_granted_ability_text(
+                        static_ability.display().as_str(),
+                    ));
                 }
             }
             AbilityKind::Triggered(_) | AbilityKind::Activated(_) | AbilityKind::Mana(_) => {
@@ -4483,6 +4485,21 @@ fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
     subject
 }
 
+fn describe_for_each_spells_cast_this_turn(player: &PlayerFilter, other_than_first: bool) -> String {
+    let mut base = match player {
+        PlayerFilter::You => "spell you've cast this turn".to_string(),
+        PlayerFilter::Opponent => "spell an opponent has cast this turn".to_string(),
+        PlayerFilter::Any => "spell cast this turn".to_string(),
+        PlayerFilter::Active => "spell the active player has cast this turn".to_string(),
+        PlayerFilter::Specific(_) => "spell that player has cast this turn".to_string(),
+        _ => format!("spell cast this turn by {}", describe_player_filter(player)),
+    };
+    if other_than_first {
+        base.push_str(" other than the first");
+    }
+    base
+}
+
 fn describe_demonstrative_tagged_object_filter(
     filter: &crate::filter::ObjectFilter,
 ) -> Option<String> {
@@ -5407,6 +5424,9 @@ pub(crate) fn describe_value(value: &Value) -> String {
     match value {
         Value::Fixed(n) => n.to_string(),
         Value::Add(left, right) => {
+            if left == right {
+                return format!("twice {}", describe_value(left));
+            }
             if let Value::Fixed(n) = right.as_ref()
                 && *n < 0
             {
@@ -10124,6 +10144,41 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 describe_counter_type(put_counters.counter_type),
                 describe_for_each_count_filter(filter)
             );
+        }
+        if matches!(
+            put_counters.counter_type,
+            crate::object::CounterType::PlusOnePlusOne | crate::object::CounterType::MinusOneMinusOne
+        ) && let Value::Add(left, right) = &put_counters.count
+            && left == right
+        {
+            let per_text = match left.as_ref() {
+                Value::Count(filter) => Some(describe_for_each_count_filter(filter)),
+                Value::SpellsCastThisTurn(player) => Some(describe_for_each_spells_cast_this_turn(
+                    player,
+                    false,
+                )),
+                Value::SpellsCastBeforeThisTurn(player) => Some(describe_for_each_spells_cast_this_turn(
+                    player,
+                    true,
+                )),
+                Value::Add(inner, offset)
+                    if matches!(offset.as_ref(), Value::Fixed(n) if *n == -1)
+                        && matches!(inner.as_ref(), Value::SpellsCastThisTurn(_)) =>
+                {
+                    if let Value::SpellsCastThisTurn(player) = inner.as_ref() {
+                        Some(describe_for_each_spells_cast_this_turn(player, true))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(per_text) = per_text {
+                return format!(
+                    "Put two {} counters on {target} for each {per_text}",
+                    describe_counter_type(put_counters.counter_type),
+                );
+            }
         }
         return format!(
             "Put {} on {}",
