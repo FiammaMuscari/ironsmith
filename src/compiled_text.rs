@@ -11078,8 +11078,12 @@ fn describe_effect_impl(effect: &Effect) -> String {
         };
         let spec = crate::target::ChooseSpec::Tagged(cast_tagged.tag.clone());
         let target = if cast_tagged.as_copy {
-            if cast_tagged.tag.as_str() == "it" {
-                "a copy of it".to_string()
+            let tag = cast_tagged.tag.as_str();
+            let tag_is_numbered = tag
+                .rsplit_once('_')
+                .is_some_and(|(_, suffix)| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()));
+            if tag == "it" || tag_is_numbered {
+                "the copy".to_string()
             } else {
                 format!("a copy of {}", describe_choose_spec(&spec))
             }
@@ -11116,6 +11120,20 @@ fn describe_effect_impl(effect: &Effect) -> String {
             inner = lowercase_may_clause(&inner);
             return format!("{who} may {inner}");
         }
+
+        if may.effects.len() == 1
+            && let Some(cast_tagged) = may.effects[0].downcast_ref::<crate::effects::CastTaggedEffect>()
+            && cast_tagged.as_copy
+        {
+            let mut inner = describe_effect_list(&may.effects);
+            if inner.starts_with("you ") {
+                inner = inner["you ".len()..].to_string();
+            }
+            inner = normalize_you_verb_phrase(&inner);
+            inner = lowercase_may_clause(&inner);
+            return format!("Copy it. You may {inner}");
+        }
+
         let mut inner = describe_effect_list(&may.effects);
         if inner.starts_with("you ") {
             inner = inner["you ".len()..].to_string();
@@ -12791,6 +12809,36 @@ fn describe_alternative_cost_effects(cost_effects: &[Effect]) -> String {
     describe_effect_list(cost_effects)
 }
 
+fn describe_optional_cost_line(cost: &crate::cost::OptionalCost) -> String {
+    let label = cost.label;
+    let cost_text = describe_cost_list(cost.cost.costs());
+    match label {
+        "Replicate" => format!("Replicate—{}.", cost_text.trim_end_matches('.')),
+        // Most optional-cost keywords render with a space-separated payload.
+        "Kicker" | "Multikicker" | "Buyback" | "Entwine" => {
+            if cost_text.trim().is_empty() {
+                label.to_string()
+            } else {
+                format!("{label} {cost_text}")
+            }
+        }
+        other if cost.repeatable => {
+            if cost_text.trim().is_empty() {
+                other.to_string()
+            } else {
+                format!("{other}—{}.", cost_text.trim_end_matches('.'))
+            }
+        }
+        other => {
+            if cost_text.trim().is_empty() {
+                other.to_string()
+            } else {
+                format!("{other} {cost_text}")
+            }
+        }
+    }
+}
+
 pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
     let mut out = Vec::new();
     let has_attach_only_spell_effect = def.spell_effect.as_ref().is_some_and(|effects| {
@@ -12876,6 +12924,9 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
                 }
             }
         }
+    }
+    for cost in &def.optional_costs {
+        out.push(describe_optional_cost_line(cost));
     }
     if let Some(filter) = &def.aura_attach_filter {
         out.push(format!("Enchant {}", describe_enchant_filter(filter)));
@@ -15964,6 +16015,21 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
         return format!(
             "{prefix} Pest creature tokens with \"When this token dies, you gain 1 life.\" under your control"
         );
+    }
+
+    if let Some((left, right)) = normalized.split_once(". Copy it. ")
+        && !right.trim().is_empty()
+    {
+        let left_lower = left.trim_start().to_ascii_lowercase();
+        let is_put_there_this_turn = left_lower.contains("put there from anywhere this turn");
+        let references_exile = left_lower.starts_with("exile ")
+            || left_lower.contains(", exile ")
+            || left_lower.contains(": exile ")
+            || left_lower.contains(". exile ");
+
+        if references_exile && !is_put_there_this_turn {
+            return format!("{left} and copy it. {right}");
+        }
     }
 
     if let Some((left, right)) = normalized.split_once(". ")

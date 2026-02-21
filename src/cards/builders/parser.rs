@@ -752,6 +752,9 @@ fn apply_line_ast(
 
             builder.cost_effects.extend(compiled);
         }
+        LineAst::OptionalCost(cost) => {
+            builder = builder.optional_cost(cost);
+        }
         LineAst::AdditionalCostChoice { options } => {
             if options.len() < 2 {
                 if allow_unsupported {

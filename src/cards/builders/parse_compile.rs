@@ -1028,6 +1028,7 @@ fn collect_tag_spans_from_line(
             }
         }
         LineAst::AlternativeCastingMethod(_)
+        | LineAst::OptionalCost(_)
         | LineAst::StaticAbility(_)
         | LineAst::StaticAbilities(_)
         | LineAst::Ability(_)

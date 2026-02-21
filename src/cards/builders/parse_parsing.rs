@@ -1527,6 +1527,20 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
         return Err(CardTextError::ParseError("empty line".to_string()));
     }
 
+    if tokens.first().is_some_and(|token| token.is_word("replicate")) && line.contains('—') {
+        let cost_tokens = tokens.get(1..).unwrap_or_default();
+        if cost_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "replicate line missing cost (line: '{line}')"
+            )));
+        }
+        parser_trace("parse_line:branch=replicate", &tokens);
+        let (cost, _) = parse_activation_cost(cost_tokens)?;
+        return Ok(LineAst::OptionalCost(
+            OptionalCost::custom("Replicate", cost).repeatable(),
+        ));
+    }
+
     if normalized.starts_with("as an additional cost to cast this spell") {
         let comma_idx = tokens
             .iter()
@@ -8519,6 +8533,11 @@ fn parse_activation_cost(tokens: &[Token]) -> Result<(TotalCost, Vec<Effect>), C
                 let Some(word) = token.as_word() else {
                     continue;
                 };
+                if word == "e" {
+                    energy_count = energy_count.saturating_add(1);
+                    parsed_any = true;
+                    continue;
+                }
                 if let Ok(symbol) = parse_mana_symbol(word) {
                     mana_pips.push(vec![symbol]);
                     parsed_any = true;
@@ -21801,6 +21820,7 @@ fn parse_subtype_word(word: &str) -> Option<Subtype> {
         "construct" => Some(Subtype::Construct),
         "crab" => Some(Subtype::Crab),
         "crocodile" => Some(Subtype::Crocodile),
+        "dalek" => Some(Subtype::Dalek),
         "dauthi" => Some(Subtype::Dauthi),
         "detective" => Some(Subtype::Detective),
         "demon" => Some(Subtype::Demon),
@@ -32558,6 +32578,41 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         .filter(|word| !is_article(word) && *word != "instead")
         .collect();
 
+    // "legendary or Rat card" (Nashi, Moon's Legacy) is a supertype/subtype disjunction.
+    // We parse it by collecting both selectors and then expanding into an `any_of` filter
+    // after the normal pass so other shared qualifiers (zone/owner/etc.) are preserved.
+    let legendary_or_subtype = all_words.windows(3).find_map(|window| {
+        if window[0] == "legendary" && window[1] == "or" {
+            parse_subtype_word(window[2])
+        } else {
+            None
+        }
+    });
+
+    // "in a graveyard that was put there from anywhere this turn" (Reenact the Crime)
+    // means the card entered a graveyard this turn.
+    for phrase in [
+        ["that", "was", "put", "there", "from", "anywhere", "this", "turn"],
+        ["that", "were", "put", "there", "from", "anywhere", "this", "turn"],
+    ] {
+        if let Some(word_start) = all_words.windows(8).position(|window| window == phrase) {
+            filter.entered_graveyard_this_turn = true;
+            all_words.drain(word_start..word_start + 8);
+
+            let segment_words = words(&segment_tokens);
+            if let Some(seg_start) = segment_words.windows(8).position(|window| window == phrase)
+                && let Some(start_token_idx) =
+                    token_index_for_word_index(&segment_tokens, seg_start)
+            {
+                let end_word_idx = seg_start + 8;
+                let end_token_idx = token_index_for_word_index(&segment_tokens, end_word_idx)
+                    .unwrap_or(segment_tokens.len());
+                segment_tokens.drain(start_token_idx..end_token_idx);
+            }
+            break;
+        }
+    }
+
     // Avoid treating reference phrases like "... with mana value equal to the number of charge
     // counters on this artifact" as additional type selectors on the filtered object.
     // (Aether Vial: "put a creature card with mana value equal to the number of charge counters
@@ -34005,6 +34060,28 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
 
     if target_player.is_some() || target_object.is_some() {
         filter = filter.targeting(target_player.take(), target_object.take());
+    }
+
+    if let Some(or_subtype) = legendary_or_subtype
+        && filter.any_of.is_empty()
+        && filter.supertypes.contains(&Supertype::Legendary)
+        && filter.subtypes.contains(&or_subtype)
+    {
+        let mut legendary_branch = filter.clone();
+        legendary_branch.any_of.clear();
+        legendary_branch
+            .subtypes
+            .retain(|subtype| *subtype != or_subtype);
+
+        let mut subtype_branch = filter.clone();
+        subtype_branch.any_of.clear();
+        subtype_branch
+            .supertypes
+            .retain(|supertype| *supertype != Supertype::Legendary);
+
+        let mut disjunction = ObjectFilter::default();
+        disjunction.any_of = vec![legendary_branch, subtype_branch];
+        filter = disjunction;
     }
 
     let has_constraints = !filter.card_types.is_empty()

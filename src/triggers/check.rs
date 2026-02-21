@@ -269,6 +269,45 @@ pub fn check_triggers(
     // They function from the graveyard/hand (where the object is after the event) and use
     // the triggering_event to get stable_id and other context at execution time.
 
+    // Replicate: When a spell with Replicate is cast, it triggers to copy itself for each time
+    // its Replicate cost was paid. (We model this as a synthetic triggered ability so it
+    // stacks and can be responded to like the real mechanic.)
+    if trigger_event.kind() == crate::events::traits::EventKind::SpellCast
+        && let Some(cast) = trigger_event.downcast::<crate::events::spells::SpellCastEvent>()
+        && let Some(entry) = game.stack.iter().find(|e| e.object_id == cast.spell)
+    {
+        let times = entry.optional_costs_paid.times_paid_label("Replicate");
+        if times > 0
+            && let Some(obj) = game.object(cast.spell)
+        {
+            let copy_effect_id = crate::effect::EffectId(0);
+            let effects = vec![
+                Effect::with_id(
+                    copy_effect_id.0,
+                    Effect::copy_spell_n(crate::target::ChooseSpec::Source, times as i32),
+                ),
+                Effect::may_choose_new_targets(copy_effect_id),
+            ];
+            let ability = TriggeredAbility {
+                trigger: Trigger::you_cast_this_spell(),
+                effects,
+                choices: vec![],
+                intervening_if: None,
+            };
+            let trigger_identity = compute_trigger_identity(&ability);
+
+            triggered.push(TriggeredAbilityEntry {
+                source: cast.spell,
+                controller: cast.caster,
+                ability,
+                triggering_event: trigger_event.clone(),
+                source_stable_id: obj.stable_id,
+                source_name: obj.name.clone(),
+                trigger_identity,
+            });
+        }
+    }
+
     triggered
 }
 

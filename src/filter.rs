@@ -501,6 +501,10 @@ pub struct ObjectFilter {
     /// This is currently approximated via summoning-sick state.
     pub entered_since_your_last_turn_ended: bool,
 
+    /// If true, the object must be in a graveyard and have been put there from
+    /// anywhere this turn.
+    pub entered_graveyard_this_turn: bool,
+
     /// Power comparison (creature must satisfy)
     pub power: Option<Comparison>,
     /// Whether `power` is checked against effective or base power.
@@ -1156,6 +1160,15 @@ impl ObjectFilter {
         }
 
         if self.entered_since_your_last_turn_ended && !game.is_summoning_sick(object.id) {
+            return false;
+        }
+
+        if self.entered_graveyard_this_turn
+            && (object.zone != Zone::Graveyard
+                || !game
+                    .objects_put_into_graveyard_this_turn
+                    .contains(&object.stable_id))
+        {
             return false;
         }
 
@@ -2844,6 +2857,8 @@ impl ObjectFilter {
                     ));
                 } else if zone == Zone::Graveyard && self.single_graveyard {
                     parts.push("in single graveyard".to_string());
+                } else if zone == Zone::Graveyard {
+                    parts.push("in a graveyard".to_string());
                 } else {
                     parts.push(format!("in {}", zone_name));
                 }
@@ -2852,6 +2867,11 @@ impl ObjectFilter {
                 // Avoid adding it to reduce render-only mismatches.
             }
         }
+
+        if self.entered_graveyard_this_turn && self.zone == Some(Zone::Graveyard) {
+            parts.push("that was put there from anywhere this turn".to_string());
+        }
+
         match (controller_suffix, owner_suffix) {
             (Some(controller), Some(owner))
                 if controller == "you control" && owner == "you own" =>

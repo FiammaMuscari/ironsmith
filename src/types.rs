@@ -64,6 +64,7 @@ pub enum Subtype {
     Construct,
     Crab,
     Crocodile,
+    Dalek,
     Dauthi,
     Detective,
     Demon,

@@ -887,6 +887,12 @@ pub struct GameState {
     /// Reset at the start of each turn.
     pub creatures_died_this_turn: u32,
 
+    /// Cards/tokens that were put into a graveyard from anywhere this turn.
+    ///
+    /// Tracked by stable ID so zone changes (Rule 400.7) don't lose identity.
+    /// Reset at the start of each turn.
+    pub objects_put_into_graveyard_this_turn: HashSet<StableId>,
+
     /// Number of times each (source stable id, trigger identity) has fired this turn.
     pub triggers_fired_this_turn: HashMap<(ObjectId, TriggerIdentity), u32>,
 
@@ -1053,6 +1059,7 @@ impl GameState {
             player_control_effects: Vec::new(),
             player_control_timestamp: 0,
             creatures_died_this_turn: 0,
+            objects_put_into_graveyard_this_turn: HashSet::new(),
             triggers_fired_this_turn: HashMap::new(),
             turn_counters: TurnCounterTracker::default(),
             spells_cast_this_turn: HashMap::new(),
@@ -1381,6 +1388,10 @@ impl GameState {
             && old_object.is_creature();
         if is_creature_dying {
             self.creatures_died_this_turn += 1;
+        }
+        if new_zone == Zone::Graveyard {
+            self.objects_put_into_graveyard_this_turn
+                .insert(old_object.stable_id);
         }
 
         // Remove from old zone index
@@ -2411,6 +2422,7 @@ impl GameState {
         self.chosen_modes_by_ability_this_turn.clear();
         self.cards_drawn_this_turn.clear();
         self.creatures_died_this_turn = 0;
+        self.objects_put_into_graveyard_this_turn.clear();
         self.triggers_fired_this_turn.clear();
         self.turn_counters.clear();
         self.spells_cast_last_turn_total = self.spells_cast_this_turn_total;

@@ -161,6 +161,7 @@ enum LineAst {
     AdditionalCost {
         effects: Vec<EffectAst>,
     },
+    OptionalCost(OptionalCost),
     AdditionalCostChoice {
         options: Vec<AdditionalCostChoiceOptionAst>,
     },
