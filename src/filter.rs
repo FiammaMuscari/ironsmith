@@ -2281,7 +2281,8 @@ impl ObjectFilter {
     ///
     /// Used primarily for trigger display text.
     pub fn description(&self) -> String {
-        if !self.any_of.is_empty() {
+        let any_of_keyword_clause = describe_simple_any_of_keyword_clause(&self.any_of);
+        if any_of_keyword_clause.is_none() && !self.any_of.is_empty() {
             return self
                 .any_of
                 .iter()
@@ -2814,6 +2815,9 @@ impl ObjectFilter {
                 describe_counter_type(counter_type)
             ));
         }
+        if let Some(clause) = any_of_keyword_clause {
+            parts.push(format!("with {clause}"));
+        }
         for ability in &self.static_abilities {
             if let Some(label) = describe_filter_static_ability(*ability) {
                 parts.push(format!("with {}", label));
@@ -2929,6 +2933,42 @@ impl ObjectFilter {
 
         parts.join(" ")
     }
+}
+
+fn describe_simple_any_of_keyword_clause(any_of: &[ObjectFilter]) -> Option<String> {
+    if any_of.len() < 2 {
+        return None;
+    }
+
+    let mut labels = Vec::new();
+    for filter in any_of {
+        if !filter.any_of.is_empty() {
+            return None;
+        }
+
+        let mut stripped = filter.clone();
+        stripped.static_abilities.clear();
+        stripped.excluded_static_abilities.clear();
+        stripped.custom_static_markers.clear();
+        stripped.excluded_custom_static_markers.clear();
+        if stripped != ObjectFilter::default() {
+            return None;
+        }
+
+        if filter.static_abilities.len() == 1 && filter.custom_static_markers.is_empty() {
+            let label = describe_filter_static_ability(filter.static_abilities[0])?;
+            labels.push(label.to_string());
+            continue;
+        }
+        if filter.custom_static_markers.len() == 1 && filter.static_abilities.is_empty() {
+            labels.push(filter.custom_static_markers[0].to_ascii_lowercase());
+            continue;
+        }
+
+        return None;
+    }
+
+    Some(labels.join(" or "))
 }
 
 fn plus_minus_counter_delta(counters: &std::collections::HashMap<CounterType, u32>) -> i32 {

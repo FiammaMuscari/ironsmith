@@ -8739,9 +8739,7 @@ fn describe_compact_token_count(value: &Value, token_name: &str) -> String {
 fn describe_compact_create_token(
     create_token: &crate::effects::CreateTokenEffect,
 ) -> Option<String> {
-    if create_token.enters_tapped
-        || create_token.enters_attacking
-        || create_token.exile_at_end_of_combat
+    if create_token.exile_at_end_of_combat
         || create_token.sacrifice_at_end_of_combat
         || create_token.sacrifice_at_next_end_step
         || create_token.exile_at_next_end_step
@@ -8758,7 +8756,20 @@ fn describe_compact_create_token(
         return None;
     }
 
-    let amount = describe_compact_token_count(&create_token.count, token_name);
+    let mut amount = describe_compact_token_count(&create_token.count, token_name);
+    let state = if create_token.enters_tapped && create_token.enters_attacking {
+        Some("tapped and attacking")
+    } else if create_token.enters_tapped {
+        Some("tapped")
+    } else if create_token.enters_attacking {
+        Some("attacking")
+    } else {
+        None
+    };
+    if let Some(state) = state {
+        amount = amount.replacen(token_name, &format!("{state} {token_name}"), 1);
+    }
+
     if matches!(create_token.controller, PlayerFilter::You) {
         Some(format!("Create {amount}"))
     } else {

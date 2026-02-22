@@ -34026,6 +34026,25 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         if let Some((constraint, consumed)) =
             parse_filter_keyword_constraint_words(&all_words[with_idx + 1..])
         {
+            let after_constraint = with_idx + 1 + consumed;
+            if all_words.get(after_constraint).is_some_and(|word| *word == "or")
+                && let Some((rhs_constraint, rhs_consumed)) =
+                    parse_filter_keyword_constraint_words(&all_words[after_constraint + 1..])
+            {
+                // Model "with <keyword> or <keyword>" as an any-of filter.
+                //
+                // Each branch is deliberately "keyword-only"; the outer filter
+                // keeps controller/type/etc qualifiers. Rendering is handled by
+                // ObjectFilter::description() for simple any-of keyword lists.
+                let mut left = ObjectFilter::default();
+                apply_filter_keyword_constraint(&mut left, constraint, false);
+                let mut right = ObjectFilter::default();
+                apply_filter_keyword_constraint(&mut right, rhs_constraint, false);
+                filter.any_of = vec![left, right];
+                with_idx += 1 + consumed + 1 + rhs_consumed;
+                continue;
+            }
+
             apply_filter_keyword_constraint(&mut filter, constraint, false);
             with_idx += 1 + consumed;
             continue;
