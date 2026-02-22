@@ -7515,7 +7515,7 @@ fn parse_rejects_three_dog_aura_copy_attachment_clause() {
 fn parse_defending_player_suffix_subject_keeps_player_binding() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Keeper Variant")
         .parse_text(
-            "Whenever this creature attacks and isn't blocked, it assigns no combat damage this turn and defending player loses 2 life.",
+            "Whenever this creature attacks and isn't blocked, defending player loses 2 life.",
         )
         .expect("parse defending-player suffix subject");
 
@@ -7523,6 +7523,72 @@ fn parse_defending_player_suffix_subject_keeps_player_binding() {
     assert!(
         joined.contains("defending player loses 2 life"),
         "expected defending-player life-loss wording, got {joined}"
+    );
+}
+
+#[test]
+fn parse_rejects_assigns_no_combat_damage_clause() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Keeper Reject Variant")
+        .parse_text(
+            "Whenever this creature attacks and isn't blocked, it assigns no combat damage this turn and defending player loses 2 life.",
+        )
+        .expect_err("assigns-no-combat-damage clause should not partially parse");
+
+    let message = format!("{err:?}").to_ascii_lowercase();
+    assert!(
+        message.contains("assigns-no-combat-damage")
+            || message.contains("unsupported parser line")
+            || message.contains("unsupported known partial parse pattern"),
+        "expected assigns-no-combat-damage rejection, got {message}"
+    );
+}
+
+#[test]
+fn parse_rejects_defending_players_choice_clause() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Erithizon Reject Variant")
+        .parse_text(
+            "Whenever this creature attacks, put a +1/+1 counter on target creature of defending player's choice.",
+        )
+        .expect_err("defending player's choice clause should not partially parse");
+
+    let message = format!("{err:?}").to_ascii_lowercase();
+    assert!(
+        message.contains("defending-players-choice")
+            || message.contains("unsupported parser line")
+            || message.contains("unsupported known partial parse pattern"),
+        "expected defending player's choice rejection, got {message}"
+    );
+}
+
+#[test]
+fn parse_rejects_creature_token_player_planeswalker_target_clause() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Coalborn Reject Variant")
+        .parse_text("{2}{R}: This creature deals 1 damage to target creature token, player, or planeswalker.")
+        .expect_err("creature-token/player/planeswalker target clause should not partially parse");
+
+    let message = format!("{err:?}").to_ascii_lowercase();
+    assert!(
+        message.contains("creature-token/player/planeswalker")
+            || message.contains("unsupported parser line")
+            || message.contains("unsupported known partial parse pattern"),
+        "expected creature-token/player/planeswalker rejection, got {message}"
+    );
+}
+
+#[test]
+fn parse_rejects_if_you_sacrifice_an_island_this_way_clause() {
+    let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Serendib Reject Variant")
+        .parse_text(
+            "At the beginning of your upkeep, sacrifice a land. If you sacrifice an Island this way, this creature deals 3 damage to you.",
+        )
+        .expect_err("if-you-sacrifice-an-island-this-way clause should not partially parse");
+
+    let message = format!("{err:?}").to_ascii_lowercase();
+    assert!(
+        message.contains("if-you-sacrifice-an-island-this-way")
+            || message.contains("unsupported parser line")
+            || message.contains("unsupported known partial parse pattern"),
+        "expected island-this-way rejection, got {message}"
     );
 }
 
