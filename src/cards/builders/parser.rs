@@ -347,6 +347,7 @@ pub(super) fn parse_text_with_annotations(
 
     builder = normalize_channel_spell_effect(builder);
     builder = normalize_chaotic_transformation_spell_effect(builder);
+    builder = normalize_glimpse_of_nature_spell_effect(builder);
 
     Ok((builder.build(), annotations))
 }
@@ -574,6 +575,50 @@ fn normalize_chaotic_transformation_spell_effect(mut builder: CardDefinitionBuil
     effects.push(per_exiled);
 
     builder.spell_effect = Some(effects);
+    builder
+}
+
+fn normalize_glimpse_of_nature_spell_effect(mut builder: CardDefinitionBuilder) -> CardDefinitionBuilder {
+    use crate::ability::AbilityKind;
+    use crate::target::PlayerFilter;
+
+    if builder.card_builder.name_ref() != "Glimpse of Nature" {
+        return builder;
+    }
+
+    let Some(trigger_idx) = builder
+        .abilities
+        .iter()
+        .position(|ability| matches!(ability.kind, AbilityKind::Triggered(_)))
+    else {
+        return builder;
+    };
+
+    let ability_text = builder.abilities[trigger_idx]
+        .text
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !ability_text.contains("this turn") {
+        return builder;
+    }
+
+    let triggered = match builder.abilities.remove(trigger_idx).kind {
+        AbilityKind::Triggered(triggered) => triggered,
+        _ => return builder,
+    };
+
+    let schedule = crate::effect::Effect::new(
+        crate::effects::ScheduleDelayedTriggerEffect::new(
+            triggered.trigger,
+            triggered.effects,
+            false,
+            Vec::new(),
+            PlayerFilter::You,
+        )
+        .until_end_of_turn(),
+    );
+    builder.spell_effect = Some(vec![schedule]);
     builder
 }
 
