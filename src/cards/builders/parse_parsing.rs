@@ -1486,6 +1486,16 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
         .trim()
         .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
         .to_ascii_lowercase();
+    if normalized.contains("for each time")
+        && normalized.contains("cast")
+        && normalized.contains("commander")
+        && normalized.contains("from the command zone")
+    {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported commander-cast-count clause (line: '{}')",
+            line
+        )));
+    }
     if normalized.starts_with("activate only") {
         return Ok(LineAst::StaticAbility(StaticAbility::custom(
             "activation_restriction",
@@ -9665,6 +9675,20 @@ fn parse_enters_tapped_line(tokens: &[Token]) -> Result<Option<StaticAbility>, C
 
 fn parse_cost_reduction_line(tokens: &[Token]) -> Result<Option<StaticAbility>, CardTextError> {
     let line_words = words(tokens);
+    let has_commander_cast_count_clause = line_words
+        .windows(3)
+        .any(|window| window == ["for", "each", "time"])
+        && line_words.contains(&"cast")
+        && line_words.contains(&"commander")
+        && line_words
+            .windows(4)
+            .any(|window| window == ["from", "the", "command", "zone"]);
+    if has_commander_cast_count_clause {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported commander-cast-count static clause (clause: '{}')",
+            line_words.join(" ")
+        )));
+    }
     if line_words.starts_with(&["this", "cost", "is", "reduced", "by"])
         && line_words.len() > 6
     {
@@ -17815,6 +17839,50 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
     if has_divided_evenly {
         return Err(CardTextError::ParseError(format!(
             "unsupported divided-evenly damage clause (clause: '{}')",
+            sentence_words.join(" ")
+        )));
+    }
+    let has_with_different_names = sentence_words
+        .windows(2)
+        .any(|window| window == ["different", "names"]);
+    if has_with_different_names {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported different-names selection clause (clause: '{}')",
+            sentence_words.join(" ")
+        )));
+    }
+    let has_chosen_at_random = sentence_words
+        .windows(3)
+        .any(|window| window == ["chosen", "at", "random"]);
+    if has_chosen_at_random {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported chosen-at-random clause (clause: '{}')",
+            sentence_words.join(" ")
+        )));
+    }
+    let has_for_each_card_exiled_from_hand_this_way = sentence_words
+        .windows(4)
+        .any(|window| window == ["for", "each", "card", "exiled"])
+        && sentence_words
+            .windows(3)
+            .any(|window| window == ["hand", "this", "way"]);
+    if has_for_each_card_exiled_from_hand_this_way {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported draw-for-each-card-exiled-from-hand clause (clause: '{}')",
+            sentence_words.join(" ")
+        )));
+    }
+    let has_commander_cast_count_clause = sentence_words
+        .windows(3)
+        .any(|window| window == ["for", "each", "time"])
+        && sentence_words.contains(&"cast")
+        && sentence_words.contains(&"commander")
+        && sentence_words
+            .windows(4)
+            .any(|window| window == ["from", "the", "command", "zone"]);
+    if has_commander_cast_count_clause {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported commander-cast-count clause (clause: '{}')",
             sentence_words.join(" ")
         )));
     }
