@@ -17783,6 +17783,41 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
             sentence_words.join(" ")
         )));
     }
+    let has_greatest_mana_value_clause = sentence_words
+        .windows(3)
+        .any(|window| window == ["greatest", "mana", "value"]);
+    if has_greatest_mana_value_clause {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported greatest-mana-value selection clause (clause: '{}')",
+            sentence_words.join(" ")
+        )));
+    }
+    let has_least_power_among = sentence_words
+        .windows(4)
+        .any(|window| window == ["least", "power", "among", "creatures"]);
+    if has_least_power_among {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported least-power-among-creatures selection clause (clause: '{}')",
+            sentence_words.join(" ")
+        )));
+    }
+    let has_villainous_choice =
+        sentence_words.contains(&"villainous") && sentence_words.contains(&"choice");
+    if has_villainous_choice {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported villainous-choice clause (clause: '{}')",
+            sentence_words.join(" ")
+        )));
+    }
+    let has_divided_evenly = sentence_words
+        .windows(2)
+        .any(|window| window == ["divided", "evenly"]);
+    if has_divided_evenly {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported divided-evenly damage clause (clause: '{}')",
+            sentence_words.join(" ")
+        )));
+    }
     let has_copy_spell_legendary_exception = sentence_words.contains(&"copy")
         && sentence_words.contains(&"spell")
         && sentence_words.contains(&"legendary")

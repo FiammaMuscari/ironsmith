@@ -394,3 +394,14 @@ Bifurcate
 Mask of the Mimic
 Pack Hunt
 Pattern Matcher
+
+Demogorgon's Clutches
+Evolutionary Escalation
+Filigree Vector
+Specimen Collector
+
+Sphinx's Revelation
+Stormfist Crusader
+Zealous Persecution
+
+Cruel Ultimatum
