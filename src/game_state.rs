@@ -978,6 +978,12 @@ pub struct GameState {
     /// Used for mechanics like Bloodthirst.
     pub damage_to_players_this_turn: HashMap<PlayerId, u32>,
 
+    /// Creatures that have been dealt damage this turn, keyed by the damaged creature.
+    ///
+    /// Value is the set of object IDs that dealt damage to that creature this turn.
+    /// Cleared at the start of each turn.
+    pub creatures_damaged_by_this_turn: HashMap<ObjectId, HashSet<ObjectId>>,
+
     /// Combat-damage-to-player hits already processed in the current trigger batch.
     /// Used for "one or more ... deal combat damage to a player" trigger matching.
     pub combat_damage_player_batch_hits: Vec<(ObjectId, PlayerId)>,
@@ -1114,6 +1120,7 @@ impl GameState {
             crewed_this_turn: HashMap::new(),
             creature_damage_to_players_this_turn: HashMap::new(),
             damage_to_players_this_turn: HashMap::new(),
+            creatures_damaged_by_this_turn: HashMap::new(),
             combat_damage_player_batch_hits: Vec::new(),
             granted_mana_abilities: Vec::new(),
             restriction_effects: Vec::new(),
@@ -2497,6 +2504,7 @@ impl GameState {
         self.crewed_this_turn.clear();
         self.creature_damage_to_players_this_turn.clear();
         self.damage_to_players_this_turn.clear();
+        self.creatures_damaged_by_this_turn.clear();
         self.combat_damage_player_batch_hits.clear();
 
         // Activate any pending player-control effects for the new active player.
@@ -3076,6 +3084,25 @@ impl GameState {
         if amount > 0 {
             *self.damage_marked.entry(id).or_insert(0) += amount;
         }
+    }
+
+    /// Record that a creature was dealt damage by a given source this turn.
+    pub fn record_creature_damaged_by_this_turn(&mut self, creature: ObjectId, source: ObjectId) {
+        self.creatures_damaged_by_this_turn
+            .entry(creature)
+            .or_default()
+            .insert(source);
+    }
+
+    /// Returns true if `creature` was dealt damage by `source` this turn.
+    pub fn creature_was_damaged_by_source_this_turn(
+        &self,
+        creature: ObjectId,
+        source: ObjectId,
+    ) -> bool {
+        self.creatures_damaged_by_this_turn
+            .get(&creature)
+            .is_some_and(|sources| sources.contains(&source))
     }
 
     /// Clear damage from an object.

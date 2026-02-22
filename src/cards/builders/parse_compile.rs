@@ -48,6 +48,9 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
             DamageBySpec::EquippedCreature => {
                 Trigger::creature_dealt_damage_by_equipped_creature_this_turn_dies(victim)
             }
+            DamageBySpec::EnchantedCreature => {
+                Trigger::creature_dealt_damage_by_enchanted_creature_this_turn_dies(victim)
+            }
         },
         TriggerSpec::SpellCast {
             filter,

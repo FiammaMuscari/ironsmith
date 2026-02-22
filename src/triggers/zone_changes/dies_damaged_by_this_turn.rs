@@ -14,6 +14,8 @@ pub enum DamagerSource {
     ThisCreature,
     /// The creature this source is attached to ("equipped creature").
     EquippedCreature,
+    /// The creature this source enchants ("enchanted creature").
+    EnchantedCreature,
 }
 
 /// Trigger for "Whenever a creature dealt damage by [source] this turn dies".
@@ -42,10 +44,18 @@ impl DiesDamagedByThisTurnTrigger {
         }
     }
 
+    /// Create a trigger where the damager is the creature this source enchants.
+    pub fn by_enchanted_creature(victim: ObjectFilter) -> Self {
+        Self {
+            victim,
+            damager_source: DamagerSource::EnchantedCreature,
+        }
+    }
+
     fn resolve_damager(&self, ctx: &TriggerContext) -> Option<ObjectId> {
         match self.damager_source {
             DamagerSource::ThisCreature => Some(ctx.source_id),
-            DamagerSource::EquippedCreature => {
+            DamagerSource::EquippedCreature | DamagerSource::EnchantedCreature => {
                 ctx.game.object(ctx.source_id).and_then(|obj| obj.attached_to)
             }
         }
@@ -107,6 +117,7 @@ impl TriggerMatcher for DiesDamagedByThisTurnTrigger {
         let source_text = match self.damager_source {
             DamagerSource::ThisCreature => "this creature",
             DamagerSource::EquippedCreature => "equipped creature",
+            DamagerSource::EnchantedCreature => "enchanted creature",
         };
         format!(
             "Whenever {} dealt damage by {} this turn dies",

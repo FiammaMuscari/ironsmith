@@ -233,6 +233,10 @@ enum TriggerSpec {
         filter: ObjectFilter,
     },
     Dies(ObjectFilter),
+    DiesCreatureDealtDamageByThisTurn {
+        victim: ObjectFilter,
+        damager: DamageBySpec,
+    },
     SpellCast {
         filter: Option<ObjectFilter>,
         caster: PlayerFilter,
@@ -266,6 +270,13 @@ enum TriggerSpec {
     Custom(String),
     SagaChapter(Vec<u32>),
     Either(Box<TriggerSpec>, Box<TriggerSpec>),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DamageBySpec {
+    ThisCreature,
+    EquippedCreature,
+    EnchantedCreature,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5042,6 +5053,34 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             joined.contains("Prowess"),
             "expected prowess keyword in token rendering, got: {joined}"
+        );
+    }
+
+    #[test]
+    fn parse_named_source_damaged_by_trigger_as_this_creature() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Rot Wolf Trigger Probe")
+            .parse_text("Whenever a creature dealt damage by Rot Wolf this turn dies, you may draw a card.")
+            .expect("parse named-source damaged-by trigger");
+
+        let lines = compiled_lines(&def);
+        let joined = lines.join(" ");
+        assert!(
+            joined.contains("dealt damage by this creature this turn dies"),
+            "expected named source in damaged-by trigger to resolve to source creature, got {joined}"
+        );
+    }
+
+    #[test]
+    fn parse_enchanted_creature_damaged_by_trigger() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Enchanted Trigger Probe")
+            .parse_text("Whenever a creature dealt damage by enchanted creature this turn dies, draw a card.")
+            .expect("parse enchanted-creature damaged-by trigger");
+
+        let lines = compiled_lines(&def);
+        let joined = lines.join(" ");
+        assert!(
+            joined.contains("dealt damage by enchanted creature this turn dies"),
+            "expected enchanted-creature damaged-by trigger rendering, got {joined}"
         );
     }
 

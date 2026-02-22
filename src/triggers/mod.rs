@@ -188,6 +188,13 @@ impl Trigger {
         Self::new(DiesDamagedByThisTurnTrigger::by_equipped_creature(victim))
     }
 
+    /// Create a "whenever a creature dealt damage by enchanted creature this turn dies" trigger.
+    pub fn creature_dealt_damage_by_enchanted_creature_this_turn_dies(
+        victim: ObjectFilter,
+    ) -> Self {
+        Self::new(DiesDamagedByThisTurnTrigger::by_enchanted_creature(victim))
+    }
+
     /// Create a "when this permanent leaves the battlefield" trigger.
     pub fn this_leaves_battlefield() -> Self {
         Self::new(ZoneChangeTrigger::this_leaves_battlefield())

@@ -11987,13 +11987,37 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
                                 trim_edge_punctuation(&subject_tokens[damager_start..damager_end]);
                             let damager_words = self::words(&damager_tokens);
 
+                            let has_named_source_words = !damager_words.is_empty()
+                                && !matches!(
+                                    damager_words.first().copied(),
+                                    Some(
+                                        "a" | "an" | "the" | "target" | "that" | "this"
+                                            | "equipped" | "enchanted"
+                                    )
+                                )
+                                && !damager_words.iter().any(|word| {
+                                    matches!(
+                                        *word,
+                                        "creature"
+                                            | "creatures"
+                                            | "permanent"
+                                            | "permanents"
+                                            | "source"
+                                            | "sources"
+                                    )
+                                });
+
                             let damager = if damager_words == ["this", "creature"]
                                 || damager_words == ["this", "permanent"]
                                 || damager_words == ["this", "source"]
+                                || damager_words == ["this"]
+                                || has_named_source_words
                             {
                                 Some(DamageBySpec::ThisCreature)
                             } else if damager_words == ["equipped", "creature"] {
                                 Some(DamageBySpec::EquippedCreature)
+                            } else if damager_words == ["enchanted", "creature"] {
+                                Some(DamageBySpec::EnchantedCreature)
                             } else {
                                 None
                             };
