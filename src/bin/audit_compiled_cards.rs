@@ -13,6 +13,7 @@ struct Args {
     out: String,
     limit: Option<usize>,
     examples: usize,
+    raw: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -26,10 +27,17 @@ struct AuditRow {
     parse_error: Option<String>,
 }
 
+fn raw_contains_unimplemented(definition: &ironsmith::cards::CardDefinition) -> bool {
+    format!("{definition:#?}")
+        .to_ascii_lowercase()
+        .contains("unimplemented")
+}
+
 fn parse_args() -> Result<Args, String> {
     let mut out = "/tmp/compiled_audit.jsonl".to_string();
     let mut limit = None;
     let mut examples = 20usize;
+    let mut raw = false;
 
     let mut iter = env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -56,9 +64,12 @@ fn parse_args() -> Result<Args, String> {
                     .parse::<usize>()
                     .map_err(|e| format!("invalid --examples value '{raw}': {e}"))?;
             }
+            "--raw" => {
+                raw = true;
+            }
             _ => {
                 return Err(format!(
-                    "unknown argument '{arg}'. supported: --out <path> --limit <n> --examples <n>"
+                    "unknown argument '{arg}'. supported: --out <path> --limit <n> --examples <n> --raw"
                 ));
             }
         }
@@ -68,6 +79,7 @@ fn parse_args() -> Result<Args, String> {
         out,
         limit,
         examples,
+        raw,
     })
 }
 
@@ -131,6 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total = 0usize;
     let mut parsed_ok = 0usize;
     let mut parse_failed = 0usize;
+    let mut filtered_unimplemented = 0usize;
     let mut cards_with_object_filter = 0usize;
     let mut object_filter_mentions_total = 0usize;
     let mut effect_kind_counts: HashMap<String, usize> = HashMap::new();
@@ -159,12 +172,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match CardDefinitionBuilder::new(CardId::new(), &name).parse_text(parse_input) {
             Ok(def) => {
-                parsed_ok += 1;
-                let lines = compiled_lines(&def);
-                compiled_text = if lines.is_empty() {
-                    "<none>".to_string()
+                if raw_contains_unimplemented(&def) {
+                    parse_failed += 1;
+                    filtered_unimplemented += 1;
+                    parse_error = Some(
+                        "Filtered as unparseable: raw compiled output contains 'unimplemented'"
+                            .to_string(),
+                    );
                 } else {
-                    lines.join("\n")
+                    parsed_ok += 1;
+                    compiled_text = if args.raw {
+                        format!("{def:#?}")
+                    } else {
+                        let lines = compiled_lines(&def);
+                        if lines.is_empty() {
+                            "<none>".to_string()
+                        } else {
+                            lines.join("\n")
+                        }
+                    };
                 };
             }
             Err(err) => {
@@ -210,6 +236,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("- Total cards processed: {total}");
     println!("- Parsed successfully: {parsed_ok}");
     println!("- Parse failures: {parse_failed}");
+    println!("- Filtered as unparseable for 'unimplemented': {filtered_unimplemented}");
     println!("- Cards with 'ObjectFilter' in compiled text: {cards_with_object_filter}");
     println!("- Total 'ObjectFilter' mentions: {object_filter_mentions_total}");
     println!("- JSONL report: {}", args.out);

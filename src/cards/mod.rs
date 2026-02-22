@@ -358,7 +358,7 @@ const UNSUPPORTED_PARSER_LINE_FALLBACK_PREFIX: &str = "Unsupported parser line f
 /// Generated wasm/demo registries should not include parser fallback placeholders that only
 /// exist because unsupported mode swallowed a real parse failure.
 pub(crate) fn generated_definition_is_supported(definition: &CardDefinition) -> bool {
-    !definition.abilities.iter().any(|ability| {
+    let has_parser_fallback_marker = definition.abilities.iter().any(|ability| {
         matches!(
             &ability.kind,
             AbilityKind::Static(static_ability)
@@ -367,7 +367,17 @@ pub(crate) fn generated_definition_is_supported(definition: &CardDefinition) -> 
                         .display()
                         .starts_with(UNSUPPORTED_PARSER_LINE_FALLBACK_PREFIX)
         )
-    })
+    });
+
+    if has_parser_fallback_marker {
+        return false;
+    }
+
+    // Some parsed definitions still carry raw "unimplemented_*" internals
+    // (for example, fallback custom triggers). Exclude those from generated
+    // registries so only fully supported definitions ship to WASM/demo builds.
+    let raw_debug = format!("{definition:#?}").to_ascii_lowercase();
+    !raw_debug.contains("unimplemented")
 }
 
 #[cfg(test)]
@@ -469,6 +479,16 @@ mod tests {
         definition.abilities.push(custom);
 
         assert!(generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_rejects_unimplemented_markers() {
+        let text = "Ward—Discard an enchantment, instant, or sorcery card.\nWhenever you cast your second spell each turn, each opponent mills two cards. When one or more cards are milled this way, exile target enchantment, instant, or sorcery card with equal or lesser mana value than that spell from an opponent's graveyard. Copy the exiled card. You may cast the copy without paying its mana cost.";
+        let definition = CardDefinitionBuilder::new(CardId::new(), "Saruman of Many Colors")
+            .parse_text(text)
+            .expect("saruman parse should succeed");
+
+        assert!(!generated_definition_is_supported(&definition));
     }
 
     #[test]

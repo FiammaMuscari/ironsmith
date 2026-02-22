@@ -12917,10 +12917,21 @@ fn describe_ability(
                 .text
                 .as_deref()
                 .is_some_and(|text| text.eq_ignore_ascii_case("boast"));
+            let has_renew_label = ability
+                .text
+                .as_deref()
+                .is_some_and(|text| text.eq_ignore_ascii_case("renew"));
             if has_boast_label {
                 let mut label = "Boast".to_string();
                 if !activated.mana_cost.costs().is_empty() {
                     label.push(' ');
+                    label.push_str(&describe_cost_list(activated.mana_cost.costs()));
+                }
+                pre.push(label);
+            } else if has_renew_label {
+                let mut label = "Renew".to_string();
+                if !activated.mana_cost.costs().is_empty() {
+                    label.push_str(" \u{2014} ");
                     label.push_str(&describe_cost_list(activated.mana_cost.costs()));
                 }
                 pre.push(label);

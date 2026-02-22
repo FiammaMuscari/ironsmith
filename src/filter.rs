@@ -345,6 +345,8 @@ pub enum TaggedOpbjectRelation {
     SameManaValueAsTagged,
     /// The object must have mana value less than or equal to a tagged object.
     ManaValueLteTagged,
+    /// The object must have mana value less than a tagged object.
+    ManaValueLtTagged,
     /// The object must be attached to a tagged object.
     AttachedToTaggedObject,
     /// The object must NOT be one of the tagged objects.
@@ -1765,6 +1767,7 @@ impl ObjectFilter {
                         | TaggedOpbjectRelation::AttachedToTaggedObject
                         | TaggedOpbjectRelation::SameManaValueAsTagged
                         | TaggedOpbjectRelation::ManaValueLteTagged
+                        | TaggedOpbjectRelation::ManaValueLtTagged
                 ) {
                     return false;
                 }
@@ -1850,6 +1853,17 @@ impl ObjectFilter {
                     if !tagged_snapshots.iter().any(|s| {
                         object_mana_value
                             <= s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
+                    }) {
+                        return false;
+                    }
+                }
+                TaggedOpbjectRelation::ManaValueLtTagged => {
+                    let object_mana_value = object
+                        .mana_cost
+                        .as_ref()
+                        .map_or(0, |mc| mc.mana_value() as i32);
+                    if !tagged_snapshots.iter().any(|s| {
+                        object_mana_value < s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
                     }) {
                         return false;
                     }
@@ -2370,6 +2384,7 @@ impl ObjectFilter {
                         | TaggedOpbjectRelation::SameControllerAsTagged
                         | TaggedOpbjectRelation::SameManaValueAsTagged
                         | TaggedOpbjectRelation::ManaValueLteTagged
+                        | TaggedOpbjectRelation::ManaValueLtTagged
                 ) {
                     return false;
                 }
@@ -2467,6 +2482,17 @@ impl ObjectFilter {
                     if !tagged_snapshots.iter().any(|s| {
                         snapshot_mana_value
                             <= s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
+                    }) {
+                        return false;
+                    }
+                }
+                TaggedOpbjectRelation::ManaValueLtTagged => {
+                    let snapshot_mana_value = snapshot
+                        .mana_cost
+                        .as_ref()
+                        .map_or(0, |mc| mc.mana_value() as i32);
+                    if !tagged_snapshots.iter().any(|s| {
+                        snapshot_mana_value < s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
                     }) {
                         return false;
                     }
@@ -2714,6 +2740,10 @@ impl ObjectFilter {
                         "with mana value less than or equal to that object's mana value"
                             .to_string(),
                     );
+                }
+                TaggedOpbjectRelation::ManaValueLtTagged => {
+                    post_noun_qualifiers
+                        .push("with lesser mana value than that object".to_string());
                 }
                 TaggedOpbjectRelation::SharesColorWithTagged => {
                     post_noun_qualifiers.push("that shares a color with that object".to_string());

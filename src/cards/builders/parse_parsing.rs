@@ -521,6 +521,7 @@ fn preserve_keyword_prefix_for_parse(prefix: &str) -> bool {
             | "flashback"
             | "boast"
             | "replicate"
+            | "renew"
             | "spectacle"
             | "strive"
             | "surge"
@@ -7584,6 +7585,8 @@ fn parse_activated_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardT
         let prefix = words(&tokens[..cost_start]);
         if prefix == ["boast"] || prefix.last() == Some(&"boast") {
             Some("Boast".to_string())
+        } else if prefix == ["renew"] || prefix.last() == Some(&"renew") {
+            Some("Renew".to_string())
         } else {
             None
         }
@@ -34975,6 +34978,9 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
     let has_same_mana_value = all_words
         .windows(4)
         .any(|window| window == ["same", "mana", "value", "as"]);
+    let has_equal_or_lesser_mana_value = all_words
+        .windows(5)
+        .any(|window| window == ["equal", "or", "lesser", "mana", "value"]);
     let has_lte_mana_value_as_tagged = all_words.windows(8).any(|window| {
         matches!(
             window,
@@ -34997,7 +35003,11 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
                 "less", "than", "or", "equal", "to", "that", "objects", "mana", "value",
             ]
         )
-    });
+    }) || has_equal_or_lesser_mana_value;
+    let has_lt_mana_value_as_tagged = all_words
+        .windows(3)
+        .any(|window| window == ["lesser", "mana", "value"])
+        && !has_equal_or_lesser_mana_value;
     let references_sacrifice_cost_object = all_words.windows(3).any(|window| {
         matches!(
             window,
@@ -35060,10 +35070,17 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
             relation: TaggedOpbjectRelation::SameManaValueAsTagged,
         });
     }
-    if has_lte_mana_value_as_tagged && references_it_for_mana_value {
+    if has_lte_mana_value_as_tagged && (references_it_for_mana_value || has_equal_or_lesser_mana_value)
+    {
         filter.tagged_constraints.push(TaggedObjectConstraint {
             tag: IT_TAG.into(),
             relation: TaggedOpbjectRelation::ManaValueLteTagged,
+        });
+    }
+    if has_lt_mana_value_as_tagged {
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag: IT_TAG.into(),
+            relation: TaggedOpbjectRelation::ManaValueLtTagged,
         });
     }
     if has_same_name_as_tagged_object {

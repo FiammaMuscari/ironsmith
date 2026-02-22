@@ -2508,6 +2508,38 @@ fn test_parse_blocked_filter_sets_blocked() {
 }
 
 #[test]
+fn test_parse_lesser_mana_value_adds_tagged_lt_constraint() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Orah Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Whenever this creature or another Cleric you control dies, return target Cleric card with lesser mana value from your graveyard to the battlefield.",
+        )
+        .expect("parse lesser-mana-value tagged comparison");
+
+    let debug = format!("{:#?}", def.abilities);
+    assert!(
+        debug.contains("ManaValueLtTagged"),
+        "expected lesser mana value relation against tagged object, got {debug}"
+    );
+}
+
+#[test]
+fn test_parse_equal_or_lesser_mana_value_adds_tagged_lte_constraint() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Jailbreak Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "Return target permanent card in an opponent's graveyard to the battlefield under their control. When that permanent enters, return up to one target permanent card with equal or lesser mana value from your graveyard to the battlefield.",
+        )
+        .expect("parse equal-or-lesser mana value tagged comparison");
+
+    let debug = format!("{:#?}", def.effects);
+    assert!(
+        debug.contains("ManaValueLteTagged"),
+        "expected equal-or-lesser mana value relation against tagged object, got {debug}"
+    );
+}
+
+#[test]
 fn test_render_multiple_cycling_variants_preserves_variant_names() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Cycling Variant")
         .card_types(vec![CardType::Creature])
@@ -6577,6 +6609,30 @@ fn parse_boast_ability_with_prior_sentence_still_keeps_prefix() {
     assert!(
         rendered.contains("Boast {1}{R}"),
         "expected Boast prefix with cost in rendering, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_renew_ability_keeps_mechanic_prefix() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Renew Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Renew — {2}{B}, Exile this card from your graveyard: Put a flying counter on target creature. Activate only as a sorcery.",
+        )
+        .expect("parse Renew ability with prefix");
+
+    let rendered = compiled_lines(&def).join(" ");
+    assert!(
+        rendered.contains("Renew"),
+        "expected Renew prefix in rendering, got {rendered}"
+    );
+    assert!(
+        rendered.contains("Exile this card from your graveyard"),
+        "expected Renew exile cost in rendering, got {rendered}"
+    );
+    assert!(
+        rendered.contains("Activate only as a sorcery"),
+        "expected Renew timing restriction in rendering, got {rendered}"
     );
 }
 
