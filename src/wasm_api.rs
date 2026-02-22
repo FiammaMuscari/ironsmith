@@ -6123,6 +6123,10 @@ fn describe_value(
         crate::effect::Value::CreaturesDiedThisTurn => {
             "the number of creatures that died this turn".to_string()
         }
+        crate::effect::Value::CreaturesDiedThisTurnControlledBy(player) => format!(
+            "the number of creatures that died this turn under {} control",
+            describe_player_filter_possessive(player, tagged_subjects)
+        ),
         crate::effect::Value::CountPlayers(filter) => format!(
             "the number of {}",
             pluralize_noun_phrase(&describe_player_filter(filter, tagged_subjects))
