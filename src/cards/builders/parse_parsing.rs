@@ -4434,6 +4434,8 @@ fn object_filter_specificity_score(filter: &ObjectFilter) -> usize {
     score += usize::from(filter.is_commander || filter.noncommander) * 2;
     score += usize::from(filter.colorless || filter.multicolored || filter.monocolored) * 2;
     score += usize::from(filter.with_counter.is_some() || filter.without_counter.is_some()) * 4;
+    score += usize::from(filter.entered_battlefield_this_turn) * 2;
+    score += usize::from(filter.entered_battlefield_controller.is_some()) * 2;
     score += usize::from(!filter.excluded_card_types.is_empty()) * 2;
     score += usize::from(!filter.excluded_supertypes.is_empty()) * 2;
     score += usize::from(!filter.excluded_colors.is_empty()) * 2;
@@ -33920,6 +33922,179 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
                 segment_tokens.drain(start_token_idx..end_token_idx);
             }
             break;
+        }
+    }
+
+    // "... graveyard from the battlefield this turn" means the card entered a graveyard
+    // from the battlefield this turn.
+    for phrase in [
+        ["graveyard", "from", "battlefield", "this", "turn"],
+        ["graveyards", "from", "battlefield", "this", "turn"],
+    ] {
+        if let Some(word_start) = all_words.windows(5).position(|window| window == phrase) {
+            filter.entered_graveyard_from_battlefield_this_turn = true;
+            all_words.drain(word_start + 1..word_start + 5);
+
+            let segment_words = words(&segment_tokens);
+            let mut segment_match: Option<(usize, usize)> = None;
+            for (len, phrase) in [
+                (6, &["graveyard", "from", "the", "battlefield", "this", "turn"][..]),
+                (5, &["graveyard", "from", "battlefield", "this", "turn"][..]),
+                (
+                    6,
+                    &["graveyards", "from", "the", "battlefield", "this", "turn"][..],
+                ),
+                (5, &["graveyards", "from", "battlefield", "this", "turn"][..]),
+            ] {
+                if let Some(seg_start) = segment_words.windows(len).position(|window| window == phrase)
+                {
+                    segment_match = Some((seg_start, len));
+                    break;
+                }
+            }
+            if let Some((seg_start, len)) = segment_match
+                && let Some(start_token_idx) =
+                    token_index_for_word_index(&segment_tokens, seg_start + 1)
+            {
+                let end_word_idx = seg_start + len;
+                let end_token_idx = token_index_for_word_index(&segment_tokens, end_word_idx)
+                    .unwrap_or(segment_tokens.len());
+                segment_tokens.drain(start_token_idx..end_token_idx);
+            }
+            break;
+        }
+    }
+
+    // "... entered the battlefield ... this turn" marks a battlefield entry this turn.
+    let mut entered_battlefield_match: Option<(usize, usize, Option<PlayerFilter>)> = None;
+    for (idx, window) in all_words.windows(7).enumerate() {
+        if window[0] == "entered"
+            && window[1] == "battlefield"
+            && window[2] == "under"
+            && window[4] == "control"
+            && window[5] == "this"
+            && window[6] == "turn"
+        {
+            let controller = match window[3] {
+                "your" => Some(PlayerFilter::You),
+                "opponent" | "opponents" => Some(PlayerFilter::Opponent),
+                _ => None,
+            };
+            entered_battlefield_match = Some((idx, 7, controller));
+            break;
+        }
+    }
+    if entered_battlefield_match.is_none() {
+        if let Some(idx) = all_words
+            .windows(4)
+            .position(|window| window == ["entered", "battlefield", "this", "turn"])
+        {
+            entered_battlefield_match = Some((idx, 4, None));
+        }
+    }
+    if let Some((word_start, len, controller)) = entered_battlefield_match {
+        filter.entered_battlefield_this_turn = true;
+        filter.entered_battlefield_controller = controller;
+        filter.zone = Some(Zone::Battlefield);
+        all_words.drain(word_start..word_start + len);
+
+        let segment_words = words(&segment_tokens);
+        let mut segment_match: Option<(usize, usize)> = None;
+        for (len, phrase) in [
+            (
+                8,
+                &[
+                    "entered",
+                    "the",
+                    "battlefield",
+                    "under",
+                    "your",
+                    "control",
+                    "this",
+                    "turn",
+                ][..],
+            ),
+            (
+                7,
+                &[
+                    "entered",
+                    "battlefield",
+                    "under",
+                    "your",
+                    "control",
+                    "this",
+                    "turn",
+                ][..],
+            ),
+            (
+                8,
+                &[
+                    "entered",
+                    "the",
+                    "battlefield",
+                    "under",
+                    "opponent",
+                    "control",
+                    "this",
+                    "turn",
+                ][..],
+            ),
+            (
+                8,
+                &[
+                    "entered",
+                    "the",
+                    "battlefield",
+                    "under",
+                    "opponents",
+                    "control",
+                    "this",
+                    "turn",
+                ][..],
+            ),
+            (
+                7,
+                &[
+                    "entered",
+                    "battlefield",
+                    "under",
+                    "opponent",
+                    "control",
+                    "this",
+                    "turn",
+                ][..],
+            ),
+            (
+                7,
+                &[
+                    "entered",
+                    "battlefield",
+                    "under",
+                    "opponents",
+                    "control",
+                    "this",
+                    "turn",
+                ][..],
+            ),
+            (
+                5,
+                &["entered", "the", "battlefield", "this", "turn"][..],
+            ),
+            (4, &["entered", "battlefield", "this", "turn"][..]),
+        ] {
+            if let Some(seg_start) = segment_words.windows(len).position(|window| window == phrase)
+            {
+                segment_match = Some((seg_start, len));
+                break;
+            }
+        }
+        if let Some((seg_start, len)) = segment_match
+            && let Some(start_token_idx) = token_index_for_word_index(&segment_tokens, seg_start)
+        {
+            let end_word_idx = seg_start + len;
+            let end_token_idx = token_index_for_word_index(&segment_tokens, end_word_idx)
+                .unwrap_or(segment_tokens.len());
+            segment_tokens.drain(start_token_idx..end_token_idx);
         }
     }
 

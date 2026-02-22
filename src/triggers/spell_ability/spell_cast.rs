@@ -154,6 +154,7 @@ impl TriggerMatcher for SpellCastTrigger {
             .map(describe_spell_filter)
             .unwrap_or_else(|| "a spell".to_string());
         let mut suffix = String::new();
+        let mut suppress_turn_suffix = false;
         if let Some(exact_spells) = self.exact_spells_this_turn {
             let ordinal = ordinal_word(exact_spells);
             if spell_text == "a spell" || spell_text == "spell" {
@@ -178,6 +179,19 @@ impl TriggerMatcher for SpellCastTrigger {
                 };
                 suffix.push_str(&exact_suffix);
             }
+        } else if self.min_spells_this_turn == Some(2)
+            && matches!(self.caster, PlayerFilter::You)
+            && matches!(self.during_turn, Some(PlayerFilter::You))
+        {
+            if spell_text == "a spell" || spell_text == "spell" {
+                spell_text =
+                    "a spell during your turn other than your first spell that turn".to_string();
+            } else {
+                spell_text = format!(
+                    "{spell_text} during your turn other than your first spell that turn"
+                );
+            }
+            suppress_turn_suffix = true;
         } else if self.min_spells_this_turn == Some(2)
             && matches!(self.caster, PlayerFilter::Any)
             && (spell_text == "a spell" || spell_text == "spell")
@@ -204,7 +218,9 @@ impl TriggerMatcher for SpellCastTrigger {
                 PlayerFilter::Specific(_) => " during that player's turn",
                 _ => "",
             };
-            suffix.push_str(turn_text);
+            if !suppress_turn_suffix {
+                suffix.push_str(turn_text);
+            }
         }
         if self.from_not_hand {
             suffix.push_str(" from anywhere other than your hand");

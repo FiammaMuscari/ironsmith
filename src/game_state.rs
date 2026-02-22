@@ -914,6 +914,12 @@ pub struct GameState {
     /// Reset at the start of each turn.
     pub objects_put_into_graveyard_this_turn: HashSet<StableId>,
 
+    /// Cards/tokens that were put into a graveyard from the battlefield this turn.
+    ///
+    /// Tracked by stable ID so zone changes (Rule 400.7) don't lose identity.
+    /// Reset at the start of each turn.
+    pub objects_put_into_graveyard_from_battlefield_this_turn: HashSet<StableId>,
+
     /// Number of times each (source stable id, trigger identity) has fired this turn.
     pub triggers_fired_this_turn: HashMap<(ObjectId, TriggerIdentity), u32>,
 
@@ -963,6 +969,10 @@ pub struct GameState {
     /// Number of creatures that entered the battlefield this turn, per controller.
     /// Used for trap conditions like Balustrade Spy.
     pub creatures_entered_this_turn: HashMap<PlayerId, u32>,
+
+    /// Objects that entered the battlefield this turn, keyed by stable ID with entry controller.
+    /// Reset at the start of each turn.
+    pub objects_entered_battlefield_this_turn: HashMap<StableId, PlayerId>,
 
     /// Creatures that crewed a Vehicle this turn, keyed by Vehicle object id.
     ///
@@ -1105,6 +1115,7 @@ impl GameState {
             creatures_died_this_turn: 0,
             creatures_died_under_controller_this_turn: HashMap::new(),
             objects_put_into_graveyard_this_turn: HashSet::new(),
+            objects_put_into_graveyard_from_battlefield_this_turn: HashSet::new(),
             triggers_fired_this_turn: HashMap::new(),
             turn_counters: TurnCounterTracker::default(),
             spells_cast_this_turn: HashMap::new(),
@@ -1117,6 +1128,7 @@ impl GameState {
             spells_cast_last_turn_total: 0,
             library_searches_this_turn: HashSet::new(),
             creatures_entered_this_turn: HashMap::new(),
+            objects_entered_battlefield_this_turn: HashMap::new(),
             crewed_this_turn: HashMap::new(),
             creature_damage_to_players_this_turn: HashMap::new(),
             damage_to_players_this_turn: HashMap::new(),
@@ -1452,6 +1464,14 @@ impl GameState {
         if new_zone == Zone::Graveyard {
             self.objects_put_into_graveyard_this_turn
                 .insert(old_object.stable_id);
+        }
+        if old_zone == Zone::Battlefield && new_zone == Zone::Graveyard {
+            self.objects_put_into_graveyard_from_battlefield_this_turn
+                .insert(old_object.stable_id);
+        }
+        if new_zone == Zone::Battlefield {
+            self.objects_entered_battlefield_this_turn
+                .insert(old_object.stable_id, controller);
         }
 
         // Remove from old zone index
@@ -2489,6 +2509,9 @@ impl GameState {
         self.creatures_died_this_turn = 0;
         self.creatures_died_under_controller_this_turn.clear();
         self.objects_put_into_graveyard_this_turn.clear();
+        self.objects_put_into_graveyard_from_battlefield_this_turn
+            .clear();
+        self.objects_entered_battlefield_this_turn.clear();
         self.triggers_fired_this_turn.clear();
         self.turn_counters.clear();
         self.spells_cast_last_turn_total = self.spells_cast_this_turn_total;

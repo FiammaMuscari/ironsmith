@@ -501,9 +501,19 @@ pub struct ObjectFilter {
     /// This is currently approximated via summoning-sick state.
     pub entered_since_your_last_turn_ended: bool,
 
+    /// If true, the object must be on the battlefield and have entered this turn.
+    pub entered_battlefield_this_turn: bool,
+
+    /// If set, the object must have entered the battlefield under this controller this turn.
+    pub entered_battlefield_controller: Option<PlayerFilter>,
+
     /// If true, the object must be in a graveyard and have been put there from
     /// anywhere this turn.
     pub entered_graveyard_this_turn: bool,
+
+    /// If true, the object must be in a graveyard and have been put there from
+    /// the battlefield this turn.
+    pub entered_graveyard_from_battlefield_this_turn: bool,
 
     /// Power comparison (creature must satisfy)
     pub power: Option<Comparison>,
@@ -1160,6 +1170,34 @@ impl ObjectFilter {
         }
 
         if self.entered_since_your_last_turn_ended && !game.is_summoning_sick(object.id) {
+            return false;
+        }
+
+        if self.entered_battlefield_this_turn
+            || self.entered_battlefield_controller.is_some()
+        {
+            if object.zone != Zone::Battlefield {
+                return false;
+            }
+            let Some(entry_controller) = game
+                .objects_entered_battlefield_this_turn
+                .get(&object.stable_id)
+            else {
+                return false;
+            };
+            if let Some(filter) = &self.entered_battlefield_controller
+                && !filter.matches_player(*entry_controller, ctx)
+            {
+                return false;
+            }
+        }
+
+        if self.entered_graveyard_from_battlefield_this_turn
+            && (object.zone != Zone::Graveyard
+                || !game
+                    .objects_put_into_graveyard_from_battlefield_this_turn
+                    .contains(&object.stable_id))
+        {
             return false;
         }
 
@@ -2890,7 +2928,36 @@ impl ObjectFilter {
             }
         }
 
-        if self.entered_graveyard_this_turn && self.zone == Some(Zone::Graveyard) {
+        if (self.entered_battlefield_this_turn || self.entered_battlefield_controller.is_some())
+            && self.zone == Some(Zone::Battlefield)
+        {
+            let clause = if let Some(controller) = &self.entered_battlefield_controller {
+                match controller {
+                    PlayerFilter::You => {
+                        "that entered the battlefield under your control this turn".to_string()
+                    }
+                    PlayerFilter::Opponent => {
+                        "that entered the battlefield under an opponent's control this turn"
+                            .to_string()
+                    }
+                    PlayerFilter::Any => {
+                        "that entered the battlefield this turn".to_string()
+                    }
+                    other => format!(
+                        "that entered the battlefield under {} control this turn",
+                        describe_possessive_player_filter(other)
+                    ),
+                }
+            } else {
+                "that entered the battlefield this turn".to_string()
+            };
+            parts.push(clause);
+        }
+
+        if self.entered_graveyard_from_battlefield_this_turn && self.zone == Some(Zone::Graveyard)
+        {
+            parts.push("that was put there from the battlefield this turn".to_string());
+        } else if self.entered_graveyard_this_turn && self.zone == Some(Zone::Graveyard) {
             parts.push("that was put there from anywhere this turn".to_string());
         }
 

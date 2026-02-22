@@ -4427,7 +4427,14 @@ fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
     let controller = bare.controller.clone();
     let owner = bare.owner.clone();
     bare.controller = None;
-    bare.owner = None;
+    let keep_owner_in_subject = owner.is_some()
+        && matches!(
+            bare.zone,
+            Some(Zone::Graveyard | Zone::Hand | Zone::Library | Zone::Exile | Zone::Command)
+        );
+    if !keep_owner_in_subject {
+        bare.owner = None;
+    }
 
     let mut subject = strip_indefinite_article(&bare.description()).to_string();
     subject = subject.replace("target player's ", "");
@@ -4481,7 +4488,10 @@ fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
         return format!("{subject} {suffix}");
     }
 
-    let owner_suffix = match owner {
+    let owner_suffix = if keep_owner_in_subject {
+        None
+    } else {
+        match owner {
         Some(PlayerFilter::You) => Some("you own"),
         Some(PlayerFilter::NotYou) => Some("you don't own"),
         Some(PlayerFilter::Opponent) => Some("an opponent owns"),
@@ -4494,6 +4504,7 @@ fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
         Some(PlayerFilter::Specific(_)) => Some("that player owns"),
         Some(PlayerFilter::Target(_)) | Some(PlayerFilter::IteratedPlayer) => Some("they own"),
         _ => None,
+        }
     };
     if let Some(suffix) = owner_suffix {
         if let Some((head, tail)) = subject.split_once(" named ") {

@@ -119,3 +119,31 @@ fn regression_semantic_mismatch_admonition_angel_nonland_permanent_target() {
         "landfall target should not narrow to creatures, got {rendered}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_asmira_graveyard_battlefield_clause() {
+    let rendered = rendered_lines(
+        "Flying\nAt the beginning of each end step, put a +1/+1 counter on Asmira for each creature put into your graveyard from the battlefield this turn.",
+        "Asmira, Holy Avenger",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("from the battlefield this turn"),
+        "expected battlefield graveyard timing clause to remain, got {rendered}"
+    );
+}
+
+#[test]
+fn regression_semantic_mismatch_entered_battlefield_under_control_this_turn() {
+    let rendered = rendered_lines(
+        "Flying, vigilance\n{T}: Put a +1/+1 counter on each creature that entered the battlefield under your control this turn.",
+        "Shaile, Dean of Radiance // Embrose, Dean of Shadow",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("entered the battlefield under your control this turn"),
+        "expected entry-timing clause to remain, got {rendered}"
+    );
+}

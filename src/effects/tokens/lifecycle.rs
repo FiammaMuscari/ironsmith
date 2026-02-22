@@ -51,6 +51,10 @@ pub(crate) fn apply_token_battlefield_entry(
     }
     // Tokens always have summoning sickness.
     game.set_summoning_sick(token_id);
+    if let Some(obj) = game.object(token_id) {
+        game.objects_entered_battlefield_this_turn
+            .insert(obj.stable_id, controller_id);
+    }
 
     // Emit primitive zone-change ETB event plus ETB-tapped event.
     events.push(TriggerEvent::new(ZoneChangeEvent::new(

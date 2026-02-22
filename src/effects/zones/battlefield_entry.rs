@@ -77,6 +77,11 @@ pub(crate) fn move_to_battlefield_with_options(
         }
     }
 
+    if let Some(obj) = game.object(new_id) {
+        game.objects_entered_battlefield_this_turn
+            .insert(obj.stable_id, obj.controller);
+    }
+
     if options.tapped && !result.enters_tapped {
         game.tap(new_id);
     }
