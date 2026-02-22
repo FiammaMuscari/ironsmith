@@ -13600,6 +13600,28 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
     if let Some(filter) = &def.aura_attach_filter {
         out.push(format!("Enchant {}", describe_enchant_filter(filter)));
     }
+    let max_saga_chapter = def.max_saga_chapter.or_else(|| {
+        def.abilities
+            .iter()
+            .filter_map(|ability| {
+                if let AbilityKind::Triggered(triggered) = &ability.kind {
+                    triggered
+                        .trigger
+                        .saga_chapters()
+                        .and_then(|chapters| chapters.iter().copied().max())
+                } else {
+                    None
+                }
+            })
+            .max()
+    });
+    if let Some(max_chapter) = max_saga_chapter
+        && let Some(roman) = chapter_number_to_roman(max_chapter)
+    {
+        out.push(format!(
+            "(As this Saga enters and after your draw step, add a lore counter. Sacrifice after {roman}.)"
+        ));
+    }
     let push_abilities = |output: &mut Vec<String>| {
         let mut ability_idx = 0usize;
         while ability_idx < def.abilities.len() {
@@ -13908,6 +13930,56 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
                 .replace("transform this creature", &format!("transform {self_ref}"));
         }
         let mut phrased = normalize_common_semantic_phrasing(&replaced);
+        let when_you_do_subject = [
+            "this creature",
+            "this artifact",
+            "this enchantment",
+            "this land",
+            "this planeswalker",
+            "this permanent",
+            "this Saga",
+            "this battle",
+            "this spell",
+            "this Aura",
+            "this Equipment",
+            "this Vehicle",
+            "this Fortification",
+        ]
+        .into_iter()
+        .find(|subject| {
+            oracle_lower.contains(&format!(
+                "when you do, {} deals",
+                subject.to_ascii_lowercase()
+            ))
+        });
+        if let Some(subject) = when_you_do_subject {
+            if let Some((head, tail)) = phrased.split_once(". If you do, Deal ") {
+                let tail = tail.trim();
+                phrased = format!("{head}. When you do, {subject} deals {tail}");
+            } else if let Some((head, tail)) = phrased.split_once(". If you do, deal ") {
+                let tail = tail.trim();
+                phrased = format!("{head}. When you do, {subject} deals {tail}");
+            }
+        }
+        if let Some((prefix, rest)) =
+            phrased.split_once("— For each player, that player discards ")
+        {
+            let rest = rest.trim();
+            phrased = format!("{prefix}— Each player discards {rest}");
+        }
+        if oracle_lower.contains("put a +1/+1 counter on it")
+            && phrased.contains("with a +1/+1 counter on it")
+        {
+            phrased = phrased
+                .replace(
+                    " to the battlefield with a +1/+1 counter on it",
+                    " to the battlefield. Put a +1/+1 counter on it",
+                )
+                .replace(
+                    " onto the battlefield with a +1/+1 counter on it",
+                    " onto the battlefield. Put a +1/+1 counter on it",
+                );
+        }
         if has_graveyard_activation {
             phrased = phrased
                 .replace(
@@ -14190,6 +14262,28 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
         normalized_body = normalize_each_opponent_dynamic_life_exchange(&normalized_body);
         normalized_body = normalize_triggered_self_deals_damage_phrase(def, &normalized_body);
         normalized_body = normalize_gain_life_plus_phrase(&normalized_body);
+        if oracle_lower.contains("with an additional +1/+1 counter on it")
+            && normalized_body.contains("with a +1/+1 counter on it")
+        {
+            normalized_body = normalized_body
+                .replace(
+                    "with a +1/+1 counter on it",
+                    "with an additional +1/+1 counter on it",
+                );
+        } else if oracle_lower.contains("put a +1/+1 counter on it")
+            && !oracle_lower.contains("with an additional +1/+1 counter on it")
+            && normalized_body.contains("with a +1/+1 counter on it")
+        {
+            normalized_body = normalized_body
+                .replace(
+                    " to the battlefield with a +1/+1 counter on it",
+                    " to the battlefield. Put a +1/+1 counter on it",
+                )
+                .replace(
+                    " onto the battlefield with a +1/+1 counter on it",
+                    " onto the battlefield. Put a +1/+1 counter on it",
+                );
+        }
         if oracle_has_fall_greatest_power {
             normalized_body = normalized_body
                 .replace(
@@ -14243,6 +14337,25 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
     normalized = normalize_each_opponent_dynamic_life_exchange(&normalized);
     normalized = normalize_triggered_self_deals_damage_phrase(def, &normalized);
     normalized = normalize_gain_life_plus_phrase(&normalized);
+    if oracle_lower.contains("with an additional +1/+1 counter on it")
+        && normalized.contains("with a +1/+1 counter on it")
+    {
+        normalized =
+            normalized.replace("with a +1/+1 counter on it", "with an additional +1/+1 counter on it");
+    } else if oracle_lower.contains("put a +1/+1 counter on it")
+        && !oracle_lower.contains("with an additional +1/+1 counter on it")
+        && normalized.contains("with a +1/+1 counter on it")
+    {
+        normalized = normalized
+            .replace(
+                " to the battlefield with a +1/+1 counter on it",
+                " to the battlefield. Put a +1/+1 counter on it",
+            )
+            .replace(
+                " onto the battlefield with a +1/+1 counter on it",
+                " onto the battlefield. Put a +1/+1 counter on it",
+            );
+    }
     if oracle_has_fall_greatest_power {
         normalized = normalized
             .replace(
@@ -15205,54 +15318,93 @@ fn normalize_create_one_under_control_list(clauses: &[&str]) -> Option<String> {
 
 fn rewrite_return_with_counters_on_it_sequence(text: &str) -> Option<String> {
     let trimmed = text.trim().trim_end_matches('.');
-    let clauses = trimmed
+    let mut clauses = trimmed
         .split(". ")
         .map(str::trim)
         .filter(|clause| !clause.is_empty())
+        .map(str::to_string)
         .collect::<Vec<_>>();
     if clauses.len() < 2 {
         return None;
     }
 
-    let mut return_clause = clauses.first()?.to_string();
     let mut chapter_prefix = String::new();
-    if let Some((prefix, rest)) = return_clause.split_once("— ")
-        && rest.trim_start().starts_with("Return ")
+    if let Some(first) = clauses.first().cloned()
+        && let Some((prefix, rest)) = first.split_once("— ")
+        && (rest.trim_start().starts_with("Return ") || rest.trim_start().starts_with("Put "))
     {
         chapter_prefix = format!("{} — ", prefix.trim_end());
-        return_clause = rest.trim_start().to_string();
-    }
-    if !return_clause.starts_with("Return ") || !return_clause.contains(" to the battlefield") {
-        return None;
+        clauses[0] = rest.trim_start().to_string();
     }
 
-    let mut counter_descriptions = Vec::new();
-    for clause in clauses.iter().skip(1) {
-        let rest = clause.strip_prefix("Put ")?;
-        let counter_phrase = rest.strip_suffix(" on it")?.trim();
-        if !counter_phrase.to_ascii_lowercase().contains("counter") {
-            return None;
+    for idx in 0..clauses.len().saturating_sub(1) {
+        let clause = clauses[idx].clone();
+        if clause.to_ascii_lowercase().starts_with("for each player, return all ") {
+            continue;
         }
-        counter_descriptions.push(with_indefinite_article(counter_phrase));
-    }
-    if counter_descriptions.is_empty() {
-        return None;
+        let lower_clause = clause.to_ascii_lowercase();
+        let clause_moves_to_battlefield = lower_clause.contains(" onto the battlefield")
+            || lower_clause.contains(" to the battlefield");
+        if !clause_moves_to_battlefield {
+            continue;
+        }
+        let is_return = clause.starts_with("Return ");
+        let is_put = clause.starts_with("Put ");
+        let is_inline_move = !is_return
+            && !is_put
+            && (lower_clause.contains(" put ") || lower_clause.contains(" return "));
+        if !is_return && !is_put && !is_inline_move {
+            continue;
+        }
+
+        let mut counter_descriptions = Vec::new();
+        let mut tail_start = idx + 1;
+        while tail_start < clauses.len() {
+            let clause = clauses[tail_start].trim();
+            let Some(rest) = clause.strip_prefix("Put ") else {
+                break;
+            };
+            let Some(counter_phrase) = rest.strip_suffix(" on it") else {
+                break;
+            };
+            let counter_phrase = counter_phrase.trim();
+            if !counter_phrase.to_ascii_lowercase().contains("counter") {
+                break;
+            }
+            counter_descriptions.push(with_indefinite_article(counter_phrase));
+            tail_start += 1;
+        }
+        if counter_descriptions.is_empty() {
+            continue;
+        }
+
+        let mut base_clause = clause;
+        if is_return && base_clause == "Return target card from your graveyard to the battlefield" {
+            base_clause =
+                "Return target permanent card from your graveyard to the battlefield".to_string();
+        }
+
+        let merged = format!(
+            "{base_clause} with {} on it",
+            join_with_and(&counter_descriptions)
+        );
+
+        let mut rebuilt = Vec::new();
+        rebuilt.extend_from_slice(&clauses[..idx]);
+        rebuilt.push(merged);
+        rebuilt.extend_from_slice(&clauses[tail_start..]);
+
+        let mut rewritten = rebuilt.join(". ");
+        if !rewritten.ends_with('.') {
+            rewritten.push('.');
+        }
+        if !chapter_prefix.is_empty() {
+            rewritten = format!("{chapter_prefix}{rewritten}");
+        }
+        return Some(rewritten);
     }
 
-    if return_clause == "Return target card from your graveyard to the battlefield" {
-        return_clause =
-            "Return target permanent card from your graveyard to the battlefield".to_string();
-    }
-
-    let rewritten = format!(
-        "{return_clause} with {} on it.",
-        join_with_and(&counter_descriptions)
-    );
-    if chapter_prefix.is_empty() {
-        Some(rewritten)
-    } else {
-        Some(format!("{chapter_prefix}{rewritten}"))
-    }
+    None
 }
 
 fn chapter_number_to_roman(chapter: u32) -> Option<&'static str> {
@@ -19655,6 +19807,25 @@ fn normalize_sentence_surface_style(line: &str) -> String {
     {
         return format!(
             "Each player draws {} cards.",
+            render_small_number_or_raw(count)
+        );
+    }
+    if normalized == "For each player, that player discards a card."
+        || normalized == "For each player, that player discards a card"
+    {
+        return "Each player discards a card.".to_string();
+    }
+    if let Some(count) = normalized
+        .strip_prefix("For each player, that player discards ")
+        .and_then(|rest| rest.strip_suffix(" cards."))
+        .or_else(|| {
+            normalized
+                .strip_prefix("For each player, that player discards ")
+                .and_then(|rest| rest.strip_suffix(" cards"))
+        })
+    {
+        return format!(
+            "Each player discards {} cards.",
             render_small_number_or_raw(count)
         );
     }
@@ -24193,6 +24364,17 @@ mod tests {
         assert_eq!(
             normalized,
             "Return target permanent card from your graveyard to the battlefield with a Hexproof counter and an Indestructible counter on it."
+        );
+    }
+
+    #[test]
+    fn post_pass_rewrites_put_onto_battlefield_with_counter_sequence() {
+        let normalized = normalize_compiled_post_pass_effect(
+            "Put a permanent onto the battlefield. Put a finality counter on it.",
+        );
+        assert_eq!(
+            normalized,
+            "Put a permanent onto the battlefield with a finality counter on it."
         );
     }
 
