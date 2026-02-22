@@ -11956,6 +11956,67 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
                 return Ok(TriggerSpec::ThisDies);
             }
 
+            // Pattern: "a creature dealt damage by [this/equipped] creature this turn dies"
+            let subject_words = self::words(subject_tokens);
+            if subject_words.len() >= 8
+                && subject_words.ends_with(&["this", "turn"])
+                && let Some(dealt_word_idx) = subject_words
+                    .windows(3)
+                    .position(|w| w == ["dealt", "damage", "by"])
+            {
+                let victim_end =
+                    token_index_for_word_index(subject_tokens, dealt_word_idx).unwrap_or(0);
+                if victim_end > 0 && victim_end <= subject_tokens.len() {
+                    let victim_tokens = trim_edge_punctuation(&subject_tokens[..victim_end]);
+                    let victim_tokens = strip_leading_articles(&victim_tokens);
+                    if !victim_tokens.is_empty() {
+                        // Damage source tokens are between "by" and "this turn"
+                        let damager_start_word_idx = dealt_word_idx + 3;
+                        let this_word_idx = subject_words.len() - 2;
+                        let damager_start = token_index_for_word_index(
+                            subject_tokens,
+                            damager_start_word_idx,
+                        )
+                        .unwrap_or(subject_tokens.len());
+                        let damager_end =
+                            token_index_for_word_index(subject_tokens, this_word_idx)
+                                .unwrap_or(subject_tokens.len());
+
+                        if damager_start < damager_end && damager_end <= subject_tokens.len() {
+                            let damager_tokens =
+                                trim_edge_punctuation(&subject_tokens[damager_start..damager_end]);
+                            let damager_words = self::words(&damager_tokens);
+
+                            let damager = if damager_words == ["this", "creature"]
+                                || damager_words == ["this", "permanent"]
+                                || damager_words == ["this", "source"]
+                            {
+                                Some(DamageBySpec::ThisCreature)
+                            } else if damager_words == ["equipped", "creature"] {
+                                Some(DamageBySpec::EquippedCreature)
+                            } else {
+                                None
+                            };
+
+                            if let Some(damager) = damager {
+                                let victim = parse_object_filter(&victim_tokens, other).map_err(
+                                    |_| {
+                                        CardTextError::ParseError(format!(
+                                            "unsupported damaged-by trigger victim filter (clause: '{}')",
+                                            words.join(" ")
+                                        ))
+                                    },
+                                )?;
+                                return Ok(TriggerSpec::DiesCreatureDealtDamageByThisTurn {
+                                    victim,
+                                    damager,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
             if let Ok(filter) = parse_object_filter(subject_tokens, other) {
                 return Ok(TriggerSpec::Dies(filter));
             }

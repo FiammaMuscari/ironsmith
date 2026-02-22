@@ -43,6 +43,12 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
             Trigger::player_sacrifices(player, filter)
         }
         TriggerSpec::Dies(filter) => Trigger::dies(filter),
+        TriggerSpec::DiesCreatureDealtDamageByThisTurn { victim, damager } => match damager {
+            DamageBySpec::ThisCreature => Trigger::creature_dealt_damage_by_this_creature_this_turn_dies(victim),
+            DamageBySpec::EquippedCreature => {
+                Trigger::creature_dealt_damage_by_equipped_creature_this_turn_dies(victim)
+            }
+        },
         TriggerSpec::SpellCast {
             filter,
             caster,
@@ -3983,9 +3989,13 @@ fn compile_effect(
             let needs_created_tag = ctx.auto_tag_object_targets || attached_to.is_some();
             let mut created_tag: Option<String> = None;
             if needs_created_tag {
+                let preserve_trigger_reference =
+                    matches!(ctx.last_object_tag.as_deref(), Some("triggering" | "damaged"));
                 let tag = ctx.next_tag("created");
-                ctx.last_object_tag = Some(tag.clone());
                 effect = effect.tag(tag.clone());
+                if !preserve_trigger_reference {
+                    ctx.last_object_tag = Some(tag.clone());
+                }
                 created_tag = Some(tag);
             }
 
@@ -4018,8 +4028,12 @@ fn compile_effect(
             };
             let mut effect = effect;
             if ctx.auto_tag_object_targets {
+                let preserve_trigger_reference =
+                    matches!(ctx.last_object_tag.as_deref(), Some("triggering" | "damaged"));
                 let tag = ctx.next_tag("created");
-                ctx.last_object_tag = Some(tag.clone());
+                if !preserve_trigger_reference {
+                    ctx.last_object_tag = Some(tag.clone());
+                }
                 effect = effect.tag(tag);
             }
             Ok((vec![effect], Vec::new()))

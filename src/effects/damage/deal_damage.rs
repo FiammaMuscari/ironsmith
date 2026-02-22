@@ -136,10 +136,14 @@ impl EffectExecutor for DealDamageEffect {
 
         if let ChooseSpec::Iterated = &self.target {
             if let Some(object_id) = ctx.iterated_object {
-                if let Some(obj) = game.object(object_id)
-                    && (obj.has_card_type(CardType::Creature)
-                        || obj.has_card_type(CardType::Planeswalker))
-                {
+                if let Some(obj) = game.object(object_id) {
+                    let can_be_damaged = obj.has_card_type(CardType::Creature)
+                        || obj.has_card_type(CardType::Planeswalker);
+                    let is_creature = obj.has_card_type(CardType::Creature);
+                    if !can_be_damaged {
+                        return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+                    }
+
                     let (final_damage, was_prevented) =
                         process_damage_with_event_with_source_snapshot(
                             game,
@@ -156,6 +160,9 @@ impl EffectExecutor for DealDamageEffect {
 
                     if final_damage > 0 {
                         game.mark_damage(object_id, final_damage);
+                        if is_creature {
+                            game.record_creature_damaged_by_this_turn(object_id, ctx.source);
+                        }
                     }
                     return Ok(make_outcome(
                         final_damage,
@@ -234,6 +241,12 @@ impl EffectExecutor for DealDamageEffect {
 
                     if final_damage > 0 {
                         game.mark_damage(object_id, final_damage);
+                        if game
+                            .object(object_id)
+                            .is_some_and(|o| o.has_card_type(CardType::Creature))
+                        {
+                            game.record_creature_damaged_by_this_turn(object_id, ctx.source);
+                        }
                     }
 
                     return Ok(make_outcome(
@@ -297,10 +310,14 @@ impl EffectExecutor for DealDamageEffect {
                     ));
                 }
                 ResolvedTarget::Object(object_id) => {
-                    if let Some(obj) = game.object(*object_id)
-                        && (obj.has_card_type(CardType::Creature)
-                            || obj.has_card_type(CardType::Planeswalker))
-                    {
+                    if let Some(obj) = game.object(*object_id) {
+                        let can_be_damaged = obj.has_card_type(CardType::Creature)
+                            || obj.has_card_type(CardType::Planeswalker);
+                        let is_creature = obj.has_card_type(CardType::Creature);
+                        if !can_be_damaged {
+                            continue;
+                        }
+
                         // Process through replacement/prevention effects
                         let (final_damage, was_prevented) =
                             process_damage_with_event_with_source_snapshot(
@@ -318,6 +335,9 @@ impl EffectExecutor for DealDamageEffect {
 
                         if final_damage > 0 {
                             game.mark_damage(*object_id, final_damage);
+                            if is_creature {
+                                game.record_creature_damaged_by_this_turn(*object_id, ctx.source);
+                            }
                         }
                         return Ok(make_outcome(
                             final_damage,
