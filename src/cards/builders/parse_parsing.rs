@@ -11556,6 +11556,12 @@ fn split_trigger_or_index(tokens: &[Token]) -> Option<usize> {
             && previous_word
                 .is_some_and(|word| parse_color(word).is_some() || objectish_word(word))
             && next_word.is_some_and(|word| parse_color(word).is_some() || objectish_word(word));
+        let cast_or_copy_or = tokens
+            .iter()
+            .filter_map(Token::as_word)
+            .any(|word| word == "spell" || word == "spells")
+            && previous_word.is_some_and(|word| word == "cast" || word == "casts")
+            && next_word.is_some_and(|word| word == "copy" || word == "copies");
         let spell_or_ability_or = tokens
             .get(idx - 1)
             .and_then(Token::as_word)
@@ -11571,6 +11577,7 @@ fn split_trigger_or_index(tokens: &[Token]) -> Option<usize> {
             || object_list_or
             || and_or_list_or
             || serial_spell_list_or
+            || cast_or_copy_or
             || spell_or_ability_or
         {
             None
@@ -12126,11 +12133,32 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
         return Ok(TriggerSpec::YouGainLife);
     }
 
+    if words.len() >= 6
+        && words.ends_with(&["during", "your", "turn"])
+        && words[..words.len() - 3] == ["you", "gain", "life"]
+    {
+        return Ok(TriggerSpec::YouGainLifeDuringTurn(PlayerFilter::You));
+    }
+
     if words.ends_with(&["lose", "life"]) || words.ends_with(&["loses", "life"]) {
         let subject = &words[..words.len().saturating_sub(2)];
         let player = parse_trigger_subject_player_filter(subject);
         if let Some(player) = player {
             return Ok(TriggerSpec::PlayerLosesLife(player));
+        }
+    }
+
+    if words.len() >= 5
+        && words.ends_with(&["during", "your", "turn"])
+        && (words[..words.len() - 3].ends_with(&["lose", "life"])
+            || words[..words.len() - 3].ends_with(&["loses", "life"]))
+    {
+        let subject = &words[..words.len() - 5];
+        if let Some(player) = parse_trigger_subject_player_filter(subject) {
+            return Ok(TriggerSpec::PlayerLosesLifeDuringTurn {
+                player,
+                during_turn: PlayerFilter::You,
+            });
         }
     }
 

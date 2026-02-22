@@ -220,7 +220,12 @@ enum TriggerSpec {
     },
     ThisIsDealtDamage,
     YouGainLife,
+    YouGainLifeDuringTurn(PlayerFilter),
     PlayerLosesLife(PlayerFilter),
+    PlayerLosesLifeDuringTurn {
+        player: PlayerFilter,
+        during_turn: PlayerFilter,
+    },
     YouDrawCard,
     PlayerDrawsCard(PlayerFilter),
     PlayerDrawsNthCardEachTurn {

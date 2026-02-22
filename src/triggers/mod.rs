@@ -386,7 +386,12 @@ impl Trigger {
 
     /// Create a "whenever you gain life" trigger.
     pub fn you_gain_life() -> Self {
-        Self::new(YouGainLifeTrigger)
+        Self::new(YouGainLifeTrigger::new())
+    }
+
+    /// Create a "whenever you gain life during [player]'s turn" trigger.
+    pub fn you_gain_life_during_turn(during_turn: PlayerFilter) -> Self {
+        Self::new(YouGainLifeTrigger::during_turn(during_turn))
     }
 
     /// Create a "whenever you lose life" trigger.
@@ -397,6 +402,11 @@ impl Trigger {
     /// Create a "whenever [player] loses life" trigger.
     pub fn player_loses_life(player: PlayerFilter) -> Self {
         Self::new(PlayerLosesLifeTrigger::new(player))
+    }
+
+    /// Create a "whenever [player] loses life during [turn-filter]'s turn" trigger.
+    pub fn player_loses_life_during_turn(player: PlayerFilter, during_turn: PlayerFilter) -> Self {
+        Self::new(PlayerLosesLifeTrigger::during_turn(player, during_turn))
     }
 
     /// Create a "when [target] is dealt damage" trigger.

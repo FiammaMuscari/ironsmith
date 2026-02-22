@@ -34,7 +34,13 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         }
         TriggerSpec::ThisIsDealtDamage => Trigger::is_dealt_damage(ChooseSpec::Source),
         TriggerSpec::YouGainLife => Trigger::you_gain_life(),
+        TriggerSpec::YouGainLifeDuringTurn(during_turn) => {
+            Trigger::you_gain_life_during_turn(during_turn)
+        }
         TriggerSpec::PlayerLosesLife(player) => Trigger::player_loses_life(player),
+        TriggerSpec::PlayerLosesLifeDuringTurn { player, during_turn } => {
+            Trigger::player_loses_life_during_turn(player, during_turn)
+        }
         TriggerSpec::YouDrawCard => Trigger::you_draw_card(),
         TriggerSpec::PlayerDrawsCard(player) => Trigger::player_draws_card(player),
         TriggerSpec::PlayerDrawsNthCardEachTurn {
@@ -133,6 +139,7 @@ fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<PlayerFilter>
         TriggerSpec::SpellCast { .. } => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::SpellCopied { .. } => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerLosesLife(_) => Some(PlayerFilter::IteratedPlayer),
+        TriggerSpec::PlayerLosesLifeDuringTurn { .. } => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerDrawsCard(_) => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerDrawsNthCardEachTurn { .. } => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerDiscardsCard { .. } => Some(PlayerFilter::IteratedPlayer),
@@ -169,7 +176,9 @@ fn trigger_supports_event_value(trigger: &TriggerSpec, spec: &EventValueSpec) ->
     match spec {
         EventValueSpec::Amount | EventValueSpec::LifeAmount => match trigger {
             TriggerSpec::YouGainLife
+            | TriggerSpec::YouGainLifeDuringTurn(_)
             | TriggerSpec::PlayerLosesLife(_)
+            | TriggerSpec::PlayerLosesLifeDuringTurn { .. }
             | TriggerSpec::ThisIsDealtDamage
             | TriggerSpec::ThisDealsDamage
             | TriggerSpec::ThisDealsDamageTo(_)

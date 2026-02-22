@@ -2,11 +2,26 @@
 
 use crate::events::EventKind;
 use crate::events::life::LifeGainEvent;
+use crate::target::PlayerFilter;
 use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct YouGainLifeTrigger;
+pub struct YouGainLifeTrigger {
+    pub during_turn: Option<PlayerFilter>,
+}
+
+impl YouGainLifeTrigger {
+    pub fn new() -> Self {
+        Self { during_turn: None }
+    }
+
+    pub fn during_turn(during_turn: PlayerFilter) -> Self {
+        Self {
+            during_turn: Some(during_turn),
+        }
+    }
+}
 
 impl TriggerMatcher for YouGainLifeTrigger {
     fn matches(&self, event: &TriggerEvent, ctx: &TriggerContext) -> bool {
@@ -16,11 +31,34 @@ impl TriggerMatcher for YouGainLifeTrigger {
         let Some(e) = event.downcast::<LifeGainEvent>() else {
             return false;
         };
-        e.player == ctx.controller
+        if e.player != ctx.controller {
+            return false;
+        }
+        if let Some(during_turn) = &self.during_turn {
+            let active_player = ctx.game.turn.active_player;
+            return match during_turn {
+                PlayerFilter::You => active_player == ctx.controller,
+                PlayerFilter::Opponent => active_player != ctx.controller,
+                PlayerFilter::Any | PlayerFilter::Active => true,
+                PlayerFilter::Specific(id) => active_player == *id,
+                _ => true,
+            };
+        }
+        true
     }
 
     fn display(&self) -> String {
-        "Whenever you gain life".to_string()
+        if let Some(during_turn) = &self.during_turn {
+            let suffix = match during_turn {
+                PlayerFilter::You => " during your turn",
+                PlayerFilter::Opponent => " during an opponent's turn",
+                PlayerFilter::Specific(_) => " during that player's turn",
+                _ => "",
+            };
+            format!("Whenever you gain life{suffix}")
+        } else {
+            "Whenever you gain life".to_string()
+        }
     }
 
     fn clone_box(&self) -> Box<dyn TriggerMatcher> {
@@ -40,7 +78,7 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let source_id = ObjectId::from_raw(1);
 
-        let trigger = YouGainLifeTrigger;
+        let trigger = YouGainLifeTrigger::new();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let event = TriggerEvent::new(LifeGainEvent::new(alice, 3));
@@ -54,7 +92,7 @@ mod tests {
         let bob = PlayerId::from_index(1);
         let source_id = ObjectId::from_raw(1);
 
-        let trigger = YouGainLifeTrigger;
+        let trigger = YouGainLifeTrigger::new();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let event = TriggerEvent::new(LifeGainEvent::new(bob, 3));

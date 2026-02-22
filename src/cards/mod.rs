@@ -636,6 +636,28 @@ mod tests {
     }
 
     #[test]
+    fn generated_definition_support_accepts_a_symmetry_sage() {
+        let text = "Mana cost: {U}\nType: Creature — Human Wizard\nPower/Toughness: 0/3\nFlying\nMagecraft — Whenever you cast or copy an instant or sorcery spell, target creature you control has base power 3 until end of turn.";
+        let definition = CardDefinitionBuilder::new(CardId::new(), "A-Symmetry Sage")
+            .parse_text(text)
+            .expect("a-symmetry sage parse should succeed");
+
+        let debug = format!("{definition:#?}").to_ascii_lowercase();
+        assert!(!debug.contains("unimplemented"));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_a_vampire_scrivener() {
+        let text = "Mana cost: {3}{B}\nType: Creature — Vampire Warlock\nPower/Toughness: 2/2\nFlying\nWhenever you gain life during your turn, put a +1/+1 counter on Vampire Scrivener.\nWhenever you lose life during your turn, put a +1/+1 counter on Vampire Scrivener.";
+        let definition = CardDefinitionBuilder::new(CardId::new(), "A-Vampire Scrivener")
+            .parse_text(text)
+            .expect("a-vampire scrivener parse should succeed");
+
+        let debug = format!("{definition:#?}").to_ascii_lowercase();
+        assert!(!debug.contains("unimplemented"));
+    }
+
+    #[test]
     fn registry_skips_parser_fallback_definitions() {
         let card = CardBuilder::new(CardId::new(), "Skipped Fallback")
             .card_types(vec![CardType::Creature])
