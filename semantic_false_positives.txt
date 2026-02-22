@@ -488,3 +488,5 @@ Faithful Mending
 Run Wild
 Topple
 Egon, God of Death // Throne of Death
+Winged Hive Tyrant
+Flame Fusillade
