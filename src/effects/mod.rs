@@ -112,7 +112,10 @@ pub use player::{
 };
 pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};
 pub use restrictions::CantEffect;
-pub use stack::{ChooseNewTargetsEffect, CopySpellEffect, CounterEffect};
+pub use stack::{
+    ChooseNewTargetsEffect, CopySpellEffect, CounterEffect, NewTargetRestriction, RetargetMode,
+    RetargetStackObjectEffect,
+};
 pub use tokens::{CreateTokenCopyEffect, CreateTokenEffect, InvestigateEffect};
 pub use zones::{
     BattlefieldController, DestroyEffect, ExileEffect, ExileFromHandAsCostEffect,

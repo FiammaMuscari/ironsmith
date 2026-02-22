@@ -407,6 +407,18 @@ enum SharedTypeConstraintAst {
     PermanentType,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum NewTargetRestrictionAst {
+    Player(PlayerAst),
+    Object(ObjectFilter),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum RetargetModeAst {
+    All,
+    OneToFixed { target: TargetAst },
+}
+
 #[derive(Debug, Clone)]
 enum EffectAst {
     DealDamage {
@@ -674,6 +686,13 @@ enum EffectAst {
         count: Value,
         player: PlayerAst,
         may_choose_new_targets: bool,
+    },
+    RetargetStackObject {
+        target: TargetAst,
+        mode: RetargetModeAst,
+        chooser: PlayerAst,
+        require_change: bool,
+        new_target_restriction: Option<NewTargetRestrictionAst>,
     },
     Conditional {
         predicate: PredicateAst,

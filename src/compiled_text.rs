@@ -12183,6 +12183,44 @@ fn describe_effect_impl(effect: &Effect) -> String {
             },
         );
     }
+    if let Some(retarget) = effect.downcast_ref::<crate::effects::RetargetStackObjectEffect>() {
+        let target_text = describe_choose_spec(&retarget.target);
+        let mut base = match &retarget.mode {
+            crate::effects::RetargetMode::All => {
+                if retarget.require_change {
+                    format!("Change the target of {target_text}")
+                } else {
+                    format!("Choose new targets for {target_text}")
+                }
+            }
+            crate::effects::RetargetMode::OneToFixed(spec) => {
+                let fixed_text = describe_choose_spec(spec);
+                format!("Change a target of {target_text} to {fixed_text}")
+            }
+        };
+
+        if let Some(restriction) = &retarget.new_target_restriction {
+            let restriction_text = match restriction {
+                crate::effects::NewTargetRestriction::Player(filter) => {
+                    let mut text = describe_player_filter(filter);
+                    if let Some(rest) = text.strip_prefix("target ") {
+                        text = rest.to_string();
+                    }
+                    if text == "you" {
+                        text
+                    } else {
+                        ensure_indefinite_article(&text)
+                    }
+                }
+                crate::effects::NewTargetRestriction::Object(filter) => {
+                    ensure_indefinite_article(&filter.description())
+                }
+            };
+            base.push_str(". The new target must be ");
+            base.push_str(&restriction_text);
+        }
+        return base;
+    }
     if let Some(set_life) = effect.downcast_ref::<crate::effects::SetLifeTotalEffect>() {
         return format!(
             "{}'s life total becomes {}",

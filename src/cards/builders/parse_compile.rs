@@ -393,6 +393,25 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         EffectAst::CopySpell { target, .. } => {
             matches!(target, TargetAst::Tagged(t, _) if t.as_str() == tag)
         }
+        EffectAst::RetargetStackObject {
+            target,
+            mode,
+            new_target_restriction,
+            ..
+        } => {
+            let mut references = target_references_tag(target, tag);
+            if let RetargetModeAst::OneToFixed { target: fixed } = mode {
+                references = references || target_references_tag(fixed, tag);
+            }
+            if let Some(NewTargetRestrictionAst::Object(filter)) = new_target_restriction {
+                references = references
+                    || filter
+                        .tagged_constraints
+                        .iter()
+                        .any(|constraint| constraint.tag.as_str() == tag);
+            }
+            references
+        }
         EffectAst::CreateTokenCopy { object, .. } => {
             matches!(object, ObjectRefAst::It) && tag == IT_TAG
         }
@@ -606,6 +625,7 @@ fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::RevealHand { player }
         | EffectAst::PutIntoHand { player, .. }
         | EffectAst::CopySpell { player, .. }
+        | EffectAst::RetargetStackObject { chooser: player, .. }
         | EffectAst::DiscardHand { player }
         | EffectAst::Discard { player, .. }
         | EffectAst::Mill { player, .. }
@@ -800,6 +820,25 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         }
         EffectAst::PutIntoHand { object, .. } => matches!(object, ObjectRefAst::It),
         EffectAst::CopySpell { target, .. } => target_references_tag(target, IT_TAG),
+        EffectAst::RetargetStackObject {
+            target,
+            mode,
+            new_target_restriction,
+            ..
+        } => {
+            let mut references = target_references_tag(target, IT_TAG);
+            if let RetargetModeAst::OneToFixed { target: fixed } = mode {
+                references = references || target_references_tag(fixed, IT_TAG);
+            }
+            if let Some(NewTargetRestrictionAst::Object(filter)) = new_target_restriction {
+                references = references
+                    || filter
+                        .tagged_constraints
+                        .iter()
+                        .any(|constraint| constraint.tag.as_str() == IT_TAG);
+            }
+            references
+        }
         EffectAst::CreateTokenCopy { object, .. } => matches!(object, ObjectRefAst::It),
         EffectAst::CreateToken { count, .. } | EffectAst::CreateTokenWithMods { count, .. } => {
             value_references_tag(count, IT_TAG)
@@ -3706,6 +3745,59 @@ fn compile_effect(
                 compiled.push(retarget);
             }
             Ok((compiled, choices))
+        }
+        EffectAst::RetargetStackObject {
+            target,
+            mode,
+            chooser,
+            require_change,
+            new_target_restriction,
+        } => {
+            let (spec, mut choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let (chooser_filter, chooser_choices) =
+                resolve_effect_player_filter(*chooser, ctx, true, true, true)?;
+            for choice in chooser_choices {
+                push_choice(&mut choices, choice);
+            }
+
+            let mut effect = crate::effects::RetargetStackObjectEffect::new(spec.clone())
+                .with_chooser(chooser_filter);
+
+            if *require_change {
+                effect = effect.require_change();
+            }
+
+            if let Some(restriction) = new_target_restriction {
+                let restriction = match restriction {
+                    NewTargetRestrictionAst::Player(player) => {
+                        let (filter, _) =
+                            resolve_effect_player_filter(*player, ctx, false, false, false)?;
+                        crate::effects::NewTargetRestriction::Player(filter)
+                    }
+                    NewTargetRestrictionAst::Object(filter) => {
+                        let resolved = resolve_it_tag(filter, ctx)?;
+                        crate::effects::NewTargetRestriction::Object(resolved)
+                    }
+                };
+                effect = effect.with_restriction(restriction);
+            }
+
+            let compiled_mode = match mode {
+                RetargetModeAst::All => crate::effects::RetargetMode::All,
+                RetargetModeAst::OneToFixed { target: fixed } => {
+                    let (fixed_spec, fixed_choices) =
+                        resolve_target_spec_with_choices(fixed, ctx)?;
+                    for choice in fixed_choices {
+                        push_choice(&mut choices, choice);
+                    }
+                    crate::effects::RetargetMode::OneToFixed(fixed_spec)
+                }
+            };
+            effect = effect.with_mode(compiled_mode);
+
+            let effect =
+                tag_object_target_effect(Effect::new(effect), &spec, ctx, "retargeted");
+            Ok((vec![effect], choices))
         }
         EffectAst::Conditional {
             predicate,

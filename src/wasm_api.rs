@@ -5143,6 +5143,34 @@ fn describe_effect_core_expanded(
             choose_new_targets.from_effect.0
         ));
     }
+    if let Some(retarget) = effect.downcast_ref::<crate::effects::RetargetStackObjectEffect>() {
+        let target_text = describe_choose_spec(&retarget.target, tagged_subjects);
+        let mut base = match &retarget.mode {
+            crate::effects::RetargetMode::All => {
+                if retarget.require_change {
+                    format!("Change the target of {target_text}.")
+                } else {
+                    format!("Choose new targets for {target_text}.")
+                }
+            }
+            crate::effects::RetargetMode::OneToFixed(spec) => {
+                let fixed_text = describe_choose_spec(spec, tagged_subjects);
+                format!("Change a target of {target_text} to {fixed_text}.")
+            }
+        };
+        if let Some(restriction) = &retarget.new_target_restriction {
+            let restriction_text = match restriction {
+                crate::effects::NewTargetRestriction::Player(filter) => {
+                    describe_player_filter(filter, tagged_subjects).to_ascii_lowercase()
+                }
+                crate::effects::NewTargetRestriction::Object(filter) => {
+                    filter.description().to_ascii_lowercase()
+                }
+            };
+            base.push_str(&format!(" New target must be {restriction_text}."));
+        }
+        return Some(base);
+    }
     if let Some(return_to_hand) = effect.downcast_ref::<crate::effects::ReturnToHandEffect>() {
         return Some(format!(
             "Return {} to its owner's hand.",

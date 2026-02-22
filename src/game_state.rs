@@ -1499,6 +1499,7 @@ impl GameState {
         // Preserve it only for Stack -> Battlefield (a spell resolving into a permanent).
         if !(old_zone == Zone::Stack && new_zone == Zone::Battlefield) {
             new_object.keyword_payment_contributions_to_cast.clear();
+            new_object.x_value = None;
         }
 
         // Set battlefield state for new permanents

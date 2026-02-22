@@ -10,6 +10,7 @@
 //! - Triggered ability conditions (for triggers that watch for specific events)
 
 use crate::color::ColorSet;
+use crate::effect::ChoiceCount;
 use crate::ids::{ObjectId, PlayerId};
 use crate::object::{CounterType, Object, ObjectKind};
 use crate::static_abilities::StaticAbilityId;
@@ -369,6 +370,16 @@ pub enum CounterConstraint {
     Typed(CounterType),
 }
 
+/// Stack object kind constraint for stack-targeting filters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StackObjectKind {
+    Spell,
+    Ability,
+    ActivatedAbility,
+    TriggeredAbility,
+    SpellOrAbility,
+}
+
 /// A tagged-object constraint used by `ObjectFilter`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaggedObjectConstraint {
@@ -408,6 +419,21 @@ pub struct ObjectFilter {
     /// If true and both `targets_player` and `targets_object` are set, match
     /// either target class instead of requiring both.
     pub targets_any_of: bool,
+
+    /// If set, constrain stack entries to spells, abilities, or both.
+    pub stack_kind: Option<StackObjectKind>,
+
+    /// If set, require a specific target count on stack entries.
+    pub target_count: Option<ChoiceCount>,
+
+    /// If set, require stack entries to target only a player matching this filter.
+    pub targets_only_player: Option<PlayerFilter>,
+
+    /// If set, require stack entries to target only objects matching this filter.
+    pub targets_only_object: Option<Box<ObjectFilter>>,
+
+    /// If true and both `targets_only_player` and `targets_only_object` are set, allow either.
+    pub targets_only_any_of: bool,
 
     /// Required card types (object must have at least one if non-empty)
     pub card_types: Vec<CardType>,
@@ -660,6 +686,34 @@ impl ObjectFilter {
         Self {
             zone: Some(Zone::Stack),
             has_mana_cost: true,
+            stack_kind: Some(StackObjectKind::Spell),
+            ..Default::default()
+        }
+    }
+
+    /// Create a filter for spells or abilities (on the stack).
+    pub fn spell_or_ability() -> Self {
+        Self {
+            zone: Some(Zone::Stack),
+            stack_kind: Some(StackObjectKind::SpellOrAbility),
+            ..Default::default()
+        }
+    }
+
+    /// Create a filter for abilities (on the stack).
+    pub fn ability() -> Self {
+        Self {
+            zone: Some(Zone::Stack),
+            stack_kind: Some(StackObjectKind::Ability),
+            ..Default::default()
+        }
+    }
+
+    /// Create a filter for activated abilities (on the stack).
+    pub fn activated_ability() -> Self {
+        Self {
+            zone: Some(Zone::Stack),
+            stack_kind: Some(StackObjectKind::ActivatedAbility),
             ..Default::default()
         }
     }
@@ -669,6 +723,7 @@ impl ObjectFilter {
         Self {
             zone: Some(Zone::Stack),
             card_types: vec![CardType::Instant, CardType::Sorcery],
+            stack_kind: Some(StackObjectKind::Spell),
             ..Default::default()
         }
     }
@@ -724,6 +779,43 @@ impl ObjectFilter {
         self.targets_player = player;
         self.targets_object = object.map(Box::new);
         self
+    }
+
+    /// Require the object to be a spell/ability on the stack targeting only the
+    /// provided player/object filters.
+    pub fn targeting_only(
+        mut self,
+        player: Option<PlayerFilter>,
+        object: Option<ObjectFilter>,
+    ) -> Self {
+        self.zone = Some(Zone::Stack);
+        self.targets_only_player = player;
+        self.targets_only_object = object.map(Box::new);
+        if self.targets_only_player.is_some() && self.targets_only_object.is_some() {
+            self.targets_only_any_of = true;
+        }
+        self
+    }
+
+    /// Require the object to be a spell/ability on the stack targeting only a player.
+    pub fn targeting_only_player(self, player: PlayerFilter) -> Self {
+        self.targeting_only(Some(player), None)
+    }
+
+    /// Require the object to be a spell/ability on the stack targeting only an object.
+    pub fn targeting_only_object(self, object: ObjectFilter) -> Self {
+        self.targeting_only(None, Some(object))
+    }
+
+    /// Require the object to have a specific number of targets (stack entries only).
+    pub fn with_target_count(mut self, count: ChoiceCount) -> Self {
+        self.target_count = Some(count);
+        self
+    }
+
+    /// Require the object to have an exact number of targets (stack entries only).
+    pub fn target_count_exact(self, count: usize) -> Self {
+        self.with_target_count(ChoiceCount::exactly(count))
     }
 
     /// Require the object to be a spell/ability on the stack targeting a player.
@@ -1210,11 +1302,38 @@ impl ObjectFilter {
             return false;
         }
 
-        // Zone check
+        // Zone check (with special handling for stack entries)
+        let wants_stack = self.zone == Some(Zone::Stack)
+            || self.stack_kind.is_some()
+            || self.target_count.is_some()
+            || self.targets_only_player.is_some()
+            || self.targets_only_object.is_some()
+            || self.targets_player.is_some()
+            || self.targets_object.is_some();
+
+        let mut stack_entry = None;
+        if wants_stack {
+            stack_entry = game.stack.iter().find(|e| e.object_id == object.id);
+            if (self.zone == Some(Zone::Stack) || self.stack_kind.is_some()) && stack_entry.is_none()
+            {
+                return false;
+            }
+        }
+
         if let Some(zone) = &self.zone
+            && *zone != Zone::Stack
             && object.zone != *zone
         {
             return false;
+        }
+
+        if let Some(kind) = self.stack_kind {
+            let Some(entry) = stack_entry else {
+                return false;
+            };
+            if !Self::stack_entry_matches_kind(entry, kind) {
+                return false;
+            }
         }
 
         if self.modified {
@@ -1733,12 +1852,7 @@ impl ObjectFilter {
 
         // Targeting checks (spell/ability targets on the stack)
         if self.targets_player.is_some() || self.targets_object.is_some() {
-            if object.zone != Zone::Stack {
-                return false;
-            }
-
-            let entry = game.stack.iter().find(|e| e.object_id == object.id);
-            let Some(entry) = entry else {
+            let Some(entry) = stack_entry.or_else(|| game.stack.iter().find(|e| e.object_id == object.id)) else {
                 return false;
             };
 
@@ -1773,7 +1887,78 @@ impl ObjectFilter {
             }
         }
 
+        if self.target_count.is_some()
+            || self.targets_only_player.is_some()
+            || self.targets_only_object.is_some()
+        {
+            let Some(entry) = stack_entry.or_else(|| game.stack.iter().find(|e| e.object_id == object.id)) else {
+                return false;
+            };
+
+            if let Some(count) = self.target_count {
+                let total = entry.targets.len();
+                if total < count.min {
+                    return false;
+                }
+                if let Some(max) = count.max && total > max {
+                    return false;
+                }
+            }
+
+            if self.targets_only_player.is_some() || self.targets_only_object.is_some() {
+                if entry.targets.is_empty() {
+                    return false;
+                }
+
+                let matches_target = |target: &crate::game_state::Target| -> bool {
+                    let matches_player = self
+                        .targets_only_player
+                        .as_ref()
+                        .is_some_and(|player_filter| match target {
+                            crate::game_state::Target::Player(pid) => {
+                                player_filter.matches_player(*pid, ctx)
+                            }
+                            _ => false,
+                        });
+                    let matches_object = self
+                        .targets_only_object
+                        .as_ref()
+                        .is_some_and(|object_filter| match target {
+                            crate::game_state::Target::Object(obj_id) => game
+                                .object(*obj_id)
+                                .is_some_and(|obj| object_filter.matches(obj, ctx, game)),
+                            _ => false,
+                        });
+
+                    if self.targets_only_player.is_some() && self.targets_only_object.is_some() {
+                        matches_player || matches_object
+                    } else if self.targets_only_player.is_some() {
+                        matches_player
+                    } else {
+                        matches_object
+                    }
+                };
+
+                if !entry.targets.iter().all(matches_target) {
+                    return false;
+                }
+            }
+        }
+
         true
+    }
+
+    fn stack_entry_matches_kind(
+        entry: &crate::game_state::StackEntry,
+        kind: StackObjectKind,
+    ) -> bool {
+        match kind {
+            StackObjectKind::Spell => !entry.is_ability,
+            StackObjectKind::Ability => entry.is_ability,
+            StackObjectKind::ActivatedAbility => entry.is_ability && entry.triggering_event.is_none(),
+            StackObjectKind::TriggeredAbility => entry.is_ability && entry.triggering_event.is_some(),
+            StackObjectKind::SpellOrAbility => true,
+        }
     }
 
     /// Check if a snapshot matches this filter.
@@ -2708,10 +2893,19 @@ impl ObjectFilter {
                 match self.zone {
                     Some(Zone::Battlefield) | None => "permanent",
                     Some(Zone::Stack) => {
-                        if self.has_mana_cost {
-                            "spell"
-                        } else {
-                            "spell or ability"
+                        let kind = self.stack_kind.unwrap_or_else(|| {
+                            if self.has_mana_cost {
+                                StackObjectKind::Spell
+                            } else {
+                                StackObjectKind::SpellOrAbility
+                            }
+                        });
+                        match kind {
+                            StackObjectKind::Spell => "spell",
+                            StackObjectKind::Ability => "ability",
+                            StackObjectKind::ActivatedAbility => "activated ability",
+                            StackObjectKind::TriggeredAbility => "triggered ability",
+                            StackObjectKind::SpellOrAbility => "spell or ability",
                         }
                     }
                     Some(Zone::Graveyard)
@@ -2981,21 +3175,118 @@ impl ObjectFilter {
             (None, None) => {}
         }
 
-        let mut target_fragments = Vec::new();
-        if let Some(player_filter) = &self.targets_player {
-            target_fragments.push(describe_player_filter(player_filter));
-        }
-        if let Some(object_filter) = &self.targets_object {
-            target_fragments.push(object_filter.description());
-        }
-        if !target_fragments.is_empty() {
-            let target_text = if target_fragments.len() == 2 {
-                let joiner = if self.targets_any_of { "or" } else { "and" };
-                format!("{} {} {}", target_fragments[0], joiner, target_fragments[1])
+        let ensure_indefinite_article = |text: String| -> String {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return "a permanent".to_string();
+            }
+            let lower = trimmed.to_ascii_lowercase();
+            if lower.starts_with("a ")
+                || lower.starts_with("an ")
+                || lower.starts_with("the ")
+                || lower.starts_with("another ")
+                || lower.starts_with("each ")
+                || lower.starts_with("all ")
+                || lower.starts_with("this ")
+                || lower.starts_with("that ")
+                || lower.starts_with("those ")
+                || lower.starts_with("target ")
+                || lower.starts_with("any ")
+                || lower.starts_with("up to ")
+                || lower.starts_with("at least ")
+                || lower.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+            {
+                return trimmed.to_string();
+            }
+            let first = trimmed.chars().next().unwrap_or('a').to_ascii_lowercase();
+            let article = if matches!(first, 'a' | 'e' | 'i' | 'o' | 'u') {
+                "an"
             } else {
-                target_fragments[0].clone()
+                "a"
             };
-            parts.push(format!("that targets {target_text}"));
+            format!("{article} {trimmed}")
+        };
+
+        let mut appended_targeting_only = false;
+        if self.targets_only_player.is_some() || self.targets_only_object.is_some() {
+            let mut target_fragments = Vec::new();
+            if let Some(player_filter) = &self.targets_only_player {
+                let mut text = describe_player_filter(player_filter);
+                if text != "you" {
+                    text = ensure_indefinite_article(text);
+                }
+                target_fragments.push(text);
+            }
+            if let Some(object_filter) = &self.targets_only_object {
+                let mut text = ensure_indefinite_article(object_filter.description());
+                if let Some(count) = self.target_count
+                    && count.is_single()
+                    && (text.starts_with("a ") || text.starts_with("an "))
+                {
+                    if let Some(rest) = text.strip_prefix("a ") {
+                        text = format!("a single {rest}");
+                    } else if let Some(rest) = text.strip_prefix("an ") {
+                        text = format!("a single {rest}");
+                    }
+                }
+                target_fragments.push(text);
+            }
+            if !target_fragments.is_empty() {
+                let target_text = if target_fragments.len() == 2 {
+                    let joiner = if self.targets_only_any_of { "or" } else { "and" };
+                    format!("{} {} {}", target_fragments[0], joiner, target_fragments[1])
+                } else {
+                    target_fragments[0].clone()
+                };
+                parts.push(format!("that targets only {target_text}"));
+                appended_targeting_only = true;
+            }
+        }
+
+        if let Some(count) = self.target_count
+            && !appended_targeting_only
+        {
+            let phrase = if count.is_single() {
+                Some("with a single target".to_string())
+            } else if let Some(max) = count.max {
+                if count.min == max {
+                    Some(format!("with {} targets", max))
+                } else if count.min == 0 {
+                    Some(format!("with up to {} targets", max))
+                } else {
+                    Some(format!("with between {} and {} targets", count.min, max))
+                }
+            } else if count.min == 0 {
+                Some("with any number of targets".to_string())
+            } else {
+                Some(format!("with at least {} targets", count.min))
+            };
+            if let Some(phrase) = phrase {
+                parts.push(phrase);
+            }
+        }
+
+        if !appended_targeting_only {
+            let mut target_fragments = Vec::new();
+            if let Some(player_filter) = &self.targets_player {
+                let mut text = describe_player_filter(player_filter);
+                if text != "you" {
+                    text = ensure_indefinite_article(text);
+                }
+                target_fragments.push(text);
+            }
+            if let Some(object_filter) = &self.targets_object {
+                target_fragments.push(ensure_indefinite_article(object_filter.description()));
+            }
+            if !target_fragments.is_empty() {
+                let target_text = if target_fragments.len() == 2 {
+                    let joiner = if self.targets_any_of { "or" } else { "and" };
+                    format!("{} {} {}", target_fragments[0], joiner, target_fragments[1])
+                } else {
+                    target_fragments[0].clone()
+                };
+                parts.push(format!("that targets {target_text}"));
+            }
         }
 
         parts.join(" ")

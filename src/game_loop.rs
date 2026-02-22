@@ -7070,6 +7070,7 @@ fn finalize_spell_cast(
     let new_id = stack_id;
     if let Some(spell_obj) = game.object_mut(new_id) {
         spell_obj.mana_spent_to_cast = mana_spent_to_cast;
+        spell_obj.x_value = x_value;
     }
 
     // Create stack entry with targets, X value, casting method, optional costs, and chosen modes
@@ -7680,6 +7681,16 @@ fn triggered_to_stack_entry(game: &GameState, trigger: &TriggeredAbilityEntry) -
     .with_triggering_event(trigger.triggering_event.clone());
     if let Some(snapshot) = source_snapshot {
         entry = entry.with_source_snapshot(snapshot);
+    }
+    // If the source was cast with X, propagate that value to the triggered ability.
+    if let Some(obj) = game.object(trigger.source)
+        && let Some(x) = obj.x_value
+    {
+        entry = entry.with_x(x);
+    } else if let Some(ref snapshot) = entry.source_snapshot
+        && let Some(x) = snapshot.x_value
+    {
+        entry = entry.with_x(x);
     }
     // Propagate keyword payment contributions from the source permanent's cast,
     // so triggered abilities can reference "each creature that convoked it", etc.

@@ -20666,15 +20666,15 @@ fn parse_simple_ability_modifier_clause(
 }
 
 fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let words = words(tokens);
+    let word_list = words(tokens);
     let looks_like_can_attack_no_defender =
-        words.windows(2).any(|window| window == ["can", "attack"])
-            && words.windows(2).any(|window| window == ["as", "though"])
-            && words.contains(&"defender");
+        word_list.windows(2).any(|window| window == ["can", "attack"])
+            && word_list.windows(2).any(|window| window == ["as", "though"])
+            && word_list.contains(&"defender");
     if looks_like_can_attack_no_defender {
         return Ok(None);
     }
-    let gain_idx = words
+    let gain_idx = word_list
         .iter()
         .position(|word| matches!(*word, "gain" | "gains" | "has" | "have"));
     let Some(gain_idx) = gain_idx else {
@@ -20684,8 +20684,8 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
         return Ok(None);
     };
 
-    let after_gain = &words[gain_idx + 1..];
-    if matches!(words[gain_idx], "gain" | "gains") {
+    let after_gain = &word_list[gain_idx + 1..];
+    if matches!(word_list[gain_idx], "gain" | "gains") {
         let starts_with_life = after_gain.first().is_some_and(|word| *word == "life");
         let starts_with_control = after_gain.first().is_some_and(|word| *word == "control");
         if starts_with_life || starts_with_control {
@@ -20693,14 +20693,14 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
         }
     }
 
-    let leading_duration_phrase = if words.starts_with(&["until", "end", "of", "turn"]) {
+    let leading_duration_phrase = if word_list.starts_with(&["until", "end", "of", "turn"]) {
         Some((4usize, Until::EndOfTurn))
-    } else if words.starts_with(&["until", "your", "next", "turn"])
-        || words.starts_with(&["until", "your", "next", "upkeep"])
+    } else if word_list.starts_with(&["until", "your", "next", "turn"])
+        || word_list.starts_with(&["until", "your", "next", "upkeep"])
     {
         Some((4usize, Until::YourNextTurn))
-    } else if words.starts_with(&["until", "your", "next", "untap", "step"])
-        || words.starts_with(&["during", "your", "next", "untap", "step"])
+    } else if word_list.starts_with(&["until", "your", "next", "untap", "step"])
+        || word_list.starts_with(&["during", "your", "next", "untap", "step"])
     {
         Some((5usize, Until::YourNextTurn))
     } else {
@@ -20779,6 +20779,19 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
             }
         }
     }
+    let mut grants_must_attack = false;
+    if !trailing_tail_tokens.is_empty() {
+        let mut tail_words = words(&trailing_tail_tokens);
+        if tail_words.first().is_some_and(|word| *word == "and") {
+            tail_words = tail_words[1..].to_vec();
+        }
+        if tail_words.as_slice() == ["attacks", "this", "combat", "if", "able"]
+            || tail_words.as_slice() == ["attack", "this", "combat", "if", "able"]
+        {
+            grants_must_attack = true;
+            trailing_tail_tokens.clear();
+        }
+    }
 
     let ability_end_word_idx = duration_phrase
         .as_ref()
@@ -20796,14 +20809,14 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
 
     let mut grant_is_choice = false;
     let mut abilities = if let Some(actions) = parse_ability_line(&ability_tokens) {
-        reject_unimplemented_keyword_actions(&actions, &words.join(" "))?;
+        reject_unimplemented_keyword_actions(&actions, &word_list.join(" "))?;
         actions
             .into_iter()
             .filter_map(keyword_action_to_static_ability)
             .collect::<Vec<_>>()
     } else if let Some(actions) = parse_choice_of_abilities(&ability_tokens) {
         grant_is_choice = true;
-        reject_unimplemented_keyword_actions(&actions, &words.join(" "))?;
+        reject_unimplemented_keyword_actions(&actions, &word_list.join(" "))?;
         actions
             .into_iter()
             .filter_map(keyword_action_to_static_ability)
@@ -20813,17 +20826,20 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
     };
     if abilities.is_empty()
         && let Some(granted) =
-            parse_granted_activated_or_triggered_ability_for_gain(&ability_tokens, &words)?
+            parse_granted_activated_or_triggered_ability_for_gain(&ability_tokens, &word_list)?
     {
         abilities.push(granted);
     }
-    if abilities.is_empty() {
+    if abilities.is_empty() && !grants_must_attack {
         return Ok(None);
+    }
+    if grants_must_attack {
+        abilities.push(StaticAbility::must_attack());
     }
 
     // Check for "gets +X/+Y and gains/has ..." pattern - if there's a pump modifier
     // before the granting verb, extract it as a separate Pump/PumpAll effect.
-    let before_gain = &words[subject_start_word_idx..gain_idx];
+    let before_gain = &word_list[subject_start_word_idx..gain_idx];
     let get_idx = before_gain.iter().position(|w| *w == "get" || *w == "gets");
     let pump_effect = if let Some(gi) = get_idx {
         let mod_word = before_gain.get(gi + 1).copied().unwrap_or("");
@@ -20835,7 +20851,7 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
     } else {
         None
     };
-    let has_have_verb = matches!(words[gain_idx], "has" | "have");
+    let has_have_verb = matches!(word_list[gain_idx], "has" | "have");
     if has_have_verb && pump_effect.is_none() && !has_explicit_duration {
         return Ok(None);
     }
@@ -20951,7 +20967,7 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
     let filter = parse_object_filter(&real_subject_tokens, false).map_err(|_| {
         CardTextError::ParseError(format!(
             "unsupported subject in gain-ability clause (clause: '{}')",
-            words.join(" ")
+            word_list.join(" ")
         ))
     })?;
 
@@ -24943,6 +24959,10 @@ fn bind_implicit_player_context(effect: &mut EffectAst, player: PlayerAst) {
         | EffectAst::CopySpell {
             player: effect_player,
             ..
+        }
+        | EffectAst::RetargetStackObject {
+            chooser: effect_player,
+            ..
         } => {
             if matches!(*effect_player, PlayerAst::Implicit) {
                 *effect_player = player;
@@ -25148,8 +25168,268 @@ struct ClausePrimitive {
     parser: ClausePrimitiveParser,
 }
 
+fn parse_retarget_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+    if let Some(effect) = parse_choose_new_targets_clause(tokens)? {
+        return Ok(Some(effect));
+    }
+    if let Some(effect) = parse_change_target_clause(tokens)? {
+        return Ok(Some(effect));
+    }
+    Ok(None)
+}
+
+fn parse_choose_new_targets_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    let is_choose = clause_words.starts_with(&["choose", "new", "targets", "for"])
+        || clause_words.starts_with(&["chooses", "new", "targets", "for"]);
+    if !is_choose {
+        return Ok(None);
+    }
+
+    let mut tail_tokens = &tokens[4..];
+    if tail_tokens.is_empty() {
+        return Err(CardTextError::ParseError(
+            "missing choose-new-targets target".to_string(),
+        ));
+    }
+
+    if let Some(if_idx) = tail_tokens.iter().position(|token| token.is_word("if")) {
+        tail_tokens = &tail_tokens[..if_idx];
+    }
+
+    let tail_words = words(tail_tokens);
+    if tail_words.starts_with(&["it"])
+        || tail_words.starts_with(&["them"])
+        || tail_words.starts_with(&["the", "spell"])
+        || tail_words.starts_with(&["that", "spell"])
+    {
+        let target = TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(tail_tokens));
+        return Ok(Some(EffectAst::RetargetStackObject {
+            target,
+            mode: RetargetModeAst::All,
+            chooser: PlayerAst::Implicit,
+            require_change: false,
+            new_target_restriction: None,
+        }));
+    }
+
+    let (count, base_tokens, explicit_target) =
+        if tail_words.starts_with(&["any", "number", "of"]) {
+            (Some(ChoiceCount::any_number()), &tail_tokens[3..], false)
+        } else if tail_words.starts_with(&["target"]) {
+            (None, &tail_tokens[1..], true)
+        } else {
+            (None, tail_tokens, false)
+        };
+
+    let mut filter = parse_stack_retarget_filter(base_tokens)?;
+    if base_tokens.iter().any(|token| token.is_word("other")) {
+        filter.other = true;
+    }
+
+    let mut target = TargetAst::Object(
+        filter,
+        if explicit_target {
+            span_from_tokens(tail_tokens)
+        } else {
+            None
+        },
+        None,
+    );
+    if let Some(count) = count {
+        target = TargetAst::WithCount(Box::new(target), count);
+    }
+
+    Ok(Some(EffectAst::RetargetStackObject {
+        target,
+        mode: RetargetModeAst::All,
+        chooser: PlayerAst::Implicit,
+        require_change: false,
+        new_target_restriction: None,
+    }))
+}
+
+fn parse_change_target_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.is_empty() || clause_words[0] != "change" {
+        return Ok(None);
+    }
+
+    if let Some(unless_idx) = tokens.iter().position(|token| token.is_word("unless")) {
+        let main_tokens = trim_commas(&tokens[..unless_idx]);
+        let unless_tokens = trim_commas(&tokens[unless_idx + 1..]);
+        let Some(inner) = parse_change_target_clause_inner(&main_tokens)? else {
+            return Ok(None);
+        };
+        let (player, mana) = parse_unless_pays_clause(&unless_tokens)?;
+        return Ok(Some(EffectAst::UnlessPays {
+            effects: vec![inner],
+            player,
+            mana,
+        }));
+    }
+
+    parse_change_target_clause_inner(tokens)
+}
+
+fn parse_change_target_clause_inner(
+    tokens: &[Token],
+) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    let (mode, after_of_idx) = if clause_words.starts_with(&["change", "the", "target", "of"]) {
+        (RetargetModeAst::All, 4)
+    } else if clause_words.starts_with(&["change", "the", "targets", "of"]) {
+        (RetargetModeAst::All, 4)
+    } else if clause_words.starts_with(&["change", "a", "target", "of"]) {
+        (RetargetModeAst::All, 4)
+    } else {
+        return Ok(None);
+    };
+
+    if tokens.len() <= after_of_idx {
+        return Err(CardTextError::ParseError(
+            "missing target after change-the-target clause".to_string(),
+        ));
+    }
+
+    let mut tail_tokens = trim_commas(&tokens[after_of_idx..]).to_vec();
+    let mut fixed_target: Option<TargetAst> = None;
+    if let Some(to_idx) = tail_tokens.iter().position(|token| token.is_word("to")) {
+        let to_tail = &tail_tokens[to_idx + 1..];
+        let to_words = words(to_tail);
+        if to_words.starts_with(&["this"]) {
+            fixed_target = Some(TargetAst::Source(span_from_tokens(to_tail)));
+            tail_tokens.truncate(to_idx);
+        }
+    }
+
+    let mut filter = parse_stack_retarget_filter(&tail_tokens)?;
+    let tail_words = words(&tail_tokens);
+
+    if tail_words.windows(4).any(|w| w == ["with", "a", "single", "target"]) {
+        filter = filter.target_count_exact(1);
+    }
+    if tail_words.windows(5).any(|w| w == ["targets", "only", "a", "single", "creature"]) {
+        filter = filter
+            .targeting_only_object(ObjectFilter::creature())
+            .target_count_exact(1);
+    }
+    if tail_words.windows(4).any(|w| w == ["targets", "only", "this", "creature"])
+        || tail_words
+            .windows(4)
+            .any(|w| w == ["targets", "only", "this", "permanent"])
+    {
+        filter = filter
+            .targeting_only_object(ObjectFilter::source())
+            .target_count_exact(1);
+    }
+    if tail_words.windows(3).any(|w| w == ["targets", "only", "you"]) {
+        filter = filter.targeting_only_player(PlayerFilter::You).target_count_exact(1);
+    }
+    if tail_words.windows(4).any(|w| w == ["targets", "only", "a", "player"]) {
+        filter = filter.targeting_only_player(PlayerFilter::Any).target_count_exact(1);
+    }
+    if tail_words.windows(5).any(|w| w == ["if", "that", "target", "is", "you"]) {
+        filter = filter.targeting_only_player(PlayerFilter::You).target_count_exact(1);
+    }
+
+    let target = TargetAst::Object(filter, span_from_tokens(tokens), None);
+
+    let mode = if let Some(fixed) = fixed_target {
+        RetargetModeAst::OneToFixed { target: fixed }
+    } else {
+        mode
+    };
+
+    Ok(Some(EffectAst::RetargetStackObject {
+        target,
+        mode,
+        chooser: PlayerAst::Implicit,
+        require_change: true,
+        new_target_restriction: None,
+    }))
+}
+
+fn parse_unless_pays_clause(tokens: &[Token]) -> Result<(PlayerAst, Vec<ManaSymbol>), CardTextError> {
+    if tokens.is_empty() {
+        return Err(CardTextError::ParseError(
+            "missing unless clause".to_string(),
+        ));
+    }
+    let pays_idx = tokens
+        .iter()
+        .position(|token| token.is_word("pays"))
+        .ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing pays keyword (clause: '{}')",
+                words(tokens).join(" ")
+            ))
+        })?;
+
+    let player_tokens = trim_commas(&tokens[..pays_idx]);
+    let player = match parse_subject(&player_tokens) {
+        SubjectAst::Player(player) => player,
+        _ => PlayerAst::Implicit,
+    };
+
+    let mut mana = Vec::new();
+    for token in tokens[pays_idx + 1..].iter() {
+        let Some(word) = token.as_word() else {
+            continue;
+        };
+        match parse_mana_symbol(word) {
+            Ok(symbol) => mana.push(symbol),
+            Err(_) => break,
+        }
+    }
+
+    if mana.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing mana cost (clause: '{}')",
+            words(tokens).join(" ")
+        )));
+    }
+
+    Ok((player, mana))
+}
+
+fn parse_stack_retarget_filter(tokens: &[Token]) -> Result<ObjectFilter, CardTextError> {
+    let words = words(tokens);
+    let has_ability = words.iter().any(|word| *word == "ability" || *word == "abilities");
+    let has_spell = words.iter().any(|word| *word == "spell" || *word == "spells");
+    let has_activated = words.iter().any(|word| *word == "activated");
+    let has_instant = words.iter().any(|word| *word == "instant");
+    let has_sorcery = words.iter().any(|word| *word == "sorcery");
+
+    let mut filter = if has_activated && has_ability {
+        ObjectFilter::activated_ability()
+    } else if has_ability && has_spell {
+        ObjectFilter::spell_or_ability()
+    } else if has_ability {
+        ObjectFilter::ability()
+    } else if (has_instant || has_sorcery) && has_spell {
+        ObjectFilter::instant_or_sorcery()
+    } else if has_spell {
+        ObjectFilter::spell()
+    } else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported retarget target clause (clause: '{}')",
+            words.join(" ")
+        )));
+    };
+
+    if words.iter().any(|word| *word == "other") {
+        filter.other = true;
+    }
+
+    Ok(filter)
+}
+
 fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
     const PRIMITIVES: &[ClausePrimitive] = &[
+        ClausePrimitive {
+            parser: parse_retarget_clause,
+        },
         ClausePrimitive {
             parser: parse_copy_spell_clause,
         },

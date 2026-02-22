@@ -223,6 +223,9 @@ pub struct Object {
     /// Mana actually spent to cast this object while it was a spell.
     /// Used by conditional text like "if at least three blue mana was spent to cast this spell".
     pub mana_spent_to_cast: ManaPool,
+    /// X value chosen for this object when it was cast (if any).
+    /// Used by ETB and other triggered abilities that reference X from the mana cost.
+    pub x_value: Option<u32>,
     /// Permanents that contributed keyword-ability alternative payments while casting this object
     /// as a spell (e.g., Convoke/Improvise). Used by later resolution-time references like
     /// "each creature that convoked it".
@@ -283,6 +286,7 @@ impl Object {
             optional_costs: Vec::new(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
+            x_value: None,
             keyword_payment_contributions_to_cast: Vec::new(),
             cost_effects: Vec::new(),
             max_saga_chapter: None,
@@ -347,6 +351,7 @@ impl Object {
             optional_costs: Vec::new(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
+            x_value: None,
             keyword_payment_contributions_to_cast: Vec::new(),
             cost_effects: Vec::new(),
             max_saga_chapter: None,
@@ -392,6 +397,7 @@ impl Object {
             optional_costs_paid: OptionalCostsPaid::default(),
             // Tokens are never cast.
             mana_spent_to_cast: ManaPool::default(),
+            x_value: None,
             keyword_payment_contributions_to_cast: Vec::new(),
             // Cost effects are copiable
             cost_effects: source.cost_effects.clone(),
@@ -444,6 +450,7 @@ impl Object {
             optional_costs: Vec::new(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
+            x_value: None,
             keyword_payment_contributions_to_cast: Vec::new(),
             cost_effects: Vec::new(),
             max_saga_chapter: None,
@@ -838,6 +845,7 @@ impl Object {
             optional_costs: def.optional_costs.clone(),
             optional_costs_paid: OptionalCostsPaid::default(),
             mana_spent_to_cast: ManaPool::default(),
+            x_value: None,
             keyword_payment_contributions_to_cast: Vec::new(),
             cost_effects: def.cost_effects.clone(),
             max_saga_chapter: def.max_saga_chapter,

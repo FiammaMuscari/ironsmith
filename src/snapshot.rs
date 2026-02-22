@@ -73,6 +73,8 @@ pub struct ObjectSnapshot {
     pub loyalty: Option<u32>,
     /// Abilities the object had.
     pub abilities: Vec<Ability>,
+    /// X value chosen when this object was cast (if any).
+    pub x_value: Option<u32>,
 
     // === Non-copiable state ===
     /// Counters on the object.
@@ -129,6 +131,7 @@ impl ObjectSnapshot {
             base_toughness: obj.base_toughness.as_ref().map(|t| t.base_value()),
             loyalty: obj.loyalty(),
             abilities: obj.abilities.clone(),
+            x_value: obj.x_value,
 
             // Non-copiable state (from game state extension maps)
             counters: obj.counters.clone(),
