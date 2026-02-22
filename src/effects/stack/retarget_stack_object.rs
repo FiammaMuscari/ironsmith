@@ -8,8 +8,10 @@ use crate::decisions::context::{
     TargetRequirementContext, TargetsContext,
 };
 use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
-use crate::effects::helpers::{resolve_objects_from_spec, resolve_player_filter, resolve_players_from_spec};
 use crate::effects::EffectExecutor;
+use crate::effects::helpers::{
+    resolve_objects_from_spec, resolve_player_filter, resolve_players_from_spec,
+};
 use crate::events::spells::BecomesTargetedEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry, Target};
@@ -393,12 +395,8 @@ impl EffectExecutor for RetargetStackObjectEffect {
                         .map(|o| o.name.clone())
                         .unwrap_or_else(|| "spell".to_string());
 
-                    let targets_ctx = TargetsContext::new(
-                        chooser_id,
-                        object_id,
-                        source_name,
-                        adjusted.clone(),
-                    );
+                    let targets_ctx =
+                        TargetsContext::new(chooser_id, object_id, source_name, adjusted.clone());
                     let proposed = ctx.decision_maker.decide_targets(game, &targets_ctx);
                     let Some(new_targets) = normalize_target_choice(&adjusted, proposed) else {
                         continue;
@@ -565,11 +563,7 @@ mod tests {
             true
         }
 
-        fn decide_targets(
-            &mut self,
-            _game: &GameState,
-            ctx: &TargetsContext,
-        ) -> Vec<Target> {
+        fn decide_targets(&mut self, _game: &GameState, ctx: &TargetsContext) -> Vec<Target> {
             ctx.requirements
                 .iter()
                 .flat_map(|req| req.legal_targets.iter().copied().take(req.min_targets))

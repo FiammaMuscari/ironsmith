@@ -20,6 +20,7 @@ use crate::decision::{
     AttackerDeclaration, BlockerDeclaration, DecisionMaker, GameProgress, GameResult, LegalAction,
 };
 use crate::decisions::context::DecisionContext;
+use crate::effect_text_shared;
 use crate::game_loop::{
     ActivationStage, CastStage, PriorityLoopState, PriorityResponse, add_saga_lore_counters,
     advance_priority, apply_priority_response_with_dm, generate_and_queue_step_triggers,
@@ -3575,6 +3576,152 @@ fn describe_until(
     }
 }
 
+fn describe_signed_i32_ui(value: i32) -> String {
+    if value >= 0 {
+        format!("+{value}")
+    } else {
+        value.to_string()
+    }
+}
+
+fn describe_apply_continuous_target_ui(
+    effect: &crate::effects::ApplyContinuousEffect,
+    tagged_subjects: &HashMap<String, String>,
+) -> (String, bool) {
+    effect_text_shared::describe_apply_continuous_target(
+        effect,
+        |spec| describe_choose_spec(spec, tagged_subjects),
+        |filter| pluralize_noun_phrase(&filter.description()),
+    )
+}
+
+fn describe_apply_continuous_effect_ui(
+    effect: &crate::effects::ApplyContinuousEffect,
+    tagged_subjects: &HashMap<String, String>,
+) -> Option<String> {
+    let (target, plural_target) = describe_apply_continuous_target_ui(effect, tagged_subjects);
+    let gets = if plural_target { "get" } else { "gets" };
+    let has = if plural_target { "have" } else { "has" };
+    let gains = if plural_target { "gain" } else { "gains" };
+    let loses = if plural_target { "lose" } else { "loses" };
+
+    let mut clauses: Vec<String> = Vec::new();
+
+    let mut push_modification = |modification: &crate::continuous::Modification| match modification
+    {
+        crate::continuous::Modification::ModifyPowerToughness { power, toughness } => {
+            clauses.push(format!(
+                "{gets} {}/{}",
+                describe_signed_i32_ui(*power),
+                describe_signed_i32_ui(*toughness)
+            ));
+        }
+        crate::continuous::Modification::ModifyPower(value) => {
+            clauses.push(format!("{gets} {} power", describe_signed_i32_ui(*value)));
+        }
+        crate::continuous::Modification::ModifyToughness(value) => {
+            clauses.push(format!(
+                "{gets} {} toughness",
+                describe_signed_i32_ui(*value)
+            ));
+        }
+        crate::continuous::Modification::SetPowerToughness {
+            power, toughness, ..
+        } => {
+            clauses.push(format!(
+                "{has} base power and toughness {}/{}",
+                describe_value(power, tagged_subjects),
+                describe_value(toughness, tagged_subjects)
+            ));
+        }
+        crate::continuous::Modification::SetPower { value, .. } => {
+            clauses.push(format!(
+                "{has} base power {}",
+                describe_value(value, tagged_subjects)
+            ));
+        }
+        crate::continuous::Modification::SetToughness { value, .. } => {
+            clauses.push(format!(
+                "{has} base toughness {}",
+                describe_value(value, tagged_subjects)
+            ));
+        }
+        crate::continuous::Modification::AddAbility(ability) => {
+            clauses.push(format!("{gains} {}", ability.display()));
+        }
+        crate::continuous::Modification::AddAbilityGeneric(ability) => {
+            clauses.push(format!(
+                "{gains} {}",
+                ability
+                    .text
+                    .clone()
+                    .unwrap_or_else(|| format!("{:?}", ability.kind))
+            ));
+        }
+        crate::continuous::Modification::RemoveAbility(ability) => {
+            clauses.push(format!("{loses} {}", ability.display()));
+        }
+        crate::continuous::Modification::RemoveAllAbilities => {
+            clauses.push(format!("{loses} all abilities"));
+        }
+        _ => {}
+    };
+
+    if let Some(modification) = &effect.modification {
+        push_modification(modification);
+    }
+    for modification in &effect.additional_modifications {
+        push_modification(modification);
+    }
+    for runtime in &effect.runtime_modifications {
+        match runtime {
+            crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
+                power,
+                toughness,
+            } => {
+                clauses.push(format!(
+                    "{gets} {}/{}",
+                    describe_signed_value(power, tagged_subjects),
+                    describe_signed_value(toughness, tagged_subjects)
+                ));
+            }
+            crate::effects::continuous::RuntimeModification::ModifyPower { value } => {
+                clauses.push(format!(
+                    "{gets} {} power",
+                    describe_signed_value(value, tagged_subjects)
+                ));
+            }
+            crate::effects::continuous::RuntimeModification::ModifyToughness { value } => {
+                clauses.push(format!(
+                    "{gets} {} toughness",
+                    describe_signed_value(value, tagged_subjects)
+                ));
+            }
+            crate::effects::continuous::RuntimeModification::ChangeControllerToEffectController => {
+                clauses.push("changes controller to this effect's controller".to_string());
+            }
+            crate::effects::continuous::RuntimeModification::ChangeControllerToPlayer(player) => {
+                clauses.push(format!(
+                    "changes controller to {}",
+                    describe_player_filter(player, tagged_subjects)
+                ));
+            }
+        }
+    }
+
+    if clauses.is_empty() {
+        return None;
+    }
+
+    let mut text = format!("{target} {}", join_words_with_and(&clauses));
+    if !matches!(effect.until, crate::effect::Until::Forever) {
+        text.push(' ');
+        text.push_str(&describe_until(&effect.until, tagged_subjects));
+    }
+    text.push('.');
+    Some(text)
+}
+
 fn describe_condition(
     condition: &crate::effect::Condition,
     tagged_subjects: &HashMap<String, String>,
@@ -3924,23 +4071,116 @@ fn ensure_trailing_period_ui(text: &str) -> String {
     }
 }
 
-fn normalize_modal_text_ui(text: &str) -> String {
-    text.chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+fn split_mode_subject_predicate_ui(text: &str) -> Option<(&str, &str)> {
+    let trimmed = text.trim().trim_end_matches('.');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let mut split_idx: Option<usize> = None;
+    for marker in [
+        " gets ",
+        " get ",
+        " has ",
+        " have ",
+        " gains ",
+        " gain ",
+        " loses ",
+        " lose ",
+        " becomes ",
+        " become ",
+        " can't ",
+        " can ",
+        " is ",
+        " are ",
+    ] {
+        if let Some(idx) = lower.find(marker) {
+            split_idx = Some(split_idx.map_or(idx, |current| current.min(idx)));
+        }
+    }
+    let idx = split_idx?;
+    let subject = trimmed[..idx].trim();
+    let predicate = trimmed[idx + 1..].trim();
+    if subject.is_empty() || predicate.is_empty() {
+        return None;
+    }
+    Some((subject, predicate))
 }
 
-fn modal_text_equivalent_ui(description: &str, compiled: &str) -> bool {
-    normalize_modal_text_ui(description) == normalize_modal_text_ui(compiled)
+fn maybe_restore_target_subject_from_mode_description_ui(
+    compiled: &str,
+    mode_description: &str,
+) -> String {
+    let compiled_trimmed = compiled.trim();
+    if compiled_trimmed.is_empty() {
+        return String::new();
+    }
+
+    let Some((description_subject, description_predicate)) =
+        split_mode_subject_predicate_ui(mode_description)
+    else {
+        return compiled_trimmed.to_string();
+    };
+    let Some((compiled_subject, compiled_predicate)) =
+        split_mode_subject_predicate_ui(compiled_trimmed)
+    else {
+        return compiled_trimmed.to_string();
+    };
+
+    let description_subject_lower = description_subject.to_ascii_lowercase();
+    if !description_subject_lower.contains("target") {
+        return compiled_trimmed.to_string();
+    }
+    let compiled_subject_lower = compiled_subject.to_ascii_lowercase();
+    if compiled_subject_lower.contains("target") {
+        return compiled_trimmed.to_string();
+    }
+    if !compiled_predicate.eq_ignore_ascii_case(description_predicate) {
+        return compiled_trimmed.to_string();
+    }
+
+    let looks_like_indefinite_subject = compiled_subject_lower.starts_with("a ")
+        || compiled_subject_lower.starts_with("an ")
+        || compiled_subject_lower.starts_with("another ")
+        || compiled_subject_lower.starts_with("other ")
+        || compiled_subject_lower.starts_with("up to ")
+        || compiled_subject_lower.starts_with("one ")
+        || compiled_subject_lower.starts_with("two ")
+        || compiled_subject_lower.starts_with("three ")
+        || compiled_subject_lower
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_digit());
+    if !looks_like_indefinite_subject {
+        return compiled_trimmed.to_string();
+    }
+
+    format!("{description_subject} {compiled_predicate}")
+}
+
+#[cfg(test)]
+mod mode_text_tests {
+    use super::maybe_restore_target_subject_from_mode_description_ui;
+
+    #[test]
+    fn restores_target_subject_when_predicate_matches() {
+        let compiled = "a creature gets -5/-5 until end of turn.";
+        let description = "Target creature gets -5/-5 until end of turn.";
+        assert_eq!(
+            maybe_restore_target_subject_from_mode_description_ui(compiled, description),
+            "Target creature gets -5/-5 until end of turn"
+        );
+    }
+
+    #[test]
+    fn leaves_compiled_subject_when_predicate_differs() {
+        let compiled = "a creature gets -5/-5 until end of turn.";
+        let description = "Target creature gains flying until end of turn.";
+        assert_eq!(
+            maybe_restore_target_subject_from_mode_description_ui(compiled, description),
+            "a creature gets -5/-5 until end of turn."
+        );
+    }
 }
 
 fn number_word_ui(value: i32) -> Option<&'static str> {
@@ -4657,12 +4897,18 @@ fn describe_effect_core_expanded(
             .modes
             .iter()
             .map(|mode| {
-                let description = ensure_trailing_period_ui(mode.description.trim());
-                let compiled = describe_effects_inline(&mode.effects, tagged_subjects);
-                if compiled.is_empty() || modal_text_equivalent_ui(&description, &compiled) {
-                    description
+                let compiled_effects = describe_effects_inline(&mode.effects, tagged_subjects);
+                let compiled = ensure_trailing_period_ui(
+                    maybe_restore_target_subject_from_mode_description_ui(
+                        &compiled_effects,
+                        mode.description.trim(),
+                    )
+                    .trim(),
+                );
+                if !compiled.is_empty() {
+                    compiled
                 } else {
-                    format!("{description} [{compiled}]")
+                    ensure_trailing_period_ui(mode.description.trim())
                 }
             })
             .collect::<Vec<_>>()
@@ -4741,6 +4987,9 @@ fn describe_effect_core_expanded(
         ));
     }
     if let Some(tag_all) = effect.downcast_ref::<crate::effects::TagAllEffect>() {
+        if effect_text_shared::is_implicit_reference_tag(tag_all.tag.as_str()) {
+            return Some(describe_effect_core(&tag_all.effect, tagged_subjects));
+        }
         return Some(format!(
             "Tag all targets as '{}' and {}.",
             tag_all.tag.as_str(),
@@ -5656,6 +5905,9 @@ fn describe_effect_core_expanded(
         return Some("Proliferate.".to_string());
     }
     if let Some(apply_continuous) = effect.downcast_ref::<crate::effects::ApplyContinuousEffect>() {
+        if let Some(text) = describe_apply_continuous_effect_ui(apply_continuous, tagged_subjects) {
+            return Some(text);
+        }
         return Some(format!(
             "Apply continuous effect to {:?}: {:?} {}.",
             apply_continuous.target,

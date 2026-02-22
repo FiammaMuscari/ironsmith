@@ -402,6 +402,7 @@ impl ObjectSnapshot {
             base_toughness: None,
             loyalty: None,
             abilities: vec![],
+            x_value: None,
             counters: HashMap::new(),
             is_token: false,
             tapped: false,

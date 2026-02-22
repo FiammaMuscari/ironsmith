@@ -111,6 +111,11 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
 
         // Player wants to cast for miracle cost
         // Check if they can pay the miracle cost
+        let x_value = if miracle_cost.has_x() {
+            Some(0u32)
+        } else {
+            None
+        };
         let can_pay = game.can_pay_mana_cost(owner, None, &miracle_cost, 0);
 
         if !can_pay {
@@ -128,12 +133,15 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
 
         // Move spell from hand to stack
         if let Some(new_id) = game.move_object(card_id, Zone::Stack) {
+            if let Some(obj) = game.object_mut(new_id) {
+                obj.x_value = x_value;
+            }
             // Create stack entry with miracle casting method
             let stack_entry = StackEntry {
                 object_id: new_id,
                 controller: owner,
                 targets: vec![],
-                x_value: None,
+                x_value,
                 ability_effects: None,
                 is_ability: false,
                 casting_method: CastingMethod::Alternative(miracle_index),

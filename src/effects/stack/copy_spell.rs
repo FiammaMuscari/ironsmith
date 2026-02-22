@@ -127,6 +127,7 @@ impl EffectExecutor for CopySpellEffect {
             copy_entry.ability_effects = original_entry.ability_effects.clone();
             copy_entry.is_ability = original_entry.is_ability;
             copy_entry.optional_costs_paid = original_entry.optional_costs_paid.clone();
+            copy_entry.chosen_modes = original_entry.chosen_modes.clone();
 
             // Put the copy on top of the stack
             game.stack.push(copy_entry);
@@ -219,6 +220,36 @@ mod tests {
         } else {
             panic!("Expected Objects result");
         }
+    }
+
+    #[test]
+    fn test_copy_spell_preserves_chosen_modes() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+
+        let spell_id = create_instant_on_stack(&mut game, "Modal Spell", alice);
+        if let Some(entry) = game.stack.iter_mut().find(|e| e.object_id == spell_id) {
+            entry.chosen_modes = Some(vec![1, 3]);
+        }
+
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        ctx.targets = vec![crate::executor::ResolvedTarget::Object(spell_id)];
+
+        let effect = CopySpellEffect::single(ChooseSpec::spell());
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        let copy_id = match result.result {
+            EffectResult::Objects(ids) => ids[0],
+            _ => panic!("Expected Objects result"),
+        };
+
+        let copy_entry = game
+            .stack
+            .iter()
+            .find(|e| e.object_id == copy_id)
+            .expect("copy on stack");
+        assert_eq!(copy_entry.chosen_modes, Some(vec![1, 3]));
     }
 
     #[test]

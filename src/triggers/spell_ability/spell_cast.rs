@@ -187,9 +187,8 @@ impl TriggerMatcher for SpellCastTrigger {
                 spell_text =
                     "a spell during your turn other than your first spell that turn".to_string();
             } else {
-                spell_text = format!(
-                    "{spell_text} during your turn other than your first spell that turn"
-                );
+                spell_text =
+                    format!("{spell_text} during your turn other than your first spell that turn");
             }
             suppress_turn_suffix = true;
         } else if self.min_spells_this_turn == Some(2)

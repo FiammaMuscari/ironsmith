@@ -1265,9 +1265,7 @@ impl ObjectFilter {
             return false;
         }
 
-        if self.entered_battlefield_this_turn
-            || self.entered_battlefield_controller.is_some()
-        {
+        if self.entered_battlefield_this_turn || self.entered_battlefield_controller.is_some() {
             if object.zone != Zone::Battlefield {
                 return false;
             }
@@ -1314,7 +1312,8 @@ impl ObjectFilter {
         let mut stack_entry = None;
         if wants_stack {
             stack_entry = game.stack.iter().find(|e| e.object_id == object.id);
-            if (self.zone == Some(Zone::Stack) || self.stack_kind.is_some()) && stack_entry.is_none()
+            if (self.zone == Some(Zone::Stack) || self.stack_kind.is_some())
+                && stack_entry.is_none()
             {
                 return false;
             }
@@ -1852,7 +1851,9 @@ impl ObjectFilter {
 
         // Targeting checks (spell/ability targets on the stack)
         if self.targets_player.is_some() || self.targets_object.is_some() {
-            let Some(entry) = stack_entry.or_else(|| game.stack.iter().find(|e| e.object_id == object.id)) else {
+            let Some(entry) =
+                stack_entry.or_else(|| game.stack.iter().find(|e| e.object_id == object.id))
+            else {
                 return false;
             };
 
@@ -1891,7 +1892,9 @@ impl ObjectFilter {
             || self.targets_only_player.is_some()
             || self.targets_only_object.is_some()
         {
-            let Some(entry) = stack_entry.or_else(|| game.stack.iter().find(|e| e.object_id == object.id)) else {
+            let Some(entry) =
+                stack_entry.or_else(|| game.stack.iter().find(|e| e.object_id == object.id))
+            else {
                 return false;
             };
 
@@ -1900,7 +1903,9 @@ impl ObjectFilter {
                 if total < count.min {
                     return false;
                 }
-                if let Some(max) = count.max && total > max {
+                if let Some(max) = count.max
+                    && total > max
+                {
                     return false;
                 }
             }
@@ -1911,24 +1916,22 @@ impl ObjectFilter {
                 }
 
                 let matches_target = |target: &crate::game_state::Target| -> bool {
-                    let matches_player = self
-                        .targets_only_player
-                        .as_ref()
-                        .is_some_and(|player_filter| match target {
+                    let matches_player = self.targets_only_player.as_ref().is_some_and(
+                        |player_filter| match target {
                             crate::game_state::Target::Player(pid) => {
                                 player_filter.matches_player(*pid, ctx)
                             }
                             _ => false,
-                        });
-                    let matches_object = self
-                        .targets_only_object
-                        .as_ref()
-                        .is_some_and(|object_filter| match target {
+                        },
+                    );
+                    let matches_object = self.targets_only_object.as_ref().is_some_and(
+                        |object_filter| match target {
                             crate::game_state::Target::Object(obj_id) => game
                                 .object(*obj_id)
                                 .is_some_and(|obj| object_filter.matches(obj, ctx, game)),
                             _ => false,
-                        });
+                        },
+                    );
 
                     if self.targets_only_player.is_some() && self.targets_only_object.is_some() {
                         matches_player || matches_object
@@ -1955,8 +1958,12 @@ impl ObjectFilter {
         match kind {
             StackObjectKind::Spell => !entry.is_ability,
             StackObjectKind::Ability => entry.is_ability,
-            StackObjectKind::ActivatedAbility => entry.is_ability && entry.triggering_event.is_none(),
-            StackObjectKind::TriggeredAbility => entry.is_ability && entry.triggering_event.is_some(),
+            StackObjectKind::ActivatedAbility => {
+                entry.is_ability && entry.triggering_event.is_none()
+            }
+            StackObjectKind::TriggeredAbility => {
+                entry.is_ability && entry.triggering_event.is_some()
+            }
             StackObjectKind::SpellOrAbility => true,
         }
     }
@@ -3134,9 +3141,7 @@ impl ObjectFilter {
                         "that entered the battlefield under an opponent's control this turn"
                             .to_string()
                     }
-                    PlayerFilter::Any => {
-                        "that entered the battlefield this turn".to_string()
-                    }
+                    PlayerFilter::Any => "that entered the battlefield this turn".to_string(),
                     other => format!(
                         "that entered the battlefield under {} control this turn",
                         describe_possessive_player_filter(other)
@@ -3148,8 +3153,7 @@ impl ObjectFilter {
             parts.push(clause);
         }
 
-        if self.entered_graveyard_from_battlefield_this_turn && self.zone == Some(Zone::Graveyard)
-        {
+        if self.entered_graveyard_from_battlefield_this_turn && self.zone == Some(Zone::Graveyard) {
             parts.push("that was put there from the battlefield this turn".to_string());
         } else if self.entered_graveyard_this_turn && self.zone == Some(Zone::Graveyard) {
             parts.push("that was put there from anywhere this turn".to_string());
@@ -3233,7 +3237,11 @@ impl ObjectFilter {
             }
             if !target_fragments.is_empty() {
                 let target_text = if target_fragments.len() == 2 {
-                    let joiner = if self.targets_only_any_of { "or" } else { "and" };
+                    let joiner = if self.targets_only_any_of {
+                        "or"
+                    } else {
+                        "and"
+                    };
                     format!("{} {} {}", target_fragments[0], joiner, target_fragments[1])
                 } else {
                     target_fragments[0].clone()

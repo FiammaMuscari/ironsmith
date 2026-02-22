@@ -674,7 +674,11 @@ fn format_counter_type(counter_type: &CounterType) -> &'static str {
 }
 
 fn counter_article(counter_name: &str) -> &'static str {
-    match counter_name.chars().next().map(|ch| ch.to_ascii_lowercase()) {
+    match counter_name
+        .chars()
+        .next()
+        .map(|ch| ch.to_ascii_lowercase())
+    {
         Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
         _ => "a",
     }

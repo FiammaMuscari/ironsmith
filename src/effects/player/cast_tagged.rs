@@ -85,6 +85,9 @@ impl EffectExecutor for CastTaggedEffect {
                 obj.stable_id,
             )
         };
+        let x_value = mana_cost
+            .as_ref()
+            .and_then(|cost| if cost.has_x() { Some(0u32) } else { None });
 
         if self.as_copy {
             let caster = ctx.controller;
@@ -96,6 +99,7 @@ impl EffectExecutor for CastTaggedEffect {
             };
             let mut copy_obj = crate::object::Object::token_copy_of(&source_obj, copy_id, caster);
             copy_obj.controller = caster;
+            copy_obj.x_value = x_value;
 
             if is_land {
                 if !self.allow_land {
@@ -121,6 +125,7 @@ impl EffectExecutor for CastTaggedEffect {
             game.add_object(copy_obj);
 
             let mut stack_entry = StackEntry::new(copy_id, caster);
+            stack_entry.x_value = x_value;
             stack_entry.source_stable_id = Some(stable_id);
             stack_entry.source_name = Some(card_name);
             game.push_to_stack(stack_entry);
@@ -159,6 +164,9 @@ impl EffectExecutor for CastTaggedEffect {
         let Some(new_id) = game.move_object(object_id, Zone::Stack) else {
             return Ok(EffectOutcome::from_result(EffectResult::Impossible));
         };
+        if let Some(obj) = game.object_mut(new_id) {
+            obj.x_value = x_value;
+        }
 
         let casting_method = if from_zone == Zone::Hand {
             CastingMethod::Normal
@@ -174,7 +182,7 @@ impl EffectExecutor for CastTaggedEffect {
             object_id: new_id,
             controller: caster,
             targets: vec![],
-            x_value: None,
+            x_value,
             ability_effects: None,
             is_ability: false,
             casting_method,

@@ -2434,6 +2434,26 @@ fn test_parse_exile_up_to_one_single_disjunction_stays_single_choice() {
 }
 
 #[test]
+fn test_parse_exile_then_return_with_counter_keeps_counter_followup() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Planar Incision Variant")
+        .parse_text(
+            "Exile target artifact or creature, then return it to the battlefield under its owner's control with a +1/+1 counter on it.",
+        )
+        .expect("parse exile-then-return with counter");
+
+    let effects = def.spell_effect.as_ref().expect("spell effects");
+    let debug = format!("{effects:?}");
+    assert!(
+        debug.contains("MoveToZoneEffect"),
+        "expected return move-to-battlefield effect, got {debug}"
+    );
+    assert!(
+        debug.contains("PutCountersEffect") && debug.contains("PlusOnePlusOne"),
+        "expected +1/+1 counter follow-up on returned object, got {debug}"
+    );
+}
+
+#[test]
 fn test_render_multiple_cycling_variants_preserves_variant_names() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Cycling Variant")
         .card_types(vec![CardType::Creature])
@@ -6058,8 +6078,7 @@ fn parse_token_becomes_tapped_damage_trigger() {
 
     let compiled = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        compiled.contains("becomes tapped")
-            && compiled.contains("deals 1 damage to target player"),
+        compiled.contains("becomes tapped") && compiled.contains("deals 1 damage to target player"),
         "expected becomes-tapped damage trigger in compiled text, got {compiled}"
     );
 }

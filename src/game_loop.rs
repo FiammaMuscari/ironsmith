@@ -7683,7 +7683,9 @@ fn triggered_to_stack_entry(game: &GameState, trigger: &TriggeredAbilityEntry) -
         entry = entry.with_source_snapshot(snapshot);
     }
     // If the source was cast with X, propagate that value to the triggered ability.
-    if let Some(obj) = game.object(trigger.source)
+    if let Some(x) = trigger.x_value {
+        entry = entry.with_x(x);
+    } else if let Some(obj) = game.object(trigger.source)
         && let Some(x) = obj.x_value
     {
         entry = entry.with_x(x);
@@ -8441,6 +8443,7 @@ mod tests {
                 true,
             )],
             one_shot: true,
+            x_value: None,
             not_before_turn: None,
             expires_at_turn: None,
             target_objects: vec![stangg_id],

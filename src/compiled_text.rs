@@ -5,6 +5,7 @@ use crate::alternative_cast::AlternativeCastingMethod;
 use crate::effect::{
     ChoiceCount, Comparison, Condition, EffectPredicate, EventValueSpec, Until, Value,
 };
+use crate::effect_text_shared;
 use crate::object::CounterType;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::types::{Subtype, Supertype};
@@ -4492,18 +4493,18 @@ fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
         None
     } else {
         match owner {
-        Some(PlayerFilter::You) => Some("you own"),
-        Some(PlayerFilter::NotYou) => Some("you don't own"),
-        Some(PlayerFilter::Opponent) => Some("an opponent owns"),
-        Some(PlayerFilter::Any) => Some("a player owns"),
-        Some(PlayerFilter::Active) => Some("active player owns"),
-        Some(PlayerFilter::Defending) => Some("defending player owns"),
-        Some(PlayerFilter::Attacking) => Some("attacking player owns"),
-        Some(PlayerFilter::DamagedPlayer) => Some("damaged player owns"),
-        Some(PlayerFilter::Teammate) => Some("a teammate owns"),
-        Some(PlayerFilter::Specific(_)) => Some("that player owns"),
-        Some(PlayerFilter::Target(_)) | Some(PlayerFilter::IteratedPlayer) => Some("they own"),
-        _ => None,
+            Some(PlayerFilter::You) => Some("you own"),
+            Some(PlayerFilter::NotYou) => Some("you don't own"),
+            Some(PlayerFilter::Opponent) => Some("an opponent owns"),
+            Some(PlayerFilter::Any) => Some("a player owns"),
+            Some(PlayerFilter::Active) => Some("active player owns"),
+            Some(PlayerFilter::Defending) => Some("defending player owns"),
+            Some(PlayerFilter::Attacking) => Some("attacking player owns"),
+            Some(PlayerFilter::DamagedPlayer) => Some("damaged player owns"),
+            Some(PlayerFilter::Teammate) => Some("a teammate owns"),
+            Some(PlayerFilter::Specific(_)) => Some("that player owns"),
+            Some(PlayerFilter::Target(_)) | Some(PlayerFilter::IteratedPlayer) => Some("they own"),
+            _ => None,
         }
     };
     if let Some(suffix) = owner_suffix {
@@ -5796,12 +5797,7 @@ fn describe_signed_i32(value: i32) -> String {
 }
 
 fn choose_spec_is_plural(spec: &ChooseSpec) -> bool {
-    match spec {
-        ChooseSpec::Target(inner) => choose_spec_is_plural(inner),
-        ChooseSpec::All(_) | ChooseSpec::EachPlayer(_) => true,
-        ChooseSpec::WithCount(inner, count) => !count.is_single() || choose_spec_is_plural(inner),
-        _ => false,
-    }
+    effect_text_shared::choose_spec_is_plural(spec)
 }
 
 fn choose_spec_allows_multiple(spec: &ChooseSpec) -> bool {
@@ -5855,22 +5851,9 @@ fn describe_put_counter_phrase(count: &Value, counter_type: CounterType) -> Stri
 fn describe_apply_continuous_target(
     effect: &crate::effects::ApplyContinuousEffect,
 ) -> (String, bool) {
-    if let Some(spec) = &effect.target_spec {
-        return (describe_choose_spec(spec), choose_spec_is_plural(spec));
-    }
-
-    match &effect.target {
-        crate::continuous::EffectTarget::Specific(_) => ("that permanent".to_string(), false),
-        crate::continuous::EffectTarget::Filter(filter) => {
-            (pluralize_noun_phrase(&filter.description()), true)
-        }
-        crate::continuous::EffectTarget::Source => ("this source".to_string(), false),
-        crate::continuous::EffectTarget::AllPermanents => ("all permanents".to_string(), true),
-        crate::continuous::EffectTarget::AllCreatures => ("all creatures".to_string(), true),
-        crate::continuous::EffectTarget::AttachedTo(_) => {
-            ("the attached permanent".to_string(), false)
-        }
-    }
+    effect_text_shared::describe_apply_continuous_target(effect, describe_choose_spec, |filter| {
+        pluralize_noun_phrase(&filter.description())
+    })
 }
 
 fn describe_apply_continuous_clauses(
@@ -6159,14 +6142,11 @@ fn describe_tag_attached_then_tap_or_untap(
 }
 
 fn is_generated_internal_tag(tag: &str) -> bool {
-    let Some((_, suffix)) = tag.rsplit_once('_') else {
-        return false;
-    };
-    !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+    effect_text_shared::is_generated_internal_tag(tag)
 }
 
 fn is_implicit_reference_tag(tag: &str) -> bool {
-    matches!(tag, "triggering" | "damaged" | "__it__") || is_generated_internal_tag(tag)
+    effect_text_shared::is_implicit_reference_tag(tag)
 }
 
 fn describe_until(until: &Until) -> String {
@@ -13999,8 +13979,7 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
                 phrased = format!("{head}. When you do, {subject} deals {tail}");
             }
         }
-        if let Some((prefix, rest)) =
-            phrased.split_once("— For each player, that player discards ")
+        if let Some((prefix, rest)) = phrased.split_once("— For each player, that player discards ")
         {
             let rest = rest.trim();
             phrased = format!("{prefix}— Each player discards {rest}");
@@ -14303,11 +14282,10 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
         if oracle_lower.contains("with an additional +1/+1 counter on it")
             && normalized_body.contains("with a +1/+1 counter on it")
         {
-            normalized_body = normalized_body
-                .replace(
-                    "with a +1/+1 counter on it",
-                    "with an additional +1/+1 counter on it",
-                );
+            normalized_body = normalized_body.replace(
+                "with a +1/+1 counter on it",
+                "with an additional +1/+1 counter on it",
+            );
         } else if oracle_lower.contains("put a +1/+1 counter on it")
             && !oracle_lower.contains("with an additional +1/+1 counter on it")
             && normalized_body.contains("with a +1/+1 counter on it")
@@ -14378,8 +14356,10 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
     if oracle_lower.contains("with an additional +1/+1 counter on it")
         && normalized.contains("with a +1/+1 counter on it")
     {
-        normalized =
-            normalized.replace("with a +1/+1 counter on it", "with an additional +1/+1 counter on it");
+        normalized = normalized.replace(
+            "with a +1/+1 counter on it",
+            "with an additional +1/+1 counter on it",
+        );
     } else if oracle_lower.contains("put a +1/+1 counter on it")
         && !oracle_lower.contains("with an additional +1/+1 counter on it")
         && normalized.contains("with a +1/+1 counter on it")
@@ -15377,7 +15357,10 @@ fn rewrite_return_with_counters_on_it_sequence(text: &str) -> Option<String> {
 
     for idx in 0..clauses.len().saturating_sub(1) {
         let clause = clauses[idx].clone();
-        if clause.to_ascii_lowercase().starts_with("for each player, return all ") {
+        if clause
+            .to_ascii_lowercase()
+            .starts_with("for each player, return all ")
+        {
             continue;
         }
         let lower_clause = clause.to_ascii_lowercase();

@@ -29,6 +29,8 @@ pub struct TriggeredAbilityEntry {
     pub source: ObjectId,
     /// The controller of the triggered ability.
     pub controller: PlayerId,
+    /// X value to use when resolving this trigger (if any).
+    pub x_value: Option<u32>,
     /// The triggered ability definition.
     pub ability: TriggeredAbility,
     /// The event that triggered this ability (for "intervening if" checks).
@@ -50,6 +52,8 @@ pub struct DelayedTrigger {
     pub effects: Vec<Effect>,
     /// Whether this is a one-shot trigger (fires once then is removed).
     pub one_shot: bool,
+    /// X value captured when the delayed trigger was scheduled (if any).
+    pub x_value: Option<u32>,
     /// Optional minimum turn number before this delayed trigger can fire.
     pub not_before_turn: Option<u32>,
     /// Optional turn number after which this delayed trigger expires.
@@ -181,6 +185,7 @@ pub fn check_triggers(
                 triggered.push(TriggeredAbilityEntry {
                     source: obj_id,
                     controller: obj.controller,
+                    x_value: obj.x_value,
                     ability: TriggeredAbility {
                         trigger: trigger_ability.trigger.clone(),
                         effects: trigger_ability.effects.clone(),
@@ -234,6 +239,7 @@ pub fn check_triggers(
                     triggered.push(TriggeredAbilityEntry {
                         source: snapshot.object_id,
                         controller: snapshot.controller,
+                        x_value: snapshot.x_value,
                         ability: TriggeredAbility {
                             trigger: trigger_ability.trigger.clone(),
                             effects: trigger_ability.effects.clone(),
@@ -299,6 +305,7 @@ pub fn check_triggers(
             triggered.push(TriggeredAbilityEntry {
                 source: cast.spell,
                 controller: cast.caster,
+                x_value: entry.x_value,
                 ability,
                 triggering_event: trigger_event.clone(),
                 source_stable_id: obj.stable_id,
@@ -386,6 +393,7 @@ pub fn check_delayed_triggers(
             triggered.push(TriggeredAbilityEntry {
                 source: ability_source,
                 controller: delayed.controller,
+                x_value: delayed.x_value,
                 ability: TriggeredAbility {
                     trigger: delayed.trigger.clone(),
                     effects: delayed.effects.clone(),
@@ -453,6 +461,7 @@ fn check_triggers_in_zone(
             triggered.push(TriggeredAbilityEntry {
                 source: obj_id,
                 controller: obj.controller,
+                x_value: obj.x_value,
                 ability: TriggeredAbility {
                     trigger: trigger_ability.trigger.clone(),
                     effects: trigger_ability.effects.clone(),
@@ -651,6 +660,7 @@ mod tests {
         let entry = TriggeredAbilityEntry {
             source: ObjectId::from_raw(1),
             controller: PlayerId::from_index(0),
+            x_value: None,
             ability: TriggeredAbility {
                 trigger: Trigger::this_enters_battlefield(),
                 effects: vec![Effect::draw(1)],

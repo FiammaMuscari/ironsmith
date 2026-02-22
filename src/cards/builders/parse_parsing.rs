@@ -15095,11 +15095,37 @@ fn parse_return_with_counters_on_it_sentence(
         return Ok(None);
     }
 
-    let base_destination_words = words(&destination_tokens[..with_idx]);
-    if !base_destination_words.contains(&"battlefield") {
+    let base_destination_words: Vec<&str> = words(&destination_tokens[..with_idx])
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    let Some(battlefield_idx) = base_destination_words
+        .iter()
+        .position(|word| *word == "battlefield")
+    else {
         return Ok(None);
-    }
+    };
     let tapped = base_destination_words.contains(&"tapped");
+    let destination_tail: Vec<&str> = base_destination_words[battlefield_idx + 1..]
+        .iter()
+        .copied()
+        .filter(|word| *word != "tapped")
+        .collect();
+    let battlefield_controller = if destination_tail.is_empty()
+        || destination_tail == ["under", "its", "control"]
+        || destination_tail == ["under", "their", "control"]
+    {
+        ReturnControllerAst::Preserve
+    } else if destination_tail == ["under", "your", "control"] {
+        ReturnControllerAst::You
+    } else if destination_tail == ["under", "its", "owners", "control"]
+        || destination_tail == ["under", "their", "owners", "control"]
+        || destination_tail == ["under", "that", "players", "control"]
+    {
+        ReturnControllerAst::Owner
+    } else {
+        return Ok(None);
+    };
 
     let counter_clause_tokens = trim_commas(&destination_tokens[with_idx + 1..]);
     let Some(on_idx) = counter_clause_tokens
@@ -15143,7 +15169,7 @@ fn parse_return_with_counters_on_it_sentence(
     let mut effects = vec![EffectAst::ReturnToBattlefield {
         target: parse_target_phrase(&target_tokens)?,
         tapped,
-        controller: ReturnControllerAst::Preserve,
+        controller: battlefield_controller,
     }];
     let tagged_target = TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(tokens));
     for descriptor in descriptors {
@@ -19953,27 +19979,32 @@ fn parse_exile_then_return_same_object_sentence(
         return Ok(None);
     }
 
-    let second_effect = parse_effect_clause(second_clause)?;
-    let rewritten_second = match second_effect {
-        EffectAst::ReturnToBattlefield {
-            target,
-            tapped,
-            controller,
-        } if target_references_it_tag(&target) => EffectAst::ReturnToBattlefield {
-            target: TargetAst::Tagged(TagKey::from("exiled_0"), None),
-            tapped,
-            controller,
-        },
-        EffectAst::ReturnToHand { target, random } if target_references_it_tag(&target) => {
-            EffectAst::ReturnToHand {
-                target: TargetAst::Tagged(TagKey::from("exiled_0"), None),
-                random,
+    // Preserve return follow-up clauses (for example "with a +1/+1 counter on it")
+    // while still rewriting the "it" return target to the tagged exiled object.
+    let mut second_effects = parse_effect_chain_inner(second_clause)?;
+    let mut rewrote_return = false;
+    for effect in &mut second_effects {
+        match effect {
+            EffectAst::ReturnToBattlefield {
+                target,
+                tapped: _,
+                controller: _,
+            } if target_references_it_tag(target) => {
+                *target = TargetAst::Tagged(TagKey::from("exiled_0"), None);
+                rewrote_return = true;
             }
+            EffectAst::ReturnToHand { target, random: _ } if target_references_it_tag(target) => {
+                *target = TargetAst::Tagged(TagKey::from("exiled_0"), None);
+                rewrote_return = true;
+            }
+            _ => {}
         }
-        _ => return Ok(None),
-    };
+    }
+    if !rewrote_return {
+        return Ok(None);
+    }
 
-    first_effects.push(rewritten_second);
+    first_effects.extend(second_effects);
     Ok(Some(first_effects))
 }
 
