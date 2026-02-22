@@ -581,6 +581,61 @@ mod tests {
     }
 
     #[test]
+    fn generated_definition_support_accepts_a_metropolis_angel() {
+        let text = "Mana cost: {3}{W}{U}\nType: Creature — Angel Soldier\nPower/Toughness: 3/3\nFlying\nWhenever you attack with one or more creatures with counters on them, draw a card.";
+        let definition = CardDefinitionBuilder::new(CardId::new(), "A-Metropolis Angel")
+            .parse_text(text)
+            .expect("a-metropolis angel parse should succeed");
+
+        let debug = format!("{definition:#?}").to_ascii_lowercase();
+        assert!(!debug.contains("unimplemented"));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_a_nadu_winged_wisdom() {
+        let text = "Mana cost: {1}{G}{U}\nType: Legendary Creature — Bird Wizard\nPower/Toughness: 3/4\nFlying\nWhenever a creature you control becomes the target of a spell or ability, reveal the top card of your library. If it's a land card, put it onto the battlefield. Otherwise, put it into your hand. This ability triggers only twice each turn.";
+        let definition = CardDefinitionBuilder::new(CardId::new(), "A-Nadu, Winged Wisdom")
+            .parse_text(text)
+            .expect("a-nadu winged wisdom parse should succeed");
+
+        let debug = format!("{definition:#?}").to_ascii_lowercase();
+        assert!(!debug.contains("unimplemented"));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_a_radha_coalition_warlord() {
+        let text = "Mana cost: {1}{R}{G}\nType: Legendary Creature — Elf Warrior\nPower/Toughness: 3/3\nDomain — Whenever Radha, Coalition Warlord enters or becomes tapped, another target creature you control gets +X/+X until end of turn, where X is the number of basic land types among lands you control.";
+        let definition = CardDefinitionBuilder::new(CardId::new(), "A-Radha, Coalition Warlord")
+            .parse_text(text)
+            .expect("a-radha coalition warlord parse should succeed");
+
+        let debug = format!("{definition:#?}").to_ascii_lowercase();
+        assert!(!debug.contains("unimplemented"));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_a_rockslide_sorcerer() {
+        let text = "Mana cost: {2}{R}\nType: Creature — Human Wizard\nPower/Toughness: 2/2\nWhenever you cast an instant, sorcery, or Wizard spell, Rockslide Sorcerer deals 1 damage to any target.";
+        let definition = CardDefinitionBuilder::new(CardId::new(), "A-Rockslide Sorcerer")
+            .parse_text(text)
+            .expect("a-rockslide sorcerer parse should succeed");
+
+        let debug = format!("{definition:#?}").to_ascii_lowercase();
+        assert!(!debug.contains("unimplemented"));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_a_shipwreck_sifters() {
+        let text = "Mana cost: {1}{U}\nType: Creature — Spirit\nPower/Toughness: 1/2\nWhen Shipwreck Sifters enters, draw a card, then discard a card.\nWhenever a Spirit card or a card with disturb is put into your graveyard from anywhere, put a +1/+1 counter on Shipwreck Sifters.";
+        let definition = CardDefinitionBuilder::new(CardId::new(), "A-Shipwreck Sifters")
+            .parse_text(text)
+            .expect("a-shipwreck sifters parse should succeed");
+
+        let debug = format!("{definition:#?}").to_ascii_lowercase();
+        assert!(!debug.contains("unimplemented"));
+    }
+
+    #[test]
     fn registry_skips_parser_fallback_definitions() {
         let card = CardBuilder::new(CardId::new(), "Skipped Fallback")
             .card_types(vec![CardType::Creature])

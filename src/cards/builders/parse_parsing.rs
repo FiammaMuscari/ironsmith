@@ -11547,12 +11547,31 @@ fn split_trigger_or_index(tokens: &[Token]) -> Option<usize> {
                 .get(idx + 1)
                 .and_then(Token::as_word)
                 .is_some_and(|word| parse_color(word).is_some() || objectish_word(word));
+        let previous_word = (0..idx).rev().find_map(|i| tokens[i].as_word());
+        let next_word = tokens.get(idx + 1).and_then(Token::as_word);
+        let serial_spell_list_or = tokens
+            .iter()
+            .filter_map(Token::as_word)
+            .any(|word| word == "spell" || word == "spells")
+            && previous_word
+                .is_some_and(|word| parse_color(word).is_some() || objectish_word(word))
+            && next_word.is_some_and(|word| parse_color(word).is_some() || objectish_word(word));
+        let spell_or_ability_or = tokens
+            .get(idx - 1)
+            .and_then(Token::as_word)
+            .is_some_and(|word| word == "spell" || word == "spells")
+            && tokens
+                .get(idx + 1)
+                .and_then(Token::as_word)
+                .is_some_and(|word| word == "ability" || word == "abilities");
         if quantifier_or
             || comparison_or
             || numeric_list_or
             || color_list_or
             || object_list_or
             || and_or_list_or
+            || serial_spell_list_or
+            || spell_or_ability_or
         {
             None
         } else {
@@ -11616,6 +11635,28 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
                 Box::new(TriggerSpec::ThisDies),
                 Box::new(TriggerSpec::Dies(filter)),
             ));
+        }
+    }
+
+    for tail in [
+        ["is", "put", "into", "your", "graveyard", "from", "anywhere"].as_slice(),
+        ["are", "put", "into", "your", "graveyard", "from", "anywhere"].as_slice(),
+        ["is", "put", "into", "your", "graveyard"].as_slice(),
+        ["are", "put", "into", "your", "graveyard"].as_slice(),
+    ] {
+        if words.ends_with(tail) {
+            let subject_word_len = words.len().saturating_sub(tail.len());
+            let subject_tokens = token_index_for_word_index(tokens, subject_word_len)
+                .map(|idx| &tokens[..idx])
+                .unwrap_or_default();
+            let mut filter = parse_object_filter(subject_tokens, false).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported card filter in put-into-your-graveyard trigger clause (clause: '{}')",
+                    words.join(" ")
+                ))
+            })?;
+            filter.controller = Some(PlayerFilter::You);
+            return Ok(TriggerSpec::PutIntoGraveyard(filter));
         }
     }
 
@@ -11923,12 +11964,14 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
 
     if words.as_slice() == ["this", "creature", "becomes", "tapped"]
         || words.as_slice() == ["this", "becomes", "tapped"]
+        || words.as_slice() == ["becomes", "tapped"]
     {
         return Ok(TriggerSpec::ThisBecomesTapped);
     }
 
     if words.as_slice() == ["this", "creature", "becomes", "untapped"]
         || words.as_slice() == ["this", "becomes", "untapped"]
+        || words.as_slice() == ["becomes", "untapped"]
     {
         return Ok(TriggerSpec::ThisBecomesUntapped);
     }
@@ -11956,6 +11999,10 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
         && words.get(becomes_idx + 3).copied() == Some("of")
     {
         let subject_words = &words[..becomes_idx];
+        let subject_tokens = token_index_for_word_index(tokens, becomes_idx)
+            .map(|idx| &tokens[..idx])
+            .unwrap_or_default();
+        let subject_filter = parse_trigger_subject_filter(subject_tokens)?;
         let subject_is_source =
             subject_words.is_empty() || is_source_reference_words(subject_words);
         if subject_is_source {
@@ -11979,6 +12026,15 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
                     ))
                 })?;
                 return Ok(TriggerSpec::ThisBecomesTargetedBySpell(spell_filter));
+            }
+        } else {
+            let tail_word_start = becomes_idx + 4;
+            let tail_words = &words[tail_word_start..];
+            if (tail_words == ["a", "spell", "or", "ability"]
+                || tail_words == ["spell", "or", "ability"])
+                && let Some(filter) = subject_filter
+            {
+                return Ok(TriggerSpec::BecomesTargeted(filter));
             }
         }
     }
@@ -12168,6 +12224,51 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
                 })?
             };
             return Ok(TriggerSpec::PlayerSacrifices { player, filter });
+        }
+    }
+
+    if let Some(attack_idx) = words
+        .iter()
+        .position(|word| *word == "attack" || *word == "attacks")
+        && words.get(attack_idx + 1).copied() == Some("with")
+    {
+        let subject_words = &words[..attack_idx];
+        if let Some(player) = parse_trigger_subject_player_filter(subject_words) {
+            let with_object_word_start = attack_idx + 2;
+            let with_object_token_start = token_index_for_word_index(tokens, with_object_word_start)
+                .ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "missing attacking-object filter in trigger clause (clause: '{}')",
+                        words.join(" ")
+                    ))
+                })?;
+            let mut object_tokens = &tokens[with_object_token_start..];
+            let one_or_more = has_leading_one_or_more(object_tokens);
+            object_tokens = strip_leading_one_or_more(object_tokens);
+            if object_tokens.is_empty() {
+                return Err(CardTextError::ParseError(format!(
+                    "missing attacking-object filter in trigger clause (clause: '{}')",
+                    words.join(" ")
+                )));
+            }
+            let mut filter = parse_object_filter(object_tokens, false).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported attacking-object filter in trigger clause (clause: '{}')",
+                    words.join(" ")
+                ))
+            })?;
+            if filter.controller.is_none() {
+                if player == PlayerFilter::You {
+                    filter.controller = Some(PlayerFilter::You);
+                } else if player == PlayerFilter::Opponent {
+                    filter.controller = Some(PlayerFilter::Opponent);
+                }
+            }
+            return Ok(if one_or_more {
+                TriggerSpec::AttacksOneOrMore(filter)
+            } else {
+                TriggerSpec::Attacks(filter)
+            });
         }
     }
 

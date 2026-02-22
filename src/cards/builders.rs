@@ -205,6 +205,7 @@ enum TriggerSpec {
     ThisTurnedFaceUp,
     TurnedFaceUp(ObjectFilter),
     ThisBecomesTargeted,
+    BecomesTargeted(ObjectFilter),
     ThisBecomesTargetedBySpell(ObjectFilter),
     ThisDealsDamage,
     ThisDealsDamageToPlayer {
@@ -235,6 +236,7 @@ enum TriggerSpec {
         filter: ObjectFilter,
     },
     Dies(ObjectFilter),
+    PutIntoGraveyard(ObjectFilter),
     DiesCreatureDealtDamageByThisTurn {
         victim: ObjectFilter,
         damager: DamageBySpec,

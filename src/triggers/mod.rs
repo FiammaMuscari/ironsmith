@@ -455,6 +455,11 @@ impl Trigger {
         Self::new(BecomesTargetedTrigger)
     }
 
+    /// Create a "when [filter] becomes the target of a spell or ability" trigger.
+    pub fn becomes_targeted_object(filter: ObjectFilter) -> Self {
+        Self::new(BecomesTargetedObjectTrigger::new(filter))
+    }
+
     /// Create a "when this permanent becomes the target of [spell filter]" trigger.
     pub fn becomes_targeted_by_spell(filter: ObjectFilter) -> Self {
         Self::new(BecomesTargetedBySpellTrigger::new(filter))

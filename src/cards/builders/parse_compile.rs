@@ -19,6 +19,7 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         TriggerSpec::ThisTurnedFaceUp => Trigger::this_is_turned_face_up(),
         TriggerSpec::TurnedFaceUp(filter) => Trigger::turned_face_up(filter),
         TriggerSpec::ThisBecomesTargeted => Trigger::becomes_targeted(),
+        TriggerSpec::BecomesTargeted(filter) => Trigger::becomes_targeted_object(filter),
         TriggerSpec::ThisBecomesTargetedBySpell(filter) => {
             Trigger::becomes_targeted_by_spell(filter)
         }
@@ -47,6 +48,7 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
             Trigger::player_sacrifices(player, filter)
         }
         TriggerSpec::Dies(filter) => Trigger::dies(filter),
+        TriggerSpec::PutIntoGraveyard(filter) => Trigger::put_into_graveyard(filter),
         TriggerSpec::DiesCreatureDealtDamageByThisTurn { victim, damager } => match damager {
             DamageBySpec::ThisCreature => Trigger::creature_dealt_damage_by_this_creature_this_turn_dies(victim),
             DamageBySpec::EquippedCreature => {
