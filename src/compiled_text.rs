@@ -3730,8 +3730,6 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         .replace(", If ", ", if ")
         .replace(", Transform ", ", transform ")
         .replace("Counter target spell. that object's controller mills ", "Counter target spell, then its controller mills ")
-        .replace(" this artifact deals ", " It deals ")
-        .replace(" This artifact deals ", " It deals ")
         .replace(" for each creature blocking it until end of turn", " until end of turn for each creature blocking it")
         .replace(" for each artifact you control until end of turn", " until end of turn for each artifact you control")
         .replace("when this creature enters or When this creature dies, ", "When this creature enters or dies, ")
