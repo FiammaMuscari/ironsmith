@@ -7610,6 +7610,30 @@ fn parse_ward_mana_and_life_line_as_static_ability() {
 }
 
 #[test]
+fn parse_ward_discard_multiple_card_types_as_static_ability() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Ward Typed Discard Variant")
+        .parse_text("Ward—Discard an enchantment, instant, or sorcery card.")
+        .expect("ward typed-discard line should parse");
+
+    let rendered = compiled_lines(&def).join(" ");
+    let rendered_lower = rendered.to_ascii_lowercase();
+    assert!(
+        rendered_lower.contains("ward")
+            && rendered_lower.contains("discard")
+            && rendered_lower.contains("enchantment")
+            && rendered_lower.contains("instant")
+            && rendered_lower.contains("sorcery"),
+        "expected ward typed-discard wording in compiled output, got {rendered}"
+    );
+
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        !debug.contains("keyword_marker") && !debug.contains("staticabilityid::custom"),
+        "ward typed-discard should lower to a real ward static ability, got {debug}"
+    );
+}
+
+#[test]
 fn render_if_they_dont_uses_negative_may_condition() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Umbilicus Variant")
         .parse_text(

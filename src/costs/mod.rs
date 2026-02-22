@@ -161,6 +161,11 @@ impl Cost {
         Self::new(DiscardCost::new(count, card_type))
     }
 
+    /// Create a discard cards cost with one-or-more allowed card types.
+    pub fn discard_types(count: u32, card_types: Vec<CardType>) -> Self {
+        Self::new(DiscardCost::with_card_types(count, card_types))
+    }
+
     /// Create a discard hand cost.
     pub fn discard_hand() -> Self {
         Self::new(DiscardHandCost::new())

@@ -1252,11 +1252,23 @@ fn alternative_cast_parts_from_total_cost(
             continue;
         }
         if cost.is_discard() {
-            let (count, card_type) = cost.discard_details().unwrap_or((1, None));
-            let card_filter = card_type.map(|card_type| ObjectFilter {
-                card_types: vec![card_type],
-                ..Default::default()
-            });
+            let (count, card_types) = match cost.processing_mode() {
+                crate::costs::CostProcessingMode::DiscardCards { count, card_types } => {
+                    (count, card_types)
+                }
+                _ => {
+                    let (count, card_type) = cost.discard_details().unwrap_or((1, None));
+                    (count, card_type.into_iter().collect())
+                }
+            };
+            let card_filter = if card_types.is_empty() {
+                None
+            } else {
+                Some(ObjectFilter {
+                    card_types,
+                    ..Default::default()
+                })
+            };
             cost_effects.push(Effect::discard_player_filtered(
                 Value::Fixed(count as i32),
                 PlayerFilter::You,
@@ -2376,6 +2388,10 @@ fn parse_ward_static_ability_line(
         return Ok(Some(StaticAbility::custom("ward", "Ward".to_string())));
     }
 
+    if let Some(cost) = parse_ward_discard_card_type_cost(&cost_tokens) {
+        return Ok(Some(StaticAbility::ward(cost)));
+    }
+
     if let Ok((cost, _)) = parse_activation_cost(&cost_tokens)
         && !cost.is_free()
     {
@@ -2391,6 +2407,62 @@ fn parse_ward_static_ability_line(
         format!("Ward—{}", marker_tail)
     };
     Ok(Some(StaticAbility::custom("keyword_marker", marker)))
+}
+
+fn parse_ward_discard_card_type_cost(tokens: &[Token]) -> Option<TotalCost> {
+    let cost_words = words(tokens);
+    if cost_words.first().copied() != Some("discard") {
+        return None;
+    }
+
+    let mut idx = 1usize;
+    let mut count = 1u32;
+    if let Some((value, used)) = parse_number(&tokens[idx..]) {
+        count = value;
+        idx += used;
+    }
+
+    let words_tail = &cost_words[idx..];
+    if words_tail.starts_with(&["your", "hand"]) && words_tail.len() == 2 {
+        return Some(TotalCost::from_cost(crate::costs::Cost::discard_hand()));
+    }
+
+    while cost_words
+        .get(idx)
+        .is_some_and(|word| *word == "a" || *word == "an")
+    {
+        idx += 1;
+    }
+
+    let mut card_types = Vec::<CardType>::new();
+    while let Some(word) = cost_words.get(idx) {
+        if *word == "card" || *word == "cards" {
+            idx += 1;
+            break;
+        }
+        if *word == "and" || *word == "or" || *word == "a" || *word == "an" {
+            idx += 1;
+            continue;
+        }
+        let parsed = parse_card_type(word)?;
+        if !card_types.contains(&parsed) {
+            card_types.push(parsed);
+        }
+        idx += 1;
+    }
+
+    if idx != cost_words.len() {
+        return None;
+    }
+
+    let cost = if card_types.len() > 1 {
+        crate::costs::Cost::discard_types(count, card_types)
+    } else if let Some(card_type) = card_types.first().copied() {
+        crate::costs::Cost::discard(count, Some(card_type))
+    } else {
+        crate::costs::Cost::discard(count, None)
+    };
+    Some(TotalCost::from_cost(cost))
 }
 
 fn format_ward_marker_tail(tokens: &[Token]) -> String {
@@ -8990,11 +9062,37 @@ fn parse_activation_cost(tokens: &[Token]) -> Result<(TotalCost, Vec<Effect>), C
                 idx += used;
             }
 
-            let mut card_type: Option<CardType> = None;
-            if let Some(word) = segment.get(idx).and_then(Token::as_word)
-                && let Some(parsed_type) = parse_card_type(word)
+            while segment
+                .get(idx)
+                .is_some_and(|token| token.is_word("a") || token.is_word("an"))
             {
-                card_type = Some(parsed_type);
+                idx += 1;
+            }
+
+            let mut card_types = Vec::<CardType>::new();
+            while let Some(token) = segment.get(idx) {
+                if token.is_word("card") || token.is_word("cards") {
+                    break;
+                }
+                let Some(word) = token.as_word() else {
+                    return Err(CardTextError::ParseError(format!(
+                        "unsupported discard cost selector (clause: '{}')",
+                        segment_words.join(" ")
+                    )));
+                };
+                if word == "and" || word == "or" || word == "a" || word == "an" {
+                    idx += 1;
+                    continue;
+                }
+                let Some(parsed_type) = parse_card_type(word) else {
+                    return Err(CardTextError::ParseError(format!(
+                        "unsupported discard cost selector (clause: '{}')",
+                        segment_words.join(" ")
+                    )));
+                };
+                if !card_types.contains(&parsed_type) {
+                    card_types.push(parsed_type);
+                }
                 idx += 1;
             }
 
@@ -9017,10 +9115,12 @@ fn parse_activation_cost(tokens: &[Token]) -> Result<(TotalCost, Vec<Effect>), C
                 )));
             }
 
-            if let Some(card_type) = card_type {
+            if card_types.len() > 1 {
+                explicit_costs.push(crate::costs::Cost::discard_types(count, card_types));
+            } else if let Some(card_type) = card_types.first().copied() {
                 explicit_costs.push(crate::costs::Cost::discard(count, Some(card_type)));
             } else {
-                explicit_costs.push(crate::costs::Cost::effect(Effect::discard(count)));
+                explicit_costs.push(crate::costs::Cost::discard(count, None));
             }
             continue;
         }
@@ -14242,19 +14342,58 @@ fn most_recent_extra_turn_player(effects: &[EffectAst]) -> Option<PlayerAst> {
 
 fn rewrite_when_you_do_clause_prefix(tokens: &[Token]) -> Vec<Token> {
     let clause_words = words(tokens);
-    if !clause_words.starts_with(&["when", "you", "do"]) {
-        return tokens.to_vec();
-    }
-    let mut rewritten = tokens.to_vec();
-    for token in &mut rewritten {
-        if let Token::Word(word, _) = token {
-            if word.eq_ignore_ascii_case("when") {
-                *word = "if".to_string();
+    if clause_words.starts_with(&["when", "you", "do"]) {
+        let mut rewritten = tokens.to_vec();
+        for token in &mut rewritten {
+            if let Token::Word(word, _) = token {
+                if word.eq_ignore_ascii_case("when") {
+                    *word = "if".to_string();
+                }
+                break;
             }
-            break;
         }
+        return rewritten;
     }
-    rewritten
+
+    // Generic "When one or more ... this way, ..." follow-ups are semantically
+    // "If you do, ..." against the immediately previous effect result.
+    let has_this_way = clause_words
+        .windows(2)
+        .any(|window| window == ["this", "way"]);
+    if (clause_words.starts_with(&["when", "one", "or", "more"])
+        || clause_words.starts_with(&["whenever", "one", "or", "more"]))
+        && has_this_way
+    {
+        let Some(comma_idx) = tokens.iter().position(|token| matches!(token, Token::Comma(_)))
+        else {
+            return tokens.to_vec();
+        };
+        let mut rewritten = Vec::new();
+
+        let mut if_token = tokens[0].clone();
+        if let Token::Word(word, _) = &mut if_token {
+            *word = "if".to_string();
+        }
+        rewritten.push(if_token);
+
+        let mut you_token = tokens.get(1).cloned().unwrap_or_else(|| tokens[0].clone());
+        if let Token::Word(word, _) = &mut you_token {
+            *word = "you".to_string();
+        }
+        rewritten.push(you_token);
+
+        let mut do_token = tokens.get(2).cloned().unwrap_or_else(|| tokens[0].clone());
+        if let Token::Word(word, _) = &mut do_token {
+            *word = "do".to_string();
+        }
+        rewritten.push(do_token);
+
+        rewritten.push(tokens[comma_idx].clone());
+        rewritten.extend_from_slice(&tokens[comma_idx + 1..]);
+        return rewritten;
+    }
+
+    tokens.to_vec()
 }
 
 fn strip_otherwise_sentence_prefix(tokens: &[Token]) -> Option<Vec<Token>> {

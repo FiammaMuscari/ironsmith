@@ -37,8 +37,8 @@ pub enum CostProcessingMode {
     DiscardCards {
         /// Number of cards to discard.
         count: u32,
-        /// Optional card type restriction.
-        card_type: Option<CardType>,
+        /// Optional card type restrictions ("discard an enchantment, instant, or sorcery card").
+        card_types: Vec<CardType>,
     },
 
     /// Cost requires selecting cards to exile from hand.
@@ -66,21 +66,8 @@ impl CostProcessingMode {
 
             CostProcessingMode::SacrificeTarget { filter } => describe_sacrifice_filter(filter),
 
-            CostProcessingMode::DiscardCards { count, card_type } => {
-                let type_str = card_type.map_or("card".to_string(), |ct| {
-                    match ct {
-                        CardType::Creature => "creature card",
-                        CardType::Artifact => "artifact card",
-                        CardType::Enchantment => "enchantment card",
-                        CardType::Land => "land card",
-                        CardType::Planeswalker => "planeswalker card",
-                        CardType::Instant => "instant card",
-                        CardType::Sorcery => "sorcery card",
-                        CardType::Battle => "battle card",
-                        CardType::Kindred => "kindred card",
-                    }
-                    .to_string()
-                });
+            CostProcessingMode::DiscardCards { count, card_types } => {
+                let type_str = format_discard_card_type_phrase(card_types);
 
                 if *count == 1 {
                     format!("Discard a {}", type_str)
@@ -187,6 +174,33 @@ fn describe_sacrifice_filter(filter: &PermanentFilter) -> String {
     }
 
     format!("Sacrifice a {}", parts.join(" "))
+}
+
+fn card_type_name(card_type: CardType) -> &'static str {
+    match card_type {
+        CardType::Creature => "creature",
+        CardType::Artifact => "artifact",
+        CardType::Enchantment => "enchantment",
+        CardType::Land => "land",
+        CardType::Planeswalker => "planeswalker",
+        CardType::Instant => "instant",
+        CardType::Sorcery => "sorcery",
+        CardType::Battle => "battle",
+        CardType::Kindred => "kindred",
+    }
+}
+
+fn format_discard_card_type_phrase(card_types: &[CardType]) -> String {
+    if card_types.is_empty() {
+        return "card".to_string();
+    }
+    if card_types.len() == 1 {
+        return format!("{} card", card_type_name(card_types[0]));
+    }
+
+    let mut parts: Vec<&str> = card_types.iter().map(|ct| card_type_name(*ct)).collect();
+    let last = parts.pop().expect("len checked");
+    format!("{} or {} card", parts.join(", "), last)
 }
 
 /// Format a mana cost for display.
@@ -306,7 +320,7 @@ mod tests {
     fn test_discard_cards_mode() {
         let mode = CostProcessingMode::DiscardCards {
             count: 2,
-            card_type: None,
+            card_types: Vec::new(),
         };
 
         assert!(mode.needs_player_choice());
@@ -314,9 +328,18 @@ mod tests {
 
         let mode_typed = CostProcessingMode::DiscardCards {
             count: 1,
-            card_type: Some(CardType::Creature),
+            card_types: vec![CardType::Creature],
         };
         assert_eq!(mode_typed.display(), "Discard a creature card");
+
+        let mode_multi = CostProcessingMode::DiscardCards {
+            count: 1,
+            card_types: vec![CardType::Enchantment, CardType::Instant, CardType::Sorcery],
+        };
+        assert_eq!(
+            mode_multi.display(),
+            "Discard a enchantment, instant or sorcery card"
+        );
     }
 
     #[test]

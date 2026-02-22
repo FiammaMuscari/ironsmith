@@ -191,6 +191,42 @@ fn run_checked(command: &mut Command, label: &str) -> Result<(), Box<dyn std::er
     }
 }
 
+fn write_partition_report_with_jq(
+    audits_path: &Path,
+    base_dir: &Path,
+    partition: &str,
+    timestamp: &str,
+    entries_filter: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let dir = base_dir.join(partition);
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(timestamp);
+    let handle = fs::File::create(&path)?;
+    let jq_expr = format!(
+        r#"{{
+  generated_at: $ts,
+  threshold: .threshold,
+  embedding_dims: .embedding_dims,
+  cards_processed: .cards_processed,
+  partition: $partition,
+  count: ((.entries | {entries_filter}) | length),
+  entries: (.entries | {entries_filter})
+}}"#
+    );
+    let mut cmd = Command::new("jq");
+    cmd.arg("--arg")
+        .arg("ts")
+        .arg(timestamp)
+        .arg("--arg")
+        .arg("partition")
+        .arg(partition)
+        .arg(&jq_expr)
+        .arg(audits_path)
+        .stdout(Stdio::from(handle));
+    run_checked(&mut cmd, "jq partition transform")?;
+    Ok(path)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let args = parse_args(&root_dir).map_err(std::io::Error::other)?;
@@ -214,6 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let filtered_skip_names_file = reports_dir.join(format!("ironsmith_wasm_skip_names_{run_id}.txt"));
     let failures_report = tmp_dir.join(format!("ironsmith_wasm_threshold_failures_{run_id}.json"));
     let cluster_report = tmp_dir.join(format!("ironsmith_wasm_cluster_report_{run_id}.json"));
+    let audits_report = tmp_dir.join(format!("ironsmith_wasm_card_audits_{run_id}.json"));
     let mismatch_report = reports_dir.join(format!(
         "ironsmith_wasm_semantic_mismatch_report_{run_id}.json"
     ));
@@ -250,6 +287,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .arg(&mismatch_names_file)
         .arg("--failures-out")
         .arg(&failures_report)
+        .arg("--audits-out")
+        .arg(&audits_report)
         .arg("--json-out")
         .arg(&cluster_report);
     if let Some(limit) = args.limit {
@@ -329,6 +368,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .stdout(Stdio::from(unparsable_handle));
     run_checked(&mut jq_cmd, "jq report transform")?;
 
+    let partition_root = root_dir.join("reports");
+    let partition_ok_path = write_partition_report_with_jq(
+        &audits_report,
+        &partition_root,
+        "parse_ok_supported_semantic_ok",
+        &timestamp,
+        "map(select((.parse_error == null) and (.has_unimplemented | not) and ((.semantic_mismatch | not) or .semantic_false_positive)))",
+    )?;
+    let partition_mismatch_path = write_partition_report_with_jq(
+        &audits_report,
+        &partition_root,
+        "parse_ok_supported_semantic_mismatch",
+        &timestamp,
+        "map(select((.parse_error == null) and (.has_unimplemented | not) and .semantic_mismatch and (.semantic_false_positive | not)))",
+    )?;
+    let partition_unimplemented_path = write_partition_report_with_jq(
+        &audits_report,
+        &partition_root,
+        "parse_ok_unimplemented",
+        &timestamp,
+        "map(select((.parse_error == null) and .has_unimplemented))",
+    )?;
+    let partition_parse_failed_path = write_partition_report_with_jq(
+        &audits_report,
+        &partition_root,
+        "parse_failed",
+        &timestamp,
+        "map(select(.parse_error != null))",
+    )?;
+
     eprintln!(
         "[INFO] semantic gating active: excluding {} below-threshold card(s)",
         excluded_count
@@ -344,6 +413,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!(
         "[INFO] generated skip names file: {}",
         filtered_skip_names_file.display()
+    );
+    eprintln!(
+        "[INFO] partition report (parse_ok_supported_semantic_ok): {}",
+        partition_ok_path.display()
+    );
+    eprintln!(
+        "[INFO] partition report (parse_ok_supported_semantic_mismatch): {}",
+        partition_mismatch_path.display()
+    );
+    eprintln!(
+        "[INFO] partition report (parse_ok_unimplemented): {}",
+        partition_unimplemented_path.display()
+    );
+    eprintln!(
+        "[INFO] partition report (parse_failed): {}",
+        partition_parse_failed_path.display()
     );
 
     Ok(())

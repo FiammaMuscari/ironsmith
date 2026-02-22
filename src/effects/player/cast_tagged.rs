@@ -115,10 +115,9 @@ impl EffectExecutor for CastTaggedEffect {
             if !self.without_paying_mana_cost
                 && let Some(cost) = mana_cost.as_ref()
             {
-                if !game.can_pay_mana_cost(caster, None, cost, 0) {
+                if !game.try_pay_mana_cost(caster, None, cost, 0) {
                     return Ok(EffectOutcome::from_result(EffectResult::Impossible));
                 }
-                let _ = game.try_pay_mana_cost(caster, None, cost, 0);
             }
 
             copy_obj.zone = Zone::Stack;
@@ -155,10 +154,9 @@ impl EffectExecutor for CastTaggedEffect {
         if !self.without_paying_mana_cost
             && let Some(cost) = mana_cost.as_ref()
         {
-            if !game.can_pay_mana_cost(caster, None, cost, 0) {
+            if !game.try_pay_mana_cost(caster, None, cost, 0) {
                 return Ok(EffectOutcome::from_result(EffectResult::Impossible));
             }
-            let _ = game.try_pay_mana_cost(caster, None, cost, 0);
         }
 
         let Some(new_id) = game.move_object(object_id, Zone::Stack) else {

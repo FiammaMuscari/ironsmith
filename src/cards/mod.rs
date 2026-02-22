@@ -353,6 +353,27 @@ impl CardRegistry {
 
 const UNSUPPORTED_PARSER_LINE_FALLBACK_PREFIX: &str = "Unsupported parser line fallback:";
 
+/// Returns true if a parsed definition still contains unimplemented mechanics/effects.
+///
+/// This is used by generated registries and reporting utilities to keep support
+/// classification consistent.
+pub fn generated_definition_has_unimplemented_content(definition: &CardDefinition) -> bool {
+    let has_custom_static = definition.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(static_ability) if static_ability.id() == StaticAbilityId::Custom
+        )
+    });
+    if has_custom_static {
+        return true;
+    }
+
+    // Some parsed definitions still carry raw "unimplemented_*" internals
+    // (for example, fallback custom triggers).
+    let raw_debug = format!("{definition:#?}").to_ascii_lowercase();
+    raw_debug.contains("unimplemented")
+}
+
 /// Returns true when a generated parser definition can be safely included in the registry.
 ///
 /// Generated wasm/demo registries should not include parser fallback placeholders that only
@@ -373,11 +394,7 @@ pub(crate) fn generated_definition_is_supported(definition: &CardDefinition) -> 
         return false;
     }
 
-    // Some parsed definitions still carry raw "unimplemented_*" internals
-    // (for example, fallback custom triggers). Exclude those from generated
-    // registries so only fully supported definitions ship to WASM/demo builds.
-    let raw_debug = format!("{definition:#?}").to_ascii_lowercase();
-    !raw_debug.contains("unimplemented")
+    !generated_definition_has_unimplemented_content(definition)
 }
 
 #[cfg(test)]
@@ -467,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_definition_support_keeps_non_fallback_custom_static_abilities() {
+    fn generated_definition_support_rejects_custom_static_abilities() {
         let card = CardBuilder::new(CardId::new(), "Custom Probe")
             .card_types(vec![CardType::Creature])
             .build();
@@ -478,17 +495,35 @@ mod tests {
         let mut definition = CardDefinition::new(card);
         definition.abilities.push(custom);
 
+        assert!(!generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_parsed_prowess() {
+        let definition = CardDefinitionBuilder::new(CardId::new(), "Prowess Probe")
+            .parse_text("Prowess")
+            .expect("prowess parse should succeed");
+
         assert!(generated_definition_is_supported(&definition));
     }
 
     #[test]
-    fn generated_definition_support_rejects_unimplemented_markers() {
+    fn generated_definition_support_rejects_parsed_cipher_marker() {
+        let definition = CardDefinitionBuilder::new(CardId::new(), "Cipher Probe")
+            .parse_text("Cipher")
+            .expect("cipher parse should succeed");
+
+        assert!(!generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_accepts_saruman_of_many_colors() {
         let text = "Ward—Discard an enchantment, instant, or sorcery card.\nWhenever you cast your second spell each turn, each opponent mills two cards. When one or more cards are milled this way, exile target enchantment, instant, or sorcery card with equal or lesser mana value than that spell from an opponent's graveyard. Copy the exiled card. You may cast the copy without paying its mana cost.";
         let definition = CardDefinitionBuilder::new(CardId::new(), "Saruman of Many Colors")
             .parse_text(text)
             .expect("saruman parse should succeed");
 
-        assert!(!generated_definition_is_supported(&definition));
+        assert!(generated_definition_is_supported(&definition));
     }
 
     #[test]

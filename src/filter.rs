@@ -1863,7 +1863,8 @@ impl ObjectFilter {
                         .as_ref()
                         .map_or(0, |mc| mc.mana_value() as i32);
                     if !tagged_snapshots.iter().any(|s| {
-                        object_mana_value < s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
+                        object_mana_value
+                            < s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
                     }) {
                         return false;
                     }
@@ -2492,7 +2493,8 @@ impl ObjectFilter {
                         .as_ref()
                         .map_or(0, |mc| mc.mana_value() as i32);
                     if !tagged_snapshots.iter().any(|s| {
-                        snapshot_mana_value < s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
+                        snapshot_mana_value
+                            < s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
                     }) {
                         return false;
                     }

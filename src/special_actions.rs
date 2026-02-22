@@ -862,8 +862,8 @@ fn resolve_cost_choice(
                 EventOutcome::Replaced => Ok(()),
             }
         }
-        CostProcessingMode::DiscardCards { count, card_type } => {
-            let candidates = legal_discard_cards(game, ctx.payer, ctx.source, card_type);
+        CostProcessingMode::DiscardCards { count, card_types } => {
+            let candidates = legal_discard_cards(game, ctx.payer, ctx.source, &card_types);
             let required = (count as usize).min(candidates.len());
             if required < count as usize {
                 return Err(CostPaymentError::InsufficientCardsInHand);
@@ -998,7 +998,7 @@ fn legal_discard_cards(
     game: &GameState,
     payer: PlayerId,
     source: ObjectId,
-    card_type: Option<crate::types::CardType>,
+    card_types: &[crate::types::CardType],
 ) -> Vec<ObjectId> {
     game.player(payer)
         .map(|p| {
@@ -1009,10 +1009,10 @@ fn legal_discard_cards(
                     if card_id == source {
                         return false;
                     }
-                    if let Some(ct) = card_type {
+                    if !card_types.is_empty() {
                         return game
                             .object(card_id)
-                            .is_some_and(|obj| obj.has_card_type(ct));
+                            .is_some_and(|obj| card_types.iter().any(|ct| obj.has_card_type(*ct)));
                     }
                     true
                 })

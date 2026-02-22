@@ -1789,6 +1789,11 @@ fn sentence_starts_with_trigger_intro(sentence: &str, line_index: usize) -> bool
     if looks_like_delayed_next_end_step_intro(&tokens) {
         return false;
     }
+    // "When one or more ... this way, ..." is usually a follow-up gate tied to the
+    // previous sentence's effect result, not a new printed triggered ability.
+    if looks_like_when_one_or_more_this_way_followup(&tokens) {
+        return false;
+    }
     tokens
         .first()
         .is_some_and(|token| token.is_word("when") || token.is_word("whenever"))
@@ -1833,6 +1838,15 @@ fn looks_like_delayed_next_end_step_intro(tokens: &[Token]) -> bool {
         && tokens
             .get(idx + 2)
             .is_some_and(|token| token.is_word("step"))
+}
+
+fn looks_like_when_one_or_more_this_way_followup(tokens: &[Token]) -> bool {
+    let clause_words = words(tokens);
+    (clause_words.starts_with(&["when", "one", "or", "more"])
+        || clause_words.starts_with(&["whenever", "one", "or", "more"]))
+        && clause_words
+            .windows(2)
+            .any(|window| window == ["this", "way"])
 }
 
 fn split_trigger_sentence_chunks(sentences: &[String], line_index: usize) -> Vec<String> {

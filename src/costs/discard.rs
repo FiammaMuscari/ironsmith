@@ -8,19 +8,26 @@ use crate::zone::Zone;
 
 /// A discard cards cost.
 ///
-/// The player must discard a number of cards, optionally of a specific type.
+/// The player must discard a number of cards, optionally matching one or more
+/// card types.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiscardCost {
     /// The number of cards to discard.
     pub count: u32,
-    /// Optional card type restriction.
-    pub card_type: Option<CardType>,
+    /// Optional card type restrictions.
+    pub card_types: Vec<CardType>,
 }
 
 impl DiscardCost {
     /// Create a new discard cost.
     pub fn new(count: u32, card_type: Option<CardType>) -> Self {
-        Self { count, card_type }
+        let card_types = card_type.into_iter().collect();
+        Self { count, card_types }
+    }
+
+    /// Create a discard cost with one-or-more allowed card types.
+    pub fn with_card_types(count: u32, card_types: Vec<CardType>) -> Self {
+        Self { count, card_types }
     }
 
     /// Create a cost to discard any cards.
@@ -53,9 +60,9 @@ impl DiscardCost {
                     return false;
                 }
                 // Check card type filter
-                if let Some(ct) = self.card_type {
+                if !self.card_types.is_empty() {
                     if let Some(obj) = game.object(card_id) {
-                        obj.has_card_type(ct)
+                        self.card_types.iter().any(|ct| obj.has_card_type(*ct))
                     } else {
                         false
                     }
@@ -95,20 +102,7 @@ impl CostPayer for DiscardCost {
     }
 
     fn display(&self) -> String {
-        let type_str = self.card_type.map_or("card".to_string(), |ct| {
-            match ct {
-                CardType::Creature => "creature card",
-                CardType::Artifact => "artifact card",
-                CardType::Enchantment => "enchantment card",
-                CardType::Land => "land card",
-                CardType::Planeswalker => "planeswalker card",
-                CardType::Instant => "instant card",
-                CardType::Sorcery => "sorcery card",
-                CardType::Battle => "battle card",
-                CardType::Kindred => "kindred card",
-            }
-            .to_string()
-        });
+        let type_str = format_discard_card_type_phrase(&self.card_types);
 
         if self.count == 1 {
             format!("Discard a {}", type_str)
@@ -122,7 +116,11 @@ impl CostPayer for DiscardCost {
     }
 
     fn discard_details(&self) -> Option<(u32, Option<crate::types::CardType>)> {
-        Some((self.count, self.card_type))
+        if self.card_types.len() > 1 {
+            None
+        } else {
+            Some((self.count, self.card_types.first().copied()))
+        }
     }
 
     fn needs_player_choice(&self) -> bool {
@@ -133,9 +131,36 @@ impl CostPayer for DiscardCost {
     fn processing_mode(&self) -> crate::costs::CostProcessingMode {
         crate::costs::CostProcessingMode::DiscardCards {
             count: self.count,
-            card_type: self.card_type,
+            card_types: self.card_types.clone(),
         }
     }
+}
+
+fn card_type_name(card_type: CardType) -> &'static str {
+    match card_type {
+        CardType::Creature => "creature",
+        CardType::Artifact => "artifact",
+        CardType::Enchantment => "enchantment",
+        CardType::Land => "land",
+        CardType::Planeswalker => "planeswalker",
+        CardType::Instant => "instant",
+        CardType::Sorcery => "sorcery",
+        CardType::Battle => "battle",
+        CardType::Kindred => "kindred",
+    }
+}
+
+fn format_discard_card_type_phrase(card_types: &[CardType]) -> String {
+    if card_types.is_empty() {
+        return "card".to_string();
+    }
+    if card_types.len() == 1 {
+        return format!("{} card", card_type_name(card_types[0]));
+    }
+
+    let mut parts: Vec<&str> = card_types.iter().map(|ct| card_type_name(*ct)).collect();
+    let last = parts.pop().expect("len checked");
+    format!("{} or {} card", parts.join(", "), last)
 }
 
 /// A discard your hand cost.
@@ -312,6 +337,14 @@ mod tests {
             DiscardCost::new(1, Some(CardType::Creature)).display(),
             "Discard a creature card"
         );
+        assert_eq!(
+            DiscardCost::with_card_types(
+                1,
+                vec![CardType::Enchantment, CardType::Instant, CardType::Sorcery]
+            )
+            .display(),
+            "Discard a enchantment, instant or sorcery card"
+        );
     }
 
     #[test]
@@ -392,6 +425,38 @@ mod tests {
 
         let result = cost.pay(&mut game, &mut ctx);
         assert!(matches!(result, Ok(CostPaymentResult::NeedsChoice(_))));
+    }
+
+    #[test]
+    fn test_discard_cost_multi_type_filter() {
+        let mut game = create_test_game();
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(999);
+
+        let instant = CardBuilder::new(CardId::from_raw(11), "Instant Card")
+            .card_types(vec![CardType::Instant])
+            .build();
+        game.create_object_from_card(&instant, alice, Zone::Hand);
+
+        let creature = CardBuilder::new(CardId::from_raw(12), "Creature Card")
+            .card_types(vec![CardType::Creature])
+            .build();
+        game.create_object_from_card(&creature, alice, Zone::Hand);
+
+        let cost = DiscardCost::with_card_types(
+            1,
+            vec![CardType::Enchantment, CardType::Instant, CardType::Sorcery],
+        );
+        let mut dm = crate::decision::AutoPassDecisionMaker;
+        let ctx = CostContext::new(source, alice, &mut dm);
+        assert!(cost.can_pay(&game, &ctx).is_ok());
+
+        let impossible = DiscardCost::with_card_types(1, vec![CardType::Enchantment]);
+        assert_eq!(
+            impossible.can_pay(&game, &ctx),
+            Err(CostPaymentError::InsufficientCardsInHand)
+        );
+        assert_eq!(cost.discard_details(), None);
     }
 
     // === DiscardHandCost tests ===

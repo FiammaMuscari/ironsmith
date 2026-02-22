@@ -109,24 +109,17 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
             return Ok(EffectOutcome::resolved());
         }
 
-        // Player wants to cast for miracle cost
-        // Check if they can pay the miracle cost
+        // Player wants to cast for miracle cost.
         let x_value = if miracle_cost.has_x() {
             Some(0u32)
         } else {
             None
         };
-        let can_pay = game.can_pay_mana_cost(owner, None, &miracle_cost, 0);
 
-        if !can_pay {
-            // Can't pay the cost - card stays in hand
-            // In a full implementation, we'd let them tap lands, but for simplicity
-            // we check current mana pool
+        // Try to pay now; if payment fails, card stays in hand.
+        if !game.try_pay_mana_cost(owner, None, &miracle_cost, 0) {
             return Ok(EffectOutcome::resolved());
         }
-
-        // Pay the miracle cost
-        let _ = game.try_pay_mana_cost(owner, None, &miracle_cost, 0);
 
         // Get stable_id before moving
         let stable_id = game.object(card_id).map(|o| o.stable_id);

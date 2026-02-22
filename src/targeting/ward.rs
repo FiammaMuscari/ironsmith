@@ -12,6 +12,8 @@
 
 use crate::ability::AbilityKind;
 use crate::cost::TotalCost;
+use crate::cost::can_pay_cost;
+use crate::costs::CostContext;
 use crate::decision::DecisionMaker;
 use crate::decisions::specs::ChooseObjectsSpec;
 use crate::decisions::{WardSpec, make_decision};
@@ -22,6 +24,7 @@ use crate::events::permanents::SacrificeEvent;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::snapshot::ObjectSnapshot;
+use crate::special_actions::pay_cost_component_with_choice;
 use crate::static_abilities::StaticAbility;
 use crate::triggers::TriggerEvent;
 
@@ -154,10 +157,15 @@ pub fn handle_ward_payment(
 fn format_ward_cost_description(cost: &WardCost) -> String {
     match cost {
         WardCost::Mana(total_cost) => {
-            if let Some(mana_cost) = total_cost.mana_cost() {
-                format!("Pay {:?}", mana_cost)
+            let display = total_cost.display();
+            let mana_only = total_cost
+                .costs()
+                .iter()
+                .all(|component| component.mana_cost_ref().is_some());
+            if mana_only {
+                format!("Pay {display}")
             } else {
-                "Pay mana cost".to_string()
+                display
             }
         }
         WardCost::Life(amount) => format!("Pay {} life", amount),
@@ -184,17 +192,23 @@ fn pay_ward_cost(
 ) -> bool {
     match cost {
         WardCost::Mana(total_cost) => {
-            // Try to pay the mana cost from the player's mana pool
-            if let Some(mana_cost) = total_cost.mana_cost() {
-                // X is 0 for ward costs (ward costs don't have X)
-                if game.try_pay_mana_cost(payer, None, mana_cost, 0) {
-                    return true;
-                }
-            } else {
-                // No mana cost required
-                return true;
+            if can_pay_cost(game, source, payer, total_cost).is_err() {
+                return false;
             }
-            false
+
+            let mut cost_ctx = CostContext::new(source, payer, decision_maker);
+            for component in total_cost.costs() {
+                if let Some(mana_cost) = component.mana_cost_ref() {
+                    if !game.try_pay_mana_cost(payer, None, mana_cost, 0) {
+                        return false;
+                    }
+                    continue;
+                }
+                if pay_cost_component_with_choice(game, component, &mut cost_ctx).is_err() {
+                    return false;
+                }
+            }
+            true
         }
         WardCost::Life(amount) => {
             // Deduct life from the player

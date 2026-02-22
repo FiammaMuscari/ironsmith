@@ -6,7 +6,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
-use ironsmith::cards::CardDefinitionBuilder;
+use ironsmith::cards::{CardDefinitionBuilder, generated_definition_has_unimplemented_content};
 use ironsmith::compiled_text::compiled_lines;
 use ironsmith::ids::CardId;
 
@@ -27,6 +27,7 @@ struct Args {
     mismatch_names_out: Option<String>,
     false_positive_names: Option<String>,
     failures_out: Option<String>,
+    audits_out: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +50,7 @@ struct CardAudit {
     line_delta: isize,
     semantic_mismatch: bool,
     semantic_false_positive: bool,
+    has_unimplemented: bool,
 }
 
 #[derive(Debug)]
@@ -104,6 +106,31 @@ struct JsonFailureReport {
 }
 
 #[derive(Debug)]
+struct JsonAuditsReport {
+    threshold: f32,
+    embedding_dims: usize,
+    cards_processed: usize,
+    parse_failures: usize,
+    semantic_mismatches: usize,
+    semantic_false_positives: usize,
+    parse_success_with_unimplemented: usize,
+    entries: Vec<JsonAuditEntry>,
+}
+
+#[derive(Debug)]
+struct JsonAuditEntry {
+    name: String,
+    parse_error: Option<String>,
+    semantic_mismatch: bool,
+    semantic_false_positive: bool,
+    has_unimplemented: bool,
+    oracle_coverage: f32,
+    compiled_coverage: f32,
+    similarity_score: f32,
+    line_delta: isize,
+}
+
+#[derive(Debug)]
 struct JsonFailureEntry {
     name: String,
     parse_error: Option<String>,
@@ -132,6 +159,7 @@ fn parse_args() -> Result<Args, String> {
     let mut mismatch_names_out = None;
     let mut false_positive_names = None;
     let mut failures_out = None;
+    let mut audits_out = None;
 
     let mut iter = env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -230,9 +258,15 @@ fn parse_args() -> Result<Args, String> {
                         .ok_or_else(|| "--failures-out requires a path".to_string())?,
                 );
             }
+            "--audits-out" => {
+                audits_out = Some(
+                    iter.next()
+                        .ok_or_else(|| "--audits-out requires a path".to_string())?,
+                );
+            }
             _ => {
                 return Err(format!(
-                    "unknown argument '{arg}'. supported: --cards <path> --limit <n> --min-cluster-size <n> --top-clusters <n> --examples <n> --json-out <path> --parser-trace --trace-name <substring> --allow-unsupported --use-embeddings --embedding-dims <n> --embedding-threshold <f32> --mismatch-names-out <path> --false-positive-names <path> --failures-out <path>"
+                    "unknown argument '{arg}'. supported: --cards <path> --limit <n> --min-cluster-size <n> --top-clusters <n> --examples <n> --json-out <path> --parser-trace --trace-name <substring> --allow-unsupported --use-embeddings --embedding-dims <n> --embedding-threshold <f32> --mismatch-names-out <path> --false-positive-names <path> --failures-out <path> --audits-out <path>"
                 ));
             }
         }
@@ -254,6 +288,7 @@ fn parse_args() -> Result<Args, String> {
         mismatch_names_out,
         false_positive_names,
         failures_out,
+        audits_out,
     })
 }
 
@@ -4451,6 +4486,81 @@ fn json_encode_failure_report(report: &JsonFailureReport) -> String {
     out
 }
 
+fn json_encode_audits_report(report: &JsonAuditsReport) -> String {
+    let mut out = String::new();
+    out.push('{');
+    out.push_str("\"threshold\":");
+    json_push_f32(&mut out, report.threshold);
+    out.push(',');
+    out.push_str("\"embedding_dims\":");
+    out.push_str(&report.embedding_dims.to_string());
+    out.push(',');
+    out.push_str("\"cards_processed\":");
+    out.push_str(&report.cards_processed.to_string());
+    out.push(',');
+    out.push_str("\"parse_failures\":");
+    out.push_str(&report.parse_failures.to_string());
+    out.push(',');
+    out.push_str("\"semantic_mismatches\":");
+    out.push_str(&report.semantic_mismatches.to_string());
+    out.push(',');
+    out.push_str("\"semantic_false_positives\":");
+    out.push_str(&report.semantic_false_positives.to_string());
+    out.push(',');
+    out.push_str("\"parse_success_with_unimplemented\":");
+    out.push_str(&report.parse_success_with_unimplemented.to_string());
+    out.push(',');
+    out.push_str("\"entries\":[");
+    for (idx, entry) in report.entries.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        out.push('{');
+        out.push_str("\"name\":");
+        json_push_string(&mut out, &entry.name);
+        out.push(',');
+        out.push_str("\"parse_error\":");
+        json_push_opt_string(&mut out, entry.parse_error.as_deref());
+        out.push(',');
+        out.push_str("\"semantic_mismatch\":");
+        out.push_str(if entry.semantic_mismatch {
+            "true"
+        } else {
+            "false"
+        });
+        out.push(',');
+        out.push_str("\"semantic_false_positive\":");
+        out.push_str(if entry.semantic_false_positive {
+            "true"
+        } else {
+            "false"
+        });
+        out.push(',');
+        out.push_str("\"has_unimplemented\":");
+        out.push_str(if entry.has_unimplemented {
+            "true"
+        } else {
+            "false"
+        });
+        out.push(',');
+        out.push_str("\"oracle_coverage\":");
+        json_push_f32(&mut out, entry.oracle_coverage);
+        out.push(',');
+        out.push_str("\"compiled_coverage\":");
+        json_push_f32(&mut out, entry.compiled_coverage);
+        out.push(',');
+        out.push_str("\"similarity_score\":");
+        json_push_f32(&mut out, entry.similarity_score);
+        out.push(',');
+        out.push_str("\"line_delta\":");
+        out.push_str(&entry.line_delta.to_string());
+        out.push('}');
+    }
+    out.push(']');
+    out.push('}');
+    out
+}
+
 fn json_encode_cluster_report(report: &JsonReport) -> String {
     let mut out = String::new();
     out.push('{');
@@ -4641,6 +4751,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let audit = match parse_result {
             Ok(definition) => {
+                let has_unimplemented = generated_definition_has_unimplemented_content(&definition);
                 let compiled = compiled_lines(&definition);
                 let (
                     oracle_coverage,
@@ -4666,6 +4777,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     line_delta,
                     semantic_mismatch,
                     semantic_false_positive: false,
+                    has_unimplemented,
                 }
             }
             Err(err) => CardAudit {
@@ -4680,6 +4792,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 line_delta: 0,
                 semantic_mismatch: false,
                 semantic_false_positive: false,
+                has_unimplemented: false,
             },
         };
         audits.push(audit);
@@ -4756,6 +4869,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .flatten()
         .filter(|audit| audit.parse_error.is_none() && audit.semantic_false_positive)
         .count();
+    let parse_success_with_unimplemented = clusters
+        .values()
+        .flatten()
+        .filter(|audit| audit.parse_error.is_none() && audit.has_unimplemented)
+        .count();
 
     if let Some(path) = args.mismatch_names_out.as_ref() {
         let mut names = clusters
@@ -4807,6 +4925,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    if let Some(path) = args.audits_out.as_ref() {
+        let mut entries = clusters
+            .values()
+            .flatten()
+            .map(|audit| JsonAuditEntry {
+                name: audit.name.clone(),
+                parse_error: audit.parse_error.clone(),
+                semantic_mismatch: audit.semantic_mismatch,
+                semantic_false_positive: audit.semantic_false_positive,
+                has_unimplemented: audit.has_unimplemented,
+                oracle_coverage: audit.oracle_coverage,
+                compiled_coverage: audit.compiled_coverage,
+                similarity_score: audit.similarity_score,
+                line_delta: audit.line_delta,
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        let report = JsonAuditsReport {
+            threshold: args.embedding_threshold,
+            embedding_dims: args.embedding_dims,
+            cards_processed,
+            parse_failures,
+            semantic_mismatches,
+            semantic_false_positives,
+            parse_success_with_unimplemented,
+            entries,
+        };
+        let payload = json_encode_audits_report(&report);
+        fs::write(path, payload)?;
+        println!(
+            "Wrote per-card audit report to {path} ({} cards)",
+            report.cards_processed
+        );
+    }
+
     let mut ranked: Vec<(String, Vec<CardAudit>)> = clusters
         .into_iter()
         .filter(|(_, entries)| entries.len() >= args.min_cluster_size)
@@ -4844,6 +4997,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("- Cards processed: {cards_processed}");
     println!("- Parse failures: {parse_failures}");
     println!("- Semantic mismatches: {semantic_mismatches}");
+    println!(
+        "- Parse-success cards with unimplemented content: {parse_success_with_unimplemented}"
+    );
     if !false_positive_names.is_empty() {
         println!("- Marked semantic false positives: {semantic_false_positives}");
     }
