@@ -17886,6 +17886,15 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
             sentence_words.join(" ")
         )));
     }
+    let has_spent_to_cast_clause = sentence_words
+        .windows(3)
+        .any(|window| window == ["spent", "to", "cast"]);
+    if has_spent_to_cast_clause {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported spent-to-cast condition clause (clause: '{}')",
+            sentence_words.join(" ")
+        )));
+    }
     let has_copy_spell_legendary_exception = sentence_words.contains(&"copy")
         && sentence_words.contains(&"spell")
         && sentence_words.contains(&"legendary")
