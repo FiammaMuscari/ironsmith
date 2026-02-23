@@ -620,36 +620,33 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                     // Validate the ability's cost can be paid
                     if can_pay_ability_cost(game, perm_id, player, &activated.mana_cost) {
                         let max_activations_per_turn = activated.max_activations_per_turn();
-                        let activation_count = game.ability_activation_count_this_turn(perm_id, i);
                         let restrictions_ok =
                             can_activate_ability_with_restrictions(game, perm_id, i, activated);
 
-                        // Check timing restrictions
-                        let timing_ok = match activated.timing {
-                            crate::ability::ActivationTiming::AnyTime => true,
-                            crate::ability::ActivationTiming::DuringCombat => {
-                                matches!(game.turn.phase, Phase::Combat)
-                            }
-                            crate::ability::ActivationTiming::SorcerySpeed => {
-                                // Sorcery speed: main phase, empty stack, active player
-                                game.turn.active_player == player
-                                    && matches!(game.turn.phase, Phase::FirstMain | Phase::NextMain)
-                                    && game.stack_is_empty()
-                            }
-                            crate::ability::ActivationTiming::OncePerTurn => {
-                                // Check if this ability has been activated this turn
-                                activation_count == 0
-                            }
-                            crate::ability::ActivationTiming::DuringYourTurn => {
-                                game.turn.active_player == player
-                            }
-                            crate::ability::ActivationTiming::DuringOpponentsTurn => {
-                                game.turn.active_player != player
-                            }
+                        let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+                            controller: player,
+                            source: perm_id,
+                            filter_source: Some(perm_id),
+                            triggering_event: None,
+                            trigger_identity: None,
+                            ability_index: Some(i),
+                            options: Default::default(),
                         };
 
-                        let under_turn_limit =
-                            max_activations_per_turn.map_or(true, |max| activation_count < max);
+                        let timing_ok = crate::condition_eval::evaluate_condition_external(
+                            game,
+                            &crate::effect::Condition::ActivationTiming(activated.timing.clone()),
+                            &eval_ctx,
+                        );
+
+                        let under_turn_limit = match max_activations_per_turn {
+                            Some(max) => crate::condition_eval::evaluate_condition_external(
+                                game,
+                                &crate::effect::Condition::MaxActivationsPerTurn(max),
+                                &eval_ctx,
+                            ),
+                            None => true,
+                        };
 
                         if timing_ok && under_turn_limit && restrictions_ok {
                             actions.push(LegalAction::ActivateAbility {
@@ -722,6 +719,20 @@ fn activation_only_restriction_holds(
         conditions = conditions[3..].trim_start();
     }
 
+    let controller = game
+        .object(source)
+        .map(|obj| obj.controller)
+        .unwrap_or(game.turn.active_player);
+    let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+        controller,
+        source,
+        filter_source: Some(source),
+        triggering_event: None,
+        trigger_identity: None,
+        ability_index: None,
+        options: Default::default(),
+    };
+
     for condition in conditions.split(" and ") {
         let condition = condition.trim();
         if condition.is_empty() {
@@ -732,7 +743,10 @@ fn activation_only_restriction_holds(
             || condition.contains("did not attack this turn")
             || condition.contains("has not attacked this turn")
         {
-            if game.creature_attacked_this_turn(source) {
+            let expr = crate::effect::Condition::Not(Box::new(
+                crate::effect::Condition::SourceAttackedThisTurn,
+            ));
+            if !crate::condition_eval::evaluate_condition_external(game, &expr, &eval_ctx) {
                 return false;
             }
             continue;
@@ -742,7 +756,8 @@ fn activation_only_restriction_holds(
             || condition.contains("it attacked this turn")
             || condition.contains("that creature attacked this turn")
         {
-            if !game.creature_attacked_this_turn(source) {
+            let expr = crate::effect::Condition::SourceAttackedThisTurn;
+            if !crate::condition_eval::evaluate_condition_external(game, &expr, &eval_ctx) {
                 return false;
             }
             continue;
@@ -1659,106 +1674,18 @@ fn check_mana_ability_condition_for_potential(
     player: PlayerId,
     source: ObjectId,
     ability_index: usize,
-    condition: &crate::ability::ManaAbilityCondition,
+    condition: &crate::ConditionExpr,
 ) -> bool {
-    match condition {
-        crate::ability::ManaAbilityCondition::ControlLandWithSubtype(required_subtypes) => {
-            // Check if the player controls a land with at least one of the required subtypes
-            game.battlefield.iter().any(|&perm_id| {
-                if let Some(perm) = game.object(perm_id) {
-                    perm.controller == player
-                        && perm.is_land()
-                        && required_subtypes.iter().any(|st| perm.has_subtype(*st))
-                } else {
-                    false
-                }
-            })
-        }
-        crate::ability::ManaAbilityCondition::ControlAtLeastArtifacts(required_count) => {
-            let controlled_artifacts = game
-                .battlefield
-                .iter()
-                .filter_map(|&perm_id| game.object(perm_id))
-                .filter(|perm| {
-                    perm.controller == player
-                        && perm.card_types.contains(&crate::types::CardType::Artifact)
-                })
-                .count() as u32;
-            controlled_artifacts >= *required_count
-        }
-        crate::ability::ManaAbilityCondition::ControlAtLeastLands(required_count) => {
-            let controlled_lands = game
-                .battlefield
-                .iter()
-                .filter_map(|&perm_id| game.object(perm_id))
-                .filter(|perm| perm.controller == player && perm.is_land())
-                .count() as u32;
-            controlled_lands >= *required_count
-        }
-        crate::ability::ManaAbilityCondition::ControlCreatureWithPowerAtLeast(required_power) => {
-            game.battlefield.iter().any(|&perm_id| {
-                game.object(perm_id).is_some_and(|perm| {
-                    perm.controller == player
-                        && perm.is_creature()
-                        && perm
-                            .power()
-                            .is_some_and(|power| power >= *required_power as i32)
-                })
-            })
-        }
-        crate::ability::ManaAbilityCondition::ControlCreaturesTotalPowerAtLeast(required_power) => {
-            let total_power = game
-                .battlefield
-                .iter()
-                .filter_map(|&perm_id| game.object(perm_id))
-                .filter(|perm| perm.controller == player && perm.is_creature())
-                .map(|perm| perm.power().unwrap_or(0).max(0))
-                .sum::<i32>();
-            total_power >= *required_power as i32
-        }
-        crate::ability::ManaAbilityCondition::CardInYourGraveyard {
-            card_types,
-            subtypes,
-        } => game.player(player).is_some_and(|player_state| {
-            player_state.graveyard.iter().any(|&card_id| {
-                let Some(card) = game.object(card_id) else {
-                    return false;
-                };
-                let card_type_match = card_types.is_empty()
-                    || card_types
-                        .iter()
-                        .any(|card_type| card.card_types.contains(card_type));
-                let subtype_match = subtypes.is_empty()
-                    || subtypes.iter().any(|subtype| card.has_subtype(*subtype));
-                card_type_match && subtype_match
-            })
-        }),
-        crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
-            crate::ability::ActivationTiming::AnyTime => true,
-            crate::ability::ActivationTiming::DuringCombat => {
-                matches!(game.turn.phase, Phase::Combat)
-            }
-            crate::ability::ActivationTiming::SorcerySpeed => {
-                game.turn.active_player == player
-                    && matches!(game.turn.phase, Phase::FirstMain | Phase::NextMain)
-                    && game.stack_is_empty()
-            }
-            crate::ability::ActivationTiming::OncePerTurn => {
-                game.ability_activation_count_this_turn(source, ability_index) == 0
-            }
-            crate::ability::ActivationTiming::DuringYourTurn => game.turn.active_player == player,
-            crate::ability::ActivationTiming::DuringOpponentsTurn => {
-                game.turn.active_player != player
-            }
-        },
-        crate::ability::ManaAbilityCondition::MaxActivationsPerTurn(limit) => {
-            game.ability_activation_count_this_turn(source, ability_index) < *limit
-        }
-        crate::ability::ManaAbilityCondition::Unmodeled(_) => true,
-        crate::ability::ManaAbilityCondition::All(conditions) => conditions.iter().all(|inner| {
-            check_mana_ability_condition_for_potential(game, player, source, ability_index, inner)
-        }),
-    }
+    let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+        controller: player,
+        source,
+        filter_source: Some(source),
+        triggering_event: None,
+        trigger_identity: None,
+        ability_index: Some(ability_index),
+        options: crate::condition_eval::ExternalEvaluationOptions::default(),
+    };
+    crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx)
 }
 
 /// Check if a player could pay a mana cost using potential mana.

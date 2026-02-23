@@ -436,7 +436,7 @@ fn collect_line_infos(
 }
 
 fn normalize_channel_spell_effect(mut builder: CardDefinitionBuilder) -> CardDefinitionBuilder {
-    use crate::ability::{ActivationTiming, ManaAbility, ManaAbilityCondition};
+    use crate::ability::{ActivationTiming, ManaAbility};
     use crate::effect::{EffectPredicate, Value};
     use crate::mana::ManaSymbol;
     use crate::target::{ChooseSpec, PlayerFilter};
@@ -489,7 +489,9 @@ fn normalize_channel_spell_effect(mut builder: CardDefinitionBuilder) -> CardDef
         mana_cost: crate::cost::TotalCost::from_cost(crate::costs::Cost::life(1)),
         mana: vec![ManaSymbol::Colorless],
         effects: None,
-        activation_condition: Some(ManaAbilityCondition::Timing(ActivationTiming::AnyTime)),
+        activation_condition: Some(crate::effect::Condition::ActivationTiming(
+            ActivationTiming::AnyTime,
+        )),
     };
     builder.spell_effect = Some(vec![crate::effect::Effect::new(
         crate::effects::GrantManaAbilityUntilEotEffect::new(ability),
@@ -1134,7 +1136,7 @@ fn apply_line_ast(
                     effects: compiled_effects,
                     choices,
                     intervening_if: max_triggers_per_turn
-                        .map(crate::ability::InterveningIfCondition::MaxTimesEachTurn),
+                        .map(crate::ConditionExpr::MaxTimesEachTurn),
                 }),
                 functional_zones: vec![Zone::Battlefield],
                 text: Some(info.raw_line.clone()),
@@ -2111,10 +2113,10 @@ fn apply_pending_trigger_restriction(ability: &mut TriggeredAbility, restriction
     let count = parse_triggered_times_each_turn_from_words(&words(&tokens));
     if let Some(parsed_count) = count {
         ability.intervening_if = Some(match ability.intervening_if.take() {
-            Some(crate::ability::InterveningIfCondition::MaxTimesEachTurn(existing)) => {
-                crate::ability::InterveningIfCondition::MaxTimesEachTurn(existing.min(parsed_count))
+            Some(crate::ConditionExpr::MaxTimesEachTurn(existing)) => {
+                crate::ConditionExpr::MaxTimesEachTurn(existing.min(parsed_count))
             }
-            _ => crate::ability::InterveningIfCondition::MaxTimesEachTurn(parsed_count),
+            _ => crate::ConditionExpr::MaxTimesEachTurn(parsed_count),
         });
     }
 }
@@ -2128,9 +2130,7 @@ fn apply_pending_mana_restriction(ability: &mut crate::ability::ManaAbility, res
     let parsed_timing = parse_activate_only_timing(&tokens).unwrap_or_default();
     let parsed_condition = parse_activation_condition(&tokens).or_else(|| {
         if parsed_timing == ActivationTiming::AnyTime {
-            Some(ManaAbilityCondition::Unmodeled(
-                normalized_restriction.clone(),
-            ))
+            Some(crate::ConditionExpr::Unmodeled(normalized_restriction.clone()))
         } else {
             None
         }
@@ -2194,27 +2194,16 @@ fn normalize_activation_restriction(
 }
 
 fn merge_mana_activation_conditions(
-    existing: Option<ManaAbilityCondition>,
-    additional: Option<ManaAbilityCondition>,
-) -> Option<ManaAbilityCondition> {
+    existing: Option<crate::ConditionExpr>,
+    additional: Option<crate::ConditionExpr>,
+) -> Option<crate::ConditionExpr> {
     match (existing, additional) {
         (None, None) => None,
         (Some(condition), None) => Some(condition),
         (None, Some(condition)) => Some(condition),
-        (Some(left), Some(right)) => Some(ManaAbilityCondition::All(
-            flatten_mana_activation_conditions(left)
-                .into_iter()
-                .chain(flatten_mana_activation_conditions(right))
-                .collect(),
+        (Some(left), Some(right)) => Some(crate::ConditionExpr::And(
+            Box::new(left),
+            Box::new(right),
         )),
-    }
-}
-
-fn flatten_mana_activation_conditions(
-    condition: ManaAbilityCondition,
-) -> Vec<ManaAbilityCondition> {
-    match condition {
-        ManaAbilityCondition::All(conditions) => conditions,
-        condition => vec![condition],
     }
 }

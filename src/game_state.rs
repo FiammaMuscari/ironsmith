@@ -649,7 +649,7 @@ pub struct StackEntry {
     pub triggering_event: Option<crate::triggers::TriggerEvent>,
     /// Intervening-if condition that must be true at resolution time (for triggered abilities).
     /// If this condition is false when the ability would resolve, the ability does nothing.
-    pub intervening_if: Option<crate::ability::InterveningIfCondition>,
+    pub intervening_if: Option<crate::ConditionExpr>,
     /// Pre-chosen modes for modal spells (chosen during casting per rule 601.2b).
     /// If Some, resolution should use these instead of prompting.
     pub chosen_modes: Option<Vec<usize>>,
@@ -789,7 +789,7 @@ impl StackEntry {
     /// Set the intervening-if condition that must be true at resolution time.
     pub fn with_intervening_if(
         mut self,
-        condition: crate::ability::InterveningIfCondition,
+        condition: crate::ConditionExpr,
     ) -> Self {
         self.intervening_if = Some(condition);
         self

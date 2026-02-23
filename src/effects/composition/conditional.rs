@@ -121,7 +121,7 @@ fn evaluate_condition_simple(
     controller: PlayerId,
     source: ObjectId,
 ) -> bool {
-    super::condition_eval::evaluate_condition_cast_time(game, condition, controller, source)
+    crate::condition_eval::evaluate_condition_cast_time(game, condition, controller, source)
 }
 
 fn evaluate_condition(
@@ -129,7 +129,7 @@ fn evaluate_condition(
     condition: &Condition,
     ctx: &ExecutionContext,
 ) -> Result<bool, ExecutionError> {
-    super::condition_eval::evaluate_condition_resolution(game, condition, ctx)
+    crate::condition_eval::evaluate_condition_resolution(game, condition, ctx)
 }
 
 #[cfg(test)]

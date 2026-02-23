@@ -394,28 +394,6 @@ impl AnthemValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum StaticCondition {
-    /// "During your turn" / "as long as it's your turn"
-    YourTurn,
-    /// "During turns other than yours" / "as long as it's not your turn"
-    NotYourTurn,
-    /// "As long as this creature is equipped"
-    SourceIsEquipped,
-    /// "As long as this creature is enchanted"
-    SourceIsEnchanted,
-    /// "As long as equipped creature is tapped"
-    EquippedCreatureTapped,
-    /// "As long as equipped creature is untapped"
-    EquippedCreatureUntapped,
-    /// Count-based condition ("as long as you control three or more artifacts", etc.)
-    CountComparison {
-        count: AnthemCountExpression,
-        comparison: Comparison,
-        display: Option<String>,
-    },
-}
-
 fn strip_article(text: String) -> String {
     if let Some(rest) = text.strip_prefix("a ") {
         return rest.to_string();
@@ -453,19 +431,23 @@ fn comparison_display(cmp: &Comparison) -> String {
     }
 }
 
-fn describe_static_condition(condition: &StaticCondition) -> String {
+fn describe_static_condition(condition: &crate::ConditionExpr) -> String {
     match condition {
-        StaticCondition::YourTurn => "as long as it's your turn".to_string(),
-        StaticCondition::NotYourTurn => "during turns other than yours".to_string(),
-        StaticCondition::SourceIsEquipped => "as long as this creature is equipped".to_string(),
-        StaticCondition::SourceIsEnchanted => "as long as this creature is enchanted".to_string(),
-        StaticCondition::EquippedCreatureTapped => {
+        crate::ConditionExpr::YourTurn => "as long as it's your turn".to_string(),
+        crate::ConditionExpr::Not(inner)
+            if matches!(inner.as_ref(), crate::ConditionExpr::YourTurn) =>
+        {
+            "during turns other than yours".to_string()
+        }
+        crate::ConditionExpr::SourceIsEquipped => "as long as this creature is equipped".to_string(),
+        crate::ConditionExpr::SourceIsEnchanted => "as long as this creature is enchanted".to_string(),
+        crate::ConditionExpr::EquippedCreatureTapped => {
             "as long as equipped creature is tapped".to_string()
         }
-        StaticCondition::EquippedCreatureUntapped => {
+        crate::ConditionExpr::EquippedCreatureUntapped => {
             "as long as equipped creature is untapped".to_string()
         }
-        StaticCondition::CountComparison {
+        crate::ConditionExpr::CountComparison {
             count,
             comparison,
             display,
@@ -479,6 +461,8 @@ fn describe_static_condition(condition: &StaticCondition) -> String {
                 describe_anthem_count_expression(count)
             )
         }
+        crate::ConditionExpr::Unmodeled(text) if !text.is_empty() => format!("as long as {text}"),
+        _ => format!("as long as {condition:?}"),
     }
 }
 
@@ -496,7 +480,7 @@ fn all_game_object_ids(game: &GameState) -> Vec<ObjectId> {
     ids
 }
 
-fn resolve_anthem_count_expression(
+pub(crate) fn resolve_anthem_count_expression(
     count: &AnthemCountExpression,
     game: &GameState,
     source: ObjectId,
@@ -548,40 +532,21 @@ fn resolve_anthem_count_expression(
 }
 
 fn static_condition_is_active(
-    condition: &StaticCondition,
+    condition: &crate::ConditionExpr,
     game: &GameState,
     source: ObjectId,
     controller: PlayerId,
 ) -> bool {
-    match condition {
-        StaticCondition::YourTurn => game.turn.active_player == controller,
-        StaticCondition::NotYourTurn => game.turn.active_player != controller,
-        StaticCondition::SourceIsEquipped => game.object(source).is_some_and(|source_obj| {
-            source_obj.attachments.iter().any(|id| {
-                game.object(*id)
-                    .is_some_and(|obj| obj.subtypes.contains(&Subtype::Equipment))
-            })
-        }),
-        StaticCondition::SourceIsEnchanted => game.object(source).is_some_and(|source_obj| {
-            source_obj.attachments.iter().any(|id| {
-                game.object(*id)
-                    .is_some_and(|obj| obj.subtypes.contains(&Subtype::Aura))
-            })
-        }),
-        StaticCondition::EquippedCreatureTapped => game
-            .object(source)
-            .and_then(|source_obj| source_obj.attached_to)
-            .is_some_and(|attached| game.is_tapped(attached)),
-        StaticCondition::EquippedCreatureUntapped => game
-            .object(source)
-            .and_then(|source_obj| source_obj.attached_to)
-            .is_some_and(|attached| !game.is_tapped(attached)),
-        StaticCondition::CountComparison {
-            count, comparison, ..
-        } => comparison.evaluate(resolve_anthem_count_expression(
-            count, game, source, controller,
-        )),
-    }
+    let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+        controller,
+        source,
+        filter_source: Some(source),
+        triggering_event: None,
+        trigger_identity: None,
+        ability_index: None,
+        options: Default::default(),
+    };
+    crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -595,7 +560,7 @@ pub struct Anthem {
     /// Toughness modification.
     pub toughness: AnthemValue,
     /// Optional activation condition.
-    pub condition: Option<StaticCondition>,
+    pub condition: Option<crate::ConditionExpr>,
 }
 
 impl Anthem {
@@ -625,7 +590,7 @@ impl Anthem {
         self
     }
 
-    pub fn with_condition(mut self, condition: StaticCondition) -> Self {
+    pub fn with_condition(mut self, condition: crate::ConditionExpr) -> Self {
         self.condition = Some(condition);
         self
     }
@@ -794,7 +759,7 @@ pub struct GrantAbility {
     /// The ability to grant.
     pub ability: StaticAbility,
     /// Optional activation condition.
-    pub condition: Option<StaticCondition>,
+    pub condition: Option<crate::ConditionExpr>,
 }
 
 impl GrantAbility {
@@ -816,7 +781,7 @@ impl GrantAbility {
         }
     }
 
-    pub fn with_condition(mut self, condition: StaticCondition) -> Self {
+    pub fn with_condition(mut self, condition: crate::ConditionExpr) -> Self {
         self.condition = Some(condition);
         self
     }
@@ -1136,13 +1101,6 @@ impl StaticAbilityKind for SetBasePowerToughnessForFilter {
     }
 }
 
-/// Condition for CopyActivatedAbilities.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CopyActivatedAbilitiesCondition {
-    /// "As long as you own a card exiled with a <counter> counter"
-    OwnsCardExiledWithCounter(CounterType),
-}
-
 /// Copy activated abilities from objects matching a filter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CopyActivatedAbilities {
@@ -1151,7 +1109,7 @@ pub struct CopyActivatedAbilities {
     pub include_mana: bool,
     pub exclude_source_name: bool,
     pub exclude_source_id: bool,
-    pub condition: Option<CopyActivatedAbilitiesCondition>,
+    pub condition: Option<crate::ConditionExpr>,
     pub display: String,
 }
 
@@ -1183,7 +1141,7 @@ impl CopyActivatedAbilities {
         self
     }
 
-    pub fn with_condition(mut self, condition: CopyActivatedAbilitiesCondition) -> Self {
+    pub fn with_condition(mut self, condition: crate::ConditionExpr) -> Self {
         self.condition = Some(condition);
         self
     }
@@ -1240,16 +1198,16 @@ impl StaticAbilityKind for CopyActivatedAbilities {
         };
         let controller = source_obj.controller;
 
-        match condition {
-            CopyActivatedAbilitiesCondition::OwnsCardExiledWithCounter(counter) => {
-                game.exile.iter().any(|&id| {
-                    game.object(id).is_some_and(|obj| {
-                        obj.owner == controller
-                            && obj.counters.get(counter).copied().unwrap_or(0) > 0
-                    })
-                })
-            }
-        }
+        let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+            controller,
+            source,
+            filter_source: Some(source),
+            triggering_event: None,
+            trigger_identity: None,
+            ability_index: None,
+            options: Default::default(),
+        };
+        crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx)
     }
 }
 
@@ -1970,7 +1928,7 @@ pub struct GrantObjectAbilityForFilter {
     pub filter: ObjectFilter,
     pub ability: Ability,
     pub display: String,
-    pub condition: Option<StaticCondition>,
+    pub condition: Option<crate::ConditionExpr>,
 }
 
 impl GrantObjectAbilityForFilter {
@@ -1983,7 +1941,7 @@ impl GrantObjectAbilityForFilter {
         }
     }
 
-    pub fn with_condition(mut self, condition: StaticCondition) -> Self {
+    pub fn with_condition(mut self, condition: crate::ConditionExpr) -> Self {
         self.condition = Some(condition);
         self
     }
@@ -2233,7 +2191,7 @@ mod tests {
         game.create_object_from_card(&artifact_card, alice, Zone::Battlefield);
         game.create_object_from_card(&artifact_card, alice, Zone::Battlefield);
 
-        let anthem = Anthem::for_source(2, 2).with_condition(StaticCondition::CountComparison {
+        let anthem = Anthem::for_source(2, 2).with_condition(crate::ConditionExpr::CountComparison {
             count: AnthemCountExpression::MatchingFilter(ObjectFilter::artifact().you_control()),
             comparison: Comparison::GreaterThanOrEqual(3),
             display: Some("you control three or more artifacts".to_string()),

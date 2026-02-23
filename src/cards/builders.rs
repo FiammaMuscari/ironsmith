@@ -4,8 +4,7 @@
 //! making it easy to define cards with their complete gameplay mechanics.
 
 use crate::ability::{
-    self, Ability, AbilityKind, ActivationTiming, LevelAbility, ManaAbility, ManaAbilityCondition,
-    TriggeredAbility,
+    self, Ability, AbilityKind, ActivationTiming, LevelAbility, ManaAbility, TriggeredAbility,
 };
 use crate::alternative_cast::AlternativeCastingMethod;
 use crate::card::{CardBuilder, PowerToughness, PtValue};
@@ -22,7 +21,6 @@ use crate::mana::{ManaCost, ManaSymbol};
 use crate::object::CounterType;
 use crate::static_abilities::{
     Anthem, AnthemCountExpression, AnthemValue, GrantAbility, StaticAbility, StaticAbilityId,
-    StaticCondition,
 };
 use crate::tag::TagKey;
 use crate::target::{
@@ -5412,7 +5410,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             matches!(
                 triggered.intervening_if.as_ref(),
-                Some(crate::ability::InterveningIfCondition::MaxTimesEachTurn(1))
+                Some(crate::ConditionExpr::MaxTimesEachTurn(1))
             ),
             "expected 'This ability triggers only once each turn' suffix to set an intervening-if cap"
         );
@@ -5437,14 +5435,14 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             !matches!(
                 triggered.intervening_if.as_ref(),
-                Some(crate::ability::InterveningIfCondition::MaxTimesEachTurn(1))
+                Some(crate::ConditionExpr::MaxTimesEachTurn(1))
             ),
             "expected 'This ability triggers only twice each turn' suffix not to set once-each-triggers"
         );
         assert!(
             matches!(
                 triggered.intervening_if.as_ref(),
-                Some(crate::ability::InterveningIfCondition::MaxTimesEachTurn(2))
+                Some(crate::ConditionExpr::MaxTimesEachTurn(2))
             ),
             "expected 'This ability triggers only twice each turn' to set a per-turn cap of 2"
         );

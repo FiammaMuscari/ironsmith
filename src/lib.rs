@@ -5,6 +5,7 @@ pub mod cards;
 pub mod color;
 pub mod combat_state;
 pub mod compiled_text;
+pub mod condition_eval;
 pub mod continuous;
 pub mod cost;
 pub mod costs;
@@ -61,6 +62,7 @@ pub use continuous::{
     Modification, PtSublayer,
 };
 pub use cost::{OptionalCost, OptionalCostsPaid, PermanentFilter, TotalCost};
+pub use effect::Condition as ConditionExpr;
 pub use effect::{ChoiceCount, Effect, Until, Value};
 pub use effects::{DealDamageEffect, EffectExecutor};
 pub use event_processor::{

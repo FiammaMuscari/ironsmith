@@ -1331,6 +1331,103 @@ pub enum Condition {
         zones: Vec<Zone>,
     },
 
+    // === Unified gating atoms (triggers / activations / statics) ===
+
+    /// Trigger "intervening if" clause: "if this is the first time this ability triggered this turn".
+    ///
+    /// Requires a trigger identity in the evaluation context; if absent, this evaluates to true
+    /// (matching legacy permissive behavior at resolution time).
+    FirstTimeThisTurn,
+
+    /// Trigger "intervening if" clause: "if this ability has triggered at most N times this turn".
+    ///
+    /// Requires a trigger identity in the evaluation context; if absent, this evaluates to true
+    /// (matching legacy permissive behavior at resolution time).
+    MaxTimesEachTurn(u32),
+
+    /// Trigger "intervening if" clause: "if it was enchanted" (uses TriggerEvent snapshot LKI).
+    TriggeringObjectWasEnchanted,
+
+    /// Trigger "intervening if" clause: "if it had N or more counters" (uses TriggerEvent snapshot LKI).
+    TriggeringObjectHadCounters {
+        counter_type: CounterType,
+        min_count: u32,
+    },
+
+    /// Mana ability activation condition: "Activate only if you control a Plains or a Swamp."
+    ControlLandWithSubtype(Vec<crate::types::Subtype>),
+
+    /// Mana ability activation condition: "Activate only if you control N or more artifacts."
+    ControlAtLeastArtifacts(u32),
+
+    /// Mana ability activation condition: "Activate only if you control N or more lands."
+    ControlAtLeastLands(u32),
+
+    /// Mana ability activation condition: "Activate only if you control a creature with power 4 or greater."
+    ControlCreatureWithPowerAtLeast(u32),
+
+    /// Mana ability activation condition: "Activate only if creatures you control have total power 8 or greater."
+    ControlCreaturesTotalPowerAtLeast(u32),
+
+    /// Mana ability activation condition: "Activate only if there is an Elf card in your graveyard."
+    CardInYourGraveyard {
+        card_types: Vec<crate::types::CardType>,
+        subtypes: Vec<crate::types::Subtype>,
+    },
+
+    /// A timing restriction for (activated or mana) abilities.
+    ///
+    /// Requires an ability index in the evaluation context for `OncePerTurn`.
+    ActivationTiming(crate::ability::ActivationTiming),
+
+    /// Per-turn activation limit for an activated or mana ability.
+    ///
+    /// Requires an ability index in the evaluation context.
+    MaxActivationsPerTurn(u32),
+
+    /// Static condition: "as long as this creature is equipped".
+    SourceIsEquipped,
+
+    /// Static condition: "as long as this creature is enchanted".
+    SourceIsEnchanted,
+
+    /// Static condition for equipment: "as long as equipped creature is tapped".
+    EquippedCreatureTapped,
+
+    /// Static condition for equipment: "as long as equipped creature is untapped".
+    EquippedCreatureUntapped,
+
+    /// Static count-based condition ("as long as you control three or more artifacts", etc.)
+    CountComparison {
+        count: crate::static_abilities::AnthemCountExpression,
+        comparison: Comparison,
+        display: Option<String>,
+    },
+
+    /// Static condition: "as long as you own a card exiled with a <counter> counter".
+    OwnsCardExiledWithCounter(CounterType),
+
+    /// Activation restriction helper: whether the source creature attacked this turn.
+    SourceAttackedThisTurn,
+
+    /// Source is untapped.
+    SourceIsUntapped,
+
+    /// Source is attacking.
+    SourceIsAttacking,
+
+    /// Source is blocking.
+    SourceIsBlocking,
+
+    /// A specific player's graveyard has at least N cards.
+    PlayerGraveyardHasCardsAtLeast { player: PlayerId, count: usize },
+
+    /// Custom condition by ID.
+    Custom(&'static str),
+
+    /// A supported-but-unmodeled condition that is treated as permissive (true).
+    Unmodeled(String),
+
     /// Negate another condition
     Not(Box<Condition>),
 

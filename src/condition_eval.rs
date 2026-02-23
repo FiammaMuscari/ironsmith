@@ -5,6 +5,8 @@ use crate::ids::{ObjectId, PlayerId, StableId};
 use crate::target::PlayerFilter;
 use crate::zone::Zone;
 
+use crate::triggers::{TriggerEvent, TriggerIdentity};
+
 /// Condition evaluation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConditionEvaluationMode {
@@ -15,6 +17,321 @@ pub enum ConditionEvaluationMode {
     },
     /// Resolution-time evaluation: full execution context is available.
     Resolution,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExternalEvaluationOptions {
+    /// If true, treat timing restrictions as satisfied.
+    pub ignore_timing: bool,
+    /// If true, treat per-turn activation limits as satisfied.
+    pub ignore_activation_limits: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExternalEvaluationContext<'a> {
+    pub controller: PlayerId,
+    pub source: ObjectId,
+    /// The `FilterContext.source` used when matching ObjectFilters.
+    ///
+    /// This is intentionally configurable to preserve legacy semantics:
+    /// - Intervening-if checks historically passed `None` so `other` filters do not exclude the source.
+    /// - Most other checks should pass `Some(source)`.
+    pub filter_source: Option<ObjectId>,
+    pub triggering_event: Option<&'a TriggerEvent>,
+    pub trigger_identity: Option<TriggerIdentity>,
+    pub ability_index: Option<usize>,
+    pub options: ExternalEvaluationOptions,
+}
+
+/// Evaluate a condition outside of effect resolution (trigger checks, activation gating, statics).
+pub fn evaluate_condition_external(
+    game: &GameState,
+    condition: &Condition,
+    ctx: &ExternalEvaluationContext<'_>,
+) -> bool {
+    use crate::types::{CardType, Subtype};
+
+    match condition {
+        Condition::Not(inner) => !evaluate_condition_external(game, inner, ctx),
+        Condition::And(a, b) => {
+            evaluate_condition_external(game, a, ctx)
+                && evaluate_condition_external(game, b, ctx)
+        }
+        Condition::Or(a, b) => {
+            evaluate_condition_external(game, a, ctx)
+                || evaluate_condition_external(game, b, ctx)
+        }
+
+        Condition::Unmodeled(_) => true,
+        Condition::Custom(_) => false,
+
+        Condition::YouControl(filter) => {
+            let filter_ctx = game.filter_context_for(ctx.controller, ctx.filter_source);
+            game.battlefield.iter().any(|&obj_id| {
+                game.object(obj_id).is_some_and(|obj| {
+                    obj.controller == ctx.controller && filter.matches(obj, &filter_ctx, game)
+                })
+            })
+        }
+        Condition::OpponentControls(filter) => {
+            let filter_ctx = game.filter_context_for(ctx.controller, ctx.filter_source);
+            let opponents = &filter_ctx.opponents;
+            game.battlefield.iter().any(|&obj_id| {
+                game.object(obj_id).is_some_and(|obj| {
+                    opponents.contains(&obj.controller) && filter.matches(obj, &filter_ctx, game)
+                })
+            })
+        }
+        Condition::LifeTotalOrLess(threshold) => game
+            .player(ctx.controller)
+            .map(|p| p.life <= *threshold)
+            .unwrap_or(false),
+        Condition::LifeTotalOrGreater(threshold) => game
+            .player(ctx.controller)
+            .map(|p| p.life >= *threshold)
+            .unwrap_or(false),
+        Condition::YourTurn => game.turn.active_player == ctx.controller,
+        Condition::CreatureDiedThisTurn => game.creatures_died_this_turn > 0,
+        Condition::CastSpellThisTurn => game.spells_cast_this_turn.values().any(|&count| count > 0),
+        Condition::AttackedThisTurn => game.players_attacked_this_turn.contains(&ctx.controller),
+        Condition::PlayerTappedLandForManaThisTurn { player } => {
+            let Some(player_id) = resolve_condition_player_simple(game, ctx.controller, player)
+            else {
+                return false;
+            };
+            game.players_tapped_land_for_mana_this_turn
+                .contains(&player_id)
+        }
+        Condition::NoSpellsWereCastLastTurn => game.spells_cast_last_turn_total == 0,
+        Condition::CardsInHandOrMore(threshold) => game
+            .player(ctx.controller)
+            .map(|p| p.hand.len() as i32 >= *threshold)
+            .unwrap_or(false),
+        Condition::PlayerHasLessLifeThanYou { player } => {
+            let Some(player_id) = resolve_condition_player_simple(game, ctx.controller, player)
+            else {
+                return false;
+            };
+            let you_life = game.player(ctx.controller).map(|p| p.life).unwrap_or(0);
+            let other_life = game.player(player_id).map(|p| p.life).unwrap_or(0);
+            other_life < you_life
+        }
+
+        Condition::FirstTimeThisTurn => ctx
+            .trigger_identity
+            .map(|id| game.trigger_fire_count_this_turn(ctx.source, id) == 0)
+            .unwrap_or(true),
+        Condition::MaxTimesEachTurn(limit) => ctx
+            .trigger_identity
+            .map(|id| game.trigger_fire_count_this_turn(ctx.source, id) < *limit)
+            .unwrap_or(true),
+        Condition::TriggeringObjectWasEnchanted => ctx
+            .triggering_event
+            .and_then(|event| event.snapshot())
+            .is_some_and(|snapshot| snapshot.was_enchanted),
+        Condition::TriggeringObjectHadCounters {
+            counter_type,
+            min_count,
+        } => ctx
+            .triggering_event
+            .and_then(|event| event.snapshot())
+            .is_some_and(|snapshot| snapshot.counters.get(counter_type).copied().unwrap_or(0) >= *min_count),
+
+        Condition::ControlLandWithSubtype(required_subtypes) => game.battlefield.iter().any(|&id| {
+            game.object(id).is_some_and(|obj| {
+                obj.controller == ctx.controller
+                    && obj.is_land()
+                    && required_subtypes.iter().any(|subtype| obj.has_subtype(*subtype))
+            })
+        }),
+        Condition::ControlAtLeastArtifacts(required_count) => {
+            let controlled_artifacts = game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| {
+                    obj.controller == ctx.controller && obj.card_types.contains(&CardType::Artifact)
+                })
+                .count() as u32;
+            controlled_artifacts >= *required_count
+        }
+        Condition::ControlAtLeastLands(required_count) => {
+            let controlled_lands = game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| obj.controller == ctx.controller && obj.is_land())
+                .count() as u32;
+            controlled_lands >= *required_count
+        }
+        Condition::ControlCreatureWithPowerAtLeast(required_power) => game.battlefield.iter().any(
+            |&id| {
+                game.object(id).is_some_and(|obj| {
+                    obj.controller == ctx.controller
+                        && obj.is_creature()
+                        && obj
+                            .power()
+                            .is_some_and(|power| power >= *required_power as i32)
+                })
+            },
+        ),
+        Condition::ControlCreaturesTotalPowerAtLeast(required_power) => {
+            let total_power = game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| obj.controller == ctx.controller && obj.is_creature())
+                .map(|obj| obj.power().unwrap_or(0).max(0))
+                .sum::<i32>();
+            total_power >= *required_power as i32
+        }
+        Condition::CardInYourGraveyard {
+            card_types,
+            subtypes,
+        } => game.player(ctx.controller).is_some_and(|player_state| {
+            player_state.graveyard.iter().any(|&card_id| {
+                let Some(card) = game.object(card_id) else {
+                    return false;
+                };
+                let card_type_match = card_types.is_empty()
+                    || card_types
+                        .iter()
+                        .any(|card_type| card.card_types.contains(card_type));
+                let subtype_match =
+                    subtypes.is_empty() || subtypes.iter().any(|subtype| card.has_subtype(*subtype));
+                card_type_match && subtype_match
+            })
+        }),
+        Condition::ActivationTiming(timing) => {
+            if ctx.options.ignore_timing {
+                return true;
+            }
+            match timing {
+                crate::ability::ActivationTiming::AnyTime => true,
+                crate::ability::ActivationTiming::DuringCombat => matches!(game.turn.phase, crate::game_state::Phase::Combat),
+                crate::ability::ActivationTiming::SorcerySpeed => {
+                    game.turn.active_player == ctx.controller
+                        && matches!(game.turn.phase, crate::game_state::Phase::FirstMain | crate::game_state::Phase::NextMain)
+                        && game.stack_is_empty()
+                }
+                crate::ability::ActivationTiming::OncePerTurn => {
+                    let Some(ability_index) = ctx.ability_index else {
+                        return false;
+                    };
+                    game.ability_activation_count_this_turn(ctx.source, ability_index) == 0
+                }
+                crate::ability::ActivationTiming::DuringYourTurn => game.turn.active_player == ctx.controller,
+                crate::ability::ActivationTiming::DuringOpponentsTurn => game.turn.active_player != ctx.controller,
+            }
+        }
+        Condition::MaxActivationsPerTurn(limit) => {
+            if ctx.options.ignore_activation_limits {
+                return true;
+            }
+            let Some(ability_index) = ctx.ability_index else {
+                return false;
+            };
+            game.ability_activation_count_this_turn(ctx.source, ability_index) < *limit
+        }
+
+        Condition::SourceIsEquipped => game.object(ctx.source).is_some_and(|source_obj| {
+            source_obj.attachments.iter().any(|id| {
+                game.object(*id)
+                    .is_some_and(|obj| obj.subtypes.contains(&Subtype::Equipment))
+            })
+        }),
+        Condition::SourceIsEnchanted => game.object(ctx.source).is_some_and(|source_obj| {
+            source_obj.attachments.iter().any(|id| {
+                game.object(*id)
+                    .is_some_and(|obj| obj.subtypes.contains(&Subtype::Aura))
+            })
+        }),
+        Condition::EquippedCreatureTapped => game
+            .object(ctx.source)
+            .and_then(|source_obj| source_obj.attached_to)
+            .is_some_and(|attached| game.is_tapped(attached)),
+        Condition::EquippedCreatureUntapped => game
+            .object(ctx.source)
+            .and_then(|source_obj| source_obj.attached_to)
+            .is_some_and(|attached| !game.is_tapped(attached)),
+        Condition::CountComparison { count, comparison, .. } => comparison.evaluate(
+            crate::static_abilities::resolve_anthem_count_expression(
+                count,
+                game,
+                ctx.source,
+                ctx.controller,
+            ),
+        ),
+        Condition::OwnsCardExiledWithCounter(counter) => game.exile.iter().any(|&id| {
+            game.object(id).is_some_and(|obj| {
+                obj.owner == ctx.controller && obj.counters.get(counter).copied().unwrap_or(0) > 0
+            })
+        }),
+
+        Condition::SourceAttackedThisTurn => game.creature_attacked_this_turn(ctx.source),
+        Condition::SourceIsTapped => game.is_tapped(ctx.source),
+        Condition::SourceIsUntapped => !game.is_tapped(ctx.source),
+        Condition::SourceHasNoCounter(counter_type) => game
+            .object(ctx.source)
+            .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) == 0)
+            .unwrap_or(false),
+        Condition::SourceIsAttacking => game
+            .combat
+            .as_ref()
+            .is_some_and(|combat| crate::combat_state::is_attacking(combat, ctx.source)),
+        Condition::SourceIsBlocking => game
+            .combat
+            .as_ref()
+            .is_some_and(|combat| crate::combat_state::is_blocking(combat, ctx.source)),
+
+        Condition::PlayerGraveyardHasCardsAtLeast { player, count } => game
+            .player(*player)
+            .is_some_and(|p| p.graveyard.len() >= *count),
+
+        Condition::YouControlCommander => {
+            if let Some(player) = game.player(ctx.controller) {
+                let commanders = player.get_commanders();
+                for &commander_id in commanders {
+                    if game.battlefield.contains(&commander_id)
+                        && let Some(obj) = game.object(commander_id)
+                        && obj.controller == ctx.controller
+                    {
+                        return true;
+                    }
+                    for &bf_id in &game.battlefield {
+                        if let Some(obj) = game.object(bf_id)
+                            && obj.controller == ctx.controller
+                            && obj.stable_id == StableId::from(commander_id)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+
+        // Conditions requiring targets / effect execution context are not evaluable here.
+        Condition::TaggedObjectMatches(_, _)
+        | Condition::PlayerTaggedObjectMatches { .. }
+        | Condition::TargetIsTapped
+        | Condition::TargetIsAttacking
+        | Condition::TargetIsBlocked
+        | Condition::TargetWasKicked
+        | Condition::TargetSpellCastOrderThisTurn(_)
+        | Condition::TargetSpellControllerIsPoisoned
+        | Condition::TargetSpellManaSpentToCastAtLeast { .. }
+        | Condition::YouControlMoreCreaturesThanTargetSpellController
+        | Condition::TargetHasGreatestPowerAmongCreatures
+        | Condition::TargetManaValueLteColorsSpentToCastThisSpell
+        | Condition::ManaSpentToCastThisSpellAtLeast { .. }
+        | Condition::PlayerControls { .. }
+        | Condition::PlayerControlsAtLeast { .. }
+        | Condition::PlayerControlsExactly { .. }
+        | Condition::PlayerControlsAtLeastWithDifferentPowers { .. }
+        | Condition::PlayerControlsMost { .. }
+        | Condition::PlayerOwnsCardNamedInZones { .. } => false,
+    }
 }
 
 /// Shared dispatcher for condition evaluation.
@@ -412,6 +729,31 @@ fn evaluate_condition_simple(
             .object(source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) == 0)
             .unwrap_or(false),
+        Condition::FirstTimeThisTurn | Condition::MaxTimesEachTurn(_) => true,
+        Condition::TriggeringObjectWasEnchanted | Condition::TriggeringObjectHadCounters { .. } => {
+            false
+        }
+        Condition::ControlLandWithSubtype(_)
+        | Condition::ControlAtLeastArtifacts(_)
+        | Condition::ControlAtLeastLands(_)
+        | Condition::ControlCreatureWithPowerAtLeast(_)
+        | Condition::ControlCreaturesTotalPowerAtLeast(_)
+        | Condition::CardInYourGraveyard { .. }
+        | Condition::ActivationTiming(_)
+        | Condition::MaxActivationsPerTurn(_)
+        | Condition::SourceIsEquipped
+        | Condition::SourceIsEnchanted
+        | Condition::EquippedCreatureTapped
+        | Condition::EquippedCreatureUntapped
+        | Condition::CountComparison { .. }
+        | Condition::OwnsCardExiledWithCounter(_)
+        | Condition::SourceAttackedThisTurn
+        | Condition::SourceIsUntapped
+        | Condition::SourceIsAttacking
+        | Condition::SourceIsBlocking
+        | Condition::PlayerGraveyardHasCardsAtLeast { .. }
+        | Condition::Custom(_) => false,
+        Condition::Unmodeled(_) => true,
         Condition::TaggedObjectMatches(_, _) => false,
         Condition::PlayerTaggedObjectMatches { .. } => false,
         Condition::Not(inner) => !evaluate_condition_simple(game, inner, controller, source),
@@ -894,6 +1236,137 @@ fn evaluate_condition(
             };
             Ok(spent >= *amount)
         }
+        Condition::FirstTimeThisTurn | Condition::MaxTimesEachTurn(_) => Ok(true),
+        Condition::TriggeringObjectWasEnchanted => Ok(ctx
+            .triggering_event
+            .as_ref()
+            .and_then(|event| event.snapshot())
+            .is_some_and(|snapshot| snapshot.was_enchanted)),
+        Condition::TriggeringObjectHadCounters {
+            counter_type,
+            min_count,
+        } => Ok(ctx
+            .triggering_event
+            .as_ref()
+            .and_then(|event| event.snapshot())
+            .is_some_and(|snapshot| {
+                snapshot.counters.get(counter_type).copied().unwrap_or(0) >= *min_count
+            })),
+        Condition::ControlLandWithSubtype(required_subtypes) => Ok(game.battlefield.iter().any(
+            |&id| {
+                game.object(id).is_some_and(|obj| {
+                    obj.controller == ctx.controller
+                        && obj.is_land()
+                        && required_subtypes.iter().any(|subtype| obj.has_subtype(*subtype))
+                })
+            },
+        )),
+        Condition::ControlAtLeastArtifacts(required_count) => Ok(game
+            .battlefield
+            .iter()
+            .filter_map(|&id| game.object(id))
+            .filter(|obj| {
+                obj.controller == ctx.controller
+                    && obj.card_types.contains(&crate::types::CardType::Artifact)
+            })
+            .count() as u32
+            >= *required_count),
+        Condition::ControlAtLeastLands(required_count) => Ok(game
+            .battlefield
+            .iter()
+            .filter_map(|&id| game.object(id))
+            .filter(|obj| obj.controller == ctx.controller && obj.is_land())
+            .count() as u32
+            >= *required_count),
+        Condition::ControlCreatureWithPowerAtLeast(required_power) => Ok(game.battlefield.iter().any(
+            |&id| {
+                game.object(id).is_some_and(|obj| {
+                    obj.controller == ctx.controller
+                        && obj.is_creature()
+                        && obj
+                            .power()
+                            .is_some_and(|power| power >= *required_power as i32)
+                })
+            },
+        )),
+        Condition::ControlCreaturesTotalPowerAtLeast(required_power) => {
+            let total_power = game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| obj.controller == ctx.controller && obj.is_creature())
+                .map(|obj| obj.power().unwrap_or(0).max(0))
+                .sum::<i32>();
+            Ok(total_power >= *required_power as i32)
+        }
+        Condition::CardInYourGraveyard {
+            card_types,
+            subtypes,
+        } => Ok(game.player(ctx.controller).is_some_and(|player_state| {
+            player_state.graveyard.iter().any(|&card_id| {
+                let Some(card) = game.object(card_id) else {
+                    return false;
+                };
+                let card_type_match = card_types.is_empty()
+                    || card_types
+                        .iter()
+                        .any(|card_type| card.card_types.contains(card_type));
+                let subtype_match =
+                    subtypes.is_empty() || subtypes.iter().any(|subtype| card.has_subtype(*subtype));
+                card_type_match && subtype_match
+            })
+        })),
+        Condition::ActivationTiming(_) | Condition::MaxActivationsPerTurn(_) => Ok(false),
+        Condition::SourceIsEquipped => Ok(game.object(ctx.source).is_some_and(|source_obj| {
+            source_obj.attachments.iter().any(|id| {
+                game.object(*id)
+                    .is_some_and(|obj| obj.subtypes.contains(&crate::types::Subtype::Equipment))
+            })
+        })),
+        Condition::SourceIsEnchanted => Ok(game.object(ctx.source).is_some_and(|source_obj| {
+            source_obj.attachments.iter().any(|id| {
+                game.object(*id)
+                    .is_some_and(|obj| obj.subtypes.contains(&crate::types::Subtype::Aura))
+            })
+        })),
+        Condition::EquippedCreatureTapped => Ok(game
+            .object(ctx.source)
+            .and_then(|source_obj| source_obj.attached_to)
+            .is_some_and(|attached| game.is_tapped(attached))),
+        Condition::EquippedCreatureUntapped => Ok(game
+            .object(ctx.source)
+            .and_then(|source_obj| source_obj.attached_to)
+            .is_some_and(|attached| !game.is_tapped(attached))),
+        Condition::CountComparison {
+            count,
+            comparison,
+            ..
+        } => Ok(comparison.evaluate(crate::static_abilities::resolve_anthem_count_expression(
+            count,
+            game,
+            ctx.source,
+            ctx.controller,
+        ))),
+        Condition::OwnsCardExiledWithCounter(counter) => Ok(game.exile.iter().any(|&id| {
+            game.object(id).is_some_and(|obj| {
+                obj.owner == ctx.controller && obj.counters.get(counter).copied().unwrap_or(0) > 0
+            })
+        })),
+        Condition::SourceAttackedThisTurn => Ok(game.creature_attacked_this_turn(ctx.source)),
+        Condition::SourceIsUntapped => Ok(!game.is_tapped(ctx.source)),
+        Condition::SourceIsAttacking => Ok(game
+            .combat
+            .as_ref()
+            .is_some_and(|combat| crate::combat_state::is_attacking(combat, ctx.source))),
+        Condition::SourceIsBlocking => Ok(game
+            .combat
+            .as_ref()
+            .is_some_and(|combat| crate::combat_state::is_blocking(combat, ctx.source))),
+        Condition::PlayerGraveyardHasCardsAtLeast { player, count } => {
+            Ok(game.player(*player).is_some_and(|p| p.graveyard.len() >= *count))
+        }
+        Condition::Custom(_) => Ok(false),
+        Condition::Unmodeled(_) => Ok(true),
         Condition::Not(inner) => {
             let inner_result = evaluate_condition(game, inner, ctx)?;
             Ok(!inner_result)

@@ -341,7 +341,7 @@ pub struct TriggeredAbility {
     /// Example: "When this creature dies, if it was enchanted, draw a card"
     /// - If not enchanted when it dies, doesn't trigger at all
     /// - If enchanted when it dies but not when resolving (somehow), does nothing
-    pub intervening_if: Option<InterveningIfCondition>,
+    pub intervening_if: Option<crate::ConditionExpr>,
 }
 
 impl TriggeredAbility {
@@ -352,48 +352,10 @@ impl TriggeredAbility {
     }
 
     /// Add an intervening-if condition.
-    pub fn with_intervening_if(mut self, condition: InterveningIfCondition) -> Self {
+    pub fn with_intervening_if(mut self, condition: crate::ConditionExpr) -> Self {
         self.intervening_if = Some(condition);
         self
     }
-}
-
-/// Condition that must be true both when a trigger fires and when it resolves.
-///
-/// These are "intervening if" clauses in MTG rules terminology.
-/// If the condition is false when the trigger would fire, the ability doesn't trigger.
-/// If the condition is false when the ability would resolve, it does nothing.
-#[derive(Debug, Clone, PartialEq)]
-pub enum InterveningIfCondition {
-    /// "if you control [filter]" - controller must control matching permanent(s)
-    YouControl(ObjectFilter),
-
-    /// "if an opponent controls [filter]"
-    OpponentControls(ObjectFilter),
-
-    /// "if your life total is at least N"
-    LifeTotalAtLeast(i32),
-
-    /// "if your life total is at most N"
-    LifeTotalAtMost(i32),
-
-    /// "if no creature died this turn"
-    NoCreaturesDiedThisTurn,
-
-    /// "if a creature died this turn"
-    CreatureDiedThisTurn,
-
-    /// "if this is the first time this ability triggered this turn"
-    FirstTimeThisTurn,
-
-    /// "if this ability has triggered at most N times this turn"
-    MaxTimesEachTurn(u32),
-
-    /// "if this creature was enchanted" (uses snapshot from LTB/death trigger)
-    WasEnchanted,
-
-    /// "if this creature had N or more counters" (uses snapshot)
-    HadCounters(crate::object::CounterType, u32),
 }
 
 // === Activated Abilities ===
@@ -571,56 +533,7 @@ pub struct ManaAbility {
 
     /// Condition that must be true to activate this ability.
     /// Used for lands like Bleachbone Verge with "Activate only if you control a Plains or a Swamp."
-    pub activation_condition: Option<ManaAbilityCondition>,
-}
-
-/// Condition for activating a mana ability.
-///
-/// Used for abilities like "Activate only if you control a Plains or a Swamp."
-#[derive(Debug, Clone, PartialEq)]
-pub enum ManaAbilityCondition {
-    /// Controller must control a land with at least one of these subtypes.
-    /// Used for verge lands (e.g., "Activate only if you control a Plains or a Swamp").
-    ControlLandWithSubtype(Vec<crate::types::Subtype>),
-
-    /// Controller must control at least N artifacts.
-    /// Used for metalcraft-style mana abilities (e.g., Mox Opal).
-    ControlAtLeastArtifacts(u32),
-
-    /// Controller must control at least N lands.
-    /// Used for conditions like "Activate only if you control five or more lands."
-    ControlAtLeastLands(u32),
-
-    /// Controller must control a creature with power at least N.
-    /// Used for ferocious-style mana activation checks.
-    ControlCreatureWithPowerAtLeast(u32),
-
-    /// Controller's creatures must have total power at least N.
-    /// Used for formidable-style mana activation checks.
-    ControlCreaturesTotalPowerAtLeast(u32),
-
-    /// Controller must have a matching card in their graveyard.
-    /// Used for clauses like "Activate only if there is an Elf card in your graveyard."
-    CardInYourGraveyard {
-        card_types: Vec<crate::types::CardType>,
-        subtypes: Vec<crate::types::Subtype>,
-    },
-
-    /// Activation timing restriction for mana abilities.
-    Timing(ActivationTiming),
-
-    /// Maximum number of activations allowed in one turn.
-    /// Used for clauses like "Activate only twice each turn".
-    MaxActivationsPerTurn(u32),
-
-    /// Conjunction of multiple activation restrictions.
-    All(Vec<ManaAbilityCondition>),
-
-    /// A supported-but-unmodeled restriction condition.
-    ///
-    /// This is used when a known activation restriction pattern is not
-    /// modeled in detail yet but should still be represented in compiled text.
-    Unmodeled(String),
+    pub activation_condition: Option<crate::ConditionExpr>,
 }
 
 impl ManaAbility {
@@ -667,14 +580,14 @@ impl ManaAbility {
             mana_cost: TotalCost::from_cost(crate::costs::Cost::effect(Effect::tap_source())),
             mana: vec![mana],
             effects: None,
-            activation_condition: Some(ManaAbilityCondition::ControlLandWithSubtype(
+            activation_condition: Some(crate::ConditionExpr::ControlLandWithSubtype(
                 required_subtypes,
             )),
         }
     }
 
     /// Add an activation condition to this mana ability.
-    pub fn with_condition(mut self, condition: ManaAbilityCondition) -> Self {
+    pub fn with_condition(mut self, condition: crate::ConditionExpr) -> Self {
         self.activation_condition = Some(condition);
         self
     }

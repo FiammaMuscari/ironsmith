@@ -64,6 +64,8 @@ pub use misc::*;
 pub use protection::*;
 pub use restrictions::*;
 
+pub(crate) use continuous::resolve_anthem_count_expression;
+
 use crate::continuous::ContinuousEffect;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};

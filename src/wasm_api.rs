@@ -3397,50 +3397,79 @@ fn describe_activation_timing(timing: &crate::ability::ActivationTiming) -> &'st
     }
 }
 
-fn describe_intervening_if(condition: &crate::ability::InterveningIfCondition) -> String {
+fn describe_intervening_if(condition: &crate::ConditionExpr) -> String {
     match condition {
-        crate::ability::InterveningIfCondition::YouControl(filter) => {
+        crate::ConditionExpr::YouControl(filter) => {
             format!("you control {}", filter.description())
         }
-        crate::ability::InterveningIfCondition::OpponentControls(filter) => {
+        crate::ConditionExpr::OpponentControls(filter) => {
             format!(
                 "an opponent controls {}",
                 strip_leading_article(&filter.description())
             )
         }
-        crate::ability::InterveningIfCondition::LifeTotalAtLeast(value) => {
+        crate::ConditionExpr::LifeTotalOrGreater(value) => {
             format!("your life total is at least {value}")
         }
-        crate::ability::InterveningIfCondition::LifeTotalAtMost(value) => {
+        crate::ConditionExpr::LifeTotalOrLess(value) => {
             format!("your life total is at most {value}")
         }
-        crate::ability::InterveningIfCondition::NoCreaturesDiedThisTurn => {
+        crate::ConditionExpr::Not(inner)
+            if matches!(inner.as_ref(), crate::ConditionExpr::CreatureDiedThisTurn) =>
+        {
             "no creature died this turn".to_string()
         }
-        crate::ability::InterveningIfCondition::CreatureDiedThisTurn => {
+        crate::ConditionExpr::CreatureDiedThisTurn => {
             "a creature died this turn".to_string()
         }
-        crate::ability::InterveningIfCondition::FirstTimeThisTurn => {
+        crate::ConditionExpr::FirstTimeThisTurn => {
             "this is the first time this turn".to_string()
         }
-        crate::ability::InterveningIfCondition::MaxTimesEachTurn(limit) => {
+        crate::ConditionExpr::MaxTimesEachTurn(limit) => {
             format!("triggers at most {limit} times each turn")
         }
-        crate::ability::InterveningIfCondition::WasEnchanted => {
+        crate::ConditionExpr::TriggeringObjectWasEnchanted => {
             "the source was enchanted".to_string()
         }
-        crate::ability::InterveningIfCondition::HadCounters(counter_type, amount) => {
+        crate::ConditionExpr::TriggeringObjectHadCounters {
+            counter_type,
+            min_count: amount,
+        } => {
             format!(
                 "the source had at least {amount} {} counter(s)",
                 describe_counter_type(*counter_type)
             )
         }
+        _ => format!("{condition:?}"),
     }
 }
 
-fn describe_mana_condition(condition: &crate::ability::ManaAbilityCondition) -> String {
+fn describe_mana_condition(condition: &crate::ConditionExpr) -> String {
+    fn flatten(condition: &crate::ConditionExpr, out: &mut Vec<crate::ConditionExpr>) {
+        match condition {
+            crate::ConditionExpr::And(left, right) => {
+                flatten(left, out);
+                flatten(right, out);
+            }
+            _ => out.push(condition.clone()),
+        }
+    }
+
     match condition {
-        crate::ability::ManaAbilityCondition::ControlLandWithSubtype(subtypes) => {
+        crate::ConditionExpr::And(_, _) => {
+            let mut conditions = Vec::new();
+            flatten(condition, &mut conditions);
+            let clauses = conditions
+                .iter()
+                .map(describe_mana_condition)
+                .collect::<Vec<_>>();
+            if clauses.is_empty() {
+                "no condition".to_string()
+            } else {
+                clauses.join(" and ")
+            }
+        }
+        crate::ConditionExpr::ControlLandWithSubtype(subtypes) => {
             if subtypes.is_empty() {
                 "you control a land with required subtype".to_string()
             } else if subtypes.len() == 1 {
@@ -3457,27 +3486,27 @@ fn describe_mana_condition(condition: &crate::ability::ManaAbilityCondition) -> 
                 format!("you control a land with subtype {names}")
             }
         }
-        crate::ability::ManaAbilityCondition::ControlAtLeastArtifacts(count) => {
+        crate::ConditionExpr::ControlAtLeastArtifacts(count) => {
             if *count == 1 {
                 "you control an artifact".to_string()
             } else {
                 format!("you control {count} or more artifacts")
             }
         }
-        crate::ability::ManaAbilityCondition::ControlAtLeastLands(count) => {
+        crate::ConditionExpr::ControlAtLeastLands(count) => {
             if *count == 1 {
                 "you control a land".to_string()
             } else {
                 format!("you control {count} or more lands")
             }
         }
-        crate::ability::ManaAbilityCondition::ControlCreatureWithPowerAtLeast(power) => {
+        crate::ConditionExpr::ControlCreatureWithPowerAtLeast(power) => {
             format!("you control a creature with power {power} or greater")
         }
-        crate::ability::ManaAbilityCondition::ControlCreaturesTotalPowerAtLeast(power) => {
+        crate::ConditionExpr::ControlCreaturesTotalPowerAtLeast(power) => {
             format!("creatures you control have total power {power} or greater")
         }
-        crate::ability::ManaAbilityCondition::CardInYourGraveyard {
+        crate::ConditionExpr::CardInYourGraveyard {
             card_types,
             subtypes,
         } => {
@@ -3501,7 +3530,7 @@ fn describe_mana_condition(condition: &crate::ability::ManaAbilityCondition) -> 
                 )
             }
         }
-        crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
+        crate::ConditionExpr::ActivationTiming(timing) => match timing {
             crate::ability::ActivationTiming::AnyTime => {
                 "you may activate any time you could cast an instant".to_string()
             }
@@ -3521,14 +3550,14 @@ fn describe_mana_condition(condition: &crate::ability::ManaAbilityCondition) -> 
                 "activate only during an opponent's turn".to_string()
             }
         },
-        crate::ability::ManaAbilityCondition::MaxActivationsPerTurn(limit) => {
+        crate::ConditionExpr::MaxActivationsPerTurn(limit) => {
             if *limit == 1 {
                 "activate only once each turn".to_string()
             } else {
                 format!("activate only up to {limit} times each turn")
             }
         }
-        crate::ability::ManaAbilityCondition::Unmodeled(restriction) => {
+        crate::ConditionExpr::Unmodeled(restriction) => {
             let suffix = restriction
                 .trim_start_matches("activate only ")
                 .trim_start_matches("Activate only ")
@@ -3540,17 +3569,7 @@ fn describe_mana_condition(condition: &crate::ability::ManaAbilityCondition) -> 
                 format!("activate only {suffix}")
             }
         }
-        crate::ability::ManaAbilityCondition::All(conditions) => {
-            let clauses = conditions
-                .iter()
-                .map(describe_mana_condition)
-                .collect::<Vec<_>>();
-            if clauses.is_empty() {
-                "no condition".to_string()
-            } else {
-                clauses.join(" and ")
-            }
-        }
+        _ => format!("{condition:?}"),
     }
 }
 

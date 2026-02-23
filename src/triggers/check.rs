@@ -7,7 +7,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::Effect;
-use crate::ability::{AbilityKind, InterveningIfCondition, TriggeredAbility};
+use crate::ability::{AbilityKind, TriggeredAbility};
 use crate::filter::ObjectRef;
 use crate::game_state::{GameState, Phase, Step};
 use crate::ids::{ObjectId, PlayerId, StableId};
@@ -550,70 +550,23 @@ pub fn generate_step_trigger_events(game: &GameState) -> Option<TriggerEvent> {
 /// Verify if an intervening-if condition is met.
 pub fn verify_intervening_if(
     game: &GameState,
-    condition: &InterveningIfCondition,
+    condition: &crate::ConditionExpr,
     controller: PlayerId,
     event: &TriggerEvent,
     source_object_id: ObjectId,
     trigger_identity: Option<TriggerIdentity>,
 ) -> bool {
-    match condition {
-        InterveningIfCondition::YouControl(filter) => {
-            let ctx = game.filter_context_for(controller, None);
-            game.battlefield.iter().any(|&obj_id| {
-                game.object(obj_id).is_some_and(|obj| {
-                    obj.controller == controller && filter.matches(obj, &ctx, game)
-                })
-            })
-        }
-
-        InterveningIfCondition::OpponentControls(filter) => {
-            let ctx = game.filter_context_for(controller, None);
-            game.battlefield.iter().any(|&obj_id| {
-                game.object(obj_id).is_some_and(|obj| {
-                    obj.controller != controller
-                        && game
-                            .player(obj.controller)
-                            .map(|p| p.is_in_game())
-                            .unwrap_or(false)
-                        && filter.matches(obj, &ctx, game)
-                })
-            })
-        }
-
-        InterveningIfCondition::LifeTotalAtLeast(amount) => game
-            .player(controller)
-            .map(|p| p.life >= *amount)
-            .unwrap_or(false),
-
-        InterveningIfCondition::LifeTotalAtMost(amount) => game
-            .player(controller)
-            .map(|p| p.life <= *amount)
-            .unwrap_or(false),
-
-        InterveningIfCondition::NoCreaturesDiedThisTurn => game.creatures_died_this_turn == 0,
-
-        InterveningIfCondition::CreatureDiedThisTurn => game.creatures_died_this_turn > 0,
-
-        InterveningIfCondition::FirstTimeThisTurn => trigger_identity
-            .map(|id| game.trigger_fire_count_this_turn(source_object_id, id) == 0)
-            .unwrap_or(true),
-
-        InterveningIfCondition::MaxTimesEachTurn(limit) => trigger_identity
-            .map(|id| game.trigger_fire_count_this_turn(source_object_id, id) < *limit)
-            .unwrap_or(true),
-
-        InterveningIfCondition::WasEnchanted => {
-            // Check if the event has a snapshot and if it was enchanted
-            event.snapshot().is_some_and(|s| s.was_enchanted)
-        }
-
-        InterveningIfCondition::HadCounters(counter_type, min_count) => {
-            // Check if the event has a snapshot and if it had the required counters
-            event.snapshot().is_some_and(|snapshot| {
-                snapshot.counters.get(counter_type).copied().unwrap_or(0) >= *min_count
-            })
-        }
-    }
+    let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+        controller,
+        source: source_object_id,
+        // Legacy intervening-if checks intentionally did not provide a filter-context source.
+        filter_source: None,
+        triggering_event: Some(event),
+        trigger_identity,
+        ability_index: None,
+        options: Default::default(),
+    };
+    crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx)
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! Add mana of any color/type that lands matching a filter could produce.
 
 use super::choice_helpers::{choose_mana_symbols, credit_mana_symbols};
-use crate::ability::{AbilityKind, ManaAbility, ManaAbilityCondition};
+use crate::ability::{AbilityKind, ManaAbility};
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
@@ -139,92 +139,26 @@ fn mana_ability_condition_met(
     source: &Object,
     mana_ability: &ManaAbility,
 ) -> bool {
-    fn condition_met(game: &GameState, source: &Object, condition: &ManaAbilityCondition) -> bool {
-        match condition {
-            ManaAbilityCondition::ControlLandWithSubtype(required_subtypes) => {
-                game.battlefield.iter().any(|&perm_id| {
-                    let Some(perm) = game.object(perm_id) else {
-                        return false;
-                    };
-                    perm.controller == source.controller
-                        && perm.is_land()
-                        && required_subtypes.iter().any(|st| perm.has_subtype(*st))
-                })
-            }
-            ManaAbilityCondition::ControlAtLeastArtifacts(required_count) => {
-                let count = game
-                    .battlefield
-                    .iter()
-                    .filter_map(|&perm_id| game.object(perm_id))
-                    .filter(|perm| {
-                        perm.controller == source.controller
-                            && perm.card_types.contains(&crate::types::CardType::Artifact)
-                    })
-                    .count() as u32;
-                count >= *required_count
-            }
-            ManaAbilityCondition::ControlAtLeastLands(required_count) => {
-                let count = game
-                    .battlefield
-                    .iter()
-                    .filter_map(|&perm_id| game.object(perm_id))
-                    .filter(|perm| perm.controller == source.controller && perm.is_land())
-                    .count() as u32;
-                count >= *required_count
-            }
-            ManaAbilityCondition::ControlCreatureWithPowerAtLeast(required_power) => {
-                game.battlefield.iter().any(|&perm_id| {
-                    game.object(perm_id).is_some_and(|perm| {
-                        perm.controller == source.controller
-                            && perm.is_creature()
-                            && perm
-                                .power()
-                                .is_some_and(|power| power >= *required_power as i32)
-                    })
-                })
-            }
-            ManaAbilityCondition::ControlCreaturesTotalPowerAtLeast(required_power) => {
-                let total_power = game
-                    .battlefield
-                    .iter()
-                    .filter_map(|&perm_id| game.object(perm_id))
-                    .filter(|perm| perm.controller == source.controller && perm.is_creature())
-                    .map(|perm| perm.power().unwrap_or(0).max(0))
-                    .sum::<i32>();
-                total_power >= *required_power as i32
-            }
-            ManaAbilityCondition::CardInYourGraveyard {
-                card_types,
-                subtypes,
-            } => game.player(source.controller).is_some_and(|player_state| {
-                player_state.graveyard.iter().any(|&card_id| {
-                    let Some(card) = game.object(card_id) else {
-                        return false;
-                    };
-                    let card_type_match = card_types.is_empty()
-                        || card_types
-                            .iter()
-                            .any(|card_type| card.card_types.contains(card_type));
-                    let subtype_match = subtypes.is_empty()
-                        || subtypes.iter().any(|subtype| card.has_subtype(*subtype));
-                    card_type_match && subtype_match
-                })
-            }),
-            // For mana-production inference we only care about what colors can be
-            // produced, not whether the ability is currently activatable by timing.
-            ManaAbilityCondition::Timing(_) => true,
-            ManaAbilityCondition::MaxActivationsPerTurn(_) => true,
-            ManaAbilityCondition::Unmodeled(_) => true,
-            ManaAbilityCondition::All(conditions) => conditions
-                .iter()
-                .all(|inner| condition_met(game, source, inner)),
-        }
-    }
-
     mana_ability
         .activation_condition
         .as_ref()
-        .is_none_or(|condition| condition_met(game, source, condition))
+        .is_none_or(|condition| {
+            let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+                controller: source.controller,
+                source: source.id,
+                filter_source: Some(source.id),
+                triggering_event: None,
+                trigger_identity: None,
+                ability_index: None,
+                options: crate::condition_eval::ExternalEvaluationOptions {
+                    // For mana-production inference we only care about what colors can be
+                    // produced, not whether the ability is currently activatable by timing/limits.
+                    ignore_timing: true,
+                    ignore_activation_limits: true,
+                },
+            };
+            crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx)
+        })
 }
 
 fn infer_symbols_from_mana_effect(

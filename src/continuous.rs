@@ -171,7 +171,7 @@ pub struct ContinuousEffect {
     pub duration: Until,
 
     /// Optional condition that must be true for this effect to apply
-    pub condition: Option<EffectCondition>,
+    pub condition: Option<crate::ConditionExpr>,
 
     /// How this effect was created - affects target locking behavior.
     /// Per Rule 611.2c, resolution effects lock targets; per 611.3a, static effects don't.
@@ -403,34 +403,6 @@ impl Modification {
             _ => None,
         }
     }
-}
-
-/// A condition for when an effect applies.
-#[derive(Debug, Clone, PartialEq)]
-pub enum EffectCondition {
-    /// Controller controls an object matching filter
-    ControllerControls(ObjectFilter),
-
-    /// Source is tapped
-    SourceIsTapped,
-
-    /// Source is untapped
-    SourceIsUntapped,
-
-    /// Source is attacking
-    SourceIsAttacking,
-
-    /// Source is blocking
-    SourceIsBlocking,
-
-    /// It's the controller's turn
-    ControllersTurn,
-
-    /// A specific player has N or more cards in graveyard
-    GraveyardHasCards(PlayerId, usize),
-
-    /// Custom condition by ID
-    Custom(&'static str),
 }
 
 /// Manages all continuous effects in the game.
@@ -704,7 +676,7 @@ impl ContinuousEffect {
     }
 
     /// Set a condition.
-    pub fn with_condition(mut self, condition: EffectCondition) -> Self {
+    pub fn with_condition(mut self, condition: crate::ConditionExpr) -> Self {
         self.condition = Some(condition);
         self
     }

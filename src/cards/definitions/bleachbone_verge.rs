@@ -19,7 +19,7 @@ pub fn bleachbone_verge() -> CardDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ability::{AbilityKind, ManaAbilityCondition};
+    use crate::ability::AbilityKind;
     use crate::card::CardBuilder;
     use crate::game_state::GameState;
     use crate::ids::{CardId, ObjectId, PlayerId};
@@ -146,7 +146,7 @@ mod tests {
                 "Second ability should have activation condition"
             );
 
-            if let Some(ManaAbilityCondition::ControlLandWithSubtype(subtypes)) =
+            if let Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes)) =
                 &mana_ability.activation_condition
             {
                 assert!(subtypes.contains(&Subtype::Plains));

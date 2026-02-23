@@ -624,111 +624,18 @@ fn check_mana_ability_condition(
     player: PlayerId,
     source: ObjectId,
     ability_index: usize,
-    condition: &crate::ability::ManaAbilityCondition,
+    condition: &crate::ConditionExpr,
 ) -> bool {
-    match condition {
-        crate::ability::ManaAbilityCondition::ControlLandWithSubtype(required_subtypes) => {
-            // Check if the player controls a land with at least one of the required subtypes
-            game.battlefield.iter().any(|&id| {
-                if let Some(obj) = game.object(id) {
-                    if obj.controller == player && obj.is_land() {
-                        // Check if the land has any of the required subtypes
-                        required_subtypes
-                            .iter()
-                            .any(|subtype| obj.has_subtype(*subtype))
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            })
-        }
-        crate::ability::ManaAbilityCondition::ControlAtLeastArtifacts(required_count) => {
-            let controlled_artifacts = game
-                .battlefield
-                .iter()
-                .filter_map(|&id| game.object(id))
-                .filter(|obj| {
-                    obj.controller == player
-                        && obj.card_types.contains(&crate::types::CardType::Artifact)
-                })
-                .count() as u32;
-            controlled_artifacts >= *required_count
-        }
-        crate::ability::ManaAbilityCondition::ControlAtLeastLands(required_count) => {
-            let controlled_lands = game
-                .battlefield
-                .iter()
-                .filter_map(|&id| game.object(id))
-                .filter(|obj| obj.controller == player && obj.is_land())
-                .count() as u32;
-            controlled_lands >= *required_count
-        }
-        crate::ability::ManaAbilityCondition::ControlCreatureWithPowerAtLeast(required_power) => {
-            game.battlefield.iter().any(|&id| {
-                game.object(id).is_some_and(|obj| {
-                    obj.controller == player
-                        && obj.is_creature()
-                        && obj
-                            .power()
-                            .is_some_and(|power| power >= *required_power as i32)
-                })
-            })
-        }
-        crate::ability::ManaAbilityCondition::ControlCreaturesTotalPowerAtLeast(required_power) => {
-            let total_power = game
-                .battlefield
-                .iter()
-                .filter_map(|&id| game.object(id))
-                .filter(|obj| obj.controller == player && obj.is_creature())
-                .map(|obj| obj.power().unwrap_or(0).max(0))
-                .sum::<i32>();
-            total_power >= *required_power as i32
-        }
-        crate::ability::ManaAbilityCondition::CardInYourGraveyard {
-            card_types,
-            subtypes,
-        } => game.player(player).is_some_and(|player_state| {
-            player_state.graveyard.iter().any(|&card_id| {
-                let Some(card) = game.object(card_id) else {
-                    return false;
-                };
-                let card_type_match = card_types.is_empty()
-                    || card_types
-                        .iter()
-                        .any(|card_type| card.card_types.contains(card_type));
-                let subtype_match = subtypes.is_empty()
-                    || subtypes.iter().any(|subtype| card.has_subtype(*subtype));
-                card_type_match && subtype_match
-            })
-        }),
-        crate::ability::ManaAbilityCondition::Timing(timing) => match timing {
-            crate::ability::ActivationTiming::AnyTime => true,
-            crate::ability::ActivationTiming::DuringCombat => {
-                matches!(game.turn.phase, Phase::Combat)
-            }
-            crate::ability::ActivationTiming::SorcerySpeed => {
-                game.turn.active_player == player
-                    && matches!(game.turn.phase, Phase::FirstMain | Phase::NextMain)
-                    && game.stack_is_empty()
-            }
-            crate::ability::ActivationTiming::OncePerTurn => {
-                game.ability_activation_count_this_turn(source, ability_index) == 0
-            }
-            crate::ability::ActivationTiming::DuringYourTurn => game.turn.active_player == player,
-            crate::ability::ActivationTiming::DuringOpponentsTurn => {
-                game.turn.active_player != player
-            }
-        },
-        crate::ability::ManaAbilityCondition::MaxActivationsPerTurn(limit) => {
-            game.ability_activation_count_this_turn(source, ability_index) < *limit
-        }
-        crate::ability::ManaAbilityCondition::Unmodeled(_) => true,
-        crate::ability::ManaAbilityCondition::All(conditions) => conditions
-            .iter()
-            .all(|inner| check_mana_ability_condition(game, player, source, ability_index, inner)),
-    }
+    let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+        controller: player,
+        source,
+        filter_source: Some(source),
+        triggering_event: None,
+        trigger_identity: None,
+        ability_index: Some(ability_index),
+        options: crate::condition_eval::ExternalEvaluationOptions::default(),
+    };
+    crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx)
 }
 
 pub fn perform_activate_mana_ability(

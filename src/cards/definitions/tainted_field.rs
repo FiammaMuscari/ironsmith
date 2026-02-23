@@ -20,7 +20,7 @@ pub fn tainted_field() -> CardDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ability::{AbilityKind, ManaAbilityCondition};
+    use crate::ability::AbilityKind;
     use crate::card::CardBuilder;
     use crate::game_state::GameState;
     use crate::ids::{CardId, ObjectId, PlayerId};
@@ -147,7 +147,7 @@ mod tests {
                 "White ability should have activation condition"
             );
 
-            if let Some(ManaAbilityCondition::ControlLandWithSubtype(subtypes)) =
+            if let Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes)) =
                 &mana_ability.activation_condition
             {
                 assert!(subtypes.contains(&Subtype::Swamp));
@@ -190,7 +190,7 @@ mod tests {
                 "Black ability should have activation condition"
             );
 
-            if let Some(ManaAbilityCondition::ControlLandWithSubtype(subtypes)) =
+            if let Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes)) =
                 &mana_ability.activation_condition
             {
                 assert!(subtypes.contains(&Subtype::Swamp));

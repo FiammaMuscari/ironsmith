@@ -4463,7 +4463,7 @@ struct ParsedAnthemClause {
     subject: AnthemSubjectAst,
     power: AnthemValue,
     toughness: AnthemValue,
-    condition: Option<StaticCondition>,
+    condition: Option<crate::ConditionExpr>,
 }
 
 fn words_start_with(tokens: &[Token], expected: &[&str]) -> bool {
@@ -4661,7 +4661,7 @@ fn parse_permanent_card_count_filter(tokens: &[Token]) -> Option<ObjectFilter> {
     filter.zone.map(|_| filter)
 }
 
-fn parse_static_condition_clause(tokens: &[Token]) -> Result<StaticCondition, CardTextError> {
+fn parse_static_condition_clause(tokens: &[Token]) -> Result<crate::ConditionExpr, CardTextError> {
     let tokens = trim_edge_punctuation(tokens);
     let clause_words = words(&tokens);
     if clause_words.is_empty() {
@@ -4673,26 +4673,28 @@ fn parse_static_condition_clause(tokens: &[Token]) -> Result<StaticCondition, Ca
     if clause_words == ["this", "creature", "is", "equipped"]
         || clause_words == ["it", "is", "equipped"]
     {
-        return Ok(StaticCondition::SourceIsEquipped);
+        return Ok(crate::ConditionExpr::SourceIsEquipped);
     }
     if clause_words == ["this", "creature", "is", "enchanted"]
         || clause_words == ["it", "is", "enchanted"]
     {
-        return Ok(StaticCondition::SourceIsEnchanted);
+        return Ok(crate::ConditionExpr::SourceIsEnchanted);
     }
     if clause_words == ["equipped", "creature", "is", "tapped"] {
-        return Ok(StaticCondition::EquippedCreatureTapped);
+        return Ok(crate::ConditionExpr::EquippedCreatureTapped);
     }
     if clause_words == ["equipped", "creature", "is", "untapped"] {
-        return Ok(StaticCondition::EquippedCreatureUntapped);
+        return Ok(crate::ConditionExpr::EquippedCreatureUntapped);
     }
     if clause_words == ["it", "is", "your", "turn"] || clause_words == ["its", "your", "turn"] {
-        return Ok(StaticCondition::YourTurn);
+        return Ok(crate::ConditionExpr::YourTurn);
     }
     if clause_words == ["it", "is", "not", "your", "turn"]
         || clause_words == ["its", "not", "your", "turn"]
     {
-        return Ok(StaticCondition::NotYourTurn);
+        return Ok(crate::ConditionExpr::Not(Box::new(
+            crate::ConditionExpr::YourTurn,
+        )));
     }
 
     if clause_words.starts_with(&["there", "are"]) {
@@ -4720,7 +4722,7 @@ fn parse_static_condition_clause(tokens: &[Token]) -> Result<StaticCondition, Ca
                     clause_words.join(" ")
                 ))
             })?;
-        return Ok(StaticCondition::CountComparison {
+        return Ok(crate::ConditionExpr::CountComparison {
             count: AnthemCountExpression::MatchingFilter(filter),
             comparison,
             display: Some(clause_words.join(" ")),
@@ -4749,7 +4751,7 @@ fn parse_static_condition_clause(tokens: &[Token]) -> Result<StaticCondition, Ca
                 clause_words.join(" ")
             ))
         })?;
-        return Ok(StaticCondition::CountComparison {
+        return Ok(crate::ConditionExpr::CountComparison {
             count: AnthemCountExpression::MatchingFilter(filter),
             comparison,
             display: Some(clause_words.join(" ")),
@@ -4772,7 +4774,7 @@ fn parse_static_condition_clause(tokens: &[Token]) -> Result<StaticCondition, Ca
         {
             let mut filter = ObjectFilter::source();
             filter.with_counter = Some(crate::filter::CounterConstraint::Typed(counter_type));
-            return Ok(StaticCondition::CountComparison {
+            return Ok(crate::ConditionExpr::CountComparison {
                 count: AnthemCountExpression::MatchingFilter(filter),
                 comparison: crate::effect::Comparison::GreaterThanOrEqual(1),
                 display: Some(clause_words.join(" ")),
@@ -4842,7 +4844,7 @@ fn parse_anthem_for_each_expression(
 fn parse_anthem_prefix_condition(
     tokens: &[Token],
     get_idx: usize,
-) -> Result<(Option<StaticCondition>, usize), CardTextError> {
+) -> Result<(Option<crate::ConditionExpr>, usize), CardTextError> {
     if words_start_with(tokens, &["during", "turns", "other", "than", "yours"]) {
         let subject_start = tokens[..get_idx]
             .iter()
@@ -4850,7 +4852,10 @@ fn parse_anthem_prefix_condition(
             .map(|idx| idx + 1)
             .or_else(|| find_source_reference_start(&tokens[..get_idx]))
             .unwrap_or(5);
-        return Ok((Some(StaticCondition::NotYourTurn), subject_start));
+        return Ok((
+            Some(crate::ConditionExpr::Not(Box::new(crate::ConditionExpr::YourTurn))),
+            subject_start,
+        ));
     }
     if words_start_with(tokens, &["during", "your", "turn"]) {
         let subject_start = tokens[..get_idx]
@@ -4859,7 +4864,7 @@ fn parse_anthem_prefix_condition(
             .map(|idx| idx + 1)
             .or_else(|| find_source_reference_start(&tokens[..get_idx]))
             .unwrap_or(3);
-        return Ok((Some(StaticCondition::YourTurn), subject_start));
+        return Ok((Some(crate::ConditionExpr::YourTurn), subject_start));
     }
 
     if words_start_with(tokens, &["as", "long", "as"]) {
@@ -4921,7 +4926,7 @@ fn parse_anthem_clause(
 
     let tail_tokens = trim_edge_punctuation(&tokens[get_idx + 2..tail_end]);
     let mut scale: Option<AnthemCountExpression> = None;
-    let mut suffix_condition: Option<StaticCondition> = None;
+    let mut suffix_condition: Option<crate::ConditionExpr> = None;
     if !tail_tokens.is_empty() {
         if words_start_with(&tail_tokens, &["for", "each"]) {
             scale = Some(parse_anthem_for_each_expression(&tail_tokens)?);
@@ -5245,7 +5250,7 @@ fn parse_anthem_and_keyword_line(
     }
 
     let mut ability_tokens = trim_commas(&tokens[have_token_idx + 1..]);
-    let mut trailing_condition: Option<StaticCondition> = None;
+    let mut trailing_condition: Option<crate::ConditionExpr> = None;
     if let Some(as_long_idx) = words(&ability_tokens)
         .windows(3)
         .position(|window| window == ["as", "long", "as"])
@@ -6235,8 +6240,7 @@ fn parse_attached_has_keywords_and_triggered_ability_line(
                     trigger: compile_trigger_spec(trigger),
                     effects: compiled_effects,
                     choices,
-                    intervening_if: max_triggers_per_turn
-                        .map(crate::ability::InterveningIfCondition::MaxTimesEachTurn),
+                    intervening_if: max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
                 }),
                 functional_zones: vec![Zone::Battlefield],
                 text: Some(words(&trigger_tokens).join(" ")),
@@ -7223,11 +7227,7 @@ fn parse_copy_activated_abilities_line(
             })
             .and_then(parse_counter_type_word)
         {
-            condition = Some(
-                crate::static_abilities::CopyActivatedAbilitiesCondition::OwnsCardExiledWithCounter(
-                    counter_word,
-                ),
-            );
+            condition = Some(crate::ConditionExpr::OwnsCardExiledWithCounter(counter_word));
         }
     }
 
@@ -7574,7 +7574,7 @@ fn parse_filter_has_granted_ability_line(
                         effects: compiled_effects,
                         choices,
                         intervening_if: max_triggers_per_turn
-                            .map(crate::ability::InterveningIfCondition::MaxTimesEachTurn),
+                            .map(crate::ConditionExpr::MaxTimesEachTurn),
                     }),
                     functional_zones: vec![Zone::Battlefield],
                     text: None,
@@ -7676,7 +7676,7 @@ fn parse_activated_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardT
     let mut effect_sentences = split_on_period(effect_tokens);
     let functional_zones = infer_activated_functional_zones(cost_tokens, &effect_sentences);
     let mut timing = ActivationTiming::AnyTime;
-    let mut mana_activation_condition: Option<ManaAbilityCondition> = None;
+    let mut mana_activation_condition: Option<crate::ConditionExpr> = None;
     let mut additional_activation_restrictions: Vec<String> = Vec::new();
     effect_sentences.retain(|sentence| {
         if is_activate_only_restriction_sentence(sentence) {
@@ -8131,53 +8131,51 @@ fn contains_word_sequence(words: &[&str], sequence: &[&str]) -> bool {
         .any(|window| window == sequence)
 }
 
-fn combine_mana_activation_condition(
-    base: Option<ManaAbilityCondition>,
-    timing: ActivationTiming,
-) -> Option<ManaAbilityCondition> {
-    if timing == ActivationTiming::AnyTime {
-        return base;
-    }
-    let timing_condition = ManaAbilityCondition::Timing(timing);
-    match base {
-        Some(ManaAbilityCondition::All(mut conditions)) => {
-            if !conditions
-                .iter()
-                .any(|existing| *existing == timing_condition)
-            {
-                conditions.push(timing_condition);
-            }
-            Some(ManaAbilityCondition::All(conditions))
+fn flatten_mana_activation_conditions(
+    condition: &crate::ConditionExpr,
+    out: &mut Vec<crate::ConditionExpr>,
+) {
+    match condition {
+        crate::ConditionExpr::And(left, right) => {
+            flatten_mana_activation_conditions(left, out);
+            flatten_mana_activation_conditions(right, out);
         }
-        Some(existing) => {
-            if existing == timing_condition {
-                Some(existing)
-            } else {
-                Some(ManaAbilityCondition::All(vec![existing, timing_condition]))
-            }
-        }
-        None => Some(timing_condition),
+        _ => out.push(condition.clone()),
     }
 }
 
+fn rebuild_mana_activation_conditions(
+    conditions: Vec<crate::ConditionExpr>,
+) -> Option<crate::ConditionExpr> {
+    let mut iter = conditions.into_iter();
+    let first = iter.next()?;
+    Some(iter.fold(first, |acc, next| {
+        crate::ConditionExpr::And(Box::new(acc), Box::new(next))
+    }))
+}
+
+fn combine_mana_activation_condition(
+    base: Option<crate::ConditionExpr>,
+    timing: ActivationTiming,
+) -> Option<crate::ConditionExpr> {
+    if timing == ActivationTiming::AnyTime {
+        return base;
+    }
+    merge_mana_activation_conditions(base, crate::ConditionExpr::ActivationTiming(timing))
+}
+
 fn merge_mana_activation_conditions(
-    base: Option<ManaAbilityCondition>,
-    condition: ManaAbilityCondition,
-) -> Option<ManaAbilityCondition> {
-    let mut conditions = match base {
-        Some(ManaAbilityCondition::All(conditions)) => conditions,
-        Some(existing) => vec![existing],
-        None => Vec::new(),
-    };
+    base: Option<crate::ConditionExpr>,
+    condition: crate::ConditionExpr,
+) -> Option<crate::ConditionExpr> {
+    let mut conditions: Vec<crate::ConditionExpr> = Vec::new();
+    if let Some(base) = base {
+        flatten_mana_activation_conditions(&base, &mut conditions);
+    }
     if !conditions.iter().any(|existing| *existing == condition) {
         conditions.push(condition);
     }
-
-    if conditions.len() == 1 {
-        conditions.pop()
-    } else {
-        Some(ManaAbilityCondition::All(conditions))
-    }
+    rebuild_mana_activation_conditions(conditions)
 }
 
 fn is_activate_only_restriction_sentence(tokens: &[Token]) -> bool {
@@ -9658,18 +9656,20 @@ fn color_from_color_set(colors: ColorSet) -> Option<crate::color::Color> {
     found
 }
 
-fn parse_activation_condition(tokens: &[Token]) -> Option<ManaAbilityCondition> {
+fn parse_activation_condition(tokens: &[Token]) -> Option<crate::ConditionExpr> {
     let line_words = words(tokens);
     if line_words.len() < 5 {
         return None;
     }
     if let Some(count) = parse_activation_count_per_turn(&line_words[2..]) {
-        return Some(ManaAbilityCondition::MaxActivationsPerTurn(count));
+        return Some(crate::ConditionExpr::MaxActivationsPerTurn(count));
     }
     if line_words.starts_with(&["activate", "only", "as", "an", "instant"])
         || line_words.starts_with(&["activate", "only", "as", "instant"])
     {
-        return Some(ManaAbilityCondition::Timing(ActivationTiming::AnyTime));
+        return Some(crate::ConditionExpr::ActivationTiming(
+            ActivationTiming::AnyTime,
+        ));
     }
     if line_words.starts_with(&["activate", "only", "if", "there", "is"])
         || line_words.starts_with(&["activate", "only", "if", "there", "are"])
@@ -9713,7 +9713,7 @@ fn parse_activation_condition(tokens: &[Token]) -> Option<ManaAbilityCondition> 
             return None;
         }
 
-        return Some(ManaAbilityCondition::CardInYourGraveyard {
+        return Some(crate::ConditionExpr::CardInYourGraveyard {
             card_types,
             subtypes,
         });
@@ -9733,7 +9733,7 @@ fn parse_activation_condition(tokens: &[Token]) -> Option<ManaAbilityCondition> 
         let threshold = parse_cardinal_u32(threshold_word)?;
         let tail = &line_words[10..];
         if tail == ["or", "greater"] {
-            return Some(ManaAbilityCondition::ControlCreaturesTotalPowerAtLeast(
+            return Some(crate::ConditionExpr::ControlCreaturesTotalPowerAtLeast(
                 threshold,
             ));
         }
@@ -9752,7 +9752,7 @@ fn parse_activation_condition(tokens: &[Token]) -> Option<ManaAbilityCondition> 
         let threshold = parse_cardinal_u32(control_tail.get(power_idx + 1)?)?;
         let tail = &control_tail[power_idx + 2..];
         if tail == ["or", "greater"] {
-            return Some(ManaAbilityCondition::ControlCreatureWithPowerAtLeast(
+            return Some(crate::ConditionExpr::ControlCreatureWithPowerAtLeast(
                 threshold,
             ));
         }
@@ -9761,10 +9761,10 @@ fn parse_activation_condition(tokens: &[Token]) -> Option<ManaAbilityCondition> 
     if let Some((count, used)) = parse_number(after_control) {
         let tail = words(&after_control[used..]);
         if tail == ["or", "more", "artifact"] || tail == ["or", "more", "artifacts"] {
-            return Some(ManaAbilityCondition::ControlAtLeastArtifacts(count));
+            return Some(crate::ConditionExpr::ControlAtLeastArtifacts(count));
         }
         if tail == ["or", "more", "land"] || tail == ["or", "more", "lands"] {
-            return Some(ManaAbilityCondition::ControlAtLeastLands(count));
+            return Some(crate::ConditionExpr::ControlAtLeastLands(count));
         }
     }
     if control_tail == ["an", "artifact"]
@@ -9772,7 +9772,7 @@ fn parse_activation_condition(tokens: &[Token]) -> Option<ManaAbilityCondition> 
         || control_tail == ["artifact"]
         || control_tail == ["artifacts"]
     {
-        return Some(ManaAbilityCondition::ControlAtLeastArtifacts(1));
+        return Some(crate::ConditionExpr::ControlAtLeastArtifacts(1));
     }
 
     let mut subtypes = Vec::new();
@@ -9789,7 +9789,7 @@ fn parse_activation_condition(tokens: &[Token]) -> Option<ManaAbilityCondition> 
         return None;
     }
 
-    Some(ManaAbilityCondition::ControlLandWithSubtype(subtypes))
+    Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes))
 }
 
 fn parse_cardinal_u32(word: &str) -> Option<u32> {
@@ -21408,7 +21408,7 @@ fn parse_granted_activated_or_triggered_ability_for_gain(
                         effects: compiled_effects,
                         choices,
                         intervening_if: max_triggers_per_turn
-                            .map(crate::ability::InterveningIfCondition::MaxTimesEachTurn),
+                            .map(crate::ConditionExpr::MaxTimesEachTurn),
                     }),
                     functional_zones: vec![Zone::Battlefield],
                     text: None,
@@ -25909,8 +25909,7 @@ fn parse_until_duration_triggered_clause(
             trigger: compile_trigger_spec(trigger),
             effects: compiled_effects,
             choices,
-            intervening_if: max_triggers_per_turn
-                .map(crate::ability::InterveningIfCondition::MaxTimesEachTurn),
+            intervening_if: max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
         }),
         functional_zones: vec![Zone::Battlefield],
         text: Some(trigger_text.clone()),

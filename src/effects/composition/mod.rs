@@ -19,7 +19,6 @@ mod choose_mode;
 mod choose_mode_runtime;
 mod choose_objects;
 mod choose_objects_runtime;
-mod condition_eval;
 mod conditional;
 mod for_each_object;
 mod for_each_tagged;

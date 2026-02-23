@@ -7571,15 +7571,16 @@ fn can_stack_trigger_this_turn(game: &GameState, trigger: &TriggeredAbilityEntry
     };
 
     match condition {
-        crate::ability::InterveningIfCondition::FirstTimeThisTurn
-        | crate::ability::InterveningIfCondition::MaxTimesEachTurn(_) => verify_intervening_if(
+        crate::ConditionExpr::FirstTimeThisTurn | crate::ConditionExpr::MaxTimesEachTurn(_) => {
+            verify_intervening_if(
             game,
             condition,
             trigger.controller,
             &trigger.triggering_event,
             trigger.source,
             Some(trigger.trigger_identity),
-        ),
+        )
+        }
         _ => true,
     }
 }
@@ -8932,7 +8933,7 @@ mod tests {
         let attacker_id = create_creature(&mut game, "Tek Test", alice, 2, 2);
 
         if let Some(attacker) = game.object_mut(attacker_id) {
-            let swamp_condition = crate::static_abilities::StaticCondition::CountComparison {
+            let swamp_condition = crate::ConditionExpr::CountComparison {
                 count: crate::static_abilities::AnthemCountExpression::MatchingFilter(
                     crate::filter::ObjectFilter::land()
                         .with_subtype(crate::types::Subtype::Swamp)
