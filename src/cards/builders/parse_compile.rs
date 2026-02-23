@@ -944,7 +944,8 @@ fn restriction_references_tag(restriction: &crate::effect::Restriction, tag: &st
         | Restriction::HaveCountersPlaced(filter)
         | Restriction::BeTargeted(filter)
         | Restriction::BeCountered(filter)
-        | Restriction::Transform(filter) => Some(filter),
+        | Restriction::Transform(filter)
+        | Restriction::AttackOrBlock(filter) => Some(filter),
         _ => None,
     };
     let Some(filter) = maybe_filter else {
@@ -5016,6 +5017,9 @@ fn resolve_restriction_it_tag(
         Restriction::BeTargeted(filter) => Restriction::be_targeted(resolve_it_tag(filter, ctx)?),
         Restriction::BeCountered(filter) => Restriction::be_countered(resolve_it_tag(filter, ctx)?),
         Restriction::Transform(filter) => Restriction::transform(resolve_it_tag(filter, ctx)?),
+        Restriction::AttackOrBlock(filter) => {
+            Restriction::attack_or_block(resolve_it_tag(filter, ctx)?)
+        }
         _ => restriction.clone(),
     };
     Ok(resolved)
@@ -6752,13 +6756,13 @@ fn token_definition_for(name: &str) -> Option<CardDefinition> {
             && words.contains(&"or")
             && words.contains(&"block");
         if has_cant_attack_or_block && words.contains(&"alone") {
-            builder = builder.with_ability(Ability::static_ability(StaticAbility::custom(
-                "cant_attack_or_block_alone",
+            builder = builder.with_ability(Ability::static_ability(StaticAbility::restriction(
+                crate::effect::Restriction::attack_or_block_alone(ObjectFilter::source()),
                 "this token can't attack or block alone".to_string(),
             )));
         } else if has_cant_attack_or_block {
-            builder = builder.with_ability(Ability::static_ability(StaticAbility::custom(
-                "cant_attack_or_block",
+            builder = builder.with_ability(Ability::static_ability(StaticAbility::restriction(
+                crate::effect::Restriction::attack_or_block(ObjectFilter::source()),
                 "this token can't attack or block".to_string(),
             )));
         } else if words.contains(&"cant") && words.contains(&"block") {

@@ -319,7 +319,7 @@ impl RuleRestriction {
 
 impl StaticAbilityKind for RuleRestriction {
     fn id(&self) -> StaticAbilityId {
-        StaticAbilityId::Custom
+        StaticAbilityId::RuleRestriction
     }
 
     fn display(&self) -> String {

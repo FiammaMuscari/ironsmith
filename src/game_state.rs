@@ -142,9 +142,17 @@ pub struct CantEffectTracker {
     /// Example: Pacifism, Propaganda (if unpaid), Maze of Ith
     pub cant_attack: HashSet<ObjectId>,
 
+    /// Creatures that can't attack alone.
+    /// Example: "This creature can't attack alone."
+    pub cant_attack_alone: HashSet<ObjectId>,
+
     /// Creatures that can't block.
     /// Example: Goblin War Drums, Madcap Skills
     pub cant_block: HashSet<ObjectId>,
+
+    /// Creatures that can't block alone.
+    /// Example: "This creature can't block alone."
+    pub cant_block_alone: HashSet<ObjectId>,
 
     /// Permanents that can't untap during their controller's untap step.
     /// Example: "It doesn't untap during its controller's untap step"
@@ -161,6 +169,12 @@ pub struct CantEffectTracker {
     /// Players who can't cast spells.
     /// Example: Possibility Storm (can't cast from hand normally)
     pub cant_cast_spells: HashSet<PlayerId>,
+
+    /// Players who can't cast creature spells.
+    pub cant_cast_creature_spells: HashSet<PlayerId>,
+
+    /// Players who can't cast more than one spell each turn.
+    pub cant_cast_more_than_one_spell_each_turn: HashSet<PlayerId>,
 
     /// Players who can't draw cards.
     /// Example: Notion Thief redirecting draws
@@ -201,6 +215,9 @@ pub struct CantEffectTracker {
     /// Example: Hexproof/Shroud (tracked separately), but also effects like
     /// "can't be the target of spells or abilities"
     pub cant_be_targeted: HashSet<ObjectId>,
+
+    /// Players that can't be targeted.
+    pub cant_target_players: HashSet<PlayerId>,
 
     /// Permanents that can't be countered while on the stack.
     /// Example: Vexing Shusher, Prowling Serpopard
@@ -307,11 +324,17 @@ impl CantEffectTracker {
         self.cant_gain_life.extend(other.cant_gain_life);
         self.cant_search.extend(other.cant_search);
         self.cant_attack.extend(other.cant_attack);
+        self.cant_attack_alone.extend(other.cant_attack_alone);
         self.cant_block.extend(other.cant_block);
+        self.cant_block_alone.extend(other.cant_block_alone);
         self.cant_untap.extend(other.cant_untap);
         self.cant_be_destroyed.extend(other.cant_be_destroyed);
         self.cant_be_sacrificed.extend(other.cant_be_sacrificed);
         self.cant_cast_spells.extend(other.cant_cast_spells);
+        self.cant_cast_creature_spells
+            .extend(other.cant_cast_creature_spells);
+        self.cant_cast_more_than_one_spell_each_turn
+            .extend(other.cant_cast_more_than_one_spell_each_turn);
         self.cant_draw.extend(other.cant_draw);
         self.cant_draw_extra_cards
             .extend(other.cant_draw_extra_cards);
@@ -324,6 +347,7 @@ impl CantEffectTracker {
         self.cant_lose_game.extend(other.cant_lose_game);
         self.cant_win_game.extend(other.cant_win_game);
         self.cant_be_targeted.extend(other.cant_be_targeted);
+        self.cant_target_players.extend(other.cant_target_players);
         self.cant_be_countered.extend(other.cant_be_countered);
         self.cant_transform.extend(other.cant_transform);
     }
@@ -334,11 +358,15 @@ impl CantEffectTracker {
         self.cant_gain_life.clear();
         self.cant_search.clear();
         self.cant_attack.clear();
+        self.cant_attack_alone.clear();
         self.cant_block.clear();
+        self.cant_block_alone.clear();
         self.cant_untap.clear();
         self.cant_be_destroyed.clear();
         self.cant_be_sacrificed.clear();
         self.cant_cast_spells.clear();
+        self.cant_cast_creature_spells.clear();
+        self.cant_cast_more_than_one_spell_each_turn.clear();
         self.cant_draw.clear();
         self.cant_draw_extra_cards.clear();
         self.cant_be_blocked.clear();
@@ -348,6 +376,7 @@ impl CantEffectTracker {
         self.cant_lose_game.clear();
         self.cant_win_game.clear();
         self.cant_be_targeted.clear();
+        self.cant_target_players.clear();
         self.cant_be_countered.clear();
         self.cant_transform.clear();
     }
@@ -377,9 +406,19 @@ impl CantEffectTracker {
         !self.cant_attack.contains(&creature)
     }
 
+    /// Check if a creature can attack alone (as the only attacker).
+    pub fn can_attack_alone(&self, creature: ObjectId) -> bool {
+        !self.cant_attack_alone.contains(&creature)
+    }
+
     /// Check if a creature can block.
     pub fn can_block(&self, creature: ObjectId) -> bool {
         !self.cant_block.contains(&creature)
+    }
+
+    /// Check if a creature can block alone (as the only blocker).
+    pub fn can_block_alone(&self, creature: ObjectId) -> bool {
+        !self.cant_block_alone.contains(&creature)
     }
 
     /// Check if a permanent can untap during untap step.
@@ -432,6 +471,18 @@ impl CantEffectTracker {
         !self.cant_cast_spells.contains(&player)
     }
 
+    /// Check if a player can cast creature spells.
+    pub fn can_cast_creature_spells(&self, player: PlayerId) -> bool {
+        !self.cant_cast_creature_spells.contains(&player)
+    }
+
+    /// Check if a player can cast an additional spell this turn.
+    pub fn can_cast_additional_spell_this_turn(&self, player: PlayerId) -> bool {
+        !self
+            .cant_cast_more_than_one_spell_each_turn
+            .contains(&player)
+    }
+
     /// Check if a permanent can have counters placed on it.
     pub fn can_have_counters_placed(&self, permanent: ObjectId) -> bool {
         !self.cant_have_counters_placed.contains(&permanent)
@@ -440,6 +491,11 @@ impl CantEffectTracker {
     /// Check if a permanent is untargetable by the rules tracker.
     pub fn is_untargetable(&self, permanent: ObjectId) -> bool {
         self.cant_be_targeted.contains(&permanent)
+    }
+
+    /// Check if a player can be targeted.
+    pub fn can_target_player(&self, player: PlayerId) -> bool {
+        !self.cant_target_players.contains(&player)
     }
 
     /// Check if a spell on the stack can be countered by effects.
@@ -462,9 +518,19 @@ impl CantEffectTracker {
         self.cant_attack.insert(creature);
     }
 
+    /// Add a creature to the "can't attack alone" set.
+    pub fn add_cant_attack_alone(&mut self, creature: ObjectId) {
+        self.cant_attack_alone.insert(creature);
+    }
+
     /// Add a creature to the "can't block" set.
     pub fn add_cant_block(&mut self, creature: ObjectId) {
         self.cant_block.insert(creature);
+    }
+
+    /// Add a creature to the "can't block alone" set.
+    pub fn add_cant_block_alone(&mut self, creature: ObjectId) {
+        self.cant_block_alone.insert(creature);
     }
 
     /// Add a permanent to the "can't untap" set.
@@ -794,10 +860,7 @@ impl StackEntry {
     }
 
     /// Set the intervening-if condition that must be true at resolution time.
-    pub fn with_intervening_if(
-        mut self,
-        condition: crate::ConditionExpr,
-    ) -> Self {
+    pub fn with_intervening_if(mut self, condition: crate::ConditionExpr) -> Self {
         self.intervening_if = Some(condition);
         self
     }
@@ -1298,9 +1361,19 @@ impl GameState {
         self.cant_effects.can_attack(creature)
     }
 
+    /// Can the creature attack as the only attacker?
+    pub fn can_attack_alone(&self, creature: ObjectId) -> bool {
+        self.cant_effects.can_attack_alone(creature)
+    }
+
     /// Can the creature block?
     pub fn can_block(&self, creature: ObjectId) -> bool {
         self.cant_effects.can_block(creature)
+    }
+
+    /// Can the creature block as the only blocker?
+    pub fn can_block_alone(&self, creature: ObjectId) -> bool {
+        self.cant_effects.can_block_alone(creature)
     }
 
     /// Can the permanent untap during untap step?
@@ -1343,6 +1416,17 @@ impl GameState {
         self.cant_effects.can_cast_spells(player)
     }
 
+    /// Can the player cast creature spells?
+    pub fn can_cast_creature_spells(&self, player: PlayerId) -> bool {
+        self.cant_effects.can_cast_creature_spells(player)
+    }
+
+    /// Can the player cast another spell this turn?
+    pub fn can_cast_additional_spell_this_turn(&self, player: PlayerId) -> bool {
+        self.cant_effects
+            .can_cast_additional_spell_this_turn(player)
+    }
+
     /// Can counters be placed on this permanent?
     pub fn can_have_counters_placed(&self, permanent: ObjectId) -> bool {
         self.cant_effects.can_have_counters_placed(permanent)
@@ -1351,6 +1435,11 @@ impl GameState {
     /// Is this permanent untargetable (by shroud/hexproof-style effects)?
     pub fn is_untargetable(&self, permanent: ObjectId) -> bool {
         self.cant_effects.is_untargetable(permanent)
+    }
+
+    /// Can this player be targeted?
+    pub fn can_target_player(&self, player: PlayerId) -> bool {
+        self.cant_effects.can_target_player(player)
     }
 
     /// Can this spell on the stack be countered?
@@ -3034,11 +3123,9 @@ impl GameState {
             && let Some(attached_id) = source_obj.attached_to
             && let Some(attached_obj) = self.object(attached_id)
         {
-            let attached_snapshot = crate::snapshot::ObjectSnapshot::from_object(attached_obj, self);
-            if source_obj
-                .subtypes
-                .contains(&crate::types::Subtype::Aura)
-            {
+            let attached_snapshot =
+                crate::snapshot::ObjectSnapshot::from_object(attached_obj, self);
+            if source_obj.subtypes.contains(&crate::types::Subtype::Aura) {
                 tagged_objects.insert(
                     crate::tag::TagKey::from("enchanted"),
                     vec![attached_snapshot.clone()],

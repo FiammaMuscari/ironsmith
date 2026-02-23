@@ -567,7 +567,7 @@ pub fn compute_legal_targets_with_tagged_objects(
             let mut targets = Vec::new();
             // All players
             for player in &game.players {
-                if player.is_in_game() {
+                if player.is_in_game() && game.can_target_player(player.id) {
                     targets.push(Target::Player(player.id));
                 }
             }
@@ -593,7 +593,10 @@ pub fn compute_legal_targets_with_tagged_objects(
         ChooseSpec::PlayerOrPlaneswalker(filter) => {
             let mut targets = Vec::new();
             for player in &game.players {
-                if player.is_in_game() && player_matches_filter(player.id, filter, game, caster) {
+                if player.is_in_game()
+                    && game.can_target_player(player.id)
+                    && player_matches_filter(player.id, filter, game, caster)
+                {
                     targets.push(Target::Player(player.id));
                 }
             }
@@ -615,7 +618,10 @@ pub fn compute_legal_targets_with_tagged_objects(
         ChooseSpec::Player(filter) => {
             let mut targets = Vec::new();
             for player in &game.players {
-                if player.is_in_game() && player_matches_filter(player.id, filter, game, caster) {
+                if player.is_in_game()
+                    && game.can_target_player(player.id)
+                    && player_matches_filter(player.id, filter, game, caster)
+                {
                     targets.push(Target::Player(player.id));
                 }
             }
@@ -680,13 +686,21 @@ pub fn compute_legal_targets_with_tagged_objects(
             targets
         }
         // Target wrapper - recursively compute targets from inner spec
-        ChooseSpec::Target(inner) => {
-            compute_legal_targets_with_tagged_objects(game, inner, caster, source_id, tagged_objects)
-        }
+        ChooseSpec::Target(inner) => compute_legal_targets_with_tagged_objects(
+            game,
+            inner,
+            caster,
+            source_id,
+            tagged_objects,
+        ),
         // WithCount wrapper - recursively compute targets from inner spec
-        ChooseSpec::WithCount(inner, _) => {
-            compute_legal_targets_with_tagged_objects(game, inner, caster, source_id, tagged_objects)
-        }
+        ChooseSpec::WithCount(inner, _) => compute_legal_targets_with_tagged_objects(
+            game,
+            inner,
+            caster,
+            source_id,
+            tagged_objects,
+        ),
         // These don't require selection - they're resolved at execution time
         ChooseSpec::Source
         | ChooseSpec::SourceController
@@ -2612,11 +2626,11 @@ pub fn apply_priority_response_with_dm(
 
             // Get the spell's mana cost and effects, considering casting method
             // Note: We use stack_id now since the spell has been moved to stack
-        let (mana_cost, effects) = if let Some(obj) = game.object(stack_id) {
-            let cost = match casting_method {
-                CastingMethod::Normal => obj.mana_cost.clone(),
-                CastingMethod::Alternative(idx) => {
-                    if let Some(method) = obj.alternative_casts.get(*idx) {
+            let (mana_cost, effects) = if let Some(obj) = game.object(stack_id) {
+                let cost = match casting_method {
+                    CastingMethod::Normal => obj.mana_cost.clone(),
+                    CastingMethod::Alternative(idx) => {
+                        if let Some(method) = obj.alternative_casts.get(*idx) {
                             // For composed alternative methods (with cost effects), use mana_cost directly (even if None).
                             // For other methods (flashback, etc.), fall back to spell's cost.
                             if !method.cost_effects().is_empty() {
@@ -2659,11 +2673,11 @@ pub fn apply_priority_response_with_dm(
                             obj.mana_cost.clone()
                         }
                     }
+                };
+                (cost, obj.spell_effect.clone().unwrap_or_default())
+            } else {
+                (None, Vec::new())
             };
-            (cost, obj.spell_effect.clone().unwrap_or_default())
-        } else {
-            (None, Vec::new())
-        };
 
             let (needs_x, max_x) = compute_spell_cast_x_bounds(
                 game,
@@ -2674,7 +2688,6 @@ pub fn apply_priority_response_with_dm(
             );
 
             if needs_x {
-
                 // Extract target requirements for later (use stack_id since spell is on stack)
                 let requirements =
                     extract_target_requirements(game, &effects, player, Some(stack_id));
@@ -3525,7 +3538,8 @@ fn cost_effects_for_casting_method(
     casting_method: &CastingMethod,
 ) -> Vec<Effect> {
     match casting_method {
-        CastingMethod::Alternative(idx) | CastingMethod::PlayFrom {
+        CastingMethod::Alternative(idx)
+        | CastingMethod::PlayFrom {
             use_alternative: Some(idx),
             ..
         } => spell
@@ -3613,7 +3627,12 @@ fn max_x_from_cost_effects(
             };
 
             let matching = match zone {
-                Zone::Battlefield => game.battlefield.iter().copied().filter(&mut matches).count(),
+                Zone::Battlefield => game
+                    .battlefield
+                    .iter()
+                    .copied()
+                    .filter(&mut matches)
+                    .count(),
                 Zone::Hand => game
                     .player(chooser_id)
                     .map(|player| player.hand.iter().copied().filter(&mut matches).count())
@@ -3631,7 +3650,12 @@ fn max_x_from_cost_effects(
                                 .map(|_| 1usize)
                                 .unwrap_or(0)
                         } else {
-                            player.graveyard.iter().copied().filter(&mut matches).count()
+                            player
+                                .graveyard
+                                .iter()
+                                .copied()
+                                .filter(&mut matches)
+                                .count()
                         }
                     })
                     .unwrap_or(0),
@@ -3686,12 +3710,11 @@ fn compute_spell_cast_x_bounds(
 
     let mut max_x = None;
 
-    if pay_has_x
-        && let Some(cost) = mana_cost_to_pay
-    {
+    if pay_has_x && let Some(cost) = mana_cost_to_pay {
         let allow_any_color = game.can_spend_mana_as_any_color(caster, Some(stack_id));
         max_x = Some(
-            compute_potential_mana(game, caster).max_x_for_cost_with_any_color(cost, allow_any_color),
+            compute_potential_mana(game, caster)
+                .max_x_for_cost_with_any_color(cost, allow_any_color),
         );
     }
 
@@ -6782,7 +6805,6 @@ fn apply_casting_method_choice_response(
         compute_spell_cast_x_bounds(game, player, stack_id, &casting_method, mana_cost.as_ref());
 
     if needs_x {
-
         // Extract target requirements for later (use stack_id since spell is on stack)
         let requirements = extract_target_requirements(game, &effects, player, Some(stack_id));
 
@@ -7820,13 +7842,13 @@ fn can_stack_trigger_this_turn(game: &GameState, trigger: &TriggeredAbilityEntry
     match condition {
         crate::ConditionExpr::FirstTimeThisTurn | crate::ConditionExpr::MaxTimesEachTurn(_) => {
             verify_intervening_if(
-            game,
-            condition,
-            trigger.controller,
-            &trigger.triggering_event,
-            trigger.source,
-            Some(trigger.trigger_identity),
-        )
+                game,
+                condition,
+                trigger.controller,
+                &trigger.triggering_event,
+                trigger.source,
+                Some(trigger.trigger_identity),
+            )
         }
         _ => true,
     }
@@ -7858,7 +7880,10 @@ fn create_triggered_stack_entry_with_targets(
         let snapshots = entry
             .crew_contributors
             .iter()
-            .filter_map(|id| game.object(*id).map(|obj| ObjectSnapshot::from_object(obj, game)))
+            .filter_map(|id| {
+                game.object(*id)
+                    .map(|obj| ObjectSnapshot::from_object(obj, game))
+            })
             .collect::<Vec<_>>();
         if !snapshots.is_empty() {
             tagged_objects.insert(crate::tag::TagKey::from("crewed_it_this_turn"), snapshots);
@@ -7868,7 +7893,10 @@ fn create_triggered_stack_entry_with_targets(
         let snapshots = entry
             .saddle_contributors
             .iter()
-            .filter_map(|id| game.object(*id).map(|obj| ObjectSnapshot::from_object(obj, game)))
+            .filter_map(|id| {
+                game.object(*id)
+                    .map(|obj| ObjectSnapshot::from_object(obj, game))
+            })
             .collect::<Vec<_>>();
         if !snapshots.is_empty() {
             tagged_objects.insert(crate::tag::TagKey::from("saddled_it_this_turn"), snapshots);
@@ -8116,6 +8144,13 @@ pub fn apply_attacker_declarations(
     let legal_attackers = compute_legal_attackers(game, combat);
     let declared_creatures: HashSet<ObjectId> = declarations.iter().map(|d| d.creature).collect();
 
+    if declarations.len() == 1 && !game.can_attack_alone(declarations[0].creature) {
+        return Err(ResponseError::InvalidAttackers(
+            "This creature can't attack alone".to_string(),
+        )
+        .into());
+    }
+
     for attacker in &legal_attackers {
         if attacker.must_attack && !declared_creatures.contains(&attacker.creature) {
             return Err(CombatError::MustAttackNotDeclared(attacker.creature).into());
@@ -8311,6 +8346,13 @@ pub fn apply_blocker_declarations(
         }
     }
 
+    if declarations.len() == 1 && !game.can_block_alone(declarations[0].blocker) {
+        return Err(ResponseError::InvalidBlockers(
+            "This creature can't block alone".to_string(),
+        )
+        .into());
+    }
+
     // Generate "becomes blocked" triggers for blocked attackers
     for (attacker_id, blockers) in &combat.blockers {
         if !blockers.is_empty() {
@@ -8345,7 +8387,9 @@ pub fn apply_blocker_declarations(
         }
 
         let attack_target = match info.target {
-            AttackTarget::Player(player_id) => crate::triggers::AttackEventTarget::Player(player_id),
+            AttackTarget::Player(player_id) => {
+                crate::triggers::AttackEventTarget::Player(player_id)
+            }
             AttackTarget::Planeswalker(planeswalker_id) => {
                 crate::triggers::AttackEventTarget::Planeswalker(planeswalker_id)
             }
@@ -8891,7 +8935,8 @@ mod tests {
         for source in [stangg_a, stangg_b] {
             let mut dm = crate::decision::AutoPassDecisionMaker;
             let event = TriggerEvent::new(EnterBattlefieldEvent::new(source, Zone::Hand));
-            let mut ctx = ExecutionContext::new(source, alice, &mut dm).with_triggering_event(event);
+            let mut ctx =
+                ExecutionContext::new(source, alice, &mut dm).with_triggering_event(event);
             for effect in &etb.effects {
                 execute_effect(&mut game, effect, &mut ctx)
                     .expect("stangg ETB effect should resolve");

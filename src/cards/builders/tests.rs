@@ -791,13 +791,10 @@ fn test_parse_trigger_tap_creature_for_mana() {
 
 #[test]
 fn test_parse_trigger_one_or_more_plus_one_counters_put_on_this_creature() {
-    let def =
-        CardDefinitionBuilder::new(CardId::from_raw(1), "Counter Trigger One-Or-More Probe")
-            .card_types(vec![CardType::Creature])
-            .parse_text(
-                "Whenever one or more +1/+1 counters are put on this creature, draw a card.",
-            )
-            .expect("parse one-or-more counter placement trigger");
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Counter Trigger One-Or-More Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Whenever one or more +1/+1 counters are put on this creature, draw a card.")
+        .expect("parse one-or-more counter placement trigger");
 
     let debug = format!("{:?}", def.abilities);
     assert!(
@@ -1136,6 +1133,24 @@ fn test_parse_flashback_keyword_line() {
         }
         other => panic!("expected flashback alternative cast, got {other:?}"),
     }
+}
+
+#[test]
+fn test_parse_buyback_keyword_line_compiles_to_optional_cost() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Buyback Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Buyback {3}\nDraw a card.")
+        .expect("buyback keyword line should parse");
+
+    assert_eq!(def.optional_costs.len(), 1);
+    let buyback = &def.optional_costs[0];
+    assert_eq!(buyback.label, "Buyback");
+    assert!(buyback.returns_to_hand);
+    let mana = buyback
+        .cost
+        .mana_cost()
+        .expect("buyback should preserve mana cost");
+    assert_eq!(mana.to_oracle(), "{3}");
 }
 
 #[test]
@@ -1571,6 +1586,19 @@ fn test_parse_this_creature_cant_attack_alone_static_line() {
         rendered.contains("this creature can't attack alone"),
         "expected cant-attack-alone text in oracle-like output, got {rendered}"
     );
+
+    let static_ids = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        static_ids.contains(&StaticAbilityId::RuleRestriction),
+        "expected rule-restriction static ability id, got {static_ids:?}"
+    );
 }
 
 #[test]
@@ -1587,6 +1615,19 @@ fn test_parse_this_token_cant_attack_or_block_alone_static_line() {
         rendered.contains("this token can't attack or block alone"),
         "expected token cant-attack-or-block-alone text in oracle-like output, got {rendered}"
     );
+
+    let static_ids = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        static_ids.contains(&StaticAbilityId::RuleRestriction),
+        "expected rule-restriction static ability id, got {static_ids:?}"
+    );
 }
 
 #[test]
@@ -1600,6 +1641,19 @@ fn test_parse_lands_dont_untap_during_controllers_steps_static_line() {
     assert!(
         rendered.contains("lands don't untap during their controllers' untap steps"),
         "expected lands-dont-untap text in oracle-like output, got {rendered}"
+    );
+
+    let static_ids = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        static_ids.contains(&StaticAbilityId::RuleRestriction),
+        "expected rule-restriction static ability id, got {static_ids:?}"
     );
 }
 

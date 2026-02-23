@@ -91,6 +91,10 @@ fn get_static_abilities(object: &Object) -> Vec<crate::static_abilities::StaticA
 ///
 /// Takes `GameState` to check abilities granted by continuous effects (like protection from Akroma's Will).
 pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::GameState) -> bool {
+    if !game.can_block(blocker.id) {
+        return false;
+    }
+
     // Get calculated abilities for both creatures (includes continuous effects)
     // Fall back to the object's base abilities if not in game state (for unit tests)
     let attacker_chars = game.calculated_characteristics(attacker.id);
@@ -314,6 +318,10 @@ pub fn maximum_blockers(attacker: &Object, game: &crate::game_state::GameState) 
 /// - Summoning sickness (unless it has haste)
 /// - "Can't attack" abilities
 pub fn can_attack(creature: &Object, game: &crate::game_state::GameState) -> bool {
+    if !game.can_attack(creature.id) {
+        return false;
+    }
+
     // Tapped creatures can't attack
     if game.is_tapped(creature.id) {
         return false;

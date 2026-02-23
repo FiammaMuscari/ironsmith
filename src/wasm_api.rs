@@ -3419,12 +3419,8 @@ fn describe_intervening_if(condition: &crate::ConditionExpr) -> String {
         {
             "no creature died this turn".to_string()
         }
-        crate::ConditionExpr::CreatureDiedThisTurn => {
-            "a creature died this turn".to_string()
-        }
-        crate::ConditionExpr::FirstTimeThisTurn => {
-            "this is the first time this turn".to_string()
-        }
+        crate::ConditionExpr::CreatureDiedThisTurn => "a creature died this turn".to_string(),
+        crate::ConditionExpr::FirstTimeThisTurn => "this is the first time this turn".to_string(),
         crate::ConditionExpr::MaxTimesEachTurn(limit) => {
             format!("triggers at most {limit} times each turn")
         }
@@ -4105,6 +4101,16 @@ fn describe_restriction(
                 describe_player_filter(filter, tagged_subjects)
             )
         }
+        crate::effect::Restriction::CastCreatureSpells(filter) => {
+            format!(
+                "{} can't cast creature spells",
+                describe_player_filter(filter, tagged_subjects)
+            )
+        }
+        crate::effect::Restriction::CastMoreThanOneSpellEachTurn(filter) => format!(
+            "{} can't cast more than one spell each turn",
+            describe_player_filter(filter, tagged_subjects)
+        ),
         crate::effect::Restriction::DrawCards(filter) => {
             format!(
                 "{} can't draw cards",
@@ -4135,8 +4141,14 @@ fn describe_restriction(
         crate::effect::Restriction::Attack(filter) => {
             format!("{} can't attack", filter.description())
         }
+        crate::effect::Restriction::AttackAlone(filter) => {
+            format!("{} can't attack alone", filter.description())
+        }
         crate::effect::Restriction::Block(filter) => {
             format!("{} can't block", filter.description())
+        }
+        crate::effect::Restriction::BlockAlone(filter) => {
+            format!("{} can't block alone", filter.description())
         }
         crate::effect::Restriction::Untap(filter) => {
             format!("{} can't untap", filter.description())
@@ -4156,11 +4168,21 @@ fn describe_restriction(
         crate::effect::Restriction::BeTargeted(filter) => {
             format!("{} can't be targeted", filter.description())
         }
+        crate::effect::Restriction::BeTargetedPlayer(filter) => format!(
+            "{} can't be targeted",
+            describe_player_filter(filter, tagged_subjects)
+        ),
         crate::effect::Restriction::BeCountered(filter) => {
             format!("{} can't be countered", filter.description())
         }
         crate::effect::Restriction::Transform(filter) => {
             format!("{} can't transform", filter.description())
+        }
+        crate::effect::Restriction::AttackOrBlock(filter) => {
+            format!("{} can't attack or block", filter.description())
+        }
+        crate::effect::Restriction::AttackOrBlockAlone(filter) => {
+            format!("{} can't attack or block alone", filter.description())
         }
     }
 }

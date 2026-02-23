@@ -1702,6 +1702,11 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
         return Ok(LineAst::Ability(ability));
     }
 
+    if let Some(cost) = parse_buyback_line(&tokens)? {
+        parser_trace("parse_line:branch=buyback", &tokens);
+        return Ok(LineAst::OptionalCost(cost));
+    }
+
     if let Some(method) = parse_escape_line(&tokens)? {
         parser_trace("parse_line:branch=escape", &tokens);
         return Ok(LineAst::AlternativeCastingMethod(method));
@@ -2644,22 +2649,25 @@ fn parse_static_text_marker_line(tokens: &[Token]) -> Option<StaticAbility> {
     }
 
     if words == ["you", "have", "shroud"] {
-        return Some(StaticAbility::custom(
-            "you_have_shroud",
+        return Some(StaticAbility::restriction(
+            crate::effect::Restriction::be_targeted_player(PlayerFilter::You),
             "You have shroud".to_string(),
         ));
     }
 
     if words == ["creatures", "without", "flying", "cant", "attack"] {
-        return Some(StaticAbility::custom(
-            "creatures_without_flying_cant_attack",
+        return Some(StaticAbility::restriction(
+            crate::effect::Restriction::attack(
+                ObjectFilter::creature()
+                    .without_static_ability(crate::static_abilities::StaticAbilityId::Flying),
+            ),
             "Creatures without flying can't attack".to_string(),
         ));
     }
 
     if words == ["this", "creature", "cant", "attack", "alone"] {
-        return Some(StaticAbility::custom(
-            "cant_attack_alone",
+        return Some(StaticAbility::restriction(
+            crate::effect::Restriction::attack_alone(ObjectFilter::source()),
             "This creature can't attack alone".to_string(),
         ));
     }
@@ -2686,8 +2694,8 @@ fn parse_static_text_marker_line(tokens: &[Token]) -> Option<StaticAbility> {
         "untap",
     ]) && matches!(words.last(), Some(&"step") | Some(&"steps"))
     {
-        return Some(StaticAbility::custom(
-            "lands_dont_untap",
+        return Some(StaticAbility::restriction(
+            crate::effect::Restriction::untap(ObjectFilter::land()),
             "Lands don't untap during their controllers' untap steps".to_string(),
         ));
     }
@@ -8597,6 +8605,45 @@ fn parse_madness_line(tokens: &[Token]) -> Result<Option<AlternativeCastingMetho
     Ok(Some(AlternativeCastingMethod::Madness { cost: mana_cost }))
 }
 
+fn parse_buyback_line(tokens: &[Token]) -> Result<Option<OptionalCost>, CardTextError> {
+    if !tokens.first().is_some_and(|token| token.is_word("buyback")) {
+        return Ok(None);
+    }
+
+    // "Buyback costs cost {2} less" is a static cost-modifier line, not the keyword cost line.
+    if tokens.get(1).is_some_and(|token| token.is_word("costs")) {
+        return Ok(None);
+    }
+
+    if tokens.len() <= 1 {
+        return Err(CardTextError::ParseError(
+            "buyback keyword missing cost".to_string(),
+        ));
+    }
+
+    let tail = &tokens[1..];
+    let reminder_start = tail
+        .windows(3)
+        .position(|window| {
+            window[0].is_word("you") && window[1].is_word("may") && window[2].is_word("pay")
+        })
+        .or_else(|| {
+            tail.windows(2)
+                .position(|window| window[0].is_word("you") && window[1].is_word("may"))
+        })
+        .unwrap_or(tail.len());
+    let cost_tokens = trim_commas(&tail[..reminder_start]);
+    if cost_tokens.is_empty() {
+        return Err(CardTextError::ParseError(
+            "buyback keyword missing cost".to_string(),
+        ));
+    }
+
+    let (total_cost, cost_effects) = parse_activation_cost(&cost_tokens)?;
+    let total_cost = crate::ability::merge_cost_effects(total_cost, cost_effects);
+    Ok(Some(OptionalCost::buyback(total_cost)))
+}
+
 fn parse_morph_keyword_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardTextError> {
     let Some(first_word) = tokens.first().and_then(Token::as_word) else {
         return Ok(None);
@@ -10315,36 +10362,52 @@ fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility>, CardText
         ["this", "spell", "cant", "be", "countered"] => StaticAbility::cant_be_countered_ability(),
         ["this", "creature", "cant", "attack"] => StaticAbility::cant_attack(),
         ["this", "creature", "cant", "block"] => StaticAbility::cant_block(),
+        ["this", "creature", "cant", "attack", "alone"] => StaticAbility::restriction(
+            crate::effect::Restriction::attack_alone(ObjectFilter::source()),
+            "this creature can't attack alone".to_string(),
+        ),
+        ["this", "token", "cant", "attack", "alone"] => StaticAbility::restriction(
+            crate::effect::Restriction::attack_alone(ObjectFilter::source()),
+            "this token can't attack alone".to_string(),
+        ),
+        ["this", "cant", "attack", "alone"] => StaticAbility::restriction(
+            crate::effect::Restriction::attack_alone(ObjectFilter::source()),
+            "this can't attack alone".to_string(),
+        ),
         ["this", "token", "cant", "attack"] => StaticAbility::cant_attack(),
         ["this", "token", "cant", "block"] => StaticAbility::cant_block(),
         ["this", "cant", "block"] => StaticAbility::cant_block(),
         ["this", "cant", "attack"] => StaticAbility::cant_attack(),
-        ["this", "creature", "cant", "attack", "or", "block"] => StaticAbility::custom(
-            "cant_attack_or_block",
+        ["this", "creature", "cant", "attack", "or", "block"] => StaticAbility::restriction(
+            crate::effect::Restriction::attack_or_block(ObjectFilter::source()),
             "this creature can't attack or block".to_string(),
         ),
-        ["this", "token", "cant", "attack", "or", "block"] => StaticAbility::custom(
-            "cant_attack_or_block",
+        ["this", "token", "cant", "attack", "or", "block"] => StaticAbility::restriction(
+            crate::effect::Restriction::attack_or_block(ObjectFilter::source()),
             "this token can't attack or block".to_string(),
         ),
-        ["this", "cant", "attack", "or", "block"] => StaticAbility::custom(
-            "cant_attack_or_block",
+        ["this", "cant", "attack", "or", "block"] => StaticAbility::restriction(
+            crate::effect::Restriction::attack_or_block(ObjectFilter::source()),
             "this can't attack or block".to_string(),
         ),
-        ["this", "creature", "cant", "attack", "or", "block", "alone"] => StaticAbility::custom(
-            "cant_attack_or_block_alone",
-            "this creature can't attack or block alone".to_string(),
-        ),
-        ["this", "token", "cant", "attack", "or", "block", "alone"] => StaticAbility::custom(
-            "cant_attack_or_block_alone",
-            "this token can't attack or block alone".to_string(),
-        ),
-        ["this", "cant", "attack", "or", "block", "alone"] => StaticAbility::custom(
-            "cant_attack_or_block_alone",
+        ["this", "creature", "cant", "attack", "or", "block", "alone"] => {
+            StaticAbility::restriction(
+                crate::effect::Restriction::attack_or_block_alone(ObjectFilter::source()),
+                "this creature can't attack or block alone".to_string(),
+            )
+        }
+        ["this", "token", "cant", "attack", "or", "block", "alone"] => {
+            StaticAbility::restriction(
+                crate::effect::Restriction::attack_or_block_alone(ObjectFilter::source()),
+                "this token can't attack or block alone".to_string(),
+            )
+        }
+        ["this", "cant", "attack", "or", "block", "alone"] => StaticAbility::restriction(
+            crate::effect::Restriction::attack_or_block_alone(ObjectFilter::source()),
             "this can't attack or block alone".to_string(),
         ),
-        ["you", "cant", "cast", "creature", "spells"] => StaticAbility::custom(
-            "cant_cast_creature_spells",
+        ["you", "cant", "cast", "creature", "spells"] => StaticAbility::restriction(
+            crate::effect::Restriction::cast_creature_spells(PlayerFilter::You),
             "you can't cast creature spells".to_string(),
         ),
         [
@@ -10358,8 +10421,8 @@ fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility>, CardText
             "spell",
             "each",
             "turn",
-        ] => StaticAbility::custom(
-            "cant_cast_more_than_one_spell_each_turn",
+        ] => StaticAbility::restriction(
+            crate::effect::Restriction::cast_more_than_one_spell_each_turn(PlayerFilter::Any),
             "each player can't cast more than one spell each turn".to_string(),
         ),
         ["permanents", "you", "control", "cant", "be", "sacrificed"] => {

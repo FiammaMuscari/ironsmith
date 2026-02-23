@@ -707,6 +707,8 @@ pub enum Restriction {
     GainLife(PlayerFilter),
     SearchLibraries(PlayerFilter),
     CastSpells(PlayerFilter),
+    CastCreatureSpells(PlayerFilter),
+    CastMoreThanOneSpellEachTurn(PlayerFilter),
     DrawCards(PlayerFilter),
     DrawExtraCards(PlayerFilter),
     ChangeLifeTotal(PlayerFilter),
@@ -714,15 +716,20 @@ pub enum Restriction {
     WinGame(PlayerFilter),
     PreventDamage,
     Attack(ObjectFilter),
+    AttackAlone(ObjectFilter),
     Block(ObjectFilter),
+    BlockAlone(ObjectFilter),
     Untap(ObjectFilter),
     BeBlocked(ObjectFilter),
     BeDestroyed(ObjectFilter),
     BeSacrificed(ObjectFilter),
     HaveCountersPlaced(ObjectFilter),
     BeTargeted(ObjectFilter),
+    BeTargetedPlayer(PlayerFilter),
     BeCountered(ObjectFilter),
     Transform(ObjectFilter),
+    AttackOrBlock(ObjectFilter),
+    AttackOrBlockAlone(ObjectFilter),
 }
 
 impl Restriction {
@@ -736,6 +743,14 @@ impl Restriction {
 
     pub fn cast_spells(filter: PlayerFilter) -> Self {
         Self::CastSpells(filter)
+    }
+
+    pub fn cast_creature_spells(filter: PlayerFilter) -> Self {
+        Self::CastCreatureSpells(filter)
+    }
+
+    pub fn cast_more_than_one_spell_each_turn(filter: PlayerFilter) -> Self {
+        Self::CastMoreThanOneSpellEachTurn(filter)
     }
 
     pub fn draw_cards(filter: PlayerFilter) -> Self {
@@ -766,8 +781,16 @@ impl Restriction {
         Self::Attack(filter)
     }
 
+    pub fn attack_alone(filter: ObjectFilter) -> Self {
+        Self::AttackAlone(filter)
+    }
+
     pub fn block(filter: ObjectFilter) -> Self {
         Self::Block(filter)
+    }
+
+    pub fn block_alone(filter: ObjectFilter) -> Self {
+        Self::BlockAlone(filter)
     }
 
     pub fn untap(filter: ObjectFilter) -> Self {
@@ -794,12 +817,24 @@ impl Restriction {
         Self::BeTargeted(filter)
     }
 
+    pub fn be_targeted_player(filter: PlayerFilter) -> Self {
+        Self::BeTargetedPlayer(filter)
+    }
+
     pub fn be_countered(filter: ObjectFilter) -> Self {
         Self::BeCountered(filter)
     }
 
     pub fn transform(filter: ObjectFilter) -> Self {
         Self::Transform(filter)
+    }
+
+    pub fn attack_or_block(filter: ObjectFilter) -> Self {
+        Self::AttackOrBlock(filter)
+    }
+
+    pub fn attack_or_block_alone(filter: ObjectFilter) -> Self {
+        Self::AttackOrBlockAlone(filter)
     }
 
     pub fn apply(
@@ -845,6 +880,30 @@ impl Restriction {
                         )
                     {
                         tracker.cant_cast_spells.insert(player.id);
+                    }
+                }
+            }
+            Restriction::CastCreatureSpells(filter) => {
+                for player in &game.players {
+                    if player.is_in_game()
+                        && player_matches_filter_with_combat(
+                            player.id, filter, game, controller, combat,
+                        )
+                    {
+                        tracker.cant_cast_creature_spells.insert(player.id);
+                    }
+                }
+            }
+            Restriction::CastMoreThanOneSpellEachTurn(filter) => {
+                for player in &game.players {
+                    if player.is_in_game()
+                        && player_matches_filter_with_combat(
+                            player.id, filter, game, controller, combat,
+                        )
+                    {
+                        tracker
+                            .cant_cast_more_than_one_spell_each_turn
+                            .insert(player.id);
                     }
                 }
             }
@@ -915,12 +974,30 @@ impl Restriction {
                     }
                 }
             }
+            Restriction::AttackAlone(filter) => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && filter.matches(obj, &ctx, game)
+                    {
+                        tracker.cant_attack_alone.insert(obj_id);
+                    }
+                }
+            }
             Restriction::Block(filter) => {
                 for &obj_id in &game.battlefield {
                     if let Some(obj) = game.object(obj_id)
                         && filter.matches(obj, &ctx, game)
                     {
                         tracker.cant_block.insert(obj_id);
+                    }
+                }
+            }
+            Restriction::BlockAlone(filter) => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && filter.matches(obj, &ctx, game)
+                    {
+                        tracker.cant_block_alone.insert(obj_id);
                     }
                 }
             }
@@ -978,6 +1055,17 @@ impl Restriction {
                     }
                 }
             }
+            Restriction::BeTargetedPlayer(filter) => {
+                for player in &game.players {
+                    if player.is_in_game()
+                        && player_matches_filter_with_combat(
+                            player.id, filter, game, controller, combat,
+                        )
+                    {
+                        tracker.cant_target_players.insert(player.id);
+                    }
+                }
+            }
             Restriction::BeCountered(filter) => {
                 for entry in &game.stack {
                     let obj_id = entry.object_id;
@@ -994,6 +1082,26 @@ impl Restriction {
                         && filter.matches(obj, &ctx, game)
                     {
                         tracker.cant_transform.insert(obj_id);
+                    }
+                }
+            }
+            Restriction::AttackOrBlock(filter) => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && filter.matches(obj, &ctx, game)
+                    {
+                        tracker.cant_attack.insert(obj_id);
+                        tracker.cant_block.insert(obj_id);
+                    }
+                }
+            }
+            Restriction::AttackOrBlockAlone(filter) => {
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && filter.matches(obj, &ctx, game)
+                    {
+                        tracker.cant_attack_alone.insert(obj_id);
+                        tracker.cant_block_alone.insert(obj_id);
                     }
                 }
             }
@@ -1332,7 +1440,6 @@ pub enum Condition {
     },
 
     // === Unified gating atoms (triggers / activations / statics) ===
-
     /// Trigger "intervening if" clause: "if this is the first time this ability triggered this turn".
     ///
     /// Requires a trigger identity in the evaluation context; if absent, this evaluates to true

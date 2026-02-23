@@ -6238,6 +6238,18 @@ fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
         crate::effect::Restriction::CastSpells(filter) => {
             format!("{} can't cast spells", describe_player_set_filter(filter))
         }
+        crate::effect::Restriction::CastCreatureSpells(filter) => {
+            format!(
+                "{} can't cast creature spells",
+                describe_player_set_filter(filter)
+            )
+        }
+        crate::effect::Restriction::CastMoreThanOneSpellEachTurn(filter) => {
+            format!(
+                "{} can't cast more than one spell each turn",
+                describe_player_set_filter(filter)
+            )
+        }
         crate::effect::Restriction::DrawCards(filter) => {
             format!("{} can't draw cards", describe_player_set_filter(filter))
         }
@@ -6263,8 +6275,14 @@ fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
         crate::effect::Restriction::Attack(filter) => {
             format!("{} can't attack", filter.description())
         }
+        crate::effect::Restriction::AttackAlone(filter) => {
+            format!("{} can't attack alone", filter.description())
+        }
         crate::effect::Restriction::Block(filter) => {
             format!("{} can't block", filter.description())
+        }
+        crate::effect::Restriction::BlockAlone(filter) => {
+            format!("{} can't block alone", filter.description())
         }
         crate::effect::Restriction::Untap(filter) => {
             format!("{} can't untap", filter.description())
@@ -6284,11 +6302,20 @@ fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
         crate::effect::Restriction::BeTargeted(filter) => {
             format!("{} can't be targeted", filter.description())
         }
+        crate::effect::Restriction::BeTargetedPlayer(filter) => {
+            format!("{} can't be targeted", describe_player_set_filter(filter))
+        }
         crate::effect::Restriction::BeCountered(filter) => {
             format!("{} can't be countered", filter.description())
         }
         crate::effect::Restriction::Transform(filter) => {
             format!("{} can't transform", filter.description())
+        }
+        crate::effect::Restriction::AttackOrBlock(filter) => {
+            format!("{} can't attack or block", filter.description())
+        }
+        crate::effect::Restriction::AttackOrBlockAlone(filter) => {
+            format!("{} can't attack or block alone", filter.description())
         }
     }
 }
@@ -12994,7 +13021,9 @@ fn describe_ability(
                     line.push_str(&clauses.join(": "));
                 }
             }
-            if let Some(crate::ConditionExpr::MaxTimesEachTurn(max)) = triggered.intervening_if.as_ref() {
+            if let Some(crate::ConditionExpr::MaxTimesEachTurn(max)) =
+                triggered.intervening_if.as_ref()
+            {
                 if *max == 1 {
                     line.push_str(". This ability triggers only once each turn");
                 } else if *max == 2 {

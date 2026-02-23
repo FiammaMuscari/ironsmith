@@ -862,6 +862,23 @@ pub fn can_cast_spell(
         return false;
     }
 
+    // Check "you can't cast creature spells" style restrictions.
+    if spell.has_card_type(CardType::Creature) && !game.can_cast_creature_spells(player) {
+        return false;
+    }
+
+    // Check "can't cast more than one spell each turn" style restrictions.
+    if !game.can_cast_additional_spell_this_turn(player)
+        && game
+            .spells_cast_this_turn
+            .get(&player)
+            .copied()
+            .unwrap_or(0)
+            >= 1
+    {
+        return false;
+    }
+
     // Lands cannot be cast - they are played as a special action
     if spell.is_land() {
         return false;
@@ -1121,7 +1138,11 @@ fn can_cast_with_alternative(
 
     // Validate any non-mana additional costs expressed as cost effects.
     for effect in method.cost_effects() {
-        if effect.0.can_execute_as_cost(game, spell.id, player).is_err() {
+        if effect
+            .0
+            .can_execute_as_cost(game, spell.id, player)
+            .is_err()
+        {
             return false;
         }
     }
@@ -2072,23 +2093,30 @@ pub fn calculate_convoke_cost(
 pub fn compute_legal_attackers(game: &GameState, _combat: &CombatState) -> Vec<AttackerOption> {
     let mut options = Vec::new();
     let active_player = game.turn.active_player;
+    let mut attack_capable = Vec::new();
 
-    // Find all creatures controlled by active player that can attack
     for &perm_id in &game.battlefield {
         let Some(perm) = game.object(perm_id) else {
             continue;
         };
-
         if perm.controller != active_player {
             continue;
         }
-
         if !game.object_has_card_type(perm_id, crate::types::CardType::Creature) {
             continue;
         }
+        if crate::rules::combat::can_attack(perm, game) {
+            attack_capable.push(perm_id);
+        }
+    }
+    let has_other_attacker = attack_capable.len() >= 2;
 
-        // Check if creature can attack
-        if !crate::rules::combat::can_attack(perm, game) {
+    // Find all creatures controlled by active player that can attack
+    for &perm_id in &attack_capable {
+        let Some(perm) = game.object(perm_id) else {
+            continue;
+        };
+        if !has_other_attacker && !game.can_attack_alone(perm_id) {
             continue;
         }
 
@@ -2162,7 +2190,10 @@ pub fn compute_legal_blockers(
     combat: &CombatState,
     defending_player: PlayerId,
 ) -> Vec<BlockerOption> {
+    use std::collections::HashSet;
+
     let mut options = Vec::new();
+    let mut potential_blockers = HashSet::new();
 
     // For each attacker, find creatures that can block it
     for attacker_info in &combat.attackers {
@@ -2190,6 +2221,7 @@ pub fn compute_legal_blockers(
             // Check if this creature can block this attacker
             if crate::rules::combat::can_block(attacker, blocker, game) {
                 valid_blockers.push(perm_id);
+                potential_blockers.insert(perm_id);
             }
         }
 
@@ -2200,6 +2232,15 @@ pub fn compute_legal_blockers(
             valid_blockers,
             min_blockers,
         });
+    }
+
+    if potential_blockers.len() == 1
+        && let Some(&only_blocker) = potential_blockers.iter().next()
+        && !game.can_block_alone(only_blocker)
+    {
+        for option in &mut options {
+            option.valid_blockers.clear();
+        }
     }
 
     options
@@ -5590,6 +5631,152 @@ mod tests {
                 .valid_targets
                 .contains(&AttackTarget::Player(bob)),
             "Should be able to attack the opponent"
+        );
+    }
+
+    #[test]
+    fn test_compute_legal_attackers_respects_cant_attack_restriction_tracker() {
+        use crate::cards::definitions::grizzly_bears;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let bears_def = grizzly_bears();
+        let creature_id = game.create_object_from_definition(&bears_def, alice, Zone::Battlefield);
+        game.remove_summoning_sickness(creature_id);
+        game.cant_effects.cant_attack.insert(creature_id);
+
+        let options = compute_legal_attackers(&game, &CombatState::default());
+        assert!(
+            options.is_empty(),
+            "cant-attack tracker should prevent declaring attackers, got {options:?}"
+        );
+    }
+
+    #[test]
+    fn test_compute_legal_attackers_respects_cant_attack_alone_with_single_attacker() {
+        use crate::cards::definitions::grizzly_bears;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let bears_def = grizzly_bears();
+        let creature_id = game.create_object_from_definition(&bears_def, alice, Zone::Battlefield);
+        game.remove_summoning_sickness(creature_id);
+        game.cant_effects.cant_attack_alone.insert(creature_id);
+
+        let options = compute_legal_attackers(&game, &CombatState::default());
+        assert!(
+            options.is_empty(),
+            "single creature with can't-attack-alone should not be legal attacker, got {options:?}"
+        );
+    }
+
+    #[test]
+    fn test_compute_legal_blockers_respects_cant_block_alone_with_single_blocker() {
+        use crate::cards::definitions::grizzly_bears;
+        use crate::combat_state::AttackerInfo;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let blocker_def = grizzly_bears();
+        let blocker_id = game.create_object_from_definition(&blocker_def, alice, Zone::Battlefield);
+        game.cant_effects.cant_block_alone.insert(blocker_id);
+
+        let attacker_def = grizzly_bears();
+        let attacker_id = game.create_object_from_definition(&attacker_def, bob, Zone::Battlefield);
+        game.remove_summoning_sickness(attacker_id);
+
+        let mut combat = CombatState::default();
+        combat.attackers.push(AttackerInfo {
+            creature: attacker_id,
+            target: AttackTarget::Player(alice),
+        });
+
+        let options = compute_legal_blockers(&game, &combat, alice);
+        assert_eq!(options.len(), 1, "expected one attacker option");
+        assert!(
+            options[0].valid_blockers.is_empty(),
+            "single creature with can't-block-alone should not be a legal blocker, got {options:?}"
+        );
+    }
+
+    #[test]
+    fn test_can_cast_spell_respects_cant_cast_creature_spells_restriction() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+
+        let creature = CardBuilder::new(CardId::from_raw(77), "Restriction Bear")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let creature_id = game.create_object_from_card(&creature, alice, Zone::Hand);
+        let creature_obj = game
+            .object(creature_id)
+            .expect("creature in hand must exist")
+            .clone();
+
+        game.cant_effects.cant_cast_creature_spells.insert(alice);
+        assert!(
+            !can_cast_spell(&game, alice, &creature_obj, &CastingMethod::Normal),
+            "creature spell should be uncastable when player can't cast creature spells"
+        );
+    }
+
+    #[test]
+    fn test_can_cast_spell_respects_cast_limit_one_per_turn_restriction() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let instant = CardBuilder::new(CardId::from_raw(78), "Restriction Spark")
+            .card_types(vec![CardType::Instant])
+            .build();
+        let instant_id = game.create_object_from_card(&instant, alice, Zone::Hand);
+        let instant_obj = game
+            .object(instant_id)
+            .expect("instant in hand must exist")
+            .clone();
+
+        game.cant_effects
+            .cant_cast_more_than_one_spell_each_turn
+            .insert(alice);
+        game.spells_cast_this_turn.insert(alice, 1);
+
+        assert!(
+            !can_cast_spell(&game, alice, &instant_obj, &CastingMethod::Normal),
+            "second spell in same turn should be blocked by one-spell limit"
+        );
+    }
+
+    #[test]
+    fn test_compute_legal_targets_respects_cant_target_player_restriction() {
+        use crate::target::{ChooseSpec, PlayerFilter};
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        game.cant_effects.cant_target_players.insert(bob);
+        let targets = crate::game_loop::compute_legal_targets(
+            &game,
+            &ChooseSpec::Player(PlayerFilter::Any),
+            alice,
+            None,
+        );
+
+        assert!(
+            !targets.contains(&crate::Target::Player(bob)),
+            "untargetable player should not appear in legal target set: {targets:?}"
+        );
+        assert!(
+            targets.contains(&crate::Target::Player(alice)),
+            "other legal players should remain targetable: {targets:?}"
         );
     }
 

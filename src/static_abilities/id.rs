@@ -141,6 +141,9 @@ pub enum StaticAbilityId {
     SpendManaAsAnyColor,
     SpendManaAsAnyColorActivationCosts,
 
+    /// Generic static rule restriction ("can't" effects) with runtime support.
+    RuleRestriction,
+
     /// Interactive ETB: Discard a matching card or redirect to another zone.
     /// Used by Mox Diamond.
     DiscardOrRedirectReplacement,
