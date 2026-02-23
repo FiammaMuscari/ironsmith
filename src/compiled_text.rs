@@ -10333,6 +10333,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
             describe_choose_spec(&exile_until.spec)
         );
     }
+    if let Some(_haunt_exile) = effect.downcast_ref::<crate::effects::HauntExileEffect>() {
+        return "Exile it haunting target creature".to_string();
+    }
     if let Some(exile_when_source_leaves) =
         effect.downcast_ref::<crate::effects::ExileTaggedWhenSourceLeavesEffect>()
     {

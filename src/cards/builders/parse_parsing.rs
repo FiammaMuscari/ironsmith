@@ -13363,6 +13363,17 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
                 return Ok(TriggerSpec::ThisDies);
             }
 
+            // Pattern: "the creature it haunts dies" or "the creature this card haunts dies"
+            {
+                let subject_words = self::words(subject_tokens);
+                if subject_words.last().copied() == Some("haunts")
+                    && subject_words.first().copied() == Some("the")
+                    && subject_words.get(1).copied() == Some("creature")
+                {
+                    return Ok(TriggerSpec::HauntedCreatureDies);
+                }
+            }
+
             let mut other = false;
             if subject_tokens
                 .first()

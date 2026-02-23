@@ -65,6 +65,8 @@ pub struct DelayedTrigger {
     pub ability_source: Option<ObjectId>,
     /// The controller of this delayed trigger.
     pub controller: PlayerId,
+    /// Target choices for when the trigger resolves (e.g., haunt effects that target a player).
+    pub choices: Vec<crate::target::ChooseSpec>,
 }
 
 /// Queue of triggered abilities waiting to be put on the stack.
@@ -455,7 +457,7 @@ pub fn check_delayed_triggers(
                 ability: TriggeredAbility {
                     trigger: delayed.trigger.clone(),
                     effects: delayed.effects.clone(),
-                    choices: vec![],
+                    choices: delayed.choices.clone(),
                     intervening_if: None,
                 },
                 triggering_event: trigger_event.clone(),

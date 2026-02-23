@@ -349,6 +349,7 @@ pub(super) fn parse_text_with_annotations(
     builder = normalize_chaotic_transformation_spell_effect(builder);
     builder = normalize_glimpse_of_nature_spell_effect(builder);
     builder = normalize_take_to_the_streets_spell_effect(builder);
+    builder = finalize_haunt(builder);
 
     Ok((builder.build(), annotations))
 }
@@ -1167,6 +1168,16 @@ fn apply_line_ast(
                     Err(err) => return Err(err),
                 };
 
+            // Stash haunt effects for delayed trigger scheduling by finalize_haunt().
+            let contains_haunted_creature_dies = matches!(
+                &trigger,
+                TriggerSpec::Either(_, right) if matches!(**right, TriggerSpec::HauntedCreatureDies)
+            ) || matches!(&trigger, TriggerSpec::HauntedCreatureDies);
+            if contains_haunted_creature_dies {
+                builder.haunt_delayed_effects =
+                    Some((compiled_effects.clone(), choices.clone()));
+            }
+
             let functional_zones = match &trigger {
                 // "When you cast this spell" only functions while this object is on the stack.
                 TriggerSpec::YouCastThisSpell => vec![Zone::Stack],
@@ -1213,6 +1224,30 @@ fn push_unsupported_marker(
         ))
         .with_text(raw_line),
     )
+}
+
+/// Post-processing: if this card has both a Haunt keyword ability and stashed
+/// haunt delayed effects, embed the delayed effects into the haunt exile ability.
+fn finalize_haunt(mut builder: CardDefinitionBuilder) -> CardDefinitionBuilder {
+    let Some((haunt_effects, haunt_choices)) = builder.haunt_delayed_effects.take() else {
+        return builder;
+    };
+
+    // Find the haunt ability (text == "Haunt") and replace its exile effect
+    // with a HauntExileEffect carrying the delayed trigger effects.
+    for ability in &mut builder.abilities {
+        if ability.text.as_deref() == Some("Haunt") {
+            if let crate::ability::AbilityKind::Triggered(ref mut triggered) = ability.kind {
+                triggered.effects = vec![crate::effect::Effect::haunt_exile(
+                    haunt_effects,
+                    haunt_choices,
+                )];
+                break;
+            }
+        }
+    }
+
+    builder
 }
 
 fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextError> {

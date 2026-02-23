@@ -17,6 +17,7 @@ pub(crate) struct DelayedTriggerConfig {
     pub ability_source: Option<ObjectId>,
     pub controller: PlayerId,
     pub x_value: Option<u32>,
+    pub choices: Vec<crate::target::ChooseSpec>,
 }
 
 impl DelayedTriggerConfig {
@@ -37,6 +38,7 @@ impl DelayedTriggerConfig {
             ability_source: None,
             controller,
             x_value: None,
+            choices: Vec::new(),
         }
     }
 
@@ -57,6 +59,11 @@ impl DelayedTriggerConfig {
 
     pub fn with_x_value(mut self, x_value: Option<u32>) -> Self {
         self.x_value = x_value;
+        self
+    }
+
+    pub fn with_choices(mut self, choices: Vec<crate::target::ChooseSpec>) -> Self {
+        self.choices = choices;
         self
     }
 }
@@ -91,6 +98,7 @@ pub(crate) struct DelayedTriggerTemplate {
     pub ability_source: Option<ObjectId>,
     pub controller: PlayerId,
     pub x_value: Option<u32>,
+    pub choices: Vec<crate::target::ChooseSpec>,
 }
 
 impl DelayedTriggerTemplate {
@@ -109,6 +117,7 @@ impl DelayedTriggerTemplate {
             ability_source: None,
             controller,
             x_value: None,
+            choices: Vec::new(),
         }
     }
 
@@ -131,6 +140,11 @@ impl DelayedTriggerTemplate {
         self.x_value = x_value;
         self
     }
+
+    pub fn with_choices(mut self, choices: Vec<crate::target::ChooseSpec>) -> Self {
+        self.choices = choices;
+        self
+    }
 }
 
 /// Push a delayed trigger onto the game queue.
@@ -145,6 +159,7 @@ pub(crate) fn queue_delayed_trigger(game: &mut GameState, config: DelayedTrigger
         target_objects: config.target_objects,
         ability_source: config.ability_source,
         controller: config.controller,
+        choices: config.choices,
     });
 }
 
@@ -170,7 +185,8 @@ pub(crate) fn queue_delayed_from_template(
                 .with_not_before_turn(template.not_before_turn)
                 .with_expires_at_turn(template.expires_at_turn)
                 .with_ability_source(template.ability_source)
-                .with_x_value(template.x_value),
+                .with_x_value(template.x_value)
+                .with_choices(template.choices),
             );
             1
         }
@@ -189,7 +205,8 @@ pub(crate) fn queue_delayed_from_template(
                     .with_not_before_turn(template.not_before_turn)
                     .with_expires_at_turn(template.expires_at_turn)
                     .with_ability_source(template.ability_source)
-                    .with_x_value(template.x_value),
+                    .with_x_value(template.x_value)
+                    .with_choices(template.choices.clone()),
                 );
                 queued += 1;
             }

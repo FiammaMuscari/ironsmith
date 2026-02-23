@@ -6,6 +6,7 @@
 mod battlefield_entry;
 mod destroy;
 mod exile;
+mod haunt_exile;
 mod exile_from_hand_as_cost;
 mod exile_until_source_leaves;
 mod move_to_zone;
@@ -24,6 +25,7 @@ pub(crate) use battlefield_entry::{
 
 pub use destroy::DestroyEffect;
 pub use exile::ExileEffect;
+pub use haunt_exile::HauntExileEffect;
 pub use exile_from_hand_as_cost::ExileFromHandAsCostEffect;
 pub use exile_until_source_leaves::{ExileUntilDuration, ExileUntilEffect};
 pub use move_to_zone::{BattlefieldController, MoveToZoneEffect};

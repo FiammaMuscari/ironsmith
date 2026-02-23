@@ -1743,6 +1743,13 @@ impl Effect {
         Self::new(ExileEffect::target(choice))
     }
 
+    /// Create a haunt exile effect: exiles the source and schedules a delayed
+    /// trigger with the given effects/choices for when the haunted creature dies.
+    pub fn haunt_exile(haunt_effects: Vec<Self>, haunt_choices: Vec<ChooseSpec>) -> Self {
+        use crate::effects::HauntExileEffect;
+        Self::new(HauntExileEffect::new(haunt_effects, haunt_choices))
+    }
+
     /// Create an "exile any number of targets" effect.
     pub fn exile_any_number(choice: ChooseSpec) -> Self {
         use crate::effects::ExileEffect;

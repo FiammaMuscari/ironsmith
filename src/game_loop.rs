@@ -1319,6 +1319,7 @@ fn resolve_stack_entry_full(
                         target_objects: vec![exiled_id],
                         ability_source: None,
                         controller: entry.controller,
+                        choices: vec![],
                     });
                 }
             } else if should_exile {
@@ -8819,6 +8820,7 @@ mod tests {
             target_objects: vec![stangg_id],
             ability_source: None,
             controller: alice,
+            choices: vec![],
         });
 
         let moved = game.move_object(stangg_id, Zone::Graveyard);
