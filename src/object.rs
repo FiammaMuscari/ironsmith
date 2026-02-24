@@ -311,6 +311,41 @@ impl Object {
         obj
     }
 
+    /// Reconstructs a CardDefinition from this object's fields.
+    /// Used for rendering compiled text in the UI.
+    pub fn to_card_definition(&self) -> crate::cards::CardDefinition {
+        use crate::card::PowerToughness;
+
+        let power_toughness = match (self.base_power, self.base_toughness) {
+            (Some(p), Some(t)) => Some(PowerToughness::new(p, t)),
+            _ => None,
+        };
+        crate::cards::CardDefinition {
+            card: Card {
+                id: self.card.unwrap_or(CardId::new()),
+                name: self.name.clone(),
+                mana_cost: self.mana_cost.clone(),
+                color_indicator: self.color_override,
+                supertypes: self.supertypes.clone(),
+                card_types: self.card_types.clone(),
+                subtypes: self.subtypes.clone(),
+                oracle_text: self.oracle_text.clone(),
+                power_toughness,
+                loyalty: self.base_loyalty,
+                defense: None,
+                other_face: None,
+                is_token: matches!(self.kind, ObjectKind::Token),
+            },
+            abilities: self.abilities.clone(),
+            spell_effect: self.spell_effect.clone(),
+            aura_attach_filter: self.aura_attach_filter.clone(),
+            alternative_casts: self.alternative_casts.clone(),
+            optional_costs: self.optional_costs.clone(),
+            max_saga_chapter: self.max_saga_chapter,
+            cost_effects: self.cost_effects.clone(),
+        }
+    }
+
     /// Creates a new token.
     #[allow(clippy::too_many_arguments)]
     pub fn new_token(
