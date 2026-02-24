@@ -46,9 +46,17 @@ impl TriggerMatcher for OrTrigger {
         if self.triggers.len() == 1 {
             return self.triggers[0].display();
         }
-        // Combine displays with "or"
+        // Combine displays with "or", stripping leading "When"/"Whenever" from
+        // subsequent triggers to avoid "When X or When Y" → "When X or Y".
         let displays: Vec<String> = self.triggers.iter().map(|t| t.display()).collect();
-        displays.join(" or ")
+        let mut parts = vec![displays[0].clone()];
+        for d in &displays[1..] {
+            let stripped = d.strip_prefix("When ")
+                .or_else(|| d.strip_prefix("Whenever "))
+                .unwrap_or(d);
+            parts.push(stripped.to_string());
+        }
+        parts.join(" or ")
     }
 
     fn clone_box(&self) -> Box<dyn TriggerMatcher> {

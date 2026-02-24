@@ -13016,7 +13016,9 @@ fn describe_ability(
         AbilityKind::Triggered(triggered) => {
             if let Some(text) = ability.text.as_deref() {
                 let normalized = normalize_sentence_surface_style(text.trim());
-                if normalized.to_ascii_lowercase().starts_with("annihilator ") {
+                if normalized.to_ascii_lowercase().starts_with("annihilator ")
+                    || normalized.trim_end_matches('.').eq_ignore_ascii_case("haunt")
+                {
                     return vec![format!("Keyword ability {index}: {normalized}")];
                 }
             }
