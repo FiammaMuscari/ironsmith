@@ -5,12 +5,74 @@ use crate::decisions::specs::ChooseObjectsSpec;
 use crate::effect::{ChoiceCount, EffectOutcome, EffectResult};
 use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
+use crate::filter::ObjectFilter;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::snapshot::ObjectSnapshot;
+use crate::types::CardType;
 use crate::zone::Zone;
 
 use super::choose_objects::ChooseObjectsEffect;
+
+/// Build a human-readable prompt from an ObjectFilter when the
+/// effect carries only the bare default description.
+///
+/// `verb` is the action word: "sacrifice", "discard", "choose", etc.
+fn describe_choose_from_filter(filter: &ObjectFilter, min: usize, max: usize, verb: &str) -> String {
+    let type_word = if filter.card_types.len() == 1 {
+        match filter.card_types[0] {
+            CardType::Creature => "creature",
+            CardType::Artifact => "artifact",
+            CardType::Enchantment => "enchantment",
+            CardType::Land => "land",
+            CardType::Planeswalker => "planeswalker",
+            CardType::Instant => "instant",
+            CardType::Sorcery => "sorcery",
+            _ => "permanent",
+        }
+    } else if filter.card_types.is_empty() {
+        "permanent"
+    } else {
+        // Multiple types like "creature or artifact"
+        let types = filter
+            .card_types
+            .iter()
+            .map(|ct| format!("{ct:?}").to_lowercase())
+            .collect::<Vec<_>>()
+            .join(" or ");
+        let article = article_for_count(min, max);
+        return capitalize_first(&format!("{verb} {article} {types}"));
+    };
+
+    let mut parts = Vec::new();
+    if !filter.excluded_card_types.is_empty() {
+        for ct in &filter.excluded_card_types {
+            parts.push(format!("non{}", format!("{ct:?}").to_lowercase()));
+        }
+    }
+    if !filter.subtypes.is_empty() {
+        for st in &filter.subtypes {
+            parts.push(format!("{st:?}"));
+        }
+    }
+    parts.push(type_word.to_string());
+
+    let noun = parts.join(" ");
+    let article = article_for_count(min, max);
+    capitalize_first(&format!("{verb} {article} {noun}"))
+}
+
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+fn article_for_count(min: usize, max: usize) -> &'static str {
+    if max == 1 { "a" } else if min == max { "exactly" } else { "up to" }
+}
 
 fn graveyard_candidate_players(
     effect: &ChooseObjectsEffect,
@@ -319,9 +381,26 @@ pub(crate) fn run_choose_objects(
         return Ok(EffectOutcome::count(0));
     }
 
+    let description = if effect.description == "Choose" {
+        let tag_str = effect.tag.as_str();
+        let verb = if tag_str.starts_with("sacrificed") {
+            "sacrifice"
+        } else if tag_str.starts_with("discarded") {
+            "discard"
+        } else if tag_str.starts_with("exiled") {
+            "exile"
+        } else if tag_str.starts_with("returned") {
+            "return"
+        } else {
+            "choose"
+        };
+        describe_choose_from_filter(&effect.filter, min, max, verb)
+    } else {
+        effect.description.to_string()
+    };
     let spec = ChooseObjectsSpec::new(
         ctx.source,
-        effect.description.to_string(),
+        description,
         candidates.clone(),
         min,
         Some(max),

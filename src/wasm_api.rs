@@ -592,6 +592,7 @@ enum DecisionView {
         max: u32,
         is_x_value: bool,
         source_name: Option<String>,
+        reason: Option<String>,
     },
     SelectOptions {
         player: u8,
@@ -600,6 +601,7 @@ enum DecisionView {
         max: usize,
         options: Vec<OptionView>,
         source_name: Option<String>,
+        reason: Option<String>,
     },
     SelectObjects {
         player: u8,
@@ -608,12 +610,14 @@ enum DecisionView {
         max: Option<usize>,
         candidates: Vec<ObjectChoiceView>,
         source_name: Option<String>,
+        reason: Option<String>,
     },
     Targets {
         player: u8,
         context: String,
         requirements: Vec<TargetRequirementView>,
         source_name: Option<String>,
+        reason: Option<String>,
     },
     Attackers {
         player: u8,
@@ -630,6 +634,7 @@ impl DecisionView {
         let resolve_source_name = |source: Option<ObjectId>| -> Option<String> {
             source.and_then(|id| game.object(id)).map(|o| o.name.clone())
         };
+        let reason = decision_reason(ctx);
 
         match ctx {
             DecisionContext::Boolean(boolean) => DecisionView::SelectOptions {
@@ -650,6 +655,7 @@ impl DecisionView {
                     },
                 ],
                 source_name: resolve_source_name(boolean.source),
+                reason: reason.clone(),
             },
             DecisionContext::Priority(priority) => DecisionView::Priority {
                 player: priority.player.0,
@@ -673,6 +679,7 @@ impl DecisionView {
                 max: number.max,
                 is_x_value: number.is_x_value,
                 source_name: resolve_source_name(number.source),
+                reason: reason.clone(),
             },
             DecisionContext::SelectOptions(options) => DecisionView::SelectOptions {
                 player: options.player.0,
@@ -689,6 +696,7 @@ impl DecisionView {
                     })
                     .collect(),
                 source_name: resolve_source_name(options.source),
+                reason: reason.clone(),
             },
             DecisionContext::Modes(modes) => DecisionView::SelectOptions {
                 player: modes.player.0,
@@ -706,6 +714,7 @@ impl DecisionView {
                     })
                     .collect(),
                 source_name: resolve_source_name(modes.source),
+                reason: reason.clone(),
             },
             DecisionContext::HybridChoice(hybrid) => DecisionView::SelectOptions {
                 player: hybrid.player.0,
@@ -725,6 +734,7 @@ impl DecisionView {
                     })
                     .collect(),
                 source_name: resolve_source_name(hybrid.source),
+                reason: reason.clone(),
             },
             DecisionContext::Order(order) => DecisionView::SelectOptions {
                 player: order.player.0,
@@ -737,6 +747,7 @@ impl DecisionView {
                     legal: true,
                 }],
                 source_name: resolve_source_name(order.source),
+                reason: reason.clone(),
             },
             DecisionContext::Distribute(distribute) => DecisionView::SelectOptions {
                 player: distribute.player.0,
@@ -757,6 +768,7 @@ impl DecisionView {
                     })
                     .collect(),
                 source_name: resolve_source_name(distribute.source),
+                reason: reason.clone(),
             },
             DecisionContext::Colors(colors) => {
                 let choices = colors_for_context(colors);
@@ -779,6 +791,7 @@ impl DecisionView {
                         })
                         .collect(),
                     source_name: resolve_source_name(colors.source),
+                    reason: reason.clone(),
                 }
             }
             DecisionContext::Counters(counters) => DecisionView::SelectOptions {
@@ -803,6 +816,7 @@ impl DecisionView {
                     })
                     .collect(),
                 source_name: resolve_source_name(counters.source),
+                reason: reason.clone(),
             },
             DecisionContext::Partition(partition) => DecisionView::SelectObjects {
                 player: partition.player.0,
@@ -822,6 +836,7 @@ impl DecisionView {
                     })
                     .collect(),
                 source_name: resolve_source_name(partition.source),
+                reason: reason.clone(),
             },
             DecisionContext::Proliferate(proliferate) => DecisionView::SelectOptions {
                 player: proliferate.player.0,
@@ -846,6 +861,7 @@ impl DecisionView {
                     ))
                     .collect(),
                 source_name: resolve_source_name(proliferate.source),
+                reason: reason.clone(),
             },
             DecisionContext::SelectObjects(objects) => DecisionView::SelectObjects {
                 player: objects.player.0,
@@ -862,6 +878,7 @@ impl DecisionView {
                     })
                     .collect(),
                 source_name: resolve_source_name(objects.source),
+                reason: reason.clone(),
             },
             DecisionContext::Targets(targets) => DecisionView::Targets {
                 player: targets.player.0,
@@ -881,6 +898,7 @@ impl DecisionView {
                     })
                     .collect(),
                 source_name: resolve_source_name(Some(targets.source)),
+                reason,
             },
             DecisionContext::Attackers(attackers) => DecisionView::Attackers {
                 player: attackers.player.0,
@@ -3027,6 +3045,93 @@ fn object_name(game: &GameState, id: ObjectId) -> String {
     game.object(id)
         .map(|o| o.name.clone())
         .unwrap_or_else(|| format!("Object#{}", id.0))
+}
+
+/// Derive a short structured reason label from a DecisionContext.
+fn decision_reason(ctx: &DecisionContext) -> Option<String> {
+    match ctx {
+        DecisionContext::Boolean(b) => {
+            let d = b.description.to_lowercase();
+            if d.contains("ward") {
+                Some("Ward".into())
+            } else if d.contains("miracle") {
+                Some("Miracle".into())
+            } else if d.contains("madness") {
+                Some("Madness".into())
+            } else if d.contains("new targets") {
+                Some("Retarget".into())
+            } else if d.starts_with("you may") || d.starts_with("may ") {
+                Some("May ability".into())
+            } else {
+                None
+            }
+        }
+        DecisionContext::Number(n) => {
+            if n.is_x_value {
+                Some("X value".into())
+            } else {
+                Some("Choose number".into())
+            }
+        }
+        DecisionContext::SelectOptions(o) => {
+            let d = o.description.to_lowercase();
+            if d.contains("replacement") {
+                Some("Replacement effect".into())
+            } else if d.contains("optional cost") {
+                Some("Additional costs".into())
+            } else {
+                None
+            }
+        }
+        DecisionContext::Modes(_) => Some("Modal choice".into()),
+        DecisionContext::HybridChoice(_) => Some("Mana payment".into()),
+        DecisionContext::Order(o) => {
+            let d = o.description.to_lowercase();
+            if d.contains("blocker") {
+                Some("Order blockers".into())
+            } else if d.contains("attacker") {
+                Some("Order attackers".into())
+            } else {
+                Some("Ordering".into())
+            }
+        }
+        DecisionContext::Distribute(_) => Some("Distribute".into()),
+        DecisionContext::Colors(_) => Some("Choose color".into()),
+        DecisionContext::Counters(_) => Some("Remove counters".into()),
+        DecisionContext::Partition(p) => {
+            let d = p.description.to_lowercase();
+            if d.starts_with("surveil") {
+                Some("Surveil".into())
+            } else {
+                Some("Scry".into())
+            }
+        }
+        DecisionContext::Proliferate(_) => Some("Proliferate".into()),
+        DecisionContext::SelectObjects(o) => {
+            let d = o.description.to_lowercase();
+            if d.contains("sacrifice") {
+                Some("Sacrifice".into())
+            } else if d.contains("discard") {
+                Some("Discard".into())
+            } else if d.contains("exile") {
+                Some("Exile".into())
+            } else if d.contains("search") {
+                Some("Search library".into())
+            } else if d.contains("legend rule") {
+                Some("Legend rule".into())
+            } else if d.contains("destroy") {
+                Some("Destroy".into())
+            } else if d.contains("return") {
+                Some("Return".into())
+            } else {
+                None
+            }
+        }
+        DecisionContext::Targets(_) => Some("Choose targets".into()),
+        DecisionContext::Priority(_)
+        | DecisionContext::Attackers(_)
+        | DecisionContext::Blockers(_) => None,
+    }
 }
 
 fn truncate_text(text: &str, max_len: usize) -> String {
