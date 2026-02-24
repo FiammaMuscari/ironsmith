@@ -4901,33 +4901,9 @@ fn continue_activation(
     mut pending: PendingActivation,
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<GameProgress, GameLoopError> {
-    // Re-check activation constraints while continuing an in-flight activation.
-    let Some(obj) = game.object(pending.source) else {
-        return Err(GameLoopError::InvalidState(
-            "Ability source no longer exists".to_string(),
-        ));
-    };
-    let Some(ability) = obj.abilities.get(pending.ability_index) else {
-        return Err(GameLoopError::InvalidState(
-            "Ability index no longer valid".to_string(),
-        ));
-    };
-    if let AbilityKind::Activated(activated) = &ability.kind {
-        if !can_activate_ability_with_restrictions(
-            game,
-            pending.source,
-            pending.ability_index,
-            activated,
-        ) {
-            return Err(GameLoopError::InvalidState(
-                "Ability activation restrictions are no longer satisfied".to_string(),
-            ));
-        }
-    } else {
-        return Err(GameLoopError::InvalidState(
-            "Pending ability is not an activated ability".to_string(),
-        ));
-    }
+    // No re-validation needed: costs have already been paid (tap, sacrifice, exile,
+    // etc.) and all ability data is captured in the PendingActivation. Per MTG rule
+    // 602.2, once activation begins and costs are paid, it completes.
 
     match pending.stage {
         ActivationStage::ChoosingX => {

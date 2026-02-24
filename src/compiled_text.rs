@@ -11324,12 +11324,11 @@ fn describe_effect_impl(effect: &Effect) -> String {
     {
         let subject = describe_player_filter(&shuffle_gy.player);
         let verb = player_verb(&subject, "shuffle", "shuffles");
+        // Use possessive pronoun ("your"/"their") instead of repeating the subject
+        let possessive = if subject == "you" { "your" } else { "their" };
         return format!(
             "{} {} {} graveyard into {} library",
-            subject,
-            verb,
-            describe_possessive_player_filter(&shuffle_gy.player),
-            describe_possessive_player_filter(&shuffle_gy.player)
+            subject, verb, possessive, possessive
         );
     }
     if let Some(reorder_gy) = effect.downcast_ref::<crate::effects::ReorderGraveyardEffect>() {
