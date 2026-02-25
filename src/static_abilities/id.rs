@@ -131,6 +131,7 @@ pub enum StaticAbilityId {
     EntersTappedUnlessControlTwoOrMoreBasicLands,
     EntersTappedUnlessAPlayerHas13OrLessLife,
     EntersTappedUnlessTwoOrMoreOpponents,
+    EntersTappedUnlessCondition,
     EnterWithCounters,
     ShuffleIntoLibraryFromGraveyard,
     AllPermanentsEnterTapped,

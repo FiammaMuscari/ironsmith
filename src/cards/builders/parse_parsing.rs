@@ -6109,6 +6109,27 @@ fn parse_conditional_enters_tapped_unless_line(
         ));
     }
 
+    // Generic: "unless you control <object filter>" (covers Mount/Vehicle, etc.).
+    if condition_words.starts_with(&["you", "control"])
+        || condition_words.starts_with(&["you", "controls"])
+    {
+        let control_idx = tokens[unless_idx + 1..]
+            .iter()
+            .position(|token| token.is_word("control") || token.is_word("controls"))
+            .map(|idx| unless_idx + 1 + idx)
+            .unwrap_or(unless_idx + 1);
+        let filter_tokens = trim_edge_punctuation(&tokens[control_idx + 1..]);
+        if !filter_tokens.is_empty() {
+            if let Ok(filter) = parse_object_filter(&filter_tokens, false) {
+                let condition = crate::ConditionExpr::YouControl(filter);
+                return Ok(Some(StaticAbility::enters_tapped_unless_condition(
+                    condition,
+                    clause_words.join(" "),
+                )));
+            }
+        }
+    }
+
     Err(CardTextError::ParseError(format!(
         "unsupported enters tapped unless condition (clause: '{}')",
         clause_words.join(" ")

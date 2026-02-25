@@ -5,7 +5,7 @@
 use super::{ChooseColorAsEntersSpec, StaticAbilityId, StaticAbilityKind};
 use crate::ability::LevelAbility;
 use crate::color::Color;
-use crate::effect::{Effect, Value};
+use crate::effect::{Condition, Effect, Value};
 use crate::events::cards::matchers::{WouldDiscardMatcher, WouldDrawCardMatcher};
 use crate::events::damage::matchers::DamageToPlayerOrObjectMatcher;
 use crate::events::traits::{EventKind, ReplacementMatcher, ReplacementPriority, downcast_event};
@@ -569,6 +569,106 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessTwoOrMoreOpponentsMatcher 
 
     fn display(&self) -> String {
         "When this would enter tapped unless you have two or more opponents".to_string()
+    }
+}
+
+/// "This enters the battlefield tapped unless <condition>."
+///
+/// This is a generic ETB replacement that evaluates a `Condition` at the moment
+/// the object would enter the battlefield.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntersTappedUnlessCondition {
+    pub condition: Condition,
+    pub display: String,
+}
+
+impl EntersTappedUnlessCondition {
+    pub fn new(condition: Condition, display: String) -> Self {
+        Self { condition, display }
+    }
+}
+
+impl StaticAbilityKind for EntersTappedUnlessCondition {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::EntersTappedUnlessCondition
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(
+            ReplacementEffect::with_matcher(
+                source,
+                controller,
+                ThisWouldEnterTappedUnlessConditionMatcher {
+                    condition: self.condition.clone(),
+                    display: self.display.clone(),
+                },
+                ReplacementAction::EnterTapped,
+            )
+            .self_replacing(),
+        )
+    }
+
+    fn enters_tapped(&self) -> bool {
+        // Conditionally enters tapped; replacement determines final state.
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ThisWouldEnterTappedUnlessConditionMatcher {
+    condition: Condition,
+    display: String,
+}
+
+impl ReplacementMatcher for ThisWouldEnterTappedUnlessConditionMatcher {
+    fn matches_event(
+        &self,
+        event: &dyn crate::events::traits::GameEventType,
+        ctx: &crate::events::EventContext,
+    ) -> bool {
+        if !matches_this_would_enter_battlefield(event, ctx) {
+            return false;
+        }
+
+        let Some(source) = ctx.source else {
+            return false;
+        };
+        let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+            controller: ctx.controller,
+            source,
+            filter_source: None,
+            triggering_event: None,
+            trigger_identity: None,
+            ability_index: None,
+            options: Default::default(),
+        };
+
+        // Replacement applies when the "unless" condition is false.
+        !crate::condition_eval::evaluate_condition_external(ctx.game, &self.condition, &eval_ctx)
+    }
+
+    fn priority(&self) -> ReplacementPriority {
+        ReplacementPriority::SelfReplacement
+    }
+
+    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
+        Box::new(self.clone())
+    }
+
+    fn display(&self) -> String {
+        format!("When this would enter tapped unless {}", self.display)
     }
 }
 

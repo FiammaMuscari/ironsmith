@@ -911,6 +911,15 @@ impl StaticAbility {
         Self::new(EntersTappedUnlessTwoOrMoreOpponents)
     }
 
+    pub fn enters_tapped_unless_condition(
+        condition: crate::effect::Condition,
+        display: String,
+    ) -> Self {
+        Self::new(crate::static_abilities::misc::EntersTappedUnlessCondition::new(
+            condition, display,
+        ))
+    }
+
     pub fn enters_with_counters(counter_type: crate::object::CounterType, count: u32) -> Self {
         Self::new(EntersWithCounters::new(
             counter_type,

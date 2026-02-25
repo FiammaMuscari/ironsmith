@@ -4796,6 +4796,29 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_enters_tapped_unless_control_mount_or_vehicle_line() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Country Roads Variant")
+            .parse_text(
+                "This land enters tapped unless you control a Mount or Vehicle.\n{T}: Add {W}.",
+            )
+            .expect("should parse generic conditional ETB line");
+
+        let has_conditional_etb = def.abilities.iter().any(|ability| {
+            matches!(
+                &ability.kind,
+                AbilityKind::Static(static_ability)
+                    if static_ability.id()
+                        == crate::static_abilities::StaticAbilityId::EntersTappedUnlessCondition
+            )
+        });
+        assert!(
+            has_conditional_etb,
+            "expected generic enters-tapped-unless static ability, got {:?}",
+            def.abilities
+        );
+    }
+
+    #[test]
     fn parse_opponents_control_enter_tapped_preserves_controller_filter() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Frozen Aether Variant")
             .parse_text("Artifacts, creatures, and lands your opponents control enter the battlefield tapped.")
