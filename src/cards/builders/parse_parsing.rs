@@ -17798,8 +17798,14 @@ fn parse_sentence_pump_creature_type_of_choice(
             words(tokens).join(" ")
         ))
     })?;
-    let (power, toughness, duration) =
+    let (power, toughness, duration, condition) =
         parse_get_modifier_values_with_tail(&tokens[get_idx + 1..], base_power, base_toughness)?;
+    if condition.is_some() {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported conditional gets duration in creature-type choice pump clause (clause: '{}')",
+            words(tokens).join(" ")
+        )));
+    }
 
     filter.tagged_constraints.push(TaggedObjectConstraint {
         tag: chosen_type_tag.clone(),
@@ -21229,6 +21235,7 @@ fn parse_same_name_gets_fanout_sentence(
             toughness: Value::Fixed(toughness),
             target,
             duration: duration.clone(),
+            condition: None,
         },
         EffectAst::PumpAll {
             filter,
@@ -22312,6 +22319,7 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
                 toughness,
                 target: target.clone(),
                 duration: duration.clone(),
+                condition: None,
             });
         }
         if grant_is_choice {
@@ -22342,6 +22350,7 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
                 toughness,
                 target: target.clone(),
                 duration: duration.clone(),
+                condition: None,
             });
         }
         if grant_is_choice {
@@ -22369,6 +22378,7 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
                 toughness,
                 target,
                 duration: duration.clone(),
+                condition: None,
             });
         }
         let target = parse_target_phrase(&real_subject_tokens)?;
@@ -27397,7 +27407,7 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
                     });
                 }
 
-                let (power, toughness, duration) =
+                let (power, toughness, duration, condition) =
                     parse_get_modifier_values_with_tail(modifier_tail, power, toughness)?;
 
                 let mut normalized_subject_words: Vec<&str> = subject_words
@@ -27420,6 +27430,7 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
                             span_from_tokens(subject_tokens),
                         ),
                         duration,
+                        condition,
                     });
                 }
 
@@ -27433,6 +27444,7 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
                         toughness: toughness.clone(),
                         target,
                         duration,
+                        condition,
                     });
                 }
 
@@ -27451,6 +27463,7 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
                         toughness: toughness.clone(),
                         target,
                         duration,
+                        condition,
                     });
                 }
 
@@ -27970,14 +27983,15 @@ fn parse_get_modifier_values_with_tail(
     modifier_tokens: &[Token],
     power: Value,
     toughness: Value,
-) -> Result<(Value, Value, Until), CardTextError> {
+) -> Result<(Value, Value, Until, Option<crate::ConditionExpr>), CardTextError> {
     let clause = words(modifier_tokens).join(" ");
     let mut out_power = power;
     let mut out_toughness = toughness;
     let duration = Until::EndOfTurn;
+    let mut condition = None;
 
     if modifier_tokens.is_empty() {
-        return Ok((out_power, out_toughness, duration));
+        return Ok((out_power, out_toughness, duration, condition));
     }
 
     let after_modifier = &modifier_tokens[1..];
@@ -27992,10 +28006,23 @@ fn parse_get_modifier_values_with_tail(
     let tail_tokens = trim_commas(&after_modifier[tail_start..]);
 
     if tail_tokens.is_empty() {
-        return Ok((out_power, out_toughness, duration));
+        return Ok((out_power, out_toughness, duration, condition));
     }
 
     let tail_words = words(&tail_tokens);
+    if tail_words.starts_with(&["for", "as", "long", "as"])
+        && tail_words.contains(&"this")
+        && tail_words.contains(&"remains")
+        && tail_words.contains(&"tapped")
+    {
+        condition = Some(crate::ConditionExpr::SourceIsTapped);
+        return Ok((
+            out_power,
+            out_toughness,
+            Until::ThisLeavesTheBattlefield,
+            condition,
+        ));
+    }
     if !tail_words.starts_with(&["where", "x", "is"]) {
         return Err(CardTextError::ParseError(format!(
             "unsupported trailing gets clause (clause: '{}')",
@@ -28019,7 +28046,7 @@ fn parse_get_modifier_values_with_tail(
     out_power = replace_unbound_x_with_value(out_power, &x_value, &clause)?;
     out_toughness = replace_unbound_x_with_value(out_toughness, &x_value, &clause)?;
 
-    Ok((out_power, out_toughness, duration))
+    Ok((out_power, out_toughness, duration, condition))
 }
 
 fn force_implicit_token_controller_you(effects: &mut [EffectAst]) {
@@ -32436,7 +32463,7 @@ fn parse_get(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst,
     if let Some(mod_token) = tokens.first().and_then(Token::as_word)
         && let Ok((power, toughness)) = parse_pt_modifier_values(mod_token)
     {
-        let (power, toughness, duration) =
+        let (power, toughness, duration, condition) =
             parse_get_modifier_values_with_tail(tokens, power, toughness)?;
         let target = match subject {
             Some(SubjectAst::This) => TargetAst::Source(None),
@@ -32451,6 +32478,7 @@ fn parse_get(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst,
             toughness,
             target,
             duration,
+            condition,
         });
     }
 

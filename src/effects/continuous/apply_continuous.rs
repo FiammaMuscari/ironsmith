@@ -47,6 +47,8 @@ pub struct ApplyContinuousEffect {
     pub runtime_modifications: Vec<RuntimeModification>,
     /// How long the effect lasts.
     pub until: Until,
+    /// Optional condition that must be true for the continuous effect to apply.
+    pub condition: Option<crate::ConditionExpr>,
     /// Optional source type (e.g., resolution lock).
     pub source_type: Option<EffectSourceType>,
     /// For filter targets created by resolving spells/abilities, lock matching
@@ -68,6 +70,7 @@ impl ApplyContinuousEffect {
             additional_modifications: Vec::new(),
             runtime_modifications: Vec::new(),
             until,
+            condition: None,
             source_type: None,
             lock_filter_at_resolution: false,
             resolve_set_pt_values_at_resolution: false,
@@ -84,6 +87,7 @@ impl ApplyContinuousEffect {
             additional_modifications: Vec::new(),
             runtime_modifications: Vec::new(),
             until,
+            condition: None,
             source_type: None,
             lock_filter_at_resolution: false,
             resolve_set_pt_values_at_resolution: false,
@@ -104,6 +108,7 @@ impl ApplyContinuousEffect {
             additional_modifications: Vec::new(),
             runtime_modifications: vec![runtime_modification],
             until,
+            condition: None,
             source_type: None,
             lock_filter_at_resolution: false,
             resolve_set_pt_values_at_resolution: false,
@@ -124,6 +129,7 @@ impl ApplyContinuousEffect {
             additional_modifications: Vec::new(),
             runtime_modifications: vec![runtime_modification],
             until,
+            condition: None,
             source_type: None,
             lock_filter_at_resolution: false,
             resolve_set_pt_values_at_resolution: false,
@@ -149,6 +155,12 @@ impl ApplyContinuousEffect {
     /// Set the source type for the continuous effect.
     pub fn with_source_type(mut self, source_type: EffectSourceType) -> Self {
         self.source_type = Some(source_type);
+        self
+    }
+
+    /// Gate application of this continuous effect on a condition.
+    pub fn with_condition(mut self, condition: crate::ConditionExpr) -> Self {
+        self.condition = Some(condition);
         self
     }
 
@@ -358,6 +370,9 @@ impl EffectExecutor for ApplyContinuousEffect {
             if let Some(source_type) = &source_type {
                 effect = effect.with_source_type(source_type.clone());
             }
+            if let Some(condition) = &self.condition {
+                effect = effect.with_condition(condition.clone());
+            }
 
             game.continuous_effects.add_effect(effect);
         }
@@ -411,6 +426,42 @@ mod tests {
         let obj = Object::from_card(id, &card, controller, Zone::Battlefield);
         game.add_object(obj);
         id
+    }
+
+    #[test]
+    fn conditional_continuous_effect_only_applies_while_condition_true() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let source = create_creature(&mut game, "Source", alice);
+        let target = create_creature(&mut game, "Target", alice);
+
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        let effect = Effect::new(
+            ApplyContinuousEffect::new_runtime(
+                EffectTarget::Specific(target),
+                RuntimeModification::ModifyPowerToughness {
+                    power: Value::Fixed(2),
+                    toughness: Value::Fixed(-2),
+                },
+                Until::ThisLeavesTheBattlefield,
+            )
+            .with_condition(crate::ConditionExpr::SourceIsTapped),
+        );
+
+        execute_effect(&mut game, &effect, &mut ctx).expect("execute conditional apply");
+
+        // Condition false: source is untapped
+        assert_eq!(game.calculated_power(target), Some(2));
+        assert_eq!(game.calculated_toughness(target), Some(2));
+
+        game.tap(source);
+        assert_eq!(game.calculated_power(target), Some(4));
+        assert_eq!(game.calculated_toughness(target), Some(0));
+
+        game.untap(source);
+        assert_eq!(game.calculated_power(target), Some(2));
+        assert_eq!(game.calculated_toughness(target), Some(2));
     }
 
     #[test]

@@ -948,7 +948,15 @@ fn calculate_with_layers_direct_internal(
 
         // Apply effects in dependency order
         for effect in sorted_effects {
-            if !effect_applies_to_direct(effect, object, &chars, objects, battlefield, commanders) {
+            if !effect_applies_to_direct(
+                effect,
+                object,
+                &chars,
+                objects,
+                battlefield,
+                commanders,
+                game,
+            ) {
                 continue;
             }
 
@@ -1006,7 +1014,15 @@ fn calculate_with_layers_direct_internal(
         };
 
         for effect in sorted_pt {
-            if !effect_applies_to_direct(effect, object, &chars, objects, battlefield, commanders) {
+            if !effect_applies_to_direct(
+                effect,
+                object,
+                &chars,
+                objects,
+                battlefield,
+                commanders,
+                game,
+            ) {
                 continue;
             }
 
@@ -1037,7 +1053,23 @@ fn effect_applies_to_direct(
     objects: &HashMap<ObjectId, Object>,
     battlefield: &[ObjectId],
     commanders: &HashSet<ObjectId>,
+    game: &crate::game_state::GameState,
 ) -> bool {
+    if let Some(condition) = &effect.condition {
+        let ctx = crate::condition_eval::ExternalEvaluationContext {
+            controller: effect.controller,
+            source: effect.source,
+            filter_source: Some(effect.source),
+            triggering_event: None,
+            trigger_identity: None,
+            ability_index: None,
+            options: crate::condition_eval::ExternalEvaluationOptions::default(),
+        };
+        if !crate::condition_eval::evaluate_condition_external(game, condition, &ctx) {
+            return false;
+        }
+    }
+
     // First, check if this is a Resolution effect with locked targets.
     if let EffectSourceType::Resolution { ref locked_targets } = effect.source_type {
         if !locked_targets.contains(&object.id) {

@@ -4439,12 +4439,12 @@ fn compile_effect(
             toughness,
             target,
             duration,
+            condition,
         } => {
             let resolved_power = resolve_value_it_tag(power, ctx)?;
             let resolved_toughness = resolve_value_it_tag(toughness, ctx)?;
             compile_tagged_effect_for_target(target, ctx, "pumped", |spec| {
-                Effect::new(
-                    crate::effects::ApplyContinuousEffect::with_spec_runtime(
+                let mut apply = crate::effects::ApplyContinuousEffect::with_spec_runtime(
                         spec,
                         crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
                             power: resolved_power.clone(),
@@ -4452,8 +4452,11 @@ fn compile_effect(
                         },
                         duration.clone(),
                     )
-                    .require_creature_target(),
-                )
+                    .require_creature_target();
+                if let Some(condition) = condition {
+                    apply = apply.with_condition(condition.clone());
+                }
+                Effect::new(apply)
             })
         }
         EffectAst::SetBasePowerToughness {
