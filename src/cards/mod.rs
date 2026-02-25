@@ -719,6 +719,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_discover_keyword_action_clause() {
+        use crate::effects::DiscoverEffect;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Discover Probe")
+            .card_types(vec![CardType::Sorcery])
+            .parse_text("Discover 4.")
+            .expect("discover clause should parse");
+
+        let effects = def.spell_effect.as_ref().expect("expected spell effects");
+        assert!(
+            effects.iter().any(|e| e.downcast_ref::<DiscoverEffect>().is_some()),
+            "expected DiscoverEffect in compiled effects"
+        );
+    }
+
+    #[test]
     fn generated_definition_support_rejects_parser_fallback_markers() {
         let card = CardBuilder::new(CardId::new(), "Fallback Probe")
             .card_types(vec![CardType::Creature])

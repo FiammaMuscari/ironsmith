@@ -12155,6 +12155,18 @@ fn describe_effect_impl(effect: &Effect) -> String {
             describe_value(&scry.count)
         );
     }
+    if let Some(discover) = effect.downcast_ref::<crate::effects::DiscoverEffect>() {
+        if discover.player == PlayerFilter::You {
+            return format!("Discover {}", describe_value(&discover.count));
+        }
+        let player = describe_player_filter(&discover.player);
+        return format!(
+            "{} {} {}",
+            player,
+            player_verb(&player, "discover", "discovers"),
+            describe_value(&discover.count)
+        );
+    }
     if let Some(investigate) = effect.downcast_ref::<crate::effects::InvestigateEffect>() {
         return format!("Investigate {}", describe_value(&investigate.count));
     }

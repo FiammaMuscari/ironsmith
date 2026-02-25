@@ -7,6 +7,7 @@
 mod cast_source;
 mod cast_tagged;
 mod cascade;
+mod discover;
 mod control_player;
 mod create_emblem;
 mod energy_counters;
@@ -28,6 +29,7 @@ mod win_the_game;
 pub use cast_source::CastSourceEffect;
 pub use cast_tagged::CastTaggedEffect;
 pub use cascade::CascadeEffect;
+pub use discover::DiscoverEffect;
 pub use control_player::ControlPlayerEffect;
 pub use create_emblem::CreateEmblemEffect;
 pub use energy_counters::EnergyCountersEffect;

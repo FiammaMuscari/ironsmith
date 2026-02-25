@@ -695,6 +695,10 @@ enum EffectAst {
         count: Value,
         player: PlayerAst,
     },
+    Discover {
+        count: Value,
+        player: PlayerAst,
+    },
     Surveil {
         count: Value,
         player: PlayerAst,

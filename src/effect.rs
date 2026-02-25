@@ -3122,6 +3122,18 @@ impl Effect {
         Self::new(ScryEffect::new(count, player))
     }
 
+    /// Create a "discover N" effect.
+    pub fn discover(count: impl Into<Value>) -> Self {
+        use crate::effects::DiscoverEffect;
+        Self::new(DiscoverEffect::you(count))
+    }
+
+    /// Create a "discover N" effect for a specific player.
+    pub fn discover_player(count: impl Into<Value>, player: PlayerFilter) -> Self {
+        use crate::effects::DiscoverEffect;
+        Self::new(DiscoverEffect::new(count, player))
+    }
+
     /// Create a "surveil" effect.
     pub fn surveil(count: impl Into<Value>) -> Self {
         use crate::effects::SurveilEffect;

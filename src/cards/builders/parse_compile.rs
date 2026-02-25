@@ -2981,6 +2981,13 @@ fn compile_effect(
             || Effect::scry(count.clone()),
             |filter| Effect::scry_player(count.clone(), filter),
         ),
+        EffectAst::Discover { count, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::discover(count.clone()),
+            |filter| Effect::discover_player(count.clone(), filter),
+        ),
         EffectAst::Surveil { count, player } => compile_player_effect(
             *player,
             ctx,

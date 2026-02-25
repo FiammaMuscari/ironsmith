@@ -107,8 +107,8 @@ pub use permanents::{
 };
 pub use player::{
     CascadeEffect, CastSourceEffect, CastTaggedEffect, ControlPlayerEffect, CreateEmblemEffect,
-    EnergyCountersEffect, ExileInsteadOfGraveyardEffect, ExperienceCountersEffect, ExtraTurnEffect,
-    GrantEffect, GrantPlayFromGraveyardEffect, LoseTheGameEffect, PayEnergyEffect,
+    DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect, ExperienceCountersEffect,
+    ExtraTurnEffect, GrantEffect, GrantPlayFromGraveyardEffect, LoseTheGameEffect, PayEnergyEffect,
     PoisonCountersEffect, SkipCombatPhasesEffect, SkipDrawStepEffect,
     SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, WinTheGameEffect,
 };

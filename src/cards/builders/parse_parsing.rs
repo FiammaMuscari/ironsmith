@@ -29356,6 +29356,25 @@ fn parse_keyword_mechanic_clause(tokens: &[Token]) -> Result<Option<EffectAst>, 
         }));
     }
 
+    if matches!(clause_words.first().copied(), Some("discover" | "discovers")) {
+        let (count, used) = parse_value(&clause_tokens[1..]).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing amount for discover clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+        if 1 + used != clause_tokens.len() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported trailing discover clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        return Ok(Some(EffectAst::Discover {
+            count,
+            player: PlayerAst::You,
+        }));
+    }
+
     if matches!(clause_words.last().copied(), Some("explore" | "explores")) {
         let subject_tokens = &clause_tokens[..clause_tokens.len().saturating_sub(1)];
         let subject_words = words(subject_tokens);
