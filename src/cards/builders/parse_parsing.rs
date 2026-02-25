@@ -2404,6 +2404,9 @@ fn parse_static_ability_line(
     if let Some(ability) = parse_equipped_creature_has_line(tokens)? {
         return Ok(Some(ability));
     }
+    if let Some(ability) = parse_attached_cant_attack_or_block_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(abilities) = parse_attached_has_keywords_and_triggered_ability_line(tokens)? {
         return Ok(Some(abilities));
     }
@@ -6323,6 +6326,63 @@ fn parse_equipped_creature_has_line(
     }
     out.extend(extra_grants);
     Ok(Some(out))
+}
+
+fn parse_attached_cant_attack_or_block_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let normalized = normalize_cant_words(tokens);
+    if normalized.len() < 4 {
+        return Ok(None);
+    }
+
+    let is_enchanted = normalized.starts_with(&["enchanted", "creature"]);
+    let is_equipped = normalized.starts_with(&["equipped", "creature"]);
+    if !is_enchanted && !is_equipped {
+        return Ok(None);
+    }
+
+    let subject_len = 2usize;
+    let tail = &normalized[subject_len..];
+    if !tail.starts_with(&["cant"]) {
+        return Ok(None);
+    }
+
+    let subject = if is_equipped {
+        "equipped creature"
+    } else {
+        "enchanted creature"
+    };
+
+    let (restriction, display) = if tail == ["cant", "attack"] {
+        (
+            crate::effect::Restriction::attack(ObjectFilter::source()),
+            format!("{subject} can't attack"),
+        )
+    } else if tail == ["cant", "block"] {
+        (
+            crate::effect::Restriction::block(ObjectFilter::source()),
+            format!("{subject} can't block"),
+        )
+    } else if tail == ["cant", "attack", "or", "block"] {
+        (
+            crate::effect::Restriction::attack_or_block(ObjectFilter::source()),
+            format!("{subject} can't attack or block"),
+        )
+    } else {
+        return Ok(None);
+    };
+
+    let granted = Ability {
+        kind: AbilityKind::Static(StaticAbility::restriction(restriction, display.clone())),
+        functional_zones: vec![Zone::Battlefield],
+        text: Some(display.clone()),
+    };
+
+    Ok(Some(StaticAbility::attached_ability_grant(
+        granted,
+        normalized.join(" "),
+    )))
 }
 
 fn parse_attached_has_keywords_and_triggered_ability_line(

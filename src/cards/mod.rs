@@ -778,6 +778,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_enchanted_creature_cant_attack_or_block_static() {
+        use crate::static_abilities::StaticAbilityId;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Aura Probe")
+            .card_types(vec![CardType::Enchantment])
+            .parse_text("Enchant creature\nEnchanted creature can't attack or block.")
+            .expect("attached cant attack/block line should parse");
+
+        assert!(
+            def.aura_attach_filter.is_some(),
+            "expected aura attach filter from 'Enchant creature' line"
+        );
+
+        let has = def.abilities.iter().any(|ability| match &ability.kind {
+            AbilityKind::Static(sa) => sa.id() == StaticAbilityId::AttachedAbilityGrant,
+            _ => false,
+        });
+        assert!(has, "expected AttachedAbilityGrant static ability on aura");
+    }
+
+    #[test]
     fn generated_definition_support_rejects_parser_fallback_markers() {
         let card = CardBuilder::new(CardId::new(), "Fallback Probe")
             .card_types(vec![CardType::Creature])
