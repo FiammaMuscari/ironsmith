@@ -25045,6 +25045,30 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
         return Ok(PredicateAst::SourceHasNoCounter(counter_type));
     }
 
+    let raw_words = words(tokens);
+    if raw_words.starts_with(&["there", "are"])
+        && raw_words.get(3).copied() == Some("or")
+        && raw_words.get(4).copied() == Some("more")
+        && raw_words.iter().any(|w| *w == "counter" || *w == "counters")
+    {
+        if let Some((count, used)) = parse_number(&tokens[2..]) {
+            let rest = &tokens[2 + used..];
+            let rest_words = words(rest);
+            // Pattern: "there are <N> or more <counter> counters on this <permanent>"
+            if rest_words.len() >= 4
+                && rest_words[0] == "or"
+                && rest_words[1] == "more"
+                && (rest_words[3] == "counter" || rest_words[3] == "counters")
+                && let Some(counter_type) = parse_counter_type_word(rest_words[2])
+            {
+                return Ok(PredicateAst::SourceHasCounterAtLeast {
+                    counter_type,
+                    count,
+                });
+            }
+        }
+    }
+
     if filtered.as_slice() == ["you", "have", "no", "cards", "in", "hand"] {
         return Ok(PredicateAst::YouHaveNoCardsInHand);
     }
@@ -26649,6 +26673,7 @@ enum Verb {
     Scry,
     Discard,
     Transform,
+    Flip,
     Regenerate,
     Mill,
     Get,
@@ -29415,6 +29440,7 @@ fn find_verb(tokens: &[Token]) -> Option<(Verb, usize)> {
             "scries" | "scry" => Verb::Scry,
             "discards" | "discard" => Verb::Discard,
             "transforms" | "transform" => Verb::Transform,
+            "flips" | "flip" => Verb::Flip,
             "regenerates" | "regenerate" => Verb::Regenerate,
             "mills" | "mill" => Verb::Mill,
             "gets" | "get" => Verb::Get,
@@ -29603,6 +29629,7 @@ fn parse_effect_with_verb(
         Verb::Scry => parse_scry(tokens, subject),
         Verb::Discard => parse_discard(tokens, subject),
         Verb::Transform => parse_transform(tokens),
+        Verb::Flip => parse_flip(tokens),
         Verb::Regenerate => parse_regenerate(tokens),
         Verb::Mill => parse_mill(tokens, subject),
         Verb::Get => parse_get(tokens, subject),
@@ -32439,6 +32466,28 @@ fn parse_transform(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
     }
     let target = parse_target_phrase(tokens)?;
     Ok(EffectAst::Transform { target })
+}
+
+fn parse_flip(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
+    if tokens.is_empty() {
+        return Ok(EffectAst::Flip {
+            target: TargetAst::Source(None),
+        });
+    }
+
+    let target_words = words(tokens);
+    if target_words == ["it"]
+        || target_words == ["this"]
+        || target_words == ["this", "creature"]
+        || target_words == ["this", "permanent"]
+    {
+        return Ok(EffectAst::Flip {
+            target: TargetAst::Source(span_from_tokens(tokens)),
+        });
+    }
+
+    let target = parse_target_phrase(tokens)?;
+    Ok(EffectAst::Flip { target })
 }
 
 fn parse_regenerate(tokens: &[Token]) -> Result<EffectAst, CardTextError> {

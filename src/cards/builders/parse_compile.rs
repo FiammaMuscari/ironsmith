@@ -420,6 +420,12 @@ fn compile_condition_from_predicate_ast(
         PredicateAst::YouHaveNoCardsInHand => Condition::Not(Box::new(Condition::CardsInHandOrMore(1))),
         PredicateAst::SourceIsTapped => Condition::SourceIsTapped,
         PredicateAst::SourceHasNoCounter(counter_type) => Condition::SourceHasNoCounter(*counter_type),
+        PredicateAst::SourceHasCounterAtLeast { counter_type, count } => {
+            Condition::SourceHasCounterAtLeast {
+                counter_type: *counter_type,
+                count: *count,
+            }
+        }
         PredicateAst::YouAttackedThisTurn => Condition::AttackedThisTurn,
         PredicateAst::NoSpellsWereCastLastTurn => Condition::NoSpellsWereCastLastTurn,
         PredicateAst::TargetWasKicked => Condition::TargetWasKicked,
@@ -593,6 +599,7 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::ExileUntilSourceLeaves { target, .. }
         | EffectAst::LookAtHand { target }
         | EffectAst::Transform { target }
+        | EffectAst::Flip { target }
         | EffectAst::Regenerate { target }
         | EffectAst::TargetOnly { target }
         | EffectAst::RemoveUpToAnyCounters { target, .. }
@@ -1025,6 +1032,7 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::ExileUntilSourceLeaves { target, .. }
         | EffectAst::LookAtHand { target }
         | EffectAst::Transform { target }
+        | EffectAst::Flip { target }
         | EffectAst::Regenerate { target }
         | EffectAst::TargetOnly { target }
         | EffectAst::RemoveUpToAnyCounters { target, .. }
@@ -1495,6 +1503,7 @@ fn collect_tag_spans_from_effect(
         | EffectAst::ExileUntilSourceLeaves { target, .. }
         | EffectAst::LookAtHand { target }
         | EffectAst::Transform { target }
+        | EffectAst::Flip { target }
         | EffectAst::Regenerate { target }
         | EffectAst::TargetOnly { target }
         | EffectAst::RemoveUpToAnyCounters { target, .. }
@@ -4260,6 +4269,12 @@ fn compile_effect(
                     PredicateAst::SourceHasNoCounter(counter_type) => {
                         Condition::SourceHasNoCounter(*counter_type)
                     }
+                    PredicateAst::SourceHasCounterAtLeast { counter_type, count } => {
+                        Condition::SourceHasCounterAtLeast {
+                            counter_type: *counter_type,
+                            count: *count,
+                        }
+                    }
                     PredicateAst::YouAttackedThisTurn => Condition::AttackedThisTurn,
                     PredicateAst::NoSpellsWereCastLastTurn => Condition::NoSpellsWereCastLastTurn,
                     PredicateAst::TargetWasKicked => Condition::TargetWasKicked,
@@ -4938,6 +4953,9 @@ fn compile_effect(
         }
         EffectAst::Transform { target } => {
             compile_tagged_effect_for_target(target, ctx, "transformed", Effect::transform)
+        }
+        EffectAst::Flip { target } => {
+            compile_tagged_effect_for_target(target, ctx, "flipped", Effect::flip)
         }
         EffectAst::GrantAbilityToSource { ability } => Ok((
             vec![Effect::grant_object_ability_to_source(ability.clone())],

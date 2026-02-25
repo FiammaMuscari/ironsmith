@@ -25,9 +25,11 @@ use crate::alternative_cast::AlternativeCastingMethod;
 use crate::card::Card;
 use crate::cost::OptionalCost;
 use crate::effect::Effect;
+use crate::ids::CardId;
 use crate::static_abilities::StaticAbilityId;
 use crate::target::ObjectFilter;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// A complete card definition including the card data and its abilities.
 ///
@@ -150,6 +152,11 @@ impl CardDefinition {
 pub struct CardRegistry {
     /// Cards indexed by name
     cards: HashMap<String, CardDefinition>,
+    /// Mapping for looking up cards by CardId without duplicating CardDefinition storage.
+    names_by_id: HashMap<CardId, String>,
+    /// Alias name -> canonical name (used for card-face layouts where Scryfall's
+    /// `name` is "Front // Back" but the playable card name is the front face).
+    aliases: HashMap<String, String>,
 }
 
 impl CardRegistry {
@@ -157,6 +164,8 @@ impl CardRegistry {
     pub fn new() -> Self {
         Self {
             cards: HashMap::new(),
+            names_by_id: HashMap::new(),
+            aliases: HashMap::new(),
         }
     }
 
@@ -312,11 +321,28 @@ impl CardRegistry {
         if !generated_definition_is_supported(&def) {
             return;
         }
-        self.cards.insert(def.card.name.clone(), def);
+        let name = def.card.name.clone();
+        self.names_by_id.entry(def.card.id).or_insert_with(|| name.clone());
+        self.cards.insert(name, def);
     }
 
     /// Look up a card by name.
     pub fn get(&self, name: &str) -> Option<&CardDefinition> {
+        if let Some(def) = self.cards.get(name) {
+            return Some(def);
+        }
+        let canonical = self.aliases.get(name)?;
+        self.cards.get(canonical)
+    }
+
+    /// Register an alternate name for an existing definition.
+    pub fn register_alias(&mut self, alias: impl Into<String>, canonical: impl Into<String>) {
+        self.aliases.insert(alias.into(), canonical.into());
+    }
+
+    /// Look up a card by CardId.
+    pub fn get_by_id(&self, id: CardId) -> Option<&CardDefinition> {
+        let name = self.names_by_id.get(&id)?;
         self.cards.get(name)
     }
 
@@ -349,6 +375,15 @@ impl CardRegistry {
     pub fn lands(&self) -> impl Iterator<Item = &CardDefinition> {
         self.cards.values().filter(|c| c.card.is_land())
     }
+}
+
+/// A lazily-constructed singleton registry for effect/runtime lookups.
+///
+/// Most engine logic avoids needing the registry at runtime, but mechanics like
+/// flip cards need to resolve the other face's definition.
+pub fn builtin_registry() -> &'static CardRegistry {
+    static REGISTRY: OnceLock<CardRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(CardRegistry::with_builtin_cards)
 }
 
 const UNSUPPORTED_PARSER_LINE_FALLBACK_PREFIX: &str = "Unsupported parser line fallback:";
@@ -590,6 +625,52 @@ mod tests {
         assert_eq!(
             activated.activation_condition,
             Some(crate::ConditionExpr::MaxActivationsPerTurn(2))
+        );
+    }
+
+    #[test]
+    fn parse_flip_it_clause_as_flip_effect() {
+        use crate::ability::AbilityKind;
+        use crate::effects::{FlipEffect, MayEffect, SequenceEffect, TaggedEffect, WithIdEffect};
+
+        fn contains_flip(effect: &crate::effect::Effect) -> bool {
+            if effect.downcast_ref::<FlipEffect>().is_some() {
+                return true;
+            }
+            if let Some(may) = effect.downcast_ref::<MayEffect>() {
+                return may.effects.iter().any(contains_flip);
+            }
+            if let Some(seq) = effect.downcast_ref::<SequenceEffect>() {
+                return seq.effects.iter().any(contains_flip);
+            }
+            if let Some(tagged) = effect.downcast_ref::<TaggedEffect>() {
+                return contains_flip(&tagged.effect);
+            }
+            if let Some(with_id) = effect.downcast_ref::<WithIdEffect>() {
+                return contains_flip(&with_id.effect);
+            }
+            false
+        }
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Flip Probe")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "At the beginning of the end step, if there are two or more ki counters on this creature, you may flip it.",
+            )
+            .expect("flip clause should parse");
+
+        let triggered = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered) => Some(triggered),
+                _ => None,
+            })
+            .expect("expected a triggered ability");
+
+        assert!(
+            triggered.effects.iter().any(contains_flip),
+            "expected FlipEffect in triggered effects"
         );
     }
 

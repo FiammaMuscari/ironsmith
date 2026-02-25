@@ -101,9 +101,9 @@ pub use mana::{
 };
 pub use permanents::{
     AttachObjectsEffect, AttachToEffect, BecomeSaddledUntilEotEffect, CrewCostEffect,
-    EarthbendEffect, EvolveEffect, GrantObjectAbilityEffect, MonstrosityEffect, NinjutsuCostEffect,
-    NinjutsuEffect, RegenerateEffect, RenownEffect, SaddleCostEffect, TapEffect, TrainingEffect,
-    TransformEffect, UnearthEffect, UntapEffect,
+    EarthbendEffect, EvolveEffect, FlipEffect, GrantObjectAbilityEffect, MonstrosityEffect,
+    NinjutsuCostEffect, NinjutsuEffect, RegenerateEffect, RenownEffect, SaddleCostEffect,
+    TapEffect, TrainingEffect, TransformEffect, UnearthEffect, UntapEffect,
 };
 pub use player::{
     CascadeEffect, CastSourceEffect, CastTaggedEffect, ControlPlayerEffect, CreateEmblemEffect,

@@ -290,6 +290,10 @@ pub fn evaluate_condition_external(
             .object(ctx.source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) == 0)
             .unwrap_or(false),
+        Condition::SourceHasCounterAtLeast { counter_type, count } => game
+            .object(ctx.source)
+            .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) >= *count)
+            .unwrap_or(false),
         Condition::SourceIsAttacking => game
             .combat
             .as_ref()
@@ -744,6 +748,10 @@ fn evaluate_condition_simple(
             .object(source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) == 0)
             .unwrap_or(false),
+        Condition::SourceHasCounterAtLeast { counter_type, count } => game
+            .object(source)
+            .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) >= *count)
+            .unwrap_or(false),
         Condition::FirstTimeThisTurn | Condition::MaxTimesEachTurn(_) => true,
         Condition::TriggeringObjectWasEnchanted | Condition::TriggeringObjectHadCounters { .. } => {
             false
@@ -1159,6 +1167,10 @@ fn evaluate_condition(
         Condition::SourceHasNoCounter(counter_type) => Ok(game
             .object(ctx.source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) == 0)
+            .unwrap_or(false)),
+        Condition::SourceHasCounterAtLeast { counter_type, count } => Ok(game
+            .object(ctx.source)
+            .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) >= *count)
             .unwrap_or(false)),
         Condition::TargetIsAttacking => {
             // Check if the target is among declared attackers

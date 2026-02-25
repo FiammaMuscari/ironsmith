@@ -371,6 +371,7 @@ mod tests {
             card_types: vec![CardType::Creature],
             subtypes: vec![],
             oracle_text: String::new(),
+            other_face: None,
             base_power: Some(PtValue::Fixed(power)),
             base_toughness: Some(PtValue::Fixed(toughness)),
             base_loyalty: None,

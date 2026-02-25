@@ -1427,6 +1427,9 @@ pub enum Condition {
     /// Source object has no counters of a specific type.
     SourceHasNoCounter(CounterType),
 
+    /// Source object has at least N counters of a specific type.
+    SourceHasCounterAtLeast { counter_type: CounterType, count: u32 },
+
     /// At least N mana of a specific color/type was spent to cast this spell.
     /// If `symbol` is `None`, checks total mana spent instead.
     ManaSpentToCastThisSpellAtLeast {
@@ -2392,6 +2395,12 @@ impl Effect {
     pub fn transform(target: ChooseSpec) -> Self {
         use crate::effects::TransformEffect;
         Self::new(TransformEffect::new(target))
+    }
+
+    /// Create a "flip" effect for flip cards.
+    pub fn flip(target: ChooseSpec) -> Self {
+        use crate::effects::FlipEffect;
+        Self::new(FlipEffect::new(target))
     }
 
     /// Create a "create emblem" effect.

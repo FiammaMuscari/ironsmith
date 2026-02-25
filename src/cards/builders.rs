@@ -463,6 +463,7 @@ enum PredicateAst {
     SourceIsTapped,
     #[allow(dead_code)]
     SourceHasNoCounter(CounterType),
+    SourceHasCounterAtLeast { counter_type: CounterType, count: u32 },
     YouAttackedThisTurn,
     NoSpellsWereCastLastTurn,
     TargetWasKicked,
@@ -818,6 +819,9 @@ enum EffectAst {
         target: TargetAst,
     },
     Transform {
+        target: TargetAst,
+    },
+    Flip {
         target: TargetAst,
     },
     Regenerate {

@@ -4812,6 +4812,13 @@ fn describe_transform_target(spec: &ChooseSpec) -> String {
     }
 }
 
+fn describe_flip_target(spec: &ChooseSpec) -> String {
+    match spec {
+        ChooseSpec::Source => "it".to_string(),
+        _ => describe_choose_spec(spec),
+    }
+}
+
 fn owner_for_zone_from_spec(spec: &ChooseSpec, zone: Zone) -> Option<Option<PlayerFilter>> {
     match spec {
         ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
@@ -6625,6 +6632,10 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::SourceIsTapped => "this source is tapped".to_string(),
         Condition::SourceHasNoCounter(counter_type) => format!(
             "there are no {} counters on this source",
+            describe_counter_type(*counter_type)
+        ),
+        Condition::SourceHasCounterAtLeast { counter_type, count } => format!(
+            "there are {count} or more {} counters on this source",
             describe_counter_type(*counter_type)
         ),
         Condition::TargetIsAttacking => "the target is attacking".to_string(),
@@ -11538,6 +11549,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
     }
     if let Some(transform) = effect.downcast_ref::<crate::effects::TransformEffect>() {
         return format!("Transform {}", describe_transform_target(&transform.target));
+    }
+    if let Some(flip) = effect.downcast_ref::<crate::effects::FlipEffect>() {
+        return format!("Flip {}", describe_flip_target(&flip.target));
     }
     if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
         if is_implicit_reference_tag(tagged.tag.as_str()) {

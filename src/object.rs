@@ -198,6 +198,10 @@ pub struct Object {
     pub card_types: Vec<CardType>,
     pub subtypes: Vec<Subtype>,
     pub oracle_text: String,
+    /// Optional reference to another face for flip/DFC style cards.
+    ///
+    /// This is copied from `Card::other_face` when the object is created.
+    pub other_face: Option<CardId>,
     pub base_power: Option<PtValue>,
     pub base_toughness: Option<PtValue>,
     pub base_loyalty: Option<u32>,
@@ -273,6 +277,7 @@ impl Object {
             card_types: card.card_types.clone(),
             subtypes: card.subtypes.clone(),
             oracle_text: card.oracle_text.clone(),
+            other_face: card.other_face,
             base_power,
             base_toughness,
             base_loyalty: card.loyalty,
@@ -311,6 +316,38 @@ impl Object {
         obj
     }
 
+    /// Apply the printed/copied characteristics of another card definition.
+    ///
+    /// Used for flip cards and similar "becomes this other face" mechanics.
+    /// This preserves identity, ownership, controller, zone, counters, and attachments.
+    pub fn apply_definition_face(&mut self, def: &crate::cards::CardDefinition) {
+        let (base_power, base_toughness) = def
+            .card
+            .power_toughness
+            .map(|pt| (Some(pt.power), Some(pt.toughness)))
+            .unwrap_or((None, None));
+
+        self.name = def.card.name.clone();
+        self.mana_cost = def.card.mana_cost.clone();
+        self.color_override = def.card.color_indicator;
+        self.supertypes = def.card.supertypes.clone();
+        self.card_types = def.card.card_types.clone();
+        self.subtypes = def.card.subtypes.clone();
+        self.oracle_text = def.card.oracle_text.clone();
+        self.other_face = def.card.other_face;
+        self.base_power = base_power;
+        self.base_toughness = base_toughness;
+        self.base_loyalty = def.card.loyalty;
+        self.abilities = def.abilities.clone();
+
+        self.spell_effect = def.spell_effect.clone();
+        self.aura_attach_filter = def.aura_attach_filter.clone();
+        self.alternative_casts = def.alternative_casts.clone();
+        self.optional_costs = def.optional_costs.clone();
+        self.max_saga_chapter = def.max_saga_chapter;
+        self.cost_effects = def.cost_effects.clone();
+    }
+
     /// Reconstructs a CardDefinition from this object's fields.
     /// Used for rendering compiled text in the UI.
     pub fn to_card_definition(&self) -> crate::cards::CardDefinition {
@@ -333,7 +370,7 @@ impl Object {
                 power_toughness,
                 loyalty: self.base_loyalty,
                 defense: None,
-                other_face: None,
+                other_face: self.other_face,
                 is_token: matches!(self.kind, ObjectKind::Token),
             },
             abilities: self.abilities.clone(),
@@ -373,6 +410,7 @@ impl Object {
             card_types,
             subtypes,
             oracle_text: String::new(),
+            other_face: None,
             base_power: power.map(PtValue::Fixed),
             base_toughness: toughness.map(PtValue::Fixed),
             base_loyalty: None,
@@ -413,6 +451,7 @@ impl Object {
             card_types: source.card_types.clone(),
             subtypes: source.subtypes.clone(),
             oracle_text: source.oracle_text.clone(),
+            other_face: source.other_face,
             base_power: source.base_power,
             base_toughness: source.base_toughness,
             base_loyalty: source.base_loyalty,
@@ -472,6 +511,7 @@ impl Object {
             card_types: Vec::new(),
             subtypes: Vec::new(),
             oracle_text: String::new(),
+            other_face: None,
             base_power: None,
             base_toughness: None,
             base_loyalty: None,
@@ -504,6 +544,7 @@ impl Object {
         self.card_types = source.card_types.clone();
         self.subtypes = source.subtypes.clone();
         self.oracle_text = source.oracle_text.clone();
+        self.other_face = source.other_face;
         self.base_power = source.base_power;
         self.base_toughness = source.base_toughness;
         self.base_loyalty = source.base_loyalty;
@@ -867,6 +908,7 @@ impl Object {
             card_types: def.card.card_types.clone(),
             subtypes: def.card.subtypes.clone(),
             oracle_text: def.card.oracle_text.clone(),
+            other_face: def.card.other_face,
             base_power: def.card.power_toughness.map(|pt| pt.power),
             base_toughness: def.card.power_toughness.map(|pt| pt.toughness),
             base_loyalty: def.card.loyalty,
