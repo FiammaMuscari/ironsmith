@@ -5,6 +5,7 @@ use crate::events::traits::{
     EventKind, GameEventType, ReplacementMatcher, ReplacementPriority, downcast_event,
 };
 use crate::game_event::DamageTarget;
+use crate::ids::{ObjectId, PlayerId};
 use crate::target::{ObjectFilter, PlayerFilter};
 
 use super::DamageEvent;
@@ -320,6 +321,106 @@ impl ReplacementMatcher for DamageFromSelfMatcher {
 
     fn display(&self) -> String {
         "When damage would be dealt by this permanent".to_string()
+    }
+}
+
+/// Constraint for matching damage sources.
+#[derive(Debug, Clone)]
+pub enum DamageSourceConstraint {
+    /// Damage is dealt by a specific object.
+    Specific(ObjectId),
+    /// Damage is dealt by a source matching this filter.
+    Filter(ObjectFilter),
+}
+
+/// Constraint for matching damage targets.
+#[derive(Debug, Clone)]
+pub enum DamageTargetConstraint {
+    /// Any damage target.
+    Any,
+    /// Damage is dealt to a specific player.
+    Player(PlayerId),
+}
+
+/// Matches preventable damage events with optional source/target constraints.
+///
+/// Intended for "prevent that damage" style replacement effects.
+#[derive(Debug, Clone)]
+pub struct PreventableDamageConstraintMatcher {
+    pub source: DamageSourceConstraint,
+    pub target: DamageTargetConstraint,
+}
+
+impl PreventableDamageConstraintMatcher {
+    pub fn from_specific_source(source: ObjectId, target: DamageTargetConstraint) -> Self {
+        Self {
+            source: DamageSourceConstraint::Specific(source),
+            target,
+        }
+    }
+
+    pub fn from_filter(filter: ObjectFilter, target: DamageTargetConstraint) -> Self {
+        Self {
+            source: DamageSourceConstraint::Filter(filter),
+            target,
+        }
+    }
+}
+
+impl ReplacementMatcher for PreventableDamageConstraintMatcher {
+    fn matches_event(&self, event: &dyn GameEventType, ctx: &EventContext) -> bool {
+        if event.event_kind() != EventKind::Damage {
+            return false;
+        }
+
+        let Some(damage) = downcast_event::<DamageEvent>(event) else {
+            return false;
+        };
+
+        // "Damage can't be prevented" bypasses prevention effects.
+        if damage.is_unpreventable {
+            return false;
+        }
+
+        // Source constraint.
+        match &self.source {
+            DamageSourceConstraint::Specific(id) => {
+                if &damage.source != id {
+                    return false;
+                }
+            }
+            DamageSourceConstraint::Filter(filter) => {
+                let Some(obj) = ctx.game.object(damage.source) else {
+                    return false;
+                };
+                if !filter.matches(obj, &ctx.filter_ctx, ctx.game) {
+                    return false;
+                }
+            }
+        }
+
+        // Target constraint.
+        match &self.target {
+            DamageTargetConstraint::Any => {}
+            DamageTargetConstraint::Player(player_id) => match damage.target {
+                DamageTarget::Player(pid) => {
+                    if &pid != player_id {
+                        return false;
+                    }
+                }
+                DamageTarget::Object(_) => return false,
+            },
+        }
+
+        true
+    }
+
+    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
+        Box::new(self.clone())
+    }
+
+    fn display(&self) -> String {
+        "When damage would be dealt (preventable)".to_string()
     }
 }
 

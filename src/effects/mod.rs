@@ -87,7 +87,10 @@ pub use counters::{
     MoveAllCountersEffect, MoveCountersEffect, ProliferateEffect, PutCountersEffect,
     RemoveCountersEffect, RemoveUpToAnyCountersEffect, RemoveUpToCountersEffect,
 };
-pub use damage::{ClearDamageEffect, DealDamageEffect};
+pub use damage::{
+    ClearDamageEffect, DealDamageEffect, PreventNextTimeDamageEffect, PreventNextTimeDamageSource,
+    PreventNextTimeDamageTarget,
+};
 pub use delayed::{
     ExileTaggedWhenSourceLeavesEffect, SacrificeSourceWhenTaggedLeavesEffect,
     ScheduleDelayedTriggerEffect, ScheduleEffectsWhenTaggedLeavesEffect, TaggedLeavesAbilitySource,

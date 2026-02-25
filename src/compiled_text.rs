@@ -12558,6 +12558,28 @@ fn describe_effect_impl(effect: &Effect) -> String {
             timing
         );
     }
+    if let Some(prevent_next_time) =
+        effect.downcast_ref::<crate::effects::PreventNextTimeDamageEffect>()
+    {
+        let source_text = match &prevent_next_time.source {
+            crate::effects::PreventNextTimeDamageSource::Choice => "a source of your choice".to_string(),
+            crate::effects::PreventNextTimeDamageSource::Filter(filter) => {
+                let desc = filter.description();
+                if desc.is_empty() {
+                    "a source".to_string()
+                } else {
+                    format!("{desc} source")
+                }
+            }
+        };
+        let target_text = match prevent_next_time.target {
+            crate::effects::PreventNextTimeDamageTarget::AnyTarget => "any target".to_string(),
+            crate::effects::PreventNextTimeDamageTarget::You => "you".to_string(),
+        };
+        return format!(
+            "Prevent the next time {source_text} would deal damage to {target_text} this turn"
+        );
+    }
     if let Some(prevent_from) =
         effect.downcast_ref::<crate::effects::PreventAllCombatDamageFromEffect>()
     {

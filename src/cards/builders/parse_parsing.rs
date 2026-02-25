@@ -19379,6 +19379,9 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
 fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
     parser_trace("parse_effect_sentence:entry", tokens);
     let sentence_words = words(tokens);
+    if let Some(effects) = parse_prevent_next_time_damage_sentence(tokens)? {
+        return Ok(effects);
+    }
     if is_activate_only_restriction_sentence(tokens) {
         return Ok(Vec::new());
     }
@@ -28969,6 +28972,118 @@ fn parse_distribute_counters_clause(tokens: &[Token]) -> Result<Option<EffectAst
     parse_distribute_counters_sentence(tokens)
 }
 
+fn parse_prevent_next_time_damage_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let clause_words = words(tokens);
+    if !clause_words.starts_with(&["the", "next", "time"]) {
+        return Ok(None);
+    }
+
+    let Some(would_idx) = clause_words.iter().position(|w| *w == "would") else {
+        return Ok(None);
+    };
+    if clause_words.get(would_idx + 1..would_idx + 4) != Some(["deal", "damage", "to"].as_slice())
+    {
+        return Ok(None);
+    }
+
+    // Must be "this turn ... prevent that damage".
+    let this_turn_rel = clause_words[would_idx + 4..]
+        .windows(2)
+        .position(|window| window == ["this", "turn"])
+        .ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "unsupported prevent-next-time damage duration (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+    let this_turn_idx = (would_idx + 4) + this_turn_rel;
+
+    let tail = &clause_words[this_turn_idx + 2..];
+    if tail != ["prevent", "that", "damage"] {
+        return Ok(None);
+    }
+
+    // Parse source phrase (between "time" and "would").
+    let source_words = &clause_words[3..would_idx];
+    if source_words.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing prevent-next-time damage source (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let source = if source_words
+        .windows(3)
+        .any(|w| w == ["of", "your", "choice"])
+    {
+        PreventNextTimeDamageSourceAst::Choice
+    } else {
+        // Patterns like "a red source", "an artifact source", "black or red source".
+        let mut words = source_words.to_vec();
+        if words.first().is_some_and(|w| matches!(*w, "a" | "an")) {
+            words.remove(0);
+        }
+        if words.last().copied() == Some("source") {
+            words.pop();
+        }
+        if words.is_empty() {
+            return Ok(Some(vec![EffectAst::PreventNextTimeDamage {
+                source: PreventNextTimeDamageSourceAst::Filter(ObjectFilter::default()),
+                target: PreventNextTimeDamageTargetAst::AnyTarget,
+            }]));
+        }
+
+        let mut filter = ObjectFilter::default();
+        let mut colors: Option<crate::color::ColorSet> = None;
+        for w in words {
+            if matches!(w, "or" | "and") {
+                continue;
+            }
+            if let Some(color) = parse_color(w) {
+                colors = Some(
+                    colors
+                        .unwrap_or_else(crate::color::ColorSet::new)
+                        .union(color),
+                );
+                continue;
+            }
+            if let Some(card_type) = parse_card_type(w) {
+                if !filter.card_types.contains(&card_type) {
+                    filter.card_types.push(card_type);
+                }
+                continue;
+            }
+            if w == "shadow" {
+                filter = filter.with_static_ability(StaticAbilityId::Shadow);
+                continue;
+            }
+        }
+        if let Some(colors) = colors {
+            // If only colors were set, COLORLESS ORing is harmless due to contains-any semantics.
+            filter.colors = Some(colors);
+        }
+
+        PreventNextTimeDamageSourceAst::Filter(filter)
+    };
+
+    // Parse target phrase (between "to" and "this turn").
+    let target_words = &clause_words[would_idx + 4..this_turn_idx];
+    let target = if target_words == ["you"] {
+        PreventNextTimeDamageTargetAst::You
+    } else if target_words == ["any", "target"] {
+        PreventNextTimeDamageTargetAst::AnyTarget
+    } else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported prevent-next-time damage target scope (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    };
+
+    Ok(Some(vec![EffectAst::PreventNextTimeDamage { source, target }]))
+}
+
 fn parse_prevent_next_damage_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
     if clause_words.first().copied() != Some("prevent") {
@@ -34387,6 +34502,22 @@ mod parse_parsing_tests {
             .expect("expected static ability");
         assert_eq!(abilities.len(), 1);
         assert_eq!(abilities[0].id(), StaticAbilityId::AttachedAbilityGrant);
+    }
+
+    #[test]
+    fn parse_prevent_next_time_damage_sentence_source_of_your_choice_any_target() {
+        let tokens = tokenize_line(
+            "The next time a source of your choice would deal damage to any target this turn, prevent that damage.",
+            0,
+        );
+        let effects = parse_effect_sentence(&tokens).expect("parse effect sentence");
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            EffectAst::PreventNextTimeDamage {
+                source: PreventNextTimeDamageSourceAst::Choice,
+                target: PreventNextTimeDamageTargetAst::AnyTarget
+            }
+        )));
     }
 }
 

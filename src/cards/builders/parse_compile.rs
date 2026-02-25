@@ -2861,6 +2861,25 @@ fn compile_effect(
                 Effect::prevent_all_damage_to_target(spec, duration.clone())
             })
         }
+        EffectAst::PreventNextTimeDamage { source, target } => {
+            let source_spec = match source {
+                PreventNextTimeDamageSourceAst::Choice => crate::effects::PreventNextTimeDamageSource::Choice,
+                PreventNextTimeDamageSourceAst::Filter(filter) => {
+                    crate::effects::PreventNextTimeDamageSource::Filter(resolve_it_tag(filter, ctx)?)
+                }
+            };
+            let target_spec = match target {
+                PreventNextTimeDamageTargetAst::AnyTarget => crate::effects::PreventNextTimeDamageTarget::AnyTarget,
+                PreventNextTimeDamageTargetAst::You => crate::effects::PreventNextTimeDamageTarget::You,
+            };
+            Ok((
+                vec![Effect::new(crate::effects::PreventNextTimeDamageEffect::new(
+                    source_spec,
+                    target_spec,
+                ))],
+                Vec::new(),
+            ))
+        }
         EffectAst::PreventDamageEach {
             amount,
             filter,

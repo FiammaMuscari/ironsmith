@@ -507,6 +507,18 @@ enum RetargetModeAst {
     OneToFixed { target: TargetAst },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum PreventNextTimeDamageSourceAst {
+    Choice,
+    Filter(ObjectFilter),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum PreventNextTimeDamageTargetAst {
+    AnyTarget,
+    You,
+}
+
 #[derive(Debug, Clone)]
 enum EffectAst {
     DealDamage {
@@ -628,6 +640,10 @@ enum EffectAst {
     PreventAllDamageToTarget {
         target: TargetAst,
         duration: Until,
+    },
+    PreventNextTimeDamage {
+        source: PreventNextTimeDamageSourceAst,
+        target: PreventNextTimeDamageTargetAst,
     },
     PreventDamageEach {
         amount: Value,

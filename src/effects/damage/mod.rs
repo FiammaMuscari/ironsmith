@@ -6,6 +6,10 @@
 
 mod clear_damage;
 mod deal_damage;
+mod prevent_next_time_damage;
 
 pub use clear_damage::ClearDamageEffect;
 pub use deal_damage::DealDamageEffect;
+pub use prevent_next_time_damage::{
+    PreventNextTimeDamageEffect, PreventNextTimeDamageSource, PreventNextTimeDamageTarget,
+};
