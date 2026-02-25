@@ -8321,7 +8321,7 @@ fn merge_mana_activation_conditions(
 
 fn is_activate_only_restriction_sentence(tokens: &[Token]) -> bool {
     let words = words(tokens);
-    words.starts_with(&["activate", "only"])
+    words.starts_with(&["activate", "only"]) || words.starts_with(&["activate", "no", "more", "than"])
 }
 
 fn is_trigger_only_restriction_sentence(tokens: &[Token]) -> bool {
@@ -9930,6 +9930,26 @@ fn parse_activation_condition(tokens: &[Token]) -> Option<crate::ConditionExpr> 
     if line_words.len() < 5 {
         return None;
     }
+
+    if line_words.starts_with(&["activate", "no", "more", "than"]) {
+        let count_word = line_words.get(4)?;
+        let count = match *count_word {
+            "once" => 1,
+            "twice" => 2,
+            other => parse_named_number(other)?,
+        };
+        let mut index = 5usize;
+        if line_words
+            .get(index)
+            .is_some_and(|word| *word == "time" || *word == "times")
+        {
+            index += 1;
+        }
+        if line_words.get(index) == Some(&"each") && line_words.get(index + 1) == Some(&"turn") {
+            return Some(crate::ConditionExpr::MaxActivationsPerTurn(count));
+        }
+    }
+
     if let Some(count) = parse_activation_count_per_turn(&line_words[2..]) {
         return Some(crate::ConditionExpr::MaxActivationsPerTurn(count));
     }

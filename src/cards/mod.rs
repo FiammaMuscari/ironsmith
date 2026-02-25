@@ -570,6 +570,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_activate_no_more_than_twice_each_turn_as_activation_limit() {
+        use crate::ability::AbilityKind;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Activation Limit Probe")
+            .card_types(vec![CardType::Creature])
+            .parse_text("{B}: This creature gets +0/+1 until end of turn. Activate no more than twice each turn.")
+            .expect("activation limit clause should parse");
+
+        let activated = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(activated) => Some(activated),
+                _ => None,
+            })
+            .expect("expected an activated ability");
+
+        assert_eq!(
+            activated.activation_condition,
+            Some(crate::ConditionExpr::MaxActivationsPerTurn(2))
+        );
+    }
+
+    #[test]
     fn generated_definition_support_rejects_parser_fallback_markers() {
         let card = CardBuilder::new(CardId::new(), "Fallback Probe")
             .card_types(vec![CardType::Creature])

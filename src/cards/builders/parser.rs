@@ -2171,6 +2171,13 @@ fn apply_pending_activation_restriction(
 ) {
     let tokens = tokenize_line(restriction, 0);
     let parsed_timing = parse_activate_only_timing(&tokens);
+    let parsed_condition = parse_activation_condition(&tokens);
+    if parsed_condition.is_some() {
+        let existing = ability.activation_condition.take();
+        ability.activation_condition =
+            merge_mana_activation_conditions(existing, parsed_condition);
+    }
+
     let mut timing_applied = false;
     if let Some(parsed_timing) = parsed_timing.as_ref() {
         let merged_timing = merge_activation_timing(&ability.timing, parsed_timing.clone());
