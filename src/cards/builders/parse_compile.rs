@@ -256,6 +256,193 @@ fn compile_trigger_effects(
     trigger: Option<&TriggerSpec>,
     effects: &[EffectAst],
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
+    let (effects, choices, _) = compile_trigger_effects_with_intervening_if(trigger, effects)?;
+    Ok((effects, choices))
+}
+
+fn compile_condition_from_predicate_ast(
+    predicate: &PredicateAst,
+    ctx: &mut CompileContext,
+    saved_last_tag: &Option<String>,
+) -> Result<Condition, CardTextError> {
+    Ok(match predicate {
+        PredicateAst::ItIsLandCard => {
+            let tag = saved_last_tag.clone().ok_or_else(|| {
+                CardTextError::ParseError("conditional requires prior reference".to_string())
+            })?;
+            Condition::TaggedObjectMatches(
+                tag.into(),
+                ObjectFilter {
+                    zone: None,
+                    card_types: vec![CardType::Land],
+                    ..Default::default()
+                },
+            )
+        }
+        PredicateAst::ItMatches(filter) => {
+            let tag = saved_last_tag.clone().ok_or_else(|| {
+                CardTextError::ParseError("conditional requires prior reference".to_string())
+            })?;
+            let mut resolved = filter.clone();
+            resolved.zone = None;
+            Condition::TaggedObjectMatches(tag.into(), resolved)
+        }
+        PredicateAst::TaggedMatches(tag, filter) => {
+            let mut resolved = filter.clone();
+            resolved.zone = None;
+            let resolved_tag = resolve_it_tag_key(tag, ctx)?;
+            Condition::TaggedObjectMatches(resolved_tag, resolved)
+        }
+        PredicateAst::PlayerTaggedObjectMatches {
+            player,
+            tag,
+            filter,
+        } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let mut resolved = resolve_it_tag(filter, ctx)?;
+            resolved.zone = None;
+            let resolved_tag = resolve_it_tag_key(tag, ctx)?;
+            Condition::PlayerTaggedObjectMatches {
+                player,
+                tag: resolved_tag,
+                filter: resolved,
+            }
+        }
+        PredicateAst::PlayerControls { player, filter } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let mut resolved = resolve_it_tag(filter, ctx)?;
+            resolved.zone = None;
+            Condition::PlayerControls {
+                player,
+                filter: resolved,
+            }
+        }
+        PredicateAst::PlayerControlsAtLeast {
+            player,
+            filter,
+            count,
+        } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let mut resolved = resolve_it_tag(filter, ctx)?;
+            resolved.zone = None;
+            Condition::PlayerControlsAtLeast {
+                player,
+                filter: resolved,
+                count: *count,
+            }
+        }
+        PredicateAst::PlayerControlsExactly {
+            player,
+            filter,
+            count,
+        } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let mut resolved = resolve_it_tag(filter, ctx)?;
+            resolved.zone = None;
+            Condition::PlayerControlsExactly {
+                player,
+                filter: resolved,
+                count: *count,
+            }
+        }
+        PredicateAst::PlayerControlsAtLeastWithDifferentPowers {
+            player,
+            filter,
+            count,
+        } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let mut resolved = resolve_it_tag(filter, ctx)?;
+            resolved.zone = None;
+            Condition::PlayerControlsAtLeastWithDifferentPowers {
+                player,
+                filter: resolved,
+                count: *count,
+            }
+        }
+        PredicateAst::PlayerControlsOrHasCardInGraveyard {
+            player,
+            control_filter,
+            graveyard_filter,
+        } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let mut resolved_control = resolve_it_tag(control_filter, ctx)?;
+            resolved_control.zone = None;
+            let resolved_graveyard = resolve_it_tag(graveyard_filter, ctx)?;
+            Condition::Or(
+                Box::new(Condition::PlayerControls {
+                    player: player.clone(),
+                    filter: resolved_control,
+                }),
+                Box::new(Condition::PlayerControls {
+                    player,
+                    filter: resolved_graveyard,
+                }),
+            )
+        }
+        PredicateAst::PlayerOwnsCardNamedInZones {
+            player,
+            name,
+            zones,
+        } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            Condition::PlayerOwnsCardNamedInZones {
+                player,
+                name: name.clone(),
+                zones: zones.clone(),
+            }
+        }
+        PredicateAst::PlayerControlsNo { player, filter } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let mut resolved = resolve_it_tag(filter, ctx)?;
+            resolved.zone = None;
+            Condition::Not(Box::new(Condition::PlayerControls {
+                player,
+                filter: resolved,
+            }))
+        }
+        PredicateAst::PlayerControlsMost { player, filter } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let mut resolved = resolve_it_tag(filter, ctx)?;
+            resolved.zone = None;
+            Condition::PlayerControlsMost {
+                player,
+                filter: resolved,
+            }
+        }
+        PredicateAst::PlayerHasLessLifeThanYou { player } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            Condition::PlayerHasLessLifeThanYou { player }
+        }
+        PredicateAst::PlayerTappedLandForManaThisTurn { player } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            Condition::PlayerTappedLandForManaThisTurn { player }
+        }
+        PredicateAst::YouHaveNoCardsInHand => Condition::Not(Box::new(Condition::CardsInHandOrMore(1))),
+        PredicateAst::SourceIsTapped => Condition::SourceIsTapped,
+        PredicateAst::SourceHasNoCounter(counter_type) => Condition::SourceHasNoCounter(*counter_type),
+        PredicateAst::YouAttackedThisTurn => Condition::AttackedThisTurn,
+        PredicateAst::NoSpellsWereCastLastTurn => Condition::NoSpellsWereCastLastTurn,
+        PredicateAst::TargetWasKicked => Condition::TargetWasKicked,
+        PredicateAst::TargetSpellCastOrderThisTurn(order) => Condition::TargetSpellCastOrderThisTurn(*order),
+        PredicateAst::TargetSpellControllerIsPoisoned => Condition::TargetSpellControllerIsPoisoned,
+        PredicateAst::TargetSpellNoManaSpentToCast => Condition::Not(Box::new(Condition::TargetSpellManaSpentToCastAtLeast { amount: 1, symbol: None })),
+        PredicateAst::YouControlMoreCreaturesThanTargetSpellController => Condition::YouControlMoreCreaturesThanTargetSpellController,
+        PredicateAst::TargetIsBlocked => Condition::TargetIsBlocked,
+        PredicateAst::TargetHasGreatestPowerAmongCreatures => Condition::TargetHasGreatestPowerAmongCreatures,
+        PredicateAst::TargetManaValueLteColorsSpentToCastThisSpell => Condition::TargetManaValueLteColorsSpentToCastThisSpell,
+        PredicateAst::ManaSpentToCastThisSpellAtLeast { amount, symbol } => Condition::ManaSpentToCastThisSpellAtLeast { amount: *amount, symbol: *symbol },
+        PredicateAst::And(left, right) => {
+            let left = compile_condition_from_predicate_ast(left, ctx, saved_last_tag)?;
+            let right = compile_condition_from_predicate_ast(right, ctx, saved_last_tag)?;
+            Condition::And(Box::new(left), Box::new(right))
+        }
+    })
+}
+
+fn compile_trigger_effects_with_intervening_if(
+    trigger: Option<&TriggerSpec>,
+    effects: &[EffectAst],
+) -> Result<(Vec<Effect>, Vec<ChooseSpec>, Option<Condition>), CardTextError> {
     let mut ctx = CompileContext::new();
     ctx.last_player_filter = trigger.and_then(inferred_trigger_player_filter);
     ctx.allow_life_event_value = trigger
@@ -280,7 +467,29 @@ fn compile_trigger_effects(
         };
         ctx.last_object_tag = Some(default_tag.to_string());
     }
-    let (mut compiled, choices) = compile_effects(effects, &mut ctx)?;
+    let mut intervening_if: Option<Condition> = None;
+    let mut effects_to_compile = effects;
+    let mut extracted_predicate: Option<&PredicateAst> = None;
+    if effects.len() == 1
+        && let EffectAst::Conditional {
+            predicate,
+            if_true,
+            if_false,
+        } = &effects[0]
+        && if_false.is_empty()
+        && !if_true.is_empty()
+    {
+        extracted_predicate = Some(predicate);
+        effects_to_compile = if_true;
+    }
+
+    let saved_last_tag = ctx.last_object_tag.clone();
+    if let Some(predicate) = extracted_predicate {
+        intervening_if =
+            Some(compile_condition_from_predicate_ast(predicate, &mut ctx, &saved_last_tag)?);
+    }
+
+    let (mut compiled, choices) = compile_effects(effects_to_compile, &mut ctx)?;
     if !prelude.is_empty() {
         prelude.append(&mut compiled);
         compiled = prelude;
@@ -295,7 +504,7 @@ fn compile_trigger_effects(
     {
         compiled.insert(0, Effect::tag_triggering_damage_target("damaged"));
     }
-    Ok((compiled, choices))
+    Ok((compiled, choices, intervening_if))
 }
 
 fn compile_trigger_effects_seeded(

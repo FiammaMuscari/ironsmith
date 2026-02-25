@@ -1786,7 +1786,7 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
     let is_each_other_player_untap_static =
         is_untap_during_each_other_players_untap_step_words(&line_words);
     let starts_with_statement_effect_head = find_verb(&tokens).is_some_and(|(_, idx)| idx == 0)
-        || tokens.first().is_some_and(|token| token.is_word("choose"));
+        || tokens.first().is_some_and(|token| token.is_word("choose") || token.is_word("if"));
     if starts_with_statement_effect_head && !is_each_other_player_untap_static {
         match parse_effect_sentences(&tokens) {
             Ok(effects) if !effects.is_empty() => {
@@ -24975,8 +24975,22 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
         }
     }
 
-    if filtered.as_slice() == ["this", "tapped"] || filtered.as_slice() == ["thiss", "tapped"] {
+    if filtered.as_slice() == ["this", "tapped"]
+        || filtered.as_slice() == ["thiss", "tapped"]
+        || ((filtered.first().copied() == Some("this") || filtered.first().copied() == Some("thiss"))
+            && filtered.last().copied() == Some("tapped"))
+    {
         return Ok(PredicateAst::SourceIsTapped);
+    }
+
+    if filtered.starts_with(&["there", "are", "no"])
+        && filtered.contains(&"counters")
+        && filtered.windows(2).any(|window| window == ["on", "this"])
+        && let Some(counters_idx) = filtered.iter().position(|word| *word == "counters")
+        && counters_idx >= 4
+        && let Some(counter_type) = parse_counter_type_word(filtered[counters_idx - 1])
+    {
+        return Ok(PredicateAst::SourceHasNoCounter(counter_type));
     }
 
     if filtered.as_slice() == ["you", "have", "no", "cards", "in", "hand"] {

@@ -1159,8 +1159,8 @@ fn apply_line_ast(
             effects,
             max_triggers_per_turn,
         } => {
-            let (compiled_effects, choices) =
-                match compile_trigger_effects(Some(&trigger), &effects) {
+            let (compiled_effects, choices, intervening_if) =
+                match compile_trigger_effects_with_intervening_if(Some(&trigger), &effects) {
                     Ok(compiled) => compiled,
                     Err(err) if allow_unsupported => {
                         return Ok(push_unsupported_marker(
@@ -1195,13 +1195,20 @@ fn apply_line_ast(
             };
 
             let compiled_trigger = compile_trigger_spec(trigger);
+            let mut merged_intervening_if = intervening_if;
+            if let Some(max) = max_triggers_per_turn {
+                let max_cond = crate::ConditionExpr::MaxTimesEachTurn(max);
+                merged_intervening_if = Some(match merged_intervening_if.take() {
+                    Some(existing) => crate::ConditionExpr::And(Box::new(existing), Box::new(max_cond)),
+                    None => max_cond,
+                });
+            }
             builder = builder.with_ability(Ability {
                 kind: AbilityKind::Triggered(TriggeredAbility {
                     trigger: compiled_trigger,
                     effects: compiled_effects,
                     choices,
-                    intervening_if: max_triggers_per_turn
-                        .map(crate::ConditionExpr::MaxTimesEachTurn),
+                    intervening_if: merged_intervening_if,
                 }),
                 functional_zones,
                 text: Some(info.raw_line.clone()),

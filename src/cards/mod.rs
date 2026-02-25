@@ -503,6 +503,44 @@ mod tests {
     }
 
     #[test]
+    fn parse_if_this_is_tapped_predicate_as_intervening_if() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Storage Land Probe")
+            .card_types(vec![CardType::Land])
+            .parse_text("At the beginning of your upkeep, if this land is tapped, put a storage counter on it.")
+            .expect("tapped predicate trigger should parse");
+
+        let triggered = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered) => Some(triggered),
+                _ => None,
+            })
+            .expect("expected a triggered ability");
+
+        assert_eq!(
+            triggered.intervening_if,
+            Some(crate::ConditionExpr::SourceIsTapped),
+            "expected intervening-if to be SourceIsTapped"
+        );
+    }
+
+    #[test]
+    fn parse_if_there_are_no_counters_on_this_predicate() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Depletion Land Probe")
+            .card_types(vec![CardType::Land])
+            .parse_text("If there are no depletion counters on this land, sacrifice it.")
+            .expect("no-counters predicate should parse");
+
+        // Ensure we actually produced an effect (not a dropped sentence).
+        assert!(
+            def.spell_effect.as_ref().is_some_and(|effects| !effects.is_empty())
+                || !def.abilities.is_empty(),
+            "expected parsed effects or abilities"
+        );
+    }
+
+    #[test]
     fn generated_definition_support_rejects_parser_fallback_markers() {
         let card = CardBuilder::new(CardId::new(), "Fallback Probe")
             .card_types(vec![CardType::Creature])
