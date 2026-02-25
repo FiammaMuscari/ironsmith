@@ -2988,6 +2988,14 @@ fn compile_effect(
             || Effect::discover(count.clone()),
             |filter| Effect::discover_player(count.clone(), filter),
         ),
+        EffectAst::BecomeBasicLandTypeChoice { target, duration } => {
+            compile_tagged_effect_for_target(target, ctx, "become_basic_land_type", |spec| {
+                Effect::new(crate::effects::BecomeBasicLandTypeChoiceEffect::new(
+                    spec,
+                    duration.clone(),
+                ))
+            })
+        }
         EffectAst::Surveil { count, player } => compile_player_effect(
             *player,
             ctx,

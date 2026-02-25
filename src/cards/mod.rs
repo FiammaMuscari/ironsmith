@@ -735,6 +735,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_become_basic_land_type_of_your_choice_until_eot() {
+        use crate::effects::BecomeBasicLandTypeChoiceEffect;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Become Land Type Probe")
+            .card_types(vec![CardType::Creature])
+            .parse_text("{T}: Target land becomes the basic land type of your choice until end of turn.")
+            .expect("basic land type choice become clause should parse");
+
+        let activated = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(act) => Some(act),
+                _ => None,
+            })
+            .expect("expected an activated ability");
+
+        assert!(
+            activated
+                .effects
+                .iter()
+                .any(|e| e.downcast_ref::<BecomeBasicLandTypeChoiceEffect>().is_some()),
+            "expected BecomeBasicLandTypeChoiceEffect in activated effects"
+        );
+    }
+
+    #[test]
     fn generated_definition_support_rejects_parser_fallback_markers() {
         let card = CardBuilder::new(CardId::new(), "Fallback Probe")
             .card_types(vec![CardType::Creature])

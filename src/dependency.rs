@@ -101,6 +101,10 @@ fn check_dependency_relationship(
         | (Modification::RemoveAllAbilities, Modification::AddAbilityGeneric(_))
         | (Modification::RemoveAllAbilities, Modification::CopyActivatedAbilities { .. })
         | (Modification::RemoveAllAbilities, Modification::AddCombatDamageDrawAbility)
+        | (Modification::SetAbilities(_), Modification::AddAbility(_))
+        | (Modification::SetAbilities(_), Modification::AddAbilityGeneric(_))
+        | (Modification::SetAbilities(_), Modification::CopyActivatedAbilities { .. })
+        | (Modification::SetAbilities(_), Modification::AddCombatDamageDrawAbility)
         | (Modification::RemoveAllAbilitiesExceptMana, Modification::AddAbility(_))
         | (Modification::RemoveAllAbilitiesExceptMana, Modification::AddAbilityGeneric(_))
         | (
@@ -116,6 +120,10 @@ fn check_dependency_relationship(
         | (Modification::AddAbilityGeneric(_), Modification::RemoveAllAbilities)
         | (Modification::CopyActivatedAbilities { .. }, Modification::RemoveAllAbilities)
         | (Modification::AddCombatDamageDrawAbility, Modification::RemoveAllAbilities)
+        | (Modification::AddAbility(_), Modification::SetAbilities(_))
+        | (Modification::AddAbilityGeneric(_), Modification::SetAbilities(_))
+        | (Modification::CopyActivatedAbilities { .. }, Modification::SetAbilities(_))
+        | (Modification::AddCombatDamageDrawAbility, Modification::SetAbilities(_))
         | (Modification::AddAbility(_), Modification::RemoveAllAbilitiesExceptMana)
         | (Modification::AddAbilityGeneric(_), Modification::RemoveAllAbilitiesExceptMana)
         | (

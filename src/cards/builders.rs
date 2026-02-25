@@ -699,6 +699,10 @@ enum EffectAst {
         count: Value,
         player: PlayerAst,
     },
+    BecomeBasicLandTypeChoice {
+        target: TargetAst,
+        duration: Until,
+    },
     Surveil {
         count: Value,
         player: PlayerAst,

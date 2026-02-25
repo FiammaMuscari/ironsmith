@@ -279,6 +279,13 @@ pub enum Modification {
     /// Add a generic ability (activated, triggered, static, or mana).
     AddAbilityGeneric(Ability),
 
+    /// Replace all abilities with a specific set.
+    ///
+    /// This is used for effects that explicitly remove all abilities and then
+    /// grant a defined set (e.g., basic land type effects that leave only the
+    /// corresponding mana ability).
+    SetAbilities(Vec<Ability>),
+
     /// Copy activated abilities from objects matching a filter.
     CopyActivatedAbilities {
         filter: ObjectFilter,
@@ -367,6 +374,7 @@ impl Modification {
 
             Modification::AddAbility(_)
             | Modification::AddAbilityGeneric(_)
+            | Modification::SetAbilities(_)
             | Modification::CopyActivatedAbilities { .. }
             | Modification::AddCombatDamageDrawAbility
             | Modification::RemoveAbility(_)
@@ -1369,6 +1377,15 @@ fn apply_modification_to_chars(
                 chars.static_abilities.push(sa.clone());
             }
             chars.abilities.push(ability.clone());
+        }
+        Modification::SetAbilities(abilities) => {
+            chars.abilities = abilities.clone();
+            chars.static_abilities.clear();
+            for ability in abilities {
+                if let AbilityKind::Static(ref sa) = ability.kind {
+                    chars.static_abilities.push(sa.clone());
+                }
+            }
         }
         Modification::CopyActivatedAbilities {
             filter,

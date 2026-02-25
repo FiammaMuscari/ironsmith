@@ -12167,6 +12167,22 @@ fn describe_effect_impl(effect: &Effect) -> String {
             describe_value(&discover.count)
         );
     }
+    if let Some(become_basic) =
+        effect.downcast_ref::<crate::effects::BecomeBasicLandTypeChoiceEffect>()
+    {
+        let target = describe_choose_spec(&become_basic.target);
+        if become_basic.until == Until::EndOfTurn {
+            return format!(
+                "{} becomes the basic land type of your choice until end of turn",
+                target
+            );
+        }
+        return format!(
+            "{} becomes the basic land type of your choice {}",
+            target,
+            describe_until(&become_basic.until)
+        );
+    }
     if let Some(investigate) = effect.downcast_ref::<crate::effects::InvestigateEffect>() {
         return format!("Investigate {}", describe_value(&investigate.count));
     }

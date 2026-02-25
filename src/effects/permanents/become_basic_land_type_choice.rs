@@ -1,0 +1,194 @@
+//! "Becomes the basic land type of your choice" effect.
+//!
+//! Used for cards like Grixis Illusionist:
+//! "{T}: Target land becomes the basic land type of your choice until end of turn."
+
+use crate::ability::{Ability, AbilityKind, ActivatedAbility};
+use crate::continuous::Modification;
+use crate::decisions::context::{SelectableOption, SelectOptionsContext};
+use crate::effect::{EffectOutcome, Until};
+use crate::effects::helpers::resolve_player_filter;
+use crate::effects::EffectExecutor;
+use crate::executor::{ExecutionContext, ExecutionError};
+use crate::game_state::GameState;
+use crate::mana::ManaSymbol;
+use crate::target::{ChooseSpec, PlayerFilter};
+use crate::types::Subtype;
+use crate::zone::Zone;
+
+/// Effect: target land becomes one basic land type of the controller's choice.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BecomeBasicLandTypeChoiceEffect {
+    pub target: ChooseSpec,
+    pub until: Until,
+    pub chooser: PlayerFilter,
+}
+
+impl BecomeBasicLandTypeChoiceEffect {
+    pub fn new(target: ChooseSpec, until: Until) -> Self {
+        Self {
+            target,
+            until,
+            chooser: PlayerFilter::You,
+        }
+    }
+
+    pub fn with_chooser(mut self, chooser: PlayerFilter) -> Self {
+        self.chooser = chooser;
+        self
+    }
+
+    fn subtype_options() -> [(Subtype, ManaSymbol, &'static str); 5] {
+        [
+            (Subtype::Plains, ManaSymbol::White, "Plains"),
+            (Subtype::Island, ManaSymbol::Blue, "Island"),
+            (Subtype::Swamp, ManaSymbol::Black, "Swamp"),
+            (Subtype::Mountain, ManaSymbol::Red, "Mountain"),
+            (Subtype::Forest, ManaSymbol::Green, "Forest"),
+        ]
+    }
+
+    fn mana_ability_for(symbol: ManaSymbol) -> Ability {
+        let text = match symbol {
+            ManaSymbol::White => "{T}: Add {W}.".to_string(),
+            ManaSymbol::Blue => "{T}: Add {U}.".to_string(),
+            ManaSymbol::Black => "{T}: Add {B}.".to_string(),
+            ManaSymbol::Red => "{T}: Add {R}.".to_string(),
+            ManaSymbol::Green => "{T}: Add {G}.".to_string(),
+            ManaSymbol::Colorless => "{T}: Add {C}.".to_string(),
+            _ => "{T}: Add mana.".to_string(),
+        };
+        Ability {
+            kind: AbilityKind::Activated(ActivatedAbility::basic_mana(symbol)),
+            functional_zones: vec![Zone::Battlefield],
+            text: Some(text),
+        }
+    }
+}
+
+impl EffectExecutor for BecomeBasicLandTypeChoiceEffect {
+    fn execute(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        let chooser = resolve_player_filter(game, &self.chooser, ctx)?;
+
+        let options: Vec<SelectableOption> = Self::subtype_options()
+            .iter()
+            .enumerate()
+            .map(|(idx, (_, _, label))| SelectableOption::new(idx, *label))
+            .collect();
+        let choice_ctx = SelectOptionsContext::new(
+            chooser,
+            Some(ctx.source),
+            "Choose a basic land type",
+            options,
+            1,
+            1,
+        );
+        let chosen = ctx
+            .decision_maker
+            .decide_options(game, &choice_ctx)
+            .into_iter()
+            .next()
+            .unwrap_or(0);
+
+        let (subtype, mana_symbol, _) = Self::subtype_options()[chosen.min(4)];
+        let mana_ability = Self::mana_ability_for(mana_symbol);
+
+        let mut apply = crate::effects::ApplyContinuousEffect::with_spec(
+            self.target.clone(),
+            Modification::SetSubtypes(vec![subtype]),
+            self.until.clone(),
+        );
+        // Rule intent: type change replaces the land's abilities with the basic land mana ability.
+        apply = apply.with_additional_modification(Modification::SetAbilities(vec![mana_ability]));
+
+        apply.execute(game, ctx)
+    }
+
+    fn clone_box(&self) -> Box<dyn EffectExecutor> {
+        Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cards::CardDefinitionBuilder;
+    use crate::decision::DecisionMaker;
+    use crate::ids::{CardId, PlayerId};
+    use crate::types::{CardType, Subtype};
+
+    fn setup_game() -> GameState {
+        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+    }
+
+    struct ChooseIslandDm;
+    impl DecisionMaker for ChooseIslandDm {
+        fn decide_options(
+            &mut self,
+            _game: &GameState,
+            ctx: &SelectOptionsContext,
+        ) -> Vec<usize> {
+            // Island option index in BecomeBasicLandTypeChoiceEffect::subtype_options()
+            let _ = ctx;
+            vec![1]
+        }
+    }
+
+    #[test]
+    fn become_basic_land_type_choice_sets_subtype_and_replaces_mana_ability() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let land_def = CardDefinitionBuilder::new(CardId::new(), "Weird Land")
+            .card_types(vec![CardType::Land])
+            .subtypes(vec![Subtype::Desert])
+            .parse_text("{T}: Add {C}{C}.")
+            .expect("land text should parse");
+
+        let land_id = game.create_object_from_definition(&land_def, alice, Zone::Battlefield);
+        let source = game.new_object_id();
+
+        let mut dm = ChooseIslandDm;
+        let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+        let effect = BecomeBasicLandTypeChoiceEffect::new(
+            ChooseSpec::SpecificObject(land_id),
+            Until::EndOfTurn,
+        );
+        effect
+            .execute(&mut game, &mut ctx)
+            .expect("execute become basic land type choice");
+
+        let subtypes = game.calculated_subtypes(land_id);
+        assert!(
+            subtypes.contains(&Subtype::Island),
+            "expected land to be an Island, got {subtypes:?}"
+        );
+
+        let chars = game
+            .calculated_characteristics(land_id)
+            .expect("calculate characteristics");
+        let mana_symbols: Vec<Vec<ManaSymbol>> = chars
+            .abilities
+            .iter()
+            .filter_map(|a| match &a.kind {
+                AbilityKind::Activated(act) if act.is_mana_ability() => {
+                    Some(act.mana_symbols().to_vec())
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            mana_symbols.iter().any(|syms| syms == &vec![ManaSymbol::Blue]),
+            "expected island mana ability, got {mana_symbols:?}"
+        );
+        assert!(
+            !mana_symbols.iter().any(|syms| syms == &vec![ManaSymbol::Colorless, ManaSymbol::Colorless]),
+            "expected old {{C}}{{C}} mana ability to be removed, got {mana_symbols:?}"
+        );
+    }
+}

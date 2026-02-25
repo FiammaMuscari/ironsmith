@@ -27619,9 +27619,13 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         }
     }
     let for_each_subject_filter = parse_for_each_object_subject(subject_tokens)?;
-    let subject = parse_subject(subject_tokens);
     let rest = &tokens[verb_idx + 1..];
-    let mut effect = parse_effect_with_verb(verb, Some(subject), rest)?;
+    let mut effect = if matches!(verb, Verb::Become) {
+        parse_become_clause(subject_tokens, rest)?
+    } else {
+        let subject = parse_subject(subject_tokens);
+        parse_effect_with_verb(verb, Some(subject), rest)?
+    };
     if let Some(filter) = for_each_subject_filter {
         effect = EffectAst::ForEachObject {
             filter,
@@ -27629,6 +27633,76 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         };
     }
     Ok(effect)
+}
+
+fn parse_become_clause(
+    subject_tokens: &[Token],
+    rest_tokens: &[Token],
+) -> Result<EffectAst, CardTextError> {
+    use crate::effect::Until;
+
+    let subject_words = words(subject_tokens);
+    let subject = parse_subject(subject_tokens);
+
+    // Split off trailing duration, if present.
+    let (duration, become_tokens) = if let Some((duration, remainder)) =
+        parse_restriction_duration(rest_tokens)?
+    {
+        (duration, remainder)
+    } else {
+        (Until::Forever, trim_commas(rest_tokens).to_vec())
+    };
+    let become_words_vec = words(&become_tokens);
+    let become_words = if become_words_vec
+        .first()
+        .is_some_and(|w| *w == "the" || *w == "a")
+    {
+        &become_words_vec[1..]
+    } else {
+        &become_words_vec[..]
+    };
+
+    // Player "life total becomes N"
+    if let Some(SubjectAst::Player(player)) = Some(subject) {
+        if subject_words.contains(&"life") && subject_words.contains(&"total") {
+            let amount = parse_value(&become_tokens)
+                .map(|(value, _)| value)
+                .ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "missing life total amount (clause: '{}')",
+                        words(rest_tokens).join(" ")
+                    ))
+                })?;
+            return Ok(EffectAst::SetLifeTotal { amount, player });
+        }
+    }
+
+    // Resolve object target.
+    let target = if subject_words.is_empty()
+        || subject_words == ["it"]
+        || subject_words == ["they"]
+        || subject_words == ["them"]
+    {
+        TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(subject_tokens))
+    } else if subject_words == ["this"]
+        || subject_words == ["this", "permanent"]
+        || subject_words == ["this", "creature"]
+        || subject_words == ["this", "land"]
+    {
+        TargetAst::Source(span_from_tokens(subject_tokens))
+    } else {
+        parse_target_phrase(subject_tokens)?
+    };
+
+    // "the/a basic land type of your choice"
+    if become_words == ["basic", "land", "type", "of", "your", "choice"] {
+        return Ok(EffectAst::BecomeBasicLandTypeChoice { target, duration });
+    }
+
+    Err(CardTextError::ParseError(format!(
+        "unsupported become clause (clause: '{}')",
+        words(rest_tokens).join(" ")
+    )))
 }
 
 fn parse_for_each_object_subject(
