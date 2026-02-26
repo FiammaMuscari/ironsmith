@@ -7,7 +7,9 @@ use crate::ability::LevelAbility;
 use crate::color::Color;
 use crate::effect::{Condition, Effect, Value};
 use crate::events::cards::matchers::{WouldDiscardMatcher, WouldDrawCardMatcher};
-use crate::events::damage::matchers::{DamageFromSelfMatcher, DamageToPlayerOrObjectMatcher};
+use crate::events::damage::matchers::{
+    DamageFromSelfMatcher, DamageToObjectMatcher, DamageToPlayerOrObjectMatcher,
+};
 use crate::events::traits::{EventKind, ReplacementMatcher, ReplacementPriority, downcast_event};
 use crate::events::zones::matchers::{
     ThisWouldEnterBattlefieldMatcher, ThisWouldGoToGraveyardMatcher, WouldEnterBattlefieldMatcher,
@@ -1139,6 +1141,37 @@ impl StaticAbilityKind for PreventAllDamageDealtByThisPermanent {
     }
 }
 
+/// "Prevent all damage that would be dealt to creatures."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PreventAllDamageDealtToCreatures;
+
+impl StaticAbilityKind for PreventAllDamageDealtToCreatures {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::PreventAllDamageDealtToCreatures
+    }
+
+    fn display(&self) -> String {
+        "Prevent all damage that would be dealt to creatures.".to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            DamageToObjectMatcher::to_creature(),
+            ReplacementAction::Prevent,
+        ))
+    }
+}
+
 /// Permanents matching a filter enter the battlefield tapped.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnterTappedForFilter {
@@ -1807,10 +1840,13 @@ impl StaticAbilityKind for Custom {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::card::CardBuilder;
     use crate::events::DamageEvent;
     use crate::events::EventContext;
     use crate::events::zones::ZoneChangeEvent;
     use crate::game_event::DamageTarget;
+    use crate::ids::CardId;
+    use crate::types::CardType;
     use crate::zone::Zone;
 
     #[test]
@@ -1957,5 +1993,34 @@ mod tests {
         // Unpreventable damage from this permanent does not match.
         let unpreventable = DamageEvent::unpreventable(src, DamageTarget::Player(alice), 3, false);
         assert!(!matcher.matches_event(&unpreventable, &ctx));
+    }
+
+    #[test]
+    fn test_prevent_all_damage_dealt_to_creatures_generates_replacement() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let src = ObjectId::from_raw(42);
+        let alice = PlayerId::from_index(0);
+        let card = CardBuilder::new(CardId::new(), "Creature Target")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let creature_id = game.create_object_from_card(&card, alice, Zone::Battlefield);
+
+        let ability = PreventAllDamageDealtToCreatures;
+        let replacement = ability
+            .generate_replacement_effect(src, alice)
+            .expect("should generate replacement effect");
+        assert_eq!(replacement.replacement, ReplacementAction::Prevent);
+
+        let matcher = replacement
+            .matcher
+            .as_ref()
+            .expect("replacement must have a matcher");
+        let ctx = EventContext::for_replacement_effect(alice, src, &game);
+
+        let creature_damage = DamageEvent::new(src, DamageTarget::Object(creature_id), 3, false);
+        assert!(matcher.matches_event(&creature_damage, &ctx));
+
+        let player_damage = DamageEvent::new(src, DamageTarget::Player(alice), 3, false);
+        assert!(!matcher.matches_event(&player_damage, &ctx));
     }
 }

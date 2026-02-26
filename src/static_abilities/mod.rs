@@ -1133,6 +1133,10 @@ impl StaticAbility {
         Self::new(MayAssignDamageAsUnblocked)
     }
 
+    pub fn prevent_all_damage_dealt_to_creatures() -> Self {
+        Self::new(PreventAllDamageDealtToCreatures)
+    }
+
     pub fn shuffle_into_library_from_graveyard() -> Self {
         Self::new(ShuffleIntoLibraryFromGraveyard)
     }

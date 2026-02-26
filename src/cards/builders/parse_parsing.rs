@@ -2495,6 +2495,9 @@ fn parse_static_ability_line(
     if let Some(ability) = parse_grant_flash_to_noncreature_spells_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) = parse_prevent_all_damage_dealt_to_creatures_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_creatures_cant_block_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -6748,6 +6751,18 @@ fn parse_creatures_cant_block_line(
             ObjectFilter::creature(),
             StaticAbility::cant_block(),
         )));
+    }
+    Ok(None)
+}
+
+fn parse_prevent_all_damage_dealt_to_creatures_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    if words.as_slice() == [
+        "prevent", "all", "damage", "that", "would", "be", "dealt", "to", "creatures",
+    ] {
+        return Ok(Some(StaticAbility::prevent_all_damage_dealt_to_creatures()));
     }
     Ok(None)
 }

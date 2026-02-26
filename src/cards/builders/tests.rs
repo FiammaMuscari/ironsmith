@@ -2078,6 +2078,26 @@ fn test_parse_counter_target_activated_or_triggered_ability_clause() {
 }
 
 #[test]
+fn test_parse_prevent_all_damage_to_creatures_static_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bubble Matrix Probe")
+        .card_types(vec![CardType::Artifact])
+        .parse_text("Prevent all damage that would be dealt to creatures.")
+        .expect("prevent-all damage to creatures clause should parse as static ability");
+
+    let has_prevent_all_to_creatures = def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(static_ability)
+                if static_ability.id() == StaticAbilityId::PreventAllDamageDealtToCreatures
+        )
+    });
+    assert!(
+        has_prevent_all_to_creatures,
+        "expected PreventAllDamageDealtToCreatures static ability in parsed card"
+    );
+}
+
+#[test]
 fn test_parse_raid_conditional_with_attacked_this_turn_without_fallback() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Raid Probe")
         .card_types(vec![CardType::Creature])
