@@ -34611,6 +34611,49 @@ fn parse_add_mana(
         });
     }
 
+    // "Add one mana of the chosen color."
+    let has_explicit_symbol = tokens
+        .iter()
+        .filter_map(Token::as_word)
+        .any(|word| parse_mana_symbol(word).is_ok());
+    if !has_explicit_symbol
+        && let Some(chosen_idx) = clause_words
+            .windows(2)
+            .position(|window| window == ["chosen", "color"])
+    {
+        let prefix = &clause_words[..chosen_idx];
+        let references_mana_of_chosen_color =
+            prefix.ends_with(&["mana", "of", "the"]) || prefix.ends_with(&["mana", "of"]);
+        if references_mana_of_chosen_color {
+            let tail_words = &clause_words[chosen_idx + 2..];
+            let has_only_pool_tail = tail_words.is_empty()
+                || tail_words.iter().all(|word| {
+                    matches!(
+                        *word,
+                        "to"
+                            | "your"
+                            | "their"
+                            | "its"
+                            | "that"
+                            | "player"
+                            | "players"
+                            | "mana"
+                            | "pool"
+                    )
+                });
+            if has_only_pool_tail {
+                let amount = parse_value(tokens)
+                    .map(|(value, _)| value)
+                    .unwrap_or(Value::Fixed(1));
+                return Ok(EffectAst::AddManaChosenColor {
+                    amount,
+                    player,
+                    fixed_option: None,
+                });
+            }
+        }
+    }
+
     let any_one = clause_words
         .windows(3)
         .any(|window| window == ["any", "one", "color"] || window == ["any", "one", "type"]);
