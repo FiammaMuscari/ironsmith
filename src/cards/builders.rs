@@ -131,6 +131,8 @@ enum KeywordAction {
     Unblockable,
     Devoid,
     Annihilator(u32),
+    ForMirrodin,
+    LivingWeapon,
     Crew {
         amount: u32,
         timing: ActivationTiming,
@@ -1600,6 +1602,8 @@ impl CardDefinitionBuilder {
                 functional_zones: vec![Zone::Battlefield],
                 text: Some(format!("Annihilator {amount}")),
             }),
+            KeywordAction::ForMirrodin => self.for_mirrodin(),
+            KeywordAction::LivingWeapon => self.living_weapon(),
             KeywordAction::Crew {
                 amount,
                 timing,
@@ -3031,6 +3035,40 @@ impl CardDefinitionBuilder {
         )
     }
 
+    /// Add "For Mirrodin!"
+    ///
+    /// "When this Equipment enters, create a 2/2 red Rebel creature token, then attach this to it."
+    pub fn for_mirrodin(self) -> Self {
+        let created_tag = TagKey::from("for_mirrodin_created");
+        self.with_ability(
+            Ability::triggered(
+                Trigger::this_enters_battlefield(),
+                vec![
+                    Effect::create_tokens(Self::for_mirrodin_rebel_token(), 1).tag(created_tag.clone()),
+                    Effect::attach_to(ChooseSpec::Tagged(created_tag)),
+                ],
+            )
+            .with_text("For Mirrodin!"),
+        )
+    }
+
+    /// Add living weapon.
+    ///
+    /// "When this Equipment enters, create a 0/0 black Phyrexian Germ creature token, then attach this to it."
+    pub fn living_weapon(self) -> Self {
+        let created_tag = TagKey::from("living_weapon_created");
+        self.with_ability(
+            Ability::triggered(
+                Trigger::this_enters_battlefield(),
+                vec![
+                    Effect::create_tokens(Self::living_weapon_germ_token(), 1).tag(created_tag.clone()),
+                    Effect::attach_to(ChooseSpec::Tagged(created_tag)),
+                ],
+            )
+            .with_text("Living weapon"),
+        )
+    }
+
     /// Add shadow.
     pub fn shadow(self) -> Self {
         self.with_ability(Ability::static_ability(StaticAbility::shadow()).with_text("Shadow"))
@@ -3531,6 +3569,26 @@ impl CardDefinitionBuilder {
             .build()
     }
 
+    fn for_mirrodin_rebel_token() -> CardDefinition {
+        CardDefinitionBuilder::new(CardId::new(), "Rebel")
+            .token()
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Rebel])
+            .color_indicator(ColorSet::RED)
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build()
+    }
+
+    fn living_weapon_germ_token() -> CardDefinition {
+        CardDefinitionBuilder::new(CardId::new(), "Phyrexian")
+            .token()
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Phyrexian, Subtype::Germ])
+            .color_indicator(ColorSet::BLACK)
+            .power_toughness(PowerToughness::fixed(0, 0))
+            .build()
+    }
+
     // === Build ===
 
     /// Build the card definition.
@@ -3545,6 +3603,65 @@ impl CardDefinitionBuilder {
             max_saga_chapter: self.max_saga_chapter,
             cost_effects: self.cost_effects,
         }
+    }
+}
+
+#[cfg(test)]
+mod keyword_behavior_tests {
+    use super::*;
+    use crate::ability::AbilityKind;
+
+    #[test]
+    fn for_mirrodin_adds_etb_create_and_attach_trigger() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "For Mirrodin Variant")
+            .card_types(vec![CardType::Artifact])
+            .subtypes(vec![Subtype::Equipment])
+            .for_mirrodin()
+            .build();
+
+        let ability = def
+            .abilities
+            .iter()
+            .find(|ability| ability.text.as_deref() == Some("For Mirrodin!"))
+            .expect("expected For Mirrodin ability");
+        let AbilityKind::Triggered(triggered) = &ability.kind else {
+            panic!("expected For Mirrodin to add a triggered ability");
+        };
+
+        let debug = format!("{triggered:?}").to_ascii_lowercase();
+        assert!(
+            debug.contains("createtokeneffect")
+                && debug.contains("rebel")
+                && debug.contains("attachtoeffect"),
+            "expected For Mirrodin trigger to create Rebel token and attach equipment, got {debug}"
+        );
+    }
+
+    #[test]
+    fn living_weapon_adds_etb_create_and_attach_trigger() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Living Weapon Variant")
+            .card_types(vec![CardType::Artifact])
+            .subtypes(vec![Subtype::Equipment])
+            .living_weapon()
+            .build();
+
+        let ability = def
+            .abilities
+            .iter()
+            .find(|ability| ability.text.as_deref() == Some("Living weapon"))
+            .expect("expected Living weapon ability");
+        let AbilityKind::Triggered(triggered) = &ability.kind else {
+            panic!("expected Living weapon to add a triggered ability");
+        };
+
+        let debug = format!("{triggered:?}").to_ascii_lowercase();
+        assert!(
+            debug.contains("createtokeneffect")
+                && debug.contains("phyrexian")
+                && debug.contains("germ")
+                && debug.contains("attachtoeffect"),
+            "expected Living weapon trigger to create Germ token and attach equipment, got {debug}"
+        );
     }
 }
 

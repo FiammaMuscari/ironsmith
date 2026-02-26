@@ -882,6 +882,8 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         KeywordAction::Unblockable => "This creature can't be blocked".to_string(),
         KeywordAction::Devoid => "Devoid".to_string(),
         KeywordAction::Annihilator(amount) => format!("Annihilator {amount}"),
+        KeywordAction::ForMirrodin => "For Mirrodin!".to_string(),
+        KeywordAction::LivingWeapon => "Living weapon".to_string(),
         KeywordAction::Crew { amount, .. } => format!("Crew {amount}"),
         KeywordAction::Saddle { amount, .. } => format!("Saddle {amount}"),
         KeywordAction::Marker(name) => title_case_words(name),

@@ -2290,6 +2290,8 @@ fn keyword_action_to_static_ability(action: KeywordAction) -> Option<StaticAbili
             "annihilator",
             format!("annihilator {amount}"),
         )),
+        KeywordAction::ForMirrodin => None,
+        KeywordAction::LivingWeapon => None,
         KeywordAction::Crew { .. } => None,
         KeywordAction::Saddle { .. } => None,
         KeywordAction::Marker(name) => Some(StaticAbility::custom(name, name.to_string())),
@@ -12612,6 +12614,12 @@ fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
     if words.first().copied() == Some("sunburst") {
         return Some(KeywordAction::Sunburst);
     }
+    if words.starts_with(&["for", "mirrodin"]) {
+        return Some(KeywordAction::ForMirrodin);
+    }
+    if words.starts_with(&["living", "weapon"]) {
+        return Some(KeywordAction::LivingWeapon);
+    }
 
     if words.as_slice().starts_with(&["battle", "cry"]) {
         return Some(KeywordAction::BattleCry);
@@ -12762,6 +12770,8 @@ fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         ["riot"] => KeywordAction::Riot,
         ["skulk"] => KeywordAction::Skulk,
         ["sunburst"] => KeywordAction::Sunburst,
+        ["for", "mirrodin"] => KeywordAction::ForMirrodin,
+        ["living", "weapon"] => KeywordAction::LivingWeapon,
         ["undaunted"] => KeywordAction::Undaunted,
         ["unleash"] => KeywordAction::Unleash,
         ["fading", amount] => {
@@ -37068,6 +37078,24 @@ mod parse_parsing_tests {
             other => panic!("expected static ability parse, got {other:?}"),
         };
         assert_eq!(ability.id(), StaticAbilityId::PreventDamageToSelfRemoveCounter);
+    }
+
+    #[test]
+    fn parse_keyword_for_mirrodin_line() {
+        let tokens = tokenize_line("For Mirrodin!", 0);
+        let actions = parse_ability_line(&tokens).expect("expected keyword actions");
+        assert!(actions
+            .iter()
+            .any(|action| matches!(action, KeywordAction::ForMirrodin)));
+    }
+
+    #[test]
+    fn parse_keyword_living_weapon_line() {
+        let tokens = tokenize_line("Living weapon", 0);
+        let actions = parse_ability_line(&tokens).expect("expected keyword actions");
+        assert!(actions
+            .iter()
+            .any(|action| matches!(action, KeywordAction::LivingWeapon)));
     }
 
     #[test]
