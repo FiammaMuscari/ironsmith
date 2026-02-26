@@ -30359,12 +30359,10 @@ fn parse_shuffle(
     };
 
     if tokens.is_empty() {
-        if matches!(subject, Some(SubjectAst::Player(_))) {
-            return Ok(EffectAst::ShuffleLibrary { player });
-        }
-        return Err(CardTextError::ParseError(
-            "unsupported implicit shuffle clause".to_string(),
-        ));
+        // Support standalone "Shuffle." clauses. If the sentence includes an explicit player
+        // subject, use it; otherwise return an implicit player that can be filled in by the
+        // carry-context logic (and compiles to "you" by default).
+        return Ok(EffectAst::ShuffleLibrary { player });
     }
 
     let clause_words = words(tokens);

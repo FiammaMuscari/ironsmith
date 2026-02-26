@@ -6554,6 +6554,18 @@ fn render_search_library_for_card_uses_card_noun() {
 }
 
 #[test]
+fn parse_standalone_shuffle_clause_defaults_to_library_owner() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Shuffle Variant")
+        .parse_text("Search your library for a card, put it into your hand. Shuffle.")
+        .expect("standalone shuffle clause should parse");
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("search your library for a card") && joined.contains("shuffle your library"),
+        "expected standalone shuffle to resolve to your library, got {joined}"
+    );
+}
+
+#[test]
 fn parse_search_target_player_library_and_exile_cards() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Denying Wind Variant")
         .parse_text("Search target player's library for up to seven cards and exile them. Then that player shuffles.")
