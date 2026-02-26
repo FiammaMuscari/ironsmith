@@ -1147,6 +1147,9 @@ pub struct GameState {
     /// Cleared at the start of each turn.
     pub saddled_this_turn: HashMap<ObjectId, Vec<ObjectId>>,
 
+    /// Soulbond pairings (stored bidirectionally: A -> B and B -> A).
+    pub soulbond_pairs: HashMap<ObjectId, ObjectId>,
+
     /// Attack targets captured while paying Ninjutsu costs, keyed by the
     /// source card object ID in hand.
     ///
@@ -1310,6 +1313,7 @@ impl GameState {
             crewed_this_turn: HashMap::new(),
             saddled_until_end_of_turn: HashSet::new(),
             saddled_this_turn: HashMap::new(),
+            soulbond_pairs: HashMap::new(),
             ninjutsu_attack_targets: HashMap::new(),
             creature_damage_to_players_this_turn: HashMap::new(),
             damage_to_players_this_turn: HashMap::new(),
@@ -3568,6 +3572,7 @@ impl GameState {
 
     /// Clear battlefield state for an object (when leaving battlefield).
     pub fn clear_battlefield_state(&mut self, id: ObjectId) {
+        self.clear_soulbond_pair(id);
         self.tapped_permanents.remove(&id);
         self.summoning_sick.remove(&id);
         self.damage_marked.remove(&id);
@@ -3584,6 +3589,59 @@ impl GameState {
         self.chosen_modes_by_ability_this_turn
             .retain(|(source, _), _| *source != id);
         // Note: saga_final_chapter_resolved and commanders persist across zone changes
+    }
+
+    fn soulbond_pair_is_valid(&self, left: ObjectId, right: ObjectId) -> bool {
+        if left == right {
+            return false;
+        }
+        let Some(left_obj) = self.object(left) else {
+            return false;
+        };
+        let Some(right_obj) = self.object(right) else {
+            return false;
+        };
+        if left_obj.zone != Zone::Battlefield || right_obj.zone != Zone::Battlefield {
+            return false;
+        }
+        if !left_obj.is_creature() || !right_obj.is_creature() {
+            return false;
+        }
+        left_obj.controller == right_obj.controller
+    }
+
+    pub fn clear_soulbond_pair(&mut self, object_id: ObjectId) {
+        let partner = self.soulbond_pairs.remove(&object_id);
+        if let Some(partner_id) = partner {
+            self.soulbond_pairs.remove(&partner_id);
+        }
+    }
+
+    pub fn set_soulbond_pair(&mut self, left: ObjectId, right: ObjectId) {
+        if !self.soulbond_pair_is_valid(left, right) {
+            return;
+        }
+        self.clear_soulbond_pair(left);
+        self.clear_soulbond_pair(right);
+        self.soulbond_pairs.insert(left, right);
+        self.soulbond_pairs.insert(right, left);
+    }
+
+    pub fn soulbond_partner(&self, object_id: ObjectId) -> Option<ObjectId> {
+        let partner = self.soulbond_pairs.get(&object_id).copied()?;
+        if self
+            .soulbond_pairs
+            .get(&partner)
+            .is_none_or(|paired_back| *paired_back != object_id)
+        {
+            return None;
+        }
+        self.soulbond_pair_is_valid(object_id, partner)
+            .then_some(partner)
+    }
+
+    pub fn is_soulbond_paired(&self, object_id: ObjectId) -> bool {
+        self.soulbond_partner(object_id).is_some()
     }
 
     /// Clear exile state for an object (when leaving exile).

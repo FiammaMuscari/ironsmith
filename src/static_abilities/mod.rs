@@ -1060,6 +1060,14 @@ impl StaticAbility {
         Self::new(GrantAbility::new(filter, ability))
     }
 
+    pub fn soulbond_shared_power_toughness(power: i32, toughness: i32) -> Self {
+        Self::new(SoulbondSharedBonus::power_toughness(power, toughness))
+    }
+
+    pub fn soulbond_shared_ability(ability: StaticAbility) -> Self {
+        Self::new(SoulbondSharedBonus::ability(ability))
+    }
+
     pub fn remove_ability(filter: crate::target::ObjectFilter, ability: StaticAbility) -> Self {
         Self::new(RemoveAbilityForFilter::new(filter, ability))
     }

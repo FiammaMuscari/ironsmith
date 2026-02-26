@@ -890,6 +890,113 @@ impl StaticAbilityKind for GrantAbility {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum SoulbondSharedMode {
+    PowerToughness { power: i32, toughness: i32 },
+    Ability(StaticAbility),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SoulbondSharedBonus {
+    pub mode: SoulbondSharedMode,
+}
+
+impl SoulbondSharedBonus {
+    pub fn power_toughness(power: i32, toughness: i32) -> Self {
+        Self {
+            mode: SoulbondSharedMode::PowerToughness { power, toughness },
+        }
+    }
+
+    pub fn ability(ability: StaticAbility) -> Self {
+        Self {
+            mode: SoulbondSharedMode::Ability(ability),
+        }
+    }
+}
+
+impl StaticAbilityKind for SoulbondSharedBonus {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::Custom
+    }
+
+    fn display(&self) -> String {
+        match &self.mode {
+            SoulbondSharedMode::PowerToughness { power, toughness } => {
+                let signed = |value: i32| {
+                    if value >= 0 {
+                        format!("+{value}")
+                    } else {
+                        value.to_string()
+                    }
+                };
+                format!(
+                    "As long as this creature is paired with another creature, each of those creatures gets {}/{}",
+                    signed(*power),
+                    signed(*toughness)
+                )
+            }
+            SoulbondSharedMode::Ability(ability) => format!(
+                "As long as this creature is paired with another creature, both creatures have {}",
+                ability.display()
+            ),
+        }
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn generate_effects(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+        game: &GameState,
+    ) -> Vec<ContinuousEffect> {
+        let Some(partner) = game.soulbond_partner(source) else {
+            return Vec::new();
+        };
+
+        let modification = |mode: &SoulbondSharedMode| match mode {
+            SoulbondSharedMode::PowerToughness { power, toughness } => {
+                Modification::ModifyPowerToughness {
+                    power: *power,
+                    toughness: *toughness,
+                }
+            }
+            SoulbondSharedMode::Ability(ability) => Modification::AddAbility(ability.clone()),
+        };
+
+        vec![
+            ContinuousEffect::new(
+                source,
+                controller,
+                EffectTarget::Specific(source),
+                modification(&self.mode),
+            )
+            .with_source_type(EffectSourceType::StaticAbility),
+            ContinuousEffect::new(
+                source,
+                controller,
+                EffectTarget::Specific(partner),
+                modification(&self.mode),
+            )
+            .with_source_type(EffectSourceType::StaticAbility),
+        ]
+    }
+
+    fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, controller: PlayerId) {
+        let SoulbondSharedMode::Ability(ability) = &self.mode else {
+            return;
+        };
+        let Some(partner) = game.soulbond_partner(source) else {
+            return;
+        };
+        ability.apply_restrictions(game, source, controller);
+        ability.apply_restrictions(game, partner, controller);
+    }
+}
+
 /// Remove ability: "Creatures lose [ability]"
 #[derive(Debug, Clone)]
 pub struct RemoveAbilityForFilter {

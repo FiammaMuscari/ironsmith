@@ -2230,6 +2230,7 @@ fn keyword_action_to_static_ability(action: KeywordAction) -> Option<StaticAbili
         KeywordAction::Graft(amount) => {
             Some(StaticAbility::custom("graft", format!("graft {amount}")))
         }
+        KeywordAction::Soulbond => Some(StaticAbility::custom("soulbond", "soulbond".to_string())),
         KeywordAction::Soulshift(amount) => Some(StaticAbility::custom(
             "soulshift",
             format!("soulshift {amount}"),
@@ -2444,6 +2445,9 @@ fn parse_static_ability_line(
         return Ok(Some(vec![ability]));
     }
     if let Some(abilities) = parse_attached_is_legendary_gets_and_has_keywords_line(tokens)? {
+        return Ok(Some(abilities));
+    }
+    if let Some(abilities) = parse_soulbond_shared_line(tokens)? {
         return Ok(Some(abilities));
     }
     if let Some(abilities) = parse_granted_keyword_static_line(tokens)? {
@@ -5905,6 +5909,109 @@ fn is_type_scope_qualifier_word(word: &str) -> bool {
             word,
             "card" | "creature" | "permanent" | "basic" | "legendary" | "snow" | "nonbasic"
         )
+}
+
+fn parse_soulbond_shared_line(tokens: &[Token]) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+    let clause_words = words(tokens);
+    let prefix = [
+        "as",
+        "long",
+        "as",
+        "this",
+        "creature",
+        "is",
+        "paired",
+        "with",
+        "another",
+        "creature",
+    ];
+    if !clause_words.starts_with(&prefix) {
+        return Ok(None);
+    }
+
+    let rest = trim_commas(&tokens[prefix.len()..]);
+    if rest.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing soulbond shared effect clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let rest_words = words(&rest);
+    let pt_modifier_idx = if rest_words.starts_with(&["both", "creatures", "get"]) {
+        Some(3usize)
+    } else if rest_words.starts_with(&["each", "of", "those", "creatures", "gets"]) {
+        Some(5usize)
+    } else {
+        None
+    };
+    if let Some(modifier_idx) = pt_modifier_idx {
+        let modifier = *rest_words.get(modifier_idx).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing power/toughness modifier in soulbond clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+        let (power, toughness) = parse_pt_modifier(modifier).map_err(|_| {
+            CardTextError::ParseError(format!(
+                "invalid power/toughness modifier in soulbond clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+        return Ok(Some(vec![StaticAbility::soulbond_shared_power_toughness(
+            power, toughness,
+        )]));
+    }
+
+    let ability_start = if rest_words.starts_with(&["both", "creatures", "have"]) {
+        Some(3usize)
+    } else if rest_words.starts_with(&["each", "of", "those", "creatures", "has"]) {
+        Some(5usize)
+    } else {
+        None
+    };
+    if let Some(ability_start) = ability_start {
+        let mut ability_tokens = trim_commas(&rest[ability_start..]);
+        let ability_end = ability_tokens
+            .iter()
+            .position(|token| matches!(token, Token::Period(_) | Token::Comma(_)))
+            .unwrap_or(ability_tokens.len());
+        ability_tokens = trim_commas(&ability_tokens[..ability_end]);
+        if ability_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing shared ability in soulbond clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+
+        let Some(actions) = parse_ability_line(&ability_tokens) else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported shared ability in soulbond clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        };
+        reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
+        let abilities: Vec<StaticAbility> = actions
+            .into_iter()
+            .filter_map(keyword_action_to_static_ability)
+            .collect();
+        if abilities.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported shared ability in soulbond clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let shared = abilities
+            .into_iter()
+            .map(StaticAbility::soulbond_shared_ability)
+            .collect();
+        return Ok(Some(shared));
+    }
+
+    Err(CardTextError::ParseError(format!(
+        "unsupported soulbond shared clause (clause: '{}')",
+        clause_words.join(" ")
+    )))
 }
 
 fn parse_anthem_and_type_color_addition_line(
@@ -12467,6 +12574,10 @@ fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         return Some(KeywordAction::Training);
     }
 
+    if words.first().copied() == Some("soulbond") {
+        return Some(KeywordAction::Soulbond);
+    }
+
     // Renown appears as "Renown N" and is often followed by reminder text.
     if words.first().copied() == Some("renown") {
         if words.len() >= 2
@@ -12712,7 +12823,6 @@ fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
                 | "suspend"
                 | "vanishing"
                 | "offering"
-                | "soulbond"
                 | "specialize"
                 | "squad"
                 | "spectacle"
@@ -37200,6 +37310,37 @@ mod parse_parsing_tests {
         assert!(effects
             .iter()
             .any(|effect| matches!(effect, EffectAst::ReturnToHand { .. })));
+    }
+
+    #[test]
+    fn parse_soulbond_shared_power_toughness_line() {
+        let tokens = tokenize_line(
+            "As long as this creature is paired with another creature, each of those creatures gets +2/+2.",
+            0,
+        );
+        let abilities = parse_static_ability_line(&tokens)
+            .expect("parse static ability line")
+            .expect("expected static abilities");
+        assert_eq!(abilities.len(), 1);
+        assert!(abilities[0]
+            .display()
+            .contains("paired with another creature"));
+        assert!(abilities[0].display().contains("+2/+2"));
+    }
+
+    #[test]
+    fn parse_soulbond_shared_keyword_line() {
+        let tokens = tokenize_line(
+            "As long as this creature is paired with another creature, both creatures have flying.",
+            0,
+        );
+        let abilities = parse_static_ability_line(&tokens)
+            .expect("parse static ability line")
+            .expect("expected static abilities");
+        assert_eq!(abilities.len(), 1);
+        assert!(abilities[0]
+            .display()
+            .contains("both creatures have Flying"));
     }
 
     #[test]

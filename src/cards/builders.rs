@@ -87,6 +87,7 @@ enum KeywordAction {
     Renown(u32),
     Modular(u32),
     Graft(u32),
+    Soulbond,
     Soulshift(u32),
     Outlast(ManaCost),
     Unearth(ManaCost),
@@ -1532,6 +1533,7 @@ impl CardDefinitionBuilder {
             KeywordAction::Renown(amount) => self.renown(amount),
             KeywordAction::Modular(amount) => self.modular(amount),
             KeywordAction::Graft(amount) => self.graft(amount),
+            KeywordAction::Soulbond => self.soulbond(),
             KeywordAction::Soulshift(amount) => self.soulshift(amount),
             KeywordAction::Outlast(cost) => self.outlast(cost),
             KeywordAction::Unearth(cost) => self.unearth(cost),
@@ -2242,6 +2244,20 @@ impl CardDefinitionBuilder {
                 vec![Effect::renown_source(amount)],
             )
             .with_text(&text),
+        )
+    }
+
+    /// Add soulbond.
+    ///
+    /// Soulbond means "You may pair this creature with another unpaired creature
+    /// when either enters. They remain paired while you control both."
+    pub fn soulbond(self) -> Self {
+        self.with_ability(
+            Ability::triggered(
+                Trigger::enters_battlefield(ObjectFilter::creature().you_control()),
+                vec![Effect::new(crate::effects::SoulbondPairEffect::new())],
+            )
+            .with_text("Soulbond"),
         )
     }
 

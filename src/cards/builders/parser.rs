@@ -838,6 +838,7 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         KeywordAction::Renown(amount) => format!("Renown {amount}"),
         KeywordAction::Modular(amount) => format!("Modular {amount}"),
         KeywordAction::Graft(amount) => format!("Graft {amount}"),
+        KeywordAction::Soulbond => "Soulbond".to_string(),
         KeywordAction::Soulshift(amount) => format!("Soulshift {amount}"),
         KeywordAction::Outlast(cost) => format!("Outlast {}", cost.to_oracle()),
         KeywordAction::Unearth(cost) => format!("Unearth {}", cost.to_oracle()),
