@@ -32768,6 +32768,56 @@ fn parse_put_into_hand(
         });
     }
 
+    if let Some(on_idx) = tokens.iter().position(|token| token.is_word("on")) {
+        let mut bottom_idx = on_idx + 1;
+        if tokens
+            .get(bottom_idx)
+            .is_some_and(|token| token.is_word("the"))
+        {
+            bottom_idx += 1;
+        }
+        if tokens
+            .get(bottom_idx)
+            .is_some_and(|token| token.is_word("bottom"))
+            && tokens
+                .get(bottom_idx + 1)
+                .is_some_and(|token| token.is_word("of"))
+        {
+            let target_tokens = trim_commas(&tokens[..on_idx]);
+            if target_tokens.is_empty() {
+                return Err(CardTextError::ParseError(format!(
+                    "missing target before 'on bottom of' (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+            let destination_words = words(&tokens[bottom_idx + 2..]);
+            if !destination_words.contains(&"library") {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported put destination after 'on bottom of' (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+
+            let target = if let Some((count, used)) = parse_number(&target_tokens)
+                && target_tokens
+                    .get(used)
+                    .is_some_and(|token| token.is_word("card") || token.is_word("cards"))
+            {
+                let inner = parse_target_phrase(&target_tokens[used..])?;
+                TargetAst::WithCount(Box::new(inner), ChoiceCount::exactly(count as usize))
+            } else {
+                parse_target_phrase(&target_tokens)?
+            };
+
+            return Ok(EffectAst::MoveToZone {
+                target,
+                zone: Zone::Library,
+                to_top: false,
+                battlefield_controller: ReturnControllerAst::Preserve,
+            });
+        }
+    }
+
     if let Some(onto_idx) = tokens.iter().position(|token| token.is_word("onto")) {
         let target_tokens = trim_commas(&tokens[..onto_idx]);
         if target_tokens.is_empty() {
