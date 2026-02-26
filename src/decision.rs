@@ -1590,6 +1590,15 @@ fn apply_spell_cost_modifiers(
         let AbilityKind::Static(static_ability) = &ability.kind else {
             continue;
         };
+        if !static_ability.is_active(game, spell.id) {
+            continue;
+        }
+        if let Some(reduction) = static_ability.this_spell_cost_reduction() {
+            let amount = resolve_cost_modifier_value(game, player, spell, &reduction.reduction);
+            if amount > 0 {
+                total_reduction = total_reduction.saturating_add(amount);
+            }
+        }
         if let Some(reduction) = static_ability.cost_reduction() {
             let amount = resolve_cost_modifier_value(game, player, spell, &reduction.reduction);
             if amount > 0 {
@@ -1732,7 +1741,14 @@ fn apply_battlefield_spell_cost_modifiers(
 
         for static_ability in static_abilities {
             if let Some(reduction) = static_ability.cost_reduction()
-                && spell_matches_filter(game, spell, caster, &reduction.filter, &ctx, chosen_target_count)
+                && spell_matches_filter(
+                    game,
+                    spell,
+                    caster,
+                    &reduction.filter,
+                    &ctx,
+                    chosen_target_count,
+                )
             {
                 let amount = resolve_cost_modifier_value_for_source(
                     game,
@@ -1745,7 +1761,14 @@ fn apply_battlefield_spell_cost_modifiers(
                 }
             }
             if let Some(increase) = static_ability.cost_increase()
-                && spell_matches_filter(game, spell, caster, &increase.filter, &ctx, chosen_target_count)
+                && spell_matches_filter(
+                    game,
+                    spell,
+                    caster,
+                    &increase.filter,
+                    &ctx,
+                    chosen_target_count,
+                )
             {
                 let amount = resolve_cost_modifier_value_for_source(
                     game,
@@ -1758,12 +1781,26 @@ fn apply_battlefield_spell_cost_modifiers(
                 }
             }
             if let Some(increase) = static_ability.cost_increase_mana_cost()
-                && spell_matches_filter(game, spell, caster, &increase.filter, &ctx, chosen_target_count)
+                && spell_matches_filter(
+                    game,
+                    spell,
+                    caster,
+                    &increase.filter,
+                    &ctx,
+                    chosen_target_count,
+                )
             {
                 increase_pips.extend(increase.increase.pips().iter().cloned());
             }
             if let Some(reduction) = static_ability.cost_reduction_mana_cost()
-                && spell_matches_filter(game, spell, caster, &reduction.filter, &ctx, chosen_target_count)
+                && spell_matches_filter(
+                    game,
+                    spell,
+                    caster,
+                    &reduction.filter,
+                    &ctx,
+                    chosen_target_count,
+                )
             {
                 reduction_pips.extend(reduction.reduction.pips().iter().cloned());
             }
@@ -1803,7 +1840,10 @@ fn add_generic_mana_cost(cost: &crate::mana::ManaCost, increase: u32) -> crate::
     crate::mana::ManaCost::from_pips(new_pips)
 }
 
-fn add_mana_cost(cost: &crate::mana::ManaCost, add: &crate::mana::ManaCost) -> crate::mana::ManaCost {
+fn add_mana_cost(
+    cost: &crate::mana::ManaCost,
+    add: &crate::mana::ManaCost,
+) -> crate::mana::ManaCost {
     if add.pips().is_empty() {
         return cost.clone();
     }
@@ -5900,13 +5940,13 @@ pub fn init_input_manager(record_file: Option<&str>, replay_file: Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ability::{Ability, SpellFilter};
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::color::ColorSet;
+    use crate::effect::Value;
     use crate::ids::CardId;
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::static_abilities::StaticAbility;
-    use crate::ability::{Ability, SpellFilter};
-    use crate::color::ColorSet;
-    use crate::effect::Value;
     use crate::target::{ObjectFilter, PlayerFilter};
     use crate::types::CardType;
     use crate::zone::Zone;
@@ -6133,6 +6173,94 @@ mod tests {
 
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
         assert_eq!(effective.to_oracle(), "{4}{G}");
+    }
+
+    #[test]
+    fn conditional_this_spell_cost_reduction_only_applies_when_active() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let spell_card = CardBuilder::new(CardId::from_raw(30), "Avatar Cost Variant")
+            .card_types(vec![CardType::Creature])
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(6)],
+                vec![ManaSymbol::Black],
+                vec![ManaSymbol::Black],
+            ]))
+            .build();
+        let spell_id = game.create_object_from_card(&spell_card, alice, Zone::Hand);
+        let ability = StaticAbility::new(crate::static_abilities::ThisSpellCostReduction::new(
+            Value::Fixed(6),
+            crate::static_abilities::ThisSpellCostCondition::YouLifeTotalOrLess(3),
+        ));
+        game.object_mut(spell_id)
+            .expect("spell exists")
+            .abilities
+            .push(Ability::static_ability(ability));
+
+        // Condition not met.
+        game.player_mut(alice).expect("alice exists").life = 4;
+        let spell_obj = game.object(spell_id).expect("spell exists");
+        let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{6}{B}{B}");
+
+        // Condition met.
+        game.player_mut(alice).expect("alice exists").life = 3;
+        let spell_obj = game.object(spell_id).expect("spell exists");
+        let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{B}{B}");
+    }
+
+    #[test]
+    fn this_spell_cost_reduction_supports_devotion_where_x_is_clause() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        // Devotion to black = 3.
+        let perm1 = CardBuilder::new(CardId::from_raw(40), "BB Permanent")
+            .card_types(vec![CardType::Creature])
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Black],
+                vec![ManaSymbol::Black],
+            ]))
+            .build();
+        game.create_object_from_card(&perm1, alice, Zone::Battlefield);
+        let perm2 = CardBuilder::new(CardId::from_raw(41), "1B Permanent")
+            .card_types(vec![CardType::Creature])
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(1)],
+                vec![ManaSymbol::Black],
+            ]))
+            .build();
+        game.create_object_from_card(&perm2, alice, Zone::Battlefield);
+
+        let spell_card = CardBuilder::new(CardId::from_raw(42), "Devotion Cost Variant")
+            .card_types(vec![CardType::Sorcery])
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(6)],
+                vec![ManaSymbol::Black],
+            ]))
+            .build();
+        let spell_id = game.create_object_from_card(&spell_card, alice, Zone::Hand);
+        let ability = StaticAbility::new(crate::static_abilities::ThisSpellCostReduction::new(
+            Value::Devotion {
+                player: PlayerFilter::You,
+                color: crate::color::Color::Black,
+            },
+            crate::static_abilities::ThisSpellCostCondition::Always,
+        ));
+        game.object_mut(spell_id)
+            .expect("spell exists")
+            .abilities
+            .push(Ability::static_ability(ability));
+
+        let spell_obj = game.object(spell_id).expect("spell exists");
+        let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
+
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{3}{B}");
     }
 
     #[test]

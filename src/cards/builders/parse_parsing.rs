@@ -1806,6 +1806,14 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
 
     let is_each_other_player_untap_static =
         is_untap_during_each_other_players_untap_step_words(&line_words);
+
+    if tokens.first().is_some_and(|token| token.is_word("if"))
+        && let Some(ability) = parse_if_this_spell_costs_less_to_cast_line(&tokens)?
+    {
+        parser_trace("parse_line:branch=if-this-spell-costs-less", &tokens);
+        return Ok(LineAst::StaticAbility(ability));
+    }
+
     let starts_with_statement_effect_head = find_verb(&tokens).is_some_and(|(_, idx)| idx == 0)
         || tokens.first().is_some_and(|token| token.is_word("choose") || token.is_word("if"));
     if starts_with_statement_effect_head && !is_each_other_player_untap_static {
@@ -3459,6 +3467,132 @@ fn parse_spell_cost_increase_per_target_beyond_first_line(
     )))
 }
 
+fn parse_if_this_spell_costs_less_to_cast_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words_all = words(tokens);
+    if !words_all.starts_with(&["if"]) {
+        return Ok(None);
+    }
+
+    // Expected shape:
+    // "If <condition>, this spell costs {N} less to cast."
+    let Some(comma_idx) = tokens.iter().position(|t| matches!(t, Token::Comma(_))) else {
+        return Ok(None);
+    };
+    let condition_tokens = trim_commas(&tokens[1..comma_idx]);
+    let tail_tokens = trim_commas(tokens.get(comma_idx + 1..).unwrap_or_default());
+    let tail_words = words(&tail_tokens);
+    if !tail_words.starts_with(&["this", "spell", "costs"]) {
+        return Ok(None);
+    }
+
+    let condition = parse_this_spell_cost_condition(&condition_tokens).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unsupported this-spell cost condition (clause: '{}')",
+            words_all.join(" ")
+        ))
+    })?;
+
+    let costs_idx = tail_tokens
+        .iter()
+        .position(|token| token.is_word("costs"))
+        .ok_or_else(|| CardTextError::ParseError("missing costs keyword".to_string()))?;
+    let amount_tokens = tail_tokens.get(costs_idx + 1..).unwrap_or_default();
+    let (amount_value, used) = parse_cost_modifier_amount(amount_tokens)
+        .ok_or_else(|| CardTextError::ParseError("missing cost modifier amount".to_string()))?;
+    let remaining_words = words(amount_tokens.get(used..).unwrap_or_default());
+    if !remaining_words.contains(&"less") || !remaining_words.contains(&"cast") {
+        return Ok(None);
+    }
+
+    Ok(Some(StaticAbility::new(
+        crate::static_abilities::ThisSpellCostReduction::new(amount_value, condition),
+    )))
+}
+
+fn parse_this_spell_cost_condition(
+    tokens: &[Token],
+) -> Option<crate::static_abilities::ThisSpellCostCondition> {
+    use crate::static_abilities::ThisSpellCostCondition;
+
+    let w = words(tokens);
+    if w.is_empty() {
+        return None;
+    }
+
+    // you have 3 or less life
+    if w.len() >= 6 && w[0] == "you" && w[1] == "have" && w.contains(&"life") {
+        if let Some((n, _)) = parse_number(tokens.get(2..).unwrap_or_default()) {
+            if w[3] == "or" && w[4] == "less" && w[5] == "life" {
+                return Some(ThisSpellCostCondition::YouLifeTotalOrLess(n as i32));
+            }
+        }
+    }
+
+    // an opponent has no cards in hand
+    if w.as_slice() == ["an", "opponent", "has", "no", "cards", "in", "hand"]
+        || w.as_slice() == ["opponent", "has", "no", "cards", "in", "hand"]
+    {
+        return Some(ThisSpellCostCondition::OpponentHasNoCardsInHand);
+    }
+
+    // an opponent controls seven or more lands
+    if w.len() >= 7 && w[0] == "an" && w[1] == "opponent" && w[2] == "controls" {
+        if let Some((n, _)) = parse_number(tokens.get(3..).unwrap_or_default()) {
+            let tail = &w[4..];
+            if tail == ["or", "more", "lands"] || tail == ["or", "more", "land"] {
+                return Some(ThisSpellCostCondition::OpponentControlsLandsOrMore(n));
+            }
+        }
+    }
+
+    // an opponent controls at least four more creatures than you
+    if w.len() >= 10
+        && w[0] == "an"
+        && w[1] == "opponent"
+        && w[2] == "controls"
+        && w[3] == "at"
+        && w[4] == "least"
+    {
+        if let Some((n, _)) = parse_number(tokens.get(5..).unwrap_or_default()) {
+            let tail = &w[6..];
+            if tail == ["more", "creatures", "than", "you"]
+                || tail == ["more", "creature", "than", "you"]
+            {
+                return Some(ThisSpellCostCondition::OpponentControlsAtLeastNMoreCreaturesThanYou(
+                    n,
+                ));
+            }
+        }
+    }
+
+    // there are ten or more creature cards total in all graveyards
+    if w.len() >= 12 && w[0] == "there" && w[1] == "are" {
+        if let Some((n, _)) = parse_number(tokens.get(2..).unwrap_or_default()) {
+            let tail = &w[3..];
+            if tail
+                == [
+                    "or",
+                    "more",
+                    "creature",
+                    "cards",
+                    "total",
+                    "in",
+                    "all",
+                    "graveyards",
+                ]
+            {
+                return Some(ThisSpellCostCondition::TotalCreatureCardsInAllGraveyardsOrMore(
+                    n,
+                ));
+            }
+        }
+    }
+
+    None
+}
+
 fn parse_spells_cost_modifier_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
@@ -3466,6 +3600,7 @@ fn parse_spells_cost_modifier_line(
     if clause_words.len() < 4 {
         return Ok(None);
     }
+    let is_this_spell = clause_words.starts_with(&["this", "spell"]);
     if clause_words.contains(&"first")
         && clause_words.contains(&"each")
         && clause_words.contains(&"turn")
@@ -3651,6 +3786,16 @@ fn parse_spells_cost_modifier_line(
     )?;
 
     if is_less {
+        // "This spell costs {N} less to cast" is a self-only modifier that should not
+        // apply from the permanent on the battlefield after it resolves.
+        if is_this_spell && parsed_mana_cost.is_none() {
+            return Ok(Some(StaticAbility::new(
+                crate::static_abilities::ThisSpellCostReduction::new(
+                    amount_value,
+                    crate::static_abilities::ThisSpellCostCondition::Always,
+                ),
+            )));
+        }
         if let Some((cost, _)) = parsed_mana_cost {
             return Ok(Some(StaticAbility::new(
                 crate::static_abilities::CostReductionManaCost::new(filter, cost),
@@ -6102,6 +6247,13 @@ fn parse_where_x_value_clause(tokens: &[Token]) -> Option<Value> {
     let words = words(tokens);
     if !words.starts_with(&["where", "x", "is"]) {
         return None;
+    }
+
+    // where X is your devotion to black
+    if words.contains(&"devotion") {
+        if let Ok(Some(value)) = parse_devotion_value_from_add_clause(tokens) {
+            return Some(value);
+        }
     }
 
     // where X is the total number of cards in all players' hands

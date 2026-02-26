@@ -345,6 +345,11 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
         false
     }
 
+    /// Get cost reduction details if this modifies the cost of *this spell* while casting.
+    fn this_spell_cost_reduction(&self) -> Option<&ThisSpellCostReduction> {
+        None
+    }
+
     /// Get cost reduction details if this is a cost reduction ability.
     fn cost_reduction(&self) -> Option<&CostReduction> {
         None
@@ -630,6 +635,10 @@ impl StaticAbility {
 
     pub fn cost_reduction(&self) -> Option<&CostReduction> {
         self.0.cost_reduction()
+    }
+
+    pub fn this_spell_cost_reduction(&self) -> Option<&ThisSpellCostReduction> {
+        self.0.this_spell_cost_reduction()
     }
 
     pub fn cost_increase(&self) -> Option<&CostIncrease> {
@@ -961,9 +970,9 @@ impl StaticAbility {
         condition: crate::effect::Condition,
         display: String,
     ) -> Self {
-        Self::new(crate::static_abilities::misc::EntersTappedUnlessCondition::new(
-            condition, display,
-        ))
+        Self::new(
+            crate::static_abilities::misc::EntersTappedUnlessCondition::new(condition, display),
+        )
     }
 
     pub fn enters_with_counters(counter_type: crate::object::CounterType, count: u32) -> Self {

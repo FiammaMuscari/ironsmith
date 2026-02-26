@@ -434,6 +434,154 @@ impl StaticAbilityKind for CostReduction {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThisSpellCostCondition {
+    Always,
+    YouLifeTotalOrLess(i32),
+    OpponentHasNoCardsInHand,
+    OpponentControlsLandsOrMore(u32),
+    OpponentControlsAtLeastNMoreCreaturesThanYou(u32),
+    TotalCreatureCardsInAllGraveyardsOrMore(u32),
+}
+
+/// Cost reduction: "If <condition>, this spell costs {N} less to cast."
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThisSpellCostReduction {
+    pub reduction: Value,
+    pub condition: ThisSpellCostCondition,
+}
+
+impl ThisSpellCostReduction {
+    pub fn new(reduction: Value, condition: ThisSpellCostCondition) -> Self {
+        Self {
+            reduction,
+            condition,
+        }
+    }
+}
+
+impl StaticAbilityKind for ThisSpellCostReduction {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::ThisSpellCostReduction
+    }
+
+    fn display(&self) -> String {
+        let (amount_text, _tail) = describe_cost_modifier_amount(&self.reduction);
+        let condition_text = match self.condition {
+            ThisSpellCostCondition::Always => {
+                return format!("This spell costs {amount_text} less to cast");
+            }
+            ThisSpellCostCondition::YouLifeTotalOrLess(n) => format!("you have {n} or less life"),
+            ThisSpellCostCondition::OpponentHasNoCardsInHand => {
+                "an opponent has no cards in hand".to_string()
+            }
+            ThisSpellCostCondition::OpponentControlsLandsOrMore(n) => {
+                format!("an opponent controls {n} or more lands")
+            }
+            ThisSpellCostCondition::OpponentControlsAtLeastNMoreCreaturesThanYou(n) => {
+                format!("an opponent controls at least {n} more creatures than you")
+            }
+            ThisSpellCostCondition::TotalCreatureCardsInAllGraveyardsOrMore(n) => {
+                format!("there are {n} or more creature cards total in all graveyards")
+            }
+        };
+
+        format!("If {condition_text}, this spell costs {amount_text} less to cast")
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn modifies_costs(&self) -> bool {
+        true
+    }
+
+    fn this_spell_cost_reduction(&self) -> Option<&ThisSpellCostReduction> {
+        Some(self)
+    }
+
+    fn is_active(&self, game: &crate::game_state::GameState, source: crate::ids::ObjectId) -> bool {
+        if matches!(self.condition, ThisSpellCostCondition::Always) {
+            return true;
+        }
+        let Some(source_obj) = game.object(source) else {
+            return false;
+        };
+        let controller = source_obj.controller;
+
+        match self.condition {
+            ThisSpellCostCondition::Always => true,
+            ThisSpellCostCondition::YouLifeTotalOrLess(n) => {
+                game.player(controller).is_some_and(|p| p.life <= n)
+            }
+            ThisSpellCostCondition::OpponentHasNoCardsInHand => game
+                .players
+                .iter()
+                .filter(|p| p.is_in_game() && p.id != controller)
+                .any(|p| p.hand.is_empty()),
+            ThisSpellCostCondition::OpponentControlsLandsOrMore(n) => game
+                .players
+                .iter()
+                .filter(|p| p.is_in_game() && p.id != controller)
+                .any(|p| {
+                    let lands = game
+                        .battlefield
+                        .iter()
+                        .filter_map(|&id| game.object(id))
+                        .filter(|obj| {
+                            obj.controller == p.id
+                                && game.object_has_card_type(obj.id, CardType::Land)
+                        })
+                        .count();
+                    lands >= n as usize
+                }),
+            ThisSpellCostCondition::OpponentControlsAtLeastNMoreCreaturesThanYou(n) => {
+                let you_creatures = game
+                    .battlefield
+                    .iter()
+                    .filter_map(|&id| game.object(id))
+                    .filter(|obj| {
+                        obj.controller == controller
+                            && game.object_has_card_type(obj.id, CardType::Creature)
+                    })
+                    .count();
+                game.players
+                    .iter()
+                    .filter(|p| p.is_in_game() && p.id != controller)
+                    .any(|p| {
+                        let opp_creatures = game
+                            .battlefield
+                            .iter()
+                            .filter_map(|&id| game.object(id))
+                            .filter(|obj| {
+                                obj.controller == p.id
+                                    && game.object_has_card_type(obj.id, CardType::Creature)
+                            })
+                            .count();
+                        opp_creatures >= you_creatures.saturating_add(n as usize)
+                    })
+            }
+            ThisSpellCostCondition::TotalCreatureCardsInAllGraveyardsOrMore(n) => {
+                let mut total = 0usize;
+                for player in &game.players {
+                    if !player.is_in_game() {
+                        continue;
+                    }
+                    for &card_id in &player.graveyard {
+                        if game.object(card_id).is_some()
+                            && game.object_has_card_type(card_id, CardType::Creature)
+                        {
+                            total = total.saturating_add(1);
+                        }
+                    }
+                }
+                total >= n as usize
+            }
+        }
+    }
+}
+
 /// Cost increase: "Spells cost {N} more to cast"
 #[derive(Debug, Clone, PartialEq)]
 pub struct CostIncrease {
