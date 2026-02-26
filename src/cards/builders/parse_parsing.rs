@@ -268,6 +268,7 @@ fn replace_names_with_map(
                     | "return"
                     | "exchange"
                     | "become"
+                    | "switch"
                     | "skip"
                     | "surveil"
                     | "pay"
@@ -26893,6 +26894,7 @@ enum Verb {
     Return,
     Exchange,
     Become,
+    Switch,
     Skip,
     Surveil,
     Shuffle,
@@ -27641,6 +27643,7 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
             "return",
             "exchange",
             "become",
+            "switch",
             "skip",
             "surveil",
             "shuffle",
@@ -29858,6 +29861,7 @@ fn find_verb(tokens: &[Token]) -> Option<(Verb, usize)> {
             "returns" | "return" => Verb::Return,
             "exchanges" | "exchange" => Verb::Exchange,
             "becomes" | "become" => Verb::Become,
+            "switches" | "switch" => Verb::Switch,
             "skips" | "skip" => Verb::Skip,
             "surveils" | "surveil" => Verb::Surveil,
             "shuffles" | "shuffle" => Verb::Shuffle,
@@ -30052,6 +30056,7 @@ fn parse_effect_with_verb(
         Verb::Return => parse_return(tokens),
         Verb::Exchange => parse_exchange(tokens),
         Verb::Become => parse_become(tokens, subject),
+        Verb::Switch => parse_switch(tokens),
         Verb::Skip => parse_skip(tokens, subject),
         Verb::Surveil => parse_surveil(tokens, subject),
         Verb::Shuffle => parse_shuffle(tokens, subject),
@@ -33051,6 +33056,63 @@ fn parse_become(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectA
         ))
     })?;
     Ok(EffectAst::SetLifeTotal { amount, player })
+}
+
+fn parse_switch(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
+    use crate::effect::Until;
+
+    let clause_words = words(tokens);
+
+    // Split off trailing duration, if present.
+    let (duration, remainder) = if let Some((duration, remainder)) =
+        parse_restriction_duration(tokens)?
+    {
+        (duration, remainder)
+    } else {
+        (Until::EndOfTurn, trim_commas(tokens).to_vec())
+    };
+
+    let remainder_words = words(&remainder);
+    let Some(power_idx) = remainder
+        .iter()
+        .position(|token| token.is_word("power"))
+    else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported switch clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    };
+
+    // Target phrase is everything up to "power".
+    let target_tokens = &remainder[..power_idx];
+    let target_words = words(target_tokens);
+    let target = if target_words.is_empty()
+        || matches!(
+            target_words.as_slice(),
+            ["this"]
+                | ["this", "creature"]
+                | ["this", "creatures"]
+                | ["this", "permanent"]
+                | ["it"]
+        ) {
+        if target_words == ["it"] {
+            TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(target_tokens))
+        } else {
+            TargetAst::Source(span_from_tokens(target_tokens))
+        }
+    } else {
+        parse_target_phrase(target_tokens)?
+    };
+
+    // Require "... power and toughness ..." somewhere in remainder.
+    if !remainder_words.contains(&"power") || !remainder_words.contains(&"toughness") {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported switch clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    Ok(EffectAst::SwitchPowerToughness { target, duration })
 }
 
 fn parse_skip(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {

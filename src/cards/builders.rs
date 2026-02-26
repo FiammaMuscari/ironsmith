@@ -1100,6 +1100,10 @@ enum EffectAst {
         duration: Until,
         condition: Option<crate::ConditionExpr>,
     },
+    SwitchPowerToughness {
+        target: TargetAst,
+        duration: Until,
+    },
     SetBasePowerToughness {
         power: Value,
         toughness: Value,

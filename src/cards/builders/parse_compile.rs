@@ -4776,6 +4776,18 @@ fn compile_effect(
                 Effect::new(apply)
             })
         }
+        EffectAst::SwitchPowerToughness { target, duration } => {
+            compile_tagged_effect_for_target(target, ctx, "switched_pt", |spec| {
+                Effect::new(
+                    crate::effects::ApplyContinuousEffect::with_spec(
+                        spec,
+                        crate::continuous::Modification::SwitchPowerToughness,
+                        duration.clone(),
+                    )
+                    .require_creature_target(),
+                )
+            })
+        }
         EffectAst::SetBasePowerToughness {
             power,
             toughness,

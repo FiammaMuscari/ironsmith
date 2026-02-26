@@ -1844,6 +1844,21 @@ fn test_parse_plus_zero_plus_one_counter_type() {
 }
 
 #[test]
+fn test_parse_switch_power_toughness_until_eot() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Switch Probe")
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(1, 4))
+        .parse_text("{U}: Switch this creature's power and toughness until end of turn.")
+        .expect("switch P/T clause should parse");
+
+    let debug = format!("{:?}", def.abilities);
+    assert!(
+        debug.contains("SwitchPowerToughness"),
+        "expected continuous switch P/T modification, got {debug}"
+    );
+}
+
+#[test]
 fn test_parse_suspend_keyword_line_with_reminder_text_keeps_suspend_clause() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Suspend Probe")
         .card_types(vec![CardType::Artifact])
