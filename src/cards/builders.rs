@@ -7528,6 +7528,40 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_target_creature_blocks_this_creature_if_able_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Rampant Elephant Variant")
+            .parse_text("{G}: Target creature blocks this creature this turn if able.")
+            .expect("target creature blocks this creature should parse");
+
+        let lines = compiled_lines(&def);
+        let activated = lines
+            .iter()
+            .find(|line| line.starts_with("Activated ability"))
+            .expect("expected activated ability line");
+        assert!(
+            activated.contains("must block") && activated.contains("if able"),
+            "expected must-block-if-able text in compiled line, got {activated}"
+        );
+    }
+
+    #[test]
+    fn parse_all_creatures_able_to_block_target_creature_do_so_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Alluring Scent Variant")
+            .parse_text("All creatures able to block target creature this turn do so.")
+            .expect("all creatures able to block target creature clause should parse");
+
+        let lines = compiled_lines(&def);
+        let spell = lines
+            .iter()
+            .find(|line| line.starts_with("Spell effects"))
+            .expect("expected spell effects line");
+        assert!(
+            spell.contains("must block") && spell.contains("if able"),
+            "expected must-block-if-able spell text, got {spell}"
+        );
+    }
+
+    #[test]
     fn reject_curly_apostrophe_negated_untap_clause() {
         let err = CardDefinitionBuilder::new(CardId::new(), "Kill Switch Apostrophe Variant")
             .parse_text(

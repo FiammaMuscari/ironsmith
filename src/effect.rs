@@ -732,6 +732,10 @@ pub enum Restriction {
         blockers: ObjectFilter,
         attacker: ObjectFilter,
     },
+    MustBlockSpecificAttacker {
+        blockers: ObjectFilter,
+        attacker: ObjectFilter,
+    },
     BlockAlone(ObjectFilter),
     Untap(ObjectFilter),
     BeBlocked(ObjectFilter),
@@ -817,6 +821,10 @@ impl Restriction {
 
     pub fn block_specific_attacker(blockers: ObjectFilter, attacker: ObjectFilter) -> Self {
         Self::BlockSpecificAttacker { blockers, attacker }
+    }
+
+    pub fn must_block_specific_attacker(blockers: ObjectFilter, attacker: ObjectFilter) -> Self {
+        Self::MustBlockSpecificAttacker { blockers, attacker }
     }
 
     pub fn block_alone(filter: ObjectFilter) -> Self {
@@ -1074,6 +1082,32 @@ impl Restriction {
                             .entry(obj_id)
                             .or_default();
                         blocked.extend(attacker_ids.iter().copied());
+                    }
+                }
+            }
+            Restriction::MustBlockSpecificAttacker { blockers, attacker } => {
+                let attacker_ids = game
+                    .battlefield
+                    .iter()
+                    .copied()
+                    .filter(|obj_id| {
+                        game.object(*obj_id)
+                            .is_some_and(|obj| attacker.matches(obj, &ctx, game))
+                    })
+                    .collect::<Vec<_>>();
+                if attacker_ids.is_empty() {
+                    return;
+                }
+
+                for &obj_id in &game.battlefield {
+                    if let Some(obj) = game.object(obj_id)
+                        && blockers.matches(obj, &ctx, game)
+                    {
+                        let required = tracker
+                            .must_block_specific_attackers
+                            .entry(obj_id)
+                            .or_default();
+                        required.extend(attacker_ids.iter().copied());
                     }
                 }
             }

@@ -1208,6 +1208,17 @@ fn restriction_references_tag(restriction: &crate::effect::Restriction, tag: &st
             .any(|constraint| constraint.tag.as_str() == tag);
         return blockers_reference || attacker_reference;
     }
+    if let Restriction::MustBlockSpecificAttacker { blockers, attacker } = restriction {
+        let blockers_reference = blockers
+            .tagged_constraints
+            .iter()
+            .any(|constraint| constraint.tag.as_str() == tag);
+        let attacker_reference = attacker
+            .tagged_constraints
+            .iter()
+            .any(|constraint| constraint.tag.as_str() == tag);
+        return blockers_reference || attacker_reference;
+    }
 
     false
 }
@@ -5541,6 +5552,12 @@ fn resolve_restriction_it_tag(
         Restriction::Block(filter) => Restriction::block(resolve_it_tag(filter, ctx)?),
         Restriction::BlockSpecificAttacker { blockers, attacker } => {
             Restriction::block_specific_attacker(
+                resolve_it_tag(blockers, ctx)?,
+                resolve_it_tag(attacker, ctx)?,
+            )
+        }
+        Restriction::MustBlockSpecificAttacker { blockers, attacker } => {
+            Restriction::must_block_specific_attacker(
                 resolve_it_tag(blockers, ctx)?,
                 resolve_it_tag(attacker, ctx)?,
             )

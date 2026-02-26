@@ -28437,6 +28437,9 @@ fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardText
             parser: parse_can_attack_as_though_no_defender_clause,
         },
         ClausePrimitive {
+            parser: parse_must_block_if_able_clause,
+        },
+        ClausePrimitive {
             parser: parse_until_duration_triggered_clause,
         },
         ClausePrimitive {
@@ -28459,6 +28462,111 @@ fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardText
         }
     }
     Ok(None)
+}
+
+fn parse_must_block_if_able_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+    use crate::effect::Until;
+
+    let clause_words = words(tokens);
+
+    // "All creatures able to block target creature this turn do so."
+    if clause_words.starts_with(&["all", "creatures", "able", "to", "block"]) {
+        let mut tail_tokens = trim_commas(&tokens[5..]);
+        let tail_words = words(&tail_tokens);
+        if !tail_words.ends_with(&["do", "so"]) {
+            return Ok(None);
+        }
+        tail_tokens = trim_commas(&tail_tokens[..tail_tokens.len().saturating_sub(2)]);
+
+        let (duration, attacker_tokens) =
+            if let Some((duration, remainder)) = parse_restriction_duration(&tail_tokens)? {
+                (duration, remainder)
+            } else {
+                (Until::EndOfTurn, tail_tokens.to_vec())
+            };
+        let attacker_tokens = trim_commas(&attacker_tokens);
+        if attacker_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing attacker in must-block clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+
+        let attacker_target = parse_target_phrase(&attacker_tokens)?;
+        let attacker_filter = target_ast_to_object_filter(attacker_target).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "unsupported attacker target in must-block clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+
+        return Ok(Some(EffectAst::Cant {
+            restriction: crate::effect::Restriction::must_block_specific_attacker(
+                ObjectFilter::creature(),
+                attacker_filter,
+            ),
+            duration,
+        }));
+    }
+
+    // "<subject> blocks <attacker> this turn if able."
+    let Some(block_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("block") || token.is_word("blocks"))
+    else {
+        return Ok(None);
+    };
+    if block_idx == 0 || block_idx + 1 >= tokens.len() {
+        return Ok(None);
+    }
+
+    let subject_tokens = trim_commas(&tokens[..block_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+    let blockers_filter = parse_subject_object_filter(&subject_tokens)?.ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unsupported blocker subject in must-block clause (clause: '{}')",
+            clause_words.join(" ")
+        ))
+    })?;
+
+    let mut tail_tokens = trim_commas(&tokens[block_idx + 1..]);
+    let tail_words = words(&tail_tokens);
+    if !tail_words.ends_with(&["if", "able"]) {
+        return Ok(None);
+    }
+    tail_tokens = trim_commas(&tail_tokens[..tail_tokens.len().saturating_sub(2)]);
+
+    let (duration, attacker_tokens) =
+        if let Some((duration, remainder)) = parse_restriction_duration(&tail_tokens)? {
+            (duration, remainder)
+        } else {
+            (Until::EndOfTurn, tail_tokens.to_vec())
+        };
+    let attacker_tokens = trim_commas(&attacker_tokens);
+    if attacker_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing attacker in must-block clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let attacker_target = parse_target_phrase(&attacker_tokens)?;
+    let attacker_filter = target_ast_to_object_filter(attacker_target).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unsupported attacker target in must-block clause (clause: '{}')",
+            clause_words.join(" ")
+        ))
+    })?;
+
+    Ok(Some(EffectAst::Cant {
+        restriction: crate::effect::Restriction::must_block_specific_attacker(
+            blockers_filter,
+            attacker_filter,
+        ),
+        duration,
+    }))
 }
 
 fn parse_until_duration_triggered_clause(

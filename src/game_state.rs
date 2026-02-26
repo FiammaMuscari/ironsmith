@@ -154,6 +154,10 @@ pub struct CantEffectTracker {
     /// Example: "Target creature can't block this creature this turn."
     pub cant_block_specific_attackers: HashMap<ObjectId, HashSet<ObjectId>>,
 
+    /// Blocker -> attackers this blocker must block this turn if able.
+    /// Example: "Target creature blocks this creature this turn if able."
+    pub must_block_specific_attackers: HashMap<ObjectId, HashSet<ObjectId>>,
+
     /// Creatures that can't block alone.
     /// Example: "This creature can't block alone."
     pub cant_block_alone: HashSet<ObjectId>,
@@ -348,6 +352,12 @@ impl CantEffectTracker {
                 .or_default()
                 .extend(attackers);
         }
+        for (blocker, attackers) in other.must_block_specific_attackers {
+            self.must_block_specific_attackers
+                .entry(blocker)
+                .or_default()
+                .extend(attackers);
+        }
         self.cant_block_alone.extend(other.cant_block_alone);
         self.cant_untap.extend(other.cant_untap);
         self.cant_be_destroyed.extend(other.cant_be_destroyed);
@@ -389,6 +399,7 @@ impl CantEffectTracker {
         self.cant_attack_alone.clear();
         self.cant_block.clear();
         self.cant_block_specific_attackers.clear();
+        self.must_block_specific_attackers.clear();
         self.cant_block_alone.clear();
         self.cant_untap.clear();
         self.cant_be_destroyed.clear();
@@ -460,6 +471,18 @@ impl CantEffectTracker {
     /// Check if a creature can block alone (as the only blocker).
     pub fn can_block_alone(&self, creature: ObjectId) -> bool {
         !self.cant_block_alone.contains(&creature)
+    }
+
+    /// Check if a creature must block a specific attacker this turn if able.
+    pub fn must_block_attacker(&self, blocker: ObjectId, attacker: ObjectId) -> bool {
+        self.must_block_specific_attackers
+            .get(&blocker)
+            .is_some_and(|attackers| attackers.contains(&attacker))
+    }
+
+    /// Get required attackers for a blocker, if any.
+    pub fn required_attackers_for_blocker(&self, blocker: ObjectId) -> Option<&HashSet<ObjectId>> {
+        self.must_block_specific_attackers.get(&blocker)
     }
 
     /// Check if a permanent can untap during untap step.
@@ -1442,6 +1465,19 @@ impl GameState {
     /// Can the creature block a specific attacker?
     pub fn can_block_attacker(&self, blocker: ObjectId, attacker: ObjectId) -> bool {
         self.cant_effects.can_block_attacker(blocker, attacker)
+    }
+
+    /// Must the creature block a specific attacker this turn if able?
+    pub fn must_block_attacker(&self, blocker: ObjectId, attacker: ObjectId) -> bool {
+        self.cant_effects.must_block_attacker(blocker, attacker)
+    }
+
+    /// Get required attackers for a blocker, if any.
+    pub fn required_attackers_for_blocker(
+        &self,
+        blocker: ObjectId,
+    ) -> Option<&HashSet<ObjectId>> {
+        self.cant_effects.required_attackers_for_blocker(blocker)
     }
 
     /// Can the creature block as the only blocker?
@@ -3958,6 +3994,11 @@ mod tests {
             .entry(object)
             .or_default()
             .insert(ObjectId::from_raw(2));
+        tracker
+            .must_block_specific_attackers
+            .entry(object)
+            .or_default()
+            .insert(ObjectId::from_raw(3));
         tracker.cant_untap.insert(object);
         tracker.cant_be_destroyed.insert(object);
         tracker.cant_be_blocked.insert(object);
@@ -3981,6 +4022,7 @@ mod tests {
         assert!(!tracker.cant_attack.is_empty());
         assert!(!tracker.cant_block.is_empty());
         assert!(!tracker.cant_block_specific_attackers.is_empty());
+        assert!(!tracker.must_block_specific_attackers.is_empty());
         assert!(!tracker.cant_untap.is_empty());
         assert!(!tracker.cant_be_destroyed.is_empty());
         assert!(!tracker.cant_be_blocked.is_empty());
@@ -4056,6 +4098,10 @@ mod tests {
         assert!(
             tracker.cant_block_specific_attackers.is_empty(),
             "cant_block_specific_attackers should be cleared"
+        );
+        assert!(
+            tracker.must_block_specific_attackers.is_empty(),
+            "must_block_specific_attackers should be cleared"
         );
         assert!(
             tracker.cant_untap.is_empty(),

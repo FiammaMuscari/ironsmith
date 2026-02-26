@@ -97,6 +97,8 @@ pub enum CombatError {
     AttackerNotFound(ObjectId),
     /// A creature with "must attack if able" was not declared as an attacker.
     MustAttackNotDeclared(ObjectId),
+    /// A creature that must block a specific attacker if able was not declared as doing so.
+    MustBlockRequirementNotMet { blocker: ObjectId, attacker: ObjectId },
 }
 
 impl std::fmt::Display for CombatError {
@@ -185,6 +187,13 @@ impl std::fmt::Display for CombatError {
                     f,
                     "Creature {:?} must attack this combat if able but was not declared",
                     id
+                )
+            }
+            CombatError::MustBlockRequirementNotMet { blocker, attacker } => {
+                write!(
+                    f,
+                    "Creature {:?} must block {:?} this combat if able but was not declared",
+                    blocker, attacker
                 )
             }
         }
@@ -339,6 +348,7 @@ pub fn declare_blockers(
 ) -> Result<(), CombatError> {
     // Group blockers by attacker for menace validation
     let mut blockers_by_attacker: HashMap<ObjectId, Vec<ObjectId>> = HashMap::new();
+    let mut attackers_by_blocker: HashMap<ObjectId, Vec<ObjectId>> = HashMap::new();
     let mut blocker_counts: HashMap<ObjectId, usize> = HashMap::new();
 
     fn max_attackers_this_blocker_can_block(game: &GameState, blocker_id: ObjectId) -> usize {
@@ -434,6 +444,10 @@ pub fn declare_blockers(
             .entry(*attacker_id)
             .or_default()
             .push(*blocker_id);
+        attackers_by_blocker
+            .entry(*blocker_id)
+            .or_default()
+            .push(*attacker_id);
     }
 
     // Second pass: validate minimum/maximum blockers.
@@ -458,6 +472,47 @@ pub fn declare_blockers(
                 maximum: max_blockers,
                 provided: blocker_list.len(),
             });
+        }
+    }
+
+    // Enforce "must block specific attacker if able" requirements.
+    for (&blocker_id, required_attackers) in &game.cant_effects.must_block_specific_attackers {
+        let Some(blocker) = game.object(blocker_id) else {
+            continue;
+        };
+        if blocker.zone != Zone::Battlefield
+            || !game.object_has_card_type(blocker_id, crate::types::CardType::Creature)
+            || game.is_tapped(blocker_id)
+        {
+            continue;
+        }
+
+        for &required_attacker in required_attackers {
+            if !is_attacking(combat, required_attacker) {
+                continue;
+            }
+            let Some(attacker) = game.object(required_attacker) else {
+                continue;
+            };
+
+            let can_legally_block_required = can_block(attacker, blocker, game)
+                && game.can_block_attacker(blocker_id, required_attacker)
+                && game.can_block(blocker_id)
+                && game.can_be_blocked(required_attacker)
+                && !game.object_has_ability(blocker_id, &StaticAbility::cant_block());
+            if !can_legally_block_required {
+                continue;
+            }
+
+            let declared_required = attackers_by_blocker
+                .get(&blocker_id)
+                .is_some_and(|attackers| attackers.contains(&required_attacker));
+            if !declared_required {
+                return Err(CombatError::MustBlockRequirementNotMet {
+                    blocker: blocker_id,
+                    attacker: required_attacker,
+                });
+            }
         }
     }
 
@@ -1720,5 +1775,89 @@ mod tests {
         // No attackers declared
         assert!(defending_players(&combat).is_empty());
         assert_eq!(get_attacking_player(&combat, &game), None);
+    }
+
+    #[test]
+    fn test_declare_blockers_enforces_must_block_specific_attacker() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let bob = PlayerId::from_index(1);
+
+        let attacker_a = make_creature(500, 0, "Attacker A");
+        let attacker_a_id = attacker_a.id;
+        game.add_object(attacker_a);
+        game.remove_summoning_sickness(attacker_a_id);
+
+        let attacker_b = make_creature(501, 0, "Attacker B");
+        let attacker_b_id = attacker_b.id;
+        game.add_object(attacker_b);
+        game.remove_summoning_sickness(attacker_b_id);
+
+        let blocker = make_creature(502, 1, "Required Blocker");
+        let blocker_id = blocker.id;
+        game.add_object(blocker);
+        game.remove_summoning_sickness(blocker_id);
+
+        game.cant_effects
+            .must_block_specific_attackers
+            .entry(blocker_id)
+            .or_default()
+            .insert(attacker_a_id);
+
+        let mut combat = new_combat();
+        let attacker_declarations = vec![
+            (attacker_a_id, AttackTarget::Player(bob)),
+            (attacker_b_id, AttackTarget::Player(bob)),
+        ];
+        declare_attackers(&mut game, &mut combat, attacker_declarations).unwrap();
+
+        let wrong_block = declare_blockers(&game, &mut combat, vec![(blocker_id, attacker_b_id)]);
+        assert!(
+            matches!(
+                wrong_block,
+                Err(CombatError::MustBlockRequirementNotMet {
+                    blocker,
+                    attacker
+                }) if blocker == blocker_id && attacker == attacker_a_id
+            ),
+            "expected must-block-specific requirement error, got {wrong_block:?}"
+        );
+
+        let ok = declare_blockers(&game, &mut combat, vec![(blocker_id, attacker_a_id)]);
+        assert!(ok.is_ok(), "blocking the required attacker should be legal");
+    }
+
+    #[test]
+    fn test_must_block_specific_requirement_ignored_when_unable() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let bob = PlayerId::from_index(1);
+
+        let mut flying_attacker = make_creature(510, 0, "Flying Attacker");
+        flying_attacker
+            .abilities
+            .push(Ability::static_ability(StaticAbility::flying()));
+        let flying_attacker_id = flying_attacker.id;
+        game.add_object(flying_attacker);
+        game.remove_summoning_sickness(flying_attacker_id);
+
+        let ground_blocker = make_creature(511, 1, "Ground Blocker");
+        let ground_blocker_id = ground_blocker.id;
+        game.add_object(ground_blocker);
+        game.remove_summoning_sickness(ground_blocker_id);
+
+        game.cant_effects
+            .must_block_specific_attackers
+            .entry(ground_blocker_id)
+            .or_default()
+            .insert(flying_attacker_id);
+
+        let mut combat = new_combat();
+        let attacker_declarations = vec![(flying_attacker_id, AttackTarget::Player(bob))];
+        declare_attackers(&mut game, &mut combat, attacker_declarations).unwrap();
+
+        let result = declare_blockers(&game, &mut combat, vec![]);
+        assert!(
+            result.is_ok(),
+            "ground blocker can't block a flyer, so must-block requirement should not apply"
+        );
     }
 }
