@@ -29262,6 +29262,42 @@ fn parse_become_clause(
         return Ok(EffectAst::BecomeBasicLandTypeChoice { target, duration });
     }
 
+    // "the color of your choice" / "color of your choice"
+    if become_words == ["color", "of", "your", "choice"] {
+        return Ok(EffectAst::BecomeColorChoice { target, duration });
+    }
+
+    // "colorless"
+    if become_words == ["colorless"] {
+        return Ok(EffectAst::MakeColorless { target, duration });
+    }
+
+    // "<color>" / "<color> and <color>" / "<color> and or <color>"
+    let color_tokens = become_words
+        .iter()
+        .copied()
+        .filter(|word| *word != "and" && *word != "or")
+        .collect::<Vec<_>>();
+    if !color_tokens.is_empty() {
+        let mut colors = crate::color::ColorSet::new();
+        let mut all_colors = true;
+        for word in color_tokens {
+            if let Some(color) = parse_color(word) {
+                colors = colors.union(color);
+            } else {
+                all_colors = false;
+                break;
+            }
+        }
+        if all_colors && !colors.is_empty() {
+            return Ok(EffectAst::SetColors {
+                target,
+                colors,
+                duration,
+            });
+        }
+    }
+
     Err(CardTextError::ParseError(format!(
         "unsupported become clause (clause: '{}')",
         words(rest_tokens).join(" ")

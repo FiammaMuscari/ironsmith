@@ -6,6 +6,7 @@
 mod attach_objects;
 mod attach_to;
 mod become_basic_land_type_choice;
+mod become_color_choice;
 mod crew;
 mod earthbend;
 mod evolve;
@@ -25,6 +26,7 @@ mod untap;
 pub use attach_objects::AttachObjectsEffect;
 pub use attach_to::AttachToEffect;
 pub use become_basic_land_type_choice::BecomeBasicLandTypeChoiceEffect;
+pub use become_color_choice::BecomeColorChoiceEffect;
 pub use crew::CrewCostEffect;
 pub use earthbend::EarthbendEffect;
 pub use evolve::EvolveEffect;

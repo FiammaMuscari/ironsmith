@@ -728,6 +728,10 @@ enum EffectAst {
         target: TargetAst,
         duration: Until,
     },
+    BecomeColorChoice {
+        target: TargetAst,
+        duration: Until,
+    },
     Surveil {
         count: Value,
         player: PlayerAst,
@@ -1132,6 +1136,15 @@ enum EffectAst {
     SetBasePowerToughness {
         power: Value,
         toughness: Value,
+        target: TargetAst,
+        duration: Until,
+    },
+    SetColors {
+        target: TargetAst,
+        colors: ColorSet,
+        duration: Until,
+    },
+    MakeColorless {
         target: TargetAst,
         duration: Until,
     },

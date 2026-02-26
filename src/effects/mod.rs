@@ -104,7 +104,7 @@ pub use mana::{
     PayManaEffect,
 };
 pub use permanents::{
-    AttachObjectsEffect, AttachToEffect, BecomeBasicLandTypeChoiceEffect,
+    AttachObjectsEffect, AttachToEffect, BecomeBasicLandTypeChoiceEffect, BecomeColorChoiceEffect,
     BecomeSaddledUntilEotEffect, CrewCostEffect, EarthbendEffect, EvolveEffect, FlipEffect,
     GrantObjectAbilityEffect, MonstrosityEffect, NinjutsuCostEffect, NinjutsuEffect,
     RegenerateEffect, RenownEffect, SaddleCostEffect, TapEffect, TrainingEffect, TransformEffect,

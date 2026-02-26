@@ -10030,3 +10030,46 @@ fn parse_enchanted_base_pt_and_indestructible_without_nested_grant_text() {
         "expected no nested grant phrasing in compiled output, got {rendered}"
     );
 }
+
+#[test]
+fn parse_target_creature_becomes_colorless_until_end_of_turn() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Ancient Kavu Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{1}: Target creature becomes colorless until end of turn.")
+        .expect("becomes-colorless clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("makecolorless"),
+        "expected make-colorless modification in spell effect, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_target_creature_becomes_single_color_until_end_of_turn() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Swirling Spriggan Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{1}: Target creature becomes red until end of turn.")
+        .expect("becomes-color clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("setcolors")
+            && rendered.contains("red"),
+        "expected set-colors(red) modification in spell effect, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_target_creature_becomes_color_of_your_choice_until_end_of_turn() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Color Choice Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{1}: Target creature becomes the color of your choice until end of turn.")
+        .expect("becomes-color-of-choice clause should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        abilities_debug.contains("becomecolorchoiceeffect"),
+        "expected become-color-choice effect in activated ability, got {abilities_debug}"
+    );
+}

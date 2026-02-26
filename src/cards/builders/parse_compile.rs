@@ -615,8 +615,12 @@ fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::ReturnToBattlefield { target, .. }
         | EffectAst::MoveToZone { target, .. }
         | EffectAst::Pump { target, .. }
+        | EffectAst::BecomeBasicLandTypeChoice { target, .. }
+        | EffectAst::BecomeColorChoice { target, .. }
         | EffectAst::SetBasePower { target, .. }
         | EffectAst::SetBasePowerToughness { target, .. }
+        | EffectAst::SetColors { target, .. }
+        | EffectAst::MakeColorless { target, .. }
         | EffectAst::PumpForEach { target, .. }
         | EffectAst::PumpByLastEffect { target, .. }
         | EffectAst::GrantAbilitiesToTarget { target, .. }
@@ -1048,8 +1052,12 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::ReturnToBattlefield { target, .. }
         | EffectAst::MoveToZone { target, .. }
         | EffectAst::Pump { target, .. }
+        | EffectAst::BecomeBasicLandTypeChoice { target, .. }
+        | EffectAst::BecomeColorChoice { target, .. }
         | EffectAst::SetBasePower { target, .. }
         | EffectAst::SetBasePowerToughness { target, .. }
+        | EffectAst::SetColors { target, .. }
+        | EffectAst::MakeColorless { target, .. }
         | EffectAst::PumpForEach { target, .. }
         | EffectAst::PumpByLastEffect { target, .. }
         | EffectAst::GrantAbilitiesToTarget { target, .. }
@@ -1542,8 +1550,12 @@ fn collect_tag_spans_from_effect(
         | EffectAst::ReturnToBattlefield { target, .. }
         | EffectAst::MoveToZone { target, .. }
         | EffectAst::Pump { target, .. }
+        | EffectAst::BecomeBasicLandTypeChoice { target, .. }
+        | EffectAst::BecomeColorChoice { target, .. }
         | EffectAst::SetBasePower { target, .. }
         | EffectAst::SetBasePowerToughness { target, .. }
+        | EffectAst::SetColors { target, .. }
+        | EffectAst::MakeColorless { target, .. }
         | EffectAst::PumpByLastEffect { target, .. }
         | EffectAst::GrantAbilitiesToTarget { target, .. }
         | EffectAst::RemoveAbilitiesFromTarget { target, .. }
@@ -3041,6 +3053,14 @@ fn compile_effect(
         EffectAst::BecomeBasicLandTypeChoice { target, duration } => {
             compile_tagged_effect_for_target(target, ctx, "become_basic_land_type", |spec| {
                 Effect::new(crate::effects::BecomeBasicLandTypeChoiceEffect::new(
+                    spec,
+                    duration.clone(),
+                ))
+            })
+        }
+        EffectAst::BecomeColorChoice { target, duration } => {
+            compile_tagged_effect_for_target(target, ctx, "become_color_choice", |spec| {
+                Effect::new(crate::effects::BecomeColorChoiceEffect::new(
                     spec,
                     duration.clone(),
                 ))
@@ -4989,6 +5009,26 @@ fn compile_effect(
                 .resolve_set_pt_values_at_resolution(),
             )
         }),
+        EffectAst::SetColors {
+            target,
+            colors,
+            duration,
+        } => compile_tagged_effect_for_target(target, ctx, "set_colors", |spec| {
+            Effect::new(crate::effects::ApplyContinuousEffect::with_spec(
+                spec,
+                crate::continuous::Modification::SetColors(*colors),
+                duration.clone(),
+            ))
+        }),
+        EffectAst::MakeColorless { target, duration } => {
+            compile_tagged_effect_for_target(target, ctx, "set_colorless", |spec| {
+                Effect::new(crate::effects::ApplyContinuousEffect::with_spec(
+                    spec,
+                    crate::continuous::Modification::MakeColorless,
+                    duration.clone(),
+                ))
+            })
+        }
         EffectAst::PumpForEach {
             power_per,
             toughness_per,
