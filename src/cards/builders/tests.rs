@@ -5415,6 +5415,34 @@ fn parse_cant_be_blocked_by_creatures_with_power_or_less_line() {
 }
 
 #[test]
+fn parse_cant_be_blocked_by_creatures_with_power_or_greater_line() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Amrou Kithkin Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature can't be blocked by creatures with power 3 or greater.")
+        .expect("cant-be-blocked-by-power clause should parse");
+
+    let ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        ids.contains(&crate::static_abilities::StaticAbilityId::CantBeBlockedByPowerOrGreater),
+        "expected cant-be-blocked-by-power static ability, got {ids:?}"
+    );
+
+    let compiled = crate::compiled_text::compiled_lines(&def).join("\n");
+    assert!(
+        compiled.to_ascii_lowercase().contains("power 3 or greater"),
+        "expected compiled text to include power threshold, got {compiled}"
+    );
+}
+
+#[test]
 fn parse_cant_attack_unless_defending_player_controls_island_line() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Deep-Sea Serpent Variant")
         .card_types(vec![CardType::Creature])

@@ -255,6 +255,43 @@ impl StaticAbilityKind for CantBeBlockedByPowerOrLess {
     }
 }
 
+/// Can't be blocked by creatures with power N or greater.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CantBeBlockedByPowerOrGreater {
+    pub threshold: i32,
+}
+
+impl CantBeBlockedByPowerOrGreater {
+    pub const fn new(threshold: i32) -> Self {
+        Self { threshold }
+    }
+}
+
+impl StaticAbilityKind for CantBeBlockedByPowerOrGreater {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantBeBlockedByPowerOrGreater
+    }
+
+    fn display(&self) -> String {
+        format!(
+            "Can't be blocked by creatures with power {} or greater",
+            self.threshold
+        )
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn grants_evasion(&self) -> bool {
+        true
+    }
+
+    fn cant_be_blocked_by_power_or_greater(&self) -> Option<i32> {
+        Some(self.threshold)
+    }
+}
+
 /// Can't be blocked by more than N creatures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CantBeBlockedByMoreThan {

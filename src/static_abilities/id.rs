@@ -57,6 +57,7 @@ pub enum StaticAbilityId {
     CanBlockOnlyFlying,
     CanBlockAdditionalCreatureEachCombat,
     CantBeBlockedByPowerOrLess,
+    CantBeBlockedByPowerOrGreater,
     CantBeBlockedByMoreThan,
     CanAttackAsThoughNoDefender,
     MustAttack,
@@ -231,6 +232,7 @@ impl StaticAbilityId {
                 | FlyingRestriction
                 | FlyingOnlyRestriction
                 | CantBeBlockedByPowerOrLess
+                | CantBeBlockedByPowerOrGreater
                 | CantBeBlockedByMoreThan
                 | Landwalk
         )
@@ -263,6 +265,7 @@ impl StaticAbilityId {
                 | CanBlockFlying
                 | CanBlockOnlyFlying
                 | CantBeBlockedByPowerOrLess
+                | CantBeBlockedByPowerOrGreater
                 | CantBeBlockedByMoreThan
                 | CanAttackAsThoughNoDefender
                 | MustAttack

@@ -10674,19 +10674,25 @@ fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility>, CardText
                     normalized.join(" ")
                 ))
             })?;
-            if used != 1
-                || normalized.get(idx + 3) != Some(&"or")
-                || normalized.get(idx + 4) != Some(&"less")
-                || idx + 5 != normalized.len()
-            {
+            if used != 1 || normalized.get(idx + 3) != Some(&"or") || idx + 5 != normalized.len() {
                 return Err(CardTextError::ParseError(format!(
                     "unsupported cant-be-blocked power clause tail (clause: '{}')",
                     normalized.join(" ")
                 )));
             }
-            return Ok(Some(StaticAbility::cant_be_blocked_by_power_or_less(
-                threshold as i32,
-            )));
+
+            return match normalized.get(idx + 4) {
+                Some(&"less") => Ok(Some(StaticAbility::cant_be_blocked_by_power_or_less(
+                    threshold as i32,
+                ))),
+                Some(&"greater") | Some(&"more") => Ok(Some(
+                    StaticAbility::cant_be_blocked_by_power_or_greater(threshold as i32),
+                )),
+                _ => Err(CardTextError::ParseError(format!(
+                    "unsupported cant-be-blocked power clause tail (clause: '{}')",
+                    normalized.join(" ")
+                ))),
+            };
         }
     }
 

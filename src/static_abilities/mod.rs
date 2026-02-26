@@ -161,6 +161,11 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// Returns the threshold for "can't be blocked by creatures with power N or greater".
+    fn cant_be_blocked_by_power_or_greater(&self) -> Option<i32> {
+        None
+    }
+
     /// Returns true if this ability prevents blocking (Unblockable, etc.)
     fn is_unblockable(&self) -> bool {
         false
@@ -498,6 +503,10 @@ impl StaticAbility {
 
     pub fn blocked_by_power_or_less_threshold(&self) -> Option<i32> {
         self.0.cant_be_blocked_by_power_or_less()
+    }
+
+    pub fn blocked_by_power_or_greater_threshold(&self) -> Option<i32> {
+        self.0.cant_be_blocked_by_power_or_greater()
     }
 
     pub fn is_unblockable(&self) -> bool {
@@ -888,6 +897,10 @@ impl StaticAbility {
 
     pub fn cant_be_blocked_by_power_or_less(threshold: i32) -> Self {
         Self::new(CantBeBlockedByPowerOrLess::new(threshold))
+    }
+
+    pub fn cant_be_blocked_by_power_or_greater(threshold: i32) -> Self {
+        Self::new(CantBeBlockedByPowerOrGreater::new(threshold))
     }
 
     pub fn cant_be_blocked_by_more_than(max_blockers: usize) -> Self {

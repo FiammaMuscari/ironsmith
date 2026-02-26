@@ -232,6 +232,20 @@ pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::
         }
     }
 
+    // "Can't be blocked by creatures with power N or greater"
+    if let Some(min_blocker_power) = attacker_abilities
+        .iter()
+        .filter_map(|ability| ability.blocked_by_power_or_greater_threshold())
+        .min()
+    {
+        let blocker_power = game
+            .calculated_power(blocker.id)
+            .or_else(|| blocker.power());
+        if blocker_power.is_some_and(|power| power >= min_blocker_power) {
+            return false;
+        }
+    }
+
     // Landwalk: unblockable if defending player controls the required land subtype.
     for required_land_subtype in attacker_abilities
         .iter()
@@ -616,6 +630,24 @@ mod tests {
 
         assert!(!can_block(&attacker, &small_blocker, &game));
         assert!(can_block(&attacker, &big_blocker, &game));
+    }
+
+    #[test]
+    fn test_cant_be_blocked_by_creatures_with_power_or_greater() {
+        let game = test_game_state();
+        let mut attacker = make_creature("Evasive", 3, 3);
+        add_ability(
+            &mut attacker,
+            StaticAbility::cant_be_blocked_by_power_or_greater(3),
+        );
+
+        let small_blocker = make_creature("Small", 2, 2);
+        let equal_power_blocker = make_creature("Equal", 3, 3);
+        let big_blocker = make_creature("Big", 4, 4);
+
+        assert!(can_block(&attacker, &small_blocker, &game));
+        assert!(!can_block(&attacker, &equal_power_blocker, &game));
+        assert!(!can_block(&attacker, &big_blocker, &game));
     }
 
     #[test]
