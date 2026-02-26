@@ -1581,6 +1581,81 @@ impl StaticAbilityKind for NoMaximumHandSize {
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
         Box::new(*self)
     }
+
+    fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
+        if let Some(player) = game.player_mut(controller) {
+            player.max_hand_size = i32::MAX;
+        }
+    }
+}
+
+/// "Your/Each opponent's maximum hand size is reduced by N."
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReduceMaximumHandSize {
+    pub player: PlayerFilter,
+    pub amount: u32,
+}
+
+impl ReduceMaximumHandSize {
+    pub fn new(player: PlayerFilter, amount: u32) -> Self {
+        Self { player, amount }
+    }
+}
+
+impl StaticAbilityKind for ReduceMaximumHandSize {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::ReduceMaximumHandSize
+    }
+
+    fn display(&self) -> String {
+        match self.player {
+            PlayerFilter::You => {
+                format!("Your maximum hand size is reduced by {}.", self.amount)
+            }
+            PlayerFilter::Opponent => {
+                format!(
+                    "Each opponent's maximum hand size is reduced by {}.",
+                    self.amount
+                )
+            }
+            PlayerFilter::Any => {
+                format!("Each player's maximum hand size is reduced by {}.", self.amount)
+            }
+            _ => format!("Maximum hand size is reduced by {}.", self.amount),
+        }
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
+        use crate::game_loop::player_matches_filter_with_combat;
+
+        let combat = game.combat.as_ref();
+        let affected: Vec<PlayerId> = game
+            .players
+            .iter()
+            .filter(|player| {
+                player.is_in_game()
+                    && player_matches_filter_with_combat(
+                        player.id,
+                        &self.player,
+                        game,
+                        controller,
+                        combat,
+                    )
+            })
+            .map(|player| player.id)
+            .collect();
+
+        let reduction = self.amount as i32;
+        for player_id in affected {
+            if let Some(player) = game.player_mut(player_id) {
+                player.max_hand_size = player.max_hand_size.saturating_sub(reduction);
+            }
+        }
+    }
 }
 
 /// Library of Leng's discard replacement effect.
@@ -1867,6 +1942,36 @@ mod tests {
     fn test_no_maximum_hand_size() {
         let ability = NoMaximumHandSize;
         assert_eq!(ability.id(), StaticAbilityId::NoMaximumHandSize);
+
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(42);
+        ability.apply_restrictions(&mut game, source, alice);
+        assert_eq!(
+            game.player(alice).expect("alice should exist").max_hand_size,
+            i32::MAX
+        );
+    }
+
+    #[test]
+    fn test_reduce_maximum_hand_size_for_opponents() {
+        let ability = ReduceMaximumHandSize::new(PlayerFilter::Opponent, 4);
+        assert_eq!(ability.id(), StaticAbilityId::ReduceMaximumHandSize);
+
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let source = ObjectId::from_raw(43);
+        ability.apply_restrictions(&mut game, source, alice);
+
+        assert_eq!(
+            game.player(alice).expect("alice should exist").max_hand_size,
+            7
+        );
+        assert_eq!(
+            game.player(bob).expect("bob should exist").max_hand_size,
+            3
+        );
     }
 
     #[test]

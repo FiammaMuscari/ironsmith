@@ -10173,3 +10173,31 @@ fn parse_target_creature_cant_block_this_turn() {
         .parse_text("Target creature can't block this turn.")
         .expect("target cant-block-this-turn clause should parse");
 }
+
+#[test]
+fn parse_your_maximum_hand_size_reduced_static_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Thought Devourer Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Flying\nYour maximum hand size is reduced by four.")
+        .expect("your maximum hand size reduction line should parse");
+
+    let rendered = format!("{:#?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        rendered.contains("maximum hand size is reduced by"),
+        "expected maximum-hand-size reduction in rendered text, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_each_opponents_maximum_hand_size_reduced_static_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Ivory Tower Variant")
+        .card_types(vec![CardType::Artifact])
+        .parse_text("Each opponent's maximum hand size is reduced by one.")
+        .expect("each-opponent maximum hand size reduction line should parse");
+
+    let rendered = format!("{:#?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        rendered.contains("maximum hand size is reduced by"),
+        "expected maximum-hand-size reduction in rendered text, got {rendered}"
+    );
+}

@@ -149,6 +149,7 @@ pub enum StaticAbilityId {
     CanBeCommander,
     LevelAbilities,
     NoMaximumHandSize,
+    ReduceMaximumHandSize,
     LibraryOfLengDiscardReplacement,
     DrawReplacementExileTopFaceDown,
     StartingLifeBonus,

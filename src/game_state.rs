@@ -2411,6 +2411,9 @@ impl GameState {
         self.cant_effects.clear();
         self.mana_spend_effects.clear();
         self.damage_persists.clear();
+        for player in &mut self.players {
+            player.max_hand_size = 7;
+        }
 
         // First, collect static abilities from objects in zones where they function
         // (currently battlefield and stack).

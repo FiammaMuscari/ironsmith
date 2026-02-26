@@ -2315,6 +2315,9 @@ fn parse_static_ability_line(
     if let Some(ability) = parse_no_maximum_hand_size_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) = parse_reduced_maximum_hand_size_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_library_of_leng_discard_replacement_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -7932,6 +7935,60 @@ fn parse_no_maximum_hand_size_line(
         return Ok(Some(StaticAbility::no_maximum_hand_size()));
     }
     Ok(None)
+}
+
+fn parse_reduced_maximum_hand_size_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    if words.is_empty() {
+        return Ok(None);
+    }
+
+    let (player, mut idx) = if words.starts_with(&["your"]) || words.starts_with(&["you"]) {
+        (crate::target::PlayerFilter::You, 1usize)
+    } else if words.starts_with(&["each", "opponent"]) || words.starts_with(&["each", "opponents"])
+    {
+        (crate::target::PlayerFilter::Opponent, 2usize)
+    } else if words.starts_with(&["opponent"]) || words.starts_with(&["opponents"]) {
+        (crate::target::PlayerFilter::Opponent, 1usize)
+    } else if words.starts_with(&["each", "player"]) || words.starts_with(&["each", "players"]) {
+        (crate::target::PlayerFilter::Any, 2usize)
+    } else if words.starts_with(&["player"]) || words.starts_with(&["players"]) {
+        (crate::target::PlayerFilter::Any, 1usize)
+    } else {
+        return Ok(None);
+    };
+
+    if words.get(idx..idx + 5) != Some(["maximum", "hand", "size", "is", "reduced"].as_slice()) {
+        return Ok(None);
+    }
+    idx += 5;
+    if words.get(idx) != Some(&"by") {
+        return Ok(None);
+    }
+    idx += 1;
+
+    let Some(amount_word) = words.get(idx) else {
+        return Err(CardTextError::ParseError(format!(
+            "missing maximum-hand-size reduction amount (clause: '{}')",
+            words.join(" ")
+        )));
+    };
+    let Some(amount) = parse_named_number(amount_word) else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported maximum-hand-size reduction amount '{}' (clause: '{}')",
+            amount_word,
+            words.join(" ")
+        )));
+    };
+    idx += 1;
+
+    if idx != words.len() {
+        return Ok(None);
+    }
+
+    Ok(Some(StaticAbility::reduce_maximum_hand_size(player, amount)))
 }
 
 fn parse_library_of_leng_discard_replacement_line(

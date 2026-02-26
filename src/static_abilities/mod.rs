@@ -1191,6 +1191,10 @@ impl StaticAbility {
         Self::new(NoMaximumHandSize)
     }
 
+    pub fn reduce_maximum_hand_size(player: crate::target::PlayerFilter, amount: u32) -> Self {
+        Self::new(ReduceMaximumHandSize::new(player, amount))
+    }
+
     pub fn damage_not_removed_during_cleanup() -> Self {
         Self::new(DamageNotRemovedDuringCleanup)
     }
