@@ -6,6 +6,7 @@ use crate::effects::helpers::{normalize_object_selection, resolve_player_filter,
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::filter::ObjectFilter;
 use crate::game_state::GameState;
+use crate::types::CardType;
 use crate::target::PlayerFilter;
 
 /// Effect that causes a player to discard cards.
@@ -81,6 +82,33 @@ impl DiscardEffect {
     }
 }
 
+fn card_type_name(card_type: CardType) -> &'static str {
+    match card_type {
+        CardType::Creature => "creature",
+        CardType::Artifact => "artifact",
+        CardType::Enchantment => "enchantment",
+        CardType::Land => "land",
+        CardType::Planeswalker => "planeswalker",
+        CardType::Instant => "instant",
+        CardType::Sorcery => "sorcery",
+        CardType::Battle => "battle",
+        CardType::Kindred => "kindred",
+    }
+}
+
+fn format_discard_card_type_phrase(card_types: &[CardType]) -> String {
+    if card_types.is_empty() {
+        return "card".to_string();
+    }
+    if card_types.len() == 1 {
+        return format!("{} card", card_type_name(card_types[0]));
+    }
+
+    let mut parts: Vec<&str> = card_types.iter().map(|ct| card_type_name(*ct)).collect();
+    let last = parts.pop().expect("len checked");
+    format!("{} or {} card", parts.join(", "), last)
+}
+
 impl EffectExecutor for DiscardEffect {
     fn execute(
         &self,
@@ -90,7 +118,6 @@ impl EffectExecutor for DiscardEffect {
         use crate::decisions::make_decision;
         use crate::decisions::specs::ChooseObjectsSpec;
         use crate::event_processor::execute_discard;
-        use crate::events::cause::EventCause;
         use rand::seq::SliceRandom;
 
         let player_id = resolve_player_filter(game, &self.player, ctx)?;
@@ -134,9 +161,9 @@ impl EffectExecutor for DiscardEffect {
             normalize_object_selection(chosen, &hand_cards, required)
         };
 
-        // Discard each card using the event system
-        // This is an EFFECT discard, so Library of Leng CAN apply
-        let cause = EventCause::from_effect(ctx.source, ctx.controller);
+        // Discard each card using the event system. The cause is inherited from
+        // the execution context so discard-as-cost stays cost-caused.
+        let cause = ctx.cause.clone();
         for card_id in cards_to_discard {
             let result = execute_discard(
                 game,
@@ -152,6 +179,76 @@ impl EffectExecutor for DiscardEffect {
         }
 
         Ok(EffectOutcome::count(discarded))
+    }
+
+    fn can_execute_as_cost(
+        &self,
+        game: &GameState,
+        source: crate::ids::ObjectId,
+        controller: crate::ids::PlayerId,
+    ) -> Result<(), crate::effects::CostValidationError> {
+        use crate::effects::CostValidationError;
+
+        let required = match self.count {
+            Value::Fixed(n) => n.max(0) as usize,
+            _ => {
+                return Err(CostValidationError::Other(
+                    "dynamic discard cost amount is unsupported".to_string(),
+                ));
+            }
+        };
+        if required == 0 {
+            return Ok(());
+        }
+
+        let player_id = match self.player {
+            PlayerFilter::You => controller,
+            PlayerFilter::Specific(id) => id,
+            _ => {
+                return Err(CostValidationError::Other(
+                    "discard cost supports only 'you' or a specific player".to_string(),
+                ));
+            }
+        };
+
+        let mut hand_cards: Vec<_> = game
+            .player(player_id)
+            .map(|p| p.hand.iter().copied().collect())
+            .unwrap_or_default();
+        hand_cards.retain(|card_id| *card_id != source);
+
+        if let Some(filter) = &self.card_filter {
+            let filter_ctx = crate::filter::FilterContext::new(controller).with_source(source);
+            hand_cards.retain(|card_id| {
+                game.object(*card_id)
+                    .is_some_and(|obj| filter.matches(obj, &filter_ctx, game))
+            });
+        }
+
+        if hand_cards.len() < required {
+            return Err(CostValidationError::NotEnoughCards);
+        }
+
+        Ok(())
+    }
+
+    fn cost_description(&self) -> Option<String> {
+        let count = match self.count {
+            Value::Fixed(n) if n > 0 => n as usize,
+            _ => return None,
+        };
+        let card_types = self
+            .card_filter
+            .as_ref()
+            .map(|f| f.card_types.clone())
+            .unwrap_or_default();
+        let type_phrase = format_discard_card_type_phrase(&card_types);
+        let random_suffix = if self.random { " at random" } else { "" };
+        Some(if count == 1 {
+            format!("Discard a {type_phrase}{random_suffix}")
+        } else {
+            format!("Discard {count} {type_phrase}s{random_suffix}")
+        })
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
@@ -263,5 +360,32 @@ mod tests {
         let effect = DiscardEffect::you(1);
         let cloned = effect.clone_box();
         assert!(format!("{:?}", cloned).contains("DiscardEffect"));
+    }
+
+    #[test]
+    fn test_discard_can_execute_as_cost_requires_enough_cards() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+
+        let effect = DiscardEffect::you_random(1);
+        let can_pay = effect.can_execute_as_cost(&game, source, alice);
+        assert_eq!(
+            can_pay,
+            Err(crate::effects::CostValidationError::NotEnoughCards)
+        );
+
+        add_card_to_hand(&mut game, "Card 1", alice);
+        let can_pay = effect.can_execute_as_cost(&game, source, alice);
+        assert!(can_pay.is_ok(), "expected discard cost to be payable");
+    }
+
+    #[test]
+    fn test_discard_cost_description_random() {
+        let effect = DiscardEffect::you_random(1);
+        assert_eq!(
+            effect.cost_description().as_deref(),
+            Some("Discard a card at random")
+        );
     }
 }

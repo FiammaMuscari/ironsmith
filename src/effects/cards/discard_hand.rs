@@ -52,8 +52,6 @@ impl EffectExecutor for DiscardHandEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         use crate::event_processor::execute_discard;
-        use crate::events::cause::EventCause;
-
         let player_id = resolve_player_filter(game, &self.player, ctx)?;
 
         let hand_cards: Vec<_> = game
@@ -63,9 +61,9 @@ impl EffectExecutor for DiscardHandEffect {
 
         let count = hand_cards.len();
 
-        // Discard each card using the event system
-        // This is an EFFECT discard, so Library of Leng CAN apply
-        let cause = EventCause::from_effect(ctx.source, ctx.controller);
+        // Discard each card using the event system. The cause is inherited from
+        // the execution context so discard-as-cost stays cost-caused.
+        let cause = ctx.cause.clone();
         for card_id in hand_cards {
             execute_discard(
                 game,

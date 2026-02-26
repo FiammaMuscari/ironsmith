@@ -8352,6 +8352,19 @@ fn render_activation_discard_hand_cost_keeps_full_hand_clause() {
 }
 
 #[test]
+fn render_activation_random_discard_cost_keeps_random_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Mage il-Vec Variant")
+        .parse_text("{T}, Discard a card at random: This creature deals 1 damage to any target.")
+        .expect("random discard activation cost should parse");
+
+    let joined = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("discard a card at random"),
+        "expected random discard activation cost wording, got {joined}"
+    );
+}
+
+#[test]
 fn render_activation_return_cost_preserves_numeric_count() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Flooded Shoreline Variant")
         .parse_text("{U}{U}, Return two Islands you control to their owner's hand: Return target creature to its owner's hand.")

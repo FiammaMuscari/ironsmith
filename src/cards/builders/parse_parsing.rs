@@ -10309,14 +10309,35 @@ fn parse_activation_cost(tokens: &[Token]) -> Result<(TotalCost, Vec<Effect>), C
             idx += 1;
 
             let trailing_words = words(&segment[idx..]);
-            if !trailing_words.is_empty() {
-                return Err(CardTextError::ParseError(format!(
-                    "unsupported trailing discard cost clause (clause: '{}')",
-                    segment_words.join(" ")
-                )));
-            }
+            let random = match trailing_words.as_slice() {
+                [] => false,
+                ["at", "random"] => true,
+                _ => {
+                    return Err(CardTextError::ParseError(format!(
+                        "unsupported trailing discard cost clause (clause: '{}')",
+                        segment_words.join(" ")
+                    )));
+                }
+            };
 
-            if card_types.len() > 1 {
+            if random {
+                let card_filter = if card_types.is_empty() {
+                    None
+                } else {
+                    Some(ObjectFilter {
+                        card_types,
+                        ..Default::default()
+                    })
+                };
+                explicit_costs.push(crate::costs::Cost::effect(
+                    Effect::discard_player_filtered(
+                        Value::Fixed(count as i32),
+                        PlayerFilter::You,
+                        true,
+                        card_filter,
+                    ),
+                ));
+            } else if card_types.len() > 1 {
                 explicit_costs.push(crate::costs::Cost::discard_types(count, card_types));
             } else if let Some(card_type) = card_types.first().copied() {
                 explicit_costs.push(crate::costs::Cost::discard(count, Some(card_type)));
@@ -36884,6 +36905,33 @@ mod parse_parsing_tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn parse_activated_discard_random_cost_to_effect_cost() {
+        let tokens = tokenize_line(
+            "{R}, Discard a card at random: This creature gets +3/+0 until end of turn.",
+            0,
+        );
+        let parsed = parse_activated_line(&tokens)
+            .expect("parse activated line")
+            .expect("expected activated ability");
+
+        let AbilityKind::Activated(activated) = parsed.ability.kind else {
+            panic!("expected activated ability");
+        };
+
+        let has_random_discard_cost = activated.mana_cost.costs().iter().any(|cost| {
+            cost.effect_ref().is_some_and(|effect| {
+                effect
+                    .downcast_ref::<crate::effects::DiscardEffect>()
+                    .is_some_and(|discard| discard.random)
+            })
+        });
+        assert!(
+            has_random_discard_cost,
+            "expected random discard effect-backed cost"
+        );
     }
 }
 
