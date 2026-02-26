@@ -1828,7 +1828,19 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
         || tokens
             .first()
             .is_some_and(|token| token.is_word("choose") || token.is_word("if"));
-    if starts_with_statement_effect_head && !is_each_other_player_untap_static {
+    let is_damage_prevent_with_remove_static = line_words
+        .starts_with(&["if", "damage", "would", "be", "dealt", "to", "this"])
+        && line_words
+            .windows(3)
+            .any(|window| window == ["prevent", "that", "damage"])
+        && line_words
+            .iter()
+            .any(|word| *word == "counter" || *word == "counters")
+        && line_words.iter().any(|word| *word == "remove");
+    if starts_with_statement_effect_head
+        && !is_each_other_player_untap_static
+        && !is_damage_prevent_with_remove_static
+    {
         match parse_effect_sentences(&tokens) {
             Ok(effects) if !effects.is_empty() => {
                 parser_trace("parse_line:branch=statement-verb-leading", &tokens);
@@ -36962,6 +36974,21 @@ mod parse_parsing_tests {
         assert!(abilities
             .iter()
             .any(|ability| ability.id() == StaticAbilityId::PreventDamageToSelfRemoveCounter));
+    }
+
+    #[test]
+    fn parse_line_prevent_damage_to_source_remove_counter_prefers_static() {
+        let line =
+            "If damage would be dealt to this creature, prevent that damage. Remove a +1/+1 counter from this creature.";
+        let parsed = parse_line(line, 0).expect("parse line");
+        let ability = match parsed {
+            LineAst::StaticAbility(ability) => ability,
+            LineAst::StaticAbilities(mut abilities) if abilities.len() == 1 => abilities
+                .pop()
+                .expect("single static ability"),
+            other => panic!("expected static ability parse, got {other:?}"),
+        };
+        assert_eq!(ability.id(), StaticAbilityId::PreventDamageToSelfRemoveCounter);
     }
 
     #[test]
