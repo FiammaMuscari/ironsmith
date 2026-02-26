@@ -10101,3 +10101,75 @@ fn parse_choose_creature_type_then_each_creature_becomes_that_type() {
         "expected become-creature-type-choice effect in sorcery text, got {rendered}"
     );
 }
+
+#[test]
+fn parse_this_creature_cant_be_blocked_by_creatures_with_flying() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Gnat Alley Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature can't be blocked by creatures with flying.")
+        .expect("cant-be-blocked-by-flying clause should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        abilities_debug.contains("blockspecificattacker"),
+        "expected blocker restriction against fliers, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_this_creature_cant_be_blocked_except_by_black_creatures() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Dread Warlock Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature can't be blocked except by black creatures.")
+        .expect("cant-be-blocked-except-by-black clause should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        abilities_debug.contains("blockspecificattacker"),
+        "expected blocker restriction to nonblack blockers, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_this_creature_cant_be_blocked_by_walls() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bog Rats Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature can't be blocked by Walls.")
+        .expect("cant-be-blocked-by-walls clause should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        abilities_debug.contains("blockspecificattacker"),
+        "expected blocker restriction against Walls, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_this_creature_cant_block_creatures_with_power_two_or_greater() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Brassclaw Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature can't block creatures with power 2 or greater.")
+        .expect("cant-block-power-threshold clause should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        abilities_debug.contains("blockspecificattacker"),
+        "expected blocker restriction by attacker power, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_creatures_without_flying_cant_block_this_turn() {
+    let _def = CardDefinitionBuilder::new(CardId::from_raw(1), "Falter Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Creatures without flying can't block this turn.")
+        .expect("global cant-block-this-turn clause should parse");
+}
+
+#[test]
+fn parse_target_creature_cant_block_this_turn() {
+    let _def = CardDefinitionBuilder::new(CardId::from_raw(1), "Blindblast Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Target creature can't block this turn.")
+        .expect("target cant-block-this-turn clause should parse");
+}

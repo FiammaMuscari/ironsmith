@@ -11246,6 +11246,60 @@ fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility>, CardText
                 ))),
             };
         }
+
+        if normalized.get(idx) == Some(&"with")
+            && normalized.get(idx + 1) == Some(&"flying")
+            && idx + 2 == normalized.len()
+        {
+            return Ok(Some(StaticAbility::restriction(
+                crate::effect::Restriction::block_specific_attacker(
+                    ObjectFilter::creature()
+                        .with_static_ability(crate::static_abilities::StaticAbilityId::Flying),
+                    ObjectFilter::source(),
+                ),
+                "this creature can't be blocked by creatures with flying".to_string(),
+            )));
+        }
+
+        if normalized.get(idx).is_some_and(|word| *word == "wall" || *word == "walls")
+            && idx + 1 == normalized.len()
+        {
+            return Ok(Some(StaticAbility::restriction(
+                crate::effect::Restriction::block_specific_attacker(
+                    ObjectFilter::creature().with_subtype(Subtype::Wall),
+                    ObjectFilter::source(),
+                ),
+                "this creature can't be blocked by walls".to_string(),
+            )));
+        }
+    }
+
+    let starts_with_cant_be_blocked_except_by = normalized
+        .starts_with(&["this", "creature", "cant", "be", "blocked", "except", "by"])
+        || normalized.starts_with(&["this", "cant", "be", "blocked", "except", "by"]);
+    if starts_with_cant_be_blocked_except_by {
+        let idx = if normalized
+            .starts_with(&["this", "creature", "cant", "be", "blocked", "except", "by"])
+        {
+            7
+        } else {
+            6
+        };
+        if let Some(color_word) = normalized.get(idx)
+            && normalized
+                .get(idx + 1)
+                .is_some_and(|word| *word == "creature" || *word == "creatures")
+            && idx + 2 == normalized.len()
+            && let Some(color) = parse_color(color_word)
+        {
+            return Ok(Some(StaticAbility::restriction(
+                crate::effect::Restriction::block_specific_attacker(
+                    ObjectFilter::creature().without_colors(crate::color::ColorSet::from(color)),
+                    ObjectFilter::source(),
+                ),
+                format!("this creature can't be blocked except by {color_word} creatures"),
+            )));
+        }
     }
 
     let starts_with_cant_attack_unless_defending_player =
@@ -11322,6 +11376,28 @@ fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility>, CardText
         let subject_tokens = trim_commas(&tokens[..neg_start]);
         let remainder_tokens = trim_commas(&tokens[neg_end..]);
         let remainder_words = normalize_cant_words(&remainder_tokens);
+        let subject_words = words(&subject_tokens);
+        if (subject_words == ["this", "creature"] || subject_words == ["this"])
+            && remainder_words.first() == Some(&"block")
+            && remainder_words.len() > 1
+        {
+            let attacker_tokens = trim_commas(&remainder_tokens[1..]);
+            let attacker_filter = parse_subject_object_filter(&attacker_tokens)?
+                .or_else(|| parse_object_filter(&attacker_tokens, false).ok())
+                .ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "unsupported blocker restriction filter (clause: '{}')",
+                        normalized.join(" ")
+                    ))
+                })?;
+            return Ok(Some(StaticAbility::restriction(
+                crate::effect::Restriction::block_specific_attacker(
+                    ObjectFilter::source(),
+                    attacker_filter,
+                ),
+                "this creature can't block those attackers".to_string(),
+            )));
+        }
         if remainder_words.as_slice() == ["transform"] {
             let Some(filter) = parse_subject_object_filter(&subject_tokens)? else {
                 return Ok(None);
@@ -11601,7 +11677,9 @@ fn parse_negated_object_restriction_clause(
 
     let restriction = match remainder_words.as_slice() {
         ["attack"] => Restriction::attack(filter),
+        ["attack", "this", "turn"] => Restriction::attack(filter),
         ["block"] => Restriction::block(filter),
+        ["block", "this", "turn"] => Restriction::block(filter),
         ["be", "blocked"] => Restriction::be_blocked(filter),
         ["be", "destroyed"] => Restriction::be_destroyed(filter),
         ["be", "sacrificed"] => Restriction::be_sacrificed(filter),
