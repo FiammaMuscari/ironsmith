@@ -6633,6 +6633,7 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::TargetIsTapped => "the target is tapped".to_string(),
         Condition::TargetIsBlocked => "the target is blocked".to_string(),
         Condition::TargetWasKicked => "the target spell was kicked".to_string(),
+        Condition::ThisSpellWasKicked => "this spell was kicked".to_string(),
         Condition::TargetSpellCastOrderThisTurn(2) => {
             "the target spell was the second spell cast this turn".to_string()
         }

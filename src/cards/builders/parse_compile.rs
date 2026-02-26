@@ -435,6 +435,7 @@ fn compile_condition_from_predicate_ast(
         }
         PredicateAst::YouAttackedThisTurn => Condition::AttackedThisTurn,
         PredicateAst::NoSpellsWereCastLastTurn => Condition::NoSpellsWereCastLastTurn,
+        PredicateAst::ThisSpellWasKicked => Condition::ThisSpellWasKicked,
         PredicateAst::TargetWasKicked => Condition::TargetWasKicked,
         PredicateAst::TargetSpellCastOrderThisTurn(order) => Condition::TargetSpellCastOrderThisTurn(*order),
         PredicateAst::TargetSpellControllerIsPoisoned => Condition::TargetSpellControllerIsPoisoned,
@@ -4449,6 +4450,7 @@ fn compile_effect(
                     }
                     PredicateAst::YouAttackedThisTurn => Condition::AttackedThisTurn,
                     PredicateAst::NoSpellsWereCastLastTurn => Condition::NoSpellsWereCastLastTurn,
+                    PredicateAst::ThisSpellWasKicked => Condition::ThisSpellWasKicked,
                     PredicateAst::TargetWasKicked => Condition::TargetWasKicked,
                     PredicateAst::TargetSpellCastOrderThisTurn(order) => {
                         Condition::TargetSpellCastOrderThisTurn(*order)

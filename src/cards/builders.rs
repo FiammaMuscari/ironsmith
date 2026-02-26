@@ -473,6 +473,8 @@ enum PredicateAst {
     },
     YouAttackedThisTurn,
     NoSpellsWereCastLastTurn,
+    /// The current resolving spell was kicked (not a target predicate).
+    ThisSpellWasKicked,
     TargetWasKicked,
     TargetSpellCastOrderThisTurn(u32),
     TargetSpellControllerIsPoisoned,

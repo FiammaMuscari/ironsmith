@@ -25997,6 +25997,9 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
     {
         return Ok(PredicateAst::NoSpellsWereCastLastTurn);
     }
+    if filtered.as_slice() == ["this", "spell", "was", "kicked"] {
+        return Ok(PredicateAst::ThisSpellWasKicked);
+    }
     if filtered.as_slice() == ["it", "was", "kicked"]
         || filtered.as_slice() == ["that", "was", "kicked"]
     {

@@ -1,5 +1,7 @@
 use crate::effect::Condition;
+use crate::effect::Value;
 use crate::executor::{ExecutionContext, ExecutionError};
+use crate::effects::helpers::resolve_value;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId, StableId};
 use crate::target::PlayerFilter;
@@ -63,6 +65,9 @@ pub fn evaluate_condition_external(
         Condition::Unmodeled(_) => true,
         Condition::Custom(_) => false,
         Condition::XValueAtLeast(_) => false, // X not available in static context
+        Condition::ThisSpellWasKicked => game
+            .object(ctx.source)
+            .is_some_and(|obj| obj.optional_costs_paid.was_kicked()),
 
         Condition::YouControl(filter) => {
             let filter_ctx = game.filter_context_for(ctx.controller, ctx.filter_source);
@@ -519,6 +524,9 @@ fn evaluate_condition_simple(
         .with_opponents(opponents.clone());
 
     match condition {
+        Condition::ThisSpellWasKicked => game
+            .object(source)
+            .is_some_and(|obj| obj.optional_costs_paid.was_kicked()),
         Condition::YouControl(filter) => game
             .battlefield
             .iter()
@@ -1125,6 +1133,7 @@ fn evaluate_condition(
             }
             Ok(false)
         }
+        Condition::ThisSpellWasKicked => Ok(resolve_value(game, &Value::WasKicked, ctx)? != 0),
         Condition::TargetSpellCastOrderThisTurn(order) => {
             for target in &ctx.targets {
                 if let crate::executor::ResolvedTarget::Object(id) = target {

@@ -1437,6 +1437,11 @@ pub enum Condition {
     /// The targeted spell was kicked.
     TargetWasKicked,
 
+    /// This resolving spell was kicked.
+    ///
+    /// Unlike `TargetWasKicked`, this does not require a spell target.
+    ThisSpellWasKicked,
+
     /// The targeted spell was the Nth spell cast this turn.
     TargetSpellCastOrderThisTurn(u32),
 
