@@ -91,7 +91,7 @@ fn get_static_abilities(object: &Object) -> Vec<crate::static_abilities::StaticA
 ///
 /// Takes `GameState` to check abilities granted by continuous effects (like protection from Akroma's Will).
 pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::GameState) -> bool {
-    if !game.can_block(blocker.id) {
+    if !game.can_block_attacker(blocker.id, attacker.id) {
         return false;
     }
 
@@ -786,6 +786,43 @@ mod tests {
         assert!(
             !can_block(&attacker, &blocker, &game_with_artifact),
             "blocker should fail when defending player controls an artifact"
+        );
+    }
+
+    #[test]
+    fn test_cant_block_specific_attacker_restriction() {
+        let mut game = test_game_state();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let mut attacker = make_creature("Attacker", 2, 2);
+        attacker.id = ObjectId::from_raw(20);
+        attacker.controller = alice;
+
+        let mut other_attacker = make_creature("Other Attacker", 2, 2);
+        other_attacker.id = ObjectId::from_raw(21);
+        other_attacker.controller = alice;
+
+        let mut blocker = make_creature("Blocker", 2, 2);
+        blocker.id = ObjectId::from_raw(22);
+        blocker.controller = bob;
+
+        game.add_object(attacker.clone());
+        game.add_object(other_attacker.clone());
+        game.add_object(blocker.clone());
+        game.cant_effects
+            .cant_block_specific_attackers
+            .entry(blocker.id)
+            .or_default()
+            .insert(attacker.id);
+
+        assert!(
+            !can_block(&attacker, &blocker, &game),
+            "blocker should fail against restricted attacker"
+        );
+        assert!(
+            can_block(&other_attacker, &blocker, &game),
+            "blocker should still block other attackers"
         );
     }
 

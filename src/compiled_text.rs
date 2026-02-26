@@ -6316,6 +6316,13 @@ fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
         crate::effect::Restriction::Block(filter) => {
             format!("{} can't block", filter.description())
         }
+        crate::effect::Restriction::BlockSpecificAttacker { blockers, attacker } => {
+            format!(
+                "{} can't block {}",
+                blockers.description(),
+                attacker.description()
+            )
+        }
         crate::effect::Restriction::BlockAlone(filter) => {
             format!("{} can't block alone", filter.description())
         }

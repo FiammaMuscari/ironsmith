@@ -7511,6 +7511,23 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_target_creature_cant_block_this_creature_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Duct Crawler Variant")
+            .parse_text("{R}: Target creature can't block this creature this turn.")
+            .expect("target creature can't block this creature should parse");
+
+        let lines = compiled_lines(&def);
+        let activated = lines
+            .iter()
+            .find(|line| line.starts_with("Activated ability"))
+            .expect("expected activated ability line");
+        assert!(
+            activated.contains("can't block") && activated.contains("this permanent this turn"),
+            "expected cant-block-this-creature text in compiled line, got {activated}"
+        );
+    }
+
+    #[test]
     fn reject_curly_apostrophe_negated_untap_clause() {
         let err = CardDefinitionBuilder::new(CardId::new(), "Kill Switch Apostrophe Variant")
             .parse_text(

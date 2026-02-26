@@ -1190,14 +1190,26 @@ fn restriction_references_tag(restriction: &crate::effect::Restriction, tag: &st
         | Restriction::AttackOrBlock(filter) => Some(filter),
         _ => None,
     };
-    let Some(filter) = maybe_filter else {
-        return false;
-    };
+    if let Some(filter) = maybe_filter {
+        return filter
+            .tagged_constraints
+            .iter()
+            .any(|constraint| constraint.tag.as_str() == tag);
+    }
 
-    filter
-        .tagged_constraints
-        .iter()
-        .any(|constraint| constraint.tag.as_str() == tag)
+    if let Restriction::BlockSpecificAttacker { blockers, attacker } = restriction {
+        let blockers_reference = blockers
+            .tagged_constraints
+            .iter()
+            .any(|constraint| constraint.tag.as_str() == tag);
+        let attacker_reference = attacker
+            .tagged_constraints
+            .iter()
+            .any(|constraint| constraint.tag.as_str() == tag);
+        return blockers_reference || attacker_reference;
+    }
+
+    false
 }
 
 fn compile_effects(
@@ -5527,6 +5539,12 @@ fn resolve_restriction_it_tag(
     let resolved = match restriction {
         Restriction::Attack(filter) => Restriction::attack(resolve_it_tag(filter, ctx)?),
         Restriction::Block(filter) => Restriction::block(resolve_it_tag(filter, ctx)?),
+        Restriction::BlockSpecificAttacker { blockers, attacker } => {
+            Restriction::block_specific_attacker(
+                resolve_it_tag(blockers, ctx)?,
+                resolve_it_tag(attacker, ctx)?,
+            )
+        }
         Restriction::Untap(filter) => Restriction::untap(resolve_it_tag(filter, ctx)?),
         Restriction::BeBlocked(filter) => Restriction::be_blocked(resolve_it_tag(filter, ctx)?),
         Restriction::BeDestroyed(filter) => Restriction::be_destroyed(resolve_it_tag(filter, ctx)?),

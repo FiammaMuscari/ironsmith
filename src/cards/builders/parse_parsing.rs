@@ -11608,6 +11608,18 @@ fn parse_negated_object_restriction_clause(
         ["be", "countered"] => Restriction::be_countered(filter),
         ["transform"] => Restriction::transform(filter),
         ["be", "targeted"] => Restriction::be_targeted(filter),
+        _ if remainder_words.first() == Some(&"block") && remainder_words.len() > 1 => {
+            let attacker_tokens = trim_commas(&remainder_tokens[1..]);
+            let attacker_filter = parse_subject_object_filter(&attacker_tokens)?
+                .or_else(|| parse_object_filter(&attacker_tokens, false).ok())
+                .ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "unsupported negated restriction tail (clause: '{}')",
+                        words(tokens).join(" ")
+                    ))
+                })?;
+            Restriction::block_specific_attacker(filter, attacker_filter)
+        }
         _ if is_supported_untap_restriction_tail(&remainder_words) => Restriction::untap(filter),
         _ => {
             return Err(CardTextError::ParseError(format!(

@@ -150,6 +150,10 @@ pub struct CantEffectTracker {
     /// Example: Goblin War Drums, Madcap Skills
     pub cant_block: HashSet<ObjectId>,
 
+    /// Blocker -> attackers this blocker can't block this turn.
+    /// Example: "Target creature can't block this creature this turn."
+    pub cant_block_specific_attackers: HashMap<ObjectId, HashSet<ObjectId>>,
+
     /// Creatures that can't block alone.
     /// Example: "This creature can't block alone."
     pub cant_block_alone: HashSet<ObjectId>,
@@ -338,6 +342,12 @@ impl CantEffectTracker {
         self.cant_attack.extend(other.cant_attack);
         self.cant_attack_alone.extend(other.cant_attack_alone);
         self.cant_block.extend(other.cant_block);
+        for (blocker, attackers) in other.cant_block_specific_attackers {
+            self.cant_block_specific_attackers
+                .entry(blocker)
+                .or_default()
+                .extend(attackers);
+        }
         self.cant_block_alone.extend(other.cant_block_alone);
         self.cant_untap.extend(other.cant_untap);
         self.cant_be_destroyed.extend(other.cant_be_destroyed);
@@ -378,6 +388,7 @@ impl CantEffectTracker {
         self.cant_attack.clear();
         self.cant_attack_alone.clear();
         self.cant_block.clear();
+        self.cant_block_specific_attackers.clear();
         self.cant_block_alone.clear();
         self.cant_untap.clear();
         self.cant_be_destroyed.clear();
@@ -435,6 +446,15 @@ impl CantEffectTracker {
     /// Check if a creature can block.
     pub fn can_block(&self, creature: ObjectId) -> bool {
         !self.cant_block.contains(&creature)
+    }
+
+    /// Check if a creature can block a specific attacker.
+    pub fn can_block_attacker(&self, blocker: ObjectId, attacker: ObjectId) -> bool {
+        self.can_block(blocker)
+            && self
+                .cant_block_specific_attackers
+                .get(&blocker)
+                .is_none_or(|attackers| !attackers.contains(&attacker))
     }
 
     /// Check if a creature can block alone (as the only blocker).
@@ -1417,6 +1437,11 @@ impl GameState {
     /// Can the creature block?
     pub fn can_block(&self, creature: ObjectId) -> bool {
         self.cant_effects.can_block(creature)
+    }
+
+    /// Can the creature block a specific attacker?
+    pub fn can_block_attacker(&self, blocker: ObjectId, attacker: ObjectId) -> bool {
+        self.cant_effects.can_block_attacker(blocker, attacker)
     }
 
     /// Can the creature block as the only blocker?
@@ -3928,6 +3953,11 @@ mod tests {
         tracker.cant_have_counters_placed.insert(object);
         tracker.cant_attack.insert(object);
         tracker.cant_block.insert(object);
+        tracker
+            .cant_block_specific_attackers
+            .entry(object)
+            .or_default()
+            .insert(ObjectId::from_raw(2));
         tracker.cant_untap.insert(object);
         tracker.cant_be_destroyed.insert(object);
         tracker.cant_be_blocked.insert(object);
@@ -3950,6 +3980,7 @@ mod tests {
         assert!(!tracker.cant_have_counters_placed.is_empty());
         assert!(!tracker.cant_attack.is_empty());
         assert!(!tracker.cant_block.is_empty());
+        assert!(!tracker.cant_block_specific_attackers.is_empty());
         assert!(!tracker.cant_untap.is_empty());
         assert!(!tracker.cant_be_destroyed.is_empty());
         assert!(!tracker.cant_be_blocked.is_empty());
@@ -4021,6 +4052,10 @@ mod tests {
         assert!(
             tracker.cant_block.is_empty(),
             "cant_block should be cleared"
+        );
+        assert!(
+            tracker.cant_block_specific_attackers.is_empty(),
+            "cant_block_specific_attackers should be cleared"
         );
         assert!(
             tracker.cant_untap.is_empty(),
