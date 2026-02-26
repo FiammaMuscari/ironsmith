@@ -756,6 +756,10 @@ enum EffectAst {
     PlayFromGraveyardUntilEot {
         player: PlayerAst,
     },
+    GrantPlayTaggedUntilYourNextTurn {
+        tag: TagKey,
+        player: PlayerAst,
+    },
     CastTagged {
         tag: TagKey,
         allow_land: bool,

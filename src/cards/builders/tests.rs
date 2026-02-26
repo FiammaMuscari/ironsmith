@@ -10201,3 +10201,19 @@ fn parse_each_opponents_maximum_hand_size_reduced_static_line() {
         "expected maximum-hand-size reduction in rendered text, got {rendered}"
     );
 }
+
+#[test]
+fn parse_exile_top_x_until_end_of_your_next_turn_may_play_those_cards() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Commune with Lava Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Exile the top X cards of your library. Until the end of your next turn, you may play those cards.",
+        )
+        .expect("exile-top then until-next-turn play-those-cards should parse");
+
+    let spell_debug = format!("{:#?}", def.spell_effect).to_ascii_lowercase();
+    assert!(
+        spell_debug.contains("grantplaytaggedeffect"),
+        "expected tagged play grant effect in spell text, got {spell_debug}"
+    );
+}

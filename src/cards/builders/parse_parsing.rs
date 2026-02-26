@@ -28680,6 +28680,9 @@ fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardText
             parser: parse_distribute_counters_clause,
         },
         ClausePrimitive {
+            parser: parse_until_your_next_turn_may_play_tagged_clause,
+        },
+        ClausePrimitive {
             parser: parse_prevent_next_damage_clause,
         },
         ClausePrimitive {
@@ -30687,6 +30690,44 @@ fn parse_double_counters_clause(tokens: &[Token]) -> Result<Option<EffectAst>, C
 
 fn parse_distribute_counters_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
     parse_distribute_counters_sentence(tokens)
+}
+
+fn parse_until_your_next_turn_may_play_tagged_clause(
+    tokens: &[Token],
+) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    let prefix_len = if clause_words.starts_with(&["until", "the", "end", "of", "your", "next", "turn"])
+    {
+        7
+    } else if clause_words.starts_with(&["until", "end", "of", "your", "next", "turn"]) {
+        6
+    } else {
+        return Ok(None);
+    };
+
+    let tail = &clause_words[prefix_len..];
+    if !tail.starts_with(&["you", "may", "play"]) {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported until-next-turn permission clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+    let target_words = &tail[3..];
+    let is_supported_target = matches!(
+        target_words,
+        ["those", "cards"] | ["those", "card"] | ["them"] | ["it"] | ["that", "card"]
+    );
+    if !is_supported_target {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported until-next-turn play target (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    Ok(Some(EffectAst::GrantPlayTaggedUntilYourNextTurn {
+        tag: TagKey::from(IT_TAG),
+        player: PlayerAst::You,
+    }))
 }
 
 fn parse_prevent_next_time_damage_sentence(

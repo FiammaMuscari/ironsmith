@@ -3118,6 +3118,25 @@ fn compile_effect(
             let effect = Effect::grant_play_from_graveyard_until_eot(player_filter);
             Ok((vec![effect], Vec::new()))
         }
+        EffectAst::GrantPlayTaggedUntilYourNextTurn { tag, player } => {
+            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let resolved_tag = if tag.as_str() == IT_TAG {
+                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
+                    CardTextError::ParseError(
+                        "unable to resolve 'it' without prior reference".to_string(),
+                    )
+                })?)
+            } else {
+                tag.clone()
+            };
+            Ok((
+                vec![Effect::new(crate::effects::GrantPlayTaggedEffect::until_your_next_turn(
+                    resolved_tag,
+                    player_filter,
+                ))],
+                Vec::new(),
+            ))
+        }
         EffectAst::CastTagged {
             tag,
             allow_land,
