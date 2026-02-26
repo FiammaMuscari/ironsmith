@@ -76,7 +76,10 @@ mod tests {
 
         if let AbilityKind::Activated(act_ab) = &mana_ability.kind {
             // Should produce 2 colorless mana
-            let mana = act_ab.mana_output.as_ref().expect("Should have mana_output");
+            let mana = act_ab
+                .mana_output
+                .as_ref()
+                .expect("Should have mana_output");
             assert_eq!(mana.len(), 2);
             assert_eq!(mana[0], ManaSymbol::Colorless);
             assert_eq!(mana[1], ManaSymbol::Colorless);

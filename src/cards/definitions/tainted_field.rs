@@ -86,7 +86,9 @@ mod tests {
         let def = tainted_field();
 
         let ability = &def.abilities[0];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert_eq!(mana_ability.mana_symbols(), &[ManaSymbol::Colorless]);
         } else {
             panic!("Expected mana ability");
@@ -98,7 +100,9 @@ mod tests {
         let def = tainted_field();
 
         let ability = &def.abilities[0];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert!(
                 mana_ability.activation_condition.is_none(),
                 "First ability (colorless) should be unconditional"
@@ -113,7 +117,9 @@ mod tests {
         let def = tainted_field();
 
         let ability = &def.abilities[0];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert!(mana_ability.has_tap_cost());
         } else {
             panic!("Expected mana ability");
@@ -129,7 +135,9 @@ mod tests {
         let def = tainted_field();
 
         let ability = &def.abilities[1];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert_eq!(mana_ability.mana_symbols(), &[ManaSymbol::White]);
         } else {
             panic!("Expected mana ability");
@@ -141,7 +149,9 @@ mod tests {
         let def = tainted_field();
 
         let ability = &def.abilities[1];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert!(
                 mana_ability.activation_condition.is_some(),
                 "White ability should have activation condition"
@@ -172,7 +182,9 @@ mod tests {
         let def = tainted_field();
 
         let ability = &def.abilities[2];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert_eq!(mana_ability.mana_symbols(), &[ManaSymbol::Black]);
         } else {
             panic!("Expected mana ability");
@@ -184,7 +196,9 @@ mod tests {
         let def = tainted_field();
 
         let ability = &def.abilities[2];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert!(
                 mana_ability.activation_condition.is_some(),
                 "Black ability should have activation condition"

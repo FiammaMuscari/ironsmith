@@ -18,7 +18,12 @@ use super::choose_objects::ChooseObjectsEffect;
 /// effect carries only the bare default description.
 ///
 /// `verb` is the action word: "sacrifice", "discard", "choose", etc.
-fn describe_choose_from_filter(filter: &ObjectFilter, min: usize, max: usize, verb: &str) -> String {
+fn describe_choose_from_filter(
+    filter: &ObjectFilter,
+    min: usize,
+    max: usize,
+    verb: &str,
+) -> String {
     let type_word = if filter.card_types.len() == 1 {
         match filter.card_types[0] {
             CardType::Creature => "creature",
@@ -71,7 +76,13 @@ fn capitalize_first(s: &str) -> String {
 }
 
 fn article_for_count(min: usize, max: usize) -> &'static str {
-    if max == 1 { "a" } else if min == max { "exactly" } else { "up to" }
+    if max == 1 {
+        "a"
+    } else if min == max {
+        "exactly"
+    } else {
+        "up to"
+    }
 }
 
 fn graveyard_candidate_players(
@@ -398,13 +409,7 @@ pub(crate) fn run_choose_objects(
     } else {
         effect.description.to_string()
     };
-    let spec = ChooseObjectsSpec::new(
-        ctx.source,
-        description,
-        candidates.clone(),
-        min,
-        Some(max),
-    );
+    let spec = ChooseObjectsSpec::new(ctx.source, description, candidates.clone(), min, Some(max));
     let chosen: Vec<ObjectId> =
         make_decision(game, ctx.decision_maker, chooser_id, Some(ctx.source), spec);
     let chosen = normalize_chosen_objects(chosen, &candidates, min, max);

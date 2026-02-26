@@ -69,16 +69,16 @@ mod tests {
             .abilities
             .iter()
             .filter_map(|ability| match &ability.kind {
-                AbilityKind::Activated(mana_ability) if mana_ability.is_mana_ability() => Some(mana_ability),
+                AbilityKind::Activated(mana_ability) if mana_ability.is_mana_ability() => {
+                    Some(mana_ability)
+                }
                 _ => None,
             })
             .collect();
         assert_eq!(mana_abilities.len(), 2);
-        assert!(
-            mana_abilities
-                .iter()
-                .any(|ability| ability.mana_symbols() == &[ManaSymbol::White] && ability.has_tap_cost())
-        );
+        assert!(mana_abilities.iter().any(|ability| ability.mana_symbols()
+            == &[ManaSymbol::White]
+            && ability.has_tap_cost()));
     }
 
     #[test]
@@ -88,16 +88,16 @@ mod tests {
             .abilities
             .iter()
             .filter_map(|ability| match &ability.kind {
-                AbilityKind::Activated(mana_ability) if mana_ability.is_mana_ability() => Some(mana_ability),
+                AbilityKind::Activated(mana_ability) if mana_ability.is_mana_ability() => {
+                    Some(mana_ability)
+                }
                 _ => None,
             })
             .collect();
         assert_eq!(mana_abilities.len(), 2);
-        assert!(
-            mana_abilities
-                .iter()
-                .any(|ability| ability.mana_symbols() == &[ManaSymbol::Black] && ability.has_tap_cost())
-        );
+        assert!(mana_abilities.iter().any(|ability| ability.mana_symbols()
+            == &[ManaSymbol::Black]
+            && ability.has_tap_cost()));
     }
 
     #[test]
@@ -111,7 +111,9 @@ mod tests {
 
         assert_eq!(mana_abilities.len(), 2);
         for ability in mana_abilities {
-            if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+            if let AbilityKind::Activated(mana_ability) = &ability.kind
+                && mana_ability.is_mana_ability()
+            {
                 assert!(mana_ability.has_tap_cost());
             } else {
                 panic!("Expected mana ability");

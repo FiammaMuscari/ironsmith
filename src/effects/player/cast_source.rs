@@ -107,7 +107,9 @@ impl EffectExecutor for CastSourceEffect {
         };
 
         game.push_to_stack(stack_entry);
-        Ok(EffectOutcome::from_result(EffectResult::Objects(vec![new_id])))
+        Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+            new_id,
+        ])))
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
@@ -121,7 +123,9 @@ mod tests {
 
     #[test]
     fn test_cast_source_effect_builders() {
-        let effect = CastSourceEffect::new().without_paying_mana_cost().require_exile();
+        let effect = CastSourceEffect::new()
+            .without_paying_mana_cost()
+            .require_exile();
         assert!(effect.without_paying_mana_cost);
         assert!(effect.require_exile);
     }

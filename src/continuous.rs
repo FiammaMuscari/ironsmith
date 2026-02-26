@@ -1451,9 +1451,7 @@ fn apply_modification_to_chars(
             *abilities_removed = true;
         }
         Modification::RemoveAllAbilitiesExceptMana => {
-            chars
-                .abilities
-                .retain(|ability| ability.is_mana_ability());
+            chars.abilities.retain(|ability| ability.is_mana_ability());
             chars.static_abilities.clear();
             *abilities_removed = true;
         }
@@ -1973,9 +1971,7 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
                     abilities_removed = true;
                 }
                 Modification::RemoveAllAbilitiesExceptMana => {
-                    chars
-                        .abilities
-                        .retain(|ability| ability.is_mana_ability());
+                    chars.abilities.retain(|ability| ability.is_mana_ability());
                     chars.static_abilities.clear();
                     abilities_removed = true;
                 }

@@ -5,10 +5,10 @@
 
 use crate::ability::{Ability, AbilityKind, ActivatedAbility};
 use crate::continuous::Modification;
-use crate::decisions::context::{SelectableOption, SelectOptionsContext};
+use crate::decisions::context::{SelectOptionsContext, SelectableOption};
 use crate::effect::{EffectOutcome, Until};
-use crate::effects::helpers::resolve_player_filter;
 use crate::effects::EffectExecutor;
+use crate::effects::helpers::resolve_player_filter;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::mana::ManaSymbol;
@@ -127,11 +127,7 @@ mod tests {
 
     struct ChooseIslandDm;
     impl DecisionMaker for ChooseIslandDm {
-        fn decide_options(
-            &mut self,
-            _game: &GameState,
-            ctx: &SelectOptionsContext,
-        ) -> Vec<usize> {
+        fn decide_options(&mut self, _game: &GameState, ctx: &SelectOptionsContext) -> Vec<usize> {
             // Island option index in BecomeBasicLandTypeChoiceEffect::subtype_options()
             let _ = ctx;
             vec![1]
@@ -183,11 +179,15 @@ mod tests {
             .collect();
 
         assert!(
-            mana_symbols.iter().any(|syms| syms == &vec![ManaSymbol::Blue]),
+            mana_symbols
+                .iter()
+                .any(|syms| syms == &vec![ManaSymbol::Blue]),
             "expected island mana ability, got {mana_symbols:?}"
         );
         assert!(
-            !mana_symbols.iter().any(|syms| syms == &vec![ManaSymbol::Colorless, ManaSymbol::Colorless]),
+            !mana_symbols
+                .iter()
+                .any(|syms| syms == &vec![ManaSymbol::Colorless, ManaSymbol::Colorless]),
             "expected old {{C}}{{C}} mana ability to be removed, got {mana_symbols:?}"
         );
     }

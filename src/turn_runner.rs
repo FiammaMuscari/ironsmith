@@ -8,10 +8,9 @@ use crate::combat_state::CombatState;
 use crate::decision::{AttackerDeclaration, BlockerDeclaration, GameResult};
 use crate::decisions::context::DecisionContext;
 use crate::game_loop::{
-    apply_attacker_declarations, apply_blocker_declarations, check_and_apply_sbas,
+    GameLoopError, apply_attacker_declarations, apply_blocker_declarations, check_and_apply_sbas,
     execute_combat_damage_step, generate_and_queue_step_triggers, get_declare_attackers_decision,
     get_declare_blockers_decision, put_triggers_on_stack, queue_combat_damage_triggers,
-    GameLoopError,
 };
 use crate::game_state::{GameState, Phase, Step};
 use crate::ids::{ObjectId, PlayerId};
@@ -180,8 +179,7 @@ impl TurnRunner {
 
                 // Queue triggers for each drawn card (Miracle, etc.)
                 for draw_event in draw_events {
-                    let triggered =
-                        crate::triggers::check::check_triggers(game, &draw_event);
+                    let triggered = crate::triggers::check::check_triggers(game, &draw_event);
                     for entry in triggered {
                         tq.add(entry);
                     }
@@ -247,12 +245,7 @@ impl TurnRunner {
 
             TurnState::DeclareAttackersApply => {
                 let declarations = self.pending_attackers.take().unwrap_or_default();
-                apply_attacker_declarations(
-                    game,
-                    &mut self.combat,
-                    tq,
-                    &declarations,
-                )?;
+                apply_attacker_declarations(game, &mut self.combat, tq, &declarations)?;
                 put_triggers_on_stack(game, tq)?;
 
                 // Also sync game.combat for anything that reads it
@@ -292,8 +285,7 @@ impl TurnRunner {
 
                 game.turn.priority_player = Some(defending_player);
 
-                let ctx =
-                    get_declare_blockers_decision(game, &self.combat, defending_player);
+                let ctx = get_declare_blockers_decision(game, &self.combat, defending_player);
                 self.state = TurnState::DeclareBlockersApply;
                 Ok(TurnAction::Decision(ctx))
             }
@@ -301,7 +293,10 @@ impl TurnRunner {
             TurnState::DeclareBlockersApply => {
                 let (declarations, defending_player) =
                     self.pending_blockers.take().unwrap_or_else(|| {
-                        (Vec::new(), self.defending_player.unwrap_or(game.turn.active_player))
+                        (
+                            Vec::new(),
+                            self.defending_player.unwrap_or(game.turn.active_player),
+                        )
                     });
                 apply_blocker_declarations(
                     game,
@@ -459,19 +454,14 @@ impl TurnRunner {
                 Ok(TurnAction::Continue)
             }
 
-            TurnState::CleanupRecursiveDiscard => {
-                self.advance_cleanup_discard_recursive(game)
-            }
+            TurnState::CleanupRecursiveDiscard => self.advance_cleanup_discard_recursive(game),
 
             TurnState::Complete => Ok(TurnAction::TurnComplete),
         }
     }
 
     /// Provide attacker declarations in response to a `Decision(Attackers(...))`.
-    pub fn respond_attackers(
-        &mut self,
-        declarations: Vec<AttackerDeclaration>,
-    ) {
+    pub fn respond_attackers(&mut self, declarations: Vec<AttackerDeclaration>) {
         self.pending_attackers = Some(declarations);
     }
 
@@ -600,8 +590,7 @@ mod tests {
                 TurnAction::RunPriority => {
                     // Auto-pass priority: run the priority loop with auto-pass DM
                     let mut dm = crate::decision::AutoPassDecisionMaker;
-                    crate::game_loop::run_priority_loop_with(&mut game, &mut tq, &mut dm)
-                        .unwrap();
+                    crate::game_loop::run_priority_loop_with(&mut game, &mut tq, &mut dm).unwrap();
                     runner.priority_done();
                 }
                 TurnAction::Decision(ctx) => {

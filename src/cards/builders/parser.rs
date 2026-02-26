@@ -1176,10 +1176,12 @@ fn apply_line_ast(
             let contains_haunted_creature_dies = matches!(
                 &trigger,
                 TriggerSpec::Either(_, right) if matches!(**right, TriggerSpec::HauntedCreatureDies)
-            ) || matches!(&trigger, TriggerSpec::HauntedCreatureDies);
+            ) || matches!(
+                &trigger,
+                TriggerSpec::HauntedCreatureDies
+            );
             if contains_haunted_creature_dies {
-                builder.haunt_delayed_effects =
-                    Some((compiled_effects.clone(), choices.clone()));
+                builder.haunt_delayed_effects = Some((compiled_effects.clone(), choices.clone()));
             }
 
             let functional_zones = match &trigger {
@@ -1199,7 +1201,9 @@ fn apply_line_ast(
             if let Some(max) = max_triggers_per_turn {
                 let max_cond = crate::ConditionExpr::MaxTimesEachTurn(max);
                 merged_intervening_if = Some(match merged_intervening_if.take() {
-                    Some(existing) => crate::ConditionExpr::And(Box::new(existing), Box::new(max_cond)),
+                    Some(existing) => {
+                        crate::ConditionExpr::And(Box::new(existing), Box::new(max_cond))
+                    }
                     None => max_cond,
                 });
             }
@@ -2174,8 +2178,7 @@ fn apply_pending_activation_restriction(
     let parsed_condition = parse_activation_condition(&tokens);
     if parsed_condition.is_some() {
         let existing = ability.activation_condition.take();
-        ability.activation_condition =
-            merge_mana_activation_conditions(existing, parsed_condition);
+        ability.activation_condition = merge_mana_activation_conditions(existing, parsed_condition);
     }
 
     let mut timing_applied = false;
@@ -2209,7 +2212,10 @@ fn apply_pending_trigger_restriction(ability: &mut TriggeredAbility, restriction
     }
 }
 
-fn apply_pending_mana_restriction(ability: &mut crate::ability::ActivatedAbility, restriction: &str) {
+fn apply_pending_mana_restriction(
+    ability: &mut crate::ability::ActivatedAbility,
+    restriction: &str,
+) {
     let normalized_restriction = normalize_restriction_text(restriction);
     if normalized_restriction.is_empty() {
         return;

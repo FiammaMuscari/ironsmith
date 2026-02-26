@@ -75,10 +75,7 @@ mod tests {
     #[test]
     fn test_model_of_unity_has_mana_ability() {
         let def = model_of_unity();
-        let has_mana = def
-            .abilities
-            .iter()
-            .any(|a| a.is_mana_ability());
+        let has_mana = def.abilities.iter().any(|a| a.is_mana_ability());
         assert!(has_mana, "Model of Unity should have a mana ability");
     }
 

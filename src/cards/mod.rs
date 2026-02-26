@@ -322,7 +322,9 @@ impl CardRegistry {
             return;
         }
         let name = def.card.name.clone();
-        self.names_by_id.entry(def.card.id).or_insert_with(|| name.clone());
+        self.names_by_id
+            .entry(def.card.id)
+            .or_insert_with(|| name.clone());
         self.cards.insert(name, def);
     }
 
@@ -569,7 +571,9 @@ mod tests {
 
         // Ensure we actually produced an effect (not a dropped sentence).
         assert!(
-            def.spell_effect.as_ref().is_some_and(|effects| !effects.is_empty())
+            def.spell_effect
+                .as_ref()
+                .is_some_and(|effects| !effects.is_empty())
                 || !def.abilities.is_empty(),
             "expected parsed effects or abilities"
         );
@@ -578,8 +582,8 @@ mod tests {
     #[test]
     fn parse_add_mana_for_each_counter_removed_this_way_uses_x_value() {
         use crate::ability::AbilityKind;
-        use crate::effects::mana::AddScaledManaEffect;
         use crate::effect::Value;
+        use crate::effects::mana::AddScaledManaEffect;
 
         let def = CardDefinitionBuilder::new(CardId::new(), "Storage Land Probe")
             .card_types(vec![CardType::Land])
@@ -741,11 +745,15 @@ mod tests {
 
         let effects = def.spell_effect.as_ref().expect("expected spell effects");
         assert!(
-            effects.iter().any(|e| e.downcast_ref::<LookAtTopCardsEffect>().is_some()),
+            effects
+                .iter()
+                .any(|e| e.downcast_ref::<LookAtTopCardsEffect>().is_some()),
             "expected LookAtTopCardsEffect in compiled effects"
         );
         assert!(
-            effects.iter().any(|e| e.downcast_ref::<ChooseObjectsEffect>().is_some()),
+            effects
+                .iter()
+                .any(|e| e.downcast_ref::<ChooseObjectsEffect>().is_some()),
             "expected ChooseObjectsEffect in compiled effects"
         );
     }
@@ -761,7 +769,9 @@ mod tests {
 
         let effects = def.spell_effect.as_ref().expect("expected spell effects");
         assert!(
-            effects.iter().any(|e| e.downcast_ref::<LookAtTopCardsEffect>().is_some()),
+            effects
+                .iter()
+                .any(|e| e.downcast_ref::<LookAtTopCardsEffect>().is_some()),
             "expected LookAtTopCardsEffect in compiled effects"
         );
         assert!(
@@ -783,7 +793,9 @@ mod tests {
 
         let effects = def.spell_effect.as_ref().expect("expected spell effects");
         assert!(
-            effects.iter().any(|e| e.downcast_ref::<DiscoverEffect>().is_some()),
+            effects
+                .iter()
+                .any(|e| e.downcast_ref::<DiscoverEffect>().is_some()),
             "expected DiscoverEffect in compiled effects"
         );
     }
@@ -794,7 +806,9 @@ mod tests {
 
         let def = CardDefinitionBuilder::new(CardId::new(), "Become Land Type Probe")
             .card_types(vec![CardType::Creature])
-            .parse_text("{T}: Target land becomes the basic land type of your choice until end of turn.")
+            .parse_text(
+                "{T}: Target land becomes the basic land type of your choice until end of turn.",
+            )
             .expect("basic land type choice become clause should parse");
 
         let activated = def
@@ -807,10 +821,9 @@ mod tests {
             .expect("expected an activated ability");
 
         assert!(
-            activated
-                .effects
-                .iter()
-                .any(|e| e.downcast_ref::<BecomeBasicLandTypeChoiceEffect>().is_some()),
+            activated.effects.iter().any(|e| e
+                .downcast_ref::<BecomeBasicLandTypeChoiceEffect>()
+                .is_some()),
             "expected BecomeBasicLandTypeChoiceEffect in activated effects"
         );
     }
@@ -825,10 +838,15 @@ mod tests {
             .expect("extra block static ability should parse");
 
         let has = def.abilities.iter().any(|ability| match &ability.kind {
-            AbilityKind::Static(sa) => sa.id() == StaticAbilityId::CanBlockAdditionalCreatureEachCombat,
+            AbilityKind::Static(sa) => {
+                sa.id() == StaticAbilityId::CanBlockAdditionalCreatureEachCombat
+            }
             _ => false,
         });
-        assert!(has, "expected CanBlockAdditionalCreatureEachCombat static ability");
+        assert!(
+            has,
+            "expected CanBlockAdditionalCreatureEachCombat static ability"
+        );
     }
 
     #[test]

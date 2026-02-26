@@ -201,8 +201,12 @@ mod tests {
         );
         let ctx = crate::events::EventContext::for_replacement_effect(alice, source, &game);
 
-        let unpreventable =
-            crate::events::DamageEvent::unpreventable(source, DamageTarget::Player(alice), 3, false);
+        let unpreventable = crate::events::DamageEvent::unpreventable(
+            source,
+            DamageTarget::Player(alice),
+            3,
+            false,
+        );
         assert!(
             !matcher.matches_event(&unpreventable, &ctx),
             "matcher should not match unpreventable damage"

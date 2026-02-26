@@ -43,4 +43,3 @@ impl EffectExecutor for RevealTaggedEffect {
         Box::new(self.clone())
     }
 }
-

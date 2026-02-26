@@ -43,16 +43,19 @@ impl EffectExecutor for UnearthEffect {
             return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
         }
 
-        let move_to_battlefield =
-            Effect::new(MoveToZoneEffect::new(ChooseSpec::Source, Zone::Battlefield, false).under_owner_control());
+        let move_to_battlefield = Effect::new(
+            MoveToZoneEffect::new(ChooseSpec::Source, Zone::Battlefield, false)
+                .under_owner_control(),
+        );
         let move_outcome = execute_effect(game, &move_to_battlefield, ctx)?;
         let EffectOutcome { result, events } = move_outcome;
 
         let new_id = match result {
             EffectResult::Objects(ids) => {
                 let Some(&id) = ids.first() else {
-                    return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)
-                        .with_events(events));
+                    return Ok(
+                        EffectOutcome::from_result(EffectResult::TargetInvalid).with_events(events)
+                    );
                 };
                 id
             }

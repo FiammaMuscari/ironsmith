@@ -85,10 +85,7 @@ mod tests {
             "Blood Celebrant should have abilities"
         );
 
-        let has_mana_ability = def
-            .abilities
-            .iter()
-            .any(|a| a.is_mana_ability());
+        let has_mana_ability = def.abilities.iter().any(|a| a.is_mana_ability());
         assert!(
             has_mana_ability,
             "Blood Celebrant should have a mana ability"

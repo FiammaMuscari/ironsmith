@@ -89,7 +89,11 @@ mod tests {
         match &ability.kind {
             AbilityKind::Activated(mana_ability) if mana_ability.is_mana_ability() => {
                 // Should produce 2 colorless mana
-                assert_eq!(mana_ability.mana_symbols().len(), 2, "Should produce 2 mana");
+                assert_eq!(
+                    mana_ability.mana_symbols().len(),
+                    2,
+                    "Should produce 2 mana"
+                );
                 assert!(
                     mana_ability
                         .mana_symbols()
@@ -133,7 +137,11 @@ mod tests {
         if let AbilityKind::Activated(mana_ability) = &ability.kind {
             assert!(mana_ability.is_mana_ability());
             // Sol Ring uses fixed mana production (mana_output field)
-            assert_eq!(mana_ability.mana_symbols().len(), 2, "Should produce 2 mana");
+            assert_eq!(
+                mana_ability.mana_symbols().len(),
+                2,
+                "Should produce 2 mana"
+            );
             assert!(
                 mana_ability
                     .mana_symbols()
@@ -239,7 +247,11 @@ mod tests {
         if let AbilityKind::Activated(mana_ability) = &ability.kind {
             assert!(mana_ability.is_mana_ability());
             // Sol Ring uses fixed mana production (mana_output field)
-            assert_eq!(mana_ability.mana_symbols().len(), 2, "Should produce 2 mana");
+            assert_eq!(
+                mana_ability.mana_symbols().len(),
+                2,
+                "Should produce 2 mana"
+            );
             assert!(
                 mana_ability
                     .mana_symbols()

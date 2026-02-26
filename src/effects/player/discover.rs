@@ -83,9 +83,14 @@ impl EffectExecutor for DiscoverEffect {
         let mut selected_object = None;
         if let Some(candidate_id) = candidate {
             let Some(candidate_obj) = game.object(candidate_id) else {
-                return Ok(EffectOutcome::count(exiled.len() as i32).with_event(TriggerEvent::new(
-                    KeywordActionEvent::new(KeywordActionKind::Discover, player_id, ctx.source, count),
-                )));
+                return Ok(EffectOutcome::count(exiled.len() as i32).with_event(
+                    TriggerEvent::new(KeywordActionEvent::new(
+                        KeywordActionKind::Discover,
+                        player_id,
+                        ctx.source,
+                        count,
+                    )),
+                ));
             };
 
             let candidate_name = candidate_obj.name.clone();
@@ -168,9 +173,11 @@ impl EffectExecutor for DiscoverEffect {
             EffectResult::Count(0)
         };
 
-        Ok(EffectOutcome::from_result(result).with_event(TriggerEvent::new(
-            KeywordActionEvent::new(KeywordActionKind::Discover, player_id, ctx.source, count),
-        )))
+        Ok(
+            EffectOutcome::from_result(result).with_event(TriggerEvent::new(
+                KeywordActionEvent::new(KeywordActionKind::Discover, player_id, ctx.source, count),
+            )),
+        )
     }
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
@@ -194,7 +201,9 @@ mod tests {
 
     fn make_spell(card_id: u32, name: &str, mana_value: u8) -> crate::card::Card {
         CardBuilder::new(CardId::from_raw(card_id), name)
-            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Generic(mana_value)]))
+            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Generic(
+                mana_value,
+            )]))
             .card_types(vec![CardType::Sorcery])
             .build()
     }
@@ -220,7 +229,9 @@ mod tests {
 
         let effect = DiscoverEffect::you(2);
         let mut ctx = ExecutionContext::new_default(source_id, alice);
-        let result = effect.execute(&mut game, &mut ctx).expect("execute discover");
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("execute discover");
         assert!(
             matches!(result.result, EffectResult::Objects(ref ids) if ids.len() == 1),
             "expected discover to return one selected object, got {:?}",
@@ -268,7 +279,9 @@ mod tests {
         let effect = DiscoverEffect::you(2);
         let mut dm = DeclineDecisionMaker;
         let mut ctx = ExecutionContext::new(source_id, alice, &mut dm);
-        effect.execute(&mut game, &mut ctx).expect("execute discover");
+        effect
+            .execute(&mut game, &mut ctx)
+            .expect("execute discover");
 
         assert!(game.stack.is_empty());
         assert_eq!(game.exile.len(), 0);

@@ -51,7 +51,8 @@ impl TriggerMatcher for OrTrigger {
         let displays: Vec<String> = self.triggers.iter().map(|t| t.display()).collect();
         let mut parts = vec![displays[0].clone()];
         for d in &displays[1..] {
-            let stripped = d.strip_prefix("When ")
+            let stripped = d
+                .strip_prefix("When ")
                 .or_else(|| d.strip_prefix("Whenever "))
                 .unwrap_or(d);
             parts.push(stripped.to_string());

@@ -187,7 +187,9 @@ fn run_game_with_custom_hands(
         }
 
         // Run a turn
-        if let Err(e) = execute_turn_with(game, &mut combat, &mut trigger_queue, &mut decision_maker) {
+        if let Err(e) =
+            execute_turn_with(game, &mut combat, &mut trigger_queue, &mut decision_maker)
+        {
             match e {
                 ironsmith::GameLoopError::GameOver => {
                     // Check who won

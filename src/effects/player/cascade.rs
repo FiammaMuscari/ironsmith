@@ -55,7 +55,10 @@ impl EffectExecutor for CascadeEffect {
             )
         } else if let Some(snapshot) = ctx.source_snapshot.as_ref() {
             (
-                mana_value_on_stack(snapshot.mana_cost.as_ref(), ctx.x_value.or(snapshot.x_value)),
+                mana_value_on_stack(
+                    snapshot.mana_cost.as_ref(),
+                    ctx.x_value.or(snapshot.x_value),
+                ),
                 snapshot.name.clone(),
             )
         } else {
@@ -199,7 +202,9 @@ mod tests {
 
     fn make_spell(card_id: u32, name: &str, mana_value: u8) -> crate::card::Card {
         CardBuilder::new(CardId::from_raw(card_id), name)
-            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Generic(mana_value)]))
+            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Generic(
+                mana_value,
+            )]))
             .card_types(vec![CardType::Sorcery])
             .build()
     }
@@ -225,7 +230,9 @@ mod tests {
 
         let effect = CascadeEffect::new();
         let mut ctx = ExecutionContext::new_default(source_id, alice);
-        let result = effect.execute(&mut game, &mut ctx).expect("execute cascade");
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("execute cascade");
         assert!(
             matches!(result.result, EffectResult::Objects(ref ids) if ids.len() == 1),
             "expected cascade to cast one card, got {:?}",
@@ -274,7 +281,9 @@ mod tests {
         let effect = CascadeEffect::new();
         let mut dm = DeclineDecisionMaker;
         let mut ctx = ExecutionContext::new(source_id, alice, &mut dm);
-        effect.execute(&mut game, &mut ctx).expect("execute cascade");
+        effect
+            .execute(&mut game, &mut ctx)
+            .expect("execute cascade");
 
         assert!(
             game.stack.is_empty(),

@@ -165,7 +165,10 @@ impl StaticAbilityKind for CanBlockAdditionalCreatureEachCombat {
         if self.additional == 1 {
             "Can block an additional creature each combat".to_string()
         } else {
-            format!("Can block {} additional creatures each combat", self.additional)
+            format!(
+                "Can block {} additional creatures each combat",
+                self.additional
+            )
         }
     }
 

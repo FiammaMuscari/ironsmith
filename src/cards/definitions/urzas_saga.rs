@@ -76,11 +76,7 @@ mod tests {
         assert_eq!(def.max_saga_chapter, Some(3));
 
         // Should not start with a mana ability; it's granted by chapter I/II.
-        assert!(
-            !def.abilities
-                .iter()
-                .any(|a| a.is_mana_ability())
-        );
+        assert!(!def.abilities.iter().any(|a| a.is_mana_ability()));
     }
 
     #[test]

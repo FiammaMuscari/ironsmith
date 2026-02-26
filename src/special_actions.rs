@@ -894,9 +894,8 @@ fn legal_sacrifice_targets(
         .iter()
         .copied()
         .filter(|&id| {
-            game.object(id).is_some_and(|obj| {
-                filter.matches(obj, &ctx, game) && game.can_be_sacrificed(id)
-            })
+            game.object(id)
+                .is_some_and(|obj| filter.matches(obj, &ctx, game) && game.can_be_sacrificed(id))
         })
         .collect()
 }
@@ -1555,7 +1554,9 @@ mod tests {
         let obj = game.object(obj_id).unwrap();
         assert_eq!(obj.abilities.len(), 1, "Should have 1 ability");
 
-        if let AbilityKind::Activated(mana_ability) = &obj.abilities[0].kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &obj.abilities[0].kind
+            && mana_ability.is_mana_ability()
+        {
             assert!(!mana_ability.effects.is_empty(), "Should have effects");
             assert_eq!(
                 mana_ability.effects.len(),

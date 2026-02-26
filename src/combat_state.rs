@@ -1297,7 +1297,10 @@ mod tests {
 
         let blocker_declarations = vec![(blocker1, attacker1), (blocker1, attacker2)];
         let result = declare_blockers(&game, &mut combat, blocker_declarations);
-        assert!(result.is_ok(), "expected blocker to be able to block two attackers");
+        assert!(
+            result.is_ok(),
+            "expected blocker to be able to block two attackers"
+        );
     }
 
     #[test]

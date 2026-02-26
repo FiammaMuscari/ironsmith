@@ -170,10 +170,8 @@ mod tests {
         );
 
         let effect = DestroyNoRegenerationEffect::target(ChooseSpec::creature());
-        let mut ctx =
-            ExecutionContext::new_default(game.new_object_id(), alice).with_targets(vec![
-                ResolvedTarget::Object(creature_id),
-            ]);
+        let mut ctx = ExecutionContext::new_default(game.new_object_id(), alice)
+            .with_targets(vec![ResolvedTarget::Object(creature_id)]);
 
         let out = effect.execute(&mut game, &mut ctx).expect("execute");
         assert!(

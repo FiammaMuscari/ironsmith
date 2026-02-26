@@ -1807,8 +1807,8 @@ impl StaticAbilityKind for Custom {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::EventContext;
     use crate::events::DamageEvent;
+    use crate::events::EventContext;
     use crate::events::zones::ZoneChangeEvent;
     use crate::game_event::DamageTarget;
     use crate::zone::Zone;

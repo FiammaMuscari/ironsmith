@@ -3773,7 +3773,10 @@ fn object_has_custom_static_marker(object: &Object, marker: &str) -> bool {
 }
 
 fn object_has_mana_ability(object: &Object) -> bool {
-    object.abilities.iter().any(|ability| ability.is_mana_ability())
+    object
+        .abilities
+        .iter()
+        .any(|ability| ability.is_mana_ability())
 }
 
 fn object_has_tap_activated_ability(object: &Object) -> bool {
@@ -3817,7 +3820,10 @@ fn snapshot_has_custom_static_marker(
 }
 
 fn snapshot_has_mana_ability(snapshot: &crate::snapshot::ObjectSnapshot) -> bool {
-    snapshot.abilities.iter().any(|ability| ability.is_mana_ability())
+    snapshot
+        .abilities
+        .iter()
+        .any(|ability| ability.is_mana_ability())
 }
 
 fn ability_text_has_custom_marker(ability: &crate::ability::Ability, marker: &str) -> bool {

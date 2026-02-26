@@ -19,8 +19,8 @@ use crate::decision::{
 };
 use crate::decisions::context::DecisionContext;
 use crate::game_loop::{
-    ActivationStage, CastStage, PriorityLoopState, PriorityResponse,
-    advance_priority_with_dm, apply_priority_response_with_dm,
+    ActivationStage, CastStage, PriorityLoopState, PriorityResponse, advance_priority_with_dm,
+    apply_priority_response_with_dm,
 };
 use crate::game_state::{GameState, Target};
 use crate::ids::{ObjectId, PlayerId, restore_id_counters, snapshot_id_counters};
@@ -28,7 +28,6 @@ use crate::mana::ManaSymbol;
 use crate::triggers::TriggerQueue;
 use crate::types::CardType;
 use crate::zone::Zone;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum BattlefieldLane {
@@ -476,13 +475,20 @@ impl GameSnapshot {
             stack_preview.insert(0, obj.name.clone());
             let pending_effect_text = {
                 let lines = crate::compiled_text::compiled_lines(&obj.to_card_definition());
-                if lines.is_empty() { None } else { Some(lines.join("; ")) }
+                if lines.is_empty() {
+                    None
+                } else {
+                    Some(lines.join("; "))
+                }
             };
-            stack_objects.insert(0, StackObjectSnapshot {
-                id: stack_id.0,
-                name: obj.name.clone(),
-                effect_text: pending_effect_text,
-            });
+            stack_objects.insert(
+                0,
+                StackObjectSnapshot {
+                    id: stack_id.0,
+                    name: obj.name.clone(),
+                    effect_text: pending_effect_text,
+                },
+            );
             stack_size += 1;
         }
         stack_preview.truncate(4);
@@ -630,7 +636,9 @@ enum DecisionView {
 impl DecisionView {
     fn from_context(game: &GameState, ctx: &DecisionContext) -> Self {
         let resolve_source_name = |source: Option<ObjectId>| -> Option<String> {
-            source.and_then(|id| game.object(id)).map(|o| o.name.clone())
+            source
+                .and_then(|id| game.object(id))
+                .map(|o| o.name.clone())
         };
         let reason = decision_reason(ctx);
 
@@ -2040,8 +2048,12 @@ impl WasmGame {
 
                     TurnAction::TurnComplete => {
                         // Check for game over before starting next turn
-                        let remaining: Vec<_> =
-                            self.game.players.iter().filter(|p| p.is_in_game()).collect();
+                        let remaining: Vec<_> = self
+                            .game
+                            .players
+                            .iter()
+                            .filter(|p| p.is_in_game())
+                            .collect();
                         if remaining.len() <= 1 {
                             let result = if let Some(winner) = remaining.first() {
                                 GameResult::Winner(winner.id)
@@ -2068,8 +2080,7 @@ impl WasmGame {
 
             // We're inside a priority loop - use existing priority mechanism
             let checkpoint = self.capture_replay_checkpoint();
-            let outcome =
-                self.execute_with_replay(&checkpoint, &ReplayRoot::Advance, &[])?;
+            let outcome = self.execute_with_replay(&checkpoint, &ReplayRoot::Advance, &[])?;
 
             match outcome {
                 ReplayOutcome::NeedsDecision(ctx) => {
@@ -2159,8 +2170,10 @@ impl WasmGame {
                 runner.respond_blockers(converted, bctx.player);
             }
             (DecisionContext::SelectObjects(_), UiCommand::SelectObjects { object_ids }) => {
-                let cards: Vec<ObjectId> =
-                    object_ids.iter().map(|&id| ObjectId::from_raw(id)).collect();
+                let cards: Vec<ObjectId> = object_ids
+                    .iter()
+                    .map(|&id| ObjectId::from_raw(id))
+                    .collect();
                 runner.respond_discard(cards);
             }
             _ => {
@@ -2206,22 +2219,18 @@ impl WasmGame {
         let mut replay_dm = WasmReplayDecisionMaker::new(nested_answers);
 
         let result = match root {
-            ReplayRoot::Response(response) => {
-                apply_priority_response_with_dm(
-                    &mut self.game,
-                    &mut self.trigger_queue,
-                    &mut self.priority_state,
-                    response,
-                    &mut replay_dm,
-                )
-                .map_err(|e| format!("{e}"))
-            }
-            ReplayRoot::Advance => advance_priority_with_dm(
+            ReplayRoot::Response(response) => apply_priority_response_with_dm(
                 &mut self.game,
                 &mut self.trigger_queue,
+                &mut self.priority_state,
+                response,
                 &mut replay_dm,
             )
             .map_err(|e| format!("{e}")),
+            ReplayRoot::Advance => {
+                advance_priority_with_dm(&mut self.game, &mut self.trigger_queue, &mut replay_dm)
+                    .map_err(|e| format!("{e}"))
+            }
         };
 
         if let Some(next_ctx) = replay_dm.take_pending_context() {
@@ -2838,8 +2847,7 @@ fn build_object_details_snapshot(game: &GameState, id: ObjectId) -> Option<Objec
         tapped: game.is_tapped(obj.id),
         counters,
         abilities: {
-            let mut lines =
-                crate::compiled_text::compiled_lines(&obj.to_card_definition());
+            let mut lines = crate::compiled_text::compiled_lines(&obj.to_card_definition());
             for granted in obj.level_granted_abilities() {
                 lines.push(format!("Level bonus: {}", granted.display()));
             }
@@ -3017,7 +3025,11 @@ fn describe_action(game: &GameState, action: &LegalAction) -> String {
                 .map(|text| truncate_text(text, 80));
             match ability_text {
                 Some(text) => format!("Activate {}: {}", name, text),
-                None => format!("Activate mana ability on {} (# {})", name, ability_index + 1),
+                None => format!(
+                    "Activate mana ability on {} (# {})",
+                    name,
+                    ability_index + 1
+                ),
             }
         }
         LegalAction::TurnFaceUp { creature_id } => {

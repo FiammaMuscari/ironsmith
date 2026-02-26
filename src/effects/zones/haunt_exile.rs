@@ -3,9 +3,7 @@
 
 use crate::effect::{Effect, EffectOutcome};
 use crate::effects::EffectExecutor;
-use crate::effects::delayed::trigger_queue::{
-    DelayedTriggerConfig, queue_delayed_trigger,
-};
+use crate::effects::delayed::trigger_queue::{DelayedTriggerConfig, queue_delayed_trigger};
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;

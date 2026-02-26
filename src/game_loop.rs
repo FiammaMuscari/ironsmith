@@ -14,7 +14,6 @@ use crate::combat_state::{
     is_blocked, is_unblocked,
 };
 use crate::cost::OptionalCostsPaid;
-use crate::filter::{FilterContext, ObjectFilter};
 use crate::costs::CostContext;
 use crate::decision::{
     AlternativePaymentEffect, AttackerDeclaration, BlockerDeclaration, DecisionMaker, GameProgress,
@@ -36,6 +35,7 @@ use crate::events::spells::{AbilityActivatedEvent, BecomesTargetedEvent, SpellCa
 use crate::events::zones::EnterBattlefieldEvent;
 use crate::events::{KeywordActionEvent, KeywordActionKind};
 use crate::executor::{ExecutionContext, ResolvedTarget, execute_effect};
+use crate::filter::{FilterContext, ObjectFilter};
 use crate::game_event::DamageTarget as EventDamageTarget;
 use crate::game_state::{GameState, StackEntry, Step, Target};
 use crate::ids::{ObjectId, PlayerId, StableId};
@@ -59,9 +59,7 @@ use crate::triggers::{
     DamageEventTarget, TriggerEvent, TriggerQueue, TriggeredAbilityEntry, check_triggers,
     generate_step_trigger_events, verify_intervening_if,
 };
-use crate::turn::{
-    PriorityResult, PriorityTracker, TurnError, pass_priority, reset_priority,
-};
+use crate::turn::{PriorityResult, PriorityTracker, TurnError, pass_priority, reset_priority};
 use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
 
@@ -1565,7 +1563,8 @@ pub fn execute_combat_damage_step(
     }
 
     // First, collect all blocker damage info (including per-recipient assigned damage).
-    let mut blocker_damage_info: Vec<(ObjectId, ObjectId, PlayerId, u32, DamageResult)> = Vec::new();
+    let mut blocker_damage_info: Vec<(ObjectId, ObjectId, PlayerId, u32, DamageResult)> =
+        Vec::new();
     for (blocker_id, mut attacker_ids) in attackers_by_blocker {
         let Some(blocker) = game.object(blocker_id) else {
             continue;
@@ -1614,13 +1613,12 @@ pub fn execute_combat_damage_step(
             continue;
         }
 
-        let distribution =
-            crate::rules::damage::distribute_combat_damage_to_creatures(
-                blocker,
-                &recipients,
-                power as u32,
-                game,
-            );
+        let distribution = crate::rules::damage::distribute_combat_damage_to_creatures(
+            blocker,
+            &recipients,
+            power as u32,
+            game,
+        );
         for (idx, (dmg, _is_lethal)) in distribution.into_iter().enumerate() {
             if dmg == 0 {
                 continue;
@@ -4928,7 +4926,10 @@ fn get_legal_sacrifice_targets(
     game.battlefield
         .iter()
         .copied()
-        .filter(|&id| game.object(id).is_some_and(|obj| filter.matches(obj, &ctx, game)))
+        .filter(|&id| {
+            game.object(id)
+                .is_some_and(|obj| filter.matches(obj, &ctx, game))
+        })
         .collect()
 }
 
@@ -8518,15 +8519,14 @@ pub fn execute_turn_with(
                     }
                     crate::decisions::context::DecisionContext::Blockers(ref bctx) => {
                         let defending_player = bctx.player;
-                        let declarations: Vec<crate::decision::BlockerDeclaration> =
-                            decision_maker
-                                .decide_blockers(game, bctx)
-                                .into_iter()
-                                .map(|d| crate::decision::BlockerDeclaration {
-                                    blocker: d.blocker,
-                                    blocking: d.blocking,
-                                })
-                                .collect();
+                        let declarations: Vec<crate::decision::BlockerDeclaration> = decision_maker
+                            .decide_blockers(game, bctx)
+                            .into_iter()
+                            .map(|d| crate::decision::BlockerDeclaration {
+                                blocker: d.blocker,
+                                blocking: d.blocking,
+                            })
+                            .collect();
                         runner.respond_blockers(declarations, defending_player);
                     }
                     crate::decisions::context::DecisionContext::SelectObjects(ref obj_ctx) => {
@@ -8623,8 +8623,8 @@ mod tests {
     use crate::decision::AutoPassDecisionMaker;
     use crate::effect::{Effect, Value};
     use crate::events::EventKind;
-    use crate::ids::CardId;
     use crate::game_state::Phase;
+    use crate::ids::CardId;
     use crate::static_abilities::StaticAbility;
     use crate::triggers::Trigger;
     use crate::types::CardType;
@@ -9084,9 +9084,9 @@ mod tests {
             .expect("blocker exists")
             .abilities
             .push(Ability {
-                kind: AbilityKind::Static(StaticAbility::can_block_additional_creature_each_combat(
-                    1,
-                )),
+                kind: AbilityKind::Static(
+                    StaticAbility::can_block_additional_creature_each_combat(1),
+                ),
                 functional_zones: vec![Zone::Battlefield],
                 text: None,
             });

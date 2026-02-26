@@ -137,7 +137,10 @@ impl SacrificeCost {
         game.battlefield
             .iter()
             .copied()
-            .filter(|&id| game.object(id).is_some_and(|obj| self.filter.matches(obj, &ctx, game)))
+            .filter(|&id| {
+                game.object(id)
+                    .is_some_and(|obj| self.filter.matches(obj, &ctx, game))
+            })
             .collect()
     }
 }

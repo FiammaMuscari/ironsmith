@@ -83,7 +83,9 @@ mod tests {
     fn test_brightclimb_pathway_taps_for_white() {
         let def = brightclimb_pathway();
         let ability = &def.abilities[0];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert!(mana_ability.mana_symbols().contains(&ManaSymbol::White));
             assert!(!mana_ability.mana_symbols().contains(&ManaSymbol::Black));
         } else {
@@ -95,7 +97,9 @@ mod tests {
     fn test_brightclimb_pathway_requires_tap() {
         let def = brightclimb_pathway();
         let ability = &def.abilities[0];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert!(mana_ability.has_tap_cost());
         } else {
             panic!("Expected mana ability");
@@ -183,7 +187,9 @@ mod tests {
     fn test_grimclimb_pathway_taps_for_black() {
         let def = grimclimb_pathway();
         let ability = &def.abilities[0];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert!(mana_ability.mana_symbols().contains(&ManaSymbol::Black));
             assert!(!mana_ability.mana_symbols().contains(&ManaSymbol::White));
         } else {
@@ -195,7 +201,9 @@ mod tests {
     fn test_grimclimb_pathway_requires_tap() {
         let def = grimclimb_pathway();
         let ability = &def.abilities[0];
-        if let AbilityKind::Activated(mana_ability) = &ability.kind && mana_ability.is_mana_ability() {
+        if let AbilityKind::Activated(mana_ability) = &ability.kind
+            && mana_ability.is_mana_ability()
+        {
             assert!(mana_ability.has_tap_cost());
         } else {
             panic!("Expected mana ability");

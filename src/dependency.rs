@@ -942,9 +942,7 @@ fn apply_modification_to_chars_for_dependency(
             chars.abilities.clear();
         }
         Modification::RemoveAllAbilitiesExceptMana => {
-            chars
-                .abilities
-                .retain(|ability| ability.is_mana_ability());
+            chars.abilities.retain(|ability| ability.is_mana_ability());
         }
         Modification::ModifyPower(delta) => {
             if let Some(ref mut p) = chars.power {

@@ -86,13 +86,20 @@ impl EffectExecutor for ReorderLibraryTopEffect {
         }
 
         let spec = OrderLibraryTopSpec::new(ctx.source, current_top_to_bottom.clone());
-        let ordered =
-            make_decision(game, &mut ctx.decision_maker, ctx.controller, Some(ctx.source), spec);
+        let ordered = make_decision(
+            game,
+            &mut ctx.decision_maker,
+            ctx.controller,
+            Some(ctx.source),
+            spec,
+        );
         let ordered = normalize_order_response(ordered, &current_top_to_bottom);
 
         if let Some(player) = game.player_mut(library_owner) {
             // Remove the affected cards from the library, preserving other cards.
-            player.library.retain(|id| !current_top_to_bottom.contains(id));
+            player
+                .library
+                .retain(|id| !current_top_to_bottom.contains(id));
 
             // Decision order is top-to-bottom; internal library is bottom-to-top.
             for id in ordered.iter().rev() {

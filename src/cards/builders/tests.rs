@@ -6626,7 +6626,8 @@ fn parse_standalone_shuffle_clause_defaults_to_library_owner() {
         .expect("standalone shuffle clause should parse");
     let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        joined.contains("search your library for a card") && joined.contains("shuffle your library"),
+        joined.contains("search your library for a card")
+            && joined.contains("shuffle your library"),
         "expected standalone shuffle to resolve to your library, got {joined}"
     );
 }
