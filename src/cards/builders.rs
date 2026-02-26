@@ -459,11 +459,18 @@ enum PredicateAst {
     PlayerTappedLandForManaThisTurn {
         player: PlayerAst,
     },
+    PlayerControlsBasicLandTypesAmongLandsOrMore {
+        player: PlayerAst,
+        count: u32,
+    },
     YouHaveNoCardsInHand,
     SourceIsTapped,
     #[allow(dead_code)]
     SourceHasNoCounter(CounterType),
-    SourceHasCounterAtLeast { counter_type: CounterType, count: u32 },
+    SourceHasCounterAtLeast {
+        counter_type: CounterType,
+        count: u32,
+    },
     YouAttackedThisTurn,
     NoSpellsWereCastLastTurn,
     TargetWasKicked,
@@ -2421,16 +2428,11 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::you_cast_this_spell(),
-                effects: vec![
-                    Effect::may(vec![
-                        Effect::sacrifice(creature_filter, 1),
-                        Effect::with_id(
-                            0,
-                            Effect::copy_spell(ChooseSpec::Source),
-                        ),
-                        Effect::may_choose_new_targets(EffectId(0)),
-                    ]),
-                ],
+                effects: vec![Effect::may(vec![
+                    Effect::sacrifice(creature_filter, 1),
+                    Effect::with_id(0, Effect::copy_spell(ChooseSpec::Source)),
+                    Effect::may_choose_new_targets(EffectId(0)),
+                ])],
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -2456,16 +2458,11 @@ impl CardDefinitionBuilder {
         self.with_ability(Ability {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::you_cast_this_spell(),
-                effects: vec![
-                    Effect::may(vec![
-                        Effect::tap(ChooseSpec::All(creature_filter)),
-                        Effect::with_id(
-                            0,
-                            Effect::copy_spell(ChooseSpec::Source),
-                        ),
-                        Effect::may_choose_new_targets(EffectId(0)),
-                    ]),
-                ],
+                effects: vec![Effect::may(vec![
+                    Effect::tap(ChooseSpec::All(creature_filter)),
+                    Effect::with_id(0, Effect::copy_spell(ChooseSpec::Source)),
+                    Effect::may_choose_new_targets(EffectId(0)),
+                ])],
                 choices: vec![],
                 intervening_if: None,
             }),
@@ -2486,9 +2483,9 @@ impl CardDefinitionBuilder {
         // The "any number" sacrifice + counter multiplication is complex;
         // we model it as a marker with correct text for now, since the sacrifice-
         // any-number + dynamic counter count needs dedicated effect support.
-        self.with_ability(Ability::static_ability(
-            StaticAbility::custom("devour", text),
-        ))
+        self.with_ability(Ability::static_ability(StaticAbility::custom(
+            "devour", text,
+        )))
     }
 
     /// Add ravenous.
@@ -2527,9 +2524,10 @@ impl CardDefinitionBuilder {
         // as a static ability that checks permanent count. Full runtime support
         // for the designation would require a player flag; for now this preserves
         // the keyword text and structure.
-        self.with_ability(Ability::static_ability(
-            StaticAbility::custom("ascend", "Ascend".to_string()),
-        ))
+        self.with_ability(Ability::static_ability(StaticAbility::custom(
+            "ascend",
+            "Ascend".to_string(),
+        )))
     }
 
     /// Add enlist.

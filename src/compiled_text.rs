@@ -6581,6 +6581,17 @@ fn describe_condition(condition: &Condition) -> String {
                 noun
             )
         }
+        Condition::PlayerControlsBasicLandTypesAmongLandsOrMore { player, count } => {
+            let subject = describe_player_filter(player);
+            let verb = player_verb(&subject, "control", "controls");
+            let count_text = small_number_word(*count)
+                .map(str::to_string)
+                .unwrap_or_else(|| count.to_string());
+            format!(
+                "there are {} or more basic land types among lands {} {}",
+                count_text, subject, verb
+            )
+        }
         Condition::PlayerControlsMost { player, filter } => {
             let controller = describe_player_filter(player);
             let mut described_filter = filter.clone();
@@ -12599,7 +12610,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
         effect.downcast_ref::<crate::effects::PreventNextTimeDamageEffect>()
     {
         let source_text = match &prevent_next_time.source {
-            crate::effects::PreventNextTimeDamageSource::Choice => "a source of your choice".to_string(),
+            crate::effects::PreventNextTimeDamageSource::Choice => {
+                "a source of your choice".to_string()
+            }
             crate::effects::PreventNextTimeDamageSource::Filter(filter) => {
                 let desc = filter.description();
                 if desc.is_empty() {
@@ -13088,7 +13101,9 @@ fn describe_ability(
             if let Some(text) = ability.text.as_deref() {
                 let normalized = normalize_sentence_surface_style(text.trim());
                 if normalized.to_ascii_lowercase().starts_with("annihilator ")
-                    || normalized.trim_end_matches('.').eq_ignore_ascii_case("haunt")
+                    || normalized
+                        .trim_end_matches('.')
+                        .eq_ignore_ascii_case("haunt")
                 {
                     return vec![format!("Keyword ability {index}: {normalized}")];
                 }

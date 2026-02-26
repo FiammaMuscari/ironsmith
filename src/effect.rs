@@ -930,9 +930,7 @@ impl Restriction {
                     if let Some(obj) = game.object(obj_id)
                         && filter.matches(obj, &ctx, game)
                     {
-                        tracker
-                            .cant_activate_non_mana_abilities_of
-                            .insert(obj_id);
+                        tracker.cant_activate_non_mana_abilities_of.insert(obj_id);
                     }
                 }
             }
@@ -1372,6 +1370,9 @@ pub enum Condition {
         count: u32,
     },
 
+    /// A specific player has at least `count` distinct basic land types among lands they control.
+    PlayerControlsBasicLandTypesAmongLandsOrMore { player: PlayerFilter, count: u32 },
+
     /// A specific player controls exactly `count` objects matching filter.
     PlayerControlsExactly {
         player: PlayerFilter,
@@ -1465,7 +1466,10 @@ pub enum Condition {
     SourceHasNoCounter(CounterType),
 
     /// Source object has at least N counters of a specific type.
-    SourceHasCounterAtLeast { counter_type: CounterType, count: u32 },
+    SourceHasCounterAtLeast {
+        counter_type: CounterType,
+        count: u32,
+    },
 
     /// At least N mana of a specific color/type was spent to cast this spell.
     /// If `symbol` is `None`, checks total mana spent instead.

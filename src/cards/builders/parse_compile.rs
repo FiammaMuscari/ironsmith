@@ -417,6 +417,13 @@ fn compile_condition_from_predicate_ast(
             let player = resolve_non_target_player_filter(*player, ctx)?;
             Condition::PlayerTappedLandForManaThisTurn { player }
         }
+        PredicateAst::PlayerControlsBasicLandTypesAmongLandsOrMore { player, count } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            Condition::PlayerControlsBasicLandTypesAmongLandsOrMore {
+                player,
+                count: *count,
+            }
+        }
         PredicateAst::YouHaveNoCardsInHand => Condition::Not(Box::new(Condition::CardsInHandOrMore(1))),
         PredicateAst::SourceIsTapped => Condition::SourceIsTapped,
         PredicateAst::SourceHasNoCounter(counter_type) => Condition::SourceHasNoCounter(*counter_type),
@@ -4416,14 +4423,21 @@ fn compile_effect(
                         let player = resolve_non_target_player_filter(*player, ctx)?;
                         Condition::PlayerHasLessLifeThanYou { player }
                     }
-                    PredicateAst::PlayerTappedLandForManaThisTurn { player } => {
-                        let player = resolve_non_target_player_filter(*player, ctx)?;
-                        Condition::PlayerTappedLandForManaThisTurn { player }
-                    }
-                    PredicateAst::YouHaveNoCardsInHand => {
-                        Condition::Not(Box::new(Condition::CardsInHandOrMore(1)))
-                    }
-                    PredicateAst::SourceIsTapped => Condition::SourceIsTapped,
+        PredicateAst::PlayerTappedLandForManaThisTurn { player } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            Condition::PlayerTappedLandForManaThisTurn { player }
+        }
+        PredicateAst::PlayerControlsBasicLandTypesAmongLandsOrMore { player, count } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            Condition::PlayerControlsBasicLandTypesAmongLandsOrMore {
+                player,
+                count: *count,
+            }
+        }
+        PredicateAst::YouHaveNoCardsInHand => {
+            Condition::Not(Box::new(Condition::CardsInHandOrMore(1)))
+        }
+        PredicateAst::SourceIsTapped => Condition::SourceIsTapped,
                     PredicateAst::SourceHasNoCounter(counter_type) => {
                         Condition::SourceHasNoCounter(*counter_type)
                     }

@@ -25761,6 +25761,43 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
         }
     }
 
+    // "there are N or more basic land types among lands that player controls"
+    if filtered.len() >= 13
+        && filtered[0] == "there"
+        && filtered[1] == "are"
+        && filtered.get(3).copied() == Some("or")
+        && filtered.get(4).copied() == Some("more")
+        && filtered.get(5).copied() == Some("basic")
+        && filtered.get(6).copied() == Some("land")
+        && matches!(filtered.get(7).copied(), Some("type" | "types"))
+        && filtered.get(8).copied() == Some("among")
+        && matches!(filtered.get(9).copied(), Some("land" | "lands"))
+    {
+        let Some(count) = parse_named_number(filtered[2]) else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported basic-land-types predicate count (predicate: '{}')",
+                filtered.join(" ")
+            )));
+        };
+
+        let tail = &filtered[10..];
+        let player = if tail == ["that", "player", "controls"]
+            || tail == ["that", "player", "control"]
+            || tail == ["that", "players", "controls"]
+        {
+            PlayerAst::That
+        } else if tail == ["you", "control"] || tail == ["you", "controls"] {
+            PlayerAst::You
+        } else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported basic-land-types predicate tail (predicate: '{}')",
+                filtered.join(" ")
+            )));
+        };
+
+        return Ok(PredicateAst::PlayerControlsBasicLandTypesAmongLandsOrMore { player, count });
+    }
+
     if filtered.as_slice() == ["you", "have", "no", "cards", "in", "hand"] {
         return Ok(PredicateAst::YouHaveNoCardsInHand);
     }
@@ -26068,6 +26105,67 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
             }
             return Ok(PredicateAst::PlayerControls {
                 player: PlayerAst::You,
+                filter,
+            });
+        }
+    }
+
+    if filtered.len() >= 4
+        && filtered[0] == "that"
+        && (filtered[1] == "player" || filtered[1] == "players")
+        && (filtered[2] == "control" || filtered[2] == "controls")
+    {
+        let mut filter_start = 3usize;
+        let mut min_count: Option<u32> = None;
+        let mut exact_count: Option<u32> = None;
+        if let Some(raw_count) = filtered.get(3)
+            && let Some(parsed_count) = parse_named_number(raw_count)
+            && filtered.get(4).copied() == Some("or")
+            && filtered.get(5).copied() == Some("more")
+        {
+            min_count = Some(parsed_count);
+            filter_start = 6;
+        } else if filtered.get(3).copied() == Some("exactly")
+            && let Some(raw_count) = filtered.get(4)
+            && let Some(parsed_count) = parse_named_number(raw_count)
+        {
+            exact_count = Some(parsed_count);
+            filter_start = 5;
+        } else if filtered.get(3).copied() == Some("at")
+            && filtered.get(4).copied() == Some("least")
+            && let Some(raw_count) = filtered.get(5)
+            && let Some(parsed_count) = parse_named_number(raw_count)
+        {
+            min_count = Some(parsed_count);
+            filter_start = 6;
+        }
+
+        let control_tokens = filtered[filter_start..]
+            .iter()
+            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .collect::<Vec<_>>();
+        let other = control_tokens
+            .first()
+            .is_some_and(|token| token.is_word("another") || token.is_word("other"));
+        if let Ok(filter) = parse_object_filter(&control_tokens, other) {
+            if let Some(count) = exact_count {
+                return Ok(PredicateAst::PlayerControlsExactly {
+                    player: PlayerAst::That,
+                    filter,
+                    count,
+                });
+            }
+            if let Some(count) = min_count
+                && count > 1
+            {
+                return Ok(PredicateAst::PlayerControlsAtLeast {
+                    player: PlayerAst::That,
+                    filter,
+                    count,
+                });
+            }
+            return Ok(PredicateAst::PlayerControls {
+                player: PlayerAst::That,
                 filter,
             });
         }

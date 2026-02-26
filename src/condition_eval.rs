@@ -190,6 +190,37 @@ pub fn evaluate_condition_external(
                 .sum::<i32>();
             total_power >= *required_power as i32
         }
+        Condition::PlayerControlsBasicLandTypesAmongLandsOrMore { player, count } => {
+            use crate::types::Subtype;
+            use std::collections::HashSet;
+
+            let Some(player_id) = resolve_condition_player_simple(game, ctx.controller, player)
+            else {
+                return false;
+            };
+
+            let mut seen: HashSet<Subtype> = HashSet::new();
+            for obj in game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| obj.controller == player_id && obj.is_land())
+            {
+                for subtype in game.calculated_subtypes(obj.id) {
+                    if matches!(
+                        subtype,
+                        Subtype::Plains
+                            | Subtype::Island
+                            | Subtype::Swamp
+                            | Subtype::Mountain
+                            | Subtype::Forest
+                    ) {
+                        seen.insert(subtype);
+                    }
+                }
+            }
+            seen.len() >= *count as usize
+        }
         Condition::CardInYourGraveyard {
             card_types,
             subtypes,
@@ -290,7 +321,10 @@ pub fn evaluate_condition_external(
             .object(ctx.source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) == 0)
             .unwrap_or(false),
-        Condition::SourceHasCounterAtLeast { counter_type, count } => game
+        Condition::SourceHasCounterAtLeast {
+            counter_type,
+            count,
+        } => game
             .object(ctx.source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) >= *count)
             .unwrap_or(false),
@@ -586,6 +620,36 @@ fn evaluate_condition_simple(
                 .count();
             matches >= *count as usize
         }
+        Condition::PlayerControlsBasicLandTypesAmongLandsOrMore { player, count } => {
+            use crate::types::Subtype;
+            use std::collections::HashSet;
+
+            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
+                return false;
+            };
+
+            let mut seen: HashSet<Subtype> = HashSet::new();
+            for obj in game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| obj.controller == player_id && obj.is_land())
+            {
+                for subtype in game.calculated_subtypes(obj.id) {
+                    if matches!(
+                        subtype,
+                        Subtype::Plains
+                            | Subtype::Island
+                            | Subtype::Swamp
+                            | Subtype::Mountain
+                            | Subtype::Forest
+                    ) {
+                        seen.insert(subtype);
+                    }
+                }
+            }
+            seen.len() >= *count as usize
+        }
         Condition::PlayerControlsExactly {
             player,
             filter,
@@ -748,7 +812,10 @@ fn evaluate_condition_simple(
             .object(source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) == 0)
             .unwrap_or(false),
-        Condition::SourceHasCounterAtLeast { counter_type, count } => game
+        Condition::SourceHasCounterAtLeast {
+            counter_type,
+            count,
+        } => game
             .object(source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) >= *count)
             .unwrap_or(false),
@@ -925,6 +992,33 @@ fn evaluate_condition(
                 .filter(|obj| filter.matches(obj, &filter_ctx, game))
                 .count();
             Ok(matches >= *count as usize)
+        }
+        Condition::PlayerControlsBasicLandTypesAmongLandsOrMore { player, count } => {
+            use crate::types::Subtype;
+            use std::collections::HashSet;
+
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            let mut seen: HashSet<Subtype> = HashSet::new();
+            for obj in game
+                .battlefield
+                .iter()
+                .filter_map(|&id| game.object(id))
+                .filter(|obj| obj.controller == player_id && obj.is_land())
+            {
+                for subtype in game.calculated_subtypes(obj.id) {
+                    if matches!(
+                        subtype,
+                        Subtype::Plains
+                            | Subtype::Island
+                            | Subtype::Swamp
+                            | Subtype::Mountain
+                            | Subtype::Forest
+                    ) {
+                        seen.insert(subtype);
+                    }
+                }
+            }
+            Ok(seen.len() >= *count as usize)
         }
         Condition::PlayerControlsExactly {
             player,
@@ -1168,7 +1262,10 @@ fn evaluate_condition(
             .object(ctx.source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) == 0)
             .unwrap_or(false)),
-        Condition::SourceHasCounterAtLeast { counter_type, count } => Ok(game
+        Condition::SourceHasCounterAtLeast {
+            counter_type,
+            count,
+        } => Ok(game
             .object(ctx.source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) >= *count)
             .unwrap_or(false)),
@@ -1396,9 +1493,7 @@ fn evaluate_condition(
             .player(*player)
             .is_some_and(|p| p.graveyard.len() >= *count)),
         Condition::Custom(_) => Ok(false),
-        Condition::XValueAtLeast(min) => {
-            Ok(ctx.x_value.unwrap_or(0) >= *min)
-        }
+        Condition::XValueAtLeast(min) => Ok(ctx.x_value.unwrap_or(0) >= *min),
         Condition::Unmodeled(_) => Ok(true),
         Condition::Not(inner) => {
             let inner_result = evaluate_condition(game, inner, ctx)?;
@@ -1418,5 +1513,68 @@ fn evaluate_condition(
             }
             evaluate_condition(game, b, ctx)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card::CardBuilder;
+    use crate::ids::CardId;
+    use crate::types::{CardType, Subtype};
+
+    #[test]
+    fn player_controls_basic_land_types_among_lands_or_more_counts_distinct_types() {
+        use crate::target::PlayerFilter;
+
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        game.turn.active_player = bob;
+
+        let mk_land = |id: u32, name: &str, subtype: Subtype| {
+            CardBuilder::new(CardId::from_raw(id), name)
+                .card_types(vec![CardType::Land])
+                .subtypes(vec![subtype])
+                .build()
+        };
+        game.create_object_from_card(
+            &mk_land(1, "Plains", Subtype::Plains),
+            bob,
+            Zone::Battlefield,
+        );
+        game.create_object_from_card(
+            &mk_land(2, "Island", Subtype::Island),
+            bob,
+            Zone::Battlefield,
+        );
+        game.create_object_from_card(&mk_land(3, "Swamp", Subtype::Swamp), bob, Zone::Battlefield);
+        game.create_object_from_card(
+            &mk_land(4, "Mountain", Subtype::Mountain),
+            bob,
+            Zone::Battlefield,
+        );
+
+        let condition = Condition::PlayerControlsBasicLandTypesAmongLandsOrMore {
+            player: PlayerFilter::Active,
+            count: 4,
+        };
+        let ctx = ExternalEvaluationContext {
+            controller: alice,
+            source: ObjectId::from_raw(999),
+            filter_source: None,
+            triggering_event: None,
+            trigger_identity: None,
+            ability_index: None,
+            options: ExternalEvaluationOptions::default(),
+        };
+
+        assert!(evaluate_condition_external(&game, &condition, &ctx));
+
+        let condition = Condition::PlayerControlsBasicLandTypesAmongLandsOrMore {
+            player: PlayerFilter::Active,
+            count: 5,
+        };
+        assert!(!evaluate_condition_external(&game, &condition, &ctx));
     }
 }
