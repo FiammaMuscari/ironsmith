@@ -8991,6 +8991,39 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_target_specs_pump_and_gain_clause_uses_single_target_selection() {
+        use crate::cards::CardDefinitionBuilder;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Viashino Shanktail Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "{2}{R}, Discard this card: Target attacking creature gets +3/+1 and gains first strike until end of turn.",
+            )
+            .expect("pump-and-gain clause should parse");
+
+        let activated = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(activated) => Some(activated),
+                _ => None,
+            })
+            .expect("expected activated ability");
+
+        let target_specs = activated
+            .effects
+            .iter()
+            .filter_map(extract_target_spec)
+            .filter(|extracted| requires_target_selection(extracted.spec))
+            .count();
+
+        assert_eq!(
+            target_specs, 1,
+            "expected a single target selection for combined pump+gain clause, got {target_specs}"
+        );
+    }
+
+    #[test]
     fn test_spell_has_legal_targets_any_number_with_no_targets() {
         let game = setup_game();
         let alice = PlayerId::from_index(0);

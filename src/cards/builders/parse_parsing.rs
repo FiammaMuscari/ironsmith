@@ -23513,26 +23513,31 @@ fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>
     }
 
     if before_gain.contains(&"target") {
+        let has_pump_effect = pump_effect.is_some();
+        let target = parse_target_phrase(&real_subject_tokens)?;
         if let Some((power, toughness, _)) = pump_effect {
-            let target = parse_target_phrase(&real_subject_tokens)?;
             effects.push(EffectAst::Pump {
                 power,
                 toughness,
-                target,
+                target: target.clone(),
                 duration: duration.clone(),
                 condition: None,
             });
         }
-        let target = parse_target_phrase(&real_subject_tokens)?;
+        let grant_target = if has_pump_effect {
+            TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(&real_subject_tokens))
+        } else {
+            target
+        };
         if grant_is_choice {
             effects.push(EffectAst::GrantAbilitiesChoiceToTarget {
-                target,
+                target: grant_target,
                 abilities,
                 duration,
             });
         } else {
             effects.push(EffectAst::GrantAbilitiesToTarget {
-                target,
+                target: grant_target,
                 abilities,
                 duration,
             });
