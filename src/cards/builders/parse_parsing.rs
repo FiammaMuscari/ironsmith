@@ -20175,14 +20175,63 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
         )));
     };
     let where_tokens = &tokens[where_token_idx..];
-    let Some(where_value) = parse_where_x_value_clause(where_tokens) else {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported where-x clause (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    };
 
     let stripped = trim_edge_punctuation(&tokens[..where_token_idx]);
+    let stripped_words = words(&stripped);
+    let where_words = words(where_tokens);
+
+    // Special-case common "where X is its power/toughness/mana value" patterns, because
+    // resolving "its" depends on whether the main clause is targeting something.
+    let where_value = match where_words.get(3..) {
+        Some(["its", "power"]) => {
+            if stripped_words.iter().any(|w| *w == "target") {
+                Value::PowerOf(Box::new(crate::target::ChooseSpec::target(
+                    crate::target::ChooseSpec::Object(ObjectFilter::default()),
+                )))
+            } else {
+                Value::SourcePower
+            }
+        }
+        Some(["its", "toughness"]) => {
+            if stripped_words.iter().any(|w| *w == "target") {
+                Value::ToughnessOf(Box::new(crate::target::ChooseSpec::target(
+                    crate::target::ChooseSpec::Object(ObjectFilter::default()),
+                )))
+            } else {
+                Value::SourceToughness
+            }
+        }
+        Some(["its", "mana", "value"]) => Value::ManaValueOf(Box::new(
+            if stripped_words.iter().any(|w| *w == "target") {
+                crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
+                    ObjectFilter::default(),
+                ))
+            } else {
+                crate::target::ChooseSpec::Source
+            },
+        )),
+        Some(["this", "creatures", "power"]) => Value::SourcePower,
+        Some(["this", "creatures", "toughness"]) => Value::SourceToughness,
+        Some(["this", "creatures", "mana", "value"]) => {
+            Value::ManaValueOf(Box::new(crate::target::ChooseSpec::Source))
+        }
+        Some(["that", "creatures", "power"]) => Value::PowerOf(Box::new(
+            crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(ObjectFilter::default())),
+        )),
+        Some(["that", "creatures", "toughness"]) => Value::ToughnessOf(Box::new(
+            crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(ObjectFilter::default())),
+        )),
+        Some(["that", "creatures", "mana", "value"]) => Value::ManaValueOf(Box::new(
+            crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(ObjectFilter::default())),
+        )),
+        _ => parse_where_x_value_clause(where_tokens).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "unsupported where-x clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?,
+    };
+
     let mut effects = parse_effect_sentence_inner(&stripped)?;
     replace_unbound_x_in_effects_anywhere(&mut effects, &where_value, &clause_words.join(" "))?;
     Ok(effects)
