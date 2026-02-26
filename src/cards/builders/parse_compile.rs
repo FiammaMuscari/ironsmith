@@ -2559,7 +2559,25 @@ fn compile_effect(
             let effect = Effect::fight(ChooseSpec::Iterated, spec2);
             Ok((vec![effect], choices))
         }
-        EffectAst::Clash => Ok((vec![Effect::new(crate::effects::ClashEffect::new())], Vec::new())),
+        EffectAst::Clash { opponent } => match opponent {
+            ClashOpponentAst::Opponent => Ok((
+                vec![Effect::new(crate::effects::ClashEffect::against_any_opponent())],
+                Vec::new(),
+            )),
+            ClashOpponentAst::TargetOpponent => {
+                let choice = ChooseSpec::target(ChooseSpec::Player(PlayerFilter::Opponent));
+                Ok((
+                    vec![Effect::new(crate::effects::ClashEffect::against_target_opponent())],
+                    vec![choice],
+                ))
+            }
+            ClashOpponentAst::DefendingPlayer => Ok((
+                vec![Effect::new(
+                    crate::effects::ClashEffect::against_defending_player(),
+                )],
+                Vec::new(),
+            )),
+        },
         EffectAst::DealDamageEach { amount, filter } => {
             let resolved_amount = resolve_value_it_tag(amount, ctx)?;
             let resolved_filter = resolve_it_tag(filter, ctx)?;

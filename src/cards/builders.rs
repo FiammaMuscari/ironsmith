@@ -530,6 +530,13 @@ enum PreventNextTimeDamageTargetAst {
     You,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClashOpponentAst {
+    Opponent,
+    TargetOpponent,
+    DefendingPlayer,
+}
+
 #[derive(Debug, Clone)]
 enum EffectAst {
     DealDamage {
@@ -547,7 +554,9 @@ enum EffectAst {
     FightIterated {
         creature2: TargetAst,
     },
-    Clash,
+    Clash {
+        opponent: ClashOpponentAst,
+    },
     DealDamageEach {
         amount: Value,
         filter: ObjectFilter,

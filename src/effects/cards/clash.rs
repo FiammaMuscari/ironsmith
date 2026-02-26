@@ -11,14 +11,34 @@ use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClashOpponentMode {
+    AnyOpponent,
+    TargetOpponent,
+    DefendingPlayer,
+}
+
 /// Effect that performs a clash with an opponent.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ClashEffect;
+pub struct ClashEffect {
+    opponent_mode: ClashOpponentMode,
+}
 
 impl ClashEffect {
-    /// Create a new clash effect.
-    pub fn new() -> Self {
-        Self
+    pub fn new(opponent_mode: ClashOpponentMode) -> Self {
+        Self { opponent_mode }
+    }
+
+    pub fn against_any_opponent() -> Self {
+        Self::new(ClashOpponentMode::AnyOpponent)
+    }
+
+    pub fn against_target_opponent() -> Self {
+        Self::new(ClashOpponentMode::TargetOpponent)
+    }
+
+    pub fn against_defending_player() -> Self {
+        Self::new(ClashOpponentMode::DefendingPlayer)
     }
 }
 
@@ -43,10 +63,20 @@ fn choose_opponent(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
     opponents: &[PlayerId],
+    mode: ClashOpponentMode,
 ) -> Option<PlayerId> {
-    if let Some(targeted) = targeted_opponent(ctx, opponents) {
-        return Some(targeted);
+    match mode {
+        ClashOpponentMode::TargetOpponent => {
+            return targeted_opponent(ctx, opponents);
+        }
+        ClashOpponentMode::DefendingPlayer => {
+            return ctx
+                .defending_player
+                .filter(|player_id| opponents.contains(player_id));
+        }
+        ClashOpponentMode::AnyOpponent => {}
     }
+
     if opponents.is_empty() {
         return None;
     }
@@ -129,7 +159,7 @@ impl EffectExecutor for ClashEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         let opponents = in_game_opponents(game, ctx.controller);
-        let Some(opponent) = choose_opponent(game, ctx, &opponents) else {
+        let Some(opponent) = choose_opponent(game, ctx, &opponents, self.opponent_mode) else {
             return Ok(EffectOutcome::count(0));
         };
 
@@ -204,7 +234,7 @@ mod tests {
         game.create_object_from_card(&bob_top, bob, Zone::Library);
 
         let mut ctx = ExecutionContext::new_default(source, alice);
-        let outcome = ClashEffect::new()
+        let outcome = ClashEffect::against_any_opponent()
             .execute(&mut game, &mut ctx)
             .expect("execute clash");
         assert_eq!(outcome.result, EffectResult::Count(1));
@@ -223,7 +253,7 @@ mod tests {
         game.create_object_from_card(&bob_top, bob, Zone::Library);
 
         let mut ctx = ExecutionContext::new_default(source, alice);
-        let outcome = ClashEffect::new()
+        let outcome = ClashEffect::against_any_opponent()
             .execute(&mut game, &mut ctx)
             .expect("execute clash");
         assert_eq!(outcome.result, EffectResult::Count(0));
@@ -247,7 +277,7 @@ mod tests {
 
         let mut decision_maker = PutRevealedOnBottom;
         let mut ctx = ExecutionContext::new(source, alice, &mut decision_maker);
-        let outcome = ClashEffect::new()
+        let outcome = ClashEffect::against_any_opponent()
             .execute(&mut game, &mut ctx)
             .expect("execute clash");
         assert_eq!(outcome.result, EffectResult::Count(1));
@@ -262,5 +292,35 @@ mod tests {
             .expect("bob top card after clash");
         assert_ne!(alice_top_after, alice_revealed_id);
         assert_ne!(bob_top_after, bob_revealed_id);
+    }
+
+    #[test]
+    fn clash_with_defending_player_uses_combat_defender() {
+        let mut game = GameState::new(
+            vec![
+                "Alice".to_string(),
+                "Bob".to_string(),
+                "Cara".to_string(),
+            ],
+            20,
+        );
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let cara = PlayerId::from_index(2);
+        let source = setup_source(&mut game, alice);
+
+        let alice_top = spell_card(9, "Alice Top", 5);
+        let bob_top = spell_card(10, "Bob Top", 1);
+        let cara_top = spell_card(11, "Cara Top", 7);
+        game.create_object_from_card(&alice_top, alice, Zone::Library);
+        game.create_object_from_card(&bob_top, bob, Zone::Library);
+        game.create_object_from_card(&cara_top, cara, Zone::Library);
+
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        ctx.defending_player = Some(bob);
+        let outcome = ClashEffect::against_defending_player()
+            .execute(&mut game, &mut ctx)
+            .expect("execute clash");
+        assert_eq!(outcome.result, EffectResult::Count(1));
     }
 }

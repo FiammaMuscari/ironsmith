@@ -1031,6 +1031,10 @@ fn split_segments_on_comma_then(segments: Vec<Vec<Token>>) -> Vec<Vec<Token>> {
             if matches!(segment[i], Token::Comma(_))
                 && segment.get(i + 1).is_some_and(|t| t.is_word("then"))
             {
+                let before_then = &segment[..i];
+                let before_words = words(before_then);
+                let starts_with_clash =
+                    before_words.starts_with(&["clash"]) || before_words.starts_with(&["clashes"]);
                 let after_then = &segment[i + 2..];
                 let after_words = words(after_then);
                 let has_back_ref = after_words.iter().any(|w| back_ref_words.contains(w));
@@ -1119,7 +1123,11 @@ fn split_segments_on_comma_then(segments: Vec<Vec<Token>>) -> Vec<Vec<Token>> {
                         || after_words.starts_with(&["puts", "them", "back"]))
                     && after_words.contains(&"any")
                     && after_words.contains(&"order");
+                let allow_clash_followup = starts_with_clash;
                 if has_effect_head && (!has_back_ref || allow_backref_split) {
+                    split_point = Some(i);
+                    break;
+                } else if has_effect_head && allow_clash_followup {
                     split_point = Some(i);
                     break;
                 } else if has_effect_head && allow_attach_followup {
@@ -29373,6 +29381,11 @@ fn parse_clash_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextErr
     if tail.first().is_some_and(|token| token.is_word("with")) {
         tail = trim_commas(&tail[1..]);
     }
+    let tail_end = tail
+        .iter()
+        .position(|token| token.is_word("then") || matches!(token, Token::Comma(_)))
+        .unwrap_or(tail.len());
+    let tail = trim_commas(&tail[..tail_end]);
     if tail.is_empty() {
         return Err(CardTextError::ParseError(format!(
             "missing opponent in clash clause (clause: '{}')",
@@ -29384,15 +29397,19 @@ fn parse_clash_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextErr
         .into_iter()
         .filter(|word| !is_article(word))
         .collect();
-    let is_supported = matches!(tail_words.as_slice(), ["opponent"] | ["target", "opponent"]);
-    if !is_supported {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported clash target (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    }
+    let opponent = match tail_words.as_slice() {
+        ["opponent"] => ClashOpponentAst::Opponent,
+        ["target", "opponent"] => ClashOpponentAst::TargetOpponent,
+        ["defending", "player"] => ClashOpponentAst::DefendingPlayer,
+        _ => {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported clash target (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+    };
 
-    Ok(Some(EffectAst::Clash))
+    Ok(Some(EffectAst::Clash { opponent }))
 }
 
 fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
@@ -37147,7 +37164,42 @@ mod parse_parsing_tests {
     fn parse_clash_clause() {
         let tokens = tokenize_line("Clash with an opponent.", 0);
         let effects = parse_effect_sentence(&tokens).expect("parse effect sentence");
-        assert!(effects.iter().any(|effect| matches!(effect, EffectAst::Clash)));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            EffectAst::Clash {
+                opponent: ClashOpponentAst::Opponent
+            }
+        )));
+    }
+
+    #[test]
+    fn parse_clash_with_defending_player_clause() {
+        let tokens = tokenize_line("Clash with defending player.", 0);
+        let effects = parse_effect_sentence(&tokens).expect("parse effect sentence");
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            EffectAst::Clash {
+                opponent: ClashOpponentAst::DefendingPlayer
+            }
+        )));
+    }
+
+    #[test]
+    fn parse_clash_then_return_clause() {
+        let tokens = tokenize_line(
+            "Clash with an opponent, then return target creature to its owner's hand.",
+            0,
+        );
+        let effects = parse_effect_sentence(&tokens).expect("parse effect sentence");
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            EffectAst::Clash {
+                opponent: ClashOpponentAst::Opponent
+            }
+        )));
+        assert!(effects
+            .iter()
+            .any(|effect| matches!(effect, EffectAst::ReturnToHand { .. })));
     }
 
     #[test]
