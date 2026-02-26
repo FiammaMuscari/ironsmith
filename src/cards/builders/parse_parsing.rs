@@ -35090,32 +35090,40 @@ fn parse_land_could_produce_filter(
     tokens: &[Token],
 ) -> Result<Option<ObjectFilter>, CardTextError> {
     let words = words(tokens);
-    if words.len() < 4 || words[0] != "that" {
+    if words.len() < 3 || words[0] != "that" {
         return Ok(None);
-    }
-    let Some(could_idx) = words
-        .windows(2)
-        .position(|window| window == ["could", "produce"])
-    else {
-        return Ok(None);
-    };
-    if could_idx + 2 != words.len() {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported trailing mana clause (tail: '{}')",
-            words.join(" ")
-        )));
     }
 
-    let could_token_idx = tokens
-        .iter()
-        .position(|token| token.is_word("could"))
-        .ok_or_else(|| {
-            CardTextError::ParseError(format!(
-                "missing 'could' in mana tail '{}'",
+    let marker_word_idx = if let Some(could_idx) = words
+        .windows(2)
+        .position(|window| window == ["could", "produce"])
+    {
+        if could_idx + 2 != words.len() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported trailing mana clause (tail: '{}')",
                 words.join(" ")
-            ))
-        })?;
-    let filter_tokens = trim_leading_commas(&tokens[1..could_token_idx]);
+            )));
+        }
+        could_idx
+    } else if let Some(produced_idx) = words.iter().position(|word| *word == "produced") {
+        if produced_idx + 1 != words.len() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported trailing mana clause (tail: '{}')",
+                words.join(" ")
+            )));
+        }
+        produced_idx
+    } else {
+        return Ok(None);
+    };
+
+    let marker_token_idx = token_index_for_word_index(tokens, marker_word_idx).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "missing mana production marker in tail '{}'",
+            words.join(" ")
+        ))
+    })?;
+    let filter_tokens = trim_leading_commas(&tokens[1..marker_token_idx]);
     if filter_tokens.is_empty() {
         return Err(CardTextError::ParseError(format!(
             "missing land filter in mana clause (tail: '{}')",

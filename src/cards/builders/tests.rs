@@ -2137,6 +2137,30 @@ fn test_parse_cant_be_blocked_as_long_as_defending_player_controls_artifact_clau
 }
 
 #[test]
+fn test_parse_add_any_type_that_land_produced_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Heartbeat Probe")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text(
+            "Whenever a player taps a land for mana, that player adds one mana of any type that land produced.",
+        )
+        .expect("land-produced mana clause should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("whenever a player taps a land for mana"),
+        "expected tap-for-mana trigger text in oracle-like output, got {rendered}"
+    );
+    assert!(
+        rendered.contains("adds one mana of any type"),
+        "expected add-any-type mana text in oracle-like output, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("unsupported parser line fallback"),
+        "land-produced mana clause should not rely on unsupported fallback marker: {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_raid_conditional_with_attacked_this_turn_without_fallback() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Raid Probe")
         .card_types(vec![CardType::Creature])
