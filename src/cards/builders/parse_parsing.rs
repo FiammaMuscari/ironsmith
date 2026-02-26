@@ -16276,6 +16276,133 @@ fn replace_unbound_x_in_damage_effect(
     Ok(())
 }
 
+fn replace_unbound_x_in_effects_anywhere(
+    effects: &mut [EffectAst],
+    replacement: &Value,
+    clause: &str,
+) -> Result<(), CardTextError> {
+    for effect in effects {
+        replace_unbound_x_in_effect_anywhere(effect, replacement, clause)?;
+    }
+    Ok(())
+}
+
+fn replace_unbound_x_in_effect_anywhere(
+    effect: &mut EffectAst,
+    replacement: &Value,
+    clause: &str,
+) -> Result<(), CardTextError> {
+    fn replace_value(
+        value: &mut Value,
+        replacement: &Value,
+        clause: &str,
+    ) -> Result<(), CardTextError> {
+        if value_contains_unbound_x(value) {
+            *value = replace_unbound_x_with_value(value.clone(), replacement, clause)?;
+        }
+        Ok(())
+    }
+
+    match effect {
+        EffectAst::DealDamage { amount, .. }
+        | EffectAst::DealDamageEach { amount, .. }
+        | EffectAst::Draw { count: amount, .. }
+        | EffectAst::LoseLife { amount, .. }
+        | EffectAst::GainLife { amount, .. }
+        | EffectAst::PreventDamage { amount, .. }
+        | EffectAst::PreventDamageEach { amount, .. }
+        | EffectAst::PutCounters { count: amount, .. }
+        | EffectAst::PutCountersAll { count: amount, .. }
+        | EffectAst::Mill { count: amount, .. }
+        | EffectAst::Discard { count: amount, .. }
+        | EffectAst::Scry { count: amount, .. }
+        | EffectAst::Surveil { count: amount, .. }
+        | EffectAst::Discover { count: amount, .. }
+        | EffectAst::PayEnergy { amount, .. }
+        | EffectAst::CopySpell { count: amount, .. }
+        | EffectAst::SetLifeTotal { amount, .. }
+        | EffectAst::Monstrosity { amount } => {
+            replace_value(amount, replacement, clause)?;
+        }
+        EffectAst::PutOrRemoveCounters {
+            put_count,
+            remove_count,
+            ..
+        } => {
+            replace_value(put_count, replacement, clause)?;
+            replace_value(remove_count, replacement, clause)?;
+        }
+        EffectAst::RemoveUpToAnyCounters { amount, .. } => {
+            replace_value(amount, replacement, clause)?;
+        }
+        EffectAst::AddManaScaled { amount, .. }
+        | EffectAst::AddManaAnyColor { amount, .. }
+        | EffectAst::AddManaAnyOneColor { amount, .. }
+        | EffectAst::AddManaChosenColor { amount, .. }
+        | EffectAst::AddManaFromLandCouldProduce { amount, .. }
+        | EffectAst::AddManaCommanderIdentity { amount, .. } => {
+            replace_value(amount, replacement, clause)?;
+        }
+        EffectAst::CreateToken { count, .. }
+        | EffectAst::CreateTokenWithMods { count, .. }
+        | EffectAst::CreateTokenCopy { count, .. }
+        | EffectAst::CreateTokenCopyFromSource { count, .. } => {
+            replace_value(count, replacement, clause)?;
+        }
+        EffectAst::CounterUnlessPays {
+            life,
+            additional_generic,
+            ..
+        } => {
+            if let Some(life) = life.as_mut() {
+                replace_value(life, replacement, clause)?;
+            }
+            if let Some(generic) = additional_generic.as_mut() {
+                replace_value(generic, replacement, clause)?;
+            }
+        }
+        EffectAst::Conditional {
+            if_true, if_false, ..
+        } => {
+            replace_unbound_x_in_effects_anywhere(if_true, replacement, clause)?;
+            replace_unbound_x_in_effects_anywhere(if_false, replacement, clause)?;
+        }
+        EffectAst::UnlessPays { effects, .. }
+        | EffectAst::May { effects }
+        | EffectAst::MayByPlayer { effects, .. }
+        | EffectAst::MayByTaggedController { effects, .. }
+        | EffectAst::IfResult { effects, .. }
+        | EffectAst::ForEachOpponent { effects }
+        | EffectAst::ForEachPlayer { effects }
+        | EffectAst::ForEachTargetPlayers { effects, .. }
+        | EffectAst::ForEachObject { effects, .. }
+        | EffectAst::ForEachTagged { effects, .. }
+        | EffectAst::ForEachPlayerDoesNot { effects, .. }
+        | EffectAst::ForEachOpponentDoesNot { effects, .. }
+        | EffectAst::ForEachPlayerDid { effects, .. }
+        | EffectAst::ForEachOpponentDid { effects, .. }
+        | EffectAst::ForEachTaggedPlayer { effects, .. }
+        | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
+        | EffectAst::DelayedUntilEndOfCombat { effects }
+        | EffectAst::DelayedTriggerThisTurn { effects, .. }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
+        | EffectAst::VoteOption { effects, .. } => {
+            replace_unbound_x_in_effects_anywhere(effects, replacement, clause)?;
+        }
+        EffectAst::UnlessAction {
+            effects,
+            alternative,
+            ..
+        } => {
+            replace_unbound_x_in_effects_anywhere(effects, replacement, clause)?;
+            replace_unbound_x_in_effects_anywhere(alternative, replacement, clause)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn apply_where_x_to_damage_amounts(
     tokens: &[Token],
     effects: &mut [EffectAst],
@@ -20007,6 +20134,41 @@ const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
 ];
 
 fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
+    // Generic support for trailing "where X is ..." clauses.
+    //
+    // Many Oracle texts define a computed X (not cost-derived X) using:
+    //   "... X ..., where X is <expression>."
+    //
+    // We parse the where-X value, strip the suffix clause for normal parsing,
+    // then substitute the parsed `Value::X` occurrences with that value.
+    let clause_words = words(tokens);
+    let Some(where_idx) = clause_words
+        .windows(3)
+        .position(|window| window == ["where", "x", "is"])
+    else {
+        return parse_effect_sentence_inner(tokens);
+    };
+    let Some(where_token_idx) = token_index_for_word_index(tokens, where_idx) else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported where-x clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    };
+    let where_tokens = &tokens[where_token_idx..];
+    let Some(where_value) = parse_where_x_value_clause(where_tokens) else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported where-x clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    };
+
+    let stripped = trim_edge_punctuation(&tokens[..where_token_idx]);
+    let mut effects = parse_effect_sentence_inner(&stripped)?;
+    replace_unbound_x_in_effects_anywhere(&mut effects, &where_value, &clause_words.join(" "))?;
+    Ok(effects)
+}
+
+fn parse_effect_sentence_inner(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
     parser_trace("parse_effect_sentence:entry", tokens);
     let sentence_words = words(tokens);
     if let Some(effects) = parse_prevent_next_time_damage_sentence(tokens)? {
@@ -20054,19 +20216,7 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
             sentence_words.join(" ")
         )));
     }
-    let has_where_x_clause = sentence_words
-        .windows(3)
-        .any(|window| window == ["where", "x", "is"]);
-    let can_defer_where_x_handling = has_where_x_clause
-        && sentence_words
-            .iter()
-            .any(|word| matches!(*word, "get" | "gets" | "gain" | "gains"));
-    if has_where_x_clause && !can_defer_where_x_handling {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported where-x clause (clause: '{}')",
-            sentence_words.join(" ")
-        )));
-    }
+    // where-X clauses are handled by the parse_effect_sentence wrapper.
     let has_spent_to_cast_this_spell = sentence_words
         .windows(6)
         .any(|window| window == ["was", "spent", "to", "cast", "this", "spell"]);
