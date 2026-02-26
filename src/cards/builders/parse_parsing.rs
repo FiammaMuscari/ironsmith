@@ -19822,15 +19822,6 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
             sentence_words.join(" ")
         )));
     }
-    let has_assigns_no_combat_damage_clause = sentence_words
-        .windows(4)
-        .any(|window| window == ["assigns", "no", "combat", "damage"]);
-    if has_assigns_no_combat_damage_clause {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported assigns-no-combat-damage clause (clause: '{}')",
-            sentence_words.join(" ")
-        )));
-    }
     let has_defending_players_choice_clause = sentence_words.contains(&"defending")
         && sentence_words
             .windows(3)
@@ -27691,6 +27682,55 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
             count: choose_count,
             player: chooser,
             tag: TagKey::from(IT_TAG),
+        });
+    }
+
+    // "This creature assigns no combat damage this turn."
+    // Used in Laccolith-style effects: "If you do, this creature assigns no combat damage this turn."
+    if clause_words
+        .windows(4)
+        .any(|window| window == ["assigns", "no", "combat", "damage"])
+    {
+        let assigns_idx = tokens
+            .iter()
+            .position(|token| token.is_word("assigns") || token.is_word("assign"))
+            .unwrap_or(0);
+        let subject_tokens = trim_commas(&tokens[..assigns_idx]);
+        let tail_tokens = trim_commas(&tokens[assigns_idx + 1..]);
+        let tail_words = words(&tail_tokens);
+        if !tail_words.starts_with(&["no", "combat", "damage"]) {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported assigns-no-combat-damage clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let mut idx = 3usize;
+        if tail_words.get(idx) == Some(&"this") && tail_words.get(idx + 1) == Some(&"turn") {
+            idx += 2;
+        } else if tail_words.get(idx) == Some(&"this")
+            && tail_words.get(idx + 1) == Some(&"combat")
+        {
+            idx += 2;
+        }
+        if idx != tail_words.len() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported assigns-no-combat-damage clause tail (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+
+        let subject_words = words(&subject_tokens);
+        let source = if subject_words.is_empty()
+            || matches!(subject_words.as_slice(), ["it"] | ["this"] | ["this", "creature"])
+        {
+            TargetAst::Source(None)
+        } else {
+            parse_target_phrase(&subject_tokens)?
+        };
+
+        return Ok(EffectAst::PreventAllCombatDamageFromSource {
+            duration: Until::EndOfTurn,
+            source,
         });
     }
 

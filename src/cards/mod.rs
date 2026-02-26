@@ -675,6 +675,60 @@ mod tests {
     }
 
     #[test]
+    fn parse_assigns_no_combat_damage_clause_as_combat_prevention() {
+        use crate::ability::AbilityKind;
+        use crate::effects::{
+            IfEffect, MayEffect, PreventAllCombatDamageFromEffect, SequenceEffect, TaggedEffect,
+            WithIdEffect,
+        };
+
+        fn contains_prevent(effect: &crate::effect::Effect) -> bool {
+            if effect
+                .downcast_ref::<PreventAllCombatDamageFromEffect>()
+                .is_some()
+            {
+                return true;
+            }
+            if let Some(may) = effect.downcast_ref::<MayEffect>() {
+                return may.effects.iter().any(contains_prevent);
+            }
+            if let Some(if_effect) = effect.downcast_ref::<IfEffect>() {
+                return if_effect.then.iter().any(contains_prevent)
+                    || if_effect.else_.iter().any(contains_prevent);
+            }
+            if let Some(seq) = effect.downcast_ref::<SequenceEffect>() {
+                return seq.effects.iter().any(contains_prevent);
+            }
+            if let Some(tagged) = effect.downcast_ref::<TaggedEffect>() {
+                return contains_prevent(&tagged.effect);
+            }
+            if let Some(with_id) = effect.downcast_ref::<WithIdEffect>() {
+                return contains_prevent(&with_id.effect);
+            }
+            false
+        }
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Laccolith Probe")
+            .card_types(vec![CardType::Creature])
+            .parse_text("Whenever this creature becomes blocked, you may have it deal damage equal to its power to target creature. If you do, this creature assigns no combat damage this turn.")
+            .expect("assigns-no-combat-damage clause should parse");
+
+        let triggered = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered) => Some(triggered),
+                _ => None,
+            })
+            .expect("expected a triggered ability");
+
+        assert!(
+            triggered.effects.iter().any(contains_prevent),
+            "expected PreventAllCombatDamageFromEffect in triggered effects"
+        );
+    }
+
+    #[test]
     fn parse_look_at_top_then_put_some_into_hand_rest_into_graveyard() {
         use crate::effects::{ChooseObjectsEffect, LookAtTopCardsEffect};
 
