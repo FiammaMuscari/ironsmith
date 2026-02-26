@@ -2435,6 +2435,11 @@ fn parse_static_ability_line(
     if let Some(ability) = parse_all_have_indestructible_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) =
+        parse_subject_cant_be_blocked_as_long_as_defending_player_controls_card_type_line(tokens)?
+    {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_subject_cant_be_blocked_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -3026,6 +3031,70 @@ fn parse_subject_cant_be_blocked_line(
         AnthemSubjectAst::Filter(filter) => {
             StaticAbility::grant_ability(filter, StaticAbility::unblockable())
         }
+    };
+    Ok(Some(ability))
+}
+
+fn parse_subject_cant_be_blocked_as_long_as_defending_player_controls_card_type_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let normalized = words(tokens)
+        .into_iter()
+        .map(|word| if word == "cannot" { "cant" } else { word })
+        .collect::<Vec<_>>();
+
+    let Some(cant_idx) = normalized
+        .windows(3)
+        .position(|window| window == ["cant", "be", "blocked"])
+    else {
+        return Ok(None);
+    };
+
+    let tail = &normalized[cant_idx + 3..];
+    if tail.len() < 7 || !tail.starts_with(&["as", "long", "as", "defending", "player", "controls"])
+    {
+        return Ok(None);
+    }
+
+    let mut type_words = &tail[6..];
+    if matches!(type_words.first(), Some(&"a" | &"an" | &"the")) {
+        type_words = &type_words[1..];
+    }
+    if type_words.len() != 1 {
+        return Ok(None);
+    }
+    let Some(card_type) = parse_card_type(type_words[0]) else {
+        return Ok(None);
+    };
+    if !matches!(
+        card_type,
+        CardType::Artifact
+            | CardType::Battle
+            | CardType::Creature
+            | CardType::Enchantment
+            | CardType::Land
+            | CardType::Planeswalker
+    ) {
+        return Ok(None);
+    }
+
+    let tail_start = token_index_for_word_index(tokens, cant_idx).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unable to map cant-be-blocked conditional tail (clause: '{}')",
+            normalized.join(" ")
+        ))
+    })?;
+    let subject_tokens = trim_commas(&tokens[..tail_start]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let subject = parse_anthem_subject(&subject_tokens)?;
+    let unblockable =
+        StaticAbility::cant_be_blocked_as_long_as_defending_player_controls_card_type(card_type);
+    let ability = match subject {
+        AnthemSubjectAst::Source => unblockable,
+        AnthemSubjectAst::Filter(filter) => StaticAbility::grant_ability(filter, unblockable),
     };
     Ok(Some(ability))
 }

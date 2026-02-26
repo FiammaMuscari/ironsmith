@@ -267,6 +267,23 @@ pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::
         }
     }
 
+    for required_card_type in attacker_abilities
+        .iter()
+        .filter_map(|ability| ability.required_defending_player_card_type_for_unblockable())
+    {
+        let defending_controls_required_type = game
+            .battlefield
+            .iter()
+            .filter_map(|&id| game.object(id))
+            .any(|obj| {
+                obj.controller == blocker.controller
+                    && game.object_has_card_type(obj.id, required_card_type)
+            });
+        if defending_controls_required_type {
+            return false;
+        }
+    }
+
     // "Can block only creatures with flying"
     if blocker_has(StaticAbilityId::CanBlockOnlyFlying) && !attacker_has(StaticAbilityId::Flying) {
         return false;
@@ -729,6 +746,47 @@ mod tests {
         assert!(can_block(&skulk_attacker, &equal_power_blocker, &game));
         assert!(can_block(&skulk_attacker, &smaller_blocker, &game));
         assert!(!can_block(&skulk_attacker, &larger_blocker, &game));
+    }
+
+    #[test]
+    fn test_cant_be_blocked_when_defending_player_controls_required_card_type() {
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let mut attacker = make_creature("Beebles", 2, 2);
+        attacker.id = ObjectId::from_raw(10);
+        attacker.controller = alice;
+        add_ability(
+            &mut attacker,
+            StaticAbility::cant_be_blocked_as_long_as_defending_player_controls_card_type(
+                CardType::Artifact,
+            ),
+        );
+
+        let mut blocker = make_creature("Blocker", 2, 2);
+        blocker.id = ObjectId::from_raw(11);
+        blocker.controller = bob;
+
+        let mut game_without_artifact = test_game_state();
+        game_without_artifact.add_object(attacker.clone());
+        game_without_artifact.add_object(blocker.clone());
+        assert!(
+            can_block(&attacker, &blocker, &game_without_artifact),
+            "blocker should block when defending player controls no artifact"
+        );
+
+        let mut artifact = make_creature("Relic", 0, 1);
+        artifact.id = ObjectId::from_raw(12);
+        artifact.controller = bob;
+        artifact.card_types.push(CardType::Artifact);
+
+        let mut game_with_artifact = test_game_state();
+        game_with_artifact.add_object(attacker.clone());
+        game_with_artifact.add_object(blocker.clone());
+        game_with_artifact.add_object(artifact);
+        assert!(
+            !can_block(&attacker, &blocker, &game_with_artifact),
+            "blocker should fail when defending player controls an artifact"
+        );
     }
 
     #[test]

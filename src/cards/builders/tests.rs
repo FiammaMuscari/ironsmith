@@ -2098,6 +2098,27 @@ fn test_parse_prevent_all_damage_to_creatures_static_clause() {
 }
 
 #[test]
+fn test_parse_cant_be_blocked_as_long_as_defending_player_controls_artifact_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bouncing Beebles Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature can't be blocked as long as defending player controls an artifact.")
+        .expect("defending-player artifact unblockable clause should parse");
+
+    let has_conditional_unblockable = def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(static_ability)
+                if static_ability.id()
+                    == StaticAbilityId::CantBeBlockedAsLongAsDefendingPlayerControlsCardType
+        )
+    });
+    assert!(
+        has_conditional_unblockable,
+        "expected defending-player artifact unblockable static ability in parsed card"
+    );
+}
+
+#[test]
 fn test_parse_raid_conditional_with_attacked_this_turn_without_fallback() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Raid Probe")
         .card_types(vec![CardType::Creature])

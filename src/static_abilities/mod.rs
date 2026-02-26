@@ -183,6 +183,13 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// Returns required card type for "can't be blocked as long as defending player controls ...".
+    fn required_defending_player_card_type_for_unblockable(
+        &self,
+    ) -> Option<crate::types::CardType> {
+        None
+    }
+
     /// Returns the maximum number of blockers this creature can be blocked by.
     fn maximum_blockers(&self) -> Option<usize> {
         None
@@ -539,6 +546,13 @@ impl StaticAbility {
     ) -> Option<crate::types::Subtype> {
         self.0
             .required_defending_player_land_subtype_for_unblockable()
+    }
+
+    pub fn required_defending_player_card_type_for_unblockable(
+        &self,
+    ) -> Option<crate::types::CardType> {
+        self.0
+            .required_defending_player_card_type_for_unblockable()
     }
 
     pub fn maximum_blockers(&self) -> Option<usize> {
@@ -908,6 +922,14 @@ impl StaticAbility {
 
     pub fn landwalk(land_subtype: crate::types::Subtype) -> Self {
         Self::new(Landwalk::new(land_subtype))
+    }
+
+    pub fn cant_be_blocked_as_long_as_defending_player_controls_card_type(
+        card_type: crate::types::CardType,
+    ) -> Self {
+        Self::new(CantBeBlockedAsLongAsDefendingPlayerControlsCardType::new(
+            card_type,
+        ))
     }
 
     pub fn bloodthirst(amount: u32) -> Self {

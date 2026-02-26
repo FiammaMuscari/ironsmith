@@ -221,6 +221,58 @@ impl StaticAbilityKind for Landwalk {
     }
 }
 
+/// "Can't be blocked as long as defending player controls an object of the given card type."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CantBeBlockedAsLongAsDefendingPlayerControlsCardType {
+    pub card_type: crate::types::CardType,
+}
+
+impl CantBeBlockedAsLongAsDefendingPlayerControlsCardType {
+    pub const fn new(card_type: crate::types::CardType) -> Self {
+        Self { card_type }
+    }
+}
+
+impl StaticAbilityKind for CantBeBlockedAsLongAsDefendingPlayerControlsCardType {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantBeBlockedAsLongAsDefendingPlayerControlsCardType
+    }
+
+    fn display(&self) -> String {
+        let type_word = match self.card_type {
+            crate::types::CardType::Artifact => "artifact",
+            crate::types::CardType::Battle => "battle",
+            crate::types::CardType::Creature => "creature",
+            crate::types::CardType::Enchantment => "enchantment",
+            crate::types::CardType::Land => "land",
+            crate::types::CardType::Planeswalker => "planeswalker",
+            crate::types::CardType::Instant => "instant",
+            crate::types::CardType::Sorcery => "sorcery",
+            crate::types::CardType::Kindred => "kindred",
+        };
+        let article = if matches!(type_word.chars().next(), Some('a' | 'e' | 'i' | 'o' | 'u')) {
+            "an"
+        } else {
+            "a"
+        };
+        format!("Can't be blocked as long as defending player controls {article} {type_word}")
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn grants_evasion(&self) -> bool {
+        true
+    }
+
+    fn required_defending_player_card_type_for_unblockable(
+        &self,
+    ) -> Option<crate::types::CardType> {
+        Some(self.card_type)
+    }
+}
+
 /// Can't be blocked by creatures with power N or less.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CantBeBlockedByPowerOrLess {
