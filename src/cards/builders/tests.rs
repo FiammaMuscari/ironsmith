@@ -2119,7 +2119,9 @@ fn test_parse_prevent_all_damage_to_creatures_static_clause() {
 fn test_parse_cant_be_blocked_as_long_as_defending_player_controls_artifact_clause() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bouncing Beebles Probe")
         .card_types(vec![CardType::Creature])
-        .parse_text("This creature can't be blocked as long as defending player controls an artifact.")
+        .parse_text(
+            "This creature can't be blocked as long as defending player controls an artifact.",
+        )
         .expect("defending-player artifact unblockable clause should parse");
 
     let has_conditional_unblockable = def.abilities.iter().any(|ability| {
@@ -6934,6 +6936,40 @@ fn parse_damage_redirect_to_source_line() {
 }
 
 #[test]
+fn parse_no_more_than_creatures_can_attack_or_block_each_combat_lines() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Silent Arbiter Variant")
+        .parse_text(
+            "No more than one creature can attack each combat.\nNo more than one creature can block each combat.",
+        )
+        .expect("no-more-than attack/block static lines should parse");
+    let ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        ids.contains(&crate::static_abilities::StaticAbilityId::MaxCreaturesCanAttackEachCombat),
+        "expected attack-cap static ability, got {ids:?}"
+    );
+    assert!(
+        ids.contains(&crate::static_abilities::StaticAbilityId::MaxCreaturesCanBlockEachCombat),
+        "expected block-cap static ability, got {ids:?}"
+    );
+    let compiled = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        compiled.contains("no more than 1 creature can attack each combat"),
+        "expected compiled text to include attack cap, got {compiled}"
+    );
+    assert!(
+        compiled.contains("no more than 1 creature can block each combat"),
+        "expected compiled text to include block cap, got {compiled}"
+    );
+}
+
+#[test]
 fn parse_opponent_loses_life_trigger_with_that_much_gain() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Life Trigger Variant")
         .parse_text("Whenever an opponent loses life, you gain that much life.")
@@ -10054,8 +10090,7 @@ fn parse_target_creature_becomes_single_color_until_end_of_turn() {
 
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("setcolors")
-            && rendered.contains("red"),
+        rendered.contains("setcolors") && rendered.contains("red"),
         "expected set-colors(red) modification in spell effect, got {rendered}"
     );
 }

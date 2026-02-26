@@ -202,6 +202,16 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// Returns the maximum number of creatures that can attack in a combat.
+    fn max_creatures_can_attack_each_combat(&self) -> Option<usize> {
+        None
+    }
+
+    /// Returns the maximum number of creatures that can block in a combat.
+    fn max_creatures_can_block_each_combat(&self) -> Option<usize> {
+        None
+    }
+
     /// Returns true if this is a first/double strike ability.
     fn has_first_strike(&self) -> bool {
         false
@@ -551,8 +561,7 @@ impl StaticAbility {
     pub fn required_defending_player_card_type_for_unblockable(
         &self,
     ) -> Option<crate::types::CardType> {
-        self.0
-            .required_defending_player_card_type_for_unblockable()
+        self.0.required_defending_player_card_type_for_unblockable()
     }
 
     pub fn maximum_blockers(&self) -> Option<usize> {
@@ -561,6 +570,14 @@ impl StaticAbility {
 
     pub fn additional_blockable_attackers(&self) -> Option<usize> {
         self.0.additional_blockable_attackers()
+    }
+
+    pub fn max_creatures_can_attack_each_combat(&self) -> Option<usize> {
+        self.0.max_creatures_can_attack_each_combat()
+    }
+
+    pub fn max_creatures_can_block_each_combat(&self) -> Option<usize> {
+        self.0.max_creatures_can_block_each_combat()
     }
 
     pub fn has_first_strike(&self) -> bool {
@@ -918,6 +935,14 @@ impl StaticAbility {
 
     pub fn can_block_additional_creature_each_combat(additional: usize) -> Self {
         Self::new(CanBlockAdditionalCreatureEachCombat::new(additional))
+    }
+
+    pub fn max_attackers_each_combat(maximum: usize) -> Self {
+        Self::new(MaxCreaturesCanAttackEachCombat::new(maximum))
+    }
+
+    pub fn max_blockers_each_combat(maximum: usize) -> Self {
+        Self::new(MaxCreaturesCanBlockEachCombat::new(maximum))
     }
 
     pub fn landwalk(land_subtype: crate::types::Subtype) -> Self {

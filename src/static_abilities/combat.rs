@@ -181,6 +181,80 @@ impl StaticAbilityKind for CanBlockAdditionalCreatureEachCombat {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaxCreaturesCanAttackEachCombat {
+    pub maximum: usize,
+}
+
+impl MaxCreaturesCanAttackEachCombat {
+    pub const fn new(maximum: usize) -> Self {
+        Self { maximum }
+    }
+}
+
+impl StaticAbilityKind for MaxCreaturesCanAttackEachCombat {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::MaxCreaturesCanAttackEachCombat
+    }
+
+    fn display(&self) -> String {
+        let noun = if self.maximum == 1 {
+            "creature"
+        } else {
+            "creatures"
+        };
+        format!(
+            "No more than {} {} can attack each combat",
+            self.maximum, noun
+        )
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn max_creatures_can_attack_each_combat(&self) -> Option<usize> {
+        Some(self.maximum)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaxCreaturesCanBlockEachCombat {
+    pub maximum: usize,
+}
+
+impl MaxCreaturesCanBlockEachCombat {
+    pub const fn new(maximum: usize) -> Self {
+        Self { maximum }
+    }
+}
+
+impl StaticAbilityKind for MaxCreaturesCanBlockEachCombat {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::MaxCreaturesCanBlockEachCombat
+    }
+
+    fn display(&self) -> String {
+        let noun = if self.maximum == 1 {
+            "creature"
+        } else {
+            "creatures"
+        };
+        format!(
+            "No more than {} {} can block each combat",
+            self.maximum, noun
+        )
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn max_creatures_can_block_each_combat(&self) -> Option<usize> {
+        Some(self.maximum)
+    }
+}
+
 /// Landwalk: can't be blocked as long as defending player controls a land of the given subtype.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Landwalk {
@@ -559,5 +633,19 @@ mod tests {
         let must_attack = MustAttack;
         assert_eq!(must_attack.id(), StaticAbilityId::MustAttack);
         assert_eq!(must_attack.display(), "Attacks each combat if able");
+    }
+
+    #[test]
+    fn test_max_creatures_can_attack_each_combat() {
+        let cap = MaxCreaturesCanAttackEachCombat::new(2);
+        assert_eq!(cap.id(), StaticAbilityId::MaxCreaturesCanAttackEachCombat);
+        assert_eq!(cap.max_creatures_can_attack_each_combat(), Some(2));
+    }
+
+    #[test]
+    fn test_max_creatures_can_block_each_combat() {
+        let cap = MaxCreaturesCanBlockEachCombat::new(1);
+        assert_eq!(cap.id(), StaticAbilityId::MaxCreaturesCanBlockEachCombat);
+        assert_eq!(cap.max_creatures_can_block_each_combat(), Some(1));
     }
 }

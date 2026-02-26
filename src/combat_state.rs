@@ -68,6 +68,10 @@ pub enum CombatError {
         maximum: usize,
         provided: usize,
     },
+    /// Too many creatures were declared as attackers this combat.
+    TooManyAttackers { maximum: usize, provided: usize },
+    /// Too many creatures were declared as blockers this combat.
+    TooManyBlockingCreatures { maximum: usize, provided: usize },
     /// The attack target is invalid (player not in game, planeswalker doesn't exist, etc.).
     InvalidAttackTarget(AttackTarget),
     /// The creature is tapped and cannot attack or block.
@@ -98,7 +102,10 @@ pub enum CombatError {
     /// A creature with "must attack if able" was not declared as an attacker.
     MustAttackNotDeclared(ObjectId),
     /// A creature that must block a specific attacker if able was not declared as doing so.
-    MustBlockRequirementNotMet { blocker: ObjectId, attacker: ObjectId },
+    MustBlockRequirementNotMet {
+        blocker: ObjectId,
+        attacker: ObjectId,
+    },
 }
 
 impl std::fmt::Display for CombatError {
@@ -130,6 +137,20 @@ impl std::fmt::Display for CombatError {
                     f,
                     "Attacker {:?} allows at most {} blockers but {} provided",
                     attacker, maximum, provided
+                )
+            }
+            CombatError::TooManyAttackers { maximum, provided } => {
+                write!(
+                    f,
+                    "At most {} creatures can attack this combat but {} were declared",
+                    maximum, provided
+                )
+            }
+            CombatError::TooManyBlockingCreatures { maximum, provided } => {
+                write!(
+                    f,
+                    "At most {} creatures can block this combat but {} were declared",
+                    maximum, provided
                 )
             }
             CombatError::InvalidAttackTarget(target) => {
@@ -212,6 +233,44 @@ pub fn end_combat(combat: &mut CombatState) {
     combat.attackers.clear();
     combat.blockers.clear();
     combat.damage_assignment_order.clear();
+}
+
+fn battlefield_static_abilities(game: &GameState) -> Vec<StaticAbility> {
+    let mut out = Vec::new();
+    for &object_id in &game.battlefield {
+        if let Some(calc) = game.calculated_characteristics(object_id) {
+            out.extend(calc.static_abilities);
+            continue;
+        }
+        if let Some(object) = game.object(object_id) {
+            out.extend(
+                object
+                    .abilities
+                    .iter()
+                    .filter_map(|ability| match &ability.kind {
+                        crate::ability::AbilityKind::Static(static_ability) => {
+                            Some(static_ability.clone())
+                        }
+                        _ => None,
+                    }),
+            );
+        }
+    }
+    out
+}
+
+fn max_creatures_can_attack_each_combat(game: &GameState) -> Option<usize> {
+    battlefield_static_abilities(game)
+        .iter()
+        .filter_map(|ability| ability.max_creatures_can_attack_each_combat())
+        .min()
+}
+
+fn max_creatures_can_block_each_combat(game: &GameState) -> Option<usize> {
+    battlefield_static_abilities(game)
+        .iter()
+        .filter_map(|ability| ability.max_creatures_can_block_each_combat())
+        .min()
 }
 
 /// Declares attackers for combat.
@@ -305,6 +364,15 @@ pub fn declare_attackers(
         match target {
             AttackTarget::Player(_) | AttackTarget::Planeswalker(_) => {}
         }
+    }
+
+    if let Some(max_attackers) = max_creatures_can_attack_each_combat(game)
+        && declarations.len() > max_attackers
+    {
+        return Err(CombatError::TooManyAttackers {
+            maximum: max_attackers,
+            provided: declarations.len(),
+        });
     }
 
     // Second pass: apply declarations and tap attackers without vigilance
@@ -448,6 +516,15 @@ pub fn declare_blockers(
             .entry(*blocker_id)
             .or_default()
             .push(*attacker_id);
+    }
+
+    if let Some(max_blockers) = max_creatures_can_block_each_combat(game)
+        && blocker_counts.len() > max_blockers
+    {
+        return Err(CombatError::TooManyBlockingCreatures {
+            maximum: max_blockers,
+            provided: blocker_counts.len(),
+        });
     }
 
     // Second pass: validate minimum/maximum blockers.
@@ -1720,6 +1797,66 @@ mod tests {
             ),
             "max-blockers restriction should reject too many blockers"
         );
+    }
+
+    #[test]
+    fn test_max_creatures_can_attack_each_combat_enforced() {
+        let (mut game, attacker1, attacker2, _, _) = setup_game_with_creatures();
+        let bob = PlayerId::from_index(1);
+
+        let mut cap_source = make_creature(700, 0, "Silent Arbiter Effect");
+        cap_source.abilities.push(Ability::static_ability(
+            StaticAbility::max_attackers_each_combat(1),
+        ));
+        game.add_object(cap_source);
+
+        let mut combat = new_combat();
+        let declarations = vec![
+            (attacker1, AttackTarget::Player(bob)),
+            (attacker2, AttackTarget::Player(bob)),
+        ];
+
+        let result = declare_attackers(&mut game, &mut combat, declarations);
+        assert!(matches!(
+            result,
+            Err(CombatError::TooManyAttackers {
+                maximum: 1,
+                provided: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn test_max_creatures_can_block_each_combat_enforced() {
+        let (mut game, attacker1, _, blocker1, blocker2) = setup_game_with_creatures();
+        let bob = PlayerId::from_index(1);
+
+        let mut cap_source = make_creature(701, 0, "Silent Arbiter Effect");
+        cap_source.abilities.push(Ability::static_ability(
+            StaticAbility::max_blockers_each_combat(1),
+        ));
+        game.add_object(cap_source);
+
+        let mut combat = new_combat();
+        declare_attackers(
+            &mut game,
+            &mut combat,
+            vec![(attacker1, AttackTarget::Player(bob))],
+        )
+        .unwrap();
+
+        let result = declare_blockers(
+            &game,
+            &mut combat,
+            vec![(blocker1, attacker1), (blocker2, attacker1)],
+        );
+        assert!(matches!(
+            result,
+            Err(CombatError::TooManyBlockingCreatures {
+                maximum: 1,
+                provided: 2
+            })
+        ));
     }
 
     #[test]

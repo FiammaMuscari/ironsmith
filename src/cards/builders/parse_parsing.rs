@@ -1825,7 +1825,9 @@ fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
     }
 
     let starts_with_statement_effect_head = find_verb(&tokens).is_some_and(|(_, idx)| idx == 0)
-        || tokens.first().is_some_and(|token| token.is_word("choose") || token.is_word("if"));
+        || tokens
+            .first()
+            .is_some_and(|token| token.is_word("choose") || token.is_word("if"));
     if starts_with_statement_effect_head && !is_each_other_player_untap_static {
         match parse_effect_sentences(&tokens) {
             Ok(effects) if !effects.is_empty() => {
@@ -2309,6 +2311,11 @@ fn parse_static_ability_line(
     if let Some(ability) = parse_damage_redirect_to_source_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) =
+        parse_no_more_than_creatures_can_attack_or_block_each_combat_line(tokens)?
+    {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_characteristic_defining_pt_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -2425,7 +2432,8 @@ fn parse_static_ability_line(
     if let Some(ability) = parse_each_creature_cant_be_blocked_by_more_than_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
-    if let Some(ability) = parse_each_creature_can_block_additional_creature_each_combat_line(tokens)?
+    if let Some(ability) =
+        parse_each_creature_can_block_additional_creature_each_combat_line(tokens)?
     {
         return Ok(Some(vec![ability]));
     }
@@ -2587,8 +2595,12 @@ fn parse_activated_abilities_cant_be_activated_line(
         .collect();
 
     let filter = if subject_words.len() == 3 && subject_words[1] == "and" {
-        let t1 = subject_words[0].strip_suffix('s').unwrap_or(subject_words[0]);
-        let t2 = subject_words[2].strip_suffix('s').unwrap_or(subject_words[2]);
+        let t1 = subject_words[0]
+            .strip_suffix('s')
+            .unwrap_or(subject_words[0]);
+        let t2 = subject_words[2]
+            .strip_suffix('s')
+            .unwrap_or(subject_words[2]);
         if let (Some(ct1), Some(ct2)) = (parse_card_type(t1), parse_card_type(t2)) {
             let mut a = ObjectFilter::default();
             a.zone = Some(Zone::Battlefield);
@@ -3294,6 +3306,39 @@ fn parse_damage_redirect_to_source_line(
     Ok(None)
 }
 
+fn parse_no_more_than_creatures_can_attack_or_block_each_combat_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let line_words = words(tokens);
+    if line_words.len() < 8 || !line_words.starts_with(&["no", "more", "than"]) {
+        return Ok(None);
+    }
+
+    let Some((maximum, used)) = parse_number(&tokens[3..]) else {
+        return Ok(None);
+    };
+
+    let tail = words(&tokens[3 + used..]);
+    if tail.len() != 5 {
+        return Ok(None);
+    }
+
+    if !matches!(tail[0], "creature" | "creatures")
+        || tail[1] != "can"
+        || tail[3] != "each"
+        || tail[4] != "combat"
+    {
+        return Ok(None);
+    }
+
+    let ability = match tail[2] {
+        "attack" => StaticAbility::max_attackers_each_combat(maximum as usize),
+        "block" => StaticAbility::max_blockers_each_combat(maximum as usize),
+        _ => return Ok(None),
+    };
+    Ok(Some(ability))
+}
+
 fn parse_characteristic_defining_pt_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
@@ -3651,9 +3696,9 @@ fn parse_this_spell_cost_condition(
             if tail == ["more", "creatures", "than", "you"]
                 || tail == ["more", "creature", "than", "you"]
             {
-                return Some(ThisSpellCostCondition::OpponentControlsAtLeastNMoreCreaturesThanYou(
-                    n,
-                ));
+                return Some(
+                    ThisSpellCostCondition::OpponentControlsAtLeastNMoreCreaturesThanYou(n),
+                );
             }
         }
     }
@@ -3674,9 +3719,7 @@ fn parse_this_spell_cost_condition(
                     "graveyards",
                 ]
             {
-                return Some(ThisSpellCostCondition::TotalCreatureCardsInAllGraveyardsOrMore(
-                    n,
-                ));
+                return Some(ThisSpellCostCondition::TotalCreatureCardsInAllGraveyardsOrMore(n));
             }
         }
     }
@@ -3850,8 +3893,8 @@ fn parse_spells_cost_modifier_line(
             .windows(3)
             .position(|window| window == ["where", "x", "is"])
             .unwrap_or(0);
-        let where_token_idx =
-            token_index_for_word_index(remaining_tokens, where_word_idx).ok_or_else(|| {
+        let where_token_idx = token_index_for_word_index(remaining_tokens, where_word_idx)
+            .ok_or_else(|| {
                 CardTextError::ParseError(format!(
                     "unable to map where-x clause in spells-cost modifier (clause: '{clause}')"
                 ))
@@ -4792,7 +4835,10 @@ fn parse_each_creature_cant_be_blocked_by_more_than_line(
     // Expect "... creature(s)" after the number.
     let rest_tokens = &tokens[amount_token_idx + used..];
     let rest_words = words(rest_tokens);
-    if rest_words.first().is_some_and(|w| *w == "creature" || *w == "creatures") {
+    if rest_words
+        .first()
+        .is_some_and(|w| *w == "creature" || *w == "creatures")
+    {
         let filter = if you_control {
             ObjectFilter::creature().you_control()
         } else {
@@ -6831,9 +6877,19 @@ fn parse_prevent_all_damage_dealt_to_creatures_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
     let words = words(tokens);
-    if words.as_slice() == [
-        "prevent", "all", "damage", "that", "would", "be", "dealt", "to", "creatures",
-    ] {
+    if words.as_slice()
+        == [
+            "prevent",
+            "all",
+            "damage",
+            "that",
+            "would",
+            "be",
+            "dealt",
+            "to",
+            "creatures",
+        ]
+    {
         return Ok(Some(StaticAbility::prevent_all_damage_dealt_to_creatures()));
     }
     Ok(None)
@@ -7067,8 +7123,7 @@ fn parse_attached_prevent_all_damage_dealt_by_attached_line(
     };
 
     Ok(Some(StaticAbility::attached_ability_grant(
-        granted,
-        display,
+        granted, display,
     )))
 }
 
@@ -7988,7 +8043,9 @@ fn parse_reduced_maximum_hand_size_line(
         return Ok(None);
     }
 
-    Ok(Some(StaticAbility::reduce_maximum_hand_size(player, amount)))
+    Ok(Some(StaticAbility::reduce_maximum_hand_size(
+        player, amount,
+    )))
 }
 
 fn parse_library_of_leng_discard_replacement_line(
@@ -9159,7 +9216,8 @@ fn merge_mana_activation_conditions(
 
 fn is_activate_only_restriction_sentence(tokens: &[Token]) -> bool {
     let words = words(tokens);
-    words.starts_with(&["activate", "only"]) || words.starts_with(&["activate", "no", "more", "than"])
+    words.starts_with(&["activate", "only"])
+        || words.starts_with(&["activate", "no", "more", "than"])
 }
 
 fn is_trigger_only_restriction_sentence(tokens: &[Token]) -> bool {
@@ -9622,8 +9680,13 @@ fn parse_optional_cost_keyword_line(
     let tail = &tokens[1..];
     let reminder_start = tail
         .windows(3)
-        .position(|window| window[0].is_word("you") && window[1].is_word("may") && window[2].is_word("pay"))
-        .or_else(|| tail.windows(2).position(|window| window[0].is_word("you") && window[1].is_word("may")))
+        .position(|window| {
+            window[0].is_word("you") && window[1].is_word("may") && window[2].is_word("pay")
+        })
+        .or_else(|| {
+            tail.windows(2)
+                .position(|window| window[0].is_word("you") && window[1].is_word("may"))
+        })
         .unwrap_or(tail.len());
 
     let sentence_end = tail
@@ -11318,7 +11381,9 @@ fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility>, CardText
             )));
         }
 
-        if normalized.get(idx).is_some_and(|word| *word == "wall" || *word == "walls")
+        if normalized
+            .get(idx)
+            .is_some_and(|word| *word == "wall" || *word == "walls")
             && idx + 1 == normalized.len()
         {
             return Ok(Some(StaticAbility::restriction(
@@ -11985,8 +12050,8 @@ fn marker_keyword_display(words: &[&str]) -> Option<String> {
     let title = keyword_title(keyword);
 
     match keyword {
-        "soulshift" | "adapt" | "bolster" | "modular" | "vanishing" | "backup"
-        | "saddle" | "fading" | "graft" | "tribute" => {
+        "soulshift" | "adapt" | "bolster" | "modular" | "vanishing" | "backup" | "saddle"
+        | "fading" | "graft" | "tribute" => {
             let amount = words.get(1)?.parse::<u32>().ok()?;
             Some(format!("{title} {amount}"))
         }
@@ -16173,8 +16238,10 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
             EffectAst::SearchLibrary { .. } => true,
             EffectAst::Conditional {
                 if_true, if_false, ..
-            } => if_true.iter().any(effect_contains_search_library)
-                || if_false.iter().any(effect_contains_search_library),
+            } => {
+                if_true.iter().any(effect_contains_search_library)
+                    || if_false.iter().any(effect_contains_search_library)
+            }
             EffectAst::UnlessPays { effects, .. }
             | EffectAst::May { effects }
             | EffectAst::MayByPlayer { effects, .. }
@@ -16195,7 +16262,9 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
             | EffectAst::DelayedUntilEndOfCombat { effects }
             | EffectAst::DelayedTriggerThisTurn { effects, .. }
             | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
-            | EffectAst::VoteOption { effects, .. } => effects.iter().any(effect_contains_search_library),
+            | EffectAst::VoteOption { effects, .. } => {
+                effects.iter().any(effect_contains_search_library)
+            }
             EffectAst::UnlessAction {
                 effects,
                 alternative,
@@ -16288,7 +16357,10 @@ fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextEr
         // "Destroy ... . It/They can't be regenerated." followups.
         if is_cant_be_regenerated_followup_sentence(&sentence_tokens) {
             if apply_cant_be_regenerated_to_last_destroy_effect(&mut effects) {
-                parser_trace("parse_effect_sentences:cant-be-regenerated-followup", &sentence_tokens);
+                parser_trace(
+                    "parse_effect_sentences:cant-be-regenerated-followup",
+                    &sentence_tokens,
+                );
                 sentence_idx += 1;
                 continue;
             }
@@ -20654,29 +20726,35 @@ fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextErr
                 Value::SourceToughness
             }
         }
-        Some(["its", "mana", "value"]) => Value::ManaValueOf(Box::new(
-            if stripped_words.iter().any(|w| *w == "target") {
+        Some(["its", "mana", "value"]) => {
+            Value::ManaValueOf(Box::new(if stripped_words.iter().any(|w| *w == "target") {
                 crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
                     ObjectFilter::default(),
                 ))
             } else {
                 crate::target::ChooseSpec::Source
-            },
-        )),
+            }))
+        }
         Some(["this", "creatures", "power"]) => Value::SourcePower,
         Some(["this", "creatures", "toughness"]) => Value::SourceToughness,
         Some(["this", "creatures", "mana", "value"]) => {
             Value::ManaValueOf(Box::new(crate::target::ChooseSpec::Source))
         }
-        Some(["that", "creatures", "power"]) => Value::PowerOf(Box::new(
-            crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(ObjectFilter::default())),
-        )),
-        Some(["that", "creatures", "toughness"]) => Value::ToughnessOf(Box::new(
-            crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(ObjectFilter::default())),
-        )),
-        Some(["that", "creatures", "mana", "value"]) => Value::ManaValueOf(Box::new(
-            crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(ObjectFilter::default())),
-        )),
+        Some(["that", "creatures", "power"]) => {
+            Value::PowerOf(Box::new(crate::target::ChooseSpec::target(
+                crate::target::ChooseSpec::Object(ObjectFilter::default()),
+            )))
+        }
+        Some(["that", "creatures", "toughness"]) => {
+            Value::ToughnessOf(Box::new(crate::target::ChooseSpec::target(
+                crate::target::ChooseSpec::Object(ObjectFilter::default()),
+            )))
+        }
+        Some(["that", "creatures", "mana", "value"]) => {
+            Value::ManaValueOf(Box::new(crate::target::ChooseSpec::target(
+                crate::target::ChooseSpec::Object(ObjectFilter::default()),
+            )))
+        }
         _ => parse_where_x_value_clause(where_tokens).ok_or_else(|| {
             CardTextError::ParseError(format!(
                 "unsupported where-x clause (clause: '{}')",
@@ -26584,7 +26662,8 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
 
     if filtered.as_slice() == ["this", "tapped"]
         || filtered.as_slice() == ["thiss", "tapped"]
-        || ((filtered.first().copied() == Some("this") || filtered.first().copied() == Some("thiss"))
+        || ((filtered.first().copied() == Some("this")
+            || filtered.first().copied() == Some("thiss"))
             && filtered.last().copied() == Some("tapped"))
     {
         return Ok(PredicateAst::SourceIsTapped);
@@ -26604,7 +26683,9 @@ fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
     if raw_words.starts_with(&["there", "are"])
         && raw_words.get(3).copied() == Some("or")
         && raw_words.get(4).copied() == Some("more")
-        && raw_words.iter().any(|w| *w == "counter" || *w == "counters")
+        && raw_words
+            .iter()
+            .any(|w| *w == "counter" || *w == "counters")
     {
         if let Some((count, used)) = parse_number(&tokens[2..]) {
             let rest = &tokens[2 + used..];
@@ -29180,8 +29261,7 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         let mut idx = 3usize;
         if tail_words.get(idx) == Some(&"this") && tail_words.get(idx + 1) == Some(&"turn") {
             idx += 2;
-        } else if tail_words.get(idx) == Some(&"this")
-            && tail_words.get(idx + 1) == Some(&"combat")
+        } else if tail_words.get(idx) == Some(&"this") && tail_words.get(idx + 1) == Some(&"combat")
         {
             idx += 2;
         }
@@ -29194,8 +29274,10 @@ fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
 
         let subject_words = words(&subject_tokens);
         let source = if subject_words.is_empty()
-            || matches!(subject_words.as_slice(), ["it"] | ["this"] | ["this", "creature"])
-        {
+            || matches!(
+                subject_words.as_slice(),
+                ["it"] | ["this"] | ["this", "creature"]
+            ) {
             TargetAst::Source(None)
         } else {
             parse_target_phrase(&subject_tokens)?
@@ -29463,13 +29545,12 @@ fn parse_become_clause(
     let subject = parse_subject(subject_tokens);
 
     // Split off trailing duration, if present.
-    let (duration, become_tokens) = if let Some((duration, remainder)) =
-        parse_restriction_duration(rest_tokens)?
-    {
-        (duration, remainder)
-    } else {
-        (Until::Forever, trim_commas(rest_tokens).to_vec())
-    };
+    let (duration, become_tokens) =
+        if let Some((duration, remainder)) = parse_restriction_duration(rest_tokens)? {
+            (duration, remainder)
+        } else {
+            (Until::Forever, trim_commas(rest_tokens).to_vec())
+        };
     let become_words_vec = words(&become_tokens);
     let become_words = if become_words_vec
         .first()
@@ -30696,14 +30777,14 @@ fn parse_until_your_next_turn_may_play_tagged_clause(
     tokens: &[Token],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
-    let prefix_len = if clause_words.starts_with(&["until", "the", "end", "of", "your", "next", "turn"])
-    {
-        7
-    } else if clause_words.starts_with(&["until", "end", "of", "your", "next", "turn"]) {
-        6
-    } else {
-        return Ok(None);
-    };
+    let prefix_len =
+        if clause_words.starts_with(&["until", "the", "end", "of", "your", "next", "turn"]) {
+            7
+        } else if clause_words.starts_with(&["until", "end", "of", "your", "next", "turn"]) {
+            6
+        } else {
+            return Ok(None);
+        };
 
     let tail = &clause_words[prefix_len..];
     if !tail.starts_with(&["you", "may", "play"]) {
@@ -30741,8 +30822,7 @@ fn parse_prevent_next_time_damage_sentence(
     let Some(would_idx) = clause_words.iter().position(|w| *w == "would") else {
         return Ok(None);
     };
-    if clause_words.get(would_idx + 1..would_idx + 4) != Some(["deal", "damage", "to"].as_slice())
-    {
+    if clause_words.get(would_idx + 1..would_idx + 4) != Some(["deal", "damage", "to"].as_slice()) {
         return Ok(None);
     }
 
@@ -30839,7 +30919,10 @@ fn parse_prevent_next_time_damage_sentence(
         )));
     };
 
-    Ok(Some(vec![EffectAst::PreventNextTimeDamage { source, target }]))
+    Ok(Some(vec![EffectAst::PreventNextTimeDamage {
+        source,
+        target,
+    }]))
 }
 
 fn parse_prevent_next_damage_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
@@ -31434,7 +31517,10 @@ fn parse_keyword_mechanic_clause(tokens: &[Token]) -> Result<Option<EffectAst>, 
         }));
     }
 
-    if matches!(clause_words.first().copied(), Some("discover" | "discovers")) {
+    if matches!(
+        clause_words.first().copied(),
+        Some("discover" | "discovers")
+    ) {
         let (count, used) = parse_value(&clause_tokens[1..]).ok_or_else(|| {
             CardTextError::ParseError(format!(
                 "missing amount for discover clause (clause: '{}')",
@@ -31790,7 +31876,10 @@ fn parse_look(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst
 
     // "Look at the top N cards of your library."
     let mut clause_tokens = trim_commas(tokens);
-    if clause_tokens.first().is_some_and(|token| token.is_word("at")) {
+    if clause_tokens
+        .first()
+        .is_some_and(|token| token.is_word("at"))
+    {
         clause_tokens = trim_commas(&clause_tokens[1..]);
     }
     let clause_words = words(&clause_tokens);
@@ -31865,11 +31954,11 @@ fn parse_look(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst
             })
         })
         .ok_or_else(|| {
-        CardTextError::ParseError(format!(
-            "unsupported look library owner (clause: '{}')",
-            clause_words.join(" ")
-        ))
-    })?;
+            CardTextError::ParseError(format!(
+                "unsupported look library owner (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
     // No trailing words supported for now (based on word tokens).
     if used_words < owner_words.len() {
         return Err(CardTextError::ParseError(format!(
@@ -32706,17 +32795,24 @@ fn parse_counter(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         }
         if matches!(
             clause_words.as_slice(),
-            ["target", "spell", "activated", "ability", "or", "triggered", "ability"]
-                | [
-                    "target",
-                    "spell",
-                    "or",
-                    "activated",
-                    "ability",
-                    "or",
-                    "triggered",
-                    "ability"
-                ]
+            [
+                "target",
+                "spell",
+                "activated",
+                "ability",
+                "or",
+                "triggered",
+                "ability"
+            ] | [
+                "target",
+                "spell",
+                "or",
+                "activated",
+                "ability",
+                "or",
+                "triggered",
+                "ability"
+            ]
         ) {
             return Ok(EffectAst::Counter {
                 target: TargetAst::Object(
@@ -33404,11 +33500,11 @@ fn parse_put_into_hand(
                 idx += 1;
             }
             if !tokens.get(idx).is_some_and(|t| t.is_word("them")) {
-                    return Err(CardTextError::ParseError(format!(
-                        "unsupported multi-destination put clause (clause: '{}')",
-                        clause_words.join(" ")
-                    )));
-                }
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported multi-destination put clause (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
 
             // The chooser is typically the player whose hand is referenced.
             let dest_player = if clause_words.contains(&"your") {
@@ -33702,7 +33798,10 @@ fn parse_counter_type_from_tokens(tokens: &[Token]) -> Option<CounterType> {
         }
 
         // "a counter of that kind" doesn't name the counter type.
-        if matches!(prev, "a" | "an" | "one" | "two" | "three" | "four" | "five" | "six") {
+        if matches!(
+            prev,
+            "a" | "an" | "one" | "two" | "three" | "four" | "five" | "six"
+        ) {
             return None;
         }
 
@@ -34881,19 +34980,15 @@ fn parse_switch(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
     let clause_words = words(tokens);
 
     // Split off trailing duration, if present.
-    let (duration, remainder) = if let Some((duration, remainder)) =
-        parse_restriction_duration(tokens)?
-    {
-        (duration, remainder)
-    } else {
-        (Until::EndOfTurn, trim_commas(tokens).to_vec())
-    };
+    let (duration, remainder) =
+        if let Some((duration, remainder)) = parse_restriction_duration(tokens)? {
+            (duration, remainder)
+        } else {
+            (Until::EndOfTurn, trim_commas(tokens).to_vec())
+        };
 
     let remainder_words = words(&remainder);
-    let Some(power_idx) = remainder
-        .iter()
-        .position(|token| token.is_word("power"))
-    else {
+    let Some(power_idx) = remainder.iter().position(|token| token.is_word("power")) else {
         return Err(CardTextError::ParseError(format!(
             "unsupported switch clause (clause: '{}')",
             clause_words.join(" ")
@@ -35190,8 +35285,7 @@ fn parse_add_mana(
                 || tail_words.iter().all(|word| {
                     matches!(
                         *word,
-                        "to"
-                            | "your"
+                        "to" | "your"
                             | "their"
                             | "its"
                             | "that"
@@ -35566,12 +35660,13 @@ fn parse_land_could_produce_filter(
         return Ok(None);
     };
 
-    let marker_token_idx = token_index_for_word_index(tokens, marker_word_idx).ok_or_else(|| {
-        CardTextError::ParseError(format!(
-            "missing mana production marker in tail '{}'",
-            words.join(" ")
-        ))
-    })?;
+    let marker_token_idx =
+        token_index_for_word_index(tokens, marker_word_idx).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing mana production marker in tail '{}'",
+                words.join(" ")
+            ))
+        })?;
     let filter_tokens = trim_leading_commas(&tokens[1..marker_token_idx]);
     if filter_tokens.is_empty() {
         return Err(CardTextError::ParseError(format!(
@@ -36538,7 +36633,10 @@ mod parse_parsing_tests {
 
     #[test]
     fn parse_attached_prevent_all_damage_dealt_by_enchanted_creature() {
-        let tokens = tokenize_line("Prevent all damage that would be dealt by enchanted creature.", 0);
+        let tokens = tokenize_line(
+            "Prevent all damage that would be dealt by enchanted creature.",
+            0,
+        );
         let abilities = parse_static_ability_line(&tokens)
             .expect("parse static ability line")
             .expect("expected static ability");
@@ -38288,7 +38386,9 @@ fn contains_source_from_your_hand_phrase(words: &[&str]) -> bool {
 }
 
 fn contains_discard_source_phrase(words: &[&str]) -> bool {
-    words.windows(3).any(|window| window == ["discard", "this", "card"])
+    words
+        .windows(3)
+        .any(|window| window == ["discard", "this", "card"])
 }
 
 fn is_demonstrative_object_head(word: &str) -> bool {
