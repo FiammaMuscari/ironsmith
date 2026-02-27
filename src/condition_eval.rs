@@ -106,6 +106,13 @@ pub fn evaluate_condition_external(
             game.players_tapped_land_for_mana_this_turn
                 .contains(&player_id)
         }
+        Condition::PlayerHadLandEnterBattlefieldThisTurn { player } => {
+            let Some(player_id) = resolve_condition_player_simple(game, ctx.controller, player)
+            else {
+                return false;
+            };
+            player_had_land_enter_battlefield_this_turn(game, player_id)
+        }
         Condition::NoSpellsWereCastLastTurn => game.spells_cast_last_turn_total == 0,
         Condition::CardsInHandOrMore(threshold) => game
             .player(ctx.controller)
@@ -543,6 +550,19 @@ fn count_distinct_matching_powers(
     seen_powers.len()
 }
 
+fn player_had_land_enter_battlefield_this_turn(game: &GameState, player_id: PlayerId) -> bool {
+    game.objects_entered_battlefield_this_turn
+        .iter()
+        .any(|(stable_id, entry_controller)| {
+            *entry_controller == player_id
+                && game
+                    .find_object_by_stable_id(*stable_id)
+                    .is_some_and(|object_id| {
+                        game.object_has_card_type(object_id, crate::types::CardType::Land)
+                    })
+        })
+}
+
 /// Evaluate a condition with minimal context (for cast-time evaluation).
 ///
 /// This simplified version is used during spell casting to evaluate conditions
@@ -839,6 +859,12 @@ fn evaluate_condition_simple(
             };
             game.players_tapped_land_for_mana_this_turn
                 .contains(&player_id)
+        }
+        Condition::PlayerHadLandEnterBattlefieldThisTurn { player } => {
+            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
+                return false;
+            };
+            player_had_land_enter_battlefield_this_turn(game, player_id)
         }
         Condition::NoSpellsWereCastLastTurn => game.spells_cast_last_turn_total == 0,
         Condition::YouControlCommander => {
@@ -1191,6 +1217,10 @@ fn evaluate_condition(
             Ok(game
                 .players_tapped_land_for_mana_this_turn
                 .contains(&player_id))
+        }
+        Condition::PlayerHadLandEnterBattlefieldThisTurn { player } => {
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            Ok(player_had_land_enter_battlefield_this_turn(game, player_id))
         }
         Condition::NoSpellsWereCastLastTurn => Ok(game.spells_cast_last_turn_total == 0),
         Condition::TargetIsTapped => {
@@ -1755,5 +1785,95 @@ mod tests {
             count: 5,
         };
         assert!(!evaluate_condition_external(&game, &too_many, &ctx));
+    }
+
+    #[test]
+    fn player_had_land_enter_battlefield_this_turn_filters_by_player_and_land_type() {
+        use crate::target::PlayerFilter;
+
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let land = CardBuilder::new(CardId::from_raw(21), "Forest Probe")
+            .card_types(vec![CardType::Land])
+            .subtypes(vec![Subtype::Forest])
+            .build();
+        let creature = CardBuilder::new(CardId::from_raw(22), "Bear Probe")
+            .card_types(vec![CardType::Creature])
+            .build();
+
+        let alice_land = game.create_object_from_card(&land, alice, Zone::Battlefield);
+        let bob_creature = game.create_object_from_card(&creature, bob, Zone::Battlefield);
+
+        let alice_land_stable = game
+            .object(alice_land)
+            .expect("alice land should exist")
+            .stable_id;
+        let bob_creature_stable = game
+            .object(bob_creature)
+            .expect("bob creature should exist")
+            .stable_id;
+        game.objects_entered_battlefield_this_turn
+            .insert(alice_land_stable, alice);
+        game.objects_entered_battlefield_this_turn
+            .insert(bob_creature_stable, bob);
+
+        let ctx = ExternalEvaluationContext {
+            controller: alice,
+            source: alice_land,
+            filter_source: None,
+            triggering_event: None,
+            trigger_identity: None,
+            ability_index: None,
+            options: ExternalEvaluationOptions::default(),
+        };
+
+        let you_had_land = Condition::PlayerHadLandEnterBattlefieldThisTurn {
+            player: PlayerFilter::You,
+        };
+        assert!(evaluate_condition_external(&game, &you_had_land, &ctx));
+
+        let opponent_had_land = Condition::PlayerHadLandEnterBattlefieldThisTurn {
+            player: PlayerFilter::Opponent,
+        };
+        assert!(!evaluate_condition_external(&game, &opponent_had_land, &ctx));
+    }
+
+    #[test]
+    fn player_had_land_enter_battlefield_this_turn_evaluates_at_resolution() {
+        use crate::target::PlayerFilter;
+
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let land = CardBuilder::new(CardId::from_raw(31), "Island Probe")
+            .card_types(vec![CardType::Land])
+            .subtypes(vec![Subtype::Island])
+            .build();
+        let source_card = CardBuilder::new(CardId::from_raw(32), "Source Probe")
+            .card_types(vec![CardType::Creature])
+            .build();
+
+        let source = game.create_object_from_card(&source_card, bob, Zone::Battlefield);
+        let bob_land = game.create_object_from_card(&land, bob, Zone::Battlefield);
+        let bob_land_stable = game
+            .object(bob_land)
+            .expect("bob land should exist")
+            .stable_id;
+        game.objects_entered_battlefield_this_turn
+            .insert(bob_land_stable, bob);
+
+        let _ = alice;
+        let ctx = ExecutionContext::new_default(source, bob);
+        let you_had_land = Condition::PlayerHadLandEnterBattlefieldThisTurn {
+            player: PlayerFilter::You,
+        };
+        assert!(
+            evaluate_condition_resolution(&game, &you_had_land, &ctx)
+                .expect("resolution condition should evaluate"),
+            "expected land-entry predicate to evaluate true for resolution controller"
+        );
     }
 }

@@ -6503,6 +6503,12 @@ fn describe_player_relative_condition(condition: &Condition) -> Option<String> {
             }
             Some("tapped a land for mana this turn".to_string())
         }
+        Condition::PlayerHadLandEnterBattlefieldThisTurn { player } => {
+            if *player != PlayerFilter::IteratedPlayer {
+                return None;
+            }
+            Some("had a land enter the battlefield under their control this turn".to_string())
+        }
         Condition::PlayerTaggedObjectMatches {
             player,
             tag,
@@ -6711,6 +6717,13 @@ fn describe_condition(condition: &Condition) -> String {
             format!(
                 "{} tapped a land for mana this turn",
                 describe_player_filter(player)
+            )
+        }
+        Condition::PlayerHadLandEnterBattlefieldThisTurn { player } => {
+            format!(
+                "{} had a land enter the battlefield under {} control this turn",
+                describe_player_filter(player),
+                describe_possessive_player_filter(player)
             )
         }
         Condition::NoSpellsWereCastLastTurn => "no spells were cast last turn".to_string(),

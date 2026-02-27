@@ -470,6 +470,9 @@ enum PredicateAst {
     PlayerTappedLandForManaThisTurn {
         player: PlayerAst,
     },
+    PlayerHadLandEnterBattlefieldThisTurn {
+        player: PlayerAst,
+    },
     PlayerControlsBasicLandTypesAmongLandsOrMore {
         player: PlayerAst,
         count: u32,
@@ -8074,6 +8077,24 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
                 && debug.contains("power: Fixed(3)")
                 && debug.contains("toughness: Fixed(3)"),
             "expected +3/+3 conditional replacement branch, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_conditional_landfall_history_predicate_instead_branch() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Groundswell Landfall Variant")
+            .parse_text(
+                "Target creature gets +2/+2 until end of turn. If you had a land enter the battlefield under your control this turn, that creature gets +4/+4 until end of turn instead.",
+            )
+            .expect("landfall-history conditional should parse");
+
+        let debug = format!("{:?}", def.spell_effect);
+        assert!(
+            debug.contains("ConditionalEffect")
+                && debug.contains("PlayerHadLandEnterBattlefieldThisTurn")
+                && debug.contains("power: Fixed(4)")
+                && debug.contains("toughness: Fixed(4)"),
+            "expected landfall-history conditional replacement branch, got {debug}"
         );
     }
 

@@ -294,6 +294,21 @@ use super::*;
     }
 
     #[test]
+    fn parse_predicate_you_had_land_enter_battlefield_under_your_control_this_turn() {
+        let tokens = tokenize_line(
+            "you had a land enter the battlefield under your control this turn",
+            0,
+        );
+        let predicate = parse_predicate(&tokens).expect("parse landfall-history predicate");
+        assert!(matches!(
+            predicate,
+            PredicateAst::PlayerHadLandEnterBattlefieldThisTurn {
+                player: PlayerAst::You
+            }
+        ));
+    }
+
+    #[test]
     fn parse_predicate_its_your_turn() {
         let tokens = tokenize_line("its your turn", 0);
         let predicate = parse_predicate(&tokens).expect("parse your-turn predicate");

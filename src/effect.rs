@@ -1517,6 +1517,9 @@ pub enum Condition {
     /// A player tapped a land for mana this turn.
     PlayerTappedLandForManaThisTurn { player: PlayerFilter },
 
+    /// A player had a land enter the battlefield under their control this turn.
+    PlayerHadLandEnterBattlefieldThisTurn { player: PlayerFilter },
+
     /// No spells were cast last turn
     NoSpellsWereCastLastTurn,
 

@@ -445,6 +445,10 @@ pub(crate) fn compile_condition_from_predicate_ast(
             let player = resolve_non_target_player_filter(*player, ctx)?;
             Condition::PlayerTappedLandForManaThisTurn { player }
         }
+        PredicateAst::PlayerHadLandEnterBattlefieldThisTurn { player } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            Condition::PlayerHadLandEnterBattlefieldThisTurn { player }
+        }
         PredicateAst::PlayerControlsBasicLandTypesAmongLandsOrMore { player, count } => {
             let player = resolve_non_target_player_filter(*player, ctx)?;
             Condition::PlayerControlsBasicLandTypesAmongLandsOrMore {
@@ -4912,6 +4916,10 @@ pub(crate) fn compile_effect(
         PredicateAst::PlayerTappedLandForManaThisTurn { player } => {
             let player = resolve_non_target_player_filter(*player, ctx)?;
             Condition::PlayerTappedLandForManaThisTurn { player }
+        }
+        PredicateAst::PlayerHadLandEnterBattlefieldThisTurn { player } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            Condition::PlayerHadLandEnterBattlefieldThisTurn { player }
         }
         PredicateAst::PlayerControlsBasicLandTypesAmongLandsOrMore { player, count } => {
             let player = resolve_non_target_player_filter(*player, ctx)?;

@@ -1137,6 +1137,18 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         return Ok(PredicateAst::CreatureDiedThisTurn);
     }
 
+    if matches!(
+        filtered.as_slice(),
+        ["you", "had", "land", "enter", "battlefield", "under", "your", "control", "this", "turn"]
+            | ["you", "had", "land", "entered", "battlefield", "under", "your", "control", "this", "turn"]
+            | ["you", "had", "lands", "enter", "battlefield", "under", "your", "control", "this", "turn"]
+            | ["you", "had", "lands", "entered", "battlefield", "under", "your", "control", "this", "turn"]
+    ) {
+        return Ok(PredicateAst::PlayerHadLandEnterBattlefieldThisTurn {
+            player: PlayerAst::You,
+        });
+    }
+
     if filtered.as_slice() == ["you", "attacked", "this", "turn"] {
         return Ok(PredicateAst::YouAttackedThisTurn);
     }
