@@ -2592,6 +2592,22 @@ fn parse_enters_with_counter_for_each_creature_that_died_this_turn_line() {
 }
 
 #[test]
+fn parse_enters_with_counter_for_each_color_of_mana_spent_to_cast_it_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Springmantle Cleric Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "This creature enters with a +1/+1 counter on it for each color of mana spent to cast it.",
+        )
+        .expect("spent-to-cast enters-with-counter clause should parse");
+
+    let debug = format!("{:?}", def.abilities);
+    assert!(
+        debug.contains("ColorsOfManaSpentToCastThisSpell"),
+        "expected spent-to-cast color value in static ability, got {debug}"
+    );
+}
+
+#[test]
 fn test_render_sacrifice_unless_you_pay_uses_pay_verb() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Conversion Probe")
         .card_types(vec![CardType::Enchantment])

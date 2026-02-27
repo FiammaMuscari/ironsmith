@@ -5343,6 +5343,12 @@ pub(crate) fn parse_enters_with_counters_line(
         {
             count = Value::CreaturesDiedThisTurn;
         } else if tail_words.starts_with(&[
+            "for", "each", "color", "of", "mana", "spent", "to", "cast", "it",
+        ]) || tail_words.starts_with(&[
+            "for", "each", "colour", "of", "mana", "spent", "to", "cast", "it",
+        ]) {
+            count = Value::ColorsOfManaSpentToCastThisSpell;
+        } else if tail_words.starts_with(&[
             "for",
             "each",
             "creature",
