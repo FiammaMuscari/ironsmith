@@ -35144,7 +35144,7 @@ fn parse_counter_type_from_tokens(tokens: &[Token]) -> Option<CounterType> {
         // "a counter of that kind" doesn't name the counter type.
         if matches!(
             prev,
-            "a" | "an" | "one" | "two" | "three" | "four" | "five" | "six"
+            "a" | "an" | "one" | "two" | "three" | "four" | "five" | "six" | "another"
         ) {
             return None;
         }
@@ -35219,33 +35219,96 @@ fn parse_counter_descriptor(tokens: &[Token]) -> Result<(u32, CounterType), Card
     Ok((count, counter_type))
 }
 
-fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
+fn parse_referential_counter_count_value(tokens: &[Token]) -> Option<(Value, usize)> {
     let words_all = words(tokens);
-    let (_count, used, count_value) = if words_all.starts_with(&["a", "number", "of"]) {
-        let Some(value) = parse_add_mana_equal_amount_value(tokens) else {
-            return Err(CardTextError::ParseError(format!(
-                "missing counter amount (clause: '{}')",
-                words(tokens).join(" ")
-            )));
-        };
-        (1, 3, value)
-    } else if let Some((count, used)) = parse_number(tokens) {
-        (count, used, Value::Fixed(count as i32))
+    if words_all.is_empty() {
+        return None;
+    }
+
+    let (source_spec, mut idx): (ChooseSpec, usize) = if words_all.starts_with(&["its"])
+        || words_all.starts_with(&["those"])
+        || words_all.starts_with(&["thiss"])
+    {
+        (ChooseSpec::Tagged(TagKey::from(IT_TAG)), 1)
+    } else if words_all.starts_with(&["this"]) {
+        (ChooseSpec::Source, 1)
     } else {
-        return Err(CardTextError::ParseError(format!(
-            "missing counter amount (clause: '{}')",
-            words(tokens).join(" ")
-        )));
+        return None;
     };
 
-    let rest = &tokens[used..];
-    let counter_type = parse_counter_type_from_tokens(rest).ok_or_else(|| {
-        CardTextError::ParseError(format!(
-            "unsupported counter type (clause: '{}')",
-            words(tokens).join(" ")
-        ))
-    })?;
+    let Some(word) = words_all.get(idx).copied() else {
+        return None;
+    };
 
+    let counter_type = if word == "counter" || word == "counters" {
+        idx += 1;
+        None
+    } else if let Some(counter_type) = parse_counter_type_word(word) {
+        if !matches!(words_all.get(idx + 1).copied(), Some("counter" | "counters")) {
+            return None;
+        }
+        idx += 2;
+        Some(counter_type)
+    } else {
+        return None;
+    };
+
+    Some((Value::CountersOn(Box::new(source_spec), counter_type), idx))
+}
+
+fn parse_put_counter_count_value(tokens: &[Token]) -> Result<(Value, usize), CardTextError> {
+    let clause = words(tokens).join(" ");
+    let words_all = words(tokens);
+
+    if words_all.starts_with(&["that", "many"]) || words_all.starts_with(&["that", "much"]) {
+        return Ok((Value::EventValue(EventValueSpec::Amount), 2));
+    }
+    if words_all.starts_with(&["another"]) {
+        return Ok((Value::Fixed(1), 1));
+    }
+    if let Some((value, used)) = parse_referential_counter_count_value(tokens) {
+        return Ok((value, used));
+    }
+    if words_all.starts_with(&["a", "number", "of"]) {
+        if let Some(value) = parse_add_mana_equal_amount_value(tokens)
+            .or_else(|| parse_equal_to_aggregate_filter_value(tokens))
+            .or_else(|| parse_equal_to_number_of_filter_value(tokens))
+        {
+            return Ok((value, 3));
+        }
+        if let Some(value) = parse_devotion_value_from_add_clause(tokens)? {
+            return Ok((value, 3));
+        }
+        if let Some(value) = parse_dynamic_cost_modifier_value(tokens)? {
+            return Ok((value, 3));
+        }
+        return Err(CardTextError::ParseError(format!(
+            "missing counter amount (clause: '{}')",
+            clause
+        )));
+    }
+
+    parse_value(tokens).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "missing counter amount (clause: '{}')",
+            clause
+        ))
+    })
+}
+
+fn target_from_counter_source_spec(spec: &ChooseSpec, span: Option<TextSpan>) -> Option<TargetAst> {
+    match spec {
+        ChooseSpec::Source => Some(TargetAst::Source(span)),
+        ChooseSpec::Tagged(tag) => Some(TargetAst::Tagged(tag.clone(), span)),
+        ChooseSpec::Target(inner) => target_from_counter_source_spec(inner, span),
+        _ => None,
+    }
+}
+
+fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
+    let (count_value, used) = parse_put_counter_count_value(tokens)?;
+
+    let rest = &tokens[used..];
     let on_idx = rest
         .iter()
         .position(|token| token.is_word("on"))
@@ -35257,6 +35320,14 @@ fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         })?;
 
     let mut target_tokens = rest[on_idx + 1..].to_vec();
+    if let Some(equal_idx) = target_tokens.iter().position(|token| token.is_word("equal"))
+        && target_tokens
+            .get(equal_idx + 1)
+            .is_some_and(|token| token.is_word("to"))
+        && equal_idx > 0
+    {
+        target_tokens = trim_commas(&target_tokens[..equal_idx]);
+    }
     let mut trailing_predicate: Option<PredicateAst> = None;
     if let Some(if_idx) = target_tokens.iter().position(|token| token.is_word("if")) {
         let predicate_tokens = trim_commas(&target_tokens[if_idx + 1..]);
@@ -35282,6 +35353,27 @@ fn parse_put_counters(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
         } else {
             effect
         }
+    };
+
+    let counter_type = if let Some(counter_type) = parse_counter_type_from_tokens(rest) {
+        counter_type
+    } else if let Value::CountersOn(_, Some(counter_type)) = &count_value {
+        *counter_type
+    } else if let Value::CountersOn(spec, None) = &count_value {
+        let target = parse_target_phrase(&target_tokens)?;
+        let from = target_from_counter_source_spec(spec.as_ref(), span_from_tokens(tokens))
+            .ok_or_else(|| {
+                CardTextError::ParseError(format!(
+                    "unsupported counter source reference (clause: '{}')",
+                    words(tokens).join(" ")
+                ))
+            })?;
+        return Ok(wrap_conditional(EffectAst::MoveAllCounters { from, to: target }));
+    } else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported counter type (clause: '{}')",
+            words(tokens).join(" ")
+        )));
     };
 
     if let Value::Fixed(fixed_count) = count_value
@@ -36507,6 +36599,58 @@ fn parse_equal_to_number_of_filter_value(tokens: &[Token]) -> Option<Value> {
     let filter_tokens = trim_edge_punctuation(&tokens[filter_start_token_idx..]);
     let filter = parse_object_filter(&filter_tokens, false).ok()?;
     Some(Value::Count(filter))
+}
+
+fn parse_equal_to_aggregate_filter_value(tokens: &[Token]) -> Option<Value> {
+    let clause_words = words(tokens);
+    let equal_idx = clause_words
+        .windows(2)
+        .position(|window| window == ["equal", "to"])?;
+
+    let mut idx = equal_idx + 2;
+    if clause_words.get(idx).copied() == Some("the") {
+        idx += 1;
+    }
+
+    let aggregate = match clause_words.get(idx).copied() {
+        Some("total") => "total",
+        Some("greatest") => "greatest",
+        _ => return None,
+    };
+    idx += 1;
+
+    let value_kind = if clause_words.get(idx).copied() == Some("power") {
+        idx += 1;
+        "power"
+    } else if clause_words.get(idx).copied() == Some("toughness") {
+        idx += 1;
+        "toughness"
+    } else if clause_words.get(idx).copied() == Some("mana")
+        && clause_words.get(idx + 1).copied() == Some("value")
+    {
+        idx += 2;
+        "mana_value"
+    } else {
+        return None;
+    };
+
+    if !matches!(clause_words.get(idx).copied(), Some("of" | "among")) {
+        return None;
+    }
+    idx += 1;
+
+    let object_start_token_idx = token_index_for_word_index(tokens, idx)?;
+    let filter_tokens = &tokens[object_start_token_idx..];
+    let filter = parse_object_filter(filter_tokens, false).ok()?;
+
+    match (aggregate, value_kind) {
+        ("total", "power") => Some(Value::TotalPower(filter)),
+        ("total", "toughness") => Some(Value::TotalToughness(filter)),
+        ("total", "mana_value") => Some(Value::TotalManaValue(filter)),
+        ("greatest", "power") => Some(Value::GreatestPower(filter)),
+        ("greatest", "mana_value") => Some(Value::GreatestManaValue(filter)),
+        _ => None,
+    }
 }
 
 fn parse_get(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
@@ -38420,6 +38564,86 @@ mod parse_parsing_tests {
                 amount: Value::EventValue(EventValueSpec::LifeAmount),
                 player: PlayerAst::You,
             }
+        ));
+    }
+
+    #[test]
+    fn parse_put_counters_that_many_amount() {
+        let tokens = tokenize_line("that many +1/+1 counters on this creature", 0);
+        let effect = parse_put_counters(&tokens).expect("parse put counters with that-many amount");
+        assert!(matches!(
+            effect,
+            EffectAst::PutCounters {
+                counter_type: CounterType::PlusOnePlusOne,
+                count: Value::EventValue(EventValueSpec::Amount),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_put_counters_x_amount() {
+        let tokens = tokenize_line("x +1/+1 counters on target creature", 0);
+        let effect = parse_put_counters(&tokens).expect("parse put counters with x amount");
+        assert!(matches!(
+            effect,
+            EffectAst::PutCounters {
+                counter_type: CounterType::PlusOnePlusOne,
+                count: Value::X,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_put_counters_where_x_replacement() {
+        let tokens = tokenize_line(
+            "Put X +1/+1 counters on target creature, where X is that creature's power.",
+            0,
+        );
+        let effects = parse_effect_sentence(&tokens).expect("parse put counters where-X sentence");
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            EffectAst::PutCounters {
+                counter_type: CounterType::PlusOnePlusOne,
+                count: Value::PowerOf(_),
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn parse_put_counters_equal_to_devotion_amount() {
+        let tokens = tokenize_line(
+            "a number of +1/+1 counters on it equal to your devotion to green",
+            0,
+        );
+        let effect =
+            parse_put_counters(&tokens).expect("parse put counters with devotion-derived amount");
+        assert!(matches!(
+            effect,
+            EffectAst::PutCounters {
+                counter_type: CounterType::PlusOnePlusOne,
+                count: Value::Devotion {
+                    player: PlayerFilter::You,
+                    color: crate::color::Color::Green
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_put_counters_those_counters_moves_all() {
+        let tokens = tokenize_line("those counters on target creature you control", 0);
+        let effect =
+            parse_put_counters(&tokens).expect("parse put those-counters transfer as move-all");
+        assert!(matches!(
+            effect,
+            EffectAst::MoveAllCounters {
+                from: TargetAst::Tagged(tag, _),
+                ..
+            } if tag.as_str() == IT_TAG
         ));
     }
 }
