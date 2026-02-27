@@ -771,14 +771,37 @@ pub(crate) fn parse_switch(tokens: &[Token]) -> Result<EffectAst, CardTextError>
 }
 
 pub(crate) fn parse_skip(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
-    let Some(SubjectAst::Player(player)) = subject else {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported skip clause (clause: '{}')",
-            words(tokens).join(" ")
-        )));
+    let clause_words = words(tokens);
+    let (player, words) = match subject {
+        Some(SubjectAst::Player(player)) => (player, clause_words),
+        _ => {
+            if clause_words.starts_with(&["your"]) {
+                (PlayerAst::You, clause_words[1..].to_vec())
+            } else if clause_words.starts_with(&["their"]) {
+                (PlayerAst::That, clause_words[1..].to_vec())
+            } else if clause_words.starts_with(&["that", "player"])
+                || clause_words.starts_with(&["that", "players"])
+            {
+                (PlayerAst::That, clause_words[2..].to_vec())
+            } else if clause_words.starts_with(&["his", "or", "her"]) {
+                (PlayerAst::That, clause_words[3..].to_vec())
+            } else if clause_words.starts_with(&["target", "player"])
+                || clause_words.starts_with(&["target", "players"])
+            {
+                (PlayerAst::Target, clause_words[2..].to_vec())
+            } else if clause_words.starts_with(&["target", "opponent"])
+                || clause_words.starts_with(&["target", "opponents"])
+            {
+                (PlayerAst::TargetOpponent, clause_words[2..].to_vec())
+            } else {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported skip clause (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+        }
     };
 
-    let words = words(tokens);
     let skips_next_combat_phase_this_turn = words.contains(&"combat")
         && words.contains(&"phase")
         && words.contains(&"next")

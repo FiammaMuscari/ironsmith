@@ -6443,6 +6443,21 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_skip_your_draw_step_inline_subject_from_text() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Null Profusion Variant")
+            .parse_text("Skip your draw step.")
+            .expect("parse inline-subject skip draw step");
+
+        let effects = def.spell_effect.expect("spell effect");
+        assert!(
+            effects
+                .iter()
+                .any(|e| e.downcast_ref::<SkipDrawStepEffect>().is_some()),
+            "should include skip draw step effect"
+        );
+    }
+
+    #[test]
     fn parse_skip_combat_phases_from_text() {
         let def = CardDefinitionBuilder::new(CardId::new(), "False Peace")
             .parse_text("Target player skips all combat phases of their next turn.")
