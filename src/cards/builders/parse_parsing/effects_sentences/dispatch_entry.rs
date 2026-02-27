@@ -482,6 +482,9 @@ pub(crate) fn primary_target_from_effect(effect: &EffectAst) -> Option<TargetAst
         | EffectAst::ReturnToHand { target, .. }
         | EffectAst::ReturnToBattlefield { target, .. }
         | EffectAst::MoveToZone { target, .. }
+        | EffectAst::PutCounters { target, .. }
+        | EffectAst::PutOrRemoveCounters { target, .. }
+        | EffectAst::RemoveUpToAnyCounters { target, .. }
         | EffectAst::Pump { target, .. }
         | EffectAst::GrantAbilitiesToTarget { target, .. }
         | EffectAst::GrantAbilitiesChoiceToTarget { target, .. }
@@ -970,6 +973,18 @@ pub(crate) fn replace_it_target(effect: &mut EffectAst, target: &TargetAst) {
             target: effect_target,
             ..
         }
+        | EffectAst::PutCounters {
+            target: effect_target,
+            ..
+        }
+        | EffectAst::PutOrRemoveCounters {
+            target: effect_target,
+            ..
+        }
+        | EffectAst::RemoveUpToAnyCounters {
+            target: effect_target,
+            ..
+        }
         | EffectAst::Pump {
             target: effect_target,
             ..
@@ -1283,4 +1298,3 @@ pub(crate) fn try_apply_token_copy_followup(
         _ => Ok(false),
     }
 }
-

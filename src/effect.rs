@@ -1588,6 +1588,9 @@ pub enum Condition {
     /// A tagged object matches a filter.
     TaggedObjectMatches(TagKey, ObjectFilter),
 
+    /// The first object target matches a filter.
+    TargetMatches(ObjectFilter),
+
     /// A tagged object matching a filter was controlled by the given player.
     PlayerTaggedObjectMatches {
         player: PlayerFilter,

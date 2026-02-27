@@ -396,6 +396,7 @@ pub fn evaluate_condition_external(
 
         // Conditions requiring targets / effect execution context are not evaluable here.
         Condition::TaggedObjectMatches(_, _)
+        | Condition::TargetMatches(_)
         | Condition::PlayerTaggedObjectMatches { .. }
         | Condition::TargetIsTapped
         | Condition::TargetIsAttacking
@@ -915,6 +916,7 @@ fn evaluate_condition_simple(
         | Condition::XValueAtLeast(_) => false,
         Condition::Unmodeled(_) => true,
         Condition::TaggedObjectMatches(_, _) => false,
+        Condition::TargetMatches(_) => false,
         Condition::PlayerTaggedObjectMatches { .. } => false,
         Condition::Not(inner) => !evaluate_condition_simple(game, inner, controller, source),
         Condition::And(a, b) => {
@@ -1408,10 +1410,46 @@ fn evaluate_condition(
         }
         Condition::TaggedObjectMatches(tag, filter) => {
             let filter_ctx = ctx.filter_context(game);
-            let Some(snapshot) = ctx.get_tagged(tag.as_str()) else {
+            if let Some(snapshot) = ctx.get_tagged(tag.as_str()) {
+                return Ok(filter.matches_snapshot(snapshot, &filter_ctx, game));
+            }
+
+            // Some compile-time conditional lowering paths synthesize a branch-local tag
+            // (for example "countered_0") before runtime tagging exists. In these cases,
+            // fall back to evaluating against the first object target.
+            let synthetic_tag = tag
+                .as_str()
+                .rsplit_once('_')
+                .is_some_and(|(head, suffix)| {
+                    !head.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+                });
+            if !synthetic_tag {
+                return Ok(false);
+            }
+
+            let Some(crate::executor::ResolvedTarget::Object(id)) = ctx.targets.first() else {
                 return Ok(false);
             };
-            Ok(filter.matches_snapshot(snapshot, &filter_ctx, game))
+            if let Some(obj) = game.object(*id) {
+                return Ok(filter.matches(obj, &filter_ctx, game));
+            }
+            if let Some(snapshot) = ctx.target_snapshots.get(id) {
+                return Ok(filter.matches_snapshot(snapshot, &filter_ctx, game));
+            }
+            Ok(false)
+        }
+        Condition::TargetMatches(filter) => {
+            let filter_ctx = ctx.filter_context(game);
+            let Some(crate::executor::ResolvedTarget::Object(id)) = ctx.targets.first() else {
+                return Ok(false);
+            };
+            if let Some(obj) = game.object(*id) {
+                return Ok(filter.matches(obj, &filter_ctx, game));
+            }
+            if let Some(snapshot) = ctx.target_snapshots.get(id) {
+                return Ok(filter.matches_snapshot(snapshot, &filter_ctx, game));
+            }
+            Ok(false)
         }
         Condition::PlayerTaggedObjectMatches {
             player,

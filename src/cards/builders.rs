@@ -7774,6 +7774,88 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_conditional_counter_target_spell_if_it_matches_filter() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Jaded Response Variant")
+            .parse_text("Counter target spell if it shares a color with a creature you control.")
+            .expect("target-filter conditional should parse without prior tagged reference");
+
+        let debug = format!("{:?}", def.spell_effect);
+        assert!(
+            debug.contains("ConditionalEffect")
+                && (debug.contains("TargetMatches") || debug.contains("TaggedObjectMatches")),
+            "expected conditional target-match lowering, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_conditional_instead_branch_referencing_target() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Electrostatic Bolt Variant")
+            .parse_text(
+                "Electrostatic Bolt deals 2 damage to target creature. If it's an artifact creature, Electrostatic Bolt deals 4 damage to it instead.",
+            )
+            .expect("artifact-creature conditional should parse without explicit prior tag");
+
+        let debug = format!("{:?}", def.spell_effect);
+        assert!(
+            debug.contains("ConditionalEffect")
+                && (debug.contains("TargetMatches") || debug.contains("TaggedObjectMatches")),
+            "expected artifact-creature conditional lowering, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_conditional_kicker_target_spell_mana_value() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Prohibit Variant")
+            .parse_text(
+                "Kicker {2} (You may pay an additional {2} as you cast this spell.)\nCounter target spell if its mana value is 2 or less. If this spell was kicked, counter that spell if its mana value is 4 or less instead.",
+            )
+            .expect("kicker conditional counter spell should parse");
+
+        let debug = format!("{:?}", def.spell_effect);
+        assert!(
+            debug.contains("ConditionalEffect")
+                && debug.contains("TaggedObjectMatches")
+                && debug.contains("LessThanOrEqual(2)")
+                && debug.contains("LessThanOrEqual(4)"),
+            "expected kicker conditional counter-spell lowering, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_conditional_instead_branch_for_legendary_or_enchantment_creature() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Regents Authority Variant")
+            .parse_text(
+                "Target creature gets +2/+2 until end of turn. If it's an enchantment creature or legendary creature, instead put a +1/+1 counter on it and it gets +1/+1 until end of turn.",
+            )
+            .expect("enchantment-or-legendary conditional should parse");
+
+        let debug = format!("{:?}", def.spell_effect);
+        assert!(
+            debug.contains("ConditionalEffect")
+                && (debug.contains("TargetMatches") || debug.contains("TaggedObjectMatches"))
+                && debug.contains("PutCountersEffect"),
+            "expected conditional counter-and-pump lowering, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_conditional_instead_branch_for_human_target() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Flare of Faith Variant")
+            .parse_text(
+                "Target creature gets +2/+2 until end of turn. If it's a Human, instead it gets +3/+3 and gains indestructible until end of turn.",
+            )
+            .expect("human conditional should parse");
+
+        let debug = format!("{:?}", def.spell_effect);
+        assert!(
+            debug.contains("ConditionalEffect")
+                && (debug.contains("TargetMatches") || debug.contains("TaggedObjectMatches"))
+                && debug.contains("Indestructible"),
+            "expected conditional human branch with indestructible, got {debug}"
+        );
+    }
+
+    #[test]
     fn reject_counter_ability_target_clause() {
         let err = CardDefinitionBuilder::new(CardId::new(), "Tales End Variant")
             .parse_text("Counter target activated ability, triggered ability, or legendary spell.")

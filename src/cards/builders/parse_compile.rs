@@ -294,25 +294,26 @@ pub(crate) fn compile_condition_from_predicate_ast(
 ) -> Result<Condition, CardTextError> {
     Ok(match predicate {
         PredicateAst::ItIsLandCard => {
-            let tag = saved_last_tag.clone().ok_or_else(|| {
-                CardTextError::ParseError("conditional requires prior reference".to_string())
-            })?;
-            Condition::TaggedObjectMatches(
-                tag.into(),
-                ObjectFilter {
-                    zone: None,
-                    card_types: vec![CardType::Land],
-                    ..Default::default()
-                },
-            )
+            let mut filter = ObjectFilter {
+                zone: None,
+                card_types: vec![CardType::Land],
+                ..Default::default()
+            };
+            filter.zone = None;
+            if let Some(tag) = saved_last_tag.clone() {
+                Condition::TaggedObjectMatches(tag.into(), filter)
+            } else {
+                Condition::TargetMatches(filter)
+            }
         }
         PredicateAst::ItMatches(filter) => {
-            let tag = saved_last_tag.clone().ok_or_else(|| {
-                CardTextError::ParseError("conditional requires prior reference".to_string())
-            })?;
             let mut resolved = filter.clone();
             resolved.zone = None;
-            Condition::TaggedObjectMatches(tag.into(), resolved)
+            if let Some(tag) = saved_last_tag.clone() {
+                Condition::TaggedObjectMatches(tag.into(), resolved)
+            } else {
+                Condition::TargetMatches(resolved)
+            }
         }
         PredicateAst::TaggedMatches(tag, filter) => {
             let mut resolved = filter.clone();
@@ -4688,7 +4689,7 @@ pub(crate) fn compile_effect(
             ctx.last_object_tag = saved_last_tag.clone();
             let (false_effects, false_choices) = compile_effects(if_false, ctx)?;
             if if_false.is_empty() {
-                ctx.last_object_tag = true_last_tag.or(saved_last_tag.clone());
+                ctx.last_object_tag = true_last_tag.clone().or(saved_last_tag.clone());
             } else {
                 ctx.last_object_tag = saved_last_tag.clone();
             }
@@ -4699,29 +4700,26 @@ pub(crate) fn compile_effect(
             ) -> Result<Condition, CardTextError> {
                 Ok(match predicate {
                     PredicateAst::ItIsLandCard => {
-                        let tag = saved_last_tag.clone().ok_or_else(|| {
-                            CardTextError::ParseError(
-                                "conditional requires prior reference".to_string(),
-                            )
-                        })?;
-                        Condition::TaggedObjectMatches(
-                            tag.into(),
-                            ObjectFilter {
-                                zone: None,
-                                card_types: vec![CardType::Land],
-                                ..Default::default()
-                            },
-                        )
+                        let mut filter = ObjectFilter {
+                            zone: None,
+                            card_types: vec![CardType::Land],
+                            ..Default::default()
+                        };
+                        filter.zone = None;
+                        if let Some(tag) = saved_last_tag.clone() {
+                            Condition::TaggedObjectMatches(tag.into(), filter)
+                        } else {
+                            Condition::TargetMatches(filter)
+                        }
                     }
                     PredicateAst::ItMatches(filter) => {
-                        let tag = saved_last_tag.clone().ok_or_else(|| {
-                            CardTextError::ParseError(
-                                "conditional requires prior reference".to_string(),
-                            )
-                        })?;
                         let mut resolved = filter.clone();
                         resolved.zone = None;
-                        Condition::TaggedObjectMatches(tag.into(), resolved)
+                        if let Some(tag) = saved_last_tag.clone() {
+                            Condition::TaggedObjectMatches(tag.into(), resolved)
+                        } else {
+                            Condition::TargetMatches(resolved)
+                        }
                     }
                     PredicateAst::TaggedMatches(tag, filter) => {
                         let mut resolved = filter.clone();
@@ -4936,7 +4934,9 @@ pub(crate) fn compile_effect(
                 })
             }
 
-            let condition = compile_condition_from_predicate(predicate, ctx, &saved_last_tag)?;
+            let condition_reference_tag = saved_last_tag.clone().or(true_last_tag.clone());
+            let condition =
+                compile_condition_from_predicate(predicate, ctx, &condition_reference_tag)?;
             let effect = if false_effects.is_empty() {
                 Effect::conditional_only(condition, true_effects)
             } else {

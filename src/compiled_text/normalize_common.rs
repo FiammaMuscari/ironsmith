@@ -6767,13 +6767,24 @@ fn describe_condition(condition: &Condition) -> String {
                 format!("at least {amount} mana was spent to cast this spell")
             }
         }
-	        Condition::YouControlCommander => "you control your commander".to_string(),
-	        Condition::TaggedObjectMatches(tag, filter) => {
-	            let desc = filter.description();
-	            if is_implicit_reference_tag(tag.as_str()) {
-	                // Keep implicit tags oracle-like: use pronouns rather than exposing tag keys.
-	                let subject = if matches!(tag.as_str(), "triggering" | "damaged") {
-	                    "that object"
+        Condition::YouControlCommander => "you control your commander".to_string(),
+        Condition::TargetMatches(filter) => {
+            let desc = filter.description();
+            let stripped = strip_leading_article(&desc).to_ascii_lowercase();
+            if stripped == "land" {
+                "it's a land card".to_string()
+            } else if stripped == "creature" {
+                "it's a creature".to_string()
+            } else {
+                format!("the target matches {desc}")
+            }
+        }
+        Condition::TaggedObjectMatches(tag, filter) => {
+            let desc = filter.description();
+            if is_implicit_reference_tag(tag.as_str()) {
+                // Keep implicit tags oracle-like: use pronouns rather than exposing tag keys.
+                let subject = if matches!(tag.as_str(), "triggering" | "damaged") {
+                    "that object"
 	                } else {
 	                    "it"
 	                };
@@ -6875,8 +6886,8 @@ fn describe_condition(condition: &Condition) -> String {
 	                }
 	                return format!("{subject} matches {desc}");
 	            }
-	            format!("the tagged object '{}' matches {desc}", tag.as_str())
-	        }
+                format!("the tagged object '{}' matches {desc}", tag.as_str())
+            }
         Condition::PlayerTaggedObjectMatches { player, tag, filter } => {
             if let Some(action) = tag_action_from_name(tag.as_str()) {
                 let object_text = with_indefinite_article(&filter.description());
