@@ -1,0 +1,248 @@
+// ============================================================================
+// Priority Loop
+// ============================================================================
+
+/// Stage of the spell casting process.
+///
+/// Per MTG Comprehensive Rules 601.2, casting follows this order:
+/// 1. Proposing (601.2a) - Move spell to stack
+/// 2. ChoosingModes (601.2b) - Announce modes for modal spells
+/// 3. ChoosingX (601.2b) - Announce X value
+/// 4. ChoosingOptionalCosts (601.2b) - Announce additional costs (kicker, buyback)
+/// 5. AnnouncingCost (601.2b) - Announce hybrid/Phyrexian mana choices
+/// 6. ChoosingTargets (601.2c) - Choose targets
+/// 7. ChoosingExileFromHand - Select cards for alternative costs
+/// 8. PayingMana (601.2g-h) - Activate mana abilities and pay costs
+/// 9. ReadyToFinalize (601.2i) - Spell becomes cast
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CastStage {
+    /// Spell is being proposed - moved to stack per 601.2a.
+    /// This is the first stage when casting begins.
+    Proposing,
+    /// Need to choose modes for modal spells (per 601.2b).
+    /// Modes must be chosen before targets.
+    ChoosingModes,
+    /// Need to choose X value (for spells with X in cost).
+    ChoosingX,
+    /// Need to choose optional costs (kicker, buyback, etc.).
+    ChoosingOptionalCosts,
+    /// Need to announce hybrid/Phyrexian mana payment choices (per 601.2b).
+    /// These choices are locked in before targets are chosen.
+    AnnouncingCost,
+    /// Need to choose targets.
+    ChoosingTargets,
+    /// Need to choose cards to exile from hand (for alternative costs like Force of Will).
+    ChoosingExileFromHand,
+    /// Need to pay mana costs (player can activate mana abilities).
+    PayingMana,
+    /// Ready to finalize (mana has been paid and spell becomes cast).
+    ReadyToFinalize,
+}
+
+/// Pending casting method selection for a spell with multiple available methods.
+#[derive(Debug, Clone)]
+pub struct PendingMethodSelection {
+    /// The spell being cast.
+    pub spell_id: ObjectId,
+    /// The zone the spell is being cast from.
+    pub from_zone: Zone,
+    /// The player casting the spell.
+    pub caster: PlayerId,
+    /// The available casting method options.
+    pub available_methods: Vec<crate::decision::CastingMethodOption>,
+}
+
+/// A spell or ability being cast/activated that needs decisions.
+#[derive(Debug, Clone)]
+pub struct PendingCast {
+    /// The spell/ability being cast.
+    pub spell_id: ObjectId,
+    /// The zone the spell is being cast from.
+    pub from_zone: Zone,
+    /// The player casting the spell.
+    pub caster: PlayerId,
+    /// Current stage of the casting process.
+    pub stage: CastStage,
+    /// The chosen X value (if applicable).
+    pub x_value: Option<u32>,
+    /// Targets that have been chosen so far.
+    pub chosen_targets: Vec<Target>,
+    /// Target requirements that still need to be fulfilled.
+    pub remaining_requirements: Vec<TargetRequirement>,
+    /// The casting method (normal or alternative like flashback).
+    pub casting_method: CastingMethod,
+    /// Which optional costs will be paid (kicker, buyback, etc.).
+    pub optional_costs_paid: OptionalCostsPaid,
+    /// Ordered trace of cost payments performed so far.
+    pub payment_trace: Vec<CostStep>,
+    /// Mana actually spent to cast the spell (color-by-color).
+    pub mana_spent_to_cast: ManaPool,
+    /// The computed mana cost to pay (set during PayingMana stage).
+    pub mana_cost_to_pay: Option<crate::mana::ManaCost>,
+    /// Remaining mana pips to pay (pip-by-pip payment flow).
+    /// Each element is a pip with its alternatives (e.g., [Black, Life(2)] for {B/P}).
+    pub remaining_mana_pips: Vec<Vec<crate::mana::ManaSymbol>>,
+    /// Cards chosen to exile from hand as part of alternative costs.
+    pub cards_to_exile: Vec<ObjectId>,
+    /// Pre-chosen modes for modal spells (per MTG rule 601.2b).
+    /// Set during ChoosingModes stage, used during resolution.
+    pub chosen_modes: Option<Vec<usize>>,
+    /// Hybrid/Phyrexian mana payment choices made during cost announcement (601.2b).
+    /// Maps pip index to the chosen mana symbol for that pip.
+    pub hybrid_choices: Vec<(usize, crate::mana::ManaSymbol)>,
+    /// Hybrid/Phyrexian pips that still need announcement (601.2b).
+    /// Each element is (pip_index, alternatives). Processed one at a time.
+    pub pending_hybrid_pips: Vec<(usize, Vec<crate::mana::ManaSymbol>)>,
+    /// The spell's ObjectId on the stack (after being moved per 601.2a).
+    pub stack_id: ObjectId,
+    /// Permanents that contributed keyword-ability alternative payments while casting this spell.
+    pub keyword_payment_contributions: Vec<KeywordPaymentContribution>,
+}
+
+/// Stage of the ability activation process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActivationStage {
+    /// Need to choose X value for abilities with X in cost.
+    ChoosingX,
+    /// Need to choose sacrifice targets.
+    ChoosingSacrifice,
+    /// Need to announce hybrid/Phyrexian mana payment choices (per MTG rule 601.2b via 602.2b).
+    AnnouncingCost,
+    /// Need to choose ability targets.
+    ChoosingTargets,
+    /// Need to pay mana costs (player can activate mana abilities).
+    PayingMana,
+    /// Ready to finalize (costs paid, ability goes on stack).
+    ReadyToFinalize,
+}
+
+/// An activated ability being activated that needs decisions.
+#[derive(Debug, Clone)]
+pub struct PendingActivation {
+    /// The source permanent of the activated ability.
+    pub source: ObjectId,
+    /// Index of the ability being activated.
+    pub ability_index: usize,
+    /// The player activating the ability.
+    pub activator: PlayerId,
+    /// Current stage of the activation process.
+    pub stage: ActivationStage,
+    /// The effects of the ability.
+    pub effects: Vec<crate::effect::Effect>,
+    /// Targets that have been chosen so far.
+    pub chosen_targets: Vec<Target>,
+    /// Target requirements that still need to be fulfilled.
+    pub remaining_requirements: Vec<TargetRequirement>,
+    /// The computed mana cost to pay.
+    pub mana_cost_to_pay: Option<crate::mana::ManaCost>,
+    /// Ordered trace of cost payments performed so far.
+    pub payment_trace: Vec<CostStep>,
+    /// Remaining mana pips to pay (pip-by-pip payment flow).
+    /// Each element is a pip with its alternatives (e.g., [Black, Life(2)] for {B/P}).
+    pub remaining_mana_pips: Vec<Vec<crate::mana::ManaSymbol>>,
+    /// Remaining sacrifice costs to pay: (filter, description).
+    pub remaining_sacrifice_costs: Vec<(ObjectFilter, String)>,
+    /// Whether this ability is once per turn (needs recording).
+    pub is_once_per_turn: bool,
+    /// Stable instance ID of the source (persists across zone changes).
+    pub source_stable_id: StableId,
+    /// Last known information for the source at activation time.
+    pub source_snapshot: ObjectSnapshot,
+    /// Name of the source for display purposes.
+    pub source_name: String,
+    /// The chosen X value for abilities with X in cost.
+    pub x_value: Option<usize>,
+    /// Hybrid/Phyrexian mana choices made during AnnouncingCost stage (per MTG rule 601.2b via 602.2b).
+    /// Each element is (pip_index, chosen_symbol).
+    pub hybrid_choices: Vec<(usize, crate::mana::ManaSymbol)>,
+    /// Pending hybrid/Phyrexian pips that still need announcement.
+    /// Each element is (pip_index, alternatives).
+    pub pending_hybrid_pips: Vec<(usize, Vec<crate::mana::ManaSymbol>)>,
+}
+
+/// A mana ability being activated that needs mana payment first.
+///
+/// Mana abilities don't use the stack, but if they have a mana cost
+/// (like Blood Celebrant's {B}), we need to let the player tap mana sources first.
+#[derive(Debug, Clone)]
+pub struct PendingManaAbility {
+    /// The source permanent of the mana ability.
+    pub source: ObjectId,
+    /// Index of the ability being activated.
+    pub ability_index: usize,
+    /// The player activating the ability.
+    pub activator: PlayerId,
+    /// The mana cost that needs to be paid.
+    pub mana_cost: crate::mana::ManaCost,
+    /// Other (non-mana) costs that have already been validated.
+    pub other_costs: Vec<crate::costs::Cost>,
+    /// The mana symbols to add (for simple mana abilities).
+    pub mana_to_add: Vec<crate::mana::ManaSymbol>,
+    /// The effects to execute (for complex mana abilities like Blood Celebrant).
+    pub effects: Vec<crate::effect::Effect>,
+}
+
+/// State for tracking the priority loop between decisions.
+#[derive(Debug, Clone)]
+pub struct PriorityLoopState {
+    tracker: PriorityTracker,
+    /// A pending spell cast waiting for target selection.
+    pub pending_cast: Option<PendingCast>,
+    /// A pending ability activation waiting for cost payment.
+    pub pending_activation: Option<PendingActivation>,
+    /// A pending casting method selection for spells with multiple available methods.
+    pub pending_method_selection: Option<PendingMethodSelection>,
+    /// A pending mana ability activation waiting for mana payment.
+    pub pending_mana_ability: Option<PendingManaAbility>,
+    /// Checkpoint of game state saved when starting an action chain.
+    /// If an error occurs during the chain, we restore to this state.
+    pub checkpoint: Option<GameState>,
+    /// Whether pip-by-pip mana payment should auto-pick a single legal option.
+    /// CLI/tests can keep this enabled for speed; WASM UI can disable it to require explicit taps.
+    pub auto_choose_single_pip_payment: bool,
+}
+
+impl PriorityLoopState {
+    /// Create a new priority loop state.
+    pub fn new(num_players: usize) -> Self {
+        Self {
+            tracker: PriorityTracker::new(num_players),
+            pending_cast: None,
+            pending_activation: None,
+            pending_method_selection: None,
+            pending_mana_ability: None,
+            checkpoint: None,
+            auto_choose_single_pip_payment: true,
+        }
+    }
+
+    /// Save a checkpoint of the current game state.
+    /// This should be called when starting an action chain (cast spell, activate ability).
+    pub fn save_checkpoint(&mut self, game: &GameState) {
+        self.checkpoint = Some(game.clone());
+    }
+
+    /// Clear the checkpoint (called when action completes successfully or after restore).
+    pub fn clear_checkpoint(&mut self) {
+        self.checkpoint = None;
+    }
+
+    /// Check if there's an active action chain (pending cast or activation).
+    pub fn has_pending_action(&self) -> bool {
+        self.pending_cast.is_some()
+            || self.pending_activation.is_some()
+            || self.pending_method_selection.is_some()
+    }
+
+    /// Configure whether single-option pip payments should be auto-selected.
+    pub fn set_auto_choose_single_pip_payment(&mut self, enabled: bool) {
+        self.auto_choose_single_pip_payment = enabled;
+    }
+
+    /// Reset pass tracking and assign priority to the active player for a fresh priority window.
+    pub fn reset_for_new_priority_window(&mut self, game: &mut GameState) {
+        self.tracker.set_players_in_game(game.players_in_game());
+        reset_priority(game, &mut self.tracker);
+    }
+}
+

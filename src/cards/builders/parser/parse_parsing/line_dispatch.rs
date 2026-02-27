@@ -1,0 +1,505 @@
+fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
+    parser_trace_line("parse_line:entry", line);
+    let normalized = line
+        .trim()
+        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_ascii_lowercase();
+    if normalized.contains("for each time")
+        && normalized.contains("cast")
+        && normalized.contains("commander")
+        && normalized.contains("from the command zone")
+    {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported commander-cast-count clause (line: '{}')",
+            line
+        )));
+    }
+    if normalized.starts_with("activate only") {
+        return Ok(LineAst::StaticAbility(StaticAbility::custom(
+            "activation_restriction",
+            line.trim().to_string(),
+        )));
+    }
+    if normalized.starts_with("this ability triggers only") {
+        return Ok(LineAst::StaticAbility(StaticAbility::custom(
+            "trigger_restriction",
+            line.trim().to_string(),
+        )));
+    }
+    if normalized.starts_with("as this land enters")
+        && normalized.contains("reveal")
+        && normalized.contains("from your hand")
+    {
+        let mut abilities = vec![StaticAbility::custom(
+            "as_enters_reveal",
+            line.trim().to_string(),
+        )];
+        if normalized.contains("enters tapped") || normalized.contains("enter tapped") {
+            abilities.push(StaticAbility::enters_tapped_ability());
+        }
+        return Ok(LineAst::StaticAbilities(abilities));
+    }
+    if let Some((chapters, rest)) = parse_saga_chapter_prefix(&normalized) {
+        let tokens = tokenize_line(rest, line_index);
+        parser_trace("parse_line:branch=saga", &tokens);
+        let effects = parse_effect_sentences(&tokens)?;
+        return Ok(LineAst::Triggered {
+            trigger: TriggerSpec::SagaChapter(chapters),
+            effects,
+            max_triggers_per_turn: None,
+        });
+    }
+
+    let tokens = tokenize_line(line, line_index);
+    if tokens.is_empty() {
+        return Err(CardTextError::ParseError("empty line".to_string()));
+    }
+
+    if tokens
+        .first()
+        .is_some_and(|token| token.is_word("replicate"))
+        && line.contains('—')
+    {
+        let cost_tokens = tokens.get(1..).unwrap_or_default();
+        if cost_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "replicate line missing cost (line: '{line}')"
+            )));
+        }
+        parser_trace("parse_line:branch=replicate", &tokens);
+        let (cost, _) = parse_activation_cost(cost_tokens)?;
+        return Ok(LineAst::OptionalCost(
+            OptionalCost::custom("Replicate", cost).repeatable(),
+        ));
+    }
+
+    if normalized.starts_with("as an additional cost to cast this spell") {
+        let comma_idx = tokens
+            .iter()
+            .position(|token| matches!(token, Token::Comma(_)));
+        let effect_start = if let Some(idx) = comma_idx {
+            idx + 1
+        } else if let Some(idx) = tokens.iter().position(|token| token.is_word("spell")) {
+            idx + 1
+        } else {
+            tokens.len()
+        };
+        let effect_tokens = tokens.get(effect_start..).unwrap_or_default();
+        if effect_tokens.is_empty() {
+            return Err(CardTextError::ParseError(
+                "additional cost line missing effect clause".to_string(),
+            ));
+        }
+        parser_trace("parse_line:branch=additional-cost", effect_tokens);
+        if let Some(options) = parse_additional_cost_choice_options(effect_tokens)? {
+            return Ok(LineAst::AdditionalCostChoice { options });
+        }
+        let effects = parse_effect_sentences(effect_tokens)?;
+        return Ok(LineAst::AdditionalCost { effects });
+    }
+
+    if is_non_mana_additional_cost_modifier_line(&normalized) {
+        return Ok(LineAst::StaticAbility(StaticAbility::custom(
+            "additional_cost_modifier",
+            line.trim().to_string(),
+        )));
+    }
+
+    if tokens.first().is_some_and(|token| token.is_word("you"))
+        && tokens.get(1).is_some_and(|token| token.is_word("may"))
+        && let Some(rather_idx) = tokens.iter().position(|token| token.is_word("rather"))
+    {
+        let rather_tail = words(tokens.get(rather_idx + 1..).unwrap_or_default());
+        let is_spell_cost_clause = rather_tail.starts_with(&["than", "pay", "this"])
+            && rather_tail.contains(&"mana")
+            && rather_tail.contains(&"cost")
+            && (rather_tail.contains(&"spell") || rather_tail.contains(&"spells"));
+        if is_spell_cost_clause {
+            let cost_clause_end = (rather_idx + 1..tokens.len())
+                .rfind(|idx| tokens[*idx].is_word("cost") || tokens[*idx].is_word("costs"))
+                .ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "alternative cost line missing terminal cost word (line: '{}')",
+                        line
+                    ))
+                })?;
+            let trailing_words = words(&tokens[cost_clause_end + 1..]);
+            if !trailing_words.is_empty() {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported trailing clause after alternative cost (line: '{}', trailing: '{}')",
+                    line,
+                    trailing_words.join(" ")
+                )));
+            }
+            let cost_tokens = tokens.get(2..rather_idx).unwrap_or_default();
+            if cost_tokens.is_empty() {
+                return Err(CardTextError::ParseError(
+                    "alternative cost line missing cost clause".to_string(),
+                ));
+            }
+            let (total_cost, mut cost_effects) = parse_activation_cost(cost_tokens)?;
+            let (mana_cost, mut total_cost_effects) =
+                alternative_cast_parts_from_total_cost(&total_cost);
+            cost_effects.append(&mut total_cost_effects);
+            // Keep cost effects stable for deterministic snapshots.
+            if !cost_effects.is_empty() {
+                cost_effects.shrink_to_fit();
+            }
+            parser_trace("parse_line:branch=alternative-cost", cost_tokens);
+            return Ok(LineAst::AlternativeCastingMethod(
+                AlternativeCastingMethod::alternative_cost(
+                    "Parsed alternative cost",
+                    mana_cost,
+                    cost_effects,
+                ),
+            ));
+        }
+    }
+
+    if let Some(ability) = parse_equip_line(&tokens)? {
+        parser_trace("parse_line:branch=equip", &tokens);
+        return Ok(LineAst::Ability(ability));
+    }
+
+    if let Some(ability) = parse_level_up_line(&tokens)? {
+        parser_trace("parse_line:branch=level-up", &tokens);
+        return Ok(LineAst::Ability(ability));
+    }
+
+    if let Some(ability) = parse_cycling_line(&tokens)? {
+        parser_trace("parse_line:branch=cycling", &tokens);
+        return Ok(LineAst::Ability(ability));
+    }
+
+    if let Some(ability) = parse_morph_keyword_line(&tokens)? {
+        parser_trace("parse_line:branch=morph", &tokens);
+        return Ok(LineAst::Ability(ability));
+    }
+
+    if let Some(cost) = parse_buyback_line(&tokens)? {
+        parser_trace("parse_line:branch=buyback", &tokens);
+        return Ok(LineAst::OptionalCost(cost));
+    }
+
+    if let Some(cost) = parse_kicker_line(&tokens)? {
+        parser_trace("parse_line:branch=kicker", &tokens);
+        return Ok(LineAst::OptionalCost(cost));
+    }
+
+    if let Some(cost) = parse_multikicker_line(&tokens)? {
+        parser_trace("parse_line:branch=multikicker", &tokens);
+        return Ok(LineAst::OptionalCost(cost));
+    }
+
+    if let Some(cost) = parse_entwine_line(&tokens)? {
+        parser_trace("parse_line:branch=entwine", &tokens);
+        return Ok(LineAst::OptionalCost(cost));
+    }
+
+    if let Some(method) = parse_escape_line(&tokens)? {
+        parser_trace("parse_line:branch=escape", &tokens);
+        return Ok(LineAst::AlternativeCastingMethod(method));
+    }
+
+    if let Some(method) = parse_flashback_line(&tokens)? {
+        parser_trace("parse_line:branch=flashback", &tokens);
+        return Ok(LineAst::AlternativeCastingMethod(method));
+    }
+
+    if let Some(method) = parse_madness_line(&tokens)? {
+        parser_trace("parse_line:branch=madness", &tokens);
+        return Ok(LineAst::AlternativeCastingMethod(method));
+    }
+
+    if let Some((trigger_idx, _)) = tokens.iter().enumerate().find(|(idx, token)| {
+        token.is_word("whenever") || token.is_word("when") || is_at_trigger_intro(&tokens, *idx)
+    }) && (trigger_idx <= 2
+        || (trigger_idx > 2 && dash_labeled_remainder_starts_with_trigger(line)))
+    {
+        parser_trace("parse_line:branch=triggered", &tokens[trigger_idx..]);
+        return parse_triggered_line(&tokens[trigger_idx..]);
+    }
+
+    if tokens
+        .first()
+        .is_some_and(|token| token.is_word("waterbend"))
+        && let Some(ability) = parse_activated_line(&tokens[1..])?
+    {
+        parser_trace("parse_line:branch=waterbend-activated", &tokens[1..]);
+        return Ok(LineAst::Ability(ability));
+    }
+
+    if let Some(colon_idx) = tokens
+        .iter()
+        .position(|token| matches!(token, Token::Colon(_)))
+    {
+        let cost_tokens = &tokens[..colon_idx];
+        if starts_with_activation_cost(cost_tokens) {
+            if let Some(ability) = parse_activated_line(&tokens)? {
+                parser_trace("parse_line:branch=activated", &tokens);
+                return Ok(LineAst::Ability(ability));
+            }
+            return Err(CardTextError::ParseError(format!(
+                "unsupported activated ability line (line: '{line}')"
+            )));
+        } else if (line.contains('—') || line.contains(" - "))
+            && find_activation_cost_start(cost_tokens).is_some()
+            && let Some(ability) = parse_activated_line(&tokens)?
+        {
+            parser_trace("parse_line:branch=activated-labeled", &tokens);
+            return Ok(LineAst::Ability(ability));
+        }
+    }
+
+    let line_words = words(&tokens);
+    let has_token_mana_reminder_tail = line_words.contains(&"create")
+        && line_words.contains(&"sacrifice")
+        && line_words.contains(&"add")
+        && line_words
+            .windows(2)
+            .any(|window| window == ["it", "has"] || window == ["they", "have"]);
+    if has_token_mana_reminder_tail
+        && let Ok(effects) = parse_effect_sentences(&tokens)
+        && !effects.is_empty()
+    {
+        parser_trace("parse_line:branch=statement-token-mana-reminder", &tokens);
+        return Ok(LineAst::Statement { effects });
+    }
+
+    let is_each_other_player_untap_static =
+        is_untap_during_each_other_players_untap_step_words(&line_words);
+
+    if tokens.first().is_some_and(|token| token.is_word("if"))
+        && let Some(ability) = parse_if_this_spell_costs_less_to_cast_line(&tokens)?
+    {
+        parser_trace("parse_line:branch=if-this-spell-costs-less", &tokens);
+        return Ok(LineAst::StaticAbility(ability));
+    }
+
+    let starts_with_statement_effect_head = find_verb(&tokens).is_some_and(|(_, idx)| idx == 0)
+        || tokens
+            .first()
+            .is_some_and(|token| token.is_word("choose") || token.is_word("if"));
+    let is_damage_prevent_with_remove_static = line_words
+        .starts_with(&["if", "damage", "would", "be", "dealt", "to", "this"])
+        && line_words
+            .windows(3)
+            .any(|window| window == ["prevent", "that", "damage"])
+        && line_words
+            .iter()
+            .any(|word| *word == "counter" || *word == "counters")
+        && line_words.iter().any(|word| *word == "remove");
+    let is_prevent_all_damage_to_source_by_creatures_static = line_words.starts_with(&[
+        "prevent", "all", "damage", "that", "would", "be", "dealt", "to", "this",
+    ]) && line_words.ends_with(&["by", "creatures"]);
+    if starts_with_statement_effect_head
+        && !is_each_other_player_untap_static
+        && !is_damage_prevent_with_remove_static
+        && !is_prevent_all_damage_to_source_by_creatures_static
+    {
+        match parse_effect_sentences(&tokens) {
+            Ok(effects) if !effects.is_empty() => {
+                parser_trace("parse_line:branch=statement-verb-leading", &tokens);
+                return Ok(LineAst::Statement { effects });
+            }
+            Ok(_) => {}
+            Err(err) => {
+                return Err(err);
+            }
+        }
+    }
+
+    if let Some(abilities) = parse_static_ability_line(&tokens)? {
+        parser_trace("parse_line:branch=static", &tokens);
+        if abilities.len() == 1 {
+            return Ok(LineAst::StaticAbility(
+                abilities.into_iter().next().expect("single static ability"),
+            ));
+        }
+        return Ok(LineAst::StaticAbilities(abilities));
+    }
+
+    if let Some(actions) = parse_ability_line(&tokens) {
+        parser_trace("parse_line:branch=keyword-ability-line", &tokens);
+        return Ok(LineAst::Abilities(actions));
+    }
+
+    parser_trace("parse_line:branch=statement", &tokens);
+    let effects = parse_effect_sentences(&tokens)?;
+    if effects.is_empty() {
+        parser_trace("parse_line:branch=statement-empty", &tokens);
+        return Err(CardTextError::ParseError(format!(
+            "unsupported line: {line}"
+        )));
+    }
+
+    Ok(LineAst::Statement { effects })
+}
+
+fn parse_additional_cost_choice_options(
+    tokens: &[Token],
+) -> Result<Option<Vec<AdditionalCostChoiceOptionAst>>, CardTextError> {
+    let clause_words = words(tokens);
+    if !clause_words.contains(&"or") {
+        return Ok(None);
+    }
+
+    let option_tokens = split_on_or(tokens);
+    if option_tokens.len() < 2 {
+        return Ok(None);
+    }
+
+    let mut normalized_options = Vec::new();
+    for mut option in option_tokens {
+        while option
+            .first()
+            .is_some_and(|token| token.is_word("and") || token.is_word("or"))
+        {
+            option.remove(0);
+        }
+        let option = trim_commas(&option).to_vec();
+        if option.is_empty() {
+            continue;
+        }
+        normalized_options.push(option);
+    }
+
+    if normalized_options.len() < 2 {
+        return Ok(None);
+    }
+
+    // If any branch lacks a verb, this "or" belongs to a noun phrase
+    // (for example, "discard a red or green card"), not a cost choice.
+    if normalized_options
+        .iter()
+        .any(|option| find_verb(option).is_none())
+    {
+        return Ok(None);
+    }
+
+    let mut options = Vec::new();
+    for option in normalized_options {
+
+        let effects = parse_effect_sentences(&option)?;
+        if effects.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "additional cost option parsed to no effects (clause: '{}')",
+                words(&option).join(" ")
+            )));
+        }
+        options.push(AdditionalCostChoiceOptionAst {
+            description: words(&option).join(" "),
+            effects,
+        });
+    }
+
+    if options.len() < 2 {
+        return Ok(None);
+    }
+
+    Ok(Some(options))
+}
+
+fn is_at_trigger_intro(tokens: &[Token], idx: usize) -> bool {
+    if !tokens.get(idx).is_some_and(|token| token.is_word("at")) {
+        return false;
+    }
+
+    let second = tokens.get(idx + 1).and_then(Token::as_word);
+    let third = tokens.get(idx + 2).and_then(Token::as_word);
+    matches!(
+        (second, third),
+        (Some("beginning"), _)
+            | (Some("end"), _)
+            | (Some("the"), Some("beginning"))
+            | (Some("the"), Some("end"))
+    )
+}
+
+fn starts_with_activation_cost(tokens: &[Token]) -> bool {
+    let Some(word) = tokens.first().and_then(Token::as_word) else {
+        return false;
+    };
+    if matches!(
+        word,
+        "tap"
+            | "t"
+            | "pay"
+            | "discard"
+            | "mill"
+            | "sacrifice"
+            | "put"
+            | "remove"
+            | "exile"
+            | "return"
+            | "e"
+    ) {
+        return true;
+    }
+    if word.contains('/') {
+        return parse_mana_symbol_group(word).is_ok();
+    }
+    parse_mana_symbol(word).is_ok()
+}
+
+fn find_activation_cost_start(tokens: &[Token]) -> Option<usize> {
+    (0..tokens.len()).find(|idx| starts_with_activation_cost(&tokens[*idx..]))
+}
+
+fn parse_flashback_keyword_line(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
+    let words_all = words(tokens);
+    if words_all.first().copied() != Some("flashback") {
+        return None;
+    }
+    let (cost, consumed) = leading_mana_symbols_to_oracle(&words_all[1..])?;
+    let mut text = format!("Flashback {cost}");
+    let tail = &words_all[1 + consumed..];
+    if !tail.is_empty() {
+        let mut tail_text = tail.join(" ");
+        if let Some(first) = tail_text.chars().next() {
+            let upper = first.to_ascii_uppercase().to_string();
+            let rest = &tail_text[first.len_utf8()..];
+            tail_text = format!("{upper}{rest}");
+        }
+        text.push_str(", ");
+        text.push_str(&tail_text);
+    }
+    Some(vec![KeywordAction::MarkerText(text)])
+}
+
+fn parse_flashback_line(
+    tokens: &[Token],
+) -> Result<Option<AlternativeCastingMethod>, CardTextError> {
+    if !tokens
+        .first()
+        .is_some_and(|token| token.is_word("flashback"))
+    {
+        return Ok(None);
+    }
+
+    let cost_start = 1usize;
+    if cost_start >= tokens.len() {
+        return Err(CardTextError::ParseError(
+            "flashback keyword missing mana cost".to_string(),
+        ));
+    }
+
+    let (total_cost, mut cost_effects) = parse_activation_cost(&tokens[cost_start..])?;
+    let (mana_cost, mut extracted_cost_effects) =
+        alternative_cast_parts_from_total_cost(&total_cost);
+    cost_effects.append(&mut extracted_cost_effects);
+    // Keep cost effects stable for deterministic snapshots.
+    if !cost_effects.is_empty() {
+        cost_effects.shrink_to_fit();
+    }
+
+    let mana_cost = mana_cost.ok_or_else(|| {
+        CardTextError::ParseError("flashback keyword missing mana symbols".to_string())
+    })?;
+
+    Ok(Some(AlternativeCastingMethod::Flashback {
+        cost: mana_cost,
+        cost_effects,
+    }))
+}
+

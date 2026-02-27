@@ -1347,7 +1347,15 @@ enum IfResultPredicate {
 
 const IT_TAG: &str = "__it__";
 
-include!("builders/parse_parsing.rs");
+include!("builders/parser/parse_parsing/lex.rs");
+include!("builders/parser/parse_parsing/line_dispatch.rs");
+include!("builders/parser/parse_parsing/keyword_static.rs");
+include!("builders/parser/parse_parsing/activation_and_restrictions.rs");
+include!("builders/parser/parse_parsing/effects_sentences.rs");
+include!("builders/parser/parse_parsing/effects_clauses.rs");
+include!("builders/parser/parse_parsing/targets.rs");
+include!("builders/parser/parse_parsing/object_filters.rs");
+include!("builders/parser/parse_parsing/primitives.rs");
 
 include!("builders/parse_compile.rs");
 
