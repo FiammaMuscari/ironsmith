@@ -225,6 +225,31 @@ fn queue_triggers_from_event(
             .entry(life_gain_event.player)
             .or_insert(0) += life_gain_event.amount;
     }
+    if let Some(keyword_action_event) = event.downcast::<KeywordActionEvent>()
+        && keyword_action_event.action == KeywordActionKind::CommitCrime
+    {
+        let committed = keyword_action_event.amount.max(1);
+        *game
+            .crimes_committed_this_turn
+            .entry(keyword_action_event.player)
+            .or_insert(0) += committed;
+    }
+    if let Some(sacrifice_event) = event.downcast::<SacrificeEvent>() {
+        let sacrificing_player = sacrifice_event
+            .sacrificing_player
+            .or_else(|| sacrifice_event.snapshot.as_ref().map(|snapshot| snapshot.controller))
+            .or_else(|| game.object(sacrifice_event.permanent).map(|obj| obj.controller));
+        let sacrificed_artifact = sacrifice_event
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.card_types.contains(&CardType::Artifact))
+            || game
+                .object(sacrifice_event.permanent)
+                .is_some_and(|obj| obj.card_types.contains(&CardType::Artifact));
+        if sacrificed_artifact && let Some(player) = sacrificing_player {
+            *game.artifacts_sacrificed_this_turn.entry(player).or_insert(0) += 1;
+        }
+    }
 
     game.record_trigger_event_kind(event.kind());
     queue_triggers_for_event(game, trigger_queue, event.clone());

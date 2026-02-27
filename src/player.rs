@@ -499,6 +499,7 @@ pub struct Player {
     pub name: String,
 
     // Life and resources
+    pub starting_life: i32,
     pub life: i32,
     pub mana_pool: ManaPool,
     pub poison_counters: u32,
@@ -538,6 +539,7 @@ impl Player {
         Self {
             id,
             name: name.into(),
+            starting_life,
             life: starting_life,
             mana_pool: ManaPool::new(),
             poison_counters: 0,

@@ -1003,6 +1003,8 @@ pub struct GameState {
     /// Current combat state (Some during combat phase, None otherwise).
     /// Effects can directly add creatures to combat when this is set.
     pub combat: Option<crate::combat_state::CombatState>,
+    /// Whether the game is currently in night mode (day/night designation).
+    pub is_night: bool,
 
     /// Tracks activated abilities that have been used this turn.
     /// Used for OncePerTurn timing restrictions.
@@ -1056,6 +1058,9 @@ pub struct GameState {
     /// Number of creatures that died this turn per controller (at the time they died).
     /// Reset at the start of each turn.
     pub creatures_died_under_controller_this_turn: HashMap<PlayerId, u32>,
+    /// Number of creatures that left the battlefield this turn per controller.
+    /// Reset at the start of each turn.
+    pub creatures_left_battlefield_under_controller_this_turn: HashMap<PlayerId, u32>,
 
     /// Cards/tokens that were put into a graveyard from anywhere this turn.
     ///
@@ -1078,6 +1083,12 @@ pub struct GameState {
     /// Number of spells cast this turn per player.
     /// Reset at the start of each turn.
     pub spells_cast_this_turn: HashMap<PlayerId, u32>,
+    /// Number of crimes committed this turn per player.
+    /// Reset at the start of each turn.
+    pub crimes_committed_this_turn: HashMap<PlayerId, u32>,
+    /// Number of artifacts sacrificed this turn per player.
+    /// Reset at the start of each turn.
+    pub artifacts_sacrificed_this_turn: HashMap<PlayerId, u32>,
 
     /// Total mana spent to cast spells this turn per player.
     ///
@@ -1286,6 +1297,7 @@ impl GameState {
             delayed_triggers: Vec::new(),
             pending_trigger_events: Vec::new(),
             combat: None,
+            is_night: false,
             activated_abilities_this_turn: HashSet::new(),
             chosen_modes_by_ability: HashMap::new(),
             chosen_modes_by_ability_this_turn: HashMap::new(),
@@ -1300,11 +1312,14 @@ impl GameState {
             player_control_timestamp: 0,
             creatures_died_this_turn: 0,
             creatures_died_under_controller_this_turn: HashMap::new(),
+            creatures_left_battlefield_under_controller_this_turn: HashMap::new(),
             objects_put_into_graveyard_this_turn: HashSet::new(),
             objects_put_into_graveyard_from_battlefield_this_turn: HashSet::new(),
             triggers_fired_this_turn: HashMap::new(),
             turn_counters: TurnCounterTracker::default(),
             spells_cast_this_turn: HashMap::new(),
+            crimes_committed_this_turn: HashMap::new(),
+            artifacts_sacrificed_this_turn: HashMap::new(),
             mana_spent_to_cast_spells_this_turn: HashMap::new(),
             spells_cast_this_turn_total: 0,
             spells_cast_this_turn_snapshots: Vec::new(),
@@ -1708,6 +1723,13 @@ impl GameState {
             self.creatures_died_this_turn += 1;
             *self
                 .creatures_died_under_controller_this_turn
+                .entry(controller)
+                .or_insert(0) += 1;
+        }
+        if old_zone == Zone::Battlefield && new_zone != Zone::Battlefield && old_object.is_creature()
+        {
+            *self
+                .creatures_left_battlefield_under_controller_this_turn
                 .entry(controller)
                 .or_insert(0) += 1;
         }
@@ -2771,6 +2793,8 @@ impl GameState {
         self.cards_drawn_this_turn.clear();
         self.creatures_died_this_turn = 0;
         self.creatures_died_under_controller_this_turn.clear();
+        self.creatures_left_battlefield_under_controller_this_turn
+            .clear();
         self.objects_put_into_graveyard_this_turn.clear();
         self.objects_put_into_graveyard_from_battlefield_this_turn
             .clear();
@@ -2779,6 +2803,8 @@ impl GameState {
         self.turn_counters.clear();
         self.spells_cast_last_turn_total = self.spells_cast_this_turn_total;
         self.spells_cast_this_turn.clear();
+        self.crimes_committed_this_turn.clear();
+        self.artifacts_sacrificed_this_turn.clear();
         self.mana_spent_to_cast_spells_this_turn.clear();
         self.spells_cast_this_turn_total = 0;
         self.spells_cast_this_turn_snapshots.clear();

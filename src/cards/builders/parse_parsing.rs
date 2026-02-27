@@ -3761,6 +3761,13 @@ fn parse_this_spell_cost_condition(
     {
         return Some(ThisSpellCostCondition::YouLifeTotalOrLess(n as i32));
     }
+    if w.as_slice()
+        == [
+            "your", "life", "total", "is", "less", "than", "your", "starting", "life", "total",
+        ]
+    {
+        return Some(ThisSpellCostCondition::LifeTotalLessThanStarting);
+    }
 
     if w.as_slice() == ["you", "attacked", "this", "turn"]
         || w.as_slice() == ["youve", "attacked", "this", "turn"]
@@ -3792,6 +3799,35 @@ fn parse_this_spell_cost_condition(
     {
         return Some(ThisSpellCostCondition::YouGainedLifeThisTurnOrMore(n));
     }
+    if w.as_slice() == ["its", "night"] || w.as_slice() == ["it", "is", "night"] {
+        return Some(ThisSpellCostCondition::IsNight);
+    }
+    if w.as_slice() == ["youve", "sacrificed", "an", "artifact", "this", "turn"]
+        || w.as_slice() == ["you", "sacrificed", "an", "artifact", "this", "turn"]
+    {
+        return Some(ThisSpellCostCondition::YouSacrificedArtifactThisTurn);
+    }
+    if w.as_slice() == ["youve", "committed", "a", "crime", "this", "turn"]
+        || w.as_slice() == ["you", "committed", "a", "crime", "this", "turn"]
+    {
+        return Some(ThisSpellCostCondition::YouCommittedCrimeThisTurn);
+    }
+    if w.as_slice()
+        == [
+            "a",
+            "creature",
+            "left",
+            "the",
+            "battlefield",
+            "under",
+            "your",
+            "control",
+            "this",
+            "turn",
+        ]
+    {
+        return Some(ThisSpellCostCondition::CreatureLeftBattlefieldUnderYourControlThisTurn);
+    }
     if (w.starts_with(&["youve", "cast", "another"])
         || w.starts_with(&["you", "cast", "another"]))
         && w.ends_with(&["this", "turn"])
@@ -3814,9 +3850,28 @@ fn parse_this_spell_cost_condition(
             card_types: Vec::new(),
         });
     }
+    if (w.starts_with(&["youve", "cast"]) || w.starts_with(&["you", "cast"]))
+        && w.ends_with(&["this", "turn"])
+        && (w.contains(&"instant") || w.contains(&"sorcery"))
+    {
+        let mut types = Vec::new();
+        if w.contains(&"instant") {
+            types.push(CardType::Instant);
+        }
+        if w.contains(&"sorcery") {
+            types.push(CardType::Sorcery);
+        }
+        return Some(ThisSpellCostCondition::YouCastSpellsThisTurnOrMore {
+            count: 1,
+            card_types: types,
+        });
+    }
 
     if w.as_slice() == ["you", "werent", "the", "starting", "player"] {
         return Some(ThisSpellCostCondition::NotStartingPlayer);
+    }
+    if w.as_slice() == ["a", "creature", "is", "attacking", "you"] {
+        return Some(ThisSpellCostCondition::CreatureIsAttackingYou);
     }
     if w.as_slice()
         == [
@@ -3847,6 +3902,25 @@ fn parse_this_spell_cost_condition(
         return Some(ThisSpellCostCondition::DistinctCardTypesInYourGraveyardOrMore(
             n,
         ));
+    }
+    if w.starts_with(&["you", "have"])
+        && w.ends_with(&["in", "your", "graveyard"])
+        && let Some((n, _)) = parse_number(tokens.get(2..).unwrap_or_default())
+    {
+        if w.contains(&"instant") || w.contains(&"sorcery") {
+            let mut types = Vec::new();
+            if w.contains(&"instant") {
+                types.push(CardType::Instant);
+            }
+            if w.contains(&"sorcery") {
+                types.push(CardType::Sorcery);
+            }
+            return Some(ThisSpellCostCondition::YouHaveCardsOfTypesInYourGraveyardOrMore {
+                count: n,
+                card_types: types,
+            });
+        }
+        return Some(ThisSpellCostCondition::YouHaveCardsInYourGraveyardOrMore(n));
     }
     if w.len() >= 7
         && ((w[0] == "an" && w[1] == "opponent" && w[2] == "has")
@@ -3879,6 +3953,19 @@ fn parse_this_spell_cost_condition(
             });
         }
     }
+    if ((w.starts_with(&["you", "have", "no", "other", "creature", "cards"])
+        && w.windows(2).any(|window| window == ["or", "if"]))
+        || w.starts_with(&[
+            "the", "only", "other", "creature", "cards", "in", "your", "hand", "are", "named",
+        ]))
+        && let Some(named_idx) = w.iter().position(|word| *word == "named")
+        && named_idx + 1 < w.len()
+    {
+        let name = w[named_idx + 1..].join(" ");
+        if !name.is_empty() {
+            return Some(ThisSpellCostCondition::OnlyCreatureCardsInHandNamed(name));
+        }
+    }
 
     if w.starts_with(&["there", "is"]) && w.ends_with(&["in", "your", "graveyard"]) {
         let filter_tokens = trim_commas(tokens.get(2..).unwrap_or_default());
@@ -3888,6 +3975,36 @@ fn parse_this_spell_cost_condition(
                 display: w.join(" "),
             });
         }
+    }
+
+    if w.as_slice()
+        == [
+            "it",
+            "targets",
+            "a",
+            "spell",
+            "or",
+            "ability",
+            "that",
+            "targets",
+            "a",
+            "creature",
+            "you",
+            "control",
+            "with",
+            "power",
+            "7",
+            "or",
+            "greater",
+        ]
+    {
+        let mut protected = ObjectFilter::creature().you_control();
+        protected.power = Some(crate::filter::Comparison::GreaterThanOrEqual(7));
+        let mut stack_target = ObjectFilter::default();
+        stack_target.zone = Some(Zone::Stack);
+        stack_target.stack_kind = Some(crate::filter::StackObjectKind::SpellOrAbility);
+        stack_target.targets_object = Some(Box::new(protected));
+        return Some(ThisSpellCostCondition::TargetsObject(stack_target));
     }
 
     if let Some(target_condition) = parse_this_spell_target_condition(tokens) {
@@ -38989,6 +39106,245 @@ mod parse_parsing_tests {
             }
         }
         assert!(found, "expected tapped-creature target condition");
+    }
+
+    #[test]
+    fn parse_this_spell_cost_modifier_with_graveyard_count_condition() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Graveyard Count Discount Parse Probe",
+        )
+        .parse_text(
+            "This spell costs {3} less to cast if you have nine or more cards in your graveyard.\nDraw a card.",
+        )
+        .expect("parse this-spell reduction with graveyard-count condition");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if let Some(modifier) = static_ability.this_spell_cost_reduction()
+                && modifier.reduction == Value::Fixed(3)
+                && matches!(
+                    modifier.condition,
+                    crate::static_abilities::ThisSpellCostCondition::YouHaveCardsInYourGraveyardOrMore(9)
+                )
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "expected graveyard-count condition");
+    }
+
+    #[test]
+    fn parse_this_spell_cost_modifier_with_creature_attacking_you_condition() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Attack Trap Parse Probe",
+        )
+        .parse_text(
+            "This spell costs {2} less to cast if a creature is attacking you.\nDestroy target attacking creature.",
+        )
+        .expect("parse this-spell reduction with attacking-you condition");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if let Some(modifier) = static_ability.this_spell_cost_reduction()
+                && modifier.reduction == Value::Fixed(2)
+                && matches!(
+                    modifier.condition,
+                    crate::static_abilities::ThisSpellCostCondition::CreatureIsAttackingYou
+                )
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "expected attacking-you condition");
+    }
+
+    #[test]
+    fn parse_this_spell_cost_modifier_with_night_condition() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Night Discount Parse Probe",
+        )
+        .parse_text(
+            "This spell costs {2} less to cast if it's night.\nThis spell deals 3 damage to any target.",
+        )
+        .expect("parse this-spell reduction with night condition");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if let Some(modifier) = static_ability.this_spell_cost_reduction()
+                && modifier.reduction == Value::Fixed(2)
+                && matches!(
+                    modifier.condition,
+                    crate::static_abilities::ThisSpellCostCondition::IsNight
+                )
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "expected night condition");
+    }
+
+    #[test]
+    fn parse_this_spell_cost_modifier_with_sacrificed_artifact_condition() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Artifact Sacrifice Discount Parse Probe",
+        )
+        .parse_text(
+            "This spell costs {3} less to cast if you've sacrificed an artifact this turn.\nThis spell can't be countered.\nThis spell deals 4 damage to target creature.",
+        )
+        .expect("parse this-spell reduction with artifact-sacrifice condition");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if let Some(modifier) = static_ability.this_spell_cost_reduction()
+                && modifier.reduction == Value::Fixed(3)
+                && matches!(
+                    modifier.condition,
+                    crate::static_abilities::ThisSpellCostCondition::YouSacrificedArtifactThisTurn
+                )
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "expected artifact-sacrifice condition");
+    }
+
+    #[test]
+    fn parse_this_spell_cost_modifier_with_creature_left_battlefield_condition() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Creature Left Battlefield Discount Parse Probe",
+        )
+        .parse_text(
+            "This spell costs {2} less to cast if a creature left the battlefield under your control this turn.\nDraw a card.",
+        )
+        .expect("parse this-spell reduction with creature-left condition");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if let Some(modifier) = static_ability.this_spell_cost_reduction()
+                && modifier.reduction == Value::Fixed(2)
+                && matches!(
+                    modifier.condition,
+                    crate::static_abilities::ThisSpellCostCondition::CreatureLeftBattlefieldUnderYourControlThisTurn
+                )
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "expected creature-left-battlefield condition");
+    }
+
+    #[test]
+    fn parse_this_spell_cost_modifier_with_committed_crime_condition() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Crime Discount Parse Probe",
+        )
+        .parse_text(
+            "This spell costs {1} less to cast if you've committed a crime this turn.\nDraw two cards.",
+        )
+        .expect("parse this-spell reduction with committed-crime condition");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if let Some(modifier) = static_ability.this_spell_cost_reduction()
+                && modifier.reduction == Value::Fixed(1)
+                && matches!(
+                    modifier.condition,
+                    crate::static_abilities::ThisSpellCostCondition::YouCommittedCrimeThisTurn
+                )
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "expected committed-crime condition");
+    }
+
+    #[test]
+    fn parse_this_spell_cost_modifier_with_only_named_other_creatures_condition() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Mothrider Condition Parse Probe",
+        )
+        .parse_text(
+            "This spell costs {2} less to cast if you have no other creature cards in hand or if the only other creature cards in your hand are named Mothrider Cavalry.\nFlying\nOther creatures you control get +1/+1.",
+        )
+        .expect("parse this-spell reduction with named-creatures-in-hand condition");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if let Some(modifier) = static_ability.this_spell_cost_reduction()
+                && modifier.reduction == Value::Fixed(2)
+                && let crate::static_abilities::ThisSpellCostCondition::OnlyCreatureCardsInHandNamed(name) =
+                    &modifier.condition
+                && name == "mothrider cavalry"
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "expected named-creatures-in-hand condition");
+    }
+
+    #[test]
+    fn parse_if_this_spell_costs_x_less_where_difference_condition() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Starting Life Difference Discount Parse Probe",
+        )
+        .parse_text(
+            "If your life total is less than your starting life total, this spell costs {X} less to cast, where X is the difference.",
+        )
+        .expect("parse leading-if this-spell X reduction");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if let Some(modifier) = static_ability.this_spell_cost_reduction()
+                && modifier.reduction == Value::X
+                && matches!(
+                    modifier.condition,
+                    crate::static_abilities::ThisSpellCostCondition::LifeTotalLessThanStarting
+                )
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "expected starting-life-difference condition");
     }
 
     #[test]

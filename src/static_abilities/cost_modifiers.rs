@@ -597,6 +597,17 @@ pub enum ThisSpellCostCondition {
     OpponentHasPoisonCountersOrMore(u32),
     OpponentHasCardsInGraveyardOrMore(u32),
     DistinctCardTypesInYourGraveyardOrMore(u32),
+    LifeTotalLessThanStarting,
+    IsNight,
+    YouSacrificedArtifactThisTurn,
+    YouCommittedCrimeThisTurn,
+    CreatureLeftBattlefieldUnderYourControlThisTurn,
+    YouHaveCardsInYourGraveyardOrMore(u32),
+    YouHaveCardsOfTypesInYourGraveyardOrMore {
+        count: u32,
+        card_types: Vec<CardType>,
+    },
+    OnlyCreatureCardsInHandNamed(String),
     NoCardsInHandMatching {
         filter: ObjectFilter,
         display: String,
@@ -607,6 +618,7 @@ pub enum ThisSpellCostCondition {
     },
     NotStartingPlayer,
     CreatureCardPutIntoYourGraveyardThisTurn,
+    CreatureIsAttackingYou,
 }
 
 fn describe_this_spell_cost_condition(condition: &ThisSpellCostCondition) -> Option<String> {
@@ -675,6 +687,38 @@ fn describe_this_spell_cost_condition(condition: &ThisSpellCostCondition) -> Opt
         ThisSpellCostCondition::DistinctCardTypesInYourGraveyardOrMore(n) => Some(format!(
             "there are {n} or more card types among cards in your graveyard"
         )),
+        ThisSpellCostCondition::LifeTotalLessThanStarting => {
+            Some("your life total is less than your starting life total".to_string())
+        }
+        ThisSpellCostCondition::IsNight => Some("it's night".to_string()),
+        ThisSpellCostCondition::YouSacrificedArtifactThisTurn => {
+            Some("you've sacrificed an artifact this turn".to_string())
+        }
+        ThisSpellCostCondition::YouCommittedCrimeThisTurn => {
+            Some("you've committed a crime this turn".to_string())
+        }
+        ThisSpellCostCondition::CreatureLeftBattlefieldUnderYourControlThisTurn => {
+            Some("a creature left the battlefield under your control this turn".to_string())
+        }
+        ThisSpellCostCondition::YouHaveCardsInYourGraveyardOrMore(n) => {
+            Some(format!("you have {n} or more cards in your graveyard"))
+        }
+        ThisSpellCostCondition::YouHaveCardsOfTypesInYourGraveyardOrMore {
+            count,
+            card_types,
+        } => {
+            let type_text = card_types
+                .iter()
+                .map(|card_type| describe_card_type(*card_type).to_string())
+                .collect::<Vec<_>>();
+            Some(format!(
+                "you have {count} or more {} cards in your graveyard",
+                join_with_and(&type_text)
+            ))
+        }
+        ThisSpellCostCondition::OnlyCreatureCardsInHandNamed(name) => Some(format!(
+            "the only other creature cards in your hand are named {name}"
+        )),
         ThisSpellCostCondition::NoCardsInHandMatching { display, .. } => Some(display.clone()),
         ThisSpellCostCondition::CardInYourGraveyardMatching { display, .. } => {
             Some(display.clone())
@@ -685,6 +729,9 @@ fn describe_this_spell_cost_condition(condition: &ThisSpellCostCondition) -> Opt
         ThisSpellCostCondition::CreatureCardPutIntoYourGraveyardThisTurn => Some(
             "a creature card was put into your graveyard from anywhere this turn".to_string(),
         ),
+        ThisSpellCostCondition::CreatureIsAttackingYou => {
+            Some("a creature is attacking you".to_string())
+        }
     }
 }
 
@@ -741,6 +788,17 @@ fn chosen_targets_match(
         })
     });
     matches_player && matches_object
+}
+
+fn normalize_name_for_match(name: &str) -> String {
+    name.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
+}
+
+fn names_match(lhs: &str, rhs: &str) -> bool {
+    lhs.eq_ignore_ascii_case(rhs) || normalize_name_for_match(lhs) == normalize_name_for_match(rhs)
 }
 
 pub fn this_spell_cost_condition_is_active_for_cast(
@@ -890,6 +948,28 @@ pub fn this_spell_cost_condition_is_active_for_cast(
             .iter()
             .filter(|player| player.is_in_game() && player.id != controller)
             .any(|player| player.graveyard.len() >= *n as usize),
+        ThisSpellCostCondition::LifeTotalLessThanStarting => game
+            .player(controller)
+            .is_some_and(|player| player.life < player.starting_life),
+        ThisSpellCostCondition::IsNight => game.is_night,
+        ThisSpellCostCondition::YouSacrificedArtifactThisTurn => game
+            .artifacts_sacrificed_this_turn
+            .get(&controller)
+            .copied()
+            .unwrap_or(0)
+            > 0,
+        ThisSpellCostCondition::YouCommittedCrimeThisTurn => game
+            .crimes_committed_this_turn
+            .get(&controller)
+            .copied()
+            .unwrap_or(0)
+            > 0,
+        ThisSpellCostCondition::CreatureLeftBattlefieldUnderYourControlThisTurn => game
+            .creatures_left_battlefield_under_controller_this_turn
+            .get(&controller)
+            .copied()
+            .unwrap_or(0)
+            > 0,
         ThisSpellCostCondition::DistinctCardTypesInYourGraveyardOrMore(n) => {
             let Some(player) = game.player(controller) else {
                 return false;
@@ -903,6 +983,40 @@ pub fn this_spell_cost_condition_is_active_for_cast(
                 }
             }
             card_types.len() >= *n as usize
+        }
+        ThisSpellCostCondition::YouHaveCardsInYourGraveyardOrMore(n) => game
+            .player(controller)
+            .is_some_and(|player| player.graveyard.len() >= *n as usize),
+        ThisSpellCostCondition::YouHaveCardsOfTypesInYourGraveyardOrMore {
+            count,
+            card_types,
+        } => {
+            let Some(player) = game.player(controller) else {
+                return false;
+            };
+            let matching = player
+                .graveyard
+                .iter()
+                .filter(|card_id| {
+                    game.object(**card_id).is_some_and(|object| {
+                        card_types
+                            .iter()
+                            .any(|card_type| object.card_types.contains(card_type))
+                    })
+                })
+                .count();
+            matching >= *count as usize
+        }
+        ThisSpellCostCondition::OnlyCreatureCardsInHandNamed(name) => {
+            let Some(player) = game.player(controller) else {
+                return false;
+            };
+            player
+                .hand
+                .iter()
+                .filter_map(|card_id| game.object(*card_id))
+                .filter(|object| object.card_types.contains(&CardType::Creature))
+                .all(|object| names_match(&object.name, name))
         }
         ThisSpellCostCondition::NoCardsInHandMatching { filter, .. } => {
             let Some(player) = game.player(controller) else {
@@ -959,6 +1073,17 @@ pub fn this_spell_cost_condition_is_active_for_cast(
                 })
             })
         }
+        ThisSpellCostCondition::CreatureIsAttackingYou => game
+            .combat
+            .as_ref()
+            .is_some_and(|combat| {
+                combat.attackers.iter().any(|attacker| {
+                    matches!(
+                        attacker.target,
+                        crate::combat_state::AttackTarget::Player(player) if player == controller
+                    )
+                })
+            }),
     }
 }
 
