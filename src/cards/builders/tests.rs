@@ -10932,6 +10932,50 @@ fn parse_exile_top_x_until_end_of_your_next_turn_may_play_those_cards() {
 }
 
 #[test]
+fn parse_exile_top_card_you_may_play_that_card_this_turn() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Impulse Draw Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Exile the top card of your library. You may play that card this turn.")
+        .expect("exile-top then play-that-card-this-turn should parse");
+
+    let spell_debug = format!("{:#?}", def.spell_effect).to_ascii_lowercase();
+    assert!(
+        spell_debug.contains("grantplaytaggedeffect"),
+        "expected end-of-turn tagged play grant, got {spell_debug}"
+    );
+    assert!(
+        spell_debug.contains("untilendofturn"),
+        "expected end-of-turn duration on tagged play grant, got {spell_debug}"
+    );
+}
+
+#[test]
+fn parse_target_player_may_cast_tagged_card_without_paying_mana_cost() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Cast Tagged Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "Exile the top card of target player's library. That player may cast that card without paying its mana cost.",
+        )
+        .expect("target-player may-cast-tagged clause should parse");
+
+    let spell_debug = format!("{:#?}", def.spell_effect).to_ascii_lowercase();
+    assert!(
+        spell_debug.contains("casttaggedeffect"),
+        "expected cast-tagged effect in spell text, got {spell_debug}"
+    );
+}
+
+#[test]
+fn parse_put_the_rest_on_bottom_with_previous_put_into_hand() {
+    let _def = CardDefinitionBuilder::new(CardId::from_raw(1), "Put Rest Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "Look at the top three cards of your library. You may reveal a creature card from among them and put it into your hand. Put the rest on the bottom of your library in any order.",
+        )
+        .expect("put-the-rest-on-bottom follow-up should parse as part of put clause");
+}
+
+#[test]
 fn parse_when_this_creature_becomes_blocked_may_untap_and_remove_from_combat() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Gustcloak Variant")
         .card_types(vec![CardType::Creature])

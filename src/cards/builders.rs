@@ -796,6 +796,10 @@ enum EffectAst {
     PlayFromGraveyardUntilEot {
         player: PlayerAst,
     },
+    GrantPlayTaggedUntilEndOfTurn {
+        tag: TagKey,
+        player: PlayerAst,
+    },
     GrantPlayTaggedUntilYourNextTurn {
         tag: TagKey,
         player: PlayerAst,
@@ -866,6 +870,7 @@ enum EffectAst {
         player: PlayerAst,
         count: u32,
     },
+    PutRestOnBottomOfLibrary,
     CopySpell {
         target: TargetAst,
         count: Value,

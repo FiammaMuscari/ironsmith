@@ -987,6 +987,7 @@ fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::Scry { player, .. }
         | EffectAst::Surveil { player, .. }
         | EffectAst::PlayFromGraveyardUntilEot { player }
+        | EffectAst::GrantPlayTaggedUntilEndOfTurn { player, .. }
         | EffectAst::ExileInsteadOfGraveyardThisTurn { player }
         | EffectAst::ExtraTurnAfterTurn { player }
         | EffectAst::RevealTop { player }
@@ -1227,6 +1228,7 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
             target_references_tag(object, IT_TAG) || target_references_tag(target, IT_TAG)
         }
         EffectAst::PutIntoHand { object, .. } => matches!(object, ObjectRefAst::It),
+        EffectAst::PutRestOnBottomOfLibrary => true,
         EffectAst::CopySpell { target, .. } => target_references_tag(target, IT_TAG),
         EffectAst::RetargetStackObject {
             target,
@@ -1248,7 +1250,8 @@ fn effect_references_it_tag(effect: &EffectAst) -> bool {
             references
         }
         EffectAst::CreateTokenCopy { object, .. } => matches!(object, ObjectRefAst::It),
-        EffectAst::GrantPlayTaggedUntilYourNextTurn { tag, .. }
+        EffectAst::GrantPlayTaggedUntilEndOfTurn { tag, .. }
+        | EffectAst::GrantPlayTaggedUntilYourNextTurn { tag, .. }
         | EffectAst::CastTagged { tag, .. }
         | EffectAst::ReorderTopOfLibrary { tag } => tag.as_str() == IT_TAG,
         EffectAst::CreateToken { count, .. } | EffectAst::CreateTokenWithMods { count, .. } => {
@@ -3291,6 +3294,26 @@ fn compile_effect(
             let effect = Effect::grant_play_from_graveyard_until_eot(player_filter);
             Ok((vec![effect], Vec::new()))
         }
+        EffectAst::GrantPlayTaggedUntilEndOfTurn { tag, player } => {
+            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let resolved_tag = if tag.as_str() == IT_TAG {
+                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
+                    CardTextError::ParseError(
+                        "unable to resolve 'it' without prior reference".to_string(),
+                    )
+                })?)
+            } else {
+                tag.clone()
+            };
+            Ok((
+                vec![Effect::new(crate::effects::GrantPlayTaggedEffect::new(
+                    resolved_tag,
+                    player_filter,
+                    crate::effects::GrantPlayTaggedDuration::UntilEndOfTurn,
+                ))],
+                Vec::new(),
+            ))
+        }
         EffectAst::GrantPlayTaggedUntilYourNextTurn { tag, player } => {
             let player_filter = resolve_non_target_player_filter(*player, ctx)?;
             let resolved_tag = if tag.as_str() == IT_TAG {
@@ -4491,6 +4514,41 @@ fn compile_effect(
             );
 
             Ok((vec![choose, move_chosen, move_rest], choices))
+        }
+        EffectAst::PutRestOnBottomOfLibrary => {
+            use crate::effect::Condition;
+            use crate::target::{ObjectFilter, TaggedObjectConstraint, TaggedOpbjectRelation};
+
+            let looked_tag = ctx.last_object_tag.clone().ok_or_else(|| {
+                CardTextError::ParseError(
+                    "unable to resolve 'rest' without prior reference".to_string(),
+                )
+            })?;
+
+            let mut membership_filter = ObjectFilter::default();
+            membership_filter.tagged_constraints.push(TaggedObjectConstraint {
+                tag: TagKey::from("__it__"),
+                relation: TaggedOpbjectRelation::SameStableId,
+            });
+            let in_it = Condition::PlayerTaggedObjectMatches {
+                player: PlayerFilter::IteratedPlayer,
+                tag: TagKey::from(IT_TAG),
+                filter: membership_filter,
+            };
+            let move_rest = Effect::for_each_tagged(
+                looked_tag,
+                vec![Effect::conditional(
+                    in_it,
+                    Vec::new(),
+                    vec![Effect::move_to_zone(
+                        ChooseSpec::Iterated,
+                        Zone::Library,
+                        false,
+                    )],
+                )],
+            );
+
+            Ok((vec![move_rest], Vec::new()))
         }
         EffectAst::CopySpell {
             target,

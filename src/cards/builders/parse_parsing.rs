@@ -944,6 +944,30 @@ fn should_keep_and_for_each_player_may_clause(current: &[Token], remaining: &[To
     true
 }
 
+fn should_keep_and_for_put_rest_clause(current: &[Token], remaining: &[Token]) -> bool {
+    if current.is_empty() || remaining.is_empty() {
+        return false;
+    }
+
+    let current_words = words(current);
+    let remaining_words = words(remaining);
+    if current_words.is_empty() || remaining_words.is_empty() {
+        return false;
+    }
+
+    let starts_with_rest =
+        remaining_words.starts_with(&["the", "rest"]) || remaining_words.starts_with(&["rest"]);
+    if !starts_with_rest {
+        return false;
+    }
+
+    // Keep "and the rest ..." attached to a preceding put-into-hand clause so
+    // multi-destination patterns parse as one effect.
+    current_words.contains(&"put")
+        && current_words.contains(&"into")
+        && current_words.contains(&"hand")
+}
+
 fn split_effect_chain_on_and(tokens: &[Token]) -> Vec<Vec<Token>> {
     let mut segments = Vec::new();
     let mut current = Vec::new();
@@ -959,6 +983,7 @@ fn split_effect_chain_on_and(tokens: &[Token]) -> Vec<Vec<Token>> {
                 || should_keep_and_for_token_rules(&current, &tokens[idx + 1..])
                 || should_keep_and_for_attachment_object_list(&current, &tokens[idx + 1..])
                 || should_keep_and_for_each_player_may_clause(&current, &tokens[idx + 1..])
+                || should_keep_and_for_put_rest_clause(&current, &tokens[idx + 1..])
             {
                 current.push(token.clone());
                 continue;
@@ -30679,7 +30704,13 @@ fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardText
             parser: parse_distribute_counters_clause,
         },
         ClausePrimitive {
+            parser: parse_until_end_of_turn_may_play_tagged_clause,
+        },
+        ClausePrimitive {
             parser: parse_until_your_next_turn_may_play_tagged_clause,
+        },
+        ClausePrimitive {
+            parser: parse_cast_or_play_tagged_clause,
         },
         ClausePrimitive {
             parser: parse_prevent_next_damage_clause,
@@ -32757,6 +32788,67 @@ fn parse_distribute_counters_clause(tokens: &[Token]) -> Result<Option<EffectAst
     parse_distribute_counters_sentence(tokens)
 }
 
+fn parse_tagged_cast_or_play_target(words: &[&str]) -> Option<(bool, usize)> {
+    if words.starts_with(&["it"]) || words.starts_with(&["them"]) {
+        return Some((false, 1));
+    }
+    if words.starts_with(&["that", "card"])
+        || words.starts_with(&["those", "cards"])
+        || words.starts_with(&["that", "spell"])
+        || words.starts_with(&["those", "spells"])
+        || words.starts_with(&["the", "card"])
+        || words.starts_with(&["the", "cards"])
+    {
+        return Some((false, 2));
+    }
+    if words.starts_with(&["the", "copy"])
+        || words.starts_with(&["that", "copy"])
+        || words.starts_with(&["a", "copy"])
+    {
+        return Some((true, 2));
+    }
+    None
+}
+
+fn parse_until_end_of_turn_may_play_tagged_clause(
+    tokens: &[Token],
+) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    let prefix_len = if clause_words.starts_with(&["until", "the", "end", "of", "turn"]) {
+        5
+    } else if clause_words.starts_with(&["until", "end", "of", "turn"]) {
+        4
+    } else {
+        return Ok(None);
+    };
+
+    let tail = &clause_words[prefix_len..];
+    if !tail.starts_with(&["you", "may", "play"]) {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported until-end-of-turn permission clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+    let target_words = &tail[3..];
+    let Some((as_copy, consumed)) = parse_tagged_cast_or_play_target(target_words) else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported until-end-of-turn play target (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    };
+    if as_copy || consumed != target_words.len() {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported until-end-of-turn play target (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    Ok(Some(EffectAst::GrantPlayTaggedUntilEndOfTurn {
+        tag: TagKey::from(IT_TAG),
+        player: PlayerAst::You,
+    }))
+}
+
 fn parse_until_your_next_turn_may_play_tagged_clause(
     tokens: &[Token],
 ) -> Result<Option<EffectAst>, CardTextError> {
@@ -32793,6 +32885,53 @@ fn parse_until_your_next_turn_may_play_tagged_clause(
         tag: TagKey::from(IT_TAG),
         player: PlayerAst::You,
     }))
+}
+
+fn parse_cast_or_play_tagged_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
+    let mut clause_words = words(tokens);
+    while clause_words
+        .first()
+        .is_some_and(|word| *word == "then" || *word == "and")
+    {
+        clause_words.remove(0);
+    }
+    let Some(verb_word) = clause_words.first().copied() else {
+        return Ok(None);
+    };
+    let is_cast = verb_word == "cast";
+    let is_play = verb_word == "play";
+    if !is_cast && !is_play {
+        return Ok(None);
+    }
+
+    let rest = &clause_words[1..];
+    let Some((as_copy, consumed)) = parse_tagged_cast_or_play_target(rest) else {
+        return Ok(None);
+    };
+    let tail = &rest[consumed..];
+
+    let has_this_turn_duration = tail == ["this", "turn"];
+    let has_until_end_of_turn_duration = tail == ["until", "end", "of", "turn"]
+        || tail == ["until", "the", "end", "of", "turn"];
+    if has_this_turn_duration || has_until_end_of_turn_duration {
+        return Ok(Some(EffectAst::GrantPlayTaggedUntilEndOfTurn {
+            tag: TagKey::from(IT_TAG),
+            player: PlayerAst::Implicit,
+        }));
+    }
+
+    let without_paying_its_cost = tail == ["without", "paying", "its", "mana", "cost"]
+        || tail == ["without", "paying", "their", "mana", "cost"];
+    if tail.is_empty() || without_paying_its_cost {
+        return Ok(Some(EffectAst::CastTagged {
+            tag: TagKey::from(IT_TAG),
+            allow_land: is_play,
+            as_copy,
+            without_paying_mana_cost: without_paying_its_cost,
+        }));
+    }
+
+    Ok(None)
 }
 
 fn parse_prevent_next_time_damage_sentence(
@@ -35879,6 +36018,13 @@ fn parse_put_into_hand(
                     "unsupported put destination after 'on bottom of' (clause: '{}')",
                     clause_words.join(" ")
                 )));
+            }
+
+            let target_words = words(&target_tokens);
+            let is_rest_target =
+                target_words.as_slice() == ["the", "rest"] || target_words.as_slice() == ["rest"];
+            if is_rest_target {
+                return Ok(EffectAst::PutRestOnBottomOfLibrary);
             }
 
             let target = if let Some((count, used)) = parse_number(&target_tokens)
