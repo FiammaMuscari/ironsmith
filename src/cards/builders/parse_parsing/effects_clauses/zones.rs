@@ -1500,10 +1500,27 @@ pub(crate) fn parse_any_combination_mana_colors(
 
     let mut colors = Vec::new();
     for word in &clause_words[combination_idx + 3..] {
+        if *word == "where" {
+            break;
+        }
         if matches!(
             *word,
-            "and" | "or" | "mana" | "to" | "your" | "their" | "its" | "pool"
+            "and" | "or" | "and/or" | "mana" | "to" | "your" | "their" | "its" | "pool"
         ) {
+            continue;
+        }
+        if matches!(*word, "color" | "colors") {
+            for color in [
+                crate::color::Color::White,
+                crate::color::Color::Blue,
+                crate::color::Color::Black,
+                crate::color::Color::Red,
+                crate::color::Color::Green,
+            ] {
+                if !colors.contains(&color) {
+                    colors.push(color);
+                }
+            }
             continue;
         }
         let symbol = parse_mana_symbol(word).map_err(|_| {

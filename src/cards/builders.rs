@@ -5629,6 +5629,66 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_add_any_combination_of_colors_expands_to_five_colors() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Terrarion Variant")
+            .parse_text("{T}, Sacrifice this artifact: Add two mana in any combination of colors.")
+            .expect("any-combination-of-colors mana ability should parse");
+
+        let mana_ability = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(a) if a.is_mana_ability() => Some(a),
+                _ => None,
+            })
+            .expect("expected mana ability");
+        let add_any = mana_ability
+            .effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<AddManaOfAnyColorEffect>())
+            .expect("expected AddManaOfAnyColorEffect");
+        assert_eq!(add_any.amount, Value::Fixed(2));
+        let colors = add_any
+            .available_colors
+            .as_ref()
+            .expect("expected explicit five-color restriction");
+        assert_eq!(colors.len(), 5, "expected WUBRG, got {colors:?}");
+        assert!(colors.contains(&crate::color::Color::White));
+        assert!(colors.contains(&crate::color::Color::Blue));
+        assert!(colors.contains(&crate::color::Color::Black));
+        assert!(colors.contains(&crate::color::Color::Red));
+        assert!(colors.contains(&crate::color::Color::Green));
+    }
+
+    #[test]
+    fn parse_add_any_combination_with_where_tail_keeps_color_choices() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Vivi Variant")
+            .parse_text("{T}: Add X mana in any combination of {G} and/or {U}, where X is this creature's power.")
+            .expect("any-combination clause with where-tail should parse");
+
+        let mana_ability = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(a) if a.is_mana_ability() => Some(a),
+                _ => None,
+            })
+            .expect("expected mana ability");
+        let add_any = mana_ability
+            .effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<AddManaOfAnyColorEffect>())
+            .expect("expected AddManaOfAnyColorEffect");
+        let colors = add_any
+            .available_colors
+            .as_ref()
+            .expect("expected restricted colors");
+        assert_eq!(colors.len(), 2, "expected two-color restriction, got {colors:?}");
+        assert!(colors.contains(&crate::color::Color::Green));
+        assert!(colors.contains(&crate::color::Color::Blue));
+    }
+
+    #[test]
     fn parse_add_any_color_that_opponent_land_could_produce_compiles_restricted_mana_effect() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Exotic Orchard Variant")
             .parse_text(
