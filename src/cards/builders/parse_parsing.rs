@@ -31574,8 +31574,20 @@ fn parse_become_clause(
     }
 
     // "the color of your choice" / "color of your choice"
-    if become_words == ["color", "of", "your", "choice"] {
+    if become_words == ["color", "of", "your", "choice"]
+        || become_words == ["color", "or", "colors", "of", "your", "choice"]
+        || become_words == ["colors", "of", "your", "choice"]
+    {
         return Ok(EffectAst::BecomeColorChoice { target, duration });
+    }
+
+    // "the creature type of your choice" / "creature type of your choice"
+    if become_words == ["creature", "type", "of", "your", "choice"] {
+        return Ok(EffectAst::BecomeCreatureTypeChoice {
+            target,
+            duration,
+            excluded_subtypes: Vec::new(),
+        });
     }
 
     // "colorless"

@@ -10723,6 +10723,34 @@ fn parse_target_creature_becomes_color_of_your_choice_until_end_of_turn() {
 }
 
 #[test]
+fn parse_target_creature_becomes_color_or_colors_of_your_choice_until_end_of_turn() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Swirling Spriggan Choice Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{G/U}: Target creature you control becomes the color or colors of your choice until end of turn.")
+        .expect("becomes-color-or-colors-of-choice clause should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        abilities_debug.contains("becomecolorchoiceeffect"),
+        "expected become-color-choice effect in activated ability, got {abilities_debug}"
+    );
+}
+
+#[test]
+fn parse_this_creature_becomes_creature_type_of_your_choice_until_end_of_turn() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Mistform Dreamer Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("{1}: This creature becomes the creature type of your choice until end of turn.")
+        .expect("becomes-creature-type-of-choice clause should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        abilities_debug.contains("becomecreaturetypechoiceeffect"),
+        "expected become-creature-type-choice effect in activated ability, got {abilities_debug}"
+    );
+}
+
+#[test]
 fn parse_choose_creature_type_then_target_becomes_that_type() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Imagecrafter Variant")
         .card_types(vec![CardType::Creature])
