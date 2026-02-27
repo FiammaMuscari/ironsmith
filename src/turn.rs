@@ -442,6 +442,7 @@ pub fn execute_cleanup_step(game: &mut GameState) {
 
     // End "until end of turn" effects would happen here
     // (Handled by continuous effect manager)
+    game.continuous_effects.cleanup_end_of_turn();
     game.cleanup_player_control_end_of_turn();
 
     // Normally no priority during cleanup, but if triggers/SBAs happen, there's a new cleanup
@@ -840,6 +841,20 @@ mod tests {
 
         let id = game.create_object_from_card(&card, active_player, Zone::Battlefield);
         game.mark_damage(id, 1);
+        game
+            .continuous_effects
+            .add_effect(crate::continuous::ContinuousEffect::pump(
+                id,
+                active_player,
+                id,
+                3,
+                0,
+                crate::effect::Until::EndOfTurn,
+            ));
+
+        // Base 2/2 with +3/+0 until end of turn.
+        assert_eq!(game.calculated_power(id), Some(5));
+        assert_eq!(game.calculated_toughness(id), Some(2));
 
         execute_cleanup_step(&mut game);
 
@@ -848,6 +863,11 @@ mod tests {
 
         // Damage should be removed
         assert_eq!(game.damage_on(id), 0);
+
+        // "Until end of turn" continuous effects should be removed.
+        assert!(game.continuous_effects.effects_sorted().is_empty());
+        assert_eq!(game.calculated_power(id), Some(2));
+        assert_eq!(game.calculated_toughness(id), Some(2));
 
         // No priority during cleanup
         assert!(game.turn.priority_player.is_none());

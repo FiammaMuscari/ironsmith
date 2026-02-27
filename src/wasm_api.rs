@@ -2821,6 +2821,14 @@ impl Default for WasmGame {
 
 fn build_object_details_snapshot(game: &GameState, id: ObjectId) -> Option<ObjectDetailsSnapshot> {
     let obj = game.object(id)?;
+    let (power, toughness) = if obj.zone == Zone::Battlefield {
+        (
+            game.calculated_power(id).or_else(|| obj.power()),
+            game.calculated_toughness(id).or_else(|| obj.toughness()),
+        )
+    } else {
+        (obj.power(), obj.toughness())
+    };
     let counters = obj
         .counters
         .iter()
@@ -2841,8 +2849,8 @@ fn build_object_details_snapshot(game: &GameState, id: ObjectId) -> Option<Objec
         type_line: format_type_line(obj),
         mana_cost: obj.mana_cost.as_ref().map(|cost| cost.to_oracle()),
         oracle_text: obj.oracle_text.clone(),
-        power: obj.power(),
-        toughness: obj.toughness(),
+        power,
+        toughness,
         loyalty: obj.loyalty(),
         tapped: game.is_tapped(obj.id),
         counters,
@@ -3414,4 +3422,39 @@ fn validate_object_selection(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_object_details_snapshot;
+    use crate::cards::definitions::grizzly_bears;
+    use crate::continuous::ContinuousEffect;
+    use crate::effect::Until;
+    use crate::game_state::GameState;
+    use crate::ids::PlayerId;
+    use crate::zone::Zone;
+
+    #[test]
+    fn object_details_reports_calculated_battlefield_power_toughness() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let bears_def = grizzly_bears();
+        let bears_id = game.create_object_from_definition(&bears_def, alice, Zone::Battlefield);
+
+        // Apply +3/+0 until end of turn to the bears.
+        game.continuous_effects.add_effect(ContinuousEffect::pump(
+            bears_id,
+            alice,
+            bears_id,
+            3,
+            0,
+            Until::EndOfTurn,
+        ));
+
+        let details =
+            build_object_details_snapshot(&game, bears_id).expect("expected object details");
+        assert_eq!(details.power, Some(5));
+        assert_eq!(details.toughness, Some(2));
+    }
 }
