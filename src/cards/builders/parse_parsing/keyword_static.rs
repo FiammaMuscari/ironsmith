@@ -357,6 +357,9 @@ pub(crate) fn parse_static_ability_line(
     if let Some(ability) = parse_creatures_entering_dont_cause_abilities_to_trigger_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) = parse_creatures_assign_combat_damage_using_toughness_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_players_cant_cycle_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -1545,6 +1548,57 @@ pub(crate) fn parse_creatures_entering_dont_cause_abilities_to_trigger_line(
     {
         return Ok(Some(
             StaticAbility::creatures_entering_dont_cause_abilities_to_trigger(),
+        ));
+    }
+    Ok(None)
+}
+
+pub(crate) fn parse_creatures_assign_combat_damage_using_toughness_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    if words.as_slice()
+        == [
+            "each",
+            "creature",
+            "assigns",
+            "combat",
+            "damage",
+            "equal",
+            "to",
+            "its",
+            "toughness",
+            "rather",
+            "than",
+            "its",
+            "power",
+        ]
+    {
+        return Ok(Some(
+            StaticAbility::creatures_assign_combat_damage_using_toughness(),
+        ));
+    }
+    if words.as_slice()
+        == [
+            "each",
+            "creature",
+            "you",
+            "control",
+            "assigns",
+            "combat",
+            "damage",
+            "equal",
+            "to",
+            "its",
+            "toughness",
+            "rather",
+            "than",
+            "its",
+            "power",
+        ]
+    {
+        return Ok(Some(
+            StaticAbility::creatures_you_control_assign_combat_damage_using_toughness(),
         ));
     }
     Ok(None)

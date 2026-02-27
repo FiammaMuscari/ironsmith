@@ -1197,6 +1197,14 @@ impl StaticAbility {
         Self::new(MayAssignDamageAsUnblocked)
     }
 
+    pub fn creatures_assign_combat_damage_using_toughness() -> Self {
+        Self::new(CreaturesAssignCombatDamageUsingToughness)
+    }
+
+    pub fn creatures_you_control_assign_combat_damage_using_toughness() -> Self {
+        Self::new(CreaturesYouControlAssignCombatDamageUsingToughness)
+    }
+
     pub fn prevent_all_damage_dealt_to_creatures() -> Self {
         Self::new(PreventAllDamageDealtToCreatures)
     }

@@ -69,6 +69,8 @@ pub enum StaticAbilityId {
     CantAttackUnlessDefendingPlayerControlsLandSubtype,
     CantBlock,
     MayAssignDamageAsUnblocked,
+    CreaturesAssignCombatDamageUsingToughness,
+    CreaturesYouControlAssignCombatDamageUsingToughness,
 
     // === Continuous effect generators ===
     Anthem,
@@ -291,6 +293,8 @@ impl StaticAbilityId {
                 | CantAttackUnlessDefendingPlayerControlsLandSubtype
                 | CantBlock
                 | MayAssignDamageAsUnblocked
+                | CreaturesAssignCombatDamageUsingToughness
+                | CreaturesYouControlAssignCombatDamageUsingToughness
         )
     }
 

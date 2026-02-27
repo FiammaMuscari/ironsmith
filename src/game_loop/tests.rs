@@ -806,6 +806,41 @@ mod tests {
     }
 
     #[test]
+    fn test_unblocked_attacker_uses_toughness_for_combat_damage_when_static_applies() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let enabler = CardBuilder::new(CardId::new(), "Brontodon Enabler")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(4, 6))
+            .build();
+        let enabler_id = game.create_object_from_card(&enabler, alice, Zone::Battlefield);
+        if let Some(object) = game.object_mut(enabler_id) {
+            object.abilities.push(Ability::static_ability(
+                crate::static_abilities::StaticAbility::creatures_you_control_assign_combat_damage_using_toughness(),
+            ));
+        }
+
+        let attacker_id = create_creature(&mut game, "Wall Fighter", alice, 0, 3);
+
+        let mut combat = CombatState::default();
+        combat.attackers.push(crate::combat_state::AttackerInfo {
+            creature: attacker_id,
+            target: AttackTarget::Player(bob),
+        });
+        combat.blockers.insert(attacker_id, Vec::new());
+
+        let events = execute_combat_damage_step(&mut game, &combat, false);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].amount, 3,
+            "attacker should assign combat damage equal to toughness"
+        );
+        assert_eq!(game.player(bob).unwrap().life, 17);
+    }
+
+    #[test]
     fn test_blocked_attacker_deals_damage_to_blocker() {
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);

@@ -610,6 +610,18 @@ define_combat_ability!(
     "You may have this creature assign its combat damage as though it weren't blocked"
 );
 
+define_combat_ability!(
+    CreaturesAssignCombatDamageUsingToughness,
+    CreaturesAssignCombatDamageUsingToughness,
+    "Each creature assigns combat damage equal to its toughness rather than its power"
+);
+
+define_combat_ability!(
+    CreaturesYouControlAssignCombatDamageUsingToughness,
+    CreaturesYouControlAssignCombatDamageUsingToughness,
+    "Each creature you control assigns combat damage equal to its toughness rather than its power"
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;

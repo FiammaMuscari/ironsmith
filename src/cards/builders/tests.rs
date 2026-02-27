@@ -11045,6 +11045,56 @@ fn parse_creatures_entering_dont_trigger_static_line() {
 }
 
 #[test]
+fn parse_each_creature_assigns_combat_damage_with_toughness_static_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Doran Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Each creature assigns combat damage equal to its toughness rather than its power.")
+        .expect("global toughness-combat-damage static line should parse");
+
+    let static_ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        static_ids.contains(
+            &crate::static_abilities::StaticAbilityId::CreaturesAssignCombatDamageUsingToughness
+        ),
+        "expected global toughness combat-damage static ability, got {static_ids:?}"
+    );
+}
+
+#[test]
+fn parse_each_creature_you_control_assigns_combat_damage_with_toughness_static_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Brontodon Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Each creature you control assigns combat damage equal to its toughness rather than its power.",
+        )
+        .expect("you-control toughness-combat-damage static line should parse");
+
+    let static_ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        static_ids.contains(
+            &crate::static_abilities::StaticAbilityId::CreaturesYouControlAssignCombatDamageUsingToughness
+        ),
+        "expected controller-scoped toughness combat-damage static ability, got {static_ids:?}"
+    );
+}
+
+#[test]
 fn parse_return_up_to_one_subtype_list_target_stays_single_clause() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Thwart Return Variant")
         .card_types(vec![CardType::Sorcery])

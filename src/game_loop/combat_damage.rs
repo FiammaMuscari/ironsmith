@@ -53,14 +53,12 @@ pub fn execute_combat_damage_step(
             continue;
         }
 
-        // Get attacker's effective power (includes continuous effects).
-        let Some(power) = game
-            .calculated_power(attacker_id)
-            .or_else(|| attacker.power())
-        else {
+        // Combat damage assignment usually uses power, but some static abilities
+        // replace it with toughness.
+        let Some(combat_stat) = combat_damage_stat_for_creature(game, attacker) else {
             continue;
         };
-        if power <= 0 {
+        if combat_stat <= 0 {
             continue;
         }
 
@@ -69,12 +67,12 @@ pub fn execute_combat_damage_step(
         if is_blocked(combat, attacker_id) {
             // Blocked attacker - deal damage to blockers
             let events =
-                deal_damage_to_blockers(game, attacker_id, combat, power as u32, controller);
+                deal_damage_to_blockers(game, attacker_id, combat, combat_stat as u32, controller);
             damage_events.extend(events);
         } else if is_unblocked(combat, attacker_id) {
             // Unblocked attacker - deal damage to defender
             let event =
-                deal_damage_to_defender(game, attacker_id, &attacker_info.target, power as u32);
+                deal_damage_to_defender(game, attacker_id, &attacker_info.target, combat_stat as u32);
             if let Some(e) = event {
                 damage_events.push(e);
             }
@@ -114,13 +112,10 @@ pub fn execute_combat_damage_step(
             continue;
         }
 
-        let Some(power) = game
-            .calculated_power(blocker_id)
-            .or_else(|| blocker.power())
-        else {
+        let Some(combat_stat) = combat_damage_stat_for_creature(game, blocker) else {
             continue;
         };
-        if power <= 0 {
+        if combat_stat <= 0 {
             continue;
         }
 
@@ -133,7 +128,7 @@ pub fn execute_combat_damage_step(
             if game.object(attacker_id).is_none() {
                 continue;
             }
-            let dmg = power as u32;
+            let dmg = combat_stat as u32;
             let damage_result =
                 calculate_damage_with_game(game, blocker, DamageTarget::Permanent, dmg, true);
             blocker_damage_info.push((blocker_id, attacker_id, controller, dmg, damage_result));
@@ -151,7 +146,7 @@ pub fn execute_combat_damage_step(
         let distribution = crate::rules::damage::distribute_combat_damage_to_creatures(
             blocker,
             &recipients,
-            power as u32,
+            combat_stat as u32,
             game,
         );
         for (idx, (dmg, _is_lethal)) in distribution.into_iter().enumerate() {
@@ -196,6 +191,62 @@ pub fn execute_combat_damage_step(
     }
 
     damage_events
+}
+
+fn static_abilities_for_object(
+    game: &GameState,
+    object: &crate::object::Object,
+) -> Vec<crate::static_abilities::StaticAbility> {
+    game.calculated_characteristics(object.id)
+        .map(|characteristics| characteristics.static_abilities.clone())
+        .unwrap_or_else(|| {
+            object
+                .abilities
+                .iter()
+                .filter_map(|ability| match &ability.kind {
+                    AbilityKind::Static(static_ability) => Some(static_ability.clone()),
+                    _ => None,
+                })
+                .collect()
+        })
+}
+
+fn creature_assigns_combat_damage_using_toughness(
+    game: &GameState,
+    creature: &crate::object::Object,
+) -> bool {
+    for &source_id in &game.battlefield {
+        let Some(source) = game.object(source_id) else {
+            continue;
+        };
+        for ability in static_abilities_for_object(game, source) {
+            match ability.id() {
+                crate::static_abilities::StaticAbilityId::CreaturesAssignCombatDamageUsingToughness => {
+                    return true;
+                }
+                crate::static_abilities::StaticAbilityId::CreaturesYouControlAssignCombatDamageUsingToughness => {
+                    if source.controller == creature.controller {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+fn combat_damage_stat_for_creature(
+    game: &GameState,
+    creature: &crate::object::Object,
+) -> Option<i32> {
+    if creature_assigns_combat_damage_using_toughness(game, creature) {
+        game.calculated_toughness(creature.id)
+            .or_else(|| creature.toughness())
+    } else {
+        game.calculated_power(creature.id)
+            .or_else(|| creature.power())
+    }
 }
 
 /// Deal damage from an attacker to its blockers.
@@ -623,4 +674,3 @@ fn apply_damage_to_player(
         total_damage_dealt,
     }
 }
-
