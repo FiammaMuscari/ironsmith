@@ -7386,6 +7386,40 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_anthem_and_unblockable_static_line() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Aether Tunnel Variant")
+            .parse_text("Enchanted creature gets +1/+0 and can't be blocked.")
+            .expect("anthem + unblockable static line should parse");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("power: Fixed(1)") && debug.contains("toughness: Fixed(0)"),
+            "expected +1/+0 anthem, got: {debug}"
+        );
+        assert!(
+            debug.contains("Unblockable"),
+            "expected granted unblockable static ability, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_anthem_and_changeling_static_line() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Amorphous Axe Variant")
+            .parse_text("Equipped creature gets +3/+0 and is every creature type.")
+            .expect("anthem + changeling static line should parse");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("power: Fixed(3)") && debug.contains("toughness: Fixed(0)"),
+            "expected +3/+0 anthem, got: {debug}"
+        );
+        assert!(
+            debug.contains("Changeling"),
+            "expected granted changeling static ability, got: {debug}"
+        );
+    }
+
+    #[test]
     fn parse_static_gets_rejects_unsupported_trailing_clause() {
         let err = CardDefinitionBuilder::new(CardId::new(), "Unsupported Static Tail Variant")
             .parse_text("This creature gets +1/+1 unless you control an artifact.")

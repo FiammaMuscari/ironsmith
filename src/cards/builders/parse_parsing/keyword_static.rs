@@ -437,6 +437,9 @@ pub(crate) fn parse_static_ability_line(
     if let Some(abilities) = parse_anthem_and_keyword_line(tokens)? {
         return Ok(Some(abilities));
     }
+    if let Some(abilities) = parse_anthem_and_granted_ability_line(tokens)? {
+        return Ok(Some(abilities));
+    }
     if let Some(ability) = parse_all_have_indestructible_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -4988,6 +4991,56 @@ pub(crate) fn parse_gets_and_attacks_each_combat_if_able_line(
             clause_words.join(" ")
         )));
     }
+
+    Ok(Some(result))
+}
+
+pub(crate) fn parse_anthem_and_granted_ability_line(
+    tokens: &[Token],
+) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words
+        .windows(4)
+        .any(|window| window == ["until", "end", "of", "turn"])
+    {
+        return Ok(None);
+    }
+
+    let Some(get_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("get") || token.is_word("gets"))
+    else {
+        return Ok(None);
+    };
+    let Some(and_idx) = tokens
+        .iter()
+        .enumerate()
+        .find_map(|(idx, token)| (idx > get_idx && token.is_word("and")).then_some(idx))
+    else {
+        return Ok(None);
+    };
+    let tail_tokens = trim_edge_punctuation(&tokens[and_idx + 1..]);
+    let tail_words = words(&tail_tokens);
+    let granted_ability = match tail_words.as_slice() {
+        ["cant", "be", "blocked"] | ["cannot", "be", "blocked"] => StaticAbility::unblockable(),
+        ["is", "every", "creature", "type"] | ["is", "every", "creature", "types"] => {
+            StaticAbility::changeling()
+        }
+        _ => return Ok(None),
+    };
+
+    let clause = parse_anthem_clause(tokens, get_idx, and_idx)?;
+    let mut result = vec![build_anthem_static_ability(&clause)];
+    let granted = match &clause.subject {
+        AnthemSubjectAst::Source => GrantAbility::source(granted_ability),
+        AnthemSubjectAst::Filter(filter) => GrantAbility::new(filter.clone(), granted_ability),
+    };
+    let granted = if let Some(condition) = &clause.condition {
+        granted.with_condition(condition.clone())
+    } else {
+        granted
+    };
+    result.push(StaticAbility::new(granted));
 
     Ok(Some(result))
 }
