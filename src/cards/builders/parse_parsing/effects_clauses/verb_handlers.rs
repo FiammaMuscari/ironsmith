@@ -1281,48 +1281,6 @@ pub(crate) fn parse_draw_equal_to_value(tokens: &[Token]) -> Result<Option<Value
 }
 
 pub(crate) fn parse_counter(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
-    let clause_words = words(tokens);
-    if clause_words.contains(&"ability")
-        && (clause_words.contains(&"activated") || clause_words.contains(&"triggered"))
-    {
-        if clause_words == ["target", "activated", "or", "triggered", "ability"] {
-            return Ok(EffectAst::CounterActivatedOrTriggeredAbility);
-        }
-        if matches!(
-            clause_words.as_slice(),
-            [
-                "target",
-                "spell",
-                "activated",
-                "ability",
-                "or",
-                "triggered",
-                "ability"
-            ] | [
-                "target",
-                "spell",
-                "or",
-                "activated",
-                "ability",
-                "or",
-                "triggered",
-                "ability"
-            ]
-        ) {
-            return Ok(EffectAst::Counter {
-                target: TargetAst::Object(
-                    ObjectFilter::spell_or_ability(),
-                    Some(TextSpan::synthetic()),
-                    None,
-                ),
-            });
-        }
-        return Err(CardTextError::ParseError(format!(
-            "unsupported counter-ability target clause (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    }
-
     if let Some(if_idx) = tokens.iter().position(|token| token.is_word("if")) {
         if if_idx == 0 || if_idx + 1 >= tokens.len() {
             return Err(CardTextError::ParseError(format!(
@@ -1332,7 +1290,7 @@ pub(crate) fn parse_counter(tokens: &[Token]) -> Result<EffectAst, CardTextError
         }
         let target_tokens = trim_commas(&tokens[..if_idx]);
         let predicate_tokens = trim_commas(&tokens[if_idx + 1..]);
-        let target = parse_target_phrase(&target_tokens)?;
+        let target = parse_counter_target_phrase(&target_tokens)?;
         let predicate = parse_predicate(&predicate_tokens)?;
         return Ok(EffectAst::Conditional {
             predicate,
@@ -1343,7 +1301,7 @@ pub(crate) fn parse_counter(tokens: &[Token]) -> Result<EffectAst, CardTextError
 
     if let Some(unless_idx) = tokens.iter().position(|token| token.is_word("unless")) {
         let target_tokens = &tokens[..unless_idx];
-        let target = parse_target_phrase(target_tokens)?;
+        let target = parse_counter_target_phrase(target_tokens)?;
 
         let unless_tokens = &tokens[unless_idx + 1..];
         let pays_idx = unless_tokens
@@ -1449,8 +1407,330 @@ pub(crate) fn parse_counter(tokens: &[Token]) -> Result<EffectAst, CardTextError
         });
     }
 
-    let target = parse_target_phrase(tokens)?;
+    let target = parse_counter_target_phrase(tokens)?;
     Ok(EffectAst::Counter { target })
+}
+
+fn parse_counter_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
+    if let Some(target) = parse_counter_ability_target_phrase(tokens)? {
+        return Ok(target);
+    }
+
+    let clause_words = words(tokens);
+    if clause_words.contains(&"ability")
+        && (clause_words.contains(&"activated") || clause_words.contains(&"triggered"))
+    {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported counter-ability target clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    parse_target_phrase(tokens)
+}
+
+fn parse_counter_ability_target_phrase(tokens: &[Token]) -> Result<Option<TargetAst>, CardTextError> {
+    let clause_tokens = trim_commas(tokens);
+    let clause_words = words(&clause_tokens);
+    if !clause_words.contains(&"ability")
+        || (!clause_words.contains(&"activated") && !clause_words.contains(&"triggered"))
+    {
+        return Ok(None);
+    }
+
+    let mut idx = 0usize;
+    let mut target_count: Option<ChoiceCount> = None;
+    if clause_tokens.get(idx).is_some_and(|token| token.is_word("up"))
+        && clause_tokens.get(idx + 1).is_some_and(|token| token.is_word("to"))
+        && let Some((count, used)) = parse_number(&clause_tokens[idx + 2..])
+    {
+        target_count = Some(ChoiceCount::up_to(count as usize));
+        idx += 2 + used;
+    } else if let Some((count, used)) = parse_number(&clause_tokens[idx..])
+        && clause_tokens
+            .get(idx + used)
+            .is_some_and(|token| token.is_word("target"))
+    {
+        target_count = Some(ChoiceCount::exactly(count as usize));
+        idx += used;
+    } else if let Some((count, used)) = parse_target_count_range_prefix(&clause_tokens[idx..])
+        && clause_tokens
+            .get(idx + used)
+            .is_some_and(|token| token.is_word("target"))
+    {
+        target_count = Some(count);
+        idx += used;
+    }
+
+    if !clause_tokens
+        .get(idx)
+        .is_some_and(|token| token.is_word("target"))
+    {
+        return Ok(None);
+    }
+    idx += 1;
+
+    #[derive(Clone, Copy)]
+    enum CounterTargetTerm {
+        Ability,
+        Spell,
+    }
+
+    let mut term_filters: Vec<(ObjectFilter, CounterTargetTerm)> = Vec::new();
+    let mut list_end = clause_tokens.len();
+    let mut scan = idx;
+    while scan < clause_tokens.len() {
+        if clause_tokens
+            .get(scan)
+            .is_some_and(|token| token.is_word("from"))
+        {
+            list_end = scan;
+            break;
+        }
+        if clause_tokens
+            .get(scan)
+            .is_some_and(|token| token.is_word("you"))
+            && clause_tokens
+                .get(scan + 1)
+                .is_some_and(|token| token.is_word("dont"))
+            && clause_tokens
+                .get(scan + 2)
+                .is_some_and(|token| token.is_word("control"))
+        {
+            list_end = scan;
+            break;
+        }
+        scan += 1;
+    }
+
+    while idx < list_end {
+        let Some(word) = clause_tokens.get(idx).and_then(Token::as_word) else {
+            idx += 1;
+            continue;
+        };
+        if matches!(word, "or" | "and") {
+            idx += 1;
+            continue;
+        }
+
+        if word == "activated"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("or"))
+            && clause_tokens
+                .get(idx + 2)
+                .is_some_and(|token| token.is_word("triggered"))
+            && clause_tokens
+                .get(idx + 3)
+                .is_some_and(|token| token.is_word("ability"))
+        {
+            term_filters.push((ObjectFilter::activated_ability(), CounterTargetTerm::Ability));
+            let mut triggered = ObjectFilter::ability();
+            triggered.stack_kind = Some(crate::filter::StackObjectKind::TriggeredAbility);
+            term_filters.push((triggered, CounterTargetTerm::Ability));
+            idx += 4;
+            continue;
+        }
+
+        if word == "triggered"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("or"))
+            && clause_tokens
+                .get(idx + 2)
+                .is_some_and(|token| token.is_word("activated"))
+            && clause_tokens
+                .get(idx + 3)
+                .is_some_and(|token| token.is_word("ability"))
+        {
+            let mut triggered = ObjectFilter::ability();
+            triggered.stack_kind = Some(crate::filter::StackObjectKind::TriggeredAbility);
+            term_filters.push((triggered, CounterTargetTerm::Ability));
+            term_filters.push((ObjectFilter::activated_ability(), CounterTargetTerm::Ability));
+            idx += 4;
+            continue;
+        }
+
+        if word == "activated"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("ability"))
+        {
+            term_filters.push((ObjectFilter::activated_ability(), CounterTargetTerm::Ability));
+            idx += 2;
+            continue;
+        }
+
+        if word == "triggered"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("ability"))
+        {
+            let mut triggered = ObjectFilter::ability();
+            triggered.stack_kind = Some(crate::filter::StackObjectKind::TriggeredAbility);
+            term_filters.push((triggered, CounterTargetTerm::Ability));
+            idx += 2;
+            continue;
+        }
+
+        if word == "spell" {
+            term_filters.push((ObjectFilter::spell(), CounterTargetTerm::Spell));
+            idx += 1;
+            continue;
+        }
+
+        if word == "instant"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("spell"))
+        {
+            term_filters.push((
+                ObjectFilter::spell().with_type(CardType::Instant),
+                CounterTargetTerm::Spell,
+            ));
+            idx += 2;
+            continue;
+        }
+
+        if word == "sorcery"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("spell"))
+        {
+            term_filters.push((
+                ObjectFilter::spell().with_type(CardType::Sorcery),
+                CounterTargetTerm::Spell,
+            ));
+            idx += 2;
+            continue;
+        }
+
+        if word == "legendary"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("spell"))
+        {
+            term_filters.push((
+                ObjectFilter::spell().with_supertype(Supertype::Legendary),
+                CounterTargetTerm::Spell,
+            ));
+            idx += 2;
+            continue;
+        }
+
+        if word == "noncreature"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("spell"))
+        {
+            let mut filter = ObjectFilter::noncreature_spell().in_zone(Zone::Stack);
+            filter.stack_kind = Some(crate::filter::StackObjectKind::Spell);
+            term_filters.push((filter, CounterTargetTerm::Spell));
+            idx += 2;
+            continue;
+        }
+
+        return Ok(None);
+    }
+
+    if term_filters.is_empty() {
+        return Ok(None);
+    }
+
+    let mut source_types: Vec<CardType> = Vec::new();
+    let mut opponent_controlled = false;
+    while idx < clause_tokens.len() {
+        let Some(word) = clause_tokens.get(idx).and_then(Token::as_word) else {
+            idx += 1;
+            continue;
+        };
+        if matches!(word, "and" | "or") {
+            idx += 1;
+            continue;
+        }
+        if word == "you"
+            && clause_tokens
+                .get(idx + 1)
+                .is_some_and(|token| token.is_word("dont"))
+            && clause_tokens
+                .get(idx + 2)
+                .is_some_and(|token| token.is_word("control"))
+        {
+            opponent_controlled = true;
+            idx += 3;
+            continue;
+        }
+        if word == "from" {
+            idx += 1;
+            if clause_tokens
+                .get(idx)
+                .is_some_and(|token| matches!(token.as_word(), Some("a" | "an" | "the")))
+            {
+                idx += 1;
+            }
+
+            let mut parsed_type = false;
+            while idx < clause_tokens.len() {
+                let Some(type_word) = clause_tokens.get(idx).and_then(Token::as_word) else {
+                    idx += 1;
+                    continue;
+                };
+                if matches!(type_word, "source" | "sources") {
+                    idx += 1;
+                    break;
+                }
+                if matches!(type_word, "and" | "or") {
+                    idx += 1;
+                    continue;
+                }
+                let parsed = parse_card_type(type_word).or_else(|| {
+                    type_word
+                        .strip_suffix('s')
+                        .and_then(parse_card_type)
+                });
+                let Some(card_type) = parsed else {
+                    return Ok(None);
+                };
+                source_types.push(card_type);
+                parsed_type = true;
+                idx += 1;
+            }
+            if !parsed_type {
+                return Ok(None);
+            }
+            continue;
+        }
+
+        return Ok(None);
+    }
+
+    for (filter, term) in &mut term_filters {
+        if opponent_controlled {
+            *filter = filter.clone().opponent_controls();
+        }
+        if !source_types.is_empty() && matches!(term, CounterTargetTerm::Ability) {
+            for card_type in &source_types {
+                *filter = filter.clone().with_type(*card_type);
+            }
+        }
+    }
+
+    let target_filter = if term_filters.len() == 1 {
+        term_filters
+            .pop()
+            .map(|(filter, _)| filter)
+            .expect("single term filter should be present")
+    } else {
+        let mut any = ObjectFilter::default();
+        any.any_of = term_filters.into_iter().map(|(filter, _)| filter).collect();
+        any
+    };
+
+    let target = wrap_target_count(
+        TargetAst::Object(target_filter, span_from_tokens(&clause_tokens), None),
+        target_count,
+    );
+    Ok(Some(target))
 }
 
 pub(crate) fn scale_value_multiplier(value: Value, multiplier: i32) -> Value {

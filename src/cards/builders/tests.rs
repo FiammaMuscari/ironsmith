@@ -2193,7 +2193,8 @@ fn test_parse_counter_target_activated_or_triggered_ability_clause() {
 
     let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("counter target activated or triggered ability"),
+        rendered.contains("counter target activated ability")
+            && rendered.contains("triggered ability"),
         "expected counter-ability text in oracle-like output, got {rendered}"
     );
     assert!(
@@ -2211,12 +2212,152 @@ fn test_parse_counter_target_spell_activated_or_triggered_ability_clause() {
 
     let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("counter target spell or ability"),
+        rendered.contains("counter target spell")
+            && rendered.contains("activated ability")
+            && rendered.contains("triggered ability"),
         "expected counter spell-or-ability text in oracle-like output, got {rendered}"
     );
     assert!(
         !rendered.contains("unsupported parser line fallback"),
         "counter spell-or-ability clause should not rely on unsupported fallback marker: {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_counter_target_activated_ability_from_artifact_source_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Rust Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Counter target activated ability from an artifact source.")
+        .expect("counter activated-ability from artifact source clause should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("counter target"),
+        "expected counter text in oracle-like output, got {rendered}"
+    );
+    assert!(
+        rendered.contains("artifact"),
+        "expected artifact source constraint in oracle-like output, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("unsupported parser line fallback"),
+        "counter activated-ability from artifact source should not rely on unsupported fallback marker: {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_counter_target_ability_or_legendary_spell_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Tales End Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Counter target activated ability, triggered ability, or legendary spell.")
+        .expect("counter activated/triggered ability or legendary spell clause should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("legendary spell"),
+        "expected legendary spell selector in oracle-like output, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("unsupported parser line fallback"),
+        "counter activated/triggered ability or legendary spell should not rely on unsupported fallback marker: {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_counter_target_ability_or_noncreature_spell_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Louisoix Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Counter target activated ability, triggered ability, or noncreature spell.")
+        .expect("counter activated/triggered ability or noncreature spell clause should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("noncreature") && rendered.contains("spell"),
+        "expected noncreature spell selector in oracle-like output, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("unsupported parser line fallback"),
+        "counter activated/triggered ability or noncreature spell should not rely on unsupported fallback marker: {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_counter_up_to_one_target_activated_or_triggered_ability_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Tidebinder Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Counter up to one target activated or triggered ability.")
+        .expect("counter up-to-one activated/triggered ability clause should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("up to one target"),
+        "expected up-to-one target selector in oracle-like output, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("unsupported parser line fallback"),
+        "counter up-to-one activated/triggered ability should not rely on unsupported fallback marker: {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_counter_target_ability_you_dont_control_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Obstructionist Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Counter target activated or triggered ability you don't control.")
+        .expect("counter activated/triggered ability you don't control clause should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("opponent's"),
+        "expected controller restriction in oracle-like output, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("unsupported parser line fallback"),
+        "counter activated/triggered ability you don't control should not rely on unsupported fallback marker: {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_counter_target_activated_ability_from_permanent_source_unless_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Ayesha Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "{T}: Counter target activated ability from an artifact, creature, enchantment, or land unless that ability's controller pays {W}.",
+        )
+        .expect("counter activated ability from permanent source unless clause should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("unless"),
+        "expected unless payment clause in oracle-like output, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("unsupported parser line fallback"),
+        "counter activated ability from permanent source unless should not rely on unsupported fallback marker: {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_counter_target_instant_or_sorcery_spell_or_ability_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Sister Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "When this creature enters, counter target instant spell, sorcery spell, activated ability, or triggered ability.",
+        )
+        .expect("counter instant/sorcery spell or activated/triggered ability clause should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("instant spell"),
+        "expected instant-spell selector in oracle-like output, got {rendered}"
+    );
+    assert!(
+        rendered.contains("sorcery spell"),
+        "expected sorcery-spell selector in oracle-like output, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("unsupported parser line fallback"),
+        "counter instant/sorcery spell or activated/triggered ability should not rely on unsupported fallback marker: {rendered}"
     );
 }
 

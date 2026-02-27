@@ -223,6 +223,32 @@ mod tests {
     }
 
     #[test]
+    fn test_counter_ability_on_stack() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        // Create a source permanent for the ability.
+        let source_id = create_creature(&mut game, "Ability Source", bob);
+        game.stack.push(StackEntry::ability(source_id, bob, vec![]));
+
+        let counter_source = create_creature(&mut game, "Source", alice);
+        let mut ctx = ExecutionContext::new_default(counter_source, alice)
+            .with_targets(vec![ResolvedTarget::Object(source_id)]);
+
+        let effect = CounterEffect::any_spell();
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        // Ability should be countered and removed from the stack.
+        assert_eq!(result.result, EffectResult::Resolved);
+        assert!(game.stack.is_empty());
+
+        // Source permanent remains on the battlefield (abilities disappear when countered).
+        let source = game.object(source_id).expect("source object should still exist");
+        assert_eq!(source.zone, Zone::Battlefield);
+    }
+
+    #[test]
     fn test_counter_spell_cant_be_countered() {
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);
