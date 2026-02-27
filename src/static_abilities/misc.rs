@@ -889,6 +889,123 @@ impl StaticAbilityKind for EntersWithCounters {
     }
 }
 
+/// Enters the battlefield with counters if a condition is true.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntersWithCountersIfCondition {
+    pub counter_type: CounterType,
+    pub count: Value,
+    pub condition: Condition,
+    pub condition_display: String,
+}
+
+impl EntersWithCountersIfCondition {
+    pub fn new(
+        counter_type: CounterType,
+        count: Value,
+        condition: Condition,
+        condition_display: String,
+    ) -> Self {
+        Self {
+            counter_type,
+            count,
+            condition,
+            condition_display: condition_display.trim().to_string(),
+        }
+    }
+}
+
+impl StaticAbilityKind for EntersWithCountersIfCondition {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::EnterWithCountersIfCondition
+    }
+
+    fn display(&self) -> String {
+        let base = EntersWithCounters::new(self.counter_type, self.count.clone()).display();
+        let condition = self.condition_display.trim();
+        if condition.is_empty() {
+            base
+        } else {
+            format!("{base} if {condition}")
+        }
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(
+            ReplacementEffect::with_matcher(
+                source,
+                controller,
+                ThisWouldEnterWithCountersIfConditionMatcher {
+                    condition: self.condition.clone(),
+                    condition_display: self.condition_display.clone(),
+                },
+                ReplacementAction::EnterWithCounters {
+                    counter_type: self.counter_type,
+                    count: self.count.clone(),
+                },
+            )
+            .self_replacing(),
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ThisWouldEnterWithCountersIfConditionMatcher {
+    condition: Condition,
+    condition_display: String,
+}
+
+impl ReplacementMatcher for ThisWouldEnterWithCountersIfConditionMatcher {
+    fn matches_event(
+        &self,
+        event: &dyn crate::events::traits::GameEventType,
+        ctx: &crate::events::EventContext,
+    ) -> bool {
+        if !matches_this_would_enter_battlefield(event, ctx) {
+            return false;
+        }
+
+        let Some(source) = ctx.source else {
+            return false;
+        };
+        let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+            controller: ctx.controller,
+            source,
+            filter_source: None,
+            triggering_event: None,
+            trigger_identity: None,
+            ability_index: None,
+            options: Default::default(),
+        };
+
+        crate::condition_eval::evaluate_condition_external(ctx.game, &self.condition, &eval_ctx)
+    }
+
+    fn priority(&self) -> ReplacementPriority {
+        ReplacementPriority::SelfReplacement
+    }
+
+    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
+        Box::new(self.clone())
+    }
+
+    fn display(&self) -> String {
+        let condition = self.condition_display.trim();
+        if condition.is_empty() {
+            "When this would enter with counters".to_string()
+        } else {
+            format!("When this would enter with counters if {condition}")
+        }
+    }
+}
+
 /// If this would be put into a graveyard from anywhere, shuffle into library instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ShuffleIntoLibraryFromGraveyard;
@@ -2175,6 +2292,61 @@ mod tests {
         assert!(
             !matcher.matches_event(&event, &ctx),
             "bloodthirst should not match when no opponent was dealt damage"
+        );
+    }
+
+    #[test]
+    fn test_enters_with_counters_if_condition_matches_when_true() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let source = ObjectId::from_raw(52);
+        let alice = PlayerId::from_index(0);
+        game.players_attacked_this_turn.insert(alice);
+
+        let ability = EntersWithCountersIfCondition::new(
+            CounterType::PlusOnePlusOne,
+            Value::Fixed(1),
+            Condition::AttackedThisTurn,
+            "you attacked this turn".to_string(),
+        );
+        let replacement = ability
+            .generate_replacement_effect(source, alice)
+            .expect("conditional enters-with-counters should create replacement");
+        let matcher = replacement
+            .matcher
+            .as_ref()
+            .expect("conditional enters-with-counters replacement must have matcher");
+        let event = ZoneChangeEvent::new(source, Zone::Stack, Zone::Battlefield, None);
+        let ctx = EventContext::for_replacement_effect(alice, source, &game);
+        assert!(
+            matcher.matches_event(&event, &ctx),
+            "conditional enters-with-counters should match when condition is true"
+        );
+    }
+
+    #[test]
+    fn test_enters_with_counters_if_condition_does_not_match_when_false() {
+        let game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let source = ObjectId::from_raw(52);
+        let alice = PlayerId::from_index(0);
+
+        let ability = EntersWithCountersIfCondition::new(
+            CounterType::PlusOnePlusOne,
+            Value::Fixed(1),
+            Condition::AttackedThisTurn,
+            "you attacked this turn".to_string(),
+        );
+        let replacement = ability
+            .generate_replacement_effect(source, alice)
+            .expect("conditional enters-with-counters should create replacement");
+        let matcher = replacement
+            .matcher
+            .as_ref()
+            .expect("conditional enters-with-counters replacement must have matcher");
+        let event = ZoneChangeEvent::new(source, Zone::Stack, Zone::Battlefield, None);
+        let ctx = EventContext::for_replacement_effect(alice, source, &game);
+        assert!(
+            !matcher.matches_event(&event, &ctx),
+            "conditional enters-with-counters should not match when condition is false"
         );
     }
 

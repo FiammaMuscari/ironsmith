@@ -1049,6 +1049,20 @@ impl StaticAbility {
         Self::new(EntersWithCounters::new(counter_type, count))
     }
 
+    pub fn enters_with_counters_if_condition(
+        counter_type: crate::object::CounterType,
+        count: crate::effect::Value,
+        condition: crate::effect::Condition,
+        condition_display: String,
+    ) -> Self {
+        Self::new(EntersWithCountersIfCondition::new(
+            counter_type,
+            count,
+            condition,
+            condition_display,
+        ))
+    }
+
     pub fn permanents_enter_tapped() -> Self {
         Self::new(AllPermanentsEnterTapped)
     }

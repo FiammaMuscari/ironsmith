@@ -5324,12 +5324,56 @@ pub(crate) fn parse_enters_with_counters_line(
     let tail = trim_commas(tail);
     let tail_has_words = tail.iter().any(|token| token.as_word().is_some());
     if tail_has_words {
-        count = parse_where_x_value_clause(&tail).ok_or_else(|| {
-            CardTextError::ParseError(format!(
-                "unsupported trailing self ETB counter clause (clause: '{}')",
-                words.join(" ")
-            ))
-        })?;
+        let tail_words = tail
+            .iter()
+            .filter_map(Token::as_word)
+            .collect::<Vec<_>>();
+        if tail_words.starts_with(&["if", "you", "attacked", "this", "turn"])
+            || tail_words.starts_with(&["if", "youve", "attacked", "this", "turn"])
+        {
+            return Ok(Some(StaticAbility::enters_with_counters_if_condition(
+                counter_type,
+                count,
+                crate::ConditionExpr::AttackedThisTurn,
+                "you attacked this turn".to_string(),
+            )));
+        }
+        if tail_words.starts_with(&["for", "each", "creature", "that", "died", "this", "turn"])
+            || tail_words.starts_with(&["for", "each", "creatures", "that", "died", "this", "turn"])
+        {
+            count = Value::CreaturesDiedThisTurn;
+        } else if tail_words.starts_with(&[
+            "for",
+            "each",
+            "creature",
+            "that",
+            "died",
+            "under",
+            "your",
+            "control",
+            "this",
+            "turn",
+        ]) || tail_words.starts_with(&[
+            "for",
+            "each",
+            "creatures",
+            "that",
+            "died",
+            "under",
+            "your",
+            "control",
+            "this",
+            "turn",
+        ]) {
+            count = Value::CreaturesDiedThisTurnControlledBy(PlayerFilter::You);
+        } else {
+            count = parse_where_x_value_clause(&tail).ok_or_else(|| {
+                CardTextError::ParseError(format!(
+                    "unsupported trailing self ETB counter clause (clause: '{}')",
+                    words.join(" ")
+                ))
+            })?;
+        }
     }
 
     Ok(Some(StaticAbility::enters_with_counters_value(

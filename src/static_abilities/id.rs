@@ -150,6 +150,7 @@ pub enum StaticAbilityId {
     EntersTappedUnlessTwoOrMoreOpponents,
     EntersTappedUnlessCondition,
     EnterWithCounters,
+    EnterWithCountersIfCondition,
     ShuffleIntoLibraryFromGraveyard,
     AllPermanentsEnterTapped,
     EnterTappedForFilter,

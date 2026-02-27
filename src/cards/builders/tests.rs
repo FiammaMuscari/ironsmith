@@ -2551,6 +2551,47 @@ fn test_render_enters_with_single_counter_uses_singular_wording() {
 }
 
 #[test]
+fn parse_enters_with_counter_if_you_attacked_this_turn_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Goblin Boarders Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature enters with a +1/+1 counter on it if you attacked this turn.")
+        .expect("raid enters-with-counter clause should parse");
+
+    let ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        ids.contains(&crate::static_abilities::StaticAbilityId::EnterWithCountersIfCondition),
+        "expected conditional enters-with-counters ability, got {ids:?}"
+    );
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("if you attacked this turn"),
+        "expected raid condition text in rendered output, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_enters_with_counter_for_each_creature_that_died_this_turn_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bloodcrazed Paladin Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature enters with a +1/+1 counter on it for each creature that died this turn.")
+        .expect("for-each-creature-died enters-with-counter clause should parse");
+
+    let debug = format!("{:?}", def.abilities);
+    assert!(
+        debug.contains("CreaturesDiedThisTurn"),
+        "expected creatures-died-this-turn value in static ability, got {debug}"
+    );
+}
+
+#[test]
 fn test_render_sacrifice_unless_you_pay_uses_pay_verb() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Conversion Probe")
         .card_types(vec![CardType::Enchantment])
