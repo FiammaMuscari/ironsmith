@@ -66,6 +66,7 @@ pub enum StaticAbilityId {
     MustAttack,
     MustBlock,
     CantAttack,
+    CantAttackUnlessControllerCastCreatureSpellThisTurn,
     CantAttackUnlessDefendingPlayerControlsLandSubtype,
     CantBlock,
     MayAssignDamageAsUnblocked,
@@ -290,6 +291,7 @@ impl StaticAbilityId {
                 | MustAttack
                 | MustBlock
                 | CantAttack
+                | CantAttackUnlessControllerCastCreatureSpellThisTurn
                 | CantAttackUnlessDefendingPlayerControlsLandSubtype
                 | CantBlock
                 | MayAssignDamageAsUnblocked

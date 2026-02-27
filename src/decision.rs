@@ -6163,6 +6163,53 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_legal_attackers_respects_cast_creature_spell_attack_restriction() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let cohort_card = CardBuilder::new(CardId::from_raw(901), "Goblin Cohort Variant")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::new(
+                crate::card::PtValue::Fixed(2),
+                crate::card::PtValue::Fixed(2),
+            ))
+            .build();
+        let cohort_id = game.create_object_from_card(&cohort_card, alice, Zone::Battlefield);
+        game.object_mut(cohort_id)
+            .expect("cohort exists")
+            .abilities
+            .push(Ability::static_ability(
+                StaticAbility::cant_attack_unless_controller_cast_creature_spell_this_turn(),
+            ));
+        game.remove_summoning_sickness(cohort_id);
+
+        game.refresh_continuous_state();
+        let options = compute_legal_attackers(&game, &CombatState::default());
+        assert!(
+            options.iter().all(|option| option.creature != cohort_id),
+            "cohort should not be legal attacker before controller casts a creature spell this turn"
+        );
+
+        let prior_creature = CardBuilder::new(CardId::from_raw(902), "Prior Creature")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let prior_id = game.create_object_from_card(&prior_creature, alice, Zone::Graveyard);
+        let prior_snapshot = crate::snapshot::ObjectSnapshot::from_object(
+            game.object(prior_id).expect("prior creature exists"),
+            &game,
+        );
+        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
+        game.spells_cast_this_turn.insert(alice, 1);
+
+        game.refresh_continuous_state();
+        let options = compute_legal_attackers(&game, &CombatState::default());
+        assert!(
+            options.iter().any(|option| option.creature == cohort_id),
+            "cohort should become a legal attacker after controller casts a creature spell this turn"
+        );
+    }
+
+    #[test]
     fn test_compute_legal_blockers_respects_cant_block_alone_with_single_blocker() {
         use crate::cards::definitions::grizzly_bears;
         use crate::combat_state::AttackerInfo;

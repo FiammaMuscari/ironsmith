@@ -5978,6 +5978,41 @@ fn parse_cant_attack_unless_defending_player_controls_island_line() {
 }
 
 #[test]
+fn parse_cant_attack_unless_youve_cast_creature_spell_this_turn_line() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Goblin Cohort Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature can't attack unless you've cast a creature spell this turn.")
+        .expect("cant-attack-unless-youve-cast-creature-spell should parse");
+
+    let ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        ids.contains(
+            &crate::static_abilities::StaticAbilityId::CantAttackUnlessControllerCastCreatureSpellThisTurn
+        ),
+        "expected cast-creature-spell attack restriction, got {ids:?}"
+    );
+
+    let compiled = crate::compiled_text::compiled_lines(&def).join("\n");
+    assert!(
+        compiled
+            .to_ascii_lowercase()
+            .contains("can't attack unless you've cast a creature spell this turn")
+            || compiled
+                .to_ascii_lowercase()
+                .contains("cant attack unless youve cast a creature spell this turn"),
+        "expected compiled text to include cast-creature-spell condition, got {compiled}"
+    );
+}
+
+#[test]
 fn parse_morph_keyword_line() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Morph Variant")
         .card_types(vec![CardType::Creature])

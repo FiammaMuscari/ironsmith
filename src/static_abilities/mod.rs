@@ -906,6 +906,10 @@ impl StaticAbility {
         Self::new(CantAttack)
     }
 
+    pub fn cant_attack_unless_controller_cast_creature_spell_this_turn() -> Self {
+        Self::new(CantAttackUnlessControllerCastCreatureSpellThisTurn)
+    }
+
     pub fn cant_block() -> Self {
         Self::new(CantBlock)
     }

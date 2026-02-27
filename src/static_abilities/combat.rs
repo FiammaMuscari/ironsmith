@@ -574,6 +574,46 @@ impl StaticAbilityKind for CantAttack {
     }
 }
 
+/// Can't attack unless you've cast a creature spell this turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CantAttackUnlessControllerCastCreatureSpellThisTurn;
+
+impl StaticAbilityKind for CantAttackUnlessControllerCastCreatureSpellThisTurn {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantAttackUnlessControllerCastCreatureSpellThisTurn
+    }
+
+    fn display(&self) -> String {
+        "Can't attack unless you've cast a creature spell this turn".to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, controller: PlayerId) {
+        let cast_creature_spell_this_turn = game
+            .spells_cast_this_turn_snapshots
+            .iter()
+            .any(|snapshot| {
+                snapshot.controller == controller
+                    && snapshot.card_types.contains(&crate::types::CardType::Creature)
+            });
+        if cast_creature_spell_this_turn {
+            return;
+        }
+
+        let mut tracker = CantEffectTracker::default();
+        Restriction::attack(ObjectFilter::specific(source)).apply(
+            game,
+            &mut tracker,
+            controller,
+            Some(source),
+        );
+        game.cant_effects.merge(tracker);
+    }
+}
+
 /// Can't block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CantBlock;

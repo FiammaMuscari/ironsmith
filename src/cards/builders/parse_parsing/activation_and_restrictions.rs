@@ -2804,6 +2804,18 @@ pub(crate) fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility
             "defending",
             "player",
         ]) || normalized.starts_with(&["this", "cant", "attack", "unless", "defending", "player"]);
+    let cant_attack_unless_cast_creature_spell_tail =
+        normalized.ends_with(&["unless", "youve", "cast", "a", "creature", "spell", "this", "turn"])
+            || normalized.ends_with(&["unless", "youve", "cast", "creature", "spell", "this", "turn"]);
+    if cant_attack_unless_cast_creature_spell_tail
+        && (normalized.starts_with(&["this", "creature", "cant", "attack"])
+            || normalized.starts_with(&["this", "cant", "attack"]))
+    {
+        return Ok(Some(
+            StaticAbility::cant_attack_unless_controller_cast_creature_spell_this_turn(),
+        ));
+    }
+
     if starts_with_cant_attack_unless_defending_player {
         let mut idx = if normalized.starts_with(&[
             "this",
