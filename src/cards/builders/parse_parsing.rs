@@ -39348,6 +39348,76 @@ mod parse_parsing_tests {
     }
 
     #[test]
+    fn parse_object_filter_spell_or_permanent_builds_zone_disjunction() {
+        let tokens = tokenize_line("spell or permanent", 0);
+        let filter = parse_object_filter(&tokens, false).expect("parse mixed spell/permanent");
+        assert_eq!(filter.any_of.len(), 2);
+        assert!(
+            filter
+                .any_of
+                .iter()
+                .any(|branch| branch.zone == Some(Zone::Stack)),
+            "expected stack branch for spell targets"
+        );
+        assert!(
+            filter
+                .any_of
+                .iter()
+                .any(|branch| branch.zone == Some(Zone::Battlefield)),
+            "expected battlefield branch for permanent targets"
+        );
+    }
+
+    #[test]
+    fn parse_object_filter_permanent_spell_stays_stack_only() {
+        let tokens = tokenize_line("blue permanent spell", 0);
+        let filter = parse_object_filter(&tokens, false).expect("parse permanent spell filter");
+        assert!(
+            filter.any_of.is_empty(),
+            "permanent spell should not become a spell/permanent disjunction"
+        );
+        assert_eq!(filter.zone, Some(Zone::Stack));
+        assert!(
+            !filter.card_types.is_empty() || !filter.all_card_types.is_empty(),
+            "permanent spell filter should preserve permanent card-type restriction"
+        );
+    }
+
+    #[test]
+    fn parse_object_filter_spell_or_nonland_permanent_preserves_nonland_branch() {
+        let tokens = tokenize_line("spell or nonland permanent opponent controls", 0);
+        let filter =
+            parse_object_filter(&tokens, false).expect("parse spell-or-nonland-permanent filter");
+        assert_eq!(filter.any_of.len(), 2);
+        let battlefield_branch = filter
+            .any_of
+            .iter()
+            .find(|branch| branch.zone == Some(Zone::Battlefield))
+            .expect("expected battlefield branch");
+        assert!(
+            battlefield_branch.excluded_card_types.contains(&CardType::Land),
+            "nonland qualifier should stay on battlefield permanent branch"
+        );
+    }
+
+    #[test]
+    fn parse_object_filter_permanents_and_permanent_spells_split_branches() {
+        let tokens = tokenize_line("nonland permanents you control and permanent spells you control", 0);
+        let filter =
+            parse_object_filter(&tokens, false).expect("parse permanents and permanent spells");
+        assert_eq!(filter.any_of.len(), 2);
+        let stack_branch = filter
+            .any_of
+            .iter()
+            .find(|branch| branch.zone == Some(Zone::Stack))
+            .expect("expected stack branch");
+        assert!(
+            !stack_branch.card_types.is_empty() || !stack_branch.all_card_types.is_empty(),
+            "permanent-spell branch should keep permanent type restriction"
+        );
+    }
+
+    #[test]
     fn parse_trigger_clause_player_subject_attack_uses_one_or_more() {
         let tokens = tokenize_line("you attack", 0);
         let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
@@ -43263,34 +43333,78 @@ fn parse_object_filter(tokens: &[Token], other: bool) -> Result<ObjectFilter, Ca
         }
     }
 
-    if saw_permanent && filter.card_types.is_empty() && filter.all_card_types.is_empty() {
-        filter.card_types = vec![
-            CardType::Artifact,
-            CardType::Creature,
-            CardType::Enchantment,
-            CardType::Land,
-            CardType::Planeswalker,
-            CardType::Battle,
-        ];
-    }
+    let permanent_type_defaults = vec![
+        CardType::Artifact,
+        CardType::Creature,
+        CardType::Enchantment,
+        CardType::Land,
+        CardType::Planeswalker,
+        CardType::Battle,
+    ];
 
     if saw_spell && saw_permanent {
-        return Err(CardTextError::ParseError(format!(
-            "cannot mix spell and permanent targets (clause: '{}')",
-            all_words.join(" ")
-        )));
+        let has_permanent_spell_phrase = all_words.windows(2).any(|window| {
+            window == ["permanent", "spell"] || window == ["permanent", "spells"]
+        });
+        let has_standalone_permanent = all_words.iter().enumerate().any(|(idx, word)| {
+            (*word == "permanent" || *word == "permanents")
+                && !matches!(all_words.get(idx + 1).copied(), Some("spell" | "spells"))
+        });
+        let has_standalone_spell = all_words.iter().enumerate().any(|(idx, word)| {
+            (*word == "spell" || *word == "spells")
+                && !matches!(idx.checked_sub(1).and_then(|i| all_words.get(i)).copied(), Some("permanent"))
+        });
+
+        if has_standalone_permanent || has_standalone_spell {
+            let mut spell_filter = filter.clone();
+            spell_filter.any_of.clear();
+            spell_filter.zone = Some(Zone::Stack);
+
+            let permanent_spell_only = has_permanent_spell_phrase && !has_standalone_spell;
+            if permanent_spell_only {
+                if spell_filter.card_types.is_empty() && spell_filter.all_card_types.is_empty() {
+                    spell_filter.card_types = permanent_type_defaults.clone();
+                }
+            } else if spell_filter.card_types == permanent_type_defaults
+                && spell_filter.all_card_types.is_empty()
+            {
+                spell_filter.card_types.clear();
+            }
+
+            let mut permanent_filter = filter.clone();
+            permanent_filter.any_of.clear();
+            permanent_filter.zone = Some(Zone::Battlefield);
+            if permanent_filter.card_types.is_empty() && permanent_filter.all_card_types.is_empty() {
+                permanent_filter.card_types = permanent_type_defaults.clone();
+            }
+
+            let mut combined_filter = ObjectFilter::default();
+            combined_filter.any_of = vec![spell_filter, permanent_filter];
+            filter = combined_filter;
+        } else {
+            if filter.card_types.is_empty() && filter.all_card_types.is_empty() {
+                filter.card_types = permanent_type_defaults.clone();
+            }
+            filter.zone = Some(Zone::Stack);
+        }
+    } else {
+        if saw_permanent && filter.card_types.is_empty() && filter.all_card_types.is_empty() {
+            filter.card_types = permanent_type_defaults.clone();
+        }
     }
 
-    if let Some(zone) = filter.zone {
-        if saw_spell && zone != Zone::Stack {
-            return Err(CardTextError::ParseError(
-                "spell targets must be on the stack".to_string(),
-            ));
+    if filter.any_of.is_empty() {
+        if let Some(zone) = filter.zone {
+            if saw_spell && zone != Zone::Stack {
+                return Err(CardTextError::ParseError(
+                    "spell targets must be on the stack".to_string(),
+                ));
+            }
+        } else if saw_spell {
+            filter.zone = Some(Zone::Stack);
+        } else if saw_permanent || saw_permanent_type || saw_subtype {
+            filter.zone = Some(Zone::Battlefield);
         }
-    } else if saw_spell {
-        filter.zone = Some(Zone::Stack);
-    } else if saw_permanent || saw_permanent_type || saw_subtype {
-        filter.zone = Some(Zone::Battlefield);
     }
 
     if target_player.is_some() || target_object.is_some() {
