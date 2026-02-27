@@ -9265,23 +9265,26 @@ fn describe_look_at_top_then_choose_exile_text(
     }
 
     let owner = describe_possessive_player_filter(&look_at_top.player);
-    let count_text = small_number_word(look_at_top.count as u32)
-        .map(str::to_string)
-        .unwrap_or_else(|| look_at_top.count.to_string());
-    let noun = if look_at_top.count == 1 {
-        "card"
-    } else {
-        "cards"
-    };
-    let exile_ref = if look_at_top.count == 1 {
-        "it"
-    } else {
-        "one of them"
-    };
+    let (count_text, noun, singular_count) = describe_look_count_and_noun(&look_at_top.count);
+    let exile_ref = if singular_count { "it" } else { "one of them" };
     let face_down_suffix = if face_down { " face down" } else { "" };
     Some(format!(
         "Look at the top {count_text} {noun} of {owner} library, then exile {exile_ref}{face_down_suffix}"
     ))
+}
+
+fn describe_look_count_and_noun(count: &Value) -> (String, &'static str, bool) {
+    if let Value::Fixed(n) = count
+        && *n >= 0
+    {
+        let count_u32 = *n as u32;
+        let text = small_number_word(count_u32)
+            .map(str::to_string)
+            .unwrap_or_else(|| n.to_string());
+        let singular = *n == 1;
+        return (text, if singular { "card" } else { "cards" }, singular);
+    }
+    (describe_value(count), "cards", false)
 }
 
 fn describe_draw_then_discard(
@@ -11497,14 +11500,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
     }
     if let Some(look_at_top) = effect.downcast_ref::<crate::effects::LookAtTopCardsEffect>() {
         let owner = describe_possessive_player_filter(&look_at_top.player);
-        let count_text = small_number_word(look_at_top.count as u32)
-            .map(str::to_string)
-            .unwrap_or_else(|| look_at_top.count.to_string());
-        let noun = if look_at_top.count == 1 {
-            "card"
-        } else {
-            "cards"
-        };
+        let (count_text, noun, _) = describe_look_count_and_noun(&look_at_top.count);
         return format!("Look at the top {count_text} {noun} of {owner} library");
     }
     if let Some(look_at_hand) = effect.downcast_ref::<crate::effects::LookAtHandEffect>() {

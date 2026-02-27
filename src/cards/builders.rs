@@ -841,7 +841,7 @@ enum EffectAst {
     },
     LookAtTopCards {
         player: PlayerAst,
-        count: u32,
+        count: Value,
         tag: TagKey,
     },
     RevealHand {

@@ -4238,7 +4238,7 @@ fn compile_effect(
             let (player_filter, choices) =
                 resolve_effect_player_filter(*player, ctx, true, true, true)?;
             ctx.last_object_tag = Some(tag.as_str().to_string());
-            let effect = Effect::look_at_top_cards(player_filter, *count as usize, tag.clone());
+            let effect = Effect::look_at_top_cards(player_filter, count.clone(), tag.clone());
             Ok((vec![effect], choices))
         }
         EffectAst::RevealHand { player } => {

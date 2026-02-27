@@ -3294,7 +3294,11 @@ impl Effect {
     }
 
     /// Create a "look at the top N cards" effect, tagging the viewed cards.
-    pub fn look_at_top_cards(player: PlayerFilter, count: usize, tag: impl Into<TagKey>) -> Self {
+    pub fn look_at_top_cards(
+        player: PlayerFilter,
+        count: impl Into<Value>,
+        tag: impl Into<TagKey>,
+    ) -> Self {
         use crate::effects::LookAtTopCardsEffect;
         Self::new(LookAtTopCardsEffect::new(player, count, tag))
     }

@@ -24343,7 +24343,7 @@ fn parse_look_at_top_then_exile_one_sentence(
     Ok(Some(vec![
         EffectAst::LookAtTopCards {
             player,
-            count,
+            count: Value::Fixed(count as i32),
             tag: looked_tag,
         },
         EffectAst::ChooseObjects {
@@ -33375,16 +33375,16 @@ fn parse_look(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst
         .and_then(Token::as_word)
         .is_some_and(|w| w == "card" || w == "cards")
     {
-        1u32
+        Value::Fixed(1)
     } else {
-        let (n, used) = parse_number(&clause_tokens[idx..]).ok_or_else(|| {
+        let (value, used) = parse_value(&clause_tokens[idx..]).ok_or_else(|| {
             CardTextError::ParseError(format!(
                 "missing look count (clause: '{}')",
                 clause_words.join(" ")
             ))
         })?;
         idx += used;
-        n as u32
+        value
     };
 
     // Consume "card(s)"
@@ -38301,6 +38301,20 @@ mod parse_parsing_tests {
             ast,
             EffectAst::Investigate {
                 count: Value::Fixed(3)
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_look_top_x_cards_of_library() {
+        let tokens = tokenize_line("the top X cards of your library", 0);
+        let ast = parse_look(&tokens, None).expect("parse look with X count");
+        assert!(matches!(
+            ast,
+            EffectAst::LookAtTopCards {
+                player: PlayerAst::You,
+                count: Value::X,
+                ..
             }
         ));
     }
