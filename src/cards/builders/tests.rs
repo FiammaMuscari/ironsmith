@@ -5934,14 +5934,50 @@ fn parse_combat_damage_to_creature_trigger_parses_with_damaged_creature_referenc
             "Whenever this creature deals combat damage to a creature, you gain 2 life unless that creature's controller pays {2}.",
         )
         .expect("combat-damage-to-creature trigger should parse");
-    let joined = render_def_ability_lines(&def).join(" ").to_lowercase();
+    let joined = compiled_lines(&def).join(" ").to_lowercase();
     assert!(
-        joined.contains("deals combat damage to a creature"),
+        joined.contains("deals combat damage to creature"),
         "expected combat-damage-to-creature trigger text, got {joined}"
     );
     assert!(
-        joined.contains("unless that creature's controller pays {2}"),
+        joined.contains("unless its controller pays {2}"),
         "expected damaged-creature controller reference to be preserved, got {joined}"
+    );
+}
+
+#[test]
+fn parse_target_player_loses_the_game_clause() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Lose Game Target Variant")
+        .parse_text("{W}{W}, {T}: Target player loses the game.")
+        .expect("target-player lose-game clause should parse");
+    let joined = compiled_lines(&def).join(" ").to_lowercase();
+    assert!(
+        joined.contains("target player loses the game"),
+        "expected target-player lose-game text, got {joined}"
+    );
+}
+
+#[test]
+fn parse_trigger_target_opponent_creates_treasure_tokens() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Target Opponent Creates Token Variant")
+        .parse_text("When this creature dies, target opponent creates two Treasure tokens.")
+        .expect("target-opponent create-token trigger should parse");
+    let joined = compiled_lines(&def).join(" ").to_lowercase();
+    assert!(
+        joined.contains("create two treasure tokens under target opponent's control"),
+        "expected targeted opponent token creation text, got {joined}"
+    );
+}
+
+#[test]
+fn parse_trigger_target_opponent_may_draw_card() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Target Opponent May Draw Variant")
+        .parse_text("At the beginning of your end step, target opponent may draw a card.")
+        .expect("target-opponent may-draw trigger should parse");
+    let joined = compiled_lines(&def).join(" ").to_lowercase();
+    assert!(
+        joined.contains("target opponent may") && joined.contains("draw"),
+        "expected target-opponent may-draw text, got {joined}"
     );
 }
 

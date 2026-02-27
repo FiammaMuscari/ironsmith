@@ -2945,14 +2945,14 @@ fn compile_effect(
         EffectAst::LoseGame { player } => compile_player_effect(
             *player,
             ctx,
-            false,
+            true,
             Effect::lose_the_game,
             Effect::lose_the_game_player,
         ),
         EffectAst::WinGame { player } => compile_player_effect(
             *player,
             ctx,
-            false,
+            true,
             Effect::win_the_game,
             Effect::win_the_game_player,
         ),
@@ -3335,7 +3335,7 @@ fn compile_effect(
         }
         EffectAst::ExtraTurnAfterTurn { player } => {
             let (player_filter, choices) =
-                resolve_effect_player_filter(*player, ctx, true, false, true)?;
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
             Ok((vec![Effect::extra_turn_player(player_filter)], choices))
         }
         EffectAst::DelayedUntilNextEndStep { player, effects } => {
@@ -3351,7 +3351,7 @@ fn compile_effect(
         }
         EffectAst::DelayedUntilEndStepOfExtraTurn { player, effects } => {
             let (player_filter, mut choices) =
-                resolve_effect_player_filter(*player, ctx, true, false, true)?;
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let (delayed_effects, nested_choices) =
                 compile_effects_preserving_last_effect(effects, ctx)?;
             choices.extend(nested_choices);
@@ -3503,7 +3503,7 @@ fn compile_effect(
             Ok((vec![choose, sacrifice], choices))
         }
         EffectAst::SacrificeAll { filter, player } => {
-            let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, false, true)?;
+            let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let mut resolved_filter = resolve_it_tag(filter, ctx)?;
             if resolved_filter.controller.is_none() {
                 resolved_filter.controller = Some(chooser.clone());
@@ -3795,12 +3795,12 @@ fn compile_effect(
         EffectAst::MayByPlayer { player, effects } => {
             let (inner_effects, inner_choices) =
                 compile_effects_preserving_last_effect(effects, ctx)?;
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
-            if !matches!(*player, PlayerAst::Implicit) {
-                ctx.last_player_filter = Some(player_filter.clone());
-            }
+            let (player_filter, mut player_choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let effect = Effect::may_player(player_filter, inner_effects);
-            Ok((vec![effect], inner_choices))
+            let mut choices = inner_choices;
+            choices.append(&mut player_choices);
+            Ok((vec![effect], choices))
         }
         EffectAst::UnlessPays {
             effects,
@@ -4249,7 +4249,7 @@ fn compile_effect(
         }
         EffectAst::RevealTop { player } => {
             let (player_filter, choices) =
-                resolve_effect_player_filter(*player, ctx, true, false, true)?;
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let tag = ctx.next_tag("revealed");
             ctx.last_object_tag = Some(tag.clone());
             let effect = Effect::reveal_top(player_filter, tag);
@@ -4270,7 +4270,7 @@ fn compile_effect(
         }
         EffectAst::RevealHand { player } => {
             let (player_filter, choices) =
-                resolve_effect_player_filter(*player, ctx, true, false, true)?;
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let spec = if choices.is_empty() {
                 ChooseSpec::Player(player_filter)
             } else {
@@ -4287,7 +4287,7 @@ fn compile_effect(
                     )
                 })?,
             };
-            let (_, choices) = resolve_effect_player_filter(*player, ctx, true, false, true)?;
+            let (_, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let effect = Effect::move_to_zone(ChooseSpec::tagged(tag), Zone::Hand, false);
             Ok((vec![effect], choices))
         }
@@ -4791,7 +4791,8 @@ fn compile_effect(
             let token = token_definition_for(name.as_str())
                 .ok_or_else(|| CardTextError::ParseError(format!("unsupported token '{name}'")))?;
             let count = resolve_value_it_tag(count, ctx)?;
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let (player_filter, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let mut effect = if matches!(player_filter, PlayerFilter::You) {
                 crate::effects::CreateTokenEffect::you(token, count.clone())
             } else {
@@ -4826,7 +4827,6 @@ fn compile_effect(
             }
 
             let mut compiled = vec![effect];
-            let mut choices = Vec::new();
             if let Some(target) = attached_to {
                 let (target_spec, target_choices) = resolve_target_spec_with_choices(target, ctx)?;
                 for choice in target_choices {
@@ -4847,7 +4847,8 @@ fn compile_effect(
             let token = token_definition_for(name.as_str())
                 .ok_or_else(|| CardTextError::ParseError(format!("unsupported token '{name}'")))?;
             let count = resolve_value_it_tag(count, ctx)?;
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let (player_filter, choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let effect = if matches!(player_filter, PlayerFilter::You) {
                 Effect::create_tokens(token, count.clone())
             } else {
@@ -4859,7 +4860,7 @@ fn compile_effect(
                 ctx.last_object_tag = Some(tag.clone());
                 effect = effect.tag(tag);
             }
-            Ok((vec![effect], Vec::new()))
+            Ok((vec![effect], choices))
         }
         EffectAst::CreateTokenCopy {
             object,
@@ -4890,7 +4891,8 @@ fn compile_effect(
             };
             let tag: TagKey = tag.into();
             let count = resolve_value_it_tag(count, ctx)?;
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let (player_filter, choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let mut effect = crate::effects::CreateTokenCopyEffect::new(
                 ChooseSpec::Tagged(tag),
                 count,
@@ -4947,7 +4949,7 @@ fn compile_effect(
                 ctx.last_object_tag = Some(tag.clone());
                 effect = effect.tag(tag);
             }
-            Ok((vec![effect], Vec::new()))
+            Ok((vec![effect], choices))
         }
         EffectAst::CreateTokenCopyFromSource {
             source,
@@ -4970,8 +4972,12 @@ fn compile_effect(
             granted_abilities,
         } => {
             let count = resolve_value_it_tag(count, ctx)?;
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
-            let (mut source_spec, choices) = resolve_target_spec_with_choices(source, ctx)?;
+            let (player_filter, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
+            let (mut source_spec, source_choices) = resolve_target_spec_with_choices(source, ctx)?;
+            for choice in source_choices {
+                push_choice(&mut choices, choice);
+            }
             if let Some(last_tag) = ctx.last_object_tag.as_deref()
                 && last_tag.starts_with("exile_cost_")
                 && let ChooseSpec::Object(filter) = &source_spec
@@ -5433,7 +5439,8 @@ fn compile_effect(
             count,
             tapped,
         } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let (player_filter, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let count = *count;
             let mut filter = filter.clone();
             if filter.owner.is_none() && !matches!(player_filter, PlayerFilter::You) {
@@ -5461,7 +5468,7 @@ fn compile_effect(
                     player_filter.clone(),
                     *reveal,
                 )];
-                Ok((effects, Vec::new()))
+                Ok((effects, choices))
             } else {
                 let tag = ctx.next_tag("searched");
                 let mut generic_search_filter = ObjectFilter::default();
@@ -5507,7 +5514,7 @@ fn compile_effect(
                     }
                 }
                 let sequence = crate::effects::SequenceEffect::new(sequence_effects);
-                Ok((vec![Effect::new(sequence)], Vec::new()))
+                Ok((vec![Effect::new(sequence)], std::mem::take(&mut choices)))
             }
         }
         EffectAst::ShuffleGraveyardIntoLibrary { player } => compile_player_effect_from_filter(
