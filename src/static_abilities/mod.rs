@@ -367,6 +367,11 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// Get mana-symbol cost reduction details if this modifies this spell's cost while casting.
+    fn this_spell_cost_reduction_mana_cost(&self) -> Option<&ThisSpellCostReductionManaCost> {
+        None
+    }
+
     /// Get cost reduction details if this is a cost reduction ability.
     fn cost_reduction(&self) -> Option<&CostReduction> {
         None
@@ -670,6 +675,10 @@ impl StaticAbility {
 
     pub fn this_spell_cost_reduction(&self) -> Option<&ThisSpellCostReduction> {
         self.0.this_spell_cost_reduction()
+    }
+
+    pub fn this_spell_cost_reduction_mana_cost(&self) -> Option<&ThisSpellCostReductionManaCost> {
+        self.0.this_spell_cost_reduction_mana_cost()
     }
 
     pub fn cost_increase(&self) -> Option<&CostIncrease> {

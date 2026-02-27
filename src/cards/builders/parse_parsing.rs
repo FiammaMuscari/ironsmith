@@ -3671,11 +3671,33 @@ fn parse_if_this_spell_costs_less_to_cast_line(
         .position(|token| token.is_word("costs"))
         .ok_or_else(|| CardTextError::ParseError("missing costs keyword".to_string()))?;
     let amount_tokens = tail_tokens.get(costs_idx + 1..).unwrap_or_default();
-    let (amount_value, used) = parse_cost_modifier_amount(amount_tokens)
-        .ok_or_else(|| CardTextError::ParseError("missing cost modifier amount".to_string()))?;
+    let parsed_amount = parse_cost_modifier_amount(amount_tokens);
+    let parsed_mana_cost = if parsed_amount.is_none() {
+        parse_cost_modifier_mana_cost(amount_tokens)
+    } else {
+        None
+    };
+    let (amount_value, used) = parsed_amount
+        .clone()
+        .unwrap_or_else(|| (Value::Fixed(0), 0));
+    let used = if used > 0 {
+        used
+    } else if let Some((_, used)) = parsed_mana_cost {
+        used
+    } else {
+        return Err(CardTextError::ParseError(
+            "missing cost modifier amount".to_string(),
+        ));
+    };
     let remaining_words = words(amount_tokens.get(used..).unwrap_or_default());
     if !remaining_words.contains(&"less") || !remaining_words.contains(&"cast") {
         return Ok(None);
+    }
+
+    if let Some((reduction, _)) = parsed_mana_cost {
+        return Ok(Some(StaticAbility::new(
+            crate::static_abilities::ThisSpellCostReductionManaCost::new(reduction, condition),
+        )));
     }
 
     Ok(Some(StaticAbility::new(
@@ -3760,7 +3782,71 @@ fn parse_this_spell_cost_condition(
         }
     }
 
+    // an opponent cast two or more spells this turn
+    if w.len() >= 9
+        && ((w[0] == "an" && w[1] == "opponent" && w[2] == "cast")
+            || (w[0] == "opponent" && w[1] == "cast"))
+    {
+        let count_start = if w[0] == "an" { 3 } else { 2 };
+        if let Some((n, _)) = parse_number(tokens.get(count_start..).unwrap_or_default()) {
+            let tail = &w[count_start + 1..];
+            if tail == ["or", "more", "spells", "this", "turn"]
+                || tail == ["or", "more", "spell", "this", "turn"]
+            {
+                return Some(ThisSpellCostCondition::OpponentCastSpellsThisTurnOrMore(n));
+            }
+        }
+    }
+
+    // an opponent has drawn four or more cards this turn
+    if w.len() >= 10
+        && ((w[0] == "an" && w[1] == "opponent" && w[2] == "has" && w[3] == "drawn")
+            || (w[0] == "opponent" && w[1] == "has" && w[2] == "drawn"))
+    {
+        let count_start = if w[0] == "an" { 4 } else { 3 };
+        if let Some((n, _)) = parse_number(tokens.get(count_start..).unwrap_or_default()) {
+            let tail = &w[count_start + 1..];
+            if tail == ["or", "more", "cards", "this", "turn"]
+                || tail == ["or", "more", "card", "this", "turn"]
+            {
+                return Some(ThisSpellCostCondition::OpponentDrewCardsThisTurnOrMore(n));
+            }
+        }
+    }
+
     None
+}
+
+fn parse_trailing_this_spell_cost_condition(
+    remaining_tokens: &[Token],
+    clause_words: &[&str],
+) -> Result<Option<crate::static_abilities::ThisSpellCostCondition>, CardTextError> {
+    let remaining_words = words(remaining_tokens);
+    let Some(if_idx) = remaining_words.iter().position(|word| *word == "if") else {
+        return Ok(None);
+    };
+    let condition_token_idx = token_index_for_word_index(remaining_tokens, if_idx + 1).ok_or_else(
+        || {
+            CardTextError::ParseError(format!(
+                "unable to map this-spell cost condition (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        },
+    )?;
+    let condition_tokens = trim_commas(&remaining_tokens[condition_token_idx..]);
+    if condition_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing this-spell cost condition (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+    let Some(condition) = parse_this_spell_cost_condition(&condition_tokens) else {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported this-spell cost condition (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    };
+    Ok(Some(condition))
 }
 
 fn parse_spells_cost_modifier_line(
@@ -3955,14 +4041,28 @@ fn parse_spells_cost_modifier_line(
         &clause_words,
     )?;
 
+    let this_spell_condition = if is_this_spell {
+        parse_trailing_this_spell_cost_condition(remaining_tokens, &clause_words)?
+            .unwrap_or(crate::static_abilities::ThisSpellCostCondition::Always)
+    } else {
+        crate::static_abilities::ThisSpellCostCondition::Always
+    };
+
     if is_less {
         // "This spell costs {N} less to cast" is a self-only modifier that should not
         // apply from the permanent on the battlefield after it resolves.
         if is_this_spell && parsed_mana_cost.is_none() {
             return Ok(Some(StaticAbility::new(
-                crate::static_abilities::ThisSpellCostReduction::new(
-                    amount_value,
-                    crate::static_abilities::ThisSpellCostCondition::Always,
+                crate::static_abilities::ThisSpellCostReduction::new(amount_value, this_spell_condition),
+            )));
+        }
+        if is_this_spell
+            && let Some((cost, _)) = parsed_mana_cost.clone()
+        {
+            return Ok(Some(StaticAbility::new(
+                crate::static_abilities::ThisSpellCostReductionManaCost::new(
+                    cost,
+                    this_spell_condition,
                 ),
             )));
         }
@@ -4124,7 +4224,9 @@ fn parse_cost_modifier_mana_cost(tokens: &[Token]) -> Option<(crate::mana::ManaC
     let mut pips: Vec<Vec<ManaSymbol>> = Vec::new();
     let mut used = 0usize;
     while let Some(word) = tokens.get(used).and_then(Token::as_word) {
-        let symbol = parse_mana_symbol(word).ok()?;
+        let Ok(symbol) = parse_mana_symbol(word) else {
+            break;
+        };
         match symbol {
             ManaSymbol::Generic(_) | ManaSymbol::X | ManaSymbol::Snow | ManaSymbol::Life(_) => {
                 break;
@@ -38074,6 +38176,128 @@ mod parse_parsing_tests {
                 count: 2
             }
         ));
+    }
+
+    #[test]
+    fn parse_spells_cost_modifier_colored_increase() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Mana Cost Increase Parse Probe",
+        )
+        .parse_text("Black spells you cast cost {B} more to cast.")
+        .expect("parse colored cost increase");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if static_ability
+                .cost_increase_mana_cost()
+                .is_some_and(|modifier| modifier.increase.to_oracle() == "{B}")
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(
+            found,
+            "expected colored mana-symbol cost increase in parsed static abilities"
+        );
+    }
+
+    #[test]
+    fn parse_spells_cost_modifier_multicolor_increase() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Multicolor Cost Reduction Parse Probe",
+        )
+        .parse_text("Cleric spells you cast cost {W}{B} less to cast.")
+        .expect("parse multicolor cost reduction");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if static_ability
+                .cost_reduction_mana_cost()
+                .is_some_and(|modifier| modifier.reduction.to_oracle() == "{W}{B}")
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(
+            found,
+            "expected multicolor mana-symbol cost reduction in parsed static abilities"
+        );
+    }
+
+    #[test]
+    fn parse_this_spell_cost_modifier_with_opponent_drew_condition() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Even the Score Parse Probe",
+        )
+        .parse_text(
+            "This spell costs {U}{U}{U} less to cast if an opponent has drawn four or more cards this turn.\nDraw X cards.",
+        )
+        .expect("parse this-spell colored reduction with draw condition");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if let Some(modifier) = static_ability.this_spell_cost_reduction_mana_cost()
+                && modifier.reduction.to_oracle() == "{U}{U}{U}"
+                && matches!(
+                    modifier.condition,
+                    crate::static_abilities::ThisSpellCostCondition::OpponentDrewCardsThisTurnOrMore(4)
+                )
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(
+            found,
+            "expected conditional this-spell colored reduction with opponent-draw condition"
+        );
+    }
+
+    #[test]
+    fn parse_this_spell_cost_modifier_with_opponent_cast_condition() {
+        let card = crate::cards::CardDefinitionBuilder::new(
+            crate::ids::CardId::new(),
+            "Ertai's Scorn Parse Probe",
+        )
+        .parse_text(
+            "This spell costs {U} less to cast if an opponent cast two or more spells this turn.\nCounter target spell.",
+        )
+        .expect("parse this-spell colored reduction with cast condition");
+
+        let mut found = false;
+        for ability in &card.abilities {
+            let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+                continue;
+            };
+            if let Some(modifier) = static_ability.this_spell_cost_reduction_mana_cost()
+                && modifier.reduction.to_oracle() == "{U}"
+                && matches!(
+                    modifier.condition,
+                    crate::static_abilities::ThisSpellCostCondition::OpponentCastSpellsThisTurnOrMore(2)
+                )
+            {
+                found = true;
+                break;
+            }
+        }
+        assert!(
+            found,
+            "expected conditional this-spell colored reduction with opponent-cast condition"
+        );
     }
 
     #[test]

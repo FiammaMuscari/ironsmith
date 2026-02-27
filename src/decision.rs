@@ -1599,6 +1599,9 @@ fn apply_spell_cost_modifiers(
                 total_reduction = total_reduction.saturating_add(amount);
             }
         }
+        if let Some(reduction) = static_ability.this_spell_cost_reduction_mana_cost() {
+            reduction_pips.extend(reduction.reduction.pips().iter().cloned());
+        }
         if let Some(reduction) = static_ability.cost_reduction() {
             let amount = resolve_cost_modifier_value(game, player, spell, &reduction.reduction);
             if amount > 0 {
@@ -6211,6 +6214,96 @@ mod tests {
         let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
         assert_eq!(effective.to_oracle(), "{B}{B}");
+    }
+
+    #[test]
+    fn conditional_this_spell_mana_cost_reduction_checks_opponent_drawn_cards() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let spell_card = CardBuilder::new(CardId::from_raw(31), "Even the Score Variant")
+            .card_types(vec![CardType::Instant])
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(3)],
+                vec![ManaSymbol::Blue],
+                vec![ManaSymbol::Blue],
+                vec![ManaSymbol::Blue],
+            ]))
+            .build();
+        let spell_id = game.create_object_from_card(&spell_card, alice, Zone::Hand);
+        let reduction = ManaCost::from_pips(vec![
+            vec![ManaSymbol::Blue],
+            vec![ManaSymbol::Blue],
+            vec![ManaSymbol::Blue],
+        ]);
+        let ability = StaticAbility::new(
+            crate::static_abilities::ThisSpellCostReductionManaCost::new(
+                reduction,
+                crate::static_abilities::ThisSpellCostCondition::OpponentDrewCardsThisTurnOrMore(4),
+            ),
+        );
+        game.object_mut(spell_id)
+            .expect("spell exists")
+            .abilities
+            .push(Ability::static_ability(ability));
+
+        // Condition not met.
+        game.cards_drawn_this_turn.insert(bob, 3);
+        let spell_obj = game.object(spell_id).expect("spell exists");
+        let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{3}{U}{U}{U}");
+
+        // Condition met.
+        game.cards_drawn_this_turn.insert(bob, 4);
+        let spell_obj = game.object(spell_id).expect("spell exists");
+        let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{3}");
+    }
+
+    #[test]
+    fn conditional_this_spell_mana_cost_reduction_checks_opponent_cast_spells() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let spell_card = CardBuilder::new(CardId::from_raw(32), "Ertai's Scorn Variant")
+            .card_types(vec![CardType::Instant])
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(2)],
+                vec![ManaSymbol::Blue],
+            ]))
+            .build();
+        let spell_id = game.create_object_from_card(&spell_card, alice, Zone::Hand);
+        let reduction = ManaCost::from_pips(vec![vec![ManaSymbol::Blue]]);
+        let ability = StaticAbility::new(
+            crate::static_abilities::ThisSpellCostReductionManaCost::new(
+                reduction,
+                crate::static_abilities::ThisSpellCostCondition::OpponentCastSpellsThisTurnOrMore(
+                    2,
+                ),
+            ),
+        );
+        game.object_mut(spell_id)
+            .expect("spell exists")
+            .abilities
+            .push(Ability::static_ability(ability));
+
+        // Condition not met.
+        game.spells_cast_this_turn.insert(bob, 1);
+        let spell_obj = game.object(spell_id).expect("spell exists");
+        let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{2}{U}");
+
+        // Condition met.
+        game.spells_cast_this_turn.insert(bob, 2);
+        let spell_obj = game.object(spell_id).expect("spell exists");
+        let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{2}");
     }
 
     #[test]
