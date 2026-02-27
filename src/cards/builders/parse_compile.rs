@@ -44,7 +44,13 @@ fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
             Trigger::this_deals_damage_to_player(player, amount)
         }
         TriggerSpec::ThisDealsDamageTo(filter) => Trigger::this_deals_damage_to(filter),
+        TriggerSpec::ThisDealsCombatDamage => Trigger::this_deals_combat_damage(),
+        TriggerSpec::ThisDealsCombatDamageTo(filter) => Trigger::this_deals_combat_damage_to(filter),
         TriggerSpec::DealsDamage(filter) => Trigger::deals_damage(filter),
+        TriggerSpec::DealsCombatDamage(filter) => Trigger::deals_combat_damage(filter),
+        TriggerSpec::DealsCombatDamageTo { source, target } => {
+            Trigger::deals_combat_damage_to(source, target)
+        }
         TriggerSpec::PlayerTapsForMana { player, filter } => {
             Trigger::player_taps_for_mana(player, filter)
         }
@@ -237,7 +243,14 @@ fn trigger_supports_event_value(trigger: &TriggerSpec, spec: &EventValueSpec) ->
             | TriggerSpec::ThisIsDealtDamage
             | TriggerSpec::ThisDealsDamage
             | TriggerSpec::ThisDealsDamageTo(_)
-            | TriggerSpec::DealsDamage(_) => true,
+            | TriggerSpec::DealsDamage(_)
+            | TriggerSpec::ThisDealsCombatDamage
+            | TriggerSpec::ThisDealsCombatDamageTo(_)
+            | TriggerSpec::DealsCombatDamage(_)
+            | TriggerSpec::DealsCombatDamageTo { .. }
+            | TriggerSpec::ThisDealsCombatDamageToPlayer
+            | TriggerSpec::DealsCombatDamageToPlayer(_)
+            | TriggerSpec::DealsCombatDamageToPlayerOneOrMore(_) => true,
             TriggerSpec::Either(left, right) => {
                 trigger_supports_event_value(left, spec)
                     && trigger_supports_event_value(right, spec)
@@ -491,7 +504,14 @@ fn compile_trigger_effects_with_intervening_if(
     if ctx.last_object_tag.is_none()
         && (effects_reference_it_tag(effects) || effects_reference_its_controller(effects))
     {
-        let default_tag = if matches!(trigger, Some(TriggerSpec::ThisDealsDamageTo(_))) {
+        let default_tag = if matches!(
+            trigger,
+            Some(
+                TriggerSpec::ThisDealsDamageTo(_)
+                    | TriggerSpec::ThisDealsCombatDamageTo(_)
+                    | TriggerSpec::DealsCombatDamageTo { .. }
+            )
+        ) {
             "damaged"
         } else {
             "triggering"
@@ -561,7 +581,14 @@ fn compile_trigger_effects_seeded(
     if ctx.last_object_tag.is_none()
         && (effects_reference_it_tag(effects) || effects_reference_its_controller(effects))
     {
-        let default_tag = if matches!(trigger, Some(TriggerSpec::ThisDealsDamageTo(_))) {
+        let default_tag = if matches!(
+            trigger,
+            Some(
+                TriggerSpec::ThisDealsDamageTo(_)
+                    | TriggerSpec::ThisDealsCombatDamageTo(_)
+                    | TriggerSpec::DealsCombatDamageTo { .. }
+            )
+        ) {
             "damaged"
         } else {
             "triggering"

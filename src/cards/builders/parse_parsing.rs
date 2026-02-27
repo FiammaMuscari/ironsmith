@@ -14882,22 +14882,7 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
     }
 
     let has_deal = words.iter().any(|word| *word == "deal" || *word == "deals");
-    if has_deal
-        && words.contains(&"combat")
-        && words.contains(&"damage")
-        && (words.contains(&"creature") || words.contains(&"creatures"))
-        && !words.contains(&"player")
-    {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported combat-damage-to-creature trigger clause (clause: '{}')",
-            words.join(" ")
-        )));
-    }
-    if has_deal
-        && words.contains(&"combat")
-        && words.contains(&"damage")
-        && words.contains(&"player")
-    {
+    if has_deal && words.contains(&"combat") && words.contains(&"damage") {
         if let Some(deals_idx) = tokens
             .iter()
             .position(|token| token.is_word("deal") || token.is_word("deals"))
@@ -14905,18 +14890,62 @@ fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> 
             let subject_tokens = &tokens[..deals_idx];
             let player_subject = trigger_subject_player_selector(subject_tokens).is_some();
             let one_or_more = has_leading_one_or_more(subject_tokens) || player_subject;
-            return Ok(match parse_attack_trigger_subject_filter(subject_tokens)? {
-                Some(filter) => {
-                    if one_or_more {
-                        TriggerSpec::DealsCombatDamageToPlayerOneOrMore(filter)
-                    } else {
-                        TriggerSpec::DealsCombatDamageToPlayer(filter)
+            let source_filter = parse_attack_trigger_subject_filter(subject_tokens)?;
+            if let Some(damage_idx_rel) = tokens[deals_idx + 1..]
+                .iter()
+                .position(|token| token.is_word("damage"))
+            {
+                let damage_idx = deals_idx + 1 + damage_idx_rel;
+                if let Some(to_idx_rel) = tokens[damage_idx + 1..]
+                    .iter()
+                    .position(|token| token.is_word("to"))
+                {
+                    let to_idx = damage_idx + 1 + to_idx_rel;
+                    let target_tokens = trim_commas(&tokens[to_idx + 1..]);
+                    if target_tokens.is_empty() {
+                        return Err(CardTextError::ParseError(format!(
+                            "missing combat damage recipient filter in trigger clause (clause: '{}')",
+                            words.join(" ")
+                        )));
                     }
+                    let target_words: Vec<&str> =
+                        target_tokens.iter().filter_map(Token::as_word).collect();
+                    if parse_trigger_subject_player_filter(&target_words).is_some() {
+                        return Ok(match source_filter {
+                            Some(filter) => {
+                                if one_or_more {
+                                    TriggerSpec::DealsCombatDamageToPlayerOneOrMore(filter)
+                                } else {
+                                    TriggerSpec::DealsCombatDamageToPlayer(filter)
+                                }
+                            }
+                            None => TriggerSpec::ThisDealsCombatDamageToPlayer,
+                        });
+                    }
+
+                    let target_tokens = strip_leading_one_or_more(&target_tokens);
+                    let target_filter = parse_object_filter(target_tokens, false).map_err(|_| {
+                        CardTextError::ParseError(format!(
+                            "unsupported combat damage recipient filter in trigger clause (clause: '{}')",
+                            words.join(" ")
+                        ))
+                    })?;
+                    return Ok(match source_filter {
+                        Some(source) => TriggerSpec::DealsCombatDamageTo {
+                            source,
+                            target: target_filter,
+                        },
+                        None => TriggerSpec::ThisDealsCombatDamageTo(target_filter),
+                    });
                 }
-                None => TriggerSpec::ThisDealsCombatDamageToPlayer,
+            }
+
+            return Ok(match source_filter {
+                Some(filter) => TriggerSpec::DealsCombatDamage(filter),
+                None => TriggerSpec::ThisDealsCombatDamage,
             });
         }
-        return Ok(TriggerSpec::ThisDealsCombatDamageToPlayer);
+        return Ok(TriggerSpec::ThisDealsCombatDamage);
     }
 
     if words.as_slice() == ["end", "of", "combat"]
@@ -15966,7 +15995,12 @@ fn parse_trigger_subject_player_filter(subject: &[&str]) -> Option<PlayerFilter>
     if subject == ["an", "opponent"]
         || subject == ["opponent"]
         || subject == ["opponents"]
+        || subject == ["your", "opponents"]
+        || subject == ["one", "of", "your", "opponents"]
+        || subject == ["one", "or", "more", "of", "your", "opponents"]
+        || subject == ["one", "of", "the", "opponents"]
         || subject == ["one", "or", "more", "opponents"]
+        || subject == ["each", "opponent"]
     {
         return Some(PlayerFilter::Opponent);
     }
@@ -39489,6 +39523,58 @@ mod parse_parsing_tests {
             other => panic!(
                 "expected DealsCombatDamageToPlayerOneOrMore trigger, got {other:?}"
             ),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_clause_this_deals_combat_damage_to_creature() {
+        let tokens = tokenize_line("this creature deals combat damage to a creature", 0);
+        let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
+        match trigger {
+            TriggerSpec::ThisDealsCombatDamageTo(filter) => {
+                assert!(filter.card_types.contains(&CardType::Creature));
+            }
+            other => panic!("expected ThisDealsCombatDamageTo trigger, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_clause_filtered_source_deals_combat_damage_to_creature() {
+        let tokens = tokenize_line("a sliver deals combat damage to a creature", 0);
+        let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
+        match trigger {
+            TriggerSpec::DealsCombatDamageTo { source, target } => {
+                assert!(source.card_types.contains(&CardType::Creature));
+                assert!(
+                    source.description().contains("sliver"),
+                    "expected sliver source filter, got {}",
+                    source.description()
+                );
+                assert!(target.card_types.contains(&CardType::Creature));
+            }
+            other => panic!("expected DealsCombatDamageTo trigger, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_clause_combat_damage_to_one_of_your_opponents() {
+        let tokens = tokenize_line("a creature deals combat damage to one of your opponents", 0);
+        let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
+        match trigger {
+            TriggerSpec::DealsCombatDamageToPlayer(filter) => {
+                assert!(filter.card_types.contains(&CardType::Creature));
+            }
+            other => panic!("expected DealsCombatDamageToPlayer trigger, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_clause_this_deals_combat_damage_without_recipient() {
+        let tokens = tokenize_line("this creature deals combat damage", 0);
+        let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
+        match trigger {
+            TriggerSpec::ThisDealsCombatDamage => {}
+            other => panic!("expected ThisDealsCombatDamage trigger, got {other:?}"),
         }
     }
 

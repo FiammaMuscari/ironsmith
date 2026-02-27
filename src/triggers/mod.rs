@@ -397,6 +397,16 @@ impl Trigger {
         Self::new(ThisDealsCombatDamageToPlayerTrigger)
     }
 
+    /// Create a "when this creature deals combat damage" trigger.
+    pub fn this_deals_combat_damage() -> Self {
+        Self::new(ThisDealsDamageTrigger::new().combat_only())
+    }
+
+    /// Create a "when this creature deals combat damage to [filter]" trigger.
+    pub fn this_deals_combat_damage_to(filter: ObjectFilter) -> Self {
+        Self::new(ThisDealsDamageToTrigger::combat_only(filter))
+    }
+
     /// Create a "when [filter] deals combat damage to a player" trigger.
     pub fn deals_combat_damage_to_player(filter: ObjectFilter) -> Self {
         Self::new(DealsCombatDamageToPlayerTrigger::new(filter))
@@ -405,6 +415,16 @@ impl Trigger {
     /// Create a "when one or more [filter] deal combat damage to a player" trigger.
     pub fn deals_combat_damage_to_player_one_or_more(filter: ObjectFilter) -> Self {
         Self::new(DealsCombatDamageToPlayerTrigger::one_or_more(filter))
+    }
+
+    /// Create a "when [filter] deals combat damage" trigger.
+    pub fn deals_combat_damage(filter: ObjectFilter) -> Self {
+        Self::new(DealsDamageTrigger::combat_only(filter))
+    }
+
+    /// Create a "when [source-filter] deals combat damage to [target-filter]" trigger.
+    pub fn deals_combat_damage_to(source_filter: ObjectFilter, target_filter: ObjectFilter) -> Self {
+        Self::new(DealsDamageToTrigger::combat_only(source_filter, target_filter))
     }
 
     /// Create a "when this permanent deals damage" trigger.

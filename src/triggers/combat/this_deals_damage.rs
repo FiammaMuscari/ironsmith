@@ -12,6 +12,7 @@ use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
 pub struct ThisDealsDamageTrigger {
     pub damaged_player: Option<PlayerFilter>,
     pub amount: Option<Comparison>,
+    pub combat_only: bool,
 }
 
 impl ThisDealsDamageTrigger {
@@ -19,6 +20,7 @@ impl ThisDealsDamageTrigger {
         Self {
             damaged_player: None,
             amount: None,
+            combat_only: false,
         }
     }
 
@@ -29,6 +31,11 @@ impl ThisDealsDamageTrigger {
 
     pub fn with_amount(mut self, amount: Comparison) -> Self {
         self.amount = Some(amount);
+        self
+    }
+
+    pub fn combat_only(mut self) -> Self {
+        self.combat_only = true;
         self
     }
 }
@@ -76,6 +83,9 @@ impl TriggerMatcher for ThisDealsDamageTrigger {
         if e.source != ctx.source_id {
             return false;
         }
+        if self.combat_only && !e.is_combat {
+            return false;
+        }
         if let Some(amount) = &self.amount
             && !amount.satisfies(e.amount as i32)
         {
@@ -96,9 +106,18 @@ impl TriggerMatcher for ThisDealsDamageTrigger {
         let amount = self
             .amount
             .as_ref()
-            .map(|cmp| format!(" {} damage", describe_comparison(cmp)))
-            .unwrap_or_else(|| " damage".to_string());
-        let mut text = format!("Whenever this permanent deals{amount}");
+            .map(describe_comparison);
+        let mut text = if self.combat_only {
+            if let Some(amount) = amount {
+                format!("Whenever this permanent deals {amount} combat damage")
+            } else {
+                "Whenever this permanent deals combat damage".to_string()
+            }
+        } else if let Some(amount) = amount {
+            format!("Whenever this permanent deals {amount} damage")
+        } else {
+            "Whenever this permanent deals damage".to_string()
+        };
         if let Some(player_filter) = &self.damaged_player {
             text.push_str(" to ");
             text.push_str(describe_player_filter(player_filter));

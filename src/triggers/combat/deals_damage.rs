@@ -9,11 +9,22 @@ use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
 #[derive(Debug, Clone, PartialEq)]
 pub struct DealsDamageTrigger {
     pub filter: ObjectFilter,
+    pub combat_only: bool,
 }
 
 impl DealsDamageTrigger {
     pub fn new(filter: ObjectFilter) -> Self {
-        Self { filter }
+        Self {
+            filter,
+            combat_only: false,
+        }
+    }
+
+    pub fn combat_only(filter: ObjectFilter) -> Self {
+        Self {
+            filter,
+            combat_only: true,
+        }
     }
 }
 
@@ -25,6 +36,9 @@ impl TriggerMatcher for DealsDamageTrigger {
         let Some(e) = event.downcast::<DamageEvent>() else {
             return false;
         };
+        if self.combat_only && !e.is_combat {
+            return false;
+        }
         if let Some(obj) = ctx.game.object(e.source) {
             self.filter.matches(obj, &ctx.filter_ctx, ctx.game)
         } else {
@@ -33,7 +47,11 @@ impl TriggerMatcher for DealsDamageTrigger {
     }
 
     fn display(&self) -> String {
-        format!("Whenever {} deals damage", self.filter.description())
+        if self.combat_only {
+            format!("Whenever {} deals combat damage", self.filter.description())
+        } else {
+            format!("Whenever {} deals damage", self.filter.description())
+        }
     }
 
     fn clone_box(&self) -> Box<dyn TriggerMatcher> {

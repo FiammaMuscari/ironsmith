@@ -5928,16 +5928,20 @@ fn parse_each_player_exile_sacrifice_return_this_way_fails_instead_of_partial_pa
 }
 
 #[test]
-fn parse_combat_damage_to_creature_trigger_fails_instead_of_broad_damage_trigger() {
-    let err = CardDefinitionBuilder::new(CardId::new(), "Combat Damage Creature Trigger Variant")
-            .parse_text(
-                "Whenever this creature deals combat damage to a creature, you gain 2 life unless that creature's controller pays {2}.",
-            )
-            .expect_err("unsupported combat-damage-to-creature trigger should fail parse");
-    let message = format!("{err:?}");
+fn parse_combat_damage_to_creature_trigger_parses_with_damaged_creature_reference() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Combat Damage Creature Trigger Variant")
+        .parse_text(
+            "Whenever this creature deals combat damage to a creature, you gain 2 life unless that creature's controller pays {2}.",
+        )
+        .expect("combat-damage-to-creature trigger should parse");
+    let joined = render_def_ability_lines(&def).join(" ").to_lowercase();
     assert!(
-        message.contains("unsupported combat-damage-to-creature trigger clause"),
-        "expected strict combat-damage-to-creature trigger parse error, got {message}"
+        joined.contains("deals combat damage to a creature"),
+        "expected combat-damage-to-creature trigger text, got {joined}"
+    );
+    assert!(
+        joined.contains("unless that creature's controller pays {2}"),
+        "expected damaged-creature controller reference to be preserved, got {joined}"
     );
 }
 

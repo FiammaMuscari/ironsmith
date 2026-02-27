@@ -274,7 +274,14 @@ enum TriggerSpec {
         amount: Option<crate::filter::Comparison>,
     },
     ThisDealsDamageTo(ObjectFilter),
+    ThisDealsCombatDamage,
+    ThisDealsCombatDamageTo(ObjectFilter),
     DealsDamage(ObjectFilter),
+    DealsCombatDamage(ObjectFilter),
+    DealsCombatDamageTo {
+        source: ObjectFilter,
+        target: ObjectFilter,
+    },
     PlayerTapsForMana {
         player: PlayerFilter,
         filter: ObjectFilter,

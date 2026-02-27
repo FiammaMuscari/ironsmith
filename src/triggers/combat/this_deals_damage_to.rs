@@ -10,11 +10,22 @@ use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThisDealsDamageToTrigger {
     pub target_filter: ObjectFilter,
+    pub combat_only: bool,
 }
 
 impl ThisDealsDamageToTrigger {
     pub fn new(target_filter: ObjectFilter) -> Self {
-        Self { target_filter }
+        Self {
+            target_filter,
+            combat_only: false,
+        }
+    }
+
+    pub fn combat_only(target_filter: ObjectFilter) -> Self {
+        Self {
+            target_filter,
+            combat_only: true,
+        }
     }
 }
 
@@ -29,6 +40,9 @@ impl TriggerMatcher for ThisDealsDamageToTrigger {
         if damage.source != ctx.source_id {
             return false;
         }
+        if self.combat_only && !damage.is_combat {
+            return false;
+        }
         let DamageTarget::Object(target_id) = damage.target else {
             return false;
         };
@@ -40,10 +54,17 @@ impl TriggerMatcher for ThisDealsDamageToTrigger {
     }
 
     fn display(&self) -> String {
-        format!(
-            "Whenever this permanent deals damage to {}",
-            self.target_filter.description()
-        )
+        if self.combat_only {
+            format!(
+                "Whenever this permanent deals combat damage to {}",
+                self.target_filter.description()
+            )
+        } else {
+            format!(
+                "Whenever this permanent deals damage to {}",
+                self.target_filter.description()
+            )
+        }
     }
 
     fn clone_box(&self) -> Box<dyn TriggerMatcher> {
