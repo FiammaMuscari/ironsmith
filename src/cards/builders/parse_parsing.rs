@@ -5017,9 +5017,21 @@ fn parse_add_mana_equal_amount_value(tokens: &[Token]) -> Option<Value> {
         || tail.starts_with(&["that", "spells", "mana", "value"])
         || tail.starts_with(&["that", "card", "mana", "value"])
         || tail.starts_with(&["that", "cards", "mana", "value"])
+        || tail.starts_with(&["the", "mana", "value", "of", "the", "sacrificed", "creature"])
+        || tail.starts_with(&["the", "mana", "value", "of", "the", "sacrificed", "artifact"])
+        || tail.starts_with(&["the", "mana", "value", "of", "the", "sacrificed", "permanent"])
+        || tail.starts_with(&["mana", "value", "of", "the", "sacrificed", "creature"])
+        || tail.starts_with(&["mana", "value", "of", "the", "sacrificed", "artifact"])
+        || tail.starts_with(&["mana", "value", "of", "the", "sacrificed", "permanent"])
+        || tail.starts_with(&["the", "sacrificed", "creature", "mana", "value"])
+        || tail.starts_with(&["the", "sacrificed", "artifact", "mana", "value"])
+        || tail.starts_with(&["the", "sacrificed", "permanent", "mana", "value"])
         || tail.starts_with(&["the", "sacrificed", "creatures", "mana", "value"])
         || tail.starts_with(&["the", "sacrificed", "artifacts", "mana", "value"])
         || tail.starts_with(&["the", "sacrificed", "permanents", "mana", "value"])
+        || tail.starts_with(&["sacrificed", "creature", "mana", "value"])
+        || tail.starts_with(&["sacrificed", "artifact", "mana", "value"])
+        || tail.starts_with(&["sacrificed", "permanent", "mana", "value"])
         || tail.starts_with(&["sacrificed", "creatures", "mana", "value"])
         || tail.starts_with(&["sacrificed", "artifacts", "mana", "value"])
         || tail.starts_with(&["sacrificed", "permanents", "mana", "value"])
@@ -35094,6 +35106,14 @@ fn parse_draw(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst
         (value, tokens.len())
     } else if tokens
         .first()
+        .is_some_and(|token| token.is_word("another"))
+        && tokens
+            .get(1)
+            .is_some_and(|token| token.is_word("card") || token.is_word("cards"))
+    {
+        (Value::Fixed(1), 1)
+    } else if tokens
+        .first()
         .is_some_and(|token| token.is_word("card") || token.is_word("cards"))
     {
         let tail = trim_commas(&tokens[1..]);
@@ -35209,7 +35229,12 @@ fn parse_draw_equal_to_value(tokens: &[Token]) -> Result<Option<Value>, CardText
         return Ok(None);
     }
 
+    if let Some(value) = parse_devotion_value_from_add_clause(tokens)? {
+        return Ok(Some(value));
+    }
     if let Some(value) = parse_add_mana_equal_amount_value(tokens)
+        .or_else(|| parse_equal_to_number_of_opponents_you_have_value(tokens))
+        .or_else(|| parse_equal_to_number_of_counters_on_reference_value(tokens))
         .or_else(|| parse_equal_to_aggregate_filter_value(tokens))
         .or_else(|| parse_equal_to_number_of_filter_plus_or_minus_fixed_value(tokens))
         .or_else(|| parse_equal_to_number_of_filter_value(tokens))
@@ -37917,6 +37942,94 @@ fn parse_equal_to_number_of_filter_plus_or_minus_fixed_value(tokens: &[Token]) -
     ))
 }
 
+fn parse_equal_to_number_of_opponents_you_have_value(tokens: &[Token]) -> Option<Value> {
+    let clause_words = words(tokens);
+    if matches!(
+        clause_words.as_slice(),
+        ["equal", "to", "the", "number", "of", "opponents", "you", "have"]
+            | ["equal", "to", "number", "of", "opponents", "you", "have"]
+    ) {
+        return Some(Value::CountPlayers(PlayerFilter::Opponent));
+    }
+    None
+}
+
+fn parse_equal_to_number_of_counters_on_reference_value(tokens: &[Token]) -> Option<Value> {
+    let clause_words = words(tokens);
+    if !clause_words.starts_with(&["equal", "to"]) {
+        return None;
+    }
+
+    let mut idx = 2usize;
+    if clause_words.get(idx).copied() == Some("the") {
+        idx += 1;
+    }
+    if clause_words.get(idx).copied() != Some("number")
+        || clause_words.get(idx + 1).copied() != Some("of")
+    {
+        return None;
+    }
+    idx += 2;
+
+    if clause_words
+        .get(idx)
+        .is_some_and(|word| is_article(word) || *word == "one")
+    {
+        idx += 1;
+    }
+
+    let mut counter_type = None;
+    if let Some(word) = clause_words.get(idx).copied()
+        && let Some(parsed) = parse_counter_type_word(word)
+    {
+        counter_type = Some(parsed);
+        idx += 1;
+    }
+
+    if !matches!(clause_words.get(idx).copied(), Some("counter" | "counters")) {
+        return None;
+    }
+    idx += 1;
+
+    if clause_words.get(idx).copied() != Some("on") {
+        return None;
+    }
+    idx += 1;
+
+    let reference = &clause_words[idx..];
+    if reference.is_empty() {
+        return None;
+    }
+
+    if matches!(
+        reference,
+        ["it"] | ["this"] | ["this", "creature"] | ["this", "permanent"] | ["this", "source"]
+    ) {
+        return Some(match counter_type {
+            Some(counter_type) => Value::CountersOnSource(counter_type),
+            None => Value::CountersOn(Box::new(ChooseSpec::Source), None),
+        });
+    }
+
+    if matches!(
+        reference,
+        ["that"]
+            | ["that", "creature"]
+            | ["that", "permanent"]
+            | ["that", "object"]
+            | ["those"]
+            | ["those", "creatures"]
+            | ["those", "permanents"]
+    ) {
+        return Some(Value::CountersOn(
+            Box::new(ChooseSpec::Tagged(TagKey::from(IT_TAG))),
+            counter_type,
+        ));
+    }
+
+    None
+}
+
 fn parse_equal_to_aggregate_filter_value(tokens: &[Token]) -> Option<Value> {
     let clause_words = words(tokens);
     let equal_idx = clause_words
@@ -40554,6 +40667,85 @@ mod parse_parsing_tests {
         let tokens = tokenize_line("cards equal to that spells mana value", 0);
         let effect = parse_draw(&tokens, Some(SubjectAst::Player(PlayerAst::You)))
             .expect("parse draw equal to tagged mana value");
+        assert!(matches!(
+            effect,
+            EffectAst::Draw {
+                count: Value::ManaValueOf(spec),
+                player: PlayerAst::You,
+            } if matches!(
+                spec.as_ref(),
+                ChooseSpec::Tagged(tag) if tag.as_str() == IT_TAG
+            )
+        ));
+    }
+
+    #[test]
+    fn parse_draw_another_card_as_fixed_one() {
+        let tokens = tokenize_line("another card", 0);
+        let effect = parse_draw(&tokens, Some(SubjectAst::Player(PlayerAst::You)))
+            .expect("parse draw another card");
+        assert!(matches!(
+            effect,
+            EffectAst::Draw {
+                count: Value::Fixed(1),
+                player: PlayerAst::You,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_draw_cards_equal_to_devotion() {
+        let tokens = tokenize_line("cards equal to your devotion to red", 0);
+        let effect = parse_draw(&tokens, Some(SubjectAst::Player(PlayerAst::You)))
+            .expect("parse draw equal to devotion");
+        assert!(matches!(
+            effect,
+            EffectAst::Draw {
+                count: Value::Devotion {
+                    player: PlayerFilter::You,
+                    color: crate::color::Color::Red,
+                },
+                player: PlayerAst::You,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_draw_cards_equal_to_number_of_opponents_you_have() {
+        let tokens = tokenize_line("cards equal to the number of opponents you have", 0);
+        let effect = parse_draw(&tokens, Some(SubjectAst::Player(PlayerAst::You)))
+            .expect("parse draw equal to number of opponents");
+        assert!(matches!(
+            effect,
+            EffectAst::Draw {
+                count: Value::CountPlayers(PlayerFilter::Opponent),
+                player: PlayerAst::You,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_draw_cards_equal_to_number_of_oil_counters_on_it() {
+        let tokens = tokenize_line("cards equal to the number of oil counters on it", 0);
+        let effect = parse_draw(&tokens, Some(SubjectAst::Player(PlayerAst::You)))
+            .expect("parse draw equal to counters on source");
+        assert!(matches!(
+            effect,
+            EffectAst::Draw {
+                count: Value::CountersOnSource(CounterType::Oil),
+                player: PlayerAst::You,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_draw_cards_equal_to_sacrificed_permanent_mana_value() {
+        let tokens = tokenize_line(
+            "cards equal to the mana value of the sacrificed permanent",
+            0,
+        );
+        let effect = parse_draw(&tokens, Some(SubjectAst::Player(PlayerAst::You)))
+            .expect("parse draw equal to sacrificed permanent mana value");
         assert!(matches!(
             effect,
             EffectAst::Draw {
