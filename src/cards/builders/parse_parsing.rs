@@ -30392,6 +30392,8 @@ fn parse_choose_new_targets_clause(tokens: &[Token]) -> Result<Option<EffectAst>
     let tail_words = words(tail_tokens);
     if tail_words.starts_with(&["it"])
         || tail_words.starts_with(&["them"])
+        || tail_words.starts_with(&["the", "copy"])
+        || tail_words.starts_with(&["that", "copy"])
         || tail_words.starts_with(&["the", "spell"])
         || tail_words.starts_with(&["that", "spell"])
     {

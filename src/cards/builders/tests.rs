@@ -955,6 +955,26 @@ fn test_parse_then_controller_may_copy_spell_and_choose_new_targets() {
 }
 
 #[test]
+fn test_parse_choose_new_targets_for_the_copy() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Reverberate Style Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Copy target instant or sorcery spell. You may choose new targets for the copy.",
+        )
+        .expect("parse choose-new-targets for the copy");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("CopySpellEffect"),
+        "expected copy-spell effect, got {debug}"
+    );
+    assert!(
+        debug.contains("RetargetStackObjectEffect"),
+        "expected retarget effect for the copy, got {debug}"
+    );
+}
+
+#[test]
 fn test_parse_copy_this_spell_for_each_creature_sacrificed_this_way() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Plumb Variant")
         .card_types(vec![CardType::Instant])
