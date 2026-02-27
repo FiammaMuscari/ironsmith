@@ -532,8 +532,8 @@ pub(crate) fn parse_static_ability_line(
     if let Some(ability) = parse_enters_tapped_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
-    if let Some(ability) = parse_additional_land_play_line(tokens)? {
-        return Ok(Some(vec![ability]));
+    if let Some(abilities) = parse_additional_land_play_line(tokens)? {
+        return Ok(Some(abilities));
     }
     if let Some(ability) = parse_play_lands_from_graveyard_line(tokens)? {
         return Ok(Some(vec![ability]));
@@ -3503,7 +3503,7 @@ pub(crate) fn parse_each_creature_can_block_additional_creature_each_combat_line
     if clause_words.len() < 9 {
         return Ok(None);
     }
-    let (subject_len, you_control) =
+    let (_subject_len, you_control) =
         if clause_words.starts_with(&["each", "creature", "you", "control", "can", "block"]) {
             (4usize, true)
         } else if clause_words.starts_with(&["each", "creature", "can", "block"]) {
@@ -7014,24 +7014,47 @@ pub(crate) fn parse_attacks_each_combat_if_able_line(
 
 pub(crate) fn parse_additional_land_play_line(
     tokens: &[Token],
-) -> Result<Option<StaticAbility>, CardTextError> {
+) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     let words = words(tokens);
-    if words.as_slice()
-        == [
-            "you",
-            "may",
-            "play",
-            "an",
-            "additional",
-            "land",
-            "on",
-            "each",
-            "of",
-            "your",
-            "turns",
-        ]
-    {
-        return Ok(Some(StaticAbility::additional_land_play()));
+    if !words.starts_with(&["you", "may", "play"]) {
+        return Ok(None);
+    }
+
+    let Some(count_token_idx) = token_index_for_word_index(tokens, 3) else {
+        return Ok(None);
+    };
+    let Some((count, used)) = parse_number(&tokens[count_token_idx..]) else {
+        return Ok(None);
+    };
+    let rest_word_idx = 3 + used;
+    if rest_word_idx >= words.len() {
+        return Ok(None);
+    }
+    let rest_words = &words[rest_word_idx..];
+    let is_match = rest_words
+        == ["additional", "land", "on", "each", "of", "your", "turns"]
+        || rest_words
+            == [
+                "additional",
+                "lands",
+                "on",
+                "each",
+                "of",
+                "your",
+                "turns",
+            ];
+    if !is_match {
+        return Ok(None);
+    }
+    if count == 0 {
+        return Ok(None);
+    }
+
+    let abilities = (0..count)
+        .map(|_| StaticAbility::additional_land_play())
+        .collect::<Vec<_>>();
+    if !abilities.is_empty() {
+        return Ok(Some(abilities));
     }
     Ok(None)
 }

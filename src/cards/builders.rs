@@ -7948,6 +7948,19 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_multiple_additional_land_plays_static_line() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Azusa Variant")
+            .parse_text("You may play two additional lands on each of your turns.")
+            .expect("multiple additional-land-play static line should parse");
+
+        let debug = format!("{:?}", def);
+        assert!(
+            debug.matches("AdditionalLandPlay").count() >= 2,
+            "expected at least two AdditionalLandPlay static abilities, got {debug}"
+        );
+    }
+
+    #[test]
     fn parse_counter_unless_pays_dynamic_mana_equal_value() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Repulsive Mutation Variant")
             .parse_text(
