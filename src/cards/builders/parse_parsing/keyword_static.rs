@@ -836,6 +836,15 @@ pub(crate) fn parse_composed_anthem_effects_line(
         return Ok(None);
     }
 
+    if comma_segments.len() == 2 {
+        let where_tail = trim_commas(&comma_segments[1]);
+        if words(&where_tail).starts_with(&["where", "x", "is"])
+            && let Some(ability) = parse_anthem_line(tokens)?
+        {
+            return Ok(Some(vec![ability]));
+        }
+    }
+
     let Some(first_action_idx) = tokens.iter().position(|token| {
         token.is_word("get")
             || token.is_word("gets")
@@ -4533,7 +4542,7 @@ pub(crate) fn parse_anthem_clause(
                 words(tokens).join(" ")
             ))
         })?;
-    let (base_power, base_toughness) = parse_pt_modifier(modifier_token).map_err(|_| {
+    let (raw_power, raw_toughness) = parse_pt_modifier_values(modifier_token).map_err(|_| {
         CardTextError::ParseError(format!(
             "invalid power/toughness modifier in anthem clause (clause: '{}')",
             words(tokens).join(" ")
@@ -4586,17 +4595,42 @@ pub(crate) fn parse_anthem_clause(
         (None, None) => None,
     };
 
-    let (power, toughness) = if let Some(scale_expr) = scale {
-        (
-            AnthemValue::scaled(base_power, scale_expr.clone()),
-            AnthemValue::scaled(base_toughness, scale_expr),
-        )
-    } else {
-        (
-            AnthemValue::Fixed(base_power),
-            AnthemValue::Fixed(base_toughness),
-        )
-    };
+    let resolve_anthem_value =
+        |component: Value, scale_expr: Option<&AnthemCountExpression>| -> Result<AnthemValue, CardTextError> {
+            match component {
+                Value::Fixed(value) => Ok(match scale_expr {
+                    Some(scale_expr) => AnthemValue::scaled(value, scale_expr.clone()),
+                    None => AnthemValue::Fixed(value),
+                }),
+                Value::X => {
+                    if let Some(scale_expr) = scale_expr {
+                        Ok(AnthemValue::scaled(1, scale_expr.clone()))
+                    } else {
+                        Err(CardTextError::ParseError(format!(
+                            "unsupported X power/toughness modifier without count expression (clause: '{}')",
+                            words(tokens).join(" ")
+                        )))
+                    }
+                }
+                Value::XTimes(multiplier) => {
+                    if let Some(scale_expr) = scale_expr {
+                        Ok(AnthemValue::scaled(multiplier, scale_expr.clone()))
+                    } else {
+                        Err(CardTextError::ParseError(format!(
+                            "unsupported X power/toughness modifier without count expression (clause: '{}')",
+                            words(tokens).join(" ")
+                        )))
+                    }
+                }
+                _ => Err(CardTextError::ParseError(format!(
+                    "invalid power/toughness modifier in anthem clause (clause: '{}')",
+                    words(tokens).join(" ")
+                ))),
+            }
+        };
+
+    let power = resolve_anthem_value(raw_power, scale.as_ref())?;
+    let toughness = resolve_anthem_value(raw_toughness, scale.as_ref())?;
 
     parser_trace_stack("parse_static:anthem-clause:matched", tokens);
     Ok(ParsedAnthemClause {
