@@ -1974,11 +1974,14 @@ impl WasmGame {
             .ensure_cards_loaded(deck_names.iter().map(|name| name.as_str()));
 
         for name in deck_names {
-            let Some(def) = self.find_card_definition(name) else {
+            let Some(definition) = self.find_card_definition(name).cloned() else {
                 return Err(JsValue::from_str(&format!("unknown card name: {name}")));
             };
-            self.game
-                .create_object_from_definition(def, player_id, crate::zone::Zone::Library);
+            self.game.create_object_from_definition(
+                &definition,
+                player_id,
+                crate::zone::Zone::Library,
+            );
         }
 
         if let Some(player) = self.game.player_mut(player_id) {
