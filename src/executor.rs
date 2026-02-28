@@ -1011,6 +1011,20 @@ pub fn resolve_value(
                 .ok_or(ExecutionError::PlayerNotFound(player_id))?;
             Ok(player.life)
         }
+        Value::HalfLifeTotalRoundedUp(player_spec) => {
+            let player_id = resolve_player_filter(game, player_spec, ctx)?;
+            let player = game
+                .player(player_id)
+                .ok_or(ExecutionError::PlayerNotFound(player_id))?;
+            Ok((player.life + 1).div_euclid(2))
+        }
+        Value::HalfLifeTotalRoundedDown(player_spec) => {
+            let player_id = resolve_player_filter(game, player_spec, ctx)?;
+            let player = game
+                .player(player_id)
+                .ok_or(ExecutionError::PlayerNotFound(player_id))?;
+            Ok(player.life.div_euclid(2))
+        }
 
         Value::CardsInHand(player_spec) => {
             let player_id = resolve_player_filter(game, player_spec, ctx)?;

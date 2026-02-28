@@ -587,6 +587,12 @@ pub enum Value {
     /// Life total of a player
     LifeTotal(PlayerFilter),
 
+    /// Half of a player's life total, rounded up.
+    HalfLifeTotalRoundedUp(PlayerFilter),
+
+    /// Half of a player's life total, rounded down.
+    HalfLifeTotalRoundedDown(PlayerFilter),
+
     /// Number of cards in a player's hand
     CardsInHand(PlayerFilter),
 

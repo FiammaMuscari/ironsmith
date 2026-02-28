@@ -5594,6 +5594,14 @@ pub(crate) fn describe_value(value: &Value) -> String {
         Value::LifeTotal(filter) => {
             format!("{} life total", describe_possessive_player_filter(filter))
         }
+        Value::HalfLifeTotalRoundedUp(filter) => format!(
+            "half {} life total, rounded up",
+            describe_possessive_player_filter(filter)
+        ),
+        Value::HalfLifeTotalRoundedDown(filter) => format!(
+            "half {} life total, rounded down",
+            describe_possessive_player_filter(filter)
+        ),
         Value::CardsInHand(filter) => format!(
             "the number of cards in {} hand",
             describe_possessive_player_filter(filter)

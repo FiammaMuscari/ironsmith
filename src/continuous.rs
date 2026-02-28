@@ -2809,6 +2809,8 @@ fn resolve_value_with_context(
         | Value::ToughnessOf(_)
         | Value::ManaValueOf(_)
         | Value::LifeTotal(_)
+        | Value::HalfLifeTotalRoundedUp(_)
+        | Value::HalfLifeTotalRoundedDown(_)
         | Value::CardsInHand(_)
         | Value::LifeGainedThisTurn(_)
         | Value::NoncombatDamageDealtToPlayersThisTurn(_)

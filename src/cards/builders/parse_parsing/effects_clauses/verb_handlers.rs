@@ -2022,6 +2022,40 @@ pub(crate) fn remap_source_stat_value_to_it(value: Value) -> Value {
     }
 }
 
+fn player_filter_for_life_reference(player: PlayerAst) -> Option<PlayerFilter> {
+    match player {
+        PlayerAst::You | PlayerAst::Implicit => Some(PlayerFilter::You),
+        PlayerAst::Any => Some(PlayerFilter::Any),
+        PlayerAst::Opponent => Some(PlayerFilter::Opponent),
+        PlayerAst::Target => Some(PlayerFilter::target_player()),
+        PlayerAst::TargetOpponent => Some(PlayerFilter::target_opponent()),
+        PlayerAst::That => Some(PlayerFilter::IteratedPlayer),
+        PlayerAst::Defending => Some(PlayerFilter::Defending),
+        PlayerAst::Attacking => Some(PlayerFilter::Attacking),
+        PlayerAst::ItsController | PlayerAst::ItsOwner => None,
+    }
+}
+
+fn parse_half_life_value(tokens: &[Token], player: PlayerAst) -> Option<Value> {
+    let clause_words = words(tokens);
+    if clause_words.first().copied() != Some("half")
+        || !clause_words.contains(&"life")
+        || clause_words.contains(&"lost")
+    {
+        return None;
+    }
+
+    let player_filter = player_filter_for_life_reference(player)?;
+    let rounded_down = clause_words
+        .windows(2)
+        .any(|window| window == ["rounded", "down"]);
+    if rounded_down {
+        Some(Value::HalfLifeTotalRoundedDown(player_filter))
+    } else {
+        Some(Value::HalfLifeTotalRoundedUp(player_filter))
+    }
+}
+
 pub(crate) fn parse_lose_life(
     tokens: &[Token],
     subject: Option<SubjectAst>,
@@ -2050,6 +2084,10 @@ pub(crate) fn parse_lose_life(
     }
     if clause_words.as_slice() == ["the", "game"] {
         return Ok(EffectAst::LoseGame { player });
+    }
+
+    if let Some(amount) = parse_half_life_value(tokens, player) {
+        return Ok(EffectAst::LoseLife { amount, player });
     }
 
     let (mut amount, used) = parse_life_amount(tokens, "life loss")?;

@@ -11794,3 +11794,17 @@ fn parse_you_gain_protection_from_everything_until_your_next_turn() {
         "expected intervening-if 'you cast it' condition, got {abilities_debug}"
     );
 }
+
+#[test]
+fn parse_lose_half_your_life_rounded_up_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Cruel Bargain")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Draw four cards. You lose half your life, rounded up.")
+        .expect("half-life loss clause should parse");
+
+    let spell_debug = format!("{:#?}", def.spell_effect).to_ascii_lowercase();
+    assert!(
+        spell_debug.contains("halflifetotalroundedup"),
+        "expected half-life rounded-up value in lose-life effect, got {spell_debug}"
+    );
+}

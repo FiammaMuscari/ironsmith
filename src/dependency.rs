@@ -1028,6 +1028,8 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::ColorsOfManaSpentToCastThisSpell
         | Value::ManaValueOf(_)
         | Value::LifeTotal(_)
+        | Value::HalfLifeTotalRoundedUp(_)
+        | Value::HalfLifeTotalRoundedDown(_)
         | Value::CardsInHand(_)
         | Value::LifeGainedThisTurn(_)
         | Value::NoncombatDamageDealtToPlayersThisTurn(_)
