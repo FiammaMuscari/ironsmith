@@ -480,6 +480,20 @@ pub(crate) fn parse_effect_sentence_inner(tokens: &[Token]) -> Result<Vec<Effect
     if let Some(effects) = run_sentence_primitives(tokens, PRE_CONDITIONAL_SENTENCE_PRIMITIVES)? {
         return Ok(effects);
     }
+    if sentence_words.starts_with(&["if", "you", "cast", "a", "spell", "this", "way"])
+        && sentence_words.contains(&"rather")
+        && sentence_words.contains(&"mana")
+        && sentence_words.contains(&"cost")
+    {
+        // "If you cast a spell this way, pay life equal to its mana value
+        // rather than paying its mana cost."
+        return Ok(vec![
+            EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
+                tag: TagKey::from(IT_TAG),
+                player: PlayerAst::You,
+            },
+        ]);
+    }
     if tokens.first().is_some_and(|token| token.is_word("if")) {
         parser_trace("parse_effect_sentence:conditional", tokens);
         return parse_conditional_sentence(tokens);
@@ -2775,6 +2789,15 @@ pub(crate) fn parse_prevent_damage_sentence(tokens: &[Token]) -> Result<Option<E
 
     if core_words.starts_with(&["that", "would", "be", "dealt", "by"]) {
         let source_tokens = &core_tokens[5..];
+        let source = parse_prevent_damage_source_target(source_tokens, &words)?;
+        return Ok(Some(EffectAst::PreventAllCombatDamageFromSource {
+            duration: Until::EndOfTurn,
+            source,
+        }));
+    }
+
+    if core_words.starts_with(&["that", "would", "be", "dealt", "to", "and", "dealt", "by"]) {
+        let source_tokens = &core_tokens[8..];
         let source = parse_prevent_damage_source_target(source_tokens, &words)?;
         return Ok(Some(EffectAst::PreventAllCombatDamageFromSource {
             duration: Until::EndOfTurn,

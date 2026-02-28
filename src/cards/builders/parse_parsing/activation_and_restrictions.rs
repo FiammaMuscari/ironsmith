@@ -55,6 +55,14 @@ pub(crate) fn parse_activated_line(tokens: &[Token]) -> Result<Option<ParsedAbil
             }
             return false;
         }
+        if is_spend_mana_restriction_sentence(sentence) {
+            additional_activation_restrictions.push(words(sentence).join(" "));
+            return false;
+        }
+        if is_any_player_may_activate_sentence(sentence) {
+            additional_activation_restrictions.push(words(sentence).join(" "));
+            return false;
+        }
         if is_trigger_only_restriction_sentence(sentence) {
             return false;
         }
@@ -543,6 +551,17 @@ pub(crate) fn is_activate_only_restriction_sentence(tokens: &[Token]) -> bool {
     let words = words(tokens);
     words.starts_with(&["activate", "only"])
         || words.starts_with(&["activate", "no", "more", "than"])
+}
+
+pub(crate) fn is_spend_mana_restriction_sentence(tokens: &[Token]) -> bool {
+    let words = words(tokens);
+    words.starts_with(&["spend", "this", "mana", "only"])
+        || words.starts_with(&["spend", "that", "mana", "only"])
+}
+
+pub(crate) fn is_any_player_may_activate_sentence(tokens: &[Token]) -> bool {
+    let words = words(tokens);
+    words.as_slice() == ["any", "player", "may", "activate", "this", "ability"]
 }
 
 pub(crate) fn is_trigger_only_restriction_sentence(tokens: &[Token]) -> bool {
@@ -1363,6 +1382,11 @@ pub(crate) fn is_land_subtype(subtype: Subtype) -> bool {
 }
 
 pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardTextError> {
+    let equip_end = tokens
+        .iter()
+        .position(|token| matches!(token, Token::Period(_)))
+        .unwrap_or(tokens.len());
+    let tokens = &tokens[..equip_end];
     let clause_words = words(tokens);
     if clause_words.first().copied() != Some("equip") {
         return Ok(None);
@@ -2699,6 +2723,9 @@ pub(crate) fn parse_cant_clauses(tokens: &[Token]) -> Result<Option<Vec<StaticAb
 
         let mut abilities = Vec::new();
         for (idx, segment) in segments.iter().enumerate() {
+            if find_negation_span(segment).is_none() {
+                continue;
+            }
             let mut expanded = segment.clone();
             if idx > 0
                 && !shared_subject.is_empty()
@@ -2717,6 +2744,9 @@ pub(crate) fn parse_cant_clauses(tokens: &[Token]) -> Result<Option<Vec<StaticAb
             abilities.push(ability);
         }
 
+        if abilities.is_empty() {
+            return Ok(None);
+        }
         return Ok(Some(abilities));
     }
 
@@ -2833,6 +2863,21 @@ pub(crate) fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility
                     ObjectFilter::source(),
                 ),
                 "this creature can't be blocked by creatures with flying".to_string(),
+            )));
+        }
+        if let Some(color_word) = normalized.get(idx).copied()
+            && normalized
+                .get(idx + 1)
+                .is_some_and(|word| *word == "creature" || *word == "creatures")
+            && idx + 2 == normalized.len()
+            && let Some(color) = parse_color(color_word)
+        {
+            return Ok(Some(StaticAbility::restriction(
+                crate::effect::Restriction::block_specific_attacker(
+                    ObjectFilter::creature().with_colors(crate::color::ColorSet::from(color)),
+                    ObjectFilter::source(),
+                ),
+                format!("this creature can't be blocked by {color_word} creatures"),
             )));
         }
 
@@ -3097,6 +3142,13 @@ pub(crate) fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility
             StaticAbility::permanents_you_control_cant_be_sacrificed()
         }
         ["this", "creature", "cant", "be", "blocked"] => StaticAbility::unblockable(),
+        ["this", "creature", "cant", "be", "blocked", "this", "turn"] => {
+            StaticAbility::unblockable()
+        }
+        ["this", "cant", "be", "blocked"] => StaticAbility::unblockable(),
+        ["this", "cant", "be", "blocked", "this", "turn"] => StaticAbility::unblockable(),
+        ["cant", "be", "blocked"] => StaticAbility::unblockable(),
+        ["cant", "be", "blocked", "this", "turn"] => StaticAbility::unblockable(),
         _ => return Ok(None),
     };
 
@@ -3121,6 +3173,9 @@ pub(crate) fn parse_cant_restrictions(
 
         let mut restrictions = Vec::new();
         for (idx, segment) in segments.iter().enumerate() {
+            if find_negation_span(segment).is_none() {
+                continue;
+            }
             let mut expanded = segment.clone();
             if idx > 0
                 && !shared_subject.is_empty()
@@ -3139,6 +3194,9 @@ pub(crate) fn parse_cant_restrictions(
             restrictions.push(restriction);
         }
 
+        if restrictions.is_empty() {
+            return Ok(None);
+        }
         return Ok(Some(restrictions));
     }
 
@@ -3219,12 +3277,6 @@ pub(crate) fn parse_negated_object_restriction_clause(
         return Ok(None);
     };
     let subject_tokens = trim_commas(&tokens[..neg_start]);
-    if subject_tokens.is_empty() {
-        return Err(CardTextError::ParseError(format!(
-            "missing subject in negated restriction clause (clause: '{}')",
-            words(tokens).join(" ")
-        )));
-    }
 
     let (filter, target) = if starts_with_target_indicator(&subject_tokens) {
         let target = parse_target_phrase(&subject_tokens)?;
@@ -3245,6 +3297,10 @@ pub(crate) fn parse_negated_object_restriction_clause(
             });
         }
         (filter, Some(target))
+    } else if subject_tokens.is_empty() {
+        // Supports carried clauses like "... and can't be blocked this turn."
+        let target = TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(tokens));
+        (ObjectFilter::tagged(TagKey::from(IT_TAG)), Some(target))
     } else {
         let Some(filter) = parse_subject_object_filter(&subject_tokens)? else {
             return Err(CardTextError::ParseError(format!(
@@ -3270,6 +3326,7 @@ pub(crate) fn parse_negated_object_restriction_clause(
         ["block"] => Restriction::block(filter),
         ["block", "this", "turn"] => Restriction::block(filter),
         ["be", "blocked"] => Restriction::be_blocked(filter),
+        ["be", "blocked", "this", "turn"] => Restriction::be_blocked(filter),
         ["be", "destroyed"] => Restriction::be_destroyed(filter),
         ["be", "regenerated"] => Restriction::be_regenerated(filter),
         ["be", "regenerated", "this", "turn"] => Restriction::be_regenerated(filter),

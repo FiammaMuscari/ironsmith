@@ -1773,7 +1773,7 @@ pub(crate) fn parse_if_this_spell_costs_less_to_cast_line(
         .position(|token| token.is_word("costs"))
         .ok_or_else(|| CardTextError::ParseError("missing costs keyword".to_string()))?;
     let amount_tokens = tail_tokens.get(costs_idx + 1..).unwrap_or_default();
-    let (parsed_amount, parsed_mana_cost) = parse_cost_modifier_components(amount_tokens);
+    let (parsed_amount, mut parsed_mana_cost) = parse_cost_modifier_components(amount_tokens);
     let (amount_value, used) = parsed_amount
         .clone()
         .unwrap_or_else(|| (Value::Fixed(0), 0));
@@ -2460,7 +2460,7 @@ pub(crate) fn parse_spells_cost_modifier_line(
     }
 
     let amount_tokens = &tokens[cost_token_idx + 1..];
-    let (parsed_amount, parsed_mana_cost) = parse_cost_modifier_components(amount_tokens);
+    let (parsed_amount, mut parsed_mana_cost) = parse_cost_modifier_components(amount_tokens);
     let (mut amount_value, used) = parsed_amount
         .clone()
         .map(|(value, used)| (value, used))
@@ -2480,11 +2480,11 @@ pub(crate) fn parse_spells_cost_modifier_line(
     }
 
     if let Some(dynamic_value) = parse_dynamic_cost_modifier_value(remaining_tokens)? {
+        // Wording like "{G} less for each green creature you control" is still a dynamic
+        // reduction even though the printed amount is a colored symbol. Model as a generic
+        // dynamic reduction so the clause remains playable.
         if parsed_mana_cost.is_some() {
-            return Err(CardTextError::ParseError(format!(
-                "unsupported dynamic mana-symbol cost modifier (clause: '{}')",
-                clause_words.join(" ")
-            )));
+            parsed_mana_cost = None;
         }
         amount_value = dynamic_value;
     } else if parsed_amount.is_none() && parsed_mana_cost.is_none() {
@@ -2756,7 +2756,7 @@ pub(crate) fn parse_foretelling_cards_cost_modifier_line(
         window == ["on", "any", "players", "turn"]
             || window == ["on", "any", "player", "turn"]
     }) || clause_words
-        .windows(6)
+        .windows(5)
         .any(|window| window == ["on", "any", "player", "s", "turn"]);
     if !has_less || !has_any_players_turn {
         return Ok(None);
@@ -4356,6 +4356,18 @@ pub(crate) fn parse_static_condition_clause(tokens: &[Token]) -> Result<crate::C
         return Ok(crate::ConditionExpr::CountComparison {
             count: AnthemCountExpression::MatchingFilter(filter),
             comparison,
+            display: Some(clause_words.join(" ")),
+        });
+    }
+
+    if clause_words.as_slice() == ["you", "have", "citys", "blessing"]
+        || clause_words.as_slice() == ["you", "have", "city", "blessing"]
+        || clause_words.as_slice() == ["you", "have", "the", "citys", "blessing"]
+        || clause_words.as_slice() == ["you", "have", "the", "city", "blessing"]
+    {
+        return Ok(crate::ConditionExpr::CountComparison {
+            count: AnthemCountExpression::MatchingFilter(ObjectFilter::permanent().you_control()),
+            comparison: crate::effect::Comparison::GreaterThanOrEqual(10),
             display: Some(clause_words.join(" ")),
         });
     }

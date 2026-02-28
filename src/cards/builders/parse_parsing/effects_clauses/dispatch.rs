@@ -466,6 +466,35 @@ pub(crate) fn parse_become_clause(
         return Ok(EffectAst::MakeColorless { target, duration });
     }
 
+    // "equal to this's power and toughness"
+    if become_words.starts_with(&["equal", "to"]) {
+        let rhs = &become_words[2..];
+        if rhs == ["this", "power", "and", "toughness"]
+            || rhs == ["thiss", "power", "and", "toughness"]
+            || rhs == ["source", "power", "and", "toughness"]
+        {
+            return Ok(EffectAst::SetBasePowerToughness {
+                power: Value::PowerOf(Box::new(ChooseSpec::Source)),
+                toughness: Value::ToughnessOf(Box::new(ChooseSpec::Source)),
+                target,
+                duration,
+            });
+        }
+    }
+
+    // "<N>/<M> ... creature" animation-like clauses.
+    if let Some(pt_word) = become_words.first().copied()
+        && let Ok((power, toughness)) = parse_pt_modifier(pt_word)
+        && become_words.iter().any(|word| *word == "creature")
+    {
+        return Ok(EffectAst::SetBasePowerToughness {
+            power: Value::Fixed(power),
+            toughness: Value::Fixed(toughness),
+            target,
+            duration,
+        });
+    }
+
     // "<color>" / "<color> and <color>" / "<color> and or <color>"
     let color_tokens = become_words
         .iter()
@@ -497,4 +526,3 @@ pub(crate) fn parse_become_clause(
         words(rest_tokens).join(" ")
     )))
 }
-

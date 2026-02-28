@@ -809,6 +809,20 @@ pub(crate) fn parse_if_result_predicate(tokens: &[Token]) -> Option<IfResultPred
     if words.len() >= 2 && words[0] == "they" && words[1] == "do" {
         return Some(IfResultPredicate::Did);
     }
+    if words.len() >= 2
+        && (words[0] == "player" || words[0] == "players")
+        && (words[1] == "do" || words[1] == "does")
+    {
+        return Some(IfResultPredicate::Did);
+    }
+    if words.len() >= 6
+        && words[0] == "you"
+        && words[1] == "searched"
+        && words[words.len() - 2] == "this"
+        && words[words.len() - 1] == "way"
+    {
+        return Some(IfResultPredicate::Did);
+    }
     if words.len() >= 4
         && words[0] == "you"
         && matches!(
@@ -1528,6 +1542,64 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
                 filter,
             });
         }
+    }
+
+    if filtered.as_slice() == ["you", "controlled", "that", "permanent"]
+        || filtered.as_slice() == ["you", "control", "that", "permanent"]
+    {
+        return Ok(PredicateAst::PlayerTaggedObjectMatches {
+            player: PlayerAst::You,
+            tag: TagKey::from(IT_TAG),
+            filter: ObjectFilter::default(),
+        });
+    }
+
+    if filtered.as_slice() == ["it", "wasnt", "blocking"]
+        || filtered.as_slice() == ["it", "was", "not", "blocking"]
+        || filtered.as_slice() == ["that", "creature", "wasnt", "blocking"]
+    {
+        return Ok(PredicateAst::TaggedMatches(
+            TagKey::from(IT_TAG),
+            ObjectFilter {
+                nonblocking: true,
+                ..Default::default()
+            },
+        ));
+    }
+
+    if filtered.as_slice() == ["no", "creatures", "are", "on", "battlefield"] {
+        return Ok(PredicateAst::PlayerControlsNo {
+            player: PlayerAst::Any,
+            filter: ObjectFilter::creature(),
+        });
+    }
+
+    if filtered.as_slice() == ["you", "have", "citys", "blessing"]
+        || filtered.as_slice() == ["you", "have", "city", "blessing"]
+        || filtered.starts_with(&["you", "have", "citys", "blessing", "for", "each"])
+        || filtered.starts_with(&["you", "have", "city", "blessing", "for", "each"])
+    {
+        return Ok(PredicateAst::PlayerControlsAtLeast {
+            player: PlayerAst::You,
+            filter: ObjectFilter::permanent().you_control(),
+            count: 10,
+        });
+    }
+
+    let unsupported_unmodeled = filtered.as_slice() == ["you", "gained", "life", "this", "turn"]
+        || filtered.as_slice() == ["opponent", "lost", "life", "this", "turn"]
+        || filtered.as_slice() == ["opponents", "lost", "life", "this", "turn"]
+        || filtered.as_slice() == ["an", "opponent", "lost", "life", "this", "turn"]
+        || filtered.as_slice() == ["that", "creature", "would", "die", "this", "turn"]
+        || filtered.as_slice()
+            == ["this", "second", "time", "this", "ability", "has", "resolved", "this", "turn"]
+        || filtered.as_slice()
+            == ["this", "ability", "has", "been", "activated", "four", "or", "more", "times", "this", "turn"]
+        || filtered.as_slice() == ["it", "first", "combat", "phase", "of", "turn"]
+        || filtered.as_slice()
+            == ["two", "or", "more", "creatures", "are", "tied", "for", "least", "power"];
+    if unsupported_unmodeled {
+        return Ok(PredicateAst::Unmodeled(filtered.join(" ")));
     }
 
     Err(CardTextError::ParseError(format!(

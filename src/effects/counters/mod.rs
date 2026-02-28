@@ -3,6 +3,7 @@
 //! This module contains effects that manipulate counters on objects and players,
 //! such as putting counters, removing counters, moving counters, and proliferate.
 
+mod for_each_counter_kind_put_or_remove;
 mod move_all_counters;
 mod move_counters;
 mod proliferate;
@@ -11,6 +12,7 @@ mod remove_counters;
 mod remove_up_to_any_counters;
 mod remove_up_to_counters;
 
+pub use for_each_counter_kind_put_or_remove::ForEachCounterKindPutOrRemoveEffect;
 pub use move_all_counters::MoveAllCountersEffect;
 pub use move_counters::MoveCountersEffect;
 pub use proliferate::ProliferateEffect;

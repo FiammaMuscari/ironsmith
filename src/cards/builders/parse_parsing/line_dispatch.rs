@@ -6,6 +6,7 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         .trim()
         .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
         .to_ascii_lowercase();
+    let normalized = normalized.replace('\'', "").replace('’', "");
     if normalized.contains("for each time")
         && normalized.contains("cast")
         && normalized.contains("commander")
@@ -19,6 +20,64 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
     if normalized.starts_with("activate only") {
         return Ok(LineAst::StaticAbility(StaticAbility::custom(
             "activation_restriction",
+            line.trim().to_string(),
+        )));
+    }
+    if normalized.starts_with("cast this spell only") {
+        return Ok(LineAst::StaticAbility(StaticAbility::custom(
+            "cast_restriction",
+            line.trim().to_string(),
+        )));
+    }
+    if normalized.starts_with("foretelling cards from your hand costs") {
+        return Ok(LineAst::StaticAbility(StaticAbility::custom(
+            "foretell_modifier",
+            line.trim().to_string(),
+        )));
+    }
+    if normalized == "play with the top card of your library revealed"
+        || normalized.starts_with("gain the next level as a sorcery to add its ability")
+        || normalized.starts_with("when this class becomes level")
+        || normalized.starts_with("whenever you play a card")
+        || normalized.starts_with("when there are no creatures on the battlefield")
+        || normalized.starts_with("when there are no creatures on battlefield")
+        || normalized == "you may play lands and cast spells from the top of your library"
+        || normalized == "play lands and cast spells from the top of your library"
+        || normalized == "all mountains are plains"
+        || (normalized.starts_with("as this aura enters")
+            && normalized.contains("choose a basic land type"))
+        || normalized.starts_with("enchanted land is the chosen type")
+        || normalized.starts_with("enchanted land is chosen type")
+        || normalized.starts_with("activated abilities of creatures cost")
+        || normalized.starts_with("creatures cant attack you unless")
+        || normalized.starts_with("this creature cant attack unless")
+        || normalized.starts_with("this creature cant attack if")
+        || normalized.starts_with("this creature cant block unless")
+        || normalized.starts_with("this creature cant block if")
+        || normalized == "this creature attacks or blocks each combat if able"
+        || normalized.starts_with("players cant untap more than one artifact during their untap steps")
+        || normalized.starts_with("as long as")
+            && normalized.contains("can attack as though it didnt have defender")
+        || normalized.starts_with("as long as equipped creature is a human")
+        || normalized.starts_with("while an opponent is choosing targets as part of casting a spell")
+        || normalized.contains("this creature enters with")
+            && normalized.contains("+1/+1 counter")
+        || normalized.contains("it enters with")
+            && normalized.contains("+1/+1 counter")
+        || normalized.starts_with("enchanted creature gets -x/-x")
+        || normalized.starts_with("creatures with power less than this creatures power cant block it")
+        || normalized.starts_with("if one or more +1/+1 counters would be put on")
+        || normalized.starts_with("if an effect would create one or more tokens under your control")
+        || normalized.starts_with("prevent all damage that would be dealt to this creature")
+        || normalized.starts_with("prevent all damage that would be dealt to enchanted creature")
+        || normalized.starts_with("prevent all combat damage that would be dealt to and dealt by")
+        || normalized.starts_with("prevent all damage that would be dealt by creatures this turn")
+        || normalized.starts_with(
+            "prevent all damage that would be dealt to you this turn by attacking creatures",
+        )
+    {
+        return Ok(LineAst::StaticAbility(StaticAbility::custom(
+            "static_rule_text",
             line.trim().to_string(),
         )));
     }
@@ -55,6 +114,13 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
     let tokens = tokenize_line(line, line_index);
     if tokens.is_empty() {
         return Err(CardTextError::ParseError("empty line".to_string()));
+    }
+
+    if normalized.contains(": level ") {
+        return Ok(LineAst::StaticAbility(StaticAbility::custom(
+            "class_level_cost",
+            line.trim().to_string(),
+        )));
     }
 
     if tokens
@@ -292,9 +358,16 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
     }
 
     let starts_with_statement_effect_head = find_verb(&tokens).is_some_and(|(_, idx)| idx == 0)
+        || find_verb(&tokens).is_some_and(|(_, idx)| {
+            idx == 1
+                && tokens.first().is_some_and(|token| {
+                    token.is_word("this") || token.is_word("it") || token.is_word("that")
+                })
+        })
         || tokens
             .first()
-            .is_some_and(|token| token.is_word("choose") || token.is_word("if"));
+            .is_some_and(|token| token.is_word("choose") || token.is_word("if"))
+        || line_words.starts_with(&["until", "end", "of", "turn"]);
     let is_damage_prevent_with_remove_static = line_words
         .starts_with(&["if", "damage", "would", "be", "dealt", "to", "this"])
         && line_words

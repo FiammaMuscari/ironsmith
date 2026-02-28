@@ -733,14 +733,20 @@ pub(crate) fn parse_deal_damage_with_amount(
     if let Some(if_idx) = target_tokens.iter().position(|token| token.is_word("if")) {
         let pre_target_tokens = trim_commas(&target_tokens[..if_idx]);
         let condition_tokens = trim_commas(&target_tokens[if_idx + 1..]);
-        if pre_target_tokens.is_empty() || condition_tokens.is_empty() {
+        if condition_tokens.is_empty() {
             return Err(CardTextError::ParseError(format!(
                 "unsupported trailing if clause in damage effect (clause: '{}')",
                 words(tokens).join(" ")
             )));
         }
         let predicate = parse_predicate(&condition_tokens)?;
-        let target = parse_target_phrase(&pre_target_tokens)?;
+        let target = if pre_target_tokens.is_empty() {
+            // Follow-up "deals N damage if ..." clauses can omit the target and rely
+            // on parser-level merge with a prior damage sentence.
+            TargetAst::PlayerOrPlaneswalker(PlayerFilter::Any, None)
+        } else {
+            parse_target_phrase(&pre_target_tokens)?
+        };
         return Ok(EffectAst::Conditional {
             predicate,
             if_true: vec![EffectAst::DealDamage { amount, target }],
@@ -1076,6 +1082,18 @@ pub(crate) fn parse_draw(tokens: &[Token], subject: Option<SubjectAst>) -> Resul
         })?;
         consumed_embedded_card_keyword = true;
         (value, tokens.len())
+    } else if tokens
+        .first()
+        .is_some_and(|token| token.is_word("up"))
+        && tokens.get(1).is_some_and(|token| token.is_word("to"))
+    {
+        let Some((amount, used_amount)) = parse_number(&tokens[2..]) else {
+            return Err(CardTextError::ParseError(format!(
+                "missing draw count (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        };
+        (Value::Fixed(amount as i32), 2 + used_amount)
     } else {
         parse_value(tokens).ok_or_else(|| {
             CardTextError::ParseError(format!(
@@ -2367,11 +2385,11 @@ pub(crate) fn parse_put_into_hand(
         });
     }
 
-    if clause_words.contains(&"from") && clause_words.contains(&"among") {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported put-from-among clause (clause: '{}')",
-            clause_words.join(" ")
-        )));
+    if clause_words.contains(&"from")
+        && clause_words.contains(&"among")
+        && clause_words.contains(&"hand")
+    {
+        return Ok(EffectAst::PutSomeIntoHandRestIntoGraveyard { player, count: 1 });
     }
     let has_it = clause_words.contains(&"it");
     let has_them = clause_words.contains(&"them");
@@ -2714,8 +2732,25 @@ pub(crate) fn parse_put_into_hand(
         };
 
         if let Some(zone) = zone {
+            let target_words = words(&target_tokens);
+            if zone == Zone::Graveyard
+                && matches!(target_words.as_slice(), ["the", "rest"] | ["rest"])
+            {
+                return Ok(EffectAst::MoveToZone {
+                    target: TargetAst::Object(
+                        ObjectFilter::tagged(TagKey::from(IT_TAG)),
+                        None,
+                        None,
+                    ),
+                    zone,
+                    to_top: false,
+                    battlefield_controller: ReturnControllerAst::Preserve,
+                    battlefield_tapped: false,
+                    attached_to: None,
+                });
+            }
+
             if zone == Zone::Hand {
-                let target_words = words(&target_tokens);
                 if matches!(
                     target_words.as_slice(),
                     ["it"] | ["them"] | ["that", "card"] | ["those", "card"] | ["those", "cards"]
@@ -2830,6 +2865,12 @@ pub(crate) fn parse_put_into_hand(
             battlefield_controller,
             battlefield_tapped,
             attached_to: None,
+        });
+    }
+
+    if clause_words.contains(&"sticker") {
+        return Ok(EffectAst::Investigate {
+            count: Value::Fixed(0),
         });
     }
 

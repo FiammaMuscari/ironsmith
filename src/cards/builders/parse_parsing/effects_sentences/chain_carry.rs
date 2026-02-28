@@ -1925,7 +1925,12 @@ pub(crate) fn parse_fight_clause(tokens: &[Token]) -> Result<Option<EffectAst>, 
         }
         parse_target_phrase(&left_tokens)?
     };
-    let creature2 = parse_target_phrase(&right_tokens)?;
+    let right_words = words(&right_tokens);
+    let creature2 = if right_words == ["each", "other"] || right_words == ["one", "another"] {
+        TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(&right_tokens))
+    } else {
+        parse_target_phrase(&right_tokens)?
+    };
 
     for target in [&creature1, &creature2] {
         if matches!(

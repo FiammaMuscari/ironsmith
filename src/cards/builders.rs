@@ -517,6 +517,7 @@ enum PredicateAst {
         amount: u32,
         symbol: Option<ManaSymbol>,
     },
+    Unmodeled(String),
     And(Box<PredicateAst>, Box<PredicateAst>),
 }
 
@@ -628,6 +629,9 @@ enum EffectAst {
         remove_mode_text: String,
         target: TargetAst,
         target_count: Option<ChoiceCount>,
+    },
+    ForEachCounterKindPutOrRemove {
+        target: TargetAst,
     },
     PutCountersAll {
         counter_type: CounterType,
@@ -808,6 +812,10 @@ enum EffectAst {
         player: PlayerAst,
     },
     GrantPlayTaggedUntilEndOfTurn {
+        tag: TagKey,
+        player: PlayerAst,
+    },
+    GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
         tag: TagKey,
         player: PlayerAst,
     },

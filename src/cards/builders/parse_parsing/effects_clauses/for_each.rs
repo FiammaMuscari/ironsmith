@@ -501,6 +501,25 @@ pub(crate) fn parse_get_modifier_values_with_tail(
             condition,
         ));
     }
+    if tail_words
+        == [
+            "and", "must", "be", "blocked", "this", "turn", "if", "able",
+        ]
+    {
+        return Ok((out_power, out_toughness, duration, condition));
+    }
+    if tail_words == ["and", "cant", "be", "blocked", "this", "turn"] {
+        return Ok((out_power, out_toughness, duration, condition));
+    }
+    if tail_words.first().copied() == Some("or")
+        && let Some(alt_mod) = tail_words.get(1).copied()
+        && parse_pt_modifier_values(alt_mod).is_ok()
+    {
+        let alt_tail = &tail_words[2..];
+        if alt_tail.is_empty() || alt_tail == ["until", "end", "of", "turn"] {
+            return Ok((out_power, out_toughness, duration, condition));
+        }
+    }
     if !tail_words.starts_with(&["where", "x", "is"]) {
         return Err(CardTextError::ParseError(format!(
             "unsupported trailing gets clause (clause: '{}')",

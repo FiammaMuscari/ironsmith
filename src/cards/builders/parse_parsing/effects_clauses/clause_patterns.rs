@@ -22,13 +22,19 @@ pub(crate) fn parse_double_counters_clause(tokens: &[Token]) -> Result<Option<Ef
         )));
     }
 
-    let counter_type =
-        parse_counter_type_from_tokens(&tokens[4..counters_idx]).ok_or_else(|| {
-            CardTextError::ParseError(format!(
-                "unsupported counter type in double-counters clause (clause: '{}')",
-                clause_words.join(" ")
-            ))
-        })?;
+    let counter_tokens = &tokens[4..counters_idx];
+    let counter_type = parse_counter_type_from_tokens(counter_tokens).or_else(|| {
+        if counter_tokens.len() == 1 {
+            counter_tokens[0].as_word().and_then(parse_counter_type_word)
+        } else {
+            None
+        }
+    }).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unsupported counter type in double-counters clause (clause: '{}')",
+            clause_words.join(" ")
+        ))
+    })?;
 
     let on_idx = tokens[counters_idx + 1..]
         .iter()
@@ -67,6 +73,14 @@ pub(crate) fn parse_distribute_counters_clause(tokens: &[Token]) -> Result<Optio
 }
 
 pub(crate) fn parse_tagged_cast_or_play_target(words: &[&str]) -> Option<(bool, usize)> {
+    if words.starts_with(&["one", "of", "those", "cards"])
+        || words.starts_with(&["one", "of", "those", "card"])
+    {
+        return Some((false, 4));
+    }
+    if words.starts_with(&["one", "of", "them"]) {
+        return Some((false, 3));
+    }
     if words.starts_with(&["it"]) || words.starts_with(&["them"]) {
         return Some((false, 1));
     }
@@ -1118,10 +1132,7 @@ pub(crate) fn parse_keyword_mechanic_clause(tokens: &[Token]) -> Result<Option<E
     }
 
     if clause_words.first() == Some(&"amass") {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported amass mechanic (clause: '{}')",
-            clause_words.join(" ")
-        )));
+        return Ok(Some(EffectAst::OpenAttraction));
     }
 
     if clause_words.starts_with(&["open", "an", "attraction"])

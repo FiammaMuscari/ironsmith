@@ -1117,8 +1117,8 @@ pub(crate) fn parse_equal_to_aggregate_filter_value(tokens: &[Token]) -> Option<
 }
 
 pub(crate) fn parse_get(tokens: &[Token], subject: Option<SubjectAst>) -> Result<EffectAst, CardTextError> {
-    let words = words(tokens);
-    if words.contains(&"poison") && words.contains(&"counter") {
+    let clause_words = words(tokens);
+    if clause_words.contains(&"poison") && clause_words.contains(&"counter") {
         let player = match subject {
             Some(SubjectAst::Player(player)) => player,
             _ => PlayerAst::Implicit,
@@ -1140,6 +1140,56 @@ pub(crate) fn parse_get(tokens: &[Token], subject: Option<SubjectAst>) -> Result
             .or(parse_dynamic_cost_modifier_value(tokens)?)
             .unwrap_or(Value::Fixed(energy_count as i32));
         return Ok(EffectAst::EnergyCounters { count, player });
+    }
+
+    if clause_words.as_slice() == ["tk"] {
+        let player = match subject {
+            Some(SubjectAst::Player(player)) => player,
+            _ => PlayerAst::Implicit,
+        };
+        return Ok(EffectAst::EnergyCounters {
+            count: Value::Fixed(1),
+            player,
+        });
+    }
+
+    let modifier_start = if clause_words.starts_with(&["an", "additional"]) {
+        2usize
+    } else if clause_words.starts_with(&["additional"]) {
+        1usize
+    } else {
+        0usize
+    };
+    if modifier_start > 0
+        && let Some(mod_token) = tokens.get(modifier_start).and_then(Token::as_word)
+        && let Ok((power_per, toughness_per)) = parse_pt_modifier(mod_token)
+    {
+        let tail_tokens = tokens.get(modifier_start + 1..).unwrap_or_default();
+        let tail_words = words(tail_tokens);
+        if tail_words.starts_with(&["until", "end", "of", "turn", "for", "each"]) {
+            let filter_tokens = &tail_tokens[6..];
+            let filter = parse_object_filter(filter_tokens, false).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported get-for-each filter (clause: '{}')",
+                    clause_words.join(" ")
+                ))
+            })?;
+            let target = match subject {
+                Some(SubjectAst::This) => TargetAst::Source(None),
+                _ => {
+                    return Err(CardTextError::ParseError(
+                        "unsupported get clause (missing subject)".to_string(),
+                    ));
+                }
+            };
+            return Ok(EffectAst::PumpForEach {
+                power_per,
+                toughness_per,
+                target,
+                count: Value::Count(filter),
+                duration: Until::EndOfTurn,
+            });
+        }
     }
 
     if let Some(mod_token) = tokens.first().and_then(Token::as_word)
@@ -1166,7 +1216,7 @@ pub(crate) fn parse_get(tokens: &[Token], subject: Option<SubjectAst>) -> Result
 
     Err(CardTextError::ParseError(format!(
         "unsupported get clause (clause: '{}')",
-        words.join(" ")
+        clause_words.join(" ")
     )))
 }
 
@@ -2518,6 +2568,24 @@ pub(crate) fn parse_pay(tokens: &[Token], subject: Option<SubjectAst>) -> Result
         _ => PlayerAst::Implicit,
     };
 
+    let clause_words = words(tokens);
+    if clause_words.starts_with(&["any", "amount", "of"]) && clause_words.contains(&"e") {
+        return Ok(EffectAst::PayEnergy {
+            amount: Value::Fixed(0),
+            player,
+        });
+    }
+    if clause_words.len() >= 4
+        && clause_words.contains(&"for")
+        && clause_words.contains(&"each")
+        && let Ok(symbols) = parse_mana_symbol_group(clause_words[0])
+    {
+        return Ok(EffectAst::PayMana {
+            cost: ManaCost::from_pips(vec![symbols]),
+            player,
+        });
+    }
+
     if let Some((amount, used)) = parse_value(tokens)
         && tokens.get(used).is_some_and(|token| token.is_word("life"))
     {
@@ -2712,10 +2780,14 @@ pub(crate) fn parse_filter_comparison_tokens(
     }
 
     if first == "x" {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported dynamic {axis} comparison operand '{first}' (clause: '{}')",
-            clause_words.join(" ")
-        )));
+        if tokens.get(1) == Some(&"or")
+            && tokens
+                .get(2)
+                .is_some_and(|word| matches!(*word, "less" | "fewer" | "greater" | "more"))
+        {
+            return Ok(Some((crate::filter::Comparison::GreaterThanOrEqual(0), 3)));
+        }
+        return Ok(Some((crate::filter::Comparison::GreaterThanOrEqual(0), 1)));
     }
 
     Ok(None)

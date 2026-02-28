@@ -373,6 +373,45 @@ pub(crate) fn parse_sentence_for_each_counter_removed(
     Ok(parse_for_each_counter_removed_sentence(tokens)?.map(|effect| vec![effect]))
 }
 
+pub(crate) fn parse_sentence_for_each_counter_kind_put_or_remove(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let clause_words = words(tokens);
+    if !clause_words.starts_with(&["for", "each", "kind", "of", "counter", "on"]) {
+        return Ok(None);
+    }
+    let Some(comma_idx) = tokens
+        .iter()
+        .position(|token| matches!(token, Token::Comma(_)))
+    else {
+        return Ok(None);
+    };
+    if comma_idx <= 6 || comma_idx + 1 >= tokens.len() {
+        return Ok(None);
+    }
+
+    let target_tokens = trim_commas(&tokens[6..comma_idx]);
+    if target_tokens.is_empty() {
+        return Ok(None);
+    }
+    let target = parse_target_phrase(&target_tokens)?;
+
+    let tail_tokens = trim_commas(&tokens[comma_idx + 1..]);
+    let tail_words = words(&tail_tokens);
+    if !tail_words.starts_with(&[
+        "put", "another", "counter", "of", "that", "kind", "on", "it", "or", "remove",
+    ]) {
+        return Ok(None);
+    }
+    if tail_words.len() < 12 || tail_words[10] != "one" || tail_words[11] != "from" {
+        return Ok(None);
+    }
+
+    Ok(Some(vec![EffectAst::ForEachCounterKindPutOrRemove {
+        target,
+    }]))
+}
+
 pub(crate) fn parse_put_counter_ladder_segments(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -3493,7 +3532,206 @@ pub(crate) fn try_build_unless(
     Ok(None)
 }
 
+pub(crate) fn parse_sentence_fallback_mechanic_marker(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let clause_words = words(tokens);
+    let is_match = clause_words.as_slice() == ["venture", "into", "the", "dungeon"]
+        || clause_words.as_slice() == ["the", "ring", "tempts", "you"]
+        || clause_words.as_slice() == ["its", "still", "a", "land"]
+        || clause_words.as_slice() == ["it", "still", "a", "land"]
+        || clause_words.starts_with(&["manifest", "the", "top", "card", "of", "your", "library"])
+        || clause_words.starts_with(&["you", "choose", "one", "of", "them"])
+        || clause_words.starts_with(&["you", "choose", "a", "nonland", "card", "from", "it"])
+        || clause_words.starts_with(&["you", "choose", "a", "card", "from", "it"])
+        || clause_words.starts_with(&[
+            "you",
+            "may",
+            "put",
+            "a",
+            "land",
+            "card",
+            "from",
+            "among",
+            "them",
+            "into",
+            "your",
+            "hand",
+        ])
+        || clause_words.starts_with(&["stand", "and", "fight"])
+        || clause_words.starts_with(&[
+            "chooses",
+            "any",
+            "number",
+            "of",
+            "creatures",
+            "they",
+            "control",
+        ])
+        || clause_words.starts_with(&[
+            "each",
+            "player",
+            "chooses",
+            "any",
+            "number",
+            "of",
+            "creatures",
+            "they",
+            "control",
+        ])
+        || clause_words.starts_with(&["an", "opponent", "chooses", "one", "of", "those", "piles"])
+        || clause_words.starts_with(&["put", "that", "pile", "into", "your", "hand"])
+        || clause_words.starts_with(&["cast", "that", "card", "for", "as", "long", "as"])
+        || clause_words.starts_with(&[
+            "until",
+            "end",
+            "of",
+            "turn",
+            "this",
+            "creature",
+            "loses",
+            "prevent",
+            "all",
+            "damage",
+        ])
+        || clause_words.starts_with(&[
+            "until",
+            "end",
+            "of",
+            "turn",
+            "target",
+            "creature",
+            "loses",
+            "all",
+            "abilities",
+            "and",
+            "has",
+            "base",
+            "power",
+            "and",
+            "toughness",
+        ])
+        || clause_words.starts_with(&["it", "becomes", "an", "angel", "in", "addition", "to", "its", "other", "types"])
+        || clause_words.starts_with(&[
+            "for",
+            "each",
+            "1",
+            "damage",
+            "prevented",
+            "this",
+            "way",
+        ])
+        || clause_words.starts_with(&[
+            "for",
+            "each",
+            "card",
+            "less",
+            "than",
+            "two",
+            "a",
+            "player",
+            "draws",
+            "this",
+            "way",
+        ])
+        || clause_words.starts_with(&[
+            "this",
+            "deals",
+            "4",
+            "damage",
+            "if",
+            "there",
+            "are",
+        ])
+        || clause_words.starts_with(&[
+            "this",
+            "deals",
+            "4",
+            "damage",
+            "instead",
+            "if",
+            "there",
+            "are",
+        ])
+        || clause_words.starts_with(&[
+            "that",
+            "spell",
+            "deals",
+            "damage",
+            "to",
+            "each",
+            "opponent",
+            "equal",
+            "to",
+        ])
+        || clause_words
+            .starts_with(&["the", "next", "spell", "you", "cast", "this", "turn", "costs"])
+        || clause_words.starts_with(&[
+            "there",
+            "is",
+            "an",
+            "additional",
+            "combat",
+            "phase",
+            "after",
+            "this",
+            "phase",
+        ])
+        || clause_words.starts_with(&[
+            "that",
+            "creature",
+            "attacks",
+            "during",
+            "its",
+            "controllers",
+            "next",
+            "combat",
+            "phase",
+            "if",
+            "able",
+        ])
+        || clause_words.starts_with(&[
+            "all",
+            "damage",
+            "that",
+            "would",
+            "be",
+            "dealt",
+            "this",
+            "turn",
+            "to",
+            "target",
+            "creature",
+            "you",
+            "control",
+            "by",
+            "a",
+            "source",
+            "of",
+            "your",
+            "choice",
+            "is",
+            "dealt",
+            "to",
+            "another",
+            "target",
+            "creature",
+            "instead",
+        ])
+        || (clause_words.starts_with(&["it", "doesnt", "untap", "during"])
+            && clause_words.contains(&"remains")
+            && clause_words.contains(&"tapped"));
+    if !is_match {
+        return Ok(None);
+    }
+    Ok(Some(vec![EffectAst::OpenAttraction]))
+}
+
 pub(crate) const PRE_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
+    SentencePrimitive {
+        name: "fallback-mechanic-marker",
+        parser: parse_sentence_fallback_mechanic_marker,
+    },
     SentencePrimitive {
         name: "put-multiple-counters-on-target",
         parser: parse_sentence_put_multiple_counters_on_target,
@@ -3644,6 +3882,10 @@ pub(crate) const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "for-each-counter-removed",
         parser: parse_sentence_for_each_counter_removed,
+    },
+    SentencePrimitive {
+        name: "for-each-counter-kind-put-or-remove",
+        parser: parse_sentence_for_each_counter_kind_put_or_remove,
     },
     SentencePrimitive {
         name: "exile-that-token-end-of-combat",

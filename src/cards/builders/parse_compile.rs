@@ -501,6 +501,7 @@ pub(crate) fn compile_condition_from_predicate_ast(
         PredicateAst::TargetHasGreatestPowerAmongCreatures => Condition::TargetHasGreatestPowerAmongCreatures,
         PredicateAst::TargetManaValueLteColorsSpentToCastThisSpell => Condition::TargetManaValueLteColorsSpentToCastThisSpell,
         PredicateAst::ManaSpentToCastThisSpellAtLeast { amount, symbol } => Condition::ManaSpentToCastThisSpellAtLeast { amount: *amount, symbol: *symbol },
+        PredicateAst::Unmodeled(text) => Condition::Unmodeled(text.clone()),
         PredicateAst::And(left, right) => {
             let left = compile_condition_from_predicate_ast(left, ctx, saved_last_tag)?;
             let right = compile_condition_from_predicate_ast(right, ctx, saved_last_tag)?;
@@ -669,6 +670,7 @@ pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::Goad { target }
         | EffectAst::PutCounters { target, .. }
         | EffectAst::PutOrRemoveCounters { target, .. }
+        | EffectAst::ForEachCounterKindPutOrRemove { target }
         | EffectAst::Tap { target }
         | EffectAst::Untap { target }
         | EffectAst::RemoveFromCombat { target }
@@ -1016,6 +1018,10 @@ pub(crate) fn effect_references_its_controller(effect: &EffectAst) -> bool {
         | EffectAst::Surveil { player, .. }
         | EffectAst::PlayFromGraveyardUntilEot { player }
         | EffectAst::GrantPlayTaggedUntilEndOfTurn { player, .. }
+        | EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
+            player,
+            ..
+        }
         | EffectAst::ExileInsteadOfGraveyardThisTurn { player }
         | EffectAst::ExtraTurnAfterTurn { player }
         | EffectAst::RevealTop { player }
@@ -1160,6 +1166,7 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::Connive { target }
         | EffectAst::Goad { target }
         | EffectAst::PutOrRemoveCounters { target, .. }
+        | EffectAst::ForEachCounterKindPutOrRemove { target }
         | EffectAst::Tap { target }
         | EffectAst::Untap { target }
         | EffectAst::RemoveFromCombat { target }
@@ -1289,6 +1296,7 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
         }
         EffectAst::CreateTokenCopy { object, .. } => matches!(object, ObjectRefAst::It),
         EffectAst::GrantPlayTaggedUntilEndOfTurn { tag, .. }
+        | EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn { tag, .. }
         | EffectAst::GrantPlayTaggedUntilYourNextTurn { tag, .. }
         | EffectAst::CastTagged { tag, .. }
         | EffectAst::ReorderTopOfLibrary { tag } => tag.as_str() == IT_TAG,
@@ -1688,6 +1696,7 @@ pub(crate) fn collect_tag_spans_from_effect(
         | EffectAst::Goad { target }
         | EffectAst::PutCounters { target, .. }
         | EffectAst::PutOrRemoveCounters { target, .. }
+        | EffectAst::ForEachCounterKindPutOrRemove { target }
         | EffectAst::Tap { target }
         | EffectAst::Untap { target }
         | EffectAst::RemoveFromCombat { target }
@@ -2825,6 +2834,15 @@ pub(crate) fn compile_effect(
             };
             Ok((vec![effect], choices))
         }
+        EffectAst::ForEachCounterKindPutOrRemove { target } => {
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            Ok((
+                vec![Effect::new(
+                    crate::effects::ForEachCounterKindPutOrRemoveEffect::new(spec),
+                )],
+                choices,
+            ))
+        }
         EffectAst::PutCountersAll {
             counter_type,
             count,
@@ -3362,6 +3380,30 @@ pub(crate) fn compile_effect(
                     player_filter,
                     crate::effects::GrantPlayTaggedDuration::UntilEndOfTurn,
                 ))],
+                Vec::new(),
+            ))
+        }
+        EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
+            tag,
+            player,
+        } => {
+            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let resolved_tag = if tag.as_str() == IT_TAG {
+                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
+                    CardTextError::ParseError(
+                        "unable to resolve 'it' without prior reference".to_string(),
+                    )
+                })?)
+            } else {
+                tag.clone()
+            };
+            Ok((
+                vec![Effect::new(
+                    crate::effects::GrantTaggedSpellLifeCostByManaValueEffect::new(
+                        resolved_tag,
+                        player_filter,
+                    ),
+                )],
                 Vec::new(),
             ))
         }
@@ -5010,6 +5052,7 @@ pub(crate) fn compile_effect(
                             symbol: *symbol,
                         }
                     }
+                    PredicateAst::Unmodeled(text) => Condition::Unmodeled(text.clone()),
                     PredicateAst::And(left, right) => {
                         let left = compile_condition_from_predicate(left, ctx, saved_last_tag)?;
                         let right = compile_condition_from_predicate(right, ctx, saved_last_tag)?;

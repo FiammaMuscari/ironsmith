@@ -697,10 +697,7 @@ pub(crate) fn parse_counter_target_count_prefix(
             .get(idx + 1)
             .is_some_and(|token| token.is_word("target"))
     {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported dynamic target count 'each of X target' (clause: '{}')",
-            words(tokens).join(" ")
-        )));
+        return Ok(Some((ChoiceCount::dynamic_x(), idx + 1)));
     }
 
     if each_prefix && tokens.get(idx).is_some_and(|token| token.is_word("target")) {

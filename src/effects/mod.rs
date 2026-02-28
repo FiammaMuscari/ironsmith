@@ -86,8 +86,9 @@ pub use composition::{
 pub use continuous::ApplyContinuousEffect;
 pub use control::{ExchangeControlEffect, GainControlEffect, SharedTypeConstraint};
 pub use counters::{
-    MoveAllCountersEffect, MoveCountersEffect, ProliferateEffect, PutCountersEffect,
-    RemoveCountersEffect, RemoveUpToAnyCountersEffect, RemoveUpToCountersEffect,
+    ForEachCounterKindPutOrRemoveEffect, MoveAllCountersEffect, MoveCountersEffect,
+    ProliferateEffect, PutCountersEffect, RemoveCountersEffect, RemoveUpToAnyCountersEffect,
+    RemoveUpToCountersEffect,
 };
 pub use damage::{
     ClearDamageEffect, DealDamageEffect, PreventNextTimeDamageEffect, PreventNextTimeDamageSource,
@@ -116,9 +117,9 @@ pub use player::{
     CascadeEffect, CastSourceEffect, CastTaggedEffect, ControlPlayerEffect, CreateEmblemEffect,
     DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect, ExperienceCountersEffect,
     ExtraTurnEffect, GrantEffect, GrantPlayFromGraveyardEffect, GrantPlayTaggedDuration,
-    GrantPlayTaggedEffect, LoseTheGameEffect, PayEnergyEffect, PoisonCountersEffect,
-    SkipCombatPhasesEffect, SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect,
-    WinTheGameEffect,
+    GrantPlayTaggedEffect, GrantTaggedSpellLifeCostByManaValueEffect, LoseTheGameEffect,
+    PayEnergyEffect, PoisonCountersEffect, SkipCombatPhasesEffect, SkipDrawStepEffect,
+    SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, WinTheGameEffect,
 };
 pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};
 pub use restrictions::CantEffect;
