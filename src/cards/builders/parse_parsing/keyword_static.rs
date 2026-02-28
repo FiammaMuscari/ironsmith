@@ -385,6 +385,9 @@ pub(crate) fn parse_static_ability_line(
     if let Some(ability) = parse_spells_cost_modifier_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) = parse_foretelling_cards_cost_modifier_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_players_skip_upkeep_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -2734,6 +2737,34 @@ pub(crate) fn parse_flashback_cost_modifier_line(
     }
     Ok(Some(StaticAbility::new(
         crate::static_abilities::CostIncrease::new(filter, amount_value),
+    )))
+}
+
+pub(crate) fn parse_foretelling_cards_cost_modifier_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.len() < 7 {
+        return Ok(None);
+    }
+    if !clause_words.starts_with(&["foretelling", "cards", "from", "your", "hand", "costs"]) {
+        return Ok(None);
+    }
+
+    let has_less = clause_words.contains(&"less");
+    let has_any_players_turn = clause_words.windows(5).any(|window| {
+        window == ["on", "any", "players", "turn"]
+            || window == ["on", "any", "player", "turn"]
+    }) || clause_words
+        .windows(6)
+        .any(|window| window == ["on", "any", "player", "s", "turn"]);
+    if !has_less || !has_any_players_turn {
+        return Ok(None);
+    }
+
+    Ok(Some(StaticAbility::custom(
+        "foretell_modifier",
+        clause_words.join(" "),
     )))
 }
 
@@ -7368,19 +7399,25 @@ pub(crate) fn parse_additional_land_play_line(
         return Ok(None);
     }
 
-    let Some(count_token_idx) = token_index_for_word_index(tokens, 3) else {
+    let mut count_word_idx = 3;
+    if words.get(count_word_idx) == Some(&"up") && words.get(count_word_idx + 1) == Some(&"to") {
+        count_word_idx += 2;
+    }
+
+    let Some(count_token_idx) = token_index_for_word_index(tokens, count_word_idx) else {
         return Ok(None);
     };
     let Some((count, used)) = parse_number(&tokens[count_token_idx..]) else {
         return Ok(None);
     };
-    let rest_word_idx = 3 + used;
+    let rest_word_idx = count_word_idx + used;
     if rest_word_idx >= words.len() {
         return Ok(None);
     }
     let rest_words = &words[rest_word_idx..];
     let is_match = rest_words
         == ["additional", "land", "on", "each", "of", "your", "turns"]
+        || rest_words == ["additional", "land", "this", "turn"]
         || rest_words
             == [
                 "additional",
@@ -7390,7 +7427,8 @@ pub(crate) fn parse_additional_land_play_line(
                 "of",
                 "your",
                 "turns",
-            ];
+            ]
+        || rest_words == ["additional", "lands", "this", "turn"];
     if !is_match {
         return Ok(None);
     }
@@ -7515,6 +7553,38 @@ pub(crate) fn parse_reduced_maximum_hand_size_line(
     } else {
         return Ok(None);
     };
+
+    if words.get(idx..idx + 4) == Some(["maximum", "hand", "size", "is"].as_slice()) {
+        idx += 4;
+        let Some(amount_word) = words.get(idx) else {
+            return Err(CardTextError::ParseError(format!(
+                "missing maximum-hand-size value (clause: '{}')",
+                words.join(" ")
+            )));
+        };
+        let Some(amount) = parse_named_number(amount_word) else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported maximum-hand-size value '{}' (clause: '{}')",
+                amount_word,
+                words.join(" ")
+            )));
+        };
+        idx += 1;
+        if idx != words.len() {
+            return Ok(None);
+        }
+
+        if amount <= 7 {
+            return Ok(Some(StaticAbility::reduce_maximum_hand_size(
+                player,
+                7 - amount,
+            )));
+        }
+        return Ok(Some(StaticAbility::custom(
+            "maximum_hand_size",
+            words.join(" "),
+        )));
+    }
 
     if words.get(idx..idx + 5) != Some(["maximum", "hand", "size", "is", "reduced"].as_slice()) {
         return Ok(None);

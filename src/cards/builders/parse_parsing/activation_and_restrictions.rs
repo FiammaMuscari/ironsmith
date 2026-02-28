@@ -3480,8 +3480,10 @@ pub(crate) fn marker_keyword_id(keyword: &str) -> Option<&'static str> {
     match keyword {
         "banding" => Some("banding"),
         "fabricate" => Some("fabricate"),
+        "foretell" => Some("foretell"),
         "bestow" => Some("bestow"),
         "dash" => Some("dash"),
+        "overload" => Some("overload"),
         "soulshift" => Some("soulshift"),
         "adapt" => Some("adapt"),
         "bolster" => Some("bolster"),
@@ -3525,7 +3527,8 @@ pub(crate) fn marker_keyword_display(words: &[&str]) -> Option<String> {
             Some(format!("{title} {amount}"))
         }
         "bestow" | "dash" | "disturb" | "ninjutsu" | "outlast" | "scavenge" | "unearth"
-        | "specialize" | "spectacle" | "plot" | "disguise" | "flashback" => {
+        | "specialize" | "spectacle" | "plot" | "disguise" | "flashback" | "foretell"
+        | "overload" => {
             let (cost, _) = leading_mana_symbols_to_oracle(&words[1..])?;
             Some(format!("{title} {cost}"))
         }
@@ -3795,8 +3798,7 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
     }
 
     if words.first().copied() == Some("ninjutsu") {
-        if let Some((cost_text, consumed)) = leading_mana_symbols_to_oracle(&words[1..])
-            && consumed == words.len().saturating_sub(1)
+        if let Some((cost_text, _consumed)) = leading_mana_symbols_to_oracle(&words[1..])
             && let Ok(cost) = parse_scryfall_mana_cost(&cost_text)
         {
             return Some(KeywordAction::Ninjutsu(cost));
@@ -3804,7 +3806,40 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         if words.len() == 1 {
             return Some(KeywordAction::Marker("ninjutsu"));
         }
-        return None;
+        if let Some(display) = marker_keyword_display(&words) {
+            return Some(KeywordAction::MarkerText(display));
+        }
+        return Some(KeywordAction::Marker("ninjutsu"));
+    }
+
+    if words.first().copied() == Some("foretell") {
+        if let Some((display, _consumed)) = leading_mana_symbols_to_oracle(&words[1..]) {
+            return Some(KeywordAction::MarkerText(format!("Foretell {display}")));
+        }
+        if words.len() == 1 {
+            return Some(KeywordAction::Marker("foretell"));
+        }
+        if let Some(display) = marker_keyword_display(&words) {
+            return Some(KeywordAction::MarkerText(display));
+        }
+        return Some(KeywordAction::Marker("foretell"));
+    }
+
+    if words.first().copied() == Some("overload") {
+        if let Some((display, _consumed)) = leading_mana_symbols_to_oracle(&words[1..]) {
+            return Some(KeywordAction::MarkerText(format!("Overload {display}")));
+        }
+        if words.len() == 1 {
+            return Some(KeywordAction::Marker("overload"));
+        }
+        if let Some(display) = marker_keyword_display(&words) {
+            return Some(KeywordAction::MarkerText(display));
+        }
+        return Some(KeywordAction::Marker("overload"));
+    }
+
+    if words.starts_with(&["umbra", "armor"]) {
+        return Some(KeywordAction::MarkerText("Umbra armor".to_string()));
     }
 
     if words.first().copied() == Some("echo") {
@@ -3988,8 +4023,10 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
             first,
             "banding"
                 | "fabricate"
+                | "foretell"
                 | "bestow"
                 | "dash"
+                | "overload"
                 | "soulshift"
                 | "adapt"
                 | "bolster"

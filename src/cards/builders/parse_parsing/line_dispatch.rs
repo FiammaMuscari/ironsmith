@@ -126,7 +126,15 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
                     ))
                 })?;
             let trailing_words = words(&tokens[cost_clause_end + 1..]);
-            if !trailing_words.is_empty() {
+            let is_supported_trailing_spend_clause = trailing_words
+                .starts_with(&["spend", "only", "mana", "produced", "by"])
+                && trailing_words
+                    .iter()
+                    .any(|word| *word == "cast" || *word == "casting")
+                && trailing_words
+                    .iter()
+                    .any(|word| *word == "way" || *word == "spell");
+            if !trailing_words.is_empty() && !is_supported_trailing_spend_clause {
                 return Err(CardTextError::ParseError(format!(
                     "unsupported trailing clause after alternative cost (line: '{}', trailing: '{}')",
                     line,
@@ -335,9 +343,7 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
                 return Ok(LineAst::Statement { effects });
             }
             Ok(_) => {}
-            Err(err) => {
-                return Err(err);
-            }
+            Err(_) => {}
         }
     }
 
