@@ -5549,7 +5549,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
         .downcast_ref::<crate::effects::mana::AddManaOfImprintedColorsEffect>()
         .is_some()
     {
-        return "Add one mana of any imprinted card color".to_string();
+        return "Add one mana of any of the exiled card's colors".to_string();
     }
     if let Some(prevent_damage) = effect.downcast_ref::<crate::effects::PreventDamageEffect>() {
         let filter = &prevent_damage.damage_filter;
@@ -5778,6 +5778,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
     }
     if let Some(exile_hand) = effect.downcast_ref::<crate::effects::ExileFromHandAsCostEffect>() {
         return capitalize_first(&describe_exile_from_hand_as_cost_phrase(exile_hand));
+    }
+    if let Some(imprint) = effect.downcast_ref::<crate::effects::cards::ImprintFromHandEffect>() {
+        return describe_imprint_from_hand_phrase(imprint);
     }
     if let Some(for_each_ctrl) =
         effect.downcast_ref::<crate::effects::ForEachControllerOfTaggedEffect>()
@@ -6872,6 +6875,18 @@ fn describe_exile_from_hand_as_cost_phrase(
         .map(|text| format!("{text} "))
         .unwrap_or_default();
     format!("exile {amount} {color_prefix}{card_word} from your hand")
+}
+
+fn describe_imprint_from_hand_phrase(
+    imprint: &crate::effects::cards::ImprintFromHandEffect,
+) -> String {
+    let mut card_text = imprint.filter.description();
+    if let Some((subject, zone_phrase)) = card_text.rsplit_once(" in ")
+        && zone_phrase.to_ascii_lowercase().contains("hand")
+    {
+        card_text = format!("{subject} from {zone_phrase}");
+    }
+    format!("imprint, you may exile {card_text}")
 }
 
 fn describe_optional_cost_line(cost: &crate::cost::OptionalCost) -> String {

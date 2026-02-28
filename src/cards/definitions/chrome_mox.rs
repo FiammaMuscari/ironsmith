@@ -207,6 +207,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_chrome_mox_compiled_text_mentions_imprint_clause() {
+        let def = chrome_mox();
+        let rendered = crate::compiled_text::compiled_lines(&def)
+            .join("\n")
+            .to_ascii_lowercase();
+
+        assert!(rendered.contains("imprint"));
+        assert!(rendered.contains("you may exile"));
+        assert!(rendered.contains("nonartifact"));
+        assert!(rendered.contains("nonland"));
+        assert!(rendered.contains("from your hand"));
+        assert!(rendered.contains("exiled card"));
+        assert!(rendered.contains("colors"));
+    }
+
     // =========================================================================
     // Imprint Tests
     // =========================================================================

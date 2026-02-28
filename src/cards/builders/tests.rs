@@ -6066,14 +6066,16 @@ fn parse_reveal_cards_in_library_clause() {
 }
 
 #[test]
-fn parse_target_creature_attacks_or_blocks_if_able_fails_strictly() {
-    let err = CardDefinitionBuilder::new(CardId::new(), "Hustle Variant")
+fn parse_target_creature_attacks_or_blocks_if_able() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Hustle Variant")
         .parse_text("Target creature attacks or blocks this turn if able.")
-        .expect_err("unsupported target-only combat-action clause should fail");
-    let message = format!("{err:?}");
+        .expect("target creature attacks-or-blocks clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        message.contains("unsupported target-only restriction clause"),
-        "expected strict target-only restriction error, got {message}"
+        rendered.contains("gains attacks each combat if able")
+            && rendered.contains("gains blocks each combat if able"),
+        "expected attack/block-if-able grants, got {rendered}"
     );
 }
 
@@ -6086,6 +6088,45 @@ fn parse_target_creature_can_block_any_number_fails_strictly() {
     assert!(
         message.contains("unsupported target-only restriction clause"),
         "expected strict target-only restriction error, got {message}"
+    );
+}
+
+#[test]
+fn parse_target_creature_blocks_this_turn_if_able() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Culling Mark Variant")
+        .parse_text("Target creature blocks this turn if able.")
+        .expect("target creature blocks-if-able clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("gains blocks each combat if able"),
+        "expected must-block effect, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_each_creature_opponents_control_blocks_this_turn_if_able() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Predatory Rampage Variant")
+        .parse_text("Each creature your opponents control blocks this turn if able.")
+        .expect("each-creature blocks-if-able clause should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("creatures gain blocks each combat if able"),
+        "expected must-block effect for filtered creatures, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_play_that_card_from_exile_this_turn_clause() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Play From Exile Variant")
+        .parse_text("Exile target card from a graveyard. You may play that card from exile this turn.")
+        .expect("play-that-card-from-exile clause should parse");
+
+    let debug = format!("{:?}", def.spell_effect);
+    assert!(
+        debug.contains("GrantPlayTaggedEffect") && debug.contains("UntilEndOfTurn"),
+        "expected end-of-turn play permission effect, got {debug}"
     );
 }
 

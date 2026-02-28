@@ -1554,6 +1554,9 @@ pub(crate) fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst
             parser: parse_can_block_additional_creature_this_turn_clause,
         },
         ClausePrimitive {
+            parser: parse_attack_or_block_this_turn_if_able_clause,
+        },
+        ClausePrimitive {
             parser: parse_attack_this_turn_if_able_clause,
         },
         ClausePrimitive {
@@ -1585,6 +1588,60 @@ pub(crate) fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst
         }
     }
     Ok(None)
+}
+
+pub(crate) fn parse_attack_or_block_this_turn_if_able_clause(
+    tokens: &[Token],
+) -> Result<Option<EffectAst>, CardTextError> {
+    use crate::effect::Until;
+
+    let clause_words = words(tokens);
+    let Some(attack_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("attack") || token.is_word("attacks"))
+    else {
+        return Ok(None);
+    };
+    if attack_idx == 0 {
+        return Ok(None);
+    }
+
+    let tail_words = words(&tokens[attack_idx..]);
+    let has_supported_tail = tail_words == ["attack", "or", "block", "this", "turn", "if", "able"]
+        || tail_words == ["attacks", "or", "blocks", "this", "turn", "if", "able"]
+        || tail_words == ["attacks", "or", "block", "this", "turn", "if", "able"]
+        || tail_words == ["attack", "or", "blocks", "this", "turn", "if", "able"];
+    if !has_supported_tail {
+        return Ok(None);
+    }
+
+    let subject_tokens = trim_commas(&tokens[..attack_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+    let target = parse_target_phrase(&subject_tokens)?;
+    let abilities = vec![StaticAbility::must_attack(), StaticAbility::must_block()];
+
+    if starts_with_target_indicator(&subject_tokens) {
+        return Ok(Some(EffectAst::GrantAbilitiesToTarget {
+            target,
+            abilities,
+            duration: Until::EndOfTurn,
+        }));
+    }
+
+    let filter = target_ast_to_object_filter(target).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unsupported attacker/blocker subject in attacks-or-blocks-if-able clause (clause: '{}')",
+            clause_words.join(" ")
+        ))
+    })?;
+
+    Ok(Some(EffectAst::GrantAbilitiesAll {
+        filter,
+        abilities,
+        duration: Until::EndOfTurn,
+    }))
 }
 
 pub(crate) fn parse_attack_this_turn_if_able_clause(
@@ -1691,6 +1748,48 @@ pub(crate) fn parse_must_block_if_able_clause(tokens: &[Token]) -> Result<Option
 
     let clause_words = words(tokens);
 
+    // "<subject> blocks this turn if able."
+    let Some(block_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("block") || token.is_word("blocks"))
+    else {
+        return Ok(None);
+    };
+    if block_idx == 0 || block_idx + 1 >= tokens.len() {
+        return Ok(None);
+    }
+    let tail_words = words(&tokens[block_idx..]);
+    if tail_words == ["block", "this", "turn", "if", "able"]
+        || tail_words == ["blocks", "this", "turn", "if", "able"]
+    {
+        let subject_tokens = trim_commas(&tokens[..block_idx]);
+        if subject_tokens.is_empty() {
+            return Ok(None);
+        }
+        let target = parse_target_phrase(&subject_tokens)?;
+        let ability = StaticAbility::must_block();
+
+        if starts_with_target_indicator(&subject_tokens) {
+            return Ok(Some(EffectAst::GrantAbilitiesToTarget {
+                target,
+                abilities: vec![ability],
+                duration: Until::EndOfTurn,
+            }));
+        }
+
+        let filter = target_ast_to_object_filter(target).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "unsupported blocker subject in blocks-if-able clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+        return Ok(Some(EffectAst::GrantAbilitiesAll {
+            filter,
+            abilities: vec![ability],
+            duration: Until::EndOfTurn,
+        }));
+    }
+
     // "All creatures able to block target creature this turn do so."
     if clause_words.starts_with(&["all", "creatures", "able", "to", "block"]) {
         let mut tail_tokens = trim_commas(&tokens[5..]);
@@ -1732,16 +1831,6 @@ pub(crate) fn parse_must_block_if_able_clause(tokens: &[Token]) -> Result<Option
     }
 
     // "<subject> blocks <attacker> this turn if able."
-    let Some(block_idx) = tokens
-        .iter()
-        .position(|token| token.is_word("block") || token.is_word("blocks"))
-    else {
-        return Ok(None);
-    };
-    if block_idx == 0 || block_idx + 1 >= tokens.len() {
-        return Ok(None);
-    }
-
     let subject_tokens = trim_commas(&tokens[..block_idx]);
     if subject_tokens.is_empty() {
         return Ok(None);

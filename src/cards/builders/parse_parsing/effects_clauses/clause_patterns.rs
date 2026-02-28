@@ -200,7 +200,10 @@ pub(crate) fn parse_cast_or_play_tagged_clause(tokens: &[Token]) -> Result<Optio
     let Some((as_copy, consumed)) = parse_tagged_cast_or_play_target(rest) else {
         return Ok(None);
     };
-    let tail = &rest[consumed..];
+    let mut tail = &rest[consumed..];
+    if tail.starts_with(&["from", "exile"]) {
+        tail = &tail[2..];
+    }
 
     let has_this_turn_duration = tail == ["this", "turn"];
     let has_until_end_of_turn_duration = tail == ["until", "end", "of", "turn"]
