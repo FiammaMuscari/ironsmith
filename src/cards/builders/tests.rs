@@ -11770,3 +11770,27 @@ fn parse_when_this_creature_becomes_blocked_may_untap_and_remove_from_combat() {
         "expected remove-from-combat effect in triggered ability, got {abilities_debug}"
     );
 }
+
+#[test]
+fn parse_you_gain_protection_from_everything_until_your_next_turn() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "The One Ring")
+        .card_types(vec![CardType::Artifact])
+        .parse_text(
+            "When The One Ring enters, if you cast it, you gain protection from everything until your next turn.",
+        )
+        .expect("player protection-from-everything trigger should parse");
+
+    let abilities_debug = format!("{:#?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        abilities_debug.contains("betargetedplayer"),
+        "expected temporary cant-target-player restriction, got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug.contains("preventalldamagetotargeteffect"),
+        "expected temporary prevent-all-damage-to-player effect, got {abilities_debug}"
+    );
+    assert!(
+        abilities_debug.contains("sourcewascast"),
+        "expected intervening-if 'you cast it' condition, got {abilities_debug}"
+    );
+}

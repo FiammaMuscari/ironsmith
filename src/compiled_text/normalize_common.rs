@@ -6716,6 +6716,7 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::CreatureDiedThisTurn => "a creature died this turn".to_string(),
         Condition::CastSpellThisTurn => "a spell was cast this turn".to_string(),
         Condition::AttackedThisTurn => "you attacked this turn".to_string(),
+        Condition::SourceWasCast => "you cast it".to_string(),
         Condition::PlayerTappedLandForManaThisTurn { player } => {
             format!(
                 "{} tapped a land for mana this turn",

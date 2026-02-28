@@ -1528,6 +1528,9 @@ pub enum Condition {
     /// You attacked with one or more creatures this turn
     AttackedThisTurn,
 
+    /// This source object entered as a spell that was cast.
+    SourceWasCast,
+
     /// A player tapped a land for mana this turn.
     PlayerTappedLandForManaThisTurn { player: PlayerFilter },
 

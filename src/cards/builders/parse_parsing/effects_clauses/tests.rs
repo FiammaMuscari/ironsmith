@@ -408,6 +408,13 @@ use super::*;
     }
 
     #[test]
+    fn parse_predicate_you_cast_it() {
+        let tokens = tokenize_line("you cast it", 0);
+        let predicate = parse_predicate(&tokens).expect("parse you-cast-it predicate");
+        assert!(matches!(predicate, PredicateAst::SourceWasCast));
+    }
+
+    #[test]
     fn parse_predicate_its_your_turn() {
         let tokens = tokenize_line("its your turn", 0);
         let predicate = parse_predicate(&tokens).expect("parse your-turn predicate");

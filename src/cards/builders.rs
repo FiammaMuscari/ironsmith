@@ -127,6 +127,7 @@ enum KeywordAction {
     ProtectionFrom(ColorSet),
     ProtectionFromAllColors,
     ProtectionFromColorless,
+    ProtectionFromEverything,
     ProtectionFromCardType(CardType),
     ProtectionFromSubtype(Subtype),
     Unblockable,
@@ -500,6 +501,7 @@ enum PredicateAst {
     YourTurn,
     CreatureDiedThisTurn,
     YouAttackedThisTurn,
+    SourceWasCast,
     NoSpellsWereCastLastTurn,
     /// The current resolving spell was kicked (not a target predicate).
     ThisSpellWasKicked,
@@ -1624,6 +1626,11 @@ impl CardDefinitionBuilder {
             KeywordAction::ProtectionFromColorless => self.with_ability(Ability::static_ability(
                 StaticAbility::protection(crate::ability::ProtectionFrom::Colorless),
             )),
+            KeywordAction::ProtectionFromEverything => {
+                self.with_ability(Ability::static_ability(StaticAbility::protection(
+                    crate::ability::ProtectionFrom::Everything,
+                )))
+            }
             KeywordAction::ProtectionFromCardType(card_type) => {
                 self.protection_from_card_type(card_type)
             }

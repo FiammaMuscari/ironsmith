@@ -9,6 +9,16 @@ use crate::zone::Zone;
 
 use crate::triggers::{TriggerEvent, TriggerIdentity};
 
+fn source_was_cast(game: &GameState, source: ObjectId, triggering_event: Option<&TriggerEvent>) -> bool {
+    if let Some(event) = triggering_event
+        && let Some(etb) = event.downcast::<crate::events::EnterBattlefieldEvent>()
+        && etb.object == source
+    {
+        return etb.from == Zone::Stack;
+    }
+    game.spell_cast_order_this_turn.contains_key(&source)
+}
+
 /// Condition evaluation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConditionEvaluationMode {
@@ -98,6 +108,7 @@ pub fn evaluate_condition_external(
         Condition::CreatureDiedThisTurn => game.creatures_died_this_turn > 0,
         Condition::CastSpellThisTurn => game.spells_cast_this_turn.values().any(|&count| count > 0),
         Condition::AttackedThisTurn => game.players_attacked_this_turn.contains(&ctx.controller),
+        Condition::SourceWasCast => source_was_cast(game, ctx.source, ctx.triggering_event),
         Condition::PlayerTappedLandForManaThisTurn { player } => {
             let Some(player_id) = resolve_condition_player_simple(game, ctx.controller, player)
             else {
@@ -853,6 +864,7 @@ fn evaluate_condition_simple(
         Condition::CreatureDiedThisTurn => game.creatures_died_this_turn > 0,
         Condition::CastSpellThisTurn => game.spells_cast_this_turn.values().any(|&count| count > 0),
         Condition::AttackedThisTurn => game.players_attacked_this_turn.contains(&controller),
+        Condition::SourceWasCast => source_was_cast(game, source, None),
         Condition::PlayerTappedLandForManaThisTurn { player } => {
             let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
                 return false;
@@ -1212,6 +1224,7 @@ fn evaluate_condition(
         Condition::AttackedThisTurn => {
             Ok(game.players_attacked_this_turn.contains(&ctx.controller))
         }
+        Condition::SourceWasCast => Ok(source_was_cast(game, ctx.source, ctx.triggering_event.as_ref())),
         Condition::PlayerTappedLandForManaThisTurn { player } => {
             let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
             Ok(game
@@ -1672,8 +1685,10 @@ fn evaluate_condition(
 mod tests {
     use super::*;
     use crate::card::CardBuilder;
+    use crate::events::EnterBattlefieldEvent;
     use crate::ids::CardId;
     use crate::types::{CardType, Subtype};
+    use crate::triggers::TriggerEvent;
 
     #[test]
     fn player_controls_basic_land_types_among_lands_or_more_counts_distinct_types() {
@@ -1874,6 +1889,50 @@ mod tests {
             evaluate_condition_resolution(&game, &you_had_land, &ctx)
                 .expect("resolution condition should evaluate"),
             "expected land-entry predicate to evaluate true for resolution controller"
+        );
+    }
+
+    #[test]
+    fn source_was_cast_uses_enter_battlefield_from_zone_when_available() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let source = game.create_object_from_card(
+            &CardBuilder::new(CardId::from_raw(41), "Cast Probe")
+                .card_types(vec![CardType::Artifact])
+                .build(),
+            alice,
+            Zone::Battlefield,
+        );
+        let condition = Condition::SourceWasCast;
+
+        let from_stack = TriggerEvent::new(EnterBattlefieldEvent::new(source, Zone::Stack));
+        let ctx_from_stack = ExternalEvaluationContext {
+            controller: alice,
+            source,
+            filter_source: None,
+            triggering_event: Some(&from_stack),
+            trigger_identity: None,
+            ability_index: None,
+            options: ExternalEvaluationOptions::default(),
+        };
+        assert!(
+            evaluate_condition_external(&game, &condition, &ctx_from_stack),
+            "entering from stack should satisfy SourceWasCast"
+        );
+
+        let from_exile = TriggerEvent::new(EnterBattlefieldEvent::new(source, Zone::Exile));
+        let ctx_from_exile = ExternalEvaluationContext {
+            controller: alice,
+            source,
+            filter_source: None,
+            triggering_event: Some(&from_exile),
+            trigger_identity: None,
+            ability_index: None,
+            options: ExternalEvaluationOptions::default(),
+        };
+        assert!(
+            !evaluate_condition_external(&game, &condition, &ctx_from_exile),
+            "entering from non-stack zone should fail SourceWasCast"
         );
     }
 }

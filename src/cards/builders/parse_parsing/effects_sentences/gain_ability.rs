@@ -1,5 +1,12 @@
 use super::*;
 
+fn grants_protection_from_everything(ability: &StaticAbility) -> bool {
+    matches!(
+        ability.protection_from(),
+        Some(crate::ability::ProtectionFrom::Everything)
+    )
+}
+
 pub(crate) fn parse_simple_ability_duration(words_after_verb: &[&str]) -> Option<(usize, usize, Until)> {
     if let Some(idx) = words_after_verb
         .windows(4)
@@ -502,6 +509,27 @@ pub(crate) fn parse_gain_ability_sentence(tokens: &[Token]) -> Result<Option<Vec
         }
         effects = append_gain_ability_trailing_effects(effects, &trailing_tail_tokens)?;
         return Ok(Some(effects));
+    }
+
+    if real_subject_words.as_slice() == ["you"] {
+        let has_protection_from_everything =
+            abilities.iter().any(grants_protection_from_everything);
+        if has_protection_from_everything {
+            let player_target = TargetAst::Player(
+                PlayerFilter::You,
+                span_from_tokens(&real_subject_tokens),
+            );
+            effects.push(EffectAst::Cant {
+                restriction: crate::effect::Restriction::be_targeted_player(PlayerFilter::You),
+                duration: duration.clone(),
+            });
+            effects.push(EffectAst::PreventAllDamageToTarget {
+                target: player_target,
+                duration: duration.clone(),
+            });
+            effects = append_gain_ability_trailing_effects(effects, &trailing_tail_tokens)?;
+            return Ok(Some(effects));
+        }
     }
 
     let filter = parse_object_filter(&real_subject_tokens, false).map_err(|_| {

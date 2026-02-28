@@ -874,6 +874,7 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         }
         KeywordAction::ProtectionFromAllColors => "Protection from all colors".to_string(),
         KeywordAction::ProtectionFromColorless => "Protection from colorless".to_string(),
+        KeywordAction::ProtectionFromEverything => "Protection from everything".to_string(),
         KeywordAction::ProtectionFromCardType(card_type) => {
             format!("Protection from {:?}", card_type).to_ascii_lowercase()
         }

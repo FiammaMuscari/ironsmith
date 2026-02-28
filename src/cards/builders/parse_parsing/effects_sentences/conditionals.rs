@@ -1156,6 +1156,12 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         return Ok(PredicateAst::YouAttackedThisTurn);
     }
 
+    if filtered.as_slice() == ["you", "cast", "it"]
+        || filtered.as_slice() == ["you", "cast", "this", "spell"]
+    {
+        return Ok(PredicateAst::SourceWasCast);
+    }
+
     if filtered.as_slice() == ["no", "spells", "were", "cast", "last", "turn"]
         || filtered.as_slice() == ["no", "spell", "was", "cast", "last", "turn"]
     {

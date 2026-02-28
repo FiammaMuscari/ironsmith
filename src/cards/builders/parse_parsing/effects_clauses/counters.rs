@@ -32,6 +32,7 @@ pub(crate) fn parse_counter_type_word(word: &str) -> Option<CounterType> {
         "finality" => Some(CounterType::Finality),
         "time" => Some(CounterType::Time),
         "brain" => Some(CounterType::Brain),
+        "burden" => Some(CounterType::Named(intern_counter_name("burden"))),
         "level" => Some(CounterType::Level),
         "lore" => Some(CounterType::Lore),
         "oil" => Some(CounterType::Oil),
@@ -782,4 +783,3 @@ pub(crate) fn parse_counter_target_count_prefix(
 
     Ok(None)
 }
-

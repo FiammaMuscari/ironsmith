@@ -82,6 +82,7 @@ pub(crate) fn parse_protection_chain(tokens: &[Token]) -> Option<Vec<KeywordActi
             "red" => Some(KeywordAction::ProtectionFrom(ColorSet::RED)),
             "green" => Some(KeywordAction::ProtectionFrom(ColorSet::GREEN)),
             "colorless" => Some(KeywordAction::ProtectionFromColorless),
+            "everything" => Some(KeywordAction::ProtectionFromEverything),
             "all" if matches!(words.get(idx + 2).copied(), Some("color") | Some("colors")) => {
                 Some(KeywordAction::ProtectionFromAllColors)
             }
@@ -240,6 +241,9 @@ pub(crate) fn keyword_action_to_static_ability(action: KeywordAction) -> Option<
         )),
         KeywordAction::ProtectionFromColorless => Some(StaticAbility::protection(
             crate::ability::ProtectionFrom::Colorless,
+        )),
+        KeywordAction::ProtectionFromEverything => Some(StaticAbility::protection(
+            crate::ability::ProtectionFrom::Everything,
         )),
         KeywordAction::ProtectionFromCardType(card_type) => Some(StaticAbility::protection(
             crate::ability::ProtectionFrom::CardType(card_type),

@@ -4137,6 +4137,7 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         ["protection", "from", "all", "colors"] => KeywordAction::ProtectionFromAllColors,
         ["protection", "from", "all", "color"] => KeywordAction::ProtectionFromAllColors,
         ["protection", "from", "colorless"] => KeywordAction::ProtectionFromColorless,
+        ["protection", "from", "everything"] => KeywordAction::ProtectionFromEverything,
         ["protection", "from", value] => match *value {
             "white" => KeywordAction::ProtectionFrom(ColorSet::WHITE),
             "blue" => KeywordAction::ProtectionFrom(ColorSet::BLUE),
@@ -4249,6 +4250,7 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
                         "black" => Some(KeywordAction::ProtectionFrom(ColorSet::BLACK)),
                         "red" => Some(KeywordAction::ProtectionFrom(ColorSet::RED)),
                         "green" => Some(KeywordAction::ProtectionFrom(ColorSet::GREEN)),
+                        "everything" => Some(KeywordAction::ProtectionFromEverything),
                         _ => parse_card_type(value)
                             .map(KeywordAction::ProtectionFromCardType)
                             .or_else(|| {

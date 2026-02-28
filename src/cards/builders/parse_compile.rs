@@ -489,6 +489,7 @@ pub(crate) fn compile_condition_from_predicate_ast(
             }
         }
         PredicateAst::YouAttackedThisTurn => Condition::AttackedThisTurn,
+        PredicateAst::SourceWasCast => Condition::SourceWasCast,
         PredicateAst::NoSpellsWereCastLastTurn => Condition::NoSpellsWereCastLastTurn,
         PredicateAst::ThisSpellWasKicked => Condition::ThisSpellWasKicked,
         PredicateAst::TargetWasKicked => Condition::TargetWasKicked,
@@ -4977,6 +4978,7 @@ pub(crate) fn compile_effect(
                         }
                     }
                     PredicateAst::YouAttackedThisTurn => Condition::AttackedThisTurn,
+                    PredicateAst::SourceWasCast => Condition::SourceWasCast,
                     PredicateAst::NoSpellsWereCastLastTurn => Condition::NoSpellsWereCastLastTurn,
                     PredicateAst::ThisSpellWasKicked => Condition::ThisSpellWasKicked,
                     PredicateAst::TargetWasKicked => Condition::TargetWasKicked,
