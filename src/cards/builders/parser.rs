@@ -1031,14 +1031,25 @@ fn apply_line_ast(
             }
         }
         LineAst::StaticAbility(ability) => {
-            builder = builder
-                .with_ability(Ability::static_ability(ability).with_text(info.raw_line.as_str()));
+            let mut compiled = Ability::static_ability(ability).with_text(info.raw_line.as_str());
+            if let AbilityKind::Static(static_ability) = &compiled.kind
+                && static_ability.id()
+                    == crate::static_abilities::StaticAbilityId::ConditionalSpellKeyword
+            {
+                compiled = compiled.in_zones(vec![Zone::Hand, Zone::Stack]);
+            }
+            builder = builder.with_ability(compiled);
         }
         LineAst::StaticAbilities(abilities) => {
             for ability in abilities {
-                builder = builder.with_ability(
-                    Ability::static_ability(ability).with_text(info.raw_line.as_str()),
-                );
+                let mut compiled = Ability::static_ability(ability).with_text(info.raw_line.as_str());
+                if let AbilityKind::Static(static_ability) = &compiled.kind
+                    && static_ability.id()
+                        == crate::static_abilities::StaticAbilityId::ConditionalSpellKeyword
+                {
+                    compiled = compiled.in_zones(vec![Zone::Hand, Zone::Stack]);
+                }
+                builder = builder.with_ability(compiled);
             }
         }
         LineAst::Ability(parsed_ability) => {

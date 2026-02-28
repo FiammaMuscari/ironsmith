@@ -359,12 +359,26 @@ pub fn check_triggers(
             .abilities
             .iter()
             .filter(|ability| {
-                ability.functions_in(&Zone::Stack)
-                    && matches!(
-                        &ability.kind,
-                        AbilityKind::Static(static_ability)
-                            if static_ability.id() == crate::static_abilities::StaticAbilityId::Cascade
-                    )
+                if !ability.functions_in(&Zone::Stack) {
+                    return false;
+                }
+                let AbilityKind::Static(static_ability) = &ability.kind else {
+                    return false;
+                };
+                if static_ability.id() == crate::static_abilities::StaticAbilityId::Cascade {
+                    return true;
+                }
+                if let Some(spec) = static_ability.conditional_spell_keyword_spec()
+                    && spec.keyword
+                        == crate::static_abilities::ConditionalSpellKeywordKind::Cascade
+                {
+                    return crate::static_abilities::conditional_spell_keyword_active(
+                        spec,
+                        game,
+                        cast.caster,
+                    );
+                }
+                false
             })
             .count();
         if cascade_count > 0 {
@@ -709,6 +723,7 @@ mod tests {
     use crate::events::zones::ZoneChangeEvent;
     use crate::game_state::StackEntry;
     use crate::ids::CardId;
+    use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::CounterType;
     use crate::static_abilities::StaticAbility;
     use crate::target::ObjectFilter;
@@ -937,6 +952,103 @@ mod tests {
         assert!(
             debug.contains("CascadeEffect"),
             "expected cascade synthetic trigger effect, got {debug}"
+        );
+    }
+
+    #[test]
+    fn test_check_triggers_adds_conditional_cascade_trigger_when_active() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        for (idx, (name, card_type)) in [
+            ("Artifact Card", CardType::Artifact),
+            ("Creature Card", CardType::Creature),
+            ("Enchantment Card", CardType::Enchantment),
+            ("Land Card", CardType::Land),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let card = CardBuilder::new(CardId::from_raw(300 + idx as u32), name)
+                .card_types(vec![card_type])
+                .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(1)]]))
+                .build();
+            game.create_object_from_card(&card, alice, Zone::Graveyard);
+        }
+
+        let card = CardBuilder::new(CardId::from_raw(399), "Conditional Cascade Probe")
+            .card_types(vec![CardType::Sorcery])
+            .build();
+        let spell_id = game.create_object_from_card(&card, alice, Zone::Stack);
+        let spec = crate::static_abilities::ConditionalSpellKeywordSpec {
+            keyword: crate::static_abilities::ConditionalSpellKeywordKind::Cascade,
+            metric: crate::static_abilities::GraveyardCountMetric::CardTypes,
+            threshold: 4,
+        };
+        if let Some(obj) = game.object_mut(spell_id) {
+            obj.abilities.push(
+                Ability::static_ability(StaticAbility::conditional_spell_keyword(spec))
+                    .in_zones(vec![Zone::Hand, Zone::Stack])
+                    .with_text("This spell has cascade as long as there are four or more card types among cards in your graveyard."),
+            );
+        }
+        game.stack.push(StackEntry::new(spell_id, alice));
+
+        let event = TriggerEvent::new(SpellCastEvent::new(spell_id, alice, Zone::Hand));
+        let triggered = check_triggers(&game, &event);
+
+        assert_eq!(triggered.len(), 1, "conditional cascade should trigger once");
+        let debug = format!("{:?}", triggered[0].ability.effects);
+        assert!(
+            debug.contains("CascadeEffect"),
+            "expected cascade synthetic trigger effect, got {debug}"
+        );
+    }
+
+    #[test]
+    fn test_check_triggers_skips_conditional_cascade_trigger_when_inactive() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        for (idx, (name, card_type)) in [
+            ("Artifact Card", CardType::Artifact),
+            ("Creature Card", CardType::Creature),
+            ("Enchantment Card", CardType::Enchantment),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let card = CardBuilder::new(CardId::from_raw(500 + idx as u32), name)
+                .card_types(vec![card_type])
+                .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(1)]]))
+                .build();
+            game.create_object_from_card(&card, alice, Zone::Graveyard);
+        }
+
+        let card = CardBuilder::new(CardId::from_raw(599), "Conditional Cascade Probe")
+            .card_types(vec![CardType::Sorcery])
+            .build();
+        let spell_id = game.create_object_from_card(&card, alice, Zone::Stack);
+        let spec = crate::static_abilities::ConditionalSpellKeywordSpec {
+            keyword: crate::static_abilities::ConditionalSpellKeywordKind::Cascade,
+            metric: crate::static_abilities::GraveyardCountMetric::CardTypes,
+            threshold: 4,
+        };
+        if let Some(obj) = game.object_mut(spell_id) {
+            obj.abilities.push(
+                Ability::static_ability(StaticAbility::conditional_spell_keyword(spec))
+                    .in_zones(vec![Zone::Hand, Zone::Stack]),
+            );
+        }
+        game.stack.push(StackEntry::new(spell_id, alice));
+
+        let event = TriggerEvent::new(SpellCastEvent::new(spell_id, alice, Zone::Hand));
+        let triggered = check_triggers(&game, &event);
+
+        assert_eq!(
+            triggered.len(),
+            0,
+            "conditional cascade should not trigger below threshold"
         );
     }
 }

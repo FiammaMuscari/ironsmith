@@ -409,7 +409,7 @@ pub(crate) fn parse_become_clause(
     let become_words_vec = words(&become_tokens);
     let become_words = if become_words_vec
         .first()
-        .is_some_and(|w| *w == "the" || *w == "a")
+        .is_some_and(|w| *w == "the" || *w == "a" || *w == "an")
     {
         &become_words_vec[1..]
     } else {
@@ -504,6 +504,45 @@ pub(crate) fn parse_become_clause(
             target,
             duration,
         });
+    }
+
+    // "<card type>[ ... ]" and "<card type> in addition to its/their other types"
+    let addition_tail_len = if become_words.ends_with(&["in", "addition", "to", "its", "other", "types"]) {
+        Some(6usize)
+    } else if become_words.ends_with(&["in", "addition", "to", "their", "other", "types"]) {
+        Some(6usize)
+    } else if become_words.ends_with(&["in", "addition", "to", "its", "other", "type"]) {
+        Some(6usize)
+    } else if become_words.ends_with(&["in", "addition", "to", "their", "other", "type"]) {
+        Some(6usize)
+    } else {
+        None
+    };
+    let card_type_words = if let Some(tail_len) = addition_tail_len {
+        &become_words[..become_words.len().saturating_sub(tail_len)]
+    } else {
+        become_words
+    };
+    if !card_type_words.is_empty() {
+        let mut card_types = Vec::new();
+        let mut all_card_types = true;
+        for word in card_type_words {
+            if let Some(card_type) = parse_card_type(word) {
+                if !card_types.contains(&card_type) {
+                    card_types.push(card_type);
+                }
+            } else {
+                all_card_types = false;
+                break;
+            }
+        }
+        if all_card_types && !card_types.is_empty() {
+            return Ok(EffectAst::AddCardTypes {
+                target,
+                card_types,
+                duration,
+            });
+        }
     }
 
     // "<color>" / "<color> and <color>" / "<color> and or <color>"

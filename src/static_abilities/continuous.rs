@@ -454,6 +454,17 @@ fn describe_static_condition(condition: &crate::ConditionExpr) -> String {
         crate::ConditionExpr::SourceIsAttacking => {
             "as long as this creature is attacking".to_string()
         }
+        crate::ConditionExpr::PlayerHasCardTypesInGraveyardOrMore { player, count } => {
+            let graveyard_owner = match player {
+                crate::target::PlayerFilter::You => "your".to_string(),
+                crate::target::PlayerFilter::Opponent => "an opponent's".to_string(),
+                crate::target::PlayerFilter::Any => "a player's".to_string(),
+                _ => "that player's".to_string(),
+            };
+            format!(
+                "as long as there are {count} or more card types among cards in {graveyard_owner} graveyard"
+            )
+        }
         crate::ConditionExpr::CountComparison {
             count,
             comparison,
@@ -1337,17 +1348,29 @@ pub struct EquipmentGrant {
 pub struct SetColorsForFilter {
     pub filter: ObjectFilter,
     pub colors: crate::color::ColorSet,
+    pub condition: Option<crate::ConditionExpr>,
 }
 
 impl SetColorsForFilter {
     pub fn new(filter: ObjectFilter, colors: crate::color::ColorSet) -> Self {
-        Self { filter, colors }
+        Self {
+            filter,
+            colors,
+            condition: None,
+        }
+    }
+
+    pub fn with_condition(mut self, condition: crate::ConditionExpr) -> Self {
+        self.condition = Some(condition);
+        self
     }
 }
 
 impl PartialEq for SetColorsForFilter {
     fn eq(&self, other: &Self) -> bool {
-        self.filter == other.filter && self.colors == other.colors
+        self.filter == other.filter
+            && self.colors == other.colors
+            && self.condition == other.condition
     }
 }
 
@@ -1360,7 +1383,12 @@ impl StaticAbilityKind for SetColorsForFilter {
         let subject = pluralized_subject_text(&self.filter);
         let (verb, _) = subject_verb_and_possessive(&subject);
         let colors = join_with_and(&color_list(self.colors));
-        format!("{subject} {verb} {colors}")
+        let mut text = format!("{subject} {verb} {colors}");
+        if let Some(condition) = &self.condition {
+            text.push(' ');
+            text.push_str(&describe_static_condition(condition));
+        }
+        text
     }
 
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
@@ -1371,8 +1399,13 @@ impl StaticAbilityKind for SetColorsForFilter {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        _game: &GameState,
+        game: &GameState,
     ) -> Vec<ContinuousEffect> {
+        if let Some(condition) = &self.condition
+            && !static_condition_is_active(condition, game, source, controller)
+        {
+            return Vec::new();
+        }
         vec![
             ContinuousEffect::new(
                 source,
@@ -1538,6 +1571,85 @@ impl StaticAbilityKind for AddCardTypesForFilter {
                 controller,
                 effect_target_for_filter(source, &self.filter),
                 Modification::AddCardTypes(self.card_types.clone()),
+            )
+            .with_source_type(EffectSourceType::StaticAbility),
+        ]
+    }
+}
+
+/// Remove card types: "This creature isn't a creature."
+#[derive(Debug, Clone)]
+pub struct RemoveCardTypesForFilter {
+    pub filter: ObjectFilter,
+    pub card_types: Vec<CardType>,
+    pub condition: Option<crate::ConditionExpr>,
+}
+
+impl RemoveCardTypesForFilter {
+    pub fn new(filter: ObjectFilter, card_types: Vec<CardType>) -> Self {
+        Self {
+            filter,
+            card_types,
+            condition: None,
+        }
+    }
+
+    pub fn with_condition(mut self, condition: crate::ConditionExpr) -> Self {
+        self.condition = Some(condition);
+        self
+    }
+}
+
+impl PartialEq for RemoveCardTypesForFilter {
+    fn eq(&self, other: &Self) -> bool {
+        self.filter == other.filter
+            && self.card_types == other.card_types
+            && self.condition == other.condition
+    }
+}
+
+impl StaticAbilityKind for RemoveCardTypesForFilter {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::RemoveCardTypes
+    }
+
+    fn display(&self) -> String {
+        let subject = pluralized_subject_text(&self.filter);
+        let (verb, _) = subject_verb_and_possessive(&subject);
+        let types = self
+            .card_types
+            .iter()
+            .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        let mut text = format!("{subject} {verb} no longer {}", join_with_and(&types));
+        if let Some(condition) = &self.condition {
+            text.push(' ');
+            text.push_str(&describe_static_condition(condition));
+        }
+        text
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn generate_effects(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+        game: &GameState,
+    ) -> Vec<ContinuousEffect> {
+        if let Some(condition) = &self.condition
+            && !static_condition_is_active(condition, game, source, controller)
+        {
+            return Vec::new();
+        }
+        vec![
+            ContinuousEffect::new(
+                source,
+                controller,
+                effect_target_for_filter(source, &self.filter),
+                Modification::RemoveCardTypes(self.card_types.clone()),
             )
             .with_source_type(EffectSourceType::StaticAbility),
         ]
@@ -1993,11 +2105,21 @@ impl StaticAbilityKind for EquipmentGrant {
 pub struct AttachedAbilityGrant {
     pub ability: Ability,
     pub display: String,
+    pub condition: Option<crate::ConditionExpr>,
 }
 
 impl AttachedAbilityGrant {
     pub fn new(ability: Ability, display: String) -> Self {
-        Self { ability, display }
+        Self {
+            ability,
+            display,
+            condition: None,
+        }
+    }
+
+    pub fn with_condition(mut self, condition: crate::ConditionExpr) -> Self {
+        self.condition = Some(condition);
+        self
     }
 }
 
@@ -2007,7 +2129,12 @@ impl StaticAbilityKind for AttachedAbilityGrant {
     }
 
     fn display(&self) -> String {
-        self.display.clone()
+        let mut text = self.display.clone();
+        if let Some(condition) = &self.condition {
+            text.push(' ');
+            text.push_str(&describe_static_condition(condition));
+        }
+        text
     }
 
     fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
@@ -2022,8 +2149,13 @@ impl StaticAbilityKind for AttachedAbilityGrant {
         &self,
         source: ObjectId,
         controller: PlayerId,
-        _game: &GameState,
+        game: &GameState,
     ) -> Vec<ContinuousEffect> {
+        if let Some(condition) = &self.condition
+            && !static_condition_is_active(condition, game, source, controller)
+        {
+            return Vec::new();
+        }
         vec![
             ContinuousEffect::new(
                 source,

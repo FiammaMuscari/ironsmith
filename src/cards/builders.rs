@@ -1231,6 +1231,11 @@ enum EffectAst {
         target: TargetAst,
         duration: Until,
     },
+    AddCardTypes {
+        target: TargetAst,
+        card_types: Vec<CardType>,
+        duration: Until,
+    },
     SetColors {
         target: TargetAst,
         colors: ColorSet,
@@ -7470,6 +7475,142 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_threshold_additional_anthem_keeps_condition() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Divine Sacrament Variant")
+            .parse_text(
+                "Threshold — White creatures get an additional +1/+1 as long as there are seven or more cards in your graveyard.",
+            )
+            .expect("threshold anthem with additional bonus should parse");
+
+        assert_eq!(def.abilities.len(), 1, "expected one static ability");
+        let display = match &def.abilities[0].kind {
+            AbilityKind::Static(static_ability) => static_ability.display(),
+            other => panic!("expected static ability, got {other:?}"),
+        };
+        assert!(
+            display.contains("white creatures get +1/+1"),
+            "expected anthem bonus to parse, got: {display}"
+        );
+        assert!(
+            display.contains("as long as there are seven or more cards in your graveyard"),
+            "expected threshold condition to be preserved, got: {display}"
+        );
+    }
+
+    #[test]
+    fn parse_threshold_enchanted_creature_has_keyword_condition() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Aboshan Variant")
+            .parse_text(
+                "Threshold — Enchanted creature has shroud as long as there are seven or more cards in your graveyard.",
+            )
+            .expect("threshold enchanted-creature keyword line should parse");
+
+        assert_eq!(def.abilities.len(), 1, "expected one static ability");
+        let display = match &def.abilities[0].kind {
+            AbilityKind::Static(static_ability) => static_ability.display(),
+            other => panic!("expected static ability, got {other:?}"),
+        };
+        assert!(
+            display.contains("enchanted creature has shroud")
+                && display.contains("as long as there are seven or more cards in your graveyard"),
+            "expected conditional enchanted keyword grant, got: {display}"
+        );
+    }
+
+    #[test]
+    fn parse_threshold_cant_be_blocked_condition() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Cephalid Variant")
+            .parse_text(
+                "Threshold — This creature can't be blocked as long as there are seven or more cards in your graveyard.",
+            )
+            .expect("conditional cant-be-blocked line should parse");
+
+        assert_eq!(def.abilities.len(), 1, "expected one static ability");
+        let display = match &def.abilities[0].kind {
+            AbilityKind::Static(static_ability) => static_ability.display(),
+            other => panic!("expected static ability, got {other:?}"),
+        };
+        let display_lc = display.to_ascii_lowercase();
+        assert!(
+            display_lc.contains("can't be blocked")
+                && display_lc.contains("as long as there are seven or more cards in your graveyard"),
+            "expected conditional unblockable grant, got: {display}"
+        );
+    }
+
+    #[test]
+    fn parse_delirium_spell_keyword_has_hand_and_stack_zones() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Conditional Flash Variant")
+            .parse_text(
+                "Delirium — This spell has flash as long as there are five or more mana values among cards in your graveyard.",
+            )
+            .expect("conditional spell keyword line should parse");
+
+        assert_eq!(def.abilities.len(), 1, "expected one static ability");
+        let ability = &def.abilities[0];
+        match &ability.kind {
+            AbilityKind::Static(static_ability) => {
+                assert_eq!(
+                    static_ability.id(),
+                    crate::static_abilities::StaticAbilityId::ConditionalSpellKeyword,
+                    "expected conditional spell keyword static ability id"
+                );
+            }
+            other => panic!("expected static ability, got {other:?}"),
+        }
+        assert!(
+            ability.functions_in(&Zone::Hand),
+            "conditional spell keyword should function in hand"
+        );
+        assert!(
+            ability.functions_in(&Zone::Stack),
+            "conditional spell keyword should function on stack"
+        );
+    }
+
+    #[test]
+    fn parse_delirium_can_attack_as_though_no_defender_condition() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Geist Variant")
+            .parse_text(
+                "Delirium — This creature can attack as though it didn't have defender as long as there are four or more card types among cards in your graveyard.",
+            )
+            .expect("conditional can-attack-with-defender line should parse");
+
+        assert_eq!(def.abilities.len(), 1, "expected one static ability");
+        let display = match &def.abilities[0].kind {
+            AbilityKind::Static(static_ability) => static_ability.display(),
+            other => panic!("expected static ability, got {other:?}"),
+        };
+        let display_lc = display.to_ascii_lowercase();
+        assert!(
+            display_lc.contains("can attack as though it didn't have defender")
+                && display_lc.contains("as long as there are")
+                && display_lc.contains("card types among cards in your graveyard"),
+            "expected conditional defender-override grant, got: {display}"
+        );
+    }
+
+    #[test]
+    fn parse_delirium_maximum_hand_size_formula_line() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Winter Variant")
+            .parse_text(
+                "Delirium — As long as there are four or more card types among cards in your graveyard, each opponent's maximum hand size is equal to seven minus the number of those card types.",
+            )
+            .expect("conditional maximum-hand-size formula should parse");
+
+        assert_eq!(def.abilities.len(), 1, "expected one static ability");
+        let ability = match &def.abilities[0].kind {
+            AbilityKind::Static(static_ability) => static_ability,
+            other => panic!("expected static ability, got {other:?}"),
+        };
+        assert_eq!(
+            ability.id(),
+            crate::static_abilities::StaticAbilityId::MaximumHandSizeSevenMinusYourGraveyardCardTypes,
+            "expected dedicated max-hand-size formula ability"
+        );
+    }
+
+    #[test]
     fn parse_conditional_multi_keyword_grant_keeps_all_keywords() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Conditional Multi Keyword Variant")
             .parse_text(
@@ -8287,6 +8428,23 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
                 && debug.contains("SetPowerToughness")
                 && debug.contains("EndOfTurn"),
             "expected animated-creature continuous effect lowering, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_target_artifact_becomes_artifact_creature_until_end_of_turn_spell_line() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Capenna Express Variant")
+            .card_types(vec![CardType::Instant])
+            .parse_text("Target artifact becomes an artifact creature until end of turn.")
+            .expect("artifact animation clause should parse");
+
+        let debug = format!("{:?}", def.spell_effect);
+        assert!(
+            debug.contains("AddCardTypes")
+                && debug.contains("Artifact")
+                && debug.contains("Creature")
+                && debug.contains("EndOfTurn"),
+            "expected artifact-creature animation lowering, got {debug}"
         );
     }
 

@@ -34,6 +34,7 @@ pub enum StaticAbilityId {
     Flanking,
     Landwalk,
     CantBeBlockedAsLongAsDefendingPlayerControlsCardType,
+    CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes,
     Bloodthirst,
     Morph,
     Megamorph,
@@ -49,6 +50,7 @@ pub enum StaticAbilityId {
     Rebound,
     Cascade,
     Unleash,
+    ConditionalSpellKeyword,
 
     // === Combat modifiers ===
     Unblockable,
@@ -86,6 +88,7 @@ pub enum StaticAbilityId {
     BelloBardOfTheBrambles,
     CharacteristicDefiningPT,
     AddCardTypes,
+    RemoveCardTypes,
     SetCardTypes,
     AddSubtypes,
     SetCreatureSubtypes,
@@ -161,6 +164,7 @@ pub enum StaticAbilityId {
     LevelAbilities,
     NoMaximumHandSize,
     ReduceMaximumHandSize,
+    MaximumHandSizeSevenMinusYourGraveyardCardTypes,
     LibraryOfLengDiscardReplacement,
     DrawReplacementExileTopFaceDown,
     CreaturesEnteringDontCauseAbilitiesToTrigger,
@@ -255,6 +259,7 @@ impl StaticAbilityId {
                 | CantBeBlockedByMoreThan
                 | Landwalk
                 | CantBeBlockedAsLongAsDefendingPlayerControlsCardType
+                | CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes
         )
     }
 
@@ -290,6 +295,7 @@ impl StaticAbilityId {
                 | CantBeBlockedByPowerOrGreater
                 | CantBeBlockedByMoreThan
                 | CantBeBlockedAsLongAsDefendingPlayerControlsCardType
+                | CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes
                 | CanAttackAsThoughNoDefender
                 | MustAttack
                 | MustBlock
@@ -321,6 +327,8 @@ impl StaticAbilityId {
                 | BelloBardOfTheBrambles
                 | CharacteristicDefiningPT
                 | AddCardTypes
+                | RemoveCardTypes
+                | SetCardTypes
                 | AddSubtypes
                 | AddColors
                 | SetColors

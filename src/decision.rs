@@ -1236,10 +1236,18 @@ pub fn can_cast_spell(
     // Check if has flash (either intrinsically or granted)
     let has_flash = spell.abilities.iter().any(|a| {
         if let crate::ability::AbilityKind::Static(s) = &a.kind {
-            s.has_flash()
-        } else {
-            false
+            if s.has_flash() {
+                return true;
+            }
+            if let Some(spec) = s.conditional_spell_keyword_spec()
+                && spec.keyword == crate::static_abilities::ConditionalSpellKeywordKind::Flash
+            {
+                return crate::static_abilities::conditional_spell_keyword_active(
+                    spec, game, player,
+                );
+            }
         }
+        false
     }) || game.grant_registry.card_has_granted_ability(
         game,
         spell.id,
@@ -1364,10 +1372,18 @@ fn can_cast_with_cost(
     // Check if has flash (either intrinsically or granted)
     let has_flash = spell.abilities.iter().any(|a| {
         if let crate::ability::AbilityKind::Static(s) = &a.kind {
-            s.has_flash()
-        } else {
-            false
+            if s.has_flash() {
+                return true;
+            }
+            if let Some(spec) = s.conditional_spell_keyword_spec()
+                && spec.keyword == crate::static_abilities::ConditionalSpellKeywordKind::Flash
+            {
+                return crate::static_abilities::conditional_spell_keyword_active(
+                    spec, game, player,
+                );
+            }
         }
+        false
     }) || game.grant_registry.card_has_granted_ability(
         game,
         spell_id,
@@ -7401,6 +7417,63 @@ mod tests {
         assert!(
             !can_cast_spell(&game, alice, &instant_obj, &CastingMethod::Normal),
             "second spell in same turn should be blocked by one-spell limit"
+        );
+    }
+
+    #[test]
+    fn test_can_cast_spell_uses_conditional_spell_flash_threshold() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        game.turn.active_player = bob;
+        game.turn.phase = Phase::Combat;
+        game.turn.step = Some(Step::BeginCombat);
+
+        let sorcery = CardBuilder::new(CardId::from_raw(1200), "Threshold Flash Sorcery")
+            .card_types(vec![CardType::Sorcery])
+            .build();
+        let spell_id = game.create_object_from_card(&sorcery, alice, Zone::Hand);
+        let spec = crate::static_abilities::ConditionalSpellKeywordSpec {
+            keyword: crate::static_abilities::ConditionalSpellKeywordKind::Flash,
+            metric: crate::static_abilities::GraveyardCountMetric::ManaValues,
+            threshold: 5,
+        };
+        game.object_mut(spell_id)
+            .expect("spell should exist")
+            .abilities
+            .push(
+                Ability::static_ability(StaticAbility::conditional_spell_keyword(spec))
+                    .in_zones(vec![Zone::Hand, Zone::Stack]),
+            );
+
+        for (idx, mv) in [1u8, 2, 3, 4].into_iter().enumerate() {
+            let card = CardBuilder::new(
+                CardId::from_raw(1300 + idx as u32),
+                &format!("MV{mv} Graveyard Card"),
+            )
+            .card_types(vec![CardType::Instant])
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(mv)]]))
+            .build();
+            game.create_object_from_card(&card, alice, Zone::Graveyard);
+        }
+
+        let spell_obj = game.object(spell_id).expect("spell should exist").clone();
+        assert!(
+            !can_cast_spell(&game, alice, &spell_obj, &CastingMethod::Normal),
+            "sorcery should remain sorcery-speed before mana-value threshold is met"
+        );
+
+        let fifth = CardBuilder::new(CardId::from_raw(1399), "MV5 Graveyard Card")
+            .card_types(vec![CardType::Instant])
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(5)]]))
+            .build();
+        game.create_object_from_card(&fifth, alice, Zone::Graveyard);
+
+        let spell_obj = game.object(spell_id).expect("spell should exist").clone();
+        assert!(
+            can_cast_spell(&game, alice, &spell_obj, &CastingMethod::Normal),
+            "conditional flash should allow casting once the mana-value threshold is met"
         );
     }
 

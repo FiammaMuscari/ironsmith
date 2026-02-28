@@ -2706,6 +2706,29 @@ fn test_parse_cant_be_blocked_as_long_as_defending_player_controls_artifact_clau
 }
 
 #[test]
+fn test_parse_cant_be_blocked_as_long_as_defending_player_controls_artifact_land_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Tanglewalker Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "This creature can't be blocked as long as defending player controls an artifact land.",
+        )
+        .expect("defending-player artifact-land unblockable clause should parse");
+
+    let has_multi_type_conditional_unblockable = def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(static_ability)
+                if static_ability.id()
+                    == StaticAbilityId::CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes
+        )
+    });
+    assert!(
+        has_multi_type_conditional_unblockable,
+        "expected defending-player artifact-land unblockable static ability in parsed card"
+    );
+}
+
+#[test]
 fn test_parse_add_any_type_that_land_produced_clause() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Heartbeat Probe")
         .card_types(vec![CardType::Enchantment])

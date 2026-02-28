@@ -284,6 +284,25 @@ pub fn can_block(attacker: &Object, blocker: &Object, game: &crate::game_state::
         }
     }
 
+    for required_card_types in attacker_abilities
+        .iter()
+        .filter_map(|ability| ability.required_defending_player_card_types_for_unblockable())
+    {
+        let defending_controls_required_types = game
+            .battlefield
+            .iter()
+            .filter_map(|&id| game.object(id))
+            .any(|obj| {
+                obj.controller == blocker.controller
+                    && required_card_types
+                        .iter()
+                        .all(|required_type| game.object_has_card_type(obj.id, *required_type))
+            });
+        if defending_controls_required_types {
+            return false;
+        }
+    }
+
     // "Can block only creatures with flying"
     if blocker_has(StaticAbilityId::CanBlockOnlyFlying) && !attacker_has(StaticAbilityId::Flying) {
         return false;
@@ -786,6 +805,75 @@ mod tests {
         assert!(
             !can_block(&attacker, &blocker, &game_with_artifact),
             "blocker should fail when defending player controls an artifact"
+        );
+    }
+
+    #[test]
+    fn test_cant_be_blocked_when_defending_player_controls_required_card_type_conjunction() {
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let mut attacker = make_creature("Tanglewalker", 2, 2);
+        attacker.id = ObjectId::from_raw(110);
+        attacker.controller = alice;
+        add_ability(
+            &mut attacker,
+            StaticAbility::cant_be_blocked_as_long_as_defending_player_controls_card_types(vec![
+                CardType::Artifact,
+                CardType::Land,
+            ]),
+        );
+
+        let mut blocker = make_creature("Blocker", 2, 2);
+        blocker.id = ObjectId::from_raw(111);
+        blocker.controller = bob;
+
+        let mut game_with_only_artifact = test_game_state();
+        let mut artifact_only = make_creature("Relic", 0, 1);
+        artifact_only.id = ObjectId::from_raw(112);
+        artifact_only.controller = bob;
+        artifact_only.card_types = vec![CardType::Artifact];
+        game_with_only_artifact.add_object(attacker.clone());
+        game_with_only_artifact.add_object(blocker.clone());
+        game_with_only_artifact.add_object(artifact_only);
+        assert!(
+            can_block(&attacker, &blocker, &game_with_only_artifact),
+            "blocker should still block when defending player controls only an artifact"
+        );
+
+        let mut game_with_only_land = test_game_state();
+        let mut land_only = make_creature("Field", 0, 1);
+        land_only.id = ObjectId::from_raw(113);
+        land_only.controller = bob;
+        land_only.card_types = vec![CardType::Land];
+        game_with_only_land.add_object(attacker.clone());
+        game_with_only_land.add_object(blocker.clone());
+        game_with_only_land.add_object(land_only);
+        assert!(
+            can_block(&attacker, &blocker, &game_with_only_land),
+            "blocker should still block when defending player controls only a land"
+        );
+
+        let mut game_with_artifact_land = test_game_state();
+        let mut artifact_land = make_creature("Seat of Synod", 0, 1);
+        artifact_land.id = ObjectId::from_raw(114);
+        artifact_land.controller = bob;
+        artifact_land.card_types = vec![CardType::Artifact, CardType::Land];
+        game_with_artifact_land.add_object(attacker);
+        game_with_artifact_land.add_object(blocker);
+        game_with_artifact_land.add_object(artifact_land);
+        assert!(
+            !can_block(
+                &game_with_artifact_land
+                    .object(ObjectId::from_raw(110))
+                    .expect("attacker should exist")
+                    .clone(),
+                &game_with_artifact_land
+                    .object(ObjectId::from_raw(111))
+                    .expect("blocker should exist")
+                    .clone(),
+                &game_with_artifact_land
+            ),
+            "blocker should fail only when defending player controls an artifact land permanent"
         );
     }
 

@@ -696,6 +696,7 @@ pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::SetBasePower { target, .. }
         | EffectAst::SetBasePowerToughness { target, .. }
         | EffectAst::BecomeBasePtCreature { target, .. }
+        | EffectAst::AddCardTypes { target, .. }
         | EffectAst::SetColors { target, .. }
         | EffectAst::MakeColorless { target, .. }
         | EffectAst::PumpForEach { target, .. }
@@ -1193,6 +1194,7 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::SetBasePower { target, .. }
         | EffectAst::SetBasePowerToughness { target, .. }
         | EffectAst::BecomeBasePtCreature { target, .. }
+        | EffectAst::AddCardTypes { target, .. }
         | EffectAst::SetColors { target, .. }
         | EffectAst::MakeColorless { target, .. }
         | EffectAst::PumpForEach { target, .. }
@@ -1723,6 +1725,7 @@ pub(crate) fn collect_tag_spans_from_effect(
         | EffectAst::SetBasePower { target, .. }
         | EffectAst::SetBasePowerToughness { target, .. }
         | EffectAst::BecomeBasePtCreature { target, .. }
+        | EffectAst::AddCardTypes { target, .. }
         | EffectAst::SetColors { target, .. }
         | EffectAst::MakeColorless { target, .. }
         | EffectAst::PumpByLastEffect { target, .. }
@@ -5539,6 +5542,17 @@ pub(crate) fn compile_effect(
                 })
                 .resolve_set_pt_values_at_resolution(),
             )
+        }),
+        EffectAst::AddCardTypes {
+            target,
+            card_types,
+            duration,
+        } => compile_tagged_effect_for_target(target, ctx, "typed", |spec| {
+            Effect::new(crate::effects::ApplyContinuousEffect::with_spec(
+                spec,
+                crate::continuous::Modification::AddCardTypes(card_types.clone()),
+                duration.clone(),
+            ))
         }),
         EffectAst::SetBasePower {
             power,

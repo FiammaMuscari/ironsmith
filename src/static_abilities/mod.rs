@@ -70,6 +70,28 @@ use crate::continuous::ContinuousEffect;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 
+/// Keyword granted to a spell conditionally from its own rules text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionalSpellKeywordKind {
+    Flash,
+    Cascade,
+}
+
+/// Graveyard aggregate used by conditional spell-keyword checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraveyardCountMetric {
+    CardTypes,
+    ManaValues,
+}
+
+/// Conditional spell-keyword configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConditionalSpellKeywordSpec {
+    pub keyword: ConditionalSpellKeywordKind,
+    pub metric: GraveyardCountMetric,
+    pub threshold: u32,
+}
+
 /// Trait for static ability behavior.
 ///
 /// All static abilities implement this trait. Each ability is responsible for:
@@ -187,6 +209,14 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
     fn required_defending_player_card_type_for_unblockable(
         &self,
     ) -> Option<crate::types::CardType> {
+        None
+    }
+
+    /// Returns required card-type conjunction for
+    /// "can't be blocked as long as defending player controls ...".
+    fn required_defending_player_card_types_for_unblockable(
+        &self,
+    ) -> Option<Vec<crate::types::CardType>> {
         None
     }
 
@@ -449,6 +479,11 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
     fn grant_spec(&self) -> Option<crate::grant::GrantSpec> {
         None
     }
+
+    /// Return a conditional spell-keyword descriptor, if this ability provides one.
+    fn conditional_spell_keyword_spec(&self) -> Option<ConditionalSpellKeywordSpec> {
+        None
+    }
 }
 
 /// Spec for "as this enters, choose a color" abilities.
@@ -495,6 +530,10 @@ impl StaticAbility {
 
     pub fn granted_inline_ability(&self) -> Option<&crate::ability::Ability> {
         self.0.granted_inline_ability()
+    }
+
+    pub fn conditional_spell_keyword_spec(&self) -> Option<ConditionalSpellKeywordSpec> {
+        self.0.conditional_spell_keyword_spec()
     }
 
     /// Get the display text for this ability.
@@ -572,6 +611,13 @@ impl StaticAbility {
         &self,
     ) -> Option<crate::types::CardType> {
         self.0.required_defending_player_card_type_for_unblockable()
+    }
+
+    pub fn required_defending_player_card_types_for_unblockable(
+        &self,
+    ) -> Option<Vec<crate::types::CardType>> {
+        self.0
+            .required_defending_player_card_types_for_unblockable()
     }
 
     pub fn maximum_blockers(&self) -> Option<usize> {
@@ -979,6 +1025,14 @@ impl StaticAbility {
         ))
     }
 
+    pub fn cant_be_blocked_as_long_as_defending_player_controls_card_types(
+        card_types: Vec<crate::types::CardType>,
+    ) -> Self {
+        Self::new(CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes::new(
+            card_types,
+        ))
+    }
+
     pub fn bloodthirst(amount: u32) -> Self {
         Self::new(Bloodthirst::new(amount))
     }
@@ -1145,6 +1199,13 @@ impl StaticAbility {
         Self::new(AddCardTypesForFilter::new(filter, card_types))
     }
 
+    pub fn remove_card_types(
+        filter: crate::target::ObjectFilter,
+        card_types: Vec<crate::types::CardType>,
+    ) -> Self {
+        Self::new(RemoveCardTypesForFilter::new(filter, card_types))
+    }
+
     pub fn set_card_types(
         filter: crate::target::ObjectFilter,
         card_types: Vec<crate::types::CardType>,
@@ -1297,6 +1358,20 @@ impl StaticAbility {
 
     pub fn reduce_maximum_hand_size(player: crate::target::PlayerFilter, amount: u32) -> Self {
         Self::new(ReduceMaximumHandSize::new(player, amount))
+    }
+
+    pub fn max_hand_size_seven_minus_your_graveyard_card_types(
+        player: crate::target::PlayerFilter,
+        minimum_types: u32,
+    ) -> Self {
+        Self::new(MaximumHandSizeSevenMinusYourGraveyardCardTypes::new(
+            player,
+            minimum_types,
+        ))
+    }
+
+    pub fn conditional_spell_keyword(spec: ConditionalSpellKeywordSpec) -> Self {
+        Self::new(ConditionalSpellKeyword::new(spec))
     }
 
     pub fn damage_not_removed_during_cleanup() -> Self {

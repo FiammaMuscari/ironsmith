@@ -301,6 +301,20 @@ pub struct CantBeBlockedAsLongAsDefendingPlayerControlsCardType {
     pub card_type: crate::types::CardType,
 }
 
+fn unblockable_card_type_word(card_type: crate::types::CardType) -> &'static str {
+    match card_type {
+        crate::types::CardType::Artifact => "artifact",
+        crate::types::CardType::Battle => "battle",
+        crate::types::CardType::Creature => "creature",
+        crate::types::CardType::Enchantment => "enchantment",
+        crate::types::CardType::Land => "land",
+        crate::types::CardType::Planeswalker => "planeswalker",
+        crate::types::CardType::Instant => "instant",
+        crate::types::CardType::Sorcery => "sorcery",
+        crate::types::CardType::Kindred => "kindred",
+    }
+}
+
 impl CantBeBlockedAsLongAsDefendingPlayerControlsCardType {
     pub const fn new(card_type: crate::types::CardType) -> Self {
         Self { card_type }
@@ -313,17 +327,7 @@ impl StaticAbilityKind for CantBeBlockedAsLongAsDefendingPlayerControlsCardType 
     }
 
     fn display(&self) -> String {
-        let type_word = match self.card_type {
-            crate::types::CardType::Artifact => "artifact",
-            crate::types::CardType::Battle => "battle",
-            crate::types::CardType::Creature => "creature",
-            crate::types::CardType::Enchantment => "enchantment",
-            crate::types::CardType::Land => "land",
-            crate::types::CardType::Planeswalker => "planeswalker",
-            crate::types::CardType::Instant => "instant",
-            crate::types::CardType::Sorcery => "sorcery",
-            crate::types::CardType::Kindred => "kindred",
-        };
+        let type_word = unblockable_card_type_word(self.card_type);
         let article = if matches!(type_word.chars().next(), Some('a' | 'e' | 'i' | 'o' | 'u')) {
             "an"
         } else {
@@ -344,6 +348,57 @@ impl StaticAbilityKind for CantBeBlockedAsLongAsDefendingPlayerControlsCardType 
         &self,
     ) -> Option<crate::types::CardType> {
         Some(self.card_type)
+    }
+}
+
+/// "Can't be blocked as long as defending player controls a permanent with all listed card types."
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes {
+    pub card_types: Vec<crate::types::CardType>,
+}
+
+impl CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes {
+    pub fn new(card_types: Vec<crate::types::CardType>) -> Self {
+        assert!(
+            !card_types.is_empty(),
+            "multi-card-type unblockable condition requires at least one card type"
+        );
+        Self { card_types }
+    }
+}
+
+impl StaticAbilityKind for CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes
+    }
+
+    fn display(&self) -> String {
+        let type_words = self
+            .card_types
+            .iter()
+            .map(|card_type| unblockable_card_type_word(*card_type))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let article = if matches!(type_words.chars().next(), Some('a' | 'e' | 'i' | 'o' | 'u')) {
+            "an"
+        } else {
+            "a"
+        };
+        format!("Can't be blocked as long as defending player controls {article} {type_words}")
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn grants_evasion(&self) -> bool {
+        true
+    }
+
+    fn required_defending_player_card_types_for_unblockable(
+        &self,
+    ) -> Option<Vec<crate::types::CardType>> {
+        Some(self.card_types.clone())
     }
 }
 

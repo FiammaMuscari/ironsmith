@@ -285,6 +285,9 @@ pub(crate) fn parse_static_ability_line(
     if let Some(ability) = parse_filter_dont_untap_during_controllers_untap_steps_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) = parse_conditional_source_spell_keyword_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_static_text_marker_line(tokens) {
         return Ok(Some(vec![ability]));
     }
@@ -464,6 +467,9 @@ pub(crate) fn parse_static_ability_line(
     {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) = parse_subject_cant_be_blocked_as_long_as_condition_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_subject_cant_be_blocked_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -500,8 +506,17 @@ pub(crate) fn parse_static_ability_line(
     if let Some(abilities) = parse_attached_gets_and_has_ability_line(tokens)? {
         return Ok(Some(abilities));
     }
+    if let Some(abilities) = parse_anthem_with_trailing_segments_line(tokens)? {
+        return Ok(Some(abilities));
+    }
     if let Some(abilities) = parse_gets_and_attacks_each_combat_if_able_line(tokens)? {
         return Ok(Some(abilities));
+    }
+    if let Some(ability) = parse_conditional_all_creatures_able_to_block_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
+    if let Some(ability) = parse_source_can_attack_as_though_no_defender_as_long_as_line(tokens)? {
+        return Ok(Some(vec![ability]));
     }
     if let Some(ability) = parse_attacks_each_combat_if_able_line(tokens)? {
         return Ok(Some(vec![ability]));
@@ -513,6 +528,9 @@ pub(crate) fn parse_static_ability_line(
         return Ok(Some(abilities));
     }
     if let Some(ability) = parse_has_base_power_toughness_static_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
+    if let Some(ability) = parse_isnt_creature_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
     if let Some(ability) = parse_anthem_line(tokens)? {
@@ -1064,6 +1082,117 @@ pub(crate) fn parse_filter_dont_untap_during_controllers_untap_steps_line(
     )))
 }
 
+fn comparison_to_at_least_threshold(comparison: &crate::effect::Comparison) -> Option<u32> {
+    match comparison {
+        crate::effect::Comparison::GreaterThanOrEqual(value) if *value >= 0 => Some(*value as u32),
+        crate::effect::Comparison::GreaterThan(value) if *value >= -1 => Some((*value + 1) as u32),
+        crate::effect::Comparison::Equal(value) if *value >= 0 => Some(*value as u32),
+        _ => None,
+    }
+}
+
+fn parse_graveyard_metric_threshold_condition(
+    tokens: &[Token],
+) -> Result<Option<(crate::static_abilities::GraveyardCountMetric, u32)>, CardTextError> {
+    let words_all = words(tokens);
+    if !words_all.starts_with(&["there", "are"]) && !words_all.starts_with(&["there", "is"]) {
+        return Ok(None);
+    }
+
+    let quantified = &tokens[2..];
+    let (comparison, used) = parse_static_quantity_prefix(quantified, false)?;
+    let Some(threshold) = comparison_to_at_least_threshold(&comparison) else {
+        return Ok(None);
+    };
+
+    let mut rest = &quantified[used..];
+    if rest
+        .first()
+        .is_some_and(|token| token.is_word("card") || token.is_word("cards"))
+        && !rest
+            .get(1)
+            .is_some_and(|token| token.is_word("type") || token.is_word("types"))
+    {
+        rest = &rest[1..];
+    }
+    let rest_words = words(rest);
+    let is_card_types = matches!(
+        rest_words.as_slice(),
+        ["card", "type", "among", "cards", "in", "your", "graveyard"]
+            | ["card", "types", "among", "cards", "in", "your", "graveyard"]
+    );
+    if is_card_types {
+        return Ok(Some((
+            crate::static_abilities::GraveyardCountMetric::CardTypes,
+            threshold,
+        )));
+    }
+
+    let is_mana_values = matches!(
+        rest_words.as_slice(),
+        ["mana", "value", "among", "cards", "in", "your", "graveyard"]
+            | ["mana", "values", "among", "cards", "in", "your", "graveyard"]
+    );
+    if is_mana_values {
+        return Ok(Some((
+            crate::static_abilities::GraveyardCountMetric::ManaValues,
+            threshold,
+        )));
+    }
+
+    Ok(None)
+}
+
+pub(crate) fn parse_conditional_source_spell_keyword_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.len() < 10 {
+        return Ok(None);
+    }
+
+    let Some(this_idx) = clause_words
+        .windows(3)
+        .position(|window| window == ["this", "spell", "has"])
+    else {
+        return Ok(None);
+    };
+    let Some(keyword_word) = clause_words.get(this_idx + 3).copied() else {
+        return Ok(None);
+    };
+    let keyword = match keyword_word {
+        "flash" => crate::static_abilities::ConditionalSpellKeywordKind::Flash,
+        "cascade" => crate::static_abilities::ConditionalSpellKeywordKind::Cascade,
+        _ => return Ok(None),
+    };
+
+    if clause_words.get(this_idx + 4..this_idx + 7) != Some(["as", "long", "as"].as_slice()) {
+        return Ok(None);
+    }
+
+    let condition_start = token_index_for_word_index(tokens, this_idx + 7).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unable to map conditional spell keyword condition (clause: '{}')",
+            clause_words.join(" ")
+        ))
+    })?;
+    let condition_tokens = trim_commas(&tokens[condition_start..]);
+    if condition_tokens.is_empty() {
+        return Ok(None);
+    }
+    let Some((metric, threshold)) = parse_graveyard_metric_threshold_condition(&condition_tokens)?
+    else {
+        return Ok(None);
+    };
+
+    let spec = crate::static_abilities::ConditionalSpellKeywordSpec {
+        keyword,
+        metric,
+        threshold,
+    };
+    Ok(Some(StaticAbility::conditional_spell_keyword(spec)))
+}
+
 pub(crate) fn parse_subject_cant_be_blocked_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
@@ -1134,6 +1263,61 @@ pub(crate) fn parse_subject_cant_be_blocked_line(
     Ok(Some(ability))
 }
 
+pub(crate) fn parse_subject_cant_be_blocked_as_long_as_condition_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let normalized = words(tokens)
+        .into_iter()
+        .map(|word| if word == "cannot" { "cant" } else { word })
+        .collect::<Vec<_>>();
+
+    let Some(cant_idx) = normalized
+        .windows(3)
+        .position(|window| window == ["cant", "be", "blocked"])
+    else {
+        return Ok(None);
+    };
+
+    let tail = &normalized[cant_idx + 3..];
+    if !tail.starts_with(&["as", "long", "as"]) {
+        return Ok(None);
+    }
+
+    let subject_end = token_index_for_word_index(tokens, cant_idx).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unable to map cant-be-blocked subject (clause: '{}')",
+            normalized.join(" ")
+        ))
+    })?;
+    let subject_tokens = trim_commas(&tokens[..subject_end]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let condition_start = token_index_for_word_index(tokens, cant_idx + 6).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unable to map cant-be-blocked condition (clause: '{}')",
+            normalized.join(" ")
+        ))
+    })?;
+    let condition_tokens = trim_commas(&tokens[condition_start..]);
+    if condition_tokens.is_empty() {
+        return Ok(None);
+    }
+    let condition = parse_static_condition_clause(&condition_tokens)?;
+
+    let subject = parse_anthem_subject(&subject_tokens)?;
+    let granted = match subject {
+        AnthemSubjectAst::Source => {
+            GrantAbility::source(StaticAbility::unblockable()).with_condition(condition)
+        }
+        AnthemSubjectAst::Filter(filter) => {
+            GrantAbility::new(filter, StaticAbility::unblockable()).with_condition(condition)
+        }
+    };
+    Ok(Some(StaticAbility::new(granted)))
+}
+
 pub(crate) fn parse_subject_cant_be_blocked_as_long_as_defending_player_controls_card_type_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
@@ -1159,22 +1343,26 @@ pub(crate) fn parse_subject_cant_be_blocked_as_long_as_defending_player_controls
     if matches!(type_words.first(), Some(&"a" | &"an" | &"the")) {
         type_words = &type_words[1..];
     }
-    if type_words.len() != 1 {
+    if type_words.is_empty() {
         return Ok(None);
     }
-    let Some(card_type) = parse_card_type(type_words[0]) else {
-        return Ok(None);
-    };
-    if !matches!(
-        card_type,
-        CardType::Artifact
-            | CardType::Battle
-            | CardType::Creature
-            | CardType::Enchantment
-            | CardType::Land
-            | CardType::Planeswalker
-    ) {
-        return Ok(None);
+    let mut card_types = Vec::with_capacity(type_words.len());
+    for type_word in type_words {
+        let Some(card_type) = parse_card_type(type_word) else {
+            return Ok(None);
+        };
+        if !matches!(
+            card_type,
+            CardType::Artifact
+                | CardType::Battle
+                | CardType::Creature
+                | CardType::Enchantment
+                | CardType::Land
+                | CardType::Planeswalker
+        ) {
+            return Ok(None);
+        }
+        card_types.push(card_type);
     }
 
     let tail_start = token_index_for_word_index(tokens, cant_idx).ok_or_else(|| {
@@ -1189,8 +1377,11 @@ pub(crate) fn parse_subject_cant_be_blocked_as_long_as_defending_player_controls
     }
 
     let subject = parse_anthem_subject(&subject_tokens)?;
-    let unblockable =
-        StaticAbility::cant_be_blocked_as_long_as_defending_player_controls_card_type(card_type);
+    let unblockable = if card_types.len() == 1 {
+        StaticAbility::cant_be_blocked_as_long_as_defending_player_controls_card_type(card_types[0])
+    } else {
+        StaticAbility::cant_be_blocked_as_long_as_defending_player_controls_card_types(card_types)
+    };
     let ability = match subject {
         AnthemSubjectAst::Source => unblockable,
         AnthemSubjectAst::Filter(filter) => StaticAbility::grant_ability(filter, unblockable),
@@ -3410,9 +3601,6 @@ pub(crate) fn parse_all_are_color_and_type_addition_line(
         return Ok(None);
     }
 
-    let subject_tokens = &tokens[..are_idx];
-    let filter = parse_object_filter(subject_tokens, false)?;
-
     let Some(base_color) = words.get(are_idx + 1).and_then(|word| parse_color(word)) else {
         return Ok(None);
     };
@@ -3469,6 +3657,12 @@ pub(crate) fn parse_all_are_color_and_type_addition_line(
         return Ok(None);
     }
 
+    let subject_tokens = &tokens[..are_idx];
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+    let filter = parse_object_filter(subject_tokens, false)?;
+
     let mut abilities = vec![StaticAbility::set_colors(filter.clone(), base_color)];
     if !card_types.is_empty() {
         abilities.push(StaticAbility::add_card_types(filter.clone(), card_types));
@@ -3490,9 +3684,12 @@ pub(crate) fn parse_all_creatures_are_color_line(
     let Some(are_idx) = are_idx else {
         return Ok(None);
     };
-
-    let subject_tokens = &tokens[..are_idx];
-    let filter = parse_object_filter(subject_tokens, false)?;
+    if are_idx == 0 {
+        return Ok(None);
+    }
+    if words.len() != are_idx + 2 {
+        return Ok(None);
+    }
 
     let color_word = words.get(are_idx + 1).copied();
     let Some(color_word) = color_word else {
@@ -3501,9 +3698,12 @@ pub(crate) fn parse_all_creatures_are_color_line(
     let Some(color) = parse_color(color_word) else {
         return Ok(None);
     };
-    if words.len() != are_idx + 2 {
+
+    let subject_tokens = &tokens[..are_idx];
+    if subject_tokens.is_empty() {
         return Ok(None);
     }
+    let filter = parse_object_filter(subject_tokens, false)?;
 
     Ok(Some(StaticAbility::set_colors(filter, color)))
 }
@@ -3545,8 +3745,6 @@ pub(crate) fn parse_land_type_addition_line(
         return Ok(None);
     }
 
-    let filter = parse_object_filter(&tokens[..be_idx], false)?;
-
     let mut subtype_word_idx = be_idx + 1;
     if words
         .get(subtype_word_idx)
@@ -3578,6 +3776,12 @@ pub(crate) fn parse_land_type_addition_line(
         return Ok(None);
     }
 
+    let filter_tokens = &tokens[..be_idx];
+    if filter_tokens.is_empty() {
+        return Ok(None);
+    }
+    let filter = parse_object_filter(filter_tokens, false)?;
+
     Ok(Some(StaticAbility::add_subtypes(filter, vec![subtype])))
 }
 
@@ -3598,8 +3802,6 @@ pub(crate) fn parse_lands_are_pt_creatures_still_lands_line(
     if be_idx == 0 || be_idx + 2 >= words.len() {
         return Ok(None);
     }
-
-    let filter = parse_object_filter(&tokens[..be_idx], false)?;
     let (power, toughness) = match parse_pt_modifier(words[be_idx + 1]) {
         Ok(parsed) => parsed,
         Err(_) => return Ok(None),
@@ -3620,6 +3822,12 @@ pub(crate) fn parse_lands_are_pt_creatures_still_lands_line(
     if !valid_tail {
         return Ok(None);
     }
+
+    let filter_tokens = &tokens[..be_idx];
+    if filter_tokens.is_empty() {
+        return Ok(None);
+    }
+    let filter = parse_object_filter(filter_tokens, false)?;
 
     Ok(Some(vec![
         StaticAbility::add_card_types(filter.clone(), vec![CardType::Creature]),
@@ -4348,6 +4556,31 @@ pub(crate) fn parse_static_quantity_prefix(
         return Ok((crate::effect::Comparison::LessThanOrEqual(0), 1));
     }
 
+    if tokens[0].is_word("exactly") {
+        let (value, used) = parse_number(tokens.get(1..).unwrap_or_default()).ok_or_else(|| {
+            CardTextError::ParseError("missing quantity in static condition".to_string())
+        })?;
+        return Ok((crate::effect::Comparison::Equal(value as i32), used + 1));
+    }
+
+    if (tokens[0].is_word("fewer") || tokens[0].is_word("less"))
+        && tokens.get(1).is_some_and(|token| token.is_word("than"))
+    {
+        let (value, used) = parse_number(tokens.get(2..).unwrap_or_default()).ok_or_else(|| {
+            CardTextError::ParseError("missing quantity in static condition".to_string())
+        })?;
+        return Ok((crate::effect::Comparison::LessThan(value as i32), used + 2));
+    }
+
+    if (tokens[0].is_word("more") || tokens[0].is_word("greater"))
+        && tokens.get(1).is_some_and(|token| token.is_word("than"))
+    {
+        let (value, used) = parse_number(tokens.get(2..).unwrap_or_default()).ok_or_else(|| {
+            CardTextError::ParseError("missing quantity in static condition".to_string())
+        })?;
+        return Ok((crate::effect::Comparison::GreaterThan(value as i32), used + 2));
+    }
+
     if let Some((value, used)) = parse_number(tokens) {
         let value = value as i32;
         let first_word = tokens.first().and_then(Token::as_word);
@@ -4464,6 +4697,15 @@ pub(crate) fn parse_static_condition_clause(tokens: &[Token]) -> Result<crate::C
 
     if clause_words.starts_with(&["there", "are"]) || clause_words.starts_with(&["there", "is"])
     {
+        if let Some((metric, threshold)) = parse_graveyard_metric_threshold_condition(&tokens)? {
+            if metric == crate::static_abilities::GraveyardCountMetric::CardTypes {
+                return Ok(crate::ConditionExpr::PlayerHasCardTypesInGraveyardOrMore {
+                    player: PlayerFilter::You,
+                    count: threshold,
+                });
+            }
+        }
+
         let quantified = &tokens[2..];
         let (comparison, used) = parse_static_quantity_prefix(quantified, false)?;
         let mut filter_tokens = &quantified[used..];
@@ -4694,8 +4936,19 @@ pub(crate) fn parse_anthem_clause(
     }
     let subject = parse_anthem_subject(&subject_tokens)?;
 
+    let mut modifier_idx = get_idx + 1;
+    if tokens
+        .get(modifier_idx)
+        .is_some_and(|token| token.is_word("a") || token.is_word("an"))
+        && tokens
+            .get(modifier_idx + 1)
+            .is_some_and(|token| token.is_word("additional"))
+    {
+        modifier_idx += 2;
+    }
+
     let modifier_token = tokens
-        .get(get_idx + 1)
+        .get(modifier_idx)
         .and_then(Token::as_word)
         .ok_or_else(|| {
             CardTextError::ParseError(format!(
@@ -4710,7 +4963,7 @@ pub(crate) fn parse_anthem_clause(
         ))
     })?;
 
-    let tail_tokens = trim_edge_punctuation(&tokens[get_idx + 2..tail_end]);
+    let tail_tokens = trim_edge_punctuation(&tokens[modifier_idx + 1..tail_end]);
     let mut scale: Option<AnthemCountExpression> = None;
     let mut suffix_condition: Option<crate::ConditionExpr> = None;
     if !tail_tokens.is_empty() {
@@ -5331,6 +5584,398 @@ pub(crate) fn parse_anthem_and_keyword_line(
     Ok(Some(result))
 }
 
+fn grant_for_anthem_subject(clause: &ParsedAnthemClause, ability: StaticAbility) -> StaticAbility {
+    let granted = match &clause.subject {
+        AnthemSubjectAst::Source => GrantAbility::source(ability),
+        AnthemSubjectAst::Filter(filter) => GrantAbility::new(filter.clone(), ability),
+    };
+    let granted = if let Some(condition) = &clause.condition {
+        granted.with_condition(condition.clone())
+    } else {
+        granted
+    };
+    StaticAbility::new(granted)
+}
+
+fn grant_object_ability_for_anthem_subject(
+    clause: &ParsedAnthemClause,
+    ability: Ability,
+    display: String,
+) -> StaticAbility {
+    let filter = match &clause.subject {
+        AnthemSubjectAst::Source => ObjectFilter::source(),
+        AnthemSubjectAst::Filter(filter) => filter.clone(),
+    };
+    let mut granted = crate::static_abilities::GrantObjectAbilityForFilter::new(filter, ability, display);
+    if let Some(condition) = &clause.condition {
+        granted = granted.with_condition(condition.clone());
+    }
+    StaticAbility::new(granted)
+}
+
+fn parse_triggered_granted_ability(tokens: &[Token]) -> Result<Option<Ability>, CardTextError> {
+    let trigger_tokens = trim_edge_punctuation(tokens);
+    if trigger_tokens.is_empty() {
+        return Ok(None);
+    }
+    if !trigger_tokens
+        .first()
+        .is_some_and(|token| token.is_word("when") || token.is_word("whenever"))
+        && !is_at_trigger_intro(&trigger_tokens, 0)
+    {
+        return Ok(None);
+    }
+
+    let ability = match parse_triggered_line(&trigger_tokens)? {
+        LineAst::Triggered {
+            trigger,
+            effects,
+            max_triggers_per_turn,
+        } => {
+            let (compiled_effects, choices) = compile_trigger_effects(Some(&trigger), &effects)?;
+            Ability {
+                kind: AbilityKind::Triggered(TriggeredAbility {
+                    trigger: compile_trigger_spec(trigger),
+                    effects: compiled_effects,
+                    choices,
+                    intervening_if: max_triggers_per_turn
+                        .map(crate::ConditionExpr::MaxTimesEachTurn),
+                }),
+                functional_zones: vec![Zone::Battlefield],
+                text: Some(words(&trigger_tokens).join(" ")),
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(ability))
+}
+
+pub(crate) fn parse_anthem_with_trailing_segments_line(
+    tokens: &[Token],
+) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words
+        .windows(4)
+        .any(|window| window == ["until", "end", "of", "turn"])
+    {
+        return Ok(None);
+    }
+
+    let Some(get_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("get") || token.is_word("gets"))
+    else {
+        return Ok(None);
+    };
+
+    let mut work_tokens = tokens.to_vec();
+    if work_tokens
+        .get(get_idx + 1)
+        .is_some_and(|token| token.is_word("a") || token.is_word("an"))
+        && work_tokens
+            .get(get_idx + 2)
+            .is_some_and(|token| token.is_word("additional"))
+    {
+        work_tokens.drain(get_idx + 1..get_idx + 3);
+    }
+
+    let Some(pt_word) = work_tokens.get(get_idx + 1).and_then(Token::as_word) else {
+        return Ok(None);
+    };
+    if parse_pt_modifier(pt_word).is_err() {
+        return Ok(None);
+    }
+
+    let clause = parse_anthem_clause(&work_tokens, get_idx, get_idx + 2)?;
+    let tail_tokens = trim_commas(&work_tokens[get_idx + 2..]);
+    if tail_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let mut extras = Vec::new();
+    for raw_segment in split_on_comma(&tail_tokens) {
+        let mut segment = trim_commas(&raw_segment).to_vec();
+        while segment.first().is_some_and(|token| token.is_word("and")) {
+            segment = trim_commas(&segment[1..]).to_vec();
+        }
+        if segment.is_empty() {
+            continue;
+        }
+
+        let segment_words = normalize_cant_words(&segment);
+        if segment_words.as_slice() == ["cant", "block"] {
+            extras.push(grant_for_anthem_subject(
+                &clause,
+                StaticAbility::cant_block(),
+            ));
+            continue;
+        }
+        if segment_words.as_slice() == ["attacks", "each", "combat", "if", "able"]
+            || segment_words.as_slice() == ["attack", "each", "combat", "if", "able"]
+        {
+            extras.push(grant_for_anthem_subject(
+                &clause,
+                StaticAbility::must_attack(),
+            ));
+            continue;
+        }
+        if segment_words.starts_with(&["cant", "be", "blocked", "by", "more", "than"]) {
+            let count_tokens = &segment[6..];
+            let Some((count, used)) = parse_number(count_tokens) else {
+                return Ok(None);
+            };
+            let tail = normalize_cant_words(&count_tokens[used..]);
+            if tail.as_slice() != ["creature"] && tail.as_slice() != ["creatures"] {
+                return Ok(None);
+            }
+            extras.push(grant_for_anthem_subject(
+                &clause,
+                StaticAbility::cant_be_blocked_by_more_than(count as usize),
+            ));
+            continue;
+        }
+        if segment_words.len() == 2 && segment_words[0] == "is" {
+            let Some(color) = parse_color(segment_words[1]) else {
+                return Ok(None);
+            };
+            let filter = match &clause.subject {
+                AnthemSubjectAst::Source => ObjectFilter::source(),
+                AnthemSubjectAst::Filter(filter) => filter.clone(),
+            };
+            let mut set_colors = crate::static_abilities::SetColorsForFilter::new(filter, color);
+            if let Some(condition) = &clause.condition {
+                set_colors = set_colors.with_condition(condition.clone());
+            }
+            extras.push(StaticAbility::new(set_colors));
+            continue;
+        }
+
+        if segment_words
+            .first()
+            .is_some_and(|word| *word == "has" || *word == "have")
+        {
+            let mut ability_tokens = trim_commas(&segment[1..]).to_vec();
+            if ability_tokens.is_empty() {
+                return Ok(None);
+            }
+
+            let mut grant_must_attack = false;
+            let ability_words = normalize_cant_words(&ability_tokens);
+            if let Some(and_idx) = ability_words
+                .windows(6)
+                .position(|window| {
+                    window == ["and", "attacks", "each", "combat", "if", "able"]
+                        || window == ["and", "attack", "each", "combat", "if", "able"]
+                })
+            {
+                let Some(and_token_idx) = token_index_for_word_index(&ability_tokens, and_idx) else {
+                    return Ok(None);
+                };
+                let head = trim_commas(&ability_tokens[..and_token_idx]);
+                if head.is_empty() {
+                    return Ok(None);
+                }
+                ability_tokens = head.to_vec();
+                grant_must_attack = true;
+            }
+
+            if let Some(triggered) = parse_triggered_granted_ability(&ability_tokens)? {
+                let display = format!("{} has {}", clause_words.join(" "), words(&ability_tokens).join(" "));
+                extras.push(grant_object_ability_for_anthem_subject(
+                    &clause,
+                    triggered,
+                    display,
+                ));
+            } else if let Some(actions) = parse_ability_line(&ability_tokens) {
+                reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
+                let granted = actions
+                    .into_iter()
+                    .filter_map(keyword_action_to_static_ability)
+                    .collect::<Vec<_>>();
+                if granted.is_empty() {
+                    return Ok(None);
+                }
+                for ability in granted {
+                    extras.push(grant_for_anthem_subject(&clause, ability));
+                }
+            } else {
+                return Ok(None);
+            }
+
+            if grant_must_attack {
+                extras.push(grant_for_anthem_subject(
+                    &clause,
+                    StaticAbility::must_attack(),
+                ));
+            }
+            continue;
+        }
+
+        if let Some(triggered) = parse_triggered_granted_ability(&segment)? {
+            let display = format!("{} has {}", clause_words.join(" "), words(&segment).join(" "));
+            extras.push(grant_object_ability_for_anthem_subject(
+                &clause,
+                triggered,
+                display,
+            ));
+            continue;
+        }
+
+        return Ok(None);
+    }
+
+    if extras.is_empty() {
+        return Ok(None);
+    }
+
+    let mut result = vec![build_anthem_static_ability(&clause)];
+    result.extend(extras);
+    Ok(Some(result))
+}
+
+pub(crate) fn parse_conditional_all_creatures_able_to_block_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let all_words = normalize_cant_words(tokens);
+    if !all_words.starts_with(&["as", "long", "as"]) {
+        return Ok(None);
+    }
+
+    let Some(comma_idx) = tokens
+        .iter()
+        .position(|token| matches!(token, Token::Comma(_)))
+    else {
+        return Ok(None);
+    };
+    if comma_idx <= 3 {
+        return Ok(None);
+    }
+
+    let condition_tokens = trim_commas(&tokens[3..comma_idx]);
+    if condition_tokens.is_empty() {
+        return Ok(None);
+    }
+    let condition = parse_static_condition_clause(&condition_tokens)?;
+
+    let remainder = trim_commas(&tokens[comma_idx + 1..]);
+    let remainder_words = normalize_cant_words(&remainder);
+    if remainder_words.as_slice()
+        == [
+            "all",
+            "creatures",
+            "able",
+            "to",
+            "block",
+            "this",
+            "creature",
+            "do",
+            "so",
+        ]
+        || remainder_words.as_slice()
+            == [
+                "all",
+                "creatures",
+                "able",
+                "to",
+                "block",
+                "this",
+                "do",
+                "so",
+            ]
+    {
+        let granted = GrantAbility::source(StaticAbility::must_block()).with_condition(condition);
+        return Ok(Some(StaticAbility::new(granted)));
+    }
+
+    if remainder_words.as_slice()
+        == [
+            "all",
+            "creatures",
+            "able",
+            "to",
+            "block",
+            "enchanted",
+            "creature",
+            "do",
+            "so",
+        ]
+    {
+        let granted_ability = Ability::static_ability(StaticAbility::must_block());
+        let granted = crate::static_abilities::AttachedAbilityGrant::new(
+            granted_ability,
+            "enchanted creature has this creature must be blocked if able".to_string(),
+        )
+        .with_condition(condition);
+        return Ok(Some(StaticAbility::new(granted)));
+    }
+
+    Ok(None)
+}
+
+pub(crate) fn parse_source_can_attack_as_though_no_defender_as_long_as_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let normalized = words(tokens)
+        .into_iter()
+        .map(|word| if word == "didn't" { "didnt" } else { word })
+        .collect::<Vec<_>>();
+    let Some(can_idx) = normalized.windows(11).position(|window| {
+        window
+            == [
+                "can",
+                "attack",
+                "as",
+                "though",
+                "it",
+                "didnt",
+                "have",
+                "defender",
+                "as",
+                "long",
+                "as",
+            ]
+    }) else {
+        return Ok(None);
+    };
+    if can_idx == 0 {
+        return Ok(None);
+    }
+
+    let subject_end = token_index_for_word_index(tokens, can_idx).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unable to map conditional no-defender subject (clause: '{}')",
+            normalized.join(" ")
+        ))
+    })?;
+    let subject_tokens = trim_commas(&tokens[..subject_end]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let condition_start = token_index_for_word_index(tokens, can_idx + 11).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unable to map conditional no-defender condition (clause: '{}')",
+            normalized.join(" ")
+        ))
+    })?;
+    let condition_tokens = trim_commas(&tokens[condition_start..]);
+    if condition_tokens.is_empty() {
+        return Ok(None);
+    }
+    let condition = parse_static_condition_clause(&condition_tokens)?;
+
+    let subject = parse_anthem_subject(&subject_tokens)?;
+    let granted = match subject {
+        AnthemSubjectAst::Source => GrantAbility::source(StaticAbility::can_attack_as_though_no_defender())
+            .with_condition(condition),
+        AnthemSubjectAst::Filter(filter) => {
+            GrantAbility::new(filter, StaticAbility::can_attack_as_though_no_defender())
+                .with_condition(condition)
+        }
+    };
+    Ok(Some(StaticAbility::new(granted)))
+}
+
 pub(crate) fn parse_gets_and_attacks_each_combat_if_able_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
@@ -5510,6 +6155,118 @@ pub(crate) fn parse_has_base_power_toughness_static_line(
     Ok(Some(StaticAbility::set_base_power_toughness(
         filter, power, toughness,
     )))
+}
+
+fn is_negated_creature_tail(words: &[&str]) -> bool {
+    if words.is_empty() {
+        return false;
+    }
+
+    let is_creature_phrase = |tail: &[&str]| {
+        matches!(
+            tail,
+            ["creature"] | ["creatures"] | ["a", "creature"] | ["an", "creature"]
+        )
+    };
+
+    let be = words[0];
+    if be == "isnt" || be == "isn't" {
+        return is_creature_phrase(&words[1..]);
+    }
+
+    if be == "is" || be == "are" {
+        if words.get(1).copied() == Some("not") {
+            return is_creature_phrase(&words[2..]);
+        }
+        if words.get(1).copied() == Some("no") && words.get(2).copied() == Some("longer") {
+            return is_creature_phrase(&words[3..]);
+        }
+    }
+
+    false
+}
+
+pub(crate) fn parse_isnt_creature_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let all_words = words(tokens);
+    if all_words.len() < 3 {
+        return Ok(None);
+    }
+    if all_words.contains(&"target")
+        || all_words
+            .windows(4)
+            .any(|window| window == ["until", "end", "of", "turn"])
+    {
+        return Ok(None);
+    }
+
+    let mut condition: Option<crate::ConditionExpr> = None;
+    let clause_tokens_buf = if all_words.starts_with(&["as", "long", "as"]) {
+        let Some(comma_idx) = tokens
+            .iter()
+            .position(|token| matches!(token, Token::Comma(_)))
+        else {
+            return Ok(None);
+        };
+        if comma_idx <= 3 {
+            return Err(CardTextError::ParseError(format!(
+                "missing condition after leading 'as long as' clause (clause: '{}')",
+                all_words.join(" ")
+            )));
+        }
+        let condition_tokens = trim_commas(&tokens[3..comma_idx]);
+        if condition_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing condition after leading 'as long as' clause (clause: '{}')",
+                all_words.join(" ")
+            )));
+        }
+        condition = Some(parse_static_condition_clause(&condition_tokens)?);
+        Some(trim_commas(&tokens[comma_idx + 1..]))
+    } else {
+        None
+    };
+    let clause_tokens = clause_tokens_buf.as_deref().unwrap_or(tokens);
+
+    let clause_words = words(clause_tokens);
+    if clause_words.len() < 3 {
+        return Ok(None);
+    }
+
+    let Some(verb_word_idx) = clause_words
+        .iter()
+        .position(|word| matches!(*word, "isnt" | "isn't" | "is" | "are"))
+    else {
+        return Ok(None);
+    };
+    if !is_negated_creature_tail(&clause_words[verb_word_idx..]) {
+        return Ok(None);
+    }
+
+    let verb_token_idx = token_index_for_word_index(clause_tokens, verb_word_idx).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unable to map subject in isn't-a-creature clause (clause: '{}')",
+            all_words.join(" ")
+        ))
+    })?;
+    let subject_tokens = trim_commas(&clause_tokens[..verb_token_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let subject = parse_anthem_subject(&subject_tokens)?;
+    let filter = match subject {
+        AnthemSubjectAst::Source => ObjectFilter::source(),
+        AnthemSubjectAst::Filter(filter) => filter,
+    };
+
+    let mut remove =
+        crate::static_abilities::RemoveCardTypesForFilter::new(filter, vec![CardType::Creature]);
+    if let Some(condition) = condition {
+        remove = remove.with_condition(condition);
+    }
+    Ok(Some(StaticAbility::new(remove)))
 }
 
 pub(crate) fn parse_enters_tapped_with_counters_line(
@@ -6543,36 +7300,64 @@ pub(crate) fn parse_equipped_creature_has_line(
 pub(crate) fn parse_enchanted_creature_has_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
-    let words = words(tokens);
-    let clause_text = words.join(" ");
-    if words.len() < 4 || words.first().copied() != Some("enchanted") {
+    let line_words = words(tokens);
+    let clause_text = line_words.join(" ");
+    if line_words.len() < 4 || line_words.first().copied() != Some("enchanted") {
         return Ok(None);
     }
-    let subject = match words.get(1).copied() {
+    let subject = match line_words.get(1).copied() {
         Some("creature") => "enchanted creature",
         Some("permanent") => "enchanted permanent",
         _ => return Ok(None),
     };
-    if words.get(2).copied() != Some("has") {
+    if line_words.get(2).copied() != Some("has") {
         return Ok(None);
     }
 
-    let ability_tokens = &tokens[3..];
+    let mut ability_tokens = trim_commas(&tokens[3..]);
     if ability_tokens.is_empty() {
         return Ok(None);
     }
 
-    let Some(actions) = parse_ability_line(ability_tokens) else {
+    let mut condition: Option<crate::ConditionExpr> = None;
+    if let Some(as_long_idx) = words(&ability_tokens)
+        .windows(3)
+        .position(|window| window == ["as", "long", "as"])
+    {
+        let Some(as_long_token_idx) = token_index_for_word_index(&ability_tokens, as_long_idx) else {
+            return Ok(None);
+        };
+        let Some(condition_start_idx) = token_index_for_word_index(&ability_tokens, as_long_idx + 3)
+        else {
+            return Ok(None);
+        };
+        let ability_head = trim_commas(&ability_tokens[..as_long_token_idx]);
+        if ability_head.is_empty() {
+            return Ok(None);
+        }
+        let condition_tokens = trim_commas(&ability_tokens[condition_start_idx..]);
+        if condition_tokens.is_empty() {
+            return Ok(None);
+        }
+        condition = Some(parse_static_condition_clause(&condition_tokens)?);
+        ability_tokens = ability_head;
+    }
+
+    let Some(actions) = parse_ability_line(&ability_tokens) else {
         return Ok(None);
     };
     let mut out = Vec::new();
     for action in actions {
         reject_unimplemented_keyword_actions(std::slice::from_ref(&action), &clause_text)?;
         if let KeywordAction::Annihilator(amount) = action {
-            out.push(StaticAbility::attached_ability_grant(
+            let mut grant = crate::static_abilities::AttachedAbilityGrant::new(
                 annihilator_granted_ability(amount),
                 format!("{subject} has annihilator {amount}"),
-            ));
+            );
+            if let Some(condition) = &condition {
+                grant = grant.with_condition(condition.clone());
+            }
+            out.push(StaticAbility::new(grant));
             continue;
         }
 
@@ -6584,7 +7369,11 @@ pub(crate) fn parse_enchanted_creature_has_line(
             static_ability.display().to_ascii_lowercase()
         );
         let granted = Ability::static_ability(static_ability).with_text(&ability_text);
-        out.push(StaticAbility::attached_ability_grant(granted, ability_text));
+        let mut grant = crate::static_abilities::AttachedAbilityGrant::new(granted, ability_text);
+        if let Some(condition) = &condition {
+            grant = grant.with_condition(condition.clone());
+        }
+        out.push(StaticAbility::new(grant));
     }
 
     if out.is_empty() {
@@ -7763,72 +8552,221 @@ pub(crate) fn parse_no_maximum_hand_size_line(
 pub(crate) fn parse_reduced_maximum_hand_size_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
-    let words = words(tokens);
-    if words.is_empty() {
+    let max_hand_size_subject_prefix_len = |tail: &[&str]| -> Option<usize> {
+        if tail.starts_with(&["your"]) || tail.starts_with(&["you"]) {
+            Some(1)
+        } else if tail.starts_with(&["each", "opponent", "s"]) {
+            Some(3)
+        } else if tail.starts_with(&["each", "opponent"]) || tail.starts_with(&["each", "opponents"])
+        {
+            Some(2)
+        } else if tail.starts_with(&["opponent", "s"]) {
+            Some(2)
+        } else if tail.starts_with(&["opponent"]) || tail.starts_with(&["opponents"]) {
+            Some(1)
+        } else if tail.starts_with(&["each", "player", "s"]) {
+            Some(3)
+        } else if tail.starts_with(&["each", "player"]) || tail.starts_with(&["each", "players"])
+        {
+            Some(2)
+        } else if tail.starts_with(&["player", "s"]) {
+            Some(2)
+        } else if tail.starts_with(&["player"]) || tail.starts_with(&["players"]) {
+            Some(1)
+        } else {
+            None
+        }
+    };
+
+    let mut min_card_types_condition: Option<u32> = None;
+    let mut line_words = words(tokens);
+    if line_words.is_empty() {
         return Ok(None);
     }
 
-    let (player, mut idx) = if words.starts_with(&["your"]) || words.starts_with(&["you"]) {
+    let working_tokens_storage = if line_words.starts_with(&["as", "long", "as"]) {
+        let (condition_end_idx, remainder_start_idx) = if let Some(comma_idx) = tokens
+            .iter()
+            .position(|token| matches!(token, Token::Comma(_)))
+        {
+            if comma_idx <= 3 {
+                return Ok(None);
+            }
+            (comma_idx, comma_idx + 1)
+        } else {
+            let Some(split_word_idx) = (4..line_words.len()).find(|word_idx| {
+                let tail = &line_words[*word_idx..];
+                let Some(prefix_len) = max_hand_size_subject_prefix_len(tail) else {
+                    return false;
+                };
+                tail.get(prefix_len..prefix_len + 4)
+                    == Some(["maximum", "hand", "size", "is"].as_slice())
+            })
+            else {
+                return Ok(None);
+            };
+            let split_token_idx =
+                token_index_for_word_index(tokens, split_word_idx).ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "unable to map delirium hand-size subject split (clause: '{}')",
+                        line_words.join(" ")
+                    ))
+                })?;
+            (split_token_idx, split_token_idx)
+        };
+
+        let condition_tokens = trim_commas(&tokens[3..condition_end_idx]);
+        let Some((metric, threshold)) = parse_graveyard_metric_threshold_condition(&condition_tokens)?
+        else {
+            return Ok(None);
+        };
+        if metric != crate::static_abilities::GraveyardCountMetric::CardTypes {
+            return Ok(None);
+        }
+        min_card_types_condition = Some(threshold);
+        Some(trim_commas(&tokens[remainder_start_idx..]))
+    } else {
+        None
+    };
+    let working_tokens = working_tokens_storage.as_deref().unwrap_or(tokens);
+    line_words = words(working_tokens);
+    if line_words.is_empty() {
+        return Ok(None);
+    }
+
+    let (player, mut idx) =
+        if line_words.starts_with(&["your"]) || line_words.starts_with(&["you"]) {
         (crate::target::PlayerFilter::You, 1usize)
-    } else if words.starts_with(&["each", "opponent"]) || words.starts_with(&["each", "opponents"])
+    } else if line_words.starts_with(&["each", "opponent"])
+        || line_words.starts_with(&["each", "opponents"])
+        || line_words.starts_with(&["each", "opponent", "s"])
     {
-        (crate::target::PlayerFilter::Opponent, 2usize)
-    } else if words.starts_with(&["opponent"]) || words.starts_with(&["opponents"]) {
-        (crate::target::PlayerFilter::Opponent, 1usize)
-    } else if words.starts_with(&["each", "player"]) || words.starts_with(&["each", "players"]) {
-        (crate::target::PlayerFilter::Any, 2usize)
-    } else if words.starts_with(&["player"]) || words.starts_with(&["players"]) {
-        (crate::target::PlayerFilter::Any, 1usize)
+        (
+            crate::target::PlayerFilter::Opponent,
+            if line_words.starts_with(&["each", "opponent", "s"]) {
+                3usize
+            } else {
+                2usize
+            },
+        )
+    } else if line_words.starts_with(&["opponent"])
+        || line_words.starts_with(&["opponents"])
+        || line_words.starts_with(&["opponent", "s"])
+    {
+        (
+            crate::target::PlayerFilter::Opponent,
+            if line_words.starts_with(&["opponent", "s"]) {
+                2usize
+            } else {
+                1usize
+            },
+        )
+    } else if line_words.starts_with(&["each", "player"])
+        || line_words.starts_with(&["each", "players"])
+        || line_words.starts_with(&["each", "player", "s"])
+    {
+        (
+            crate::target::PlayerFilter::Any,
+            if line_words.starts_with(&["each", "player", "s"]) {
+                3usize
+            } else {
+                2usize
+            },
+        )
+    } else if line_words.starts_with(&["player"])
+        || line_words.starts_with(&["players"])
+        || line_words.starts_with(&["player", "s"])
+    {
+        (
+            crate::target::PlayerFilter::Any,
+            if line_words.starts_with(&["player", "s"]) {
+                2usize
+            } else {
+                1usize
+            },
+        )
     } else {
         return Ok(None);
     };
 
-    if words.get(idx..idx + 5) == Some(["maximum", "hand", "size", "is", "reduced"].as_slice()) {
+    if line_words.get(idx..idx + 5)
+        == Some(["maximum", "hand", "size", "is", "reduced"].as_slice())
+    {
         idx += 5;
-        if words.get(idx) != Some(&"by") {
+        if line_words.get(idx) != Some(&"by") {
             return Ok(None);
         }
         idx += 1;
 
-        let Some(amount_word) = words.get(idx) else {
+        let Some(amount_word) = line_words.get(idx) else {
             return Err(CardTextError::ParseError(format!(
                 "missing maximum-hand-size reduction amount (clause: '{}')",
-                words.join(" ")
+                line_words.join(" ")
             )));
         };
         let Some(amount) = parse_named_number(amount_word) else {
             return Err(CardTextError::ParseError(format!(
                 "unsupported maximum-hand-size reduction amount '{}' (clause: '{}')",
                 amount_word,
-                words.join(" ")
+                line_words.join(" ")
             )));
         };
         idx += 1;
 
-        if idx != words.len() {
+        if idx != line_words.len() {
             return Ok(None);
         }
 
         return Ok(Some(StaticAbility::reduce_maximum_hand_size(player, amount)));
     }
 
-    if words.get(idx..idx + 4) == Some(["maximum", "hand", "size", "is"].as_slice()) {
+    if line_words.get(idx..idx + 4) == Some(["maximum", "hand", "size", "is"].as_slice()) {
         idx += 4;
-        let Some(amount_word) = words.get(idx) else {
+
+        if line_words.get(idx..idx + 10)
+            == Some(
+                [
+                    "equal", "to", "seven", "minus", "the", "number", "of", "those", "card",
+                    "types",
+                ]
+                .as_slice(),
+            )
+            || line_words.get(idx..idx + 10)
+                == Some(
+                    [
+                        "equal", "to", "seven", "minus", "the", "number", "of", "those", "card",
+                        "type",
+                    ]
+                    .as_slice(),
+                )
+        {
+            idx += 10;
+            if idx != line_words.len() {
+                return Ok(None);
+            }
+            return Ok(Some(
+                StaticAbility::max_hand_size_seven_minus_your_graveyard_card_types(
+                    player,
+                    min_card_types_condition.unwrap_or(0),
+                ),
+            ));
+        }
+
+        let Some(amount_word) = line_words.get(idx) else {
             return Err(CardTextError::ParseError(format!(
                 "missing maximum-hand-size value (clause: '{}')",
-                words.join(" ")
+                line_words.join(" ")
             )));
         };
         let Some(amount) = parse_named_number(amount_word) else {
             return Err(CardTextError::ParseError(format!(
                 "unsupported maximum-hand-size value '{}' (clause: '{}')",
                 amount_word,
-                words.join(" ")
+                line_words.join(" ")
             )));
         };
         idx += 1;
-        if idx != words.len() {
+        if idx != line_words.len() {
             return Ok(None);
         }
 
@@ -7840,7 +8778,7 @@ pub(crate) fn parse_reduced_maximum_hand_size_line(
         }
         return Ok(Some(StaticAbility::custom(
             "maximum_hand_size",
-            words.join(" "),
+            line_words.join(" "),
         )));
     }
     Ok(None)

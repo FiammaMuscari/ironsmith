@@ -2,7 +2,10 @@
 //!
 //! This module contains static abilities that don't fit neatly into other categories.
 
-use super::{ChooseColorAsEntersSpec, StaticAbilityId, StaticAbilityKind};
+use super::{
+    ChooseColorAsEntersSpec, ConditionalSpellKeywordKind, ConditionalSpellKeywordSpec,
+    GraveyardCountMetric, StaticAbilityId, StaticAbilityKind,
+};
 use crate::ability::LevelAbility;
 use crate::color::Color;
 use crate::effect::{Condition, Effect, Value};
@@ -1914,6 +1917,179 @@ impl StaticAbilityKind for ReduceMaximumHandSize {
     }
 }
 
+fn player_ids_for_filter(
+    game: &GameState,
+    player_filter: PlayerFilter,
+    controller: PlayerId,
+) -> Vec<PlayerId> {
+    use crate::game_loop::player_matches_filter_with_combat;
+
+    let combat = game.combat.as_ref();
+    game.players
+        .iter()
+        .filter(|player| {
+            player.is_in_game()
+                && player_matches_filter_with_combat(
+                    player.id,
+                    &player_filter,
+                    game,
+                    controller,
+                    combat,
+                )
+        })
+        .map(|player| player.id)
+        .collect()
+}
+
+fn count_distinct_card_types_in_graveyard(game: &GameState, player_id: PlayerId) -> i32 {
+    use crate::types::CardType;
+
+    let mut types: Vec<CardType> = Vec::new();
+    let Some(player) = game.player(player_id) else {
+        return 0;
+    };
+    for &card_id in &player.graveyard {
+        let Some(obj) = game.object(card_id) else {
+            continue;
+        };
+        for card_type in &obj.card_types {
+            if !types.contains(card_type) {
+                types.push(*card_type);
+            }
+        }
+    }
+    types.len() as i32
+}
+
+fn count_distinct_mana_values_in_graveyard(game: &GameState, player_id: PlayerId) -> i32 {
+    let Some(player) = game.player(player_id) else {
+        return 0;
+    };
+
+    let mut values: Vec<u32> = Vec::new();
+    for &card_id in &player.graveyard {
+        let Some(obj) = game.object(card_id) else {
+            continue;
+        };
+        let mana_value = obj.mana_cost.as_ref().map_or(0, |cost| cost.mana_value());
+        if !values.contains(&mana_value) {
+            values.push(mana_value);
+        }
+    }
+    values.len() as i32
+}
+
+pub(crate) fn conditional_spell_keyword_active(
+    spec: ConditionalSpellKeywordSpec,
+    game: &GameState,
+    controller: PlayerId,
+) -> bool {
+    let count = match spec.metric {
+        GraveyardCountMetric::CardTypes => count_distinct_card_types_in_graveyard(game, controller),
+        GraveyardCountMetric::ManaValues => {
+            count_distinct_mana_values_in_graveyard(game, controller)
+        }
+    };
+    count >= spec.threshold as i32
+}
+
+/// "This spell has flash/cascade as long as there are N or more ... in your graveyard."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConditionalSpellKeyword {
+    pub spec: ConditionalSpellKeywordSpec,
+}
+
+impl ConditionalSpellKeyword {
+    pub const fn new(spec: ConditionalSpellKeywordSpec) -> Self {
+        Self { spec }
+    }
+}
+
+impl StaticAbilityKind for ConditionalSpellKeyword {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::ConditionalSpellKeyword
+    }
+
+    fn display(&self) -> String {
+        let keyword = match self.spec.keyword {
+            ConditionalSpellKeywordKind::Flash => "flash",
+            ConditionalSpellKeywordKind::Cascade => "cascade",
+        };
+        let metric = match self.spec.metric {
+            GraveyardCountMetric::CardTypes => "card types",
+            GraveyardCountMetric::ManaValues => "mana values",
+        };
+        let threshold = number_word(self.spec.threshold)
+            .map(str::to_string)
+            .unwrap_or_else(|| self.spec.threshold.to_string());
+        format!(
+            "This spell has {keyword} as long as there are {threshold} or more {metric} among cards in your graveyard."
+        )
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn conditional_spell_keyword_spec(&self) -> Option<ConditionalSpellKeywordSpec> {
+        Some(self.spec)
+    }
+}
+
+/// "Each opponent's maximum hand size is equal to seven minus the number of card types in your graveyard."
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaximumHandSizeSevenMinusYourGraveyardCardTypes {
+    pub player: PlayerFilter,
+    pub minimum_types: u32,
+}
+
+impl MaximumHandSizeSevenMinusYourGraveyardCardTypes {
+    pub const fn new(player: PlayerFilter, minimum_types: u32) -> Self {
+        Self {
+            player,
+            minimum_types,
+        }
+    }
+}
+
+impl StaticAbilityKind for MaximumHandSizeSevenMinusYourGraveyardCardTypes {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::MaximumHandSizeSevenMinusYourGraveyardCardTypes
+    }
+
+    fn display(&self) -> String {
+        let who = match self.player {
+            PlayerFilter::You => "Your",
+            PlayerFilter::Opponent => "Each opponent's",
+            PlayerFilter::Any => "Each player's",
+            _ => "Affected players'",
+        };
+        format!(
+            "As long as there are {} or more card types among cards in your graveyard, {who} maximum hand size is equal to seven minus the number of those card types.",
+            self.minimum_types
+        )
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
+        let card_types = count_distinct_card_types_in_graveyard(game, controller);
+        if card_types < self.minimum_types as i32 {
+            return;
+        }
+
+        let max_hand_size = (7 - card_types).max(0);
+        let affected = player_ids_for_filter(game, self.player.clone(), controller);
+        for player_id in affected {
+            if let Some(player) = game.player_mut(player_id) {
+                player.max_hand_size = max_hand_size;
+            }
+        }
+    }
+}
+
 /// Library of Leng's discard replacement effect.
 ///
 /// "If an effect causes you to discard a card, you may put it on top of
@@ -2229,6 +2405,81 @@ mod tests {
             7
         );
         assert_eq!(game.player(bob).expect("bob should exist").max_hand_size, 3);
+    }
+
+    #[test]
+    fn test_conditional_spell_keyword_active_by_mana_values() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        for (idx, mv) in [1u8, 2, 3, 4, 5].into_iter().enumerate() {
+            let card = crate::card::CardBuilder::new(
+                crate::ids::CardId::from_raw(800 + idx as u32),
+                &format!("MV{mv}"),
+            )
+            .card_types(vec![crate::types::CardType::Instant])
+            .mana_cost(crate::mana::ManaCost::from_pips(vec![vec![
+                crate::mana::ManaSymbol::Generic(mv),
+            ]]))
+            .build();
+            game.create_object_from_card(&card, alice, Zone::Graveyard);
+        }
+
+        let spec = ConditionalSpellKeywordSpec {
+            keyword: ConditionalSpellKeywordKind::Flash,
+            metric: GraveyardCountMetric::ManaValues,
+            threshold: 5,
+        };
+        assert!(
+            conditional_spell_keyword_active(spec, &game, alice),
+            "expected mana-value threshold to be active"
+        );
+    }
+
+    #[test]
+    fn test_maximum_hand_size_seven_minus_card_types_applies_only_at_threshold() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let ability = MaximumHandSizeSevenMinusYourGraveyardCardTypes::new(PlayerFilter::Opponent, 4);
+        let source = ObjectId::from_raw(900);
+
+        for (idx, card_type) in [
+            crate::types::CardType::Artifact,
+            crate::types::CardType::Creature,
+            crate::types::CardType::Enchantment,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let card = crate::card::CardBuilder::new(
+                crate::ids::CardId::from_raw(900 + idx as u32),
+                &format!("Type{idx}"),
+            )
+            .card_types(vec![card_type])
+            .build();
+            game.create_object_from_card(&card, alice, Zone::Graveyard);
+        }
+
+        ability.apply_restrictions(&mut game, source, alice);
+        assert_eq!(
+            game.player(bob).expect("bob should exist").max_hand_size,
+            7,
+            "threshold not met: max hand size should remain default"
+        );
+
+        let fourth = crate::card::CardBuilder::new(crate::ids::CardId::from_raw(999), "Type4")
+            .card_types(vec![crate::types::CardType::Land])
+            .build();
+        game.create_object_from_card(&fourth, alice, Zone::Graveyard);
+
+        ability.apply_restrictions(&mut game, source, alice);
+        assert_eq!(
+            game.player(bob).expect("bob should exist").max_hand_size,
+            3,
+            "with four card types, max hand size should be seven minus four"
+        );
     }
 
     #[test]
