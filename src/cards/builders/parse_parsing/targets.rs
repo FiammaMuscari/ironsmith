@@ -469,7 +469,15 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
             target_count,
         ));
     }
-    if remaining_words.starts_with(&["thiss", "power", "and", "toughness"]) {
+    if remaining_words.starts_with(&["thiss", "power", "and", "toughness"])
+        || remaining_words.starts_with(&["this", "power", "and", "toughness"])
+        || remaining_words.as_slice() == ["thiss", "power"]
+        || remaining_words.as_slice() == ["this", "power"]
+        || remaining_words.as_slice() == ["thiss", "toughness"]
+        || remaining_words.as_slice() == ["this", "toughness"]
+        || remaining_words.as_slice() == ["thiss", "base", "power", "and", "toughness"]
+        || remaining_words.as_slice() == ["this", "base", "power", "and", "toughness"]
+    {
         return Ok(wrap_target_count(
             TargetAst::Source(target_span),
             target_count,
@@ -810,4 +818,3 @@ pub(crate) fn is_demonstrative_object_head(word: &str) -> bool {
     }
     false
 }
-

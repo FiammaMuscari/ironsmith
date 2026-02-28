@@ -2757,6 +2757,24 @@ pub(crate) fn parse_all_creatures_able_to_block_source_line(
     Ok(None)
 }
 
+pub(crate) fn parse_source_must_be_blocked_if_able_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = normalize_cant_words(tokens);
+    if words.as_slice() == ["this", "creature", "must", "be", "blocked", "if", "able"]
+        || words.as_slice() == ["this", "must", "be", "blocked", "if", "able"]
+    {
+        return Ok(Some(StaticAbility::restriction(
+            crate::effect::Restriction::must_block_specific_attacker(
+                ObjectFilter::creature(),
+                ObjectFilter::source(),
+            ),
+            "this creature must be blocked if able".to_string(),
+        )));
+    }
+    Ok(None)
+}
+
 pub(crate) fn parse_cant_clauses(tokens: &[Token]) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     if find_negation_span(tokens).is_none() {
         return Ok(None);
@@ -2811,13 +2829,16 @@ pub(crate) fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility
 
     let starts_with_cant_be_blocked_by = normalized
         .starts_with(&["this", "creature", "cant", "be", "blocked", "by"])
-        || normalized.starts_with(&["this", "cant", "be", "blocked", "by"]);
+        || normalized.starts_with(&["this", "cant", "be", "blocked", "by"])
+        || normalized.starts_with(&["cant", "be", "blocked", "by"]);
     if starts_with_cant_be_blocked_by {
         let mut idx =
             if normalized.starts_with(&["this", "creature", "cant", "be", "blocked", "by"]) {
                 6
-            } else {
+            } else if normalized.starts_with(&["this", "cant", "be", "blocked", "by"]) {
                 5
+            } else {
+                4
             };
         if normalized
             .get(idx)
@@ -2948,14 +2969,19 @@ pub(crate) fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility
 
     let starts_with_cant_be_blocked_except_by = normalized
         .starts_with(&["this", "creature", "cant", "be", "blocked", "except", "by"])
-        || normalized.starts_with(&["this", "cant", "be", "blocked", "except", "by"]);
+        || normalized.starts_with(&["this", "cant", "be", "blocked", "except", "by"])
+        || normalized.starts_with(&["cant", "be", "blocked", "except", "by"]);
     if starts_with_cant_be_blocked_except_by {
         let idx = if normalized
             .starts_with(&["this", "creature", "cant", "be", "blocked", "except", "by"])
         {
             7
-        } else {
+        } else if normalized
+            .starts_with(&["this", "cant", "be", "blocked", "except", "by"])
+        {
             6
+        } else {
+            5
         };
         if let Some(color_word) = normalized.get(idx)
             && normalized
@@ -2970,6 +2996,33 @@ pub(crate) fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility
                     ObjectFilter::source(),
                 ),
                 format!("this creature can't be blocked except by {color_word} creatures"),
+            )));
+        }
+        if normalized.get(idx) == Some(&"artifact")
+            && normalized
+                .get(idx + 1)
+                .is_some_and(|word| *word == "creature" || *word == "creatures")
+            && idx + 2 == normalized.len()
+        {
+            return Ok(Some(StaticAbility::restriction(
+                crate::effect::Restriction::block_specific_attacker(
+                    ObjectFilter::creature().without_type(CardType::Artifact),
+                    ObjectFilter::source(),
+                ),
+                "this creature can't be blocked except by artifact creatures".to_string(),
+            )));
+        }
+        if normalized
+            .get(idx)
+            .is_some_and(|word| *word == "wall" || *word == "walls")
+            && idx + 1 == normalized.len()
+        {
+            return Ok(Some(StaticAbility::restriction(
+                crate::effect::Restriction::block_specific_attacker(
+                    ObjectFilter::creature().without_subtype(Subtype::Wall),
+                    ObjectFilter::source(),
+                ),
+                "this creature can't be blocked except by walls".to_string(),
             )));
         }
     }
@@ -3199,10 +3252,51 @@ pub(crate) fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility
         ["this", "cant", "be", "blocked", "this", "turn"] => StaticAbility::unblockable(),
         ["cant", "be", "blocked"] => StaticAbility::unblockable(),
         ["cant", "be", "blocked", "this", "turn"] => StaticAbility::unblockable(),
-        _ => return Ok(None),
+        _ => {
+            if let Some(parsed) = parse_negated_object_restriction_clause(tokens)?
+                && parsed.target.is_none()
+            {
+                return Ok(Some(StaticAbility::restriction(
+                    parsed.restriction,
+                    format_negated_restriction_display(tokens),
+                )));
+            }
+            return Ok(None);
+        }
     };
 
     Ok(Some(ability))
+}
+
+pub(crate) fn format_negated_restriction_display(tokens: &[Token]) -> String {
+    let words = words(tokens);
+    let mut out = Vec::with_capacity(words.len());
+    let mut idx = 0usize;
+    while idx < words.len() {
+        match (words[idx], words.get(idx + 1).copied()) {
+            ("cant", _) => {
+                out.push("can't".to_string());
+                idx += 1;
+            }
+            ("can", Some("not")) => {
+                out.push("can't".to_string());
+                idx += 2;
+            }
+            ("does", Some("not")) => {
+                out.push("doesn't".to_string());
+                idx += 2;
+            }
+            ("do", Some("not")) => {
+                out.push("don't".to_string());
+                idx += 2;
+            }
+            _ => {
+                out.push(words[idx].to_string());
+                idx += 1;
+            }
+        }
+    }
+    out.join(" ")
 }
 
 pub(crate) fn parse_cant_restrictions(
@@ -3373,6 +3467,8 @@ pub(crate) fn parse_negated_object_restriction_clause(
     let restriction = match remainder_words.as_slice() {
         ["attack"] => Restriction::attack(filter),
         ["attack", "this", "turn"] => Restriction::attack(filter),
+        ["attack", "or", "block"] => Restriction::attack_or_block(filter),
+        ["attack", "or", "block", "this", "turn"] => Restriction::attack_or_block(filter),
         ["block"] => Restriction::block(filter),
         ["block", "this", "turn"] => Restriction::block(filter),
         ["be", "blocked"] => Restriction::be_blocked(filter),
@@ -3470,12 +3566,27 @@ pub(crate) fn find_negation_span(tokens: &[Token]) -> Option<(usize, usize)> {
         let Some(word) = token.as_word() else {
             continue;
         };
-        if matches!(word, "cant" | "cannot" | "doesnt" | "dont") {
+        if matches!(word, "cant" | "cannot") {
+            return Some((idx, idx + 1));
+        }
+        if matches!(word, "doesnt" | "dont") {
+            let next_word = tokens.get(idx + 1).and_then(Token::as_word);
+            if matches!(next_word, Some("control" | "controls" | "own" | "owns")) {
+                continue;
+            }
             return Some((idx, idx + 1));
         }
         if (word == "does" || word == "do" || word == "can")
             && tokens.get(idx + 1).is_some_and(|next| next.is_word("not"))
         {
+            if (word == "does" || word == "do")
+                && matches!(
+                    tokens.get(idx + 2).and_then(Token::as_word),
+                    Some("control" | "controls" | "own" | "owns")
+                )
+            {
+                continue;
+            }
             return Some((idx, idx + 2));
         }
     }
@@ -3501,6 +3612,7 @@ pub(crate) fn target_ast_to_object_filter(target: TargetAst) -> Option<ObjectFil
     match target {
         TargetAst::Source(_) => Some(ObjectFilter::source()),
         TargetAst::Object(filter, _, _) => Some(filter),
+        TargetAst::Spell(_) => Some(ObjectFilter::spell()),
         TargetAst::Tagged(tag, _) => Some(ObjectFilter::tagged(tag)),
         TargetAst::WithCount(inner, _) => target_ast_to_object_filter(*inner),
         _ => None,

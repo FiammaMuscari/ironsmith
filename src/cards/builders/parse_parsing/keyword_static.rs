@@ -506,6 +506,9 @@ pub(crate) fn parse_static_ability_line(
     if let Some(ability) = parse_attacks_each_combat_if_able_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) = parse_source_must_be_blocked_if_able_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(abilities) = parse_composed_anthem_effects_line(tokens)? {
         return Ok(Some(abilities));
     }
@@ -1269,9 +1272,22 @@ pub(crate) fn parse_choose_color_as_enters_line(
     let mut idx = 1;
     let subject = if words.get(idx) == Some(&"this") {
         idx += 1;
-        if words.get(idx) == Some(&"land") {
+        if words.get(idx).is_some_and(|word| {
+            matches!(
+                *word,
+                "land" | "creature" | "artifact" | "enchantment" | "aura" | "permanent"
+            )
+        }) {
+            let kind = words[idx];
             idx += 1;
-            "this land"
+            match kind {
+                "land" => "this land",
+                "creature" => "this creature",
+                "artifact" => "this artifact",
+                "enchantment" => "this enchantment",
+                "aura" => "this aura",
+                _ => "this permanent",
+            }
         } else {
             "this"
         }
@@ -1330,22 +1346,13 @@ pub(crate) fn parse_choose_color_as_enters_line(
         return Ok(None);
     }
 
-    let display = if subject == "this land" {
-        match excluded {
-            Some(color) => format!(
-                "As this land enters, choose a color other than {}.",
-                format!("{color:?}").to_ascii_lowercase()
-            ),
-            None => "As this land enters, choose a color.".to_string(),
-        }
-    } else {
-        match excluded {
-            Some(color) => format!(
-                "As it enters, choose a color other than {}.",
-                format!("{color:?}").to_ascii_lowercase()
-            ),
-            None => "As it enters, choose a color.".to_string(),
-        }
+    let display_subject = if subject == "it" { "it" } else { subject };
+    let display = match excluded {
+        Some(color) => format!(
+            "As {display_subject} enters, choose a color other than {}.",
+            format!("{color:?}").to_ascii_lowercase()
+        ),
+        None => format!("As {display_subject} enters, choose a color."),
     };
 
     Ok(Some(StaticAbility::choose_color_as_enters(
@@ -1427,47 +1434,186 @@ pub(crate) fn parse_characteristic_defining_pt_line(
     let has_this_pt = line_words.windows(4).any(|window| {
         window == ["this", "power", "and", "toughness"]
             || window == ["thiss", "power", "and", "toughness"]
+            || window == ["its", "power", "and", "toughness"]
     });
-    if !has_this_pt {
-        return Ok(None);
-    }
-    if !(line_words.contains(&"equal")
-        && line_words.contains(&"number")
-        && line_words.contains(&"of"))
-    {
-        return Ok(None);
-    }
-
-    let mut tail_tokens = tokens;
-    if let Some(equal_word_idx) = line_words
-        .windows(2)
-        .position(|window| window == ["equal", "to"])
+    if has_this_pt
+        && line_words.windows(2).any(|window| window == ["equal", "to"])
+        && let Some(equal_word_idx) = line_words
+            .windows(2)
+            .position(|window| window == ["equal", "to"])
     {
         let start_word_idx = equal_word_idx + 2;
         if let Some(start_token_idx) = token_index_for_word_index(tokens, start_word_idx) {
-            tail_tokens = &tokens[start_token_idx..];
+            let mut tail_tokens = &tokens[start_token_idx..];
+            while tail_tokens.last().is_some_and(|token| {
+                token.is_word("respectively") || matches!(token, Token::Period(_))
+            }) {
+                tail_tokens = &tail_tokens[..tail_tokens.len().saturating_sub(1)];
+            }
+            if !tail_tokens.is_empty() {
+                let value = parse_characteristic_defining_stat_value(tail_tokens).ok_or_else(|| {
+                    CardTextError::ParseError(format!(
+                        "unsupported characteristic defining P/T value (value: '{}')",
+                        words(tail_tokens).join(" ")
+                    ))
+                })?;
+                return Ok(Some(StaticAbility::characteristic_defining_pt(
+                    value.clone(),
+                    value,
+                )));
+            }
         }
     }
-    while tail_tokens
-        .last()
-        .is_some_and(|token| token.is_word("respectively") || matches!(token, Token::Period(_)))
-    {
-        tail_tokens = &tail_tokens[..tail_tokens.len().saturating_sub(1)];
+
+    let mut parsed_power: Option<Value> = None;
+    let mut parsed_toughness: Option<Value> = None;
+    let mut idx = 0usize;
+    while idx < line_words.len() {
+        let Some((axis, value_start_word_idx)) =
+            parse_characteristic_axis_clause_start(&line_words, idx)
+        else {
+            idx += 1;
+            continue;
+        };
+
+        let mut value_end_word_idx = line_words.len();
+        let mut next_clause_word_idx = None;
+        for and_idx in value_start_word_idx..line_words.len() {
+            if line_words[and_idx] != "and" {
+                continue;
+            }
+            if let Some((_next_axis, _)) =
+                parse_characteristic_axis_clause_start(&line_words, and_idx + 1)
+            {
+                value_end_word_idx = and_idx;
+                next_clause_word_idx = Some(and_idx + 1);
+                break;
+            }
+        }
+
+        let Some(value_start_token_idx) = token_index_for_word_index(tokens, value_start_word_idx)
+        else {
+            break;
+        };
+        let value_end_token_idx = if value_end_word_idx < line_words.len() {
+            token_index_for_word_index(tokens, value_end_word_idx).unwrap_or(tokens.len())
+        } else {
+            tokens.len()
+        };
+        let value_tokens =
+            trim_edge_punctuation(&tokens[value_start_token_idx..value_end_token_idx]);
+        if value_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing characteristic defining {} value (line: '{}')",
+                axis,
+                line_words.join(" ")
+            )));
+        }
+
+        let value = parse_characteristic_defining_stat_value(&value_tokens).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "unsupported characteristic defining {} value (value: '{}')",
+                axis,
+                words(&value_tokens).join(" ")
+            ))
+        })?;
+
+        match axis {
+            "power" => parsed_power = Some(value),
+            "toughness" => parsed_toughness = Some(value),
+            _ => {}
+        }
+
+        if let Some(next_idx) = next_clause_word_idx {
+            idx = next_idx;
+        } else {
+            break;
+        }
     }
-    if tail_tokens.is_empty() {
+
+    if parsed_power.is_none() && parsed_toughness.is_none() {
         return Ok(None);
     }
 
-    let value = parse_characteristic_defining_pt_value(tail_tokens).ok_or_else(|| {
-        CardTextError::ParseError(format!(
-            "unsupported characteristic defining P/T value (value: '{}')",
-            words(tail_tokens).join(" ")
-        ))
-    })?;
     Ok(Some(StaticAbility::characteristic_defining_pt(
-        value.clone(),
-        value,
+        parsed_power.unwrap_or(Value::SourcePower),
+        parsed_toughness.unwrap_or(Value::SourceToughness),
     )))
+}
+
+fn parse_characteristic_axis_clause_start<'a>(
+    words: &'a [&'a str],
+    idx: usize,
+) -> Option<(&'a str, usize)> {
+    let is_self_ref = |word: &str| matches!(word, "this" | "thiss" | "its");
+
+    let first = words.get(idx).copied()?;
+    if !is_self_ref(first) {
+        return None;
+    }
+
+    if matches!(words.get(idx + 1).copied(), Some("power" | "toughness"))
+        && words.get(idx + 2).copied() == Some("is")
+        && words.get(idx + 3).copied() == Some("equal")
+        && words.get(idx + 4).copied() == Some("to")
+    {
+        return Some((words[idx + 1], idx + 5));
+    }
+
+    if words.get(idx + 1).copied() == Some("creature")
+        && matches!(words.get(idx + 2).copied(), Some("power" | "toughness"))
+        && words.get(idx + 3).copied() == Some("is")
+        && words.get(idx + 4).copied() == Some("equal")
+        && words.get(idx + 5).copied() == Some("to")
+    {
+        return Some((words[idx + 2], idx + 6));
+    }
+
+    None
+}
+
+fn parse_characteristic_defining_stat_value(tokens: &[Token]) -> Option<Value> {
+    let trimmed = trim_edge_punctuation(tokens);
+    let trimmed_words = words(&trimmed);
+    if trimmed_words.is_empty() {
+        return None;
+    }
+
+    if matches!(
+        trimmed_words.as_slice(),
+        ["its", "power"]
+            | ["this", "power"]
+            | ["thiss", "power"]
+            | ["its", "creature", "power"]
+            | ["this", "creature", "power"]
+            | ["thiss", "creature", "power"]
+    ) {
+        return Some(Value::SourcePower);
+    }
+    if matches!(
+        trimmed_words.as_slice(),
+        ["its", "toughness"]
+            | ["this", "toughness"]
+            | ["thiss", "toughness"]
+            | ["its", "creature", "toughness"]
+            | ["this", "creature", "toughness"]
+            | ["thiss", "creature", "toughness"]
+    ) {
+        return Some(Value::SourceToughness);
+    }
+
+    let mut equal_prefixed = Vec::with_capacity(trimmed.len() + 2);
+    equal_prefixed.push(Token::Word("equal".to_string(), TextSpan::synthetic()));
+    equal_prefixed.push(Token::Word("to".to_string(), TextSpan::synthetic()));
+    equal_prefixed.extend(trimmed.iter().cloned());
+
+    parse_add_mana_equal_amount_value(&equal_prefixed)
+        .or_else(|| parse_equal_to_aggregate_filter_value(&equal_prefixed))
+        .or_else(|| parse_equal_to_number_of_filter_plus_or_minus_fixed_value(&equal_prefixed))
+        .or_else(|| parse_equal_to_number_of_filter_value(&equal_prefixed))
+        .or_else(|| parse_equal_to_number_of_opponents_you_have_value(&equal_prefixed))
+        .or_else(|| parse_equal_to_number_of_counters_on_reference_value(&equal_prefixed))
+        .or_else(|| parse_characteristic_defining_pt_value(&trimmed))
 }
 
 pub(crate) fn parse_characteristic_defining_pt_value(tokens: &[Token]) -> Option<Value> {
@@ -3034,21 +3180,40 @@ pub(crate) fn parse_add_mana_equal_amount_value(tokens: &[Token]) -> Option<Valu
         return None;
     }
 
+    let is_source_power_segment = |segment: &[&str]| {
+        matches!(
+            segment,
+            ["this", "power"]
+                | ["thiss", "power"]
+                | ["this", "creature", "power"]
+                | ["this", "creatures", "power"]
+                | ["thiss", "creature", "power"]
+                | ["thiss", "creatures", "power"]
+                | ["its", "power"]
+        )
+    };
+    let is_source_toughness_segment = |segment: &[&str]| {
+        matches!(
+            segment,
+            ["this", "toughness"]
+                | ["thiss", "toughness"]
+                | ["this", "creature", "toughness"]
+                | ["this", "creatures", "toughness"]
+                | ["thiss", "creature", "toughness"]
+                | ["thiss", "creatures", "toughness"]
+                | ["its", "toughness"]
+        )
+    };
+
     let parse_power_or_toughness_segment = |segment: &[&str]| -> Option<Value> {
         let tagged_it_power = Value::PowerOf(Box::new(ChooseSpec::Tagged(TagKey::from(IT_TAG))));
         let tagged_it_toughness =
             Value::ToughnessOf(Box::new(ChooseSpec::Tagged(TagKey::from(IT_TAG))));
 
-        if segment == ["this", "creature", "power"]
-            || segment == ["this", "creatures", "power"]
-            || segment == ["its", "power"]
-        {
+        if is_source_power_segment(segment) {
             return Some(Value::PowerOf(Box::new(ChooseSpec::Source)));
         }
-        if segment == ["this", "creature", "toughness"]
-            || segment == ["this", "creatures", "toughness"]
-            || segment == ["its", "toughness"]
-        {
+        if is_source_toughness_segment(segment) {
             return Some(Value::ToughnessOf(Box::new(ChooseSpec::Source)));
         }
         if segment == ["that", "creature", "power"]
@@ -3089,9 +3254,7 @@ pub(crate) fn parse_add_mana_equal_amount_value(tokens: &[Token]) -> Option<Valu
         return Some(Value::Add(Box::new(left), Box::new(right)));
     }
 
-    if tail.starts_with(&["this", "creature", "power"])
-        || tail.starts_with(&["this", "creatures", "power"])
-        || tail.starts_with(&["its", "power"])
+    if is_source_power_segment(tail)
         || tail.starts_with(&["that", "creature", "power"])
         || tail.starts_with(&["that", "creatures", "power"])
         || tail.starts_with(&["that", "objects", "power"])
@@ -3108,9 +3271,7 @@ pub(crate) fn parse_add_mana_equal_amount_value(tokens: &[Token]) -> Option<Valu
         return Some(Value::PowerOf(Box::new(source)));
     }
 
-    if tail.starts_with(&["this", "creature", "toughness"])
-        || tail.starts_with(&["this", "creatures", "toughness"])
-        || tail.starts_with(&["its", "toughness"])
+    if is_source_toughness_segment(tail)
         || tail.starts_with(&["that", "creature", "toughness"])
         || tail.starts_with(&["that", "creatures", "toughness"])
         || tail.starts_with(&["that", "objects", "toughness"])
@@ -6440,9 +6601,10 @@ pub(crate) fn parse_attached_cant_attack_or_block_line(
         return Ok(None);
     }
 
-    let is_enchanted = normalized.starts_with(&["enchanted", "creature"]);
-    let is_equipped = normalized.starts_with(&["equipped", "creature"]);
-    if !is_enchanted && !is_equipped {
+    let is_enchanted_creature = normalized.starts_with(&["enchanted", "creature"]);
+    let is_enchanted_permanent = normalized.starts_with(&["enchanted", "permanent"]);
+    let is_equipped_creature = normalized.starts_with(&["equipped", "creature"]);
+    if !is_enchanted_creature && !is_enchanted_permanent && !is_equipped_creature {
         return Ok(None);
     }
 
@@ -6452,8 +6614,10 @@ pub(crate) fn parse_attached_cant_attack_or_block_line(
         return Ok(None);
     }
 
-    let subject = if is_equipped {
+    let subject = if is_equipped_creature {
         "equipped creature"
+    } else if is_enchanted_permanent {
+        "enchanted permanent"
     } else {
         "enchanted creature"
     };

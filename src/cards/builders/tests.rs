@@ -626,6 +626,244 @@ fn test_parse_uncounterable_from_text() {
 }
 
 #[test]
+fn test_parse_spells_cant_be_countered_as_rule_restriction() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Global No Counter")
+        .parse_text("Spells can't be countered.")
+        .expect("parse spells can't be countered");
+
+    let has_rule_restriction = def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(ability) if ability.id() == StaticAbilityId::RuleRestriction
+        )
+    });
+
+    assert!(has_rule_restriction);
+}
+
+#[test]
+fn test_parse_nonsource_cant_block_specific_attacker_restriction() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Cowardly Rule")
+        .parse_text("Cowards can't block Warriors.")
+        .expect("parse cowards can't block warriors");
+
+    let has_rule_restriction = def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(ability) if ability.id() == StaticAbilityId::RuleRestriction
+        )
+    });
+
+    assert!(has_rule_restriction);
+}
+
+#[test]
+fn test_parse_bare_cant_be_blocked_by_more_than_one_creature() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bare Unblockable Limit")
+        .parse_text("Can't be blocked by more than one creature.")
+        .expect("parse bare cant-be-blocked-by-more-than clause");
+
+    let has_limit = def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(ability)
+                if ability.id() == StaticAbilityId::CantBeBlockedByMoreThan
+        )
+    });
+
+    assert!(has_limit);
+}
+
+#[test]
+fn test_parse_enchanted_creature_cant_attack_or_block() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Arrest Test")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("Enchant creature\nEnchanted creature can't attack or block.")
+        .expect("parse enchanted creature cant attack or block");
+
+    let has_rule_restriction = def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(ability) if ability.id() == StaticAbilityId::RuleRestriction
+        )
+    });
+
+    assert!(has_rule_restriction);
+}
+
+#[test]
+fn test_parse_enchanted_permanent_cant_attack_or_block() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Bound In Gold Test")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("Enchant permanent\nEnchanted permanent can't attack or block.")
+        .expect("parse enchanted permanent cant attack or block");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("enchanted permanent can't attack or block")
+            || rendered.contains("enchanted permanent cant attack or block"),
+        "expected attached cant attack or block text, got {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_target_creature_you_dont_control_gets_minus_two_minus_two() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Downsize Test")
+        .parse_text("Target creature you don't control gets -2/-2 until end of turn.")
+        .expect("parse target creature you dont control gets -2/-2");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("target creature you don't control gets -2/-2 until end of turn")
+            || rendered.contains("target creature you dont control gets -2/-2 until end of turn"),
+        "expected parsed pump effect, got {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_choose_color_as_enters_for_nonland_subjects() {
+    let creature_def = CardDefinitionBuilder::new(CardId::from_raw(1), "Color Creature")
+        .card_types(vec![CardType::Creature])
+        .parse_text("As this creature enters, choose a color.")
+        .expect("parse as this creature enters choose a color");
+    let enchantment_def = CardDefinitionBuilder::new(CardId::from_raw(2), "Color Enchantment")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("As this enchantment enters, choose a color.")
+        .expect("parse as this enchantment enters choose a color");
+
+    let creature_has = creature_def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(ability) if ability.id() == StaticAbilityId::ChooseColorAsEnters
+        )
+    });
+    let enchantment_has = enchantment_def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(ability) if ability.id() == StaticAbilityId::ChooseColorAsEnters
+        )
+    });
+
+    assert!(creature_has);
+    assert!(enchantment_has);
+}
+
+#[test]
+fn test_parse_damage_equal_to_thiss_power() {
+    CardDefinitionBuilder::new(CardId::from_raw(1), "Power Reference")
+        .parse_text("This deals damage equal to this's power to any target.")
+        .expect("parse damage equal to this's power");
+}
+
+#[test]
+fn test_parse_characteristic_power_equal_number_of_creatures() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Power Tester")
+        .parse_text("Power Tester's power is equal to the number of creatures you control.")
+        .expect("parse characteristic power-only count line");
+
+    let static_ability = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability)
+                if static_ability.id() == StaticAbilityId::CharacteristicDefiningPT =>
+            {
+                Some(static_ability)
+            }
+            _ => None,
+        })
+        .expect("expected characteristic-defining P/T ability");
+
+    let game = crate::game_state::GameState::new(vec!["Alice".to_string()], 20);
+    let effects = static_ability.generate_effects(
+        crate::ids::ObjectId::from_raw(1),
+        crate::ids::PlayerId::from_index(0),
+        &game,
+    );
+    let crate::continuous::Modification::SetPowerToughness {
+        power,
+        toughness,
+        sublayer: _,
+    } = &effects[0].modification
+    else {
+        panic!("expected SetPowerToughness modification");
+    };
+
+    let crate::effect::Value::Count(filter) = power else {
+        panic!("expected counted power value");
+    };
+    assert!(filter.card_types.contains(&CardType::Creature));
+    assert_eq!(filter.controller, Some(PlayerFilter::You));
+    assert!(matches!(toughness, crate::effect::Value::SourceToughness));
+}
+
+#[test]
+fn test_parse_characteristic_power_equal_greatest_mana_value() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Dodgy Jalopy")
+        .parse_text("Dodgy Jalopy's power is equal to the greatest mana value among creatures you control.")
+        .expect("parse characteristic power-only aggregate line");
+
+    let static_ability = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability)
+                if static_ability.id() == StaticAbilityId::CharacteristicDefiningPT =>
+            {
+                Some(static_ability)
+            }
+            _ => None,
+        })
+        .expect("expected characteristic-defining P/T ability");
+
+    let game = crate::game_state::GameState::new(vec!["Alice".to_string()], 20);
+    let effects = static_ability.generate_effects(
+        crate::ids::ObjectId::from_raw(1),
+        crate::ids::PlayerId::from_index(0),
+        &game,
+    );
+    let crate::continuous::Modification::SetPowerToughness {
+        power,
+        toughness,
+        sublayer: _,
+    } = &effects[0].modification
+    else {
+        panic!("expected SetPowerToughness modification");
+    };
+
+    let crate::effect::Value::GreatestManaValue(filter) = power else {
+        panic!("expected greatest mana value power");
+    };
+    assert!(filter.card_types.contains(&CardType::Creature));
+    assert_eq!(filter.controller, Some(PlayerFilter::You));
+    assert!(matches!(toughness, crate::effect::Value::SourceToughness));
+}
+
+#[test]
+fn test_parse_creatures_attack_this_turn_if_able_clause() {
+    CardDefinitionBuilder::new(CardId::from_raw(1), "Instigate Combat")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Creatures your opponents control attack this turn if able.")
+        .expect("parse creatures attack this turn if able");
+}
+
+#[test]
+fn test_parse_this_creature_must_be_blocked_if_able_static_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Forced Blocker")
+        .card_types(vec![CardType::Creature])
+        .parse_text("This creature must be blocked if able.")
+        .expect("parse this creature must be blocked if able");
+
+    let has_rule_restriction = def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(ability) if ability.id() == StaticAbilityId::RuleRestriction
+        )
+    });
+    assert!(has_rule_restriction);
+}
+
+#[test]
 fn test_parse_double_cant_clause_from_text() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "No Win")
         .parse_text("You can't lose the game and your opponents can't win the game.")

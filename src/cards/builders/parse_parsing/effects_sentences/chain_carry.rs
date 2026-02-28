@@ -1554,6 +1554,12 @@ pub(crate) fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst
             parser: parse_can_block_additional_creature_this_turn_clause,
         },
         ClausePrimitive {
+            parser: parse_attack_this_turn_if_able_clause,
+        },
+        ClausePrimitive {
+            parser: parse_must_be_blocked_if_able_clause,
+        },
+        ClausePrimitive {
             parser: parse_must_block_if_able_clause,
         },
         ClausePrimitive {
@@ -1579,6 +1585,105 @@ pub(crate) fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst
         }
     }
     Ok(None)
+}
+
+pub(crate) fn parse_attack_this_turn_if_able_clause(
+    tokens: &[Token],
+) -> Result<Option<EffectAst>, CardTextError> {
+    use crate::effect::Until;
+
+    let clause_words = words(tokens);
+    let Some(attack_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("attack") || token.is_word("attacks"))
+    else {
+        return Ok(None);
+    };
+    if attack_idx == 0 {
+        return Ok(None);
+    }
+
+    let tail_words = words(&tokens[attack_idx..]);
+    if tail_words != ["attack", "this", "turn", "if", "able"]
+        && tail_words != ["attacks", "this", "turn", "if", "able"]
+    {
+        return Ok(None);
+    }
+
+    let subject_tokens = trim_commas(&tokens[..attack_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+    let target = parse_target_phrase(&subject_tokens)?;
+    let ability = StaticAbility::must_attack();
+
+    if starts_with_target_indicator(&subject_tokens) {
+        return Ok(Some(EffectAst::GrantAbilitiesToTarget {
+            target,
+            abilities: vec![ability],
+            duration: Until::EndOfTurn,
+        }));
+    }
+
+    let filter = target_ast_to_object_filter(target).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unsupported attacker subject in attacks-if-able clause (clause: '{}')",
+            clause_words.join(" ")
+        ))
+    })?;
+
+    Ok(Some(EffectAst::GrantAbilitiesAll {
+        filter,
+        abilities: vec![ability],
+        duration: Until::EndOfTurn,
+    }))
+}
+
+pub(crate) fn parse_must_be_blocked_if_able_clause(
+    tokens: &[Token],
+) -> Result<Option<EffectAst>, CardTextError> {
+    use crate::effect::Until;
+
+    let clause_words = words(tokens);
+    let Some(must_idx) = tokens.iter().position(|token| token.is_word("must")) else {
+        return Ok(None);
+    };
+    if must_idx == 0 {
+        return Ok(None);
+    }
+
+    let tail_words = words(&tokens[must_idx..]);
+    let has_supported_tail = tail_words == ["must", "be", "blocked", "if", "able"]
+        || tail_words == ["must", "be", "blocked", "this", "turn", "if", "able"];
+    if !has_supported_tail {
+        return Ok(None);
+    }
+
+    let subject_tokens = trim_commas(&tokens[..must_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+    if starts_with_target_indicator(&subject_tokens) {
+        // We only support source/tagged subjects here; explicit "target ..." needs
+        // a target+restriction sequence that this single-clause parser cannot encode.
+        return Ok(None);
+    }
+
+    let attacker_target = parse_target_phrase(&subject_tokens)?;
+    let attacker_filter = target_ast_to_object_filter(attacker_target).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unsupported attacker subject in must-be-blocked clause (clause: '{}')",
+            clause_words.join(" ")
+        ))
+    })?;
+
+    Ok(Some(EffectAst::Cant {
+        restriction: crate::effect::Restriction::must_block_specific_attacker(
+            ObjectFilter::creature(),
+            attacker_filter,
+        ),
+        duration: Until::EndOfTurn,
+    }))
 }
 
 pub(crate) fn parse_must_block_if_able_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {

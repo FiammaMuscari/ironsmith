@@ -624,6 +624,17 @@ pub(crate) fn parse_deal_damage_equal_to_clause(tokens: &[Token]) -> Result<Opti
 
     let amount_tokens = &tokens[..target_to_idx];
     let amount = parse_add_mana_equal_amount_value(amount_tokens)
+        .or(parse_equal_to_aggregate_filter_value(amount_tokens))
+        .or(parse_equal_to_number_of_filter_plus_or_minus_fixed_value(
+            amount_tokens,
+        ))
+        .or(parse_equal_to_number_of_filter_value(amount_tokens))
+        .or(parse_equal_to_number_of_opponents_you_have_value(
+            amount_tokens,
+        ))
+        .or(parse_equal_to_number_of_counters_on_reference_value(
+            amount_tokens,
+        ))
         .or(parse_dynamic_cost_modifier_value(amount_tokens)?)
         .ok_or_else(|| {
             CardTextError::ParseError(format!(
