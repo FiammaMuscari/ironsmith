@@ -776,6 +776,38 @@ fn test_parse_target_creature_you_dont_control_gets_minus_two_minus_two() {
 }
 
 #[test]
+fn test_parse_destination_first_return_all_to_hand_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Return To Hand Test")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Return to your hand all creature cards in your graveyard that were put there from the battlefield this turn.",
+        )
+        .expect("parse destination-first return-to-hand clause");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("in your graveyard") && rendered.contains("to your hand"),
+        "expected destination-first return-to-hand text, got {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_destination_first_return_all_to_battlefield_clause() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Return To Battlefield Test")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Return to the battlefield all permanent cards in your graveyard that were put there from the battlefield this turn.",
+        )
+        .expect("parse destination-first return-to-battlefield clause");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("in your graveyard") && rendered.contains("to the battlefield"),
+        "expected destination-first return-to-battlefield text, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_choose_color_as_enters_for_nonland_subjects() {
     let creature_def = CardDefinitionBuilder::new(CardId::from_raw(1), "Color Creature")
         .card_types(vec![CardType::Creature])

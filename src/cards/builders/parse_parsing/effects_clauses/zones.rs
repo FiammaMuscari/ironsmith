@@ -368,6 +368,11 @@ pub(crate) fn parse_return(tokens: &[Token]) -> Result<EffectAst, CardTextError>
             clause_words.join(" ")
         )));
     }
+    if tokens.first().is_some_and(|token| token.is_word("to"))
+        && let Some(rewritten) = rewrite_destination_first_return_clause(tokens)
+    {
+        return parse_return(&rewritten);
+    }
 
     let to_idx = (0..tokens.len())
         .rev()
@@ -609,6 +614,43 @@ pub(crate) fn parse_return(tokens: &[Token]) -> Result<EffectAst, CardTextError>
         EffectAst::ReturnToHand { target, random }
     };
     Ok(wrap_return_with_delayed_timing(effect, delayed_timing))
+}
+
+fn rewrite_destination_first_return_clause(tokens: &[Token]) -> Option<Vec<Token>> {
+    let clause_words = words(tokens);
+    let hand_or_battlefield_idx = clause_words
+        .iter()
+        .position(|word| matches!(*word, "hand" | "hands" | "battlefield"))?;
+    let mut split_word_idx = hand_or_battlefield_idx + 1;
+
+    if clause_words.get(split_word_idx).copied() == Some("under") {
+        let control_rel_idx = clause_words[split_word_idx + 1..]
+            .iter()
+            .position(|word| *word == "control")?;
+        split_word_idx = split_word_idx + 1 + control_rel_idx + 1;
+    }
+
+    while clause_words
+        .get(split_word_idx)
+        .is_some_and(|word| *word == "tapped")
+    {
+        split_word_idx += 1;
+    }
+
+    let split_token_idx = token_index_for_word_index(tokens, split_word_idx)?;
+    if split_token_idx >= tokens.len() {
+        return None;
+    }
+
+    let target_tokens = trim_commas(&tokens[split_token_idx..]);
+    let destination_tokens = trim_commas(&tokens[..split_token_idx]);
+    if target_tokens.is_empty() || destination_tokens.is_empty() {
+        return None;
+    }
+
+    let mut rewritten = target_tokens.to_vec();
+    rewritten.extend(destination_tokens.to_vec());
+    Some(rewritten)
 }
 
 pub(crate) fn parse_exchange(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
