@@ -1241,6 +1241,33 @@ use super::*;
     }
 
     #[test]
+    fn parse_trigger_clause_this_deals_damage_to_an_opponent() {
+        let tokens = tokenize_line("this creature deals damage to an opponent", 0);
+        let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
+        match trigger {
+            TriggerSpec::ThisDealsDamageToPlayer { player, amount } => {
+                assert_eq!(player, PlayerFilter::Opponent);
+                assert!(amount.is_none());
+            }
+            other => panic!("expected ThisDealsDamageToPlayer trigger, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_clause_this_deals_damage_to_a_player() {
+        let tokens = tokenize_line("this deals damage to a player", 0);
+        let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
+        match trigger {
+            TriggerSpec::ThisDealsDamageToPlayer { player, amount } => {
+                assert_eq!(player, PlayerFilter::Any);
+                assert!(amount.is_none());
+            }
+            other => panic!("expected ThisDealsDamageToPlayer trigger, got {other:?}"),
+        }
+    }
+
+
+    #[test]
     fn parse_prevent_next_time_damage_sentence_source_of_your_choice_any_target() {
         let tokens = tokenize_line(
             "The next time a source of your choice would deal damage to any target this turn, prevent that damage.",

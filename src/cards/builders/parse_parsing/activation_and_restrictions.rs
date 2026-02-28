@@ -5892,6 +5892,13 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
                 words.join(" ")
             )));
         }
+        let target_words: Vec<&str> = target_tokens.iter().filter_map(Token::as_word).collect();
+        if let Some(player) = parse_trigger_subject_player_filter(&target_words) {
+            return Ok(TriggerSpec::ThisDealsDamageToPlayer {
+                player,
+                amount: None,
+            });
+        }
         let target_filter = parse_object_filter(&target_tokens, false).map_err(|_| {
             CardTextError::ParseError(format!(
                 "unsupported damage recipient filter in trigger clause (clause: '{}')",
