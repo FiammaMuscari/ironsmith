@@ -760,6 +760,91 @@ pub(crate) fn parse_cycling_line(tokens: &[Token]) -> Result<Option<ParsedAbilit
     }))
 }
 
+pub(crate) fn parse_reinforce_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardTextError> {
+    let words_all = words(tokens);
+    if words_all.is_empty() {
+        return Ok(None);
+    }
+    if words_all.first().copied() != Some("reinforce") {
+        return Ok(None);
+    }
+    if words_all.iter().any(|word| *word == "has" || *word == "have") {
+        return Ok(None);
+    }
+
+    let (amount, used_amount) = parse_number(tokens.get(1..).unwrap_or_default()).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "reinforce line missing counter amount (clause: '{}')",
+            words_all.join(" ")
+        ))
+    })?;
+
+    let cost_start = 1 + used_amount;
+    if cost_start >= tokens.len() {
+        return Err(CardTextError::ParseError(format!(
+            "reinforce line missing mana cost (clause: '{}')",
+            words_all.join(" ")
+        )));
+    }
+
+    let mut cost_end = cost_start;
+    while cost_end < tokens.len() {
+        let Some(word) = tokens[cost_end].as_word() else {
+            break;
+        };
+        if parse_mana_symbol(word).is_ok() {
+            cost_end += 1;
+        } else {
+            break;
+        }
+    }
+    if cost_end == cost_start {
+        return Err(CardTextError::ParseError(format!(
+            "reinforce line missing mana symbols (clause: '{}')",
+            words_all.join(" ")
+        )));
+    }
+
+    let cost_tokens = &tokens[cost_start..cost_end];
+    let (base_cost, mut cost_effects) = parse_activation_cost(cost_tokens)?;
+    cost_effects.push(Effect::move_to_zone(
+        ChooseSpec::Source,
+        Zone::Graveyard,
+        false,
+    ));
+    let mana_cost = crate::ability::merge_cost_effects(base_cost.clone(), cost_effects);
+
+    let mut creature_filter = ObjectFilter::default();
+    creature_filter.zone = Some(Zone::Battlefield);
+    creature_filter.card_types.push(CardType::Creature);
+
+    let target = ChooseSpec::target(ChooseSpec::Object(creature_filter));
+    let effect = Effect::put_counters(CounterType::PlusOnePlusOne, amount as i32, target);
+
+    let cost_text = base_cost
+        .mana_cost()
+        .map(|cost| cost.to_oracle())
+        .unwrap_or_else(|| words(cost_tokens).join(" "));
+    let render_text = format!("Reinforce {amount} {cost_text}");
+
+    Ok(Some(ParsedAbility {
+        ability: Ability {
+            kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
+                mana_cost,
+                effects: vec![effect],
+                choices: Vec::new(),
+                timing: ActivationTiming::AnyTime,
+                additional_restrictions: vec![],
+                mana_output: None,
+                activation_condition: None,
+            }),
+            functional_zones: vec![Zone::Hand],
+            text: Some(render_text),
+        },
+        effects_ast: None,
+    }))
+}
+
 pub(crate) fn parse_cycling_keyword_cost_groups(tokens: &[Token]) -> Vec<(Vec<Token>, Vec<Token>)> {
     let mut groups = Vec::new();
     let mut idx = 0usize;

@@ -168,6 +168,11 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         return Ok(LineAst::Ability(ability));
     }
 
+    if let Some(ability) = parse_reinforce_line(&tokens)? {
+        parser_trace("parse_line:branch=reinforce", &tokens);
+        return Ok(LineAst::Ability(ability));
+    }
+
     if let Some(ability) = parse_cycling_line(&tokens)? {
         parser_trace("parse_line:branch=cycling", &tokens);
         return Ok(LineAst::Ability(ability));

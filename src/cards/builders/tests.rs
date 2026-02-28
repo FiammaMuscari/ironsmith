@@ -1498,6 +1498,47 @@ fn test_parse_double_target_creatures_power_until_end_of_turn() {
 }
 
 #[test]
+fn test_parse_reinforce_keyword_line_from_hand() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Reinforce Probe")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Flying\nReinforce 2—{2}{W} ({2}{W}, Discard this card: Put two +1/+1 counters on target creature.)",
+        )
+        .expect("reinforce line should parse as a hand activated ability");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("{2}{w}")
+            && rendered.contains("put this creature into its owner's graveyard")
+            && rendered.contains("put two +1/+1 counters on target creature"),
+        "expected reinforce activation to include mana+discard cost and counter effect, got {rendered}"
+    );
+
+    let debug = format!("{:?}", def.abilities).to_ascii_lowercase();
+    assert!(
+        debug.contains("functional_zones: [hand]")
+            && debug.contains("plusoneplusone")
+            && debug.contains("graveyard"),
+        "expected reinforce to be a hand ability with discard-to-graveyard counter effect, got {debug}"
+    );
+}
+
+#[test]
+fn test_do_not_replace_keyword_named_card_reference_in_enchanted_grant_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Vigilance")
+        .card_types(vec![CardType::Enchantment])
+        .subtypes(vec![Subtype::Aura])
+        .parse_text("Enchant creature\nEnchanted creature has vigilance. (Attacking doesn't cause it to tap.)")
+        .expect("keyword-named aura grant line should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("enchanted creature has vigilance"),
+        "expected aura grant to keep vigilance keyword, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_source_deals_damage_to_target_equal_to_number_of_filter() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Ben-Ben Variant")
         .card_types(vec![CardType::Creature])

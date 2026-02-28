@@ -277,6 +277,28 @@ pub(crate) fn replace_names_with_map(
             )
     }
 
+    fn is_keyword_ability_name(name: &str) -> bool {
+        matches!(
+            name,
+            "flying"
+                | "first strike"
+                | "double strike"
+                | "vigilance"
+                | "trample"
+                | "haste"
+                | "deathtouch"
+                | "lifelink"
+                | "reach"
+                | "defender"
+                | "hexproof"
+                | "shroud"
+                | "menace"
+                | "indestructible"
+                | "flash"
+                | "ward"
+        )
+    }
+
     fn preceded_by_named_keyword(bytes: &[u8], mut idx: usize) -> bool {
         while idx > 0 && !bytes[idx - 1].is_ascii_alphanumeric() {
             idx -= 1;
@@ -297,6 +319,11 @@ pub(crate) fn replace_names_with_map(
             idx -= 1;
         }
         (idx < end).then_some(&bytes[idx..end])
+    }
+
+    fn preceded_by_ability_grant_word(bytes: &[u8], idx: usize) -> bool {
+        previous_word(bytes, idx)
+            .is_some_and(|word| matches!(word, b"has" | b"have" | b"gain" | b"gains"))
     }
 
     fn token_word_appears_before_sentence_end(bytes: &[u8], mut idx: usize) -> bool {
@@ -343,6 +370,7 @@ pub(crate) fn replace_names_with_map(
             && bytes[idx..].starts_with(full_bytes)
             && has_word_boundaries_at(bytes, idx, full_bytes.len())
             && !(idx == 0 && is_single_word_keyword_verb(full_name))
+            && !(is_keyword_ability_name(full_name) && preceded_by_ability_grant_word(bytes, idx))
             && !preceded_by_named_keyword(bytes, idx)
             && !appears_to_be_created_token_name(bytes, idx, full_bytes.len())
         {
@@ -359,6 +387,7 @@ pub(crate) fn replace_names_with_map(
             && bytes[idx..].starts_with(short_bytes)
             && has_word_boundaries_at(bytes, idx, short_bytes.len())
             && !(idx == 0 && is_single_word_keyword_verb(short_name))
+            && !(is_keyword_ability_name(short_name) && preceded_by_ability_grant_word(bytes, idx))
             && !preceded_by_named_keyword(bytes, idx)
             && !appears_to_be_created_token_name(bytes, idx, short_bytes.len())
         {
