@@ -75,6 +75,15 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
         });
     }
 
+    if let Some((chooser, choose_filter, choose_count)) = parse_you_choose_objects_clause(tokens)? {
+        return Ok(EffectAst::ChooseObjects {
+            filter: choose_filter,
+            count: choose_count,
+            player: chooser,
+            tag: TagKey::from(IT_TAG),
+        });
+    }
+
     // "This creature assigns no combat damage this turn."
     // Used in Laccolith-style effects: "If you do, this creature assigns no combat damage this turn."
     if clause_words
@@ -485,9 +494,11 @@ pub(crate) fn parse_become_clause(
     // "<N>/<M> ... creature" animation-like clauses.
     if let Some(pt_word) = become_words.first().copied()
         && let Ok((power, toughness)) = parse_pt_modifier(pt_word)
-        && become_words.iter().any(|word| *word == "creature")
+        && become_words
+            .iter()
+            .any(|word| *word == "creature" || *word == "creatures")
     {
-        return Ok(EffectAst::SetBasePowerToughness {
+        return Ok(EffectAst::BecomeBasePtCreature {
             power: Value::Fixed(power),
             toughness: Value::Fixed(toughness),
             target,

@@ -1041,7 +1041,8 @@ fn can_pay_ability_cost(
     player: PlayerId,
     cost: &crate::cost::TotalCost,
 ) -> bool {
-    can_pay_cost(game, source_id, player, cost).is_ok()
+    let effective_cost = calculate_effective_activation_total_cost(game, player, source_id, cost);
+    can_pay_cost(game, source_id, player, &effective_cost).is_ok()
 }
 
 /// Check if a player could potentially pay a TotalCost.
@@ -1068,6 +1069,101 @@ pub fn can_potentially_pay_total_cost(
         }
     }
     true
+}
+
+/// Calculate activated-ability cost after applying battlefield static cost modifiers.
+pub fn calculate_effective_activation_total_cost(
+    game: &GameState,
+    activator: PlayerId,
+    ability_source: ObjectId,
+    cost: &crate::cost::TotalCost,
+) -> crate::cost::TotalCost {
+    let mut costs = Vec::with_capacity(cost.costs().len());
+    for component in cost.costs() {
+        if let Some(mana_cost) = component.mana_cost_ref() {
+            let reduced =
+                calculate_effective_activation_mana_cost(game, activator, ability_source, mana_cost);
+            costs.push(crate::costs::Cost::mana(reduced));
+        } else {
+            costs.push(component.clone());
+        }
+    }
+    crate::cost::TotalCost::from_costs(costs)
+}
+
+/// Calculate the effective mana portion of an activated ability's cost.
+pub fn calculate_effective_activation_mana_cost(
+    game: &GameState,
+    _activator: PlayerId,
+    ability_source: ObjectId,
+    base_cost: &crate::mana::ManaCost,
+) -> crate::mana::ManaCost {
+    use crate::ability::AbilityKind;
+    use crate::filter::FilterContext;
+
+    fn opponents_of(game: &GameState, player: PlayerId) -> Vec<PlayerId> {
+        game.turn_order
+            .iter()
+            .copied()
+            .filter(|p| *p != player)
+            .collect()
+    }
+
+    let mut adjusted = base_cost.clone();
+    let Some(ability_source_object) = game.object(ability_source) else {
+        return adjusted;
+    };
+
+    for &perm_id in &game.battlefield {
+        let Some(perm) = game.object(perm_id) else {
+            continue;
+        };
+        let controller = perm.controller;
+        let filter_ctx = FilterContext::new(controller)
+            .with_source(perm_id)
+            .with_active_player(game.turn.active_player)
+            .with_opponents(opponents_of(game, controller));
+
+        let static_abilities = game
+            .calculated_characteristics(perm_id)
+            .map(|c| c.static_abilities)
+            .unwrap_or_else(|| {
+                perm.abilities
+                    .iter()
+                    .filter_map(|a| match &a.kind {
+                        AbilityKind::Static(sa) => Some(sa.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            });
+
+        for static_ability in static_abilities {
+            let Some(reduction) = static_ability.activated_ability_cost_reduction() else {
+                continue;
+            };
+            if !static_ability.is_active(game, perm_id) {
+                continue;
+            }
+            if !reduction
+                .filter
+                .matches(ability_source_object, &filter_ctx, game)
+            {
+                continue;
+            }
+
+            let before = adjusted.clone();
+            adjusted = adjusted.reduce_generic(reduction.reduction);
+            if let Some(minimum_total_mana) = reduction.minimum_total_mana
+                && before.mana_value() > 0
+                && adjusted.mana_value() < minimum_total_mana
+            {
+                let missing = minimum_total_mana - adjusted.mana_value();
+                adjusted = add_generic_mana_cost(&adjusted, missing);
+            }
+        }
+    }
+
+    adjusted
 }
 
 /// Resolve an alternative method index for `CastingMethod::PlayFrom`.
@@ -7536,6 +7632,120 @@ mod tests {
                 .iter()
                 .any(|a| matches!(a, LegalAction::ActivateAbility { source, .. } if *source == creature_id)),
             "Should be able to activate with sufficient mana"
+        );
+    }
+
+    #[test]
+    fn test_activated_ability_cost_reduction_respects_minimum_one_mana() {
+        use crate::ability::{Ability, AbilityKind, ActivatedAbility, ActivationTiming};
+        use crate::cost::TotalCost;
+        use crate::effect::Effect;
+        use crate::mana::{ManaCost, ManaSymbol};
+        use crate::static_abilities::StaticAbility;
+        use crate::target::ObjectFilter;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+
+        // Creature with two activated abilities: one costs {2}, one costs {1}.
+        let creature = CardBuilder::new(CardId::from_raw(11), "Reducer Target")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let creature_id = game.create_object_from_card(&creature, alice, Zone::Battlefield);
+        game.remove_summoning_sickness(creature_id);
+
+        let cost_two = ManaCost::from_pips(vec![vec![ManaSymbol::Generic(2)]]);
+        let cost_one = ManaCost::from_pips(vec![vec![ManaSymbol::Generic(1)]]);
+        let activated = |cost: ManaCost| Ability {
+            kind: AbilityKind::Activated(ActivatedAbility {
+                mana_cost: TotalCost::mana(cost),
+                effects: vec![Effect::draw(1)],
+                choices: vec![],
+                timing: ActivationTiming::AnyTime,
+                additional_restrictions: vec![],
+                mana_output: None,
+                activation_condition: None,
+            }),
+            functional_zones: vec![crate::zone::Zone::Battlefield],
+            text: None,
+        };
+        game.object_mut(creature_id)
+            .expect("creature exists")
+            .abilities
+            .extend([activated(cost_two), activated(cost_one)]);
+
+        // Training Grounds-style static ability.
+        let reducer = CardBuilder::new(CardId::from_raw(12), "Training Grounds Effect")
+            .card_types(vec![CardType::Enchantment])
+            .build();
+        let reducer_id = game.create_object_from_card(&reducer, alice, Zone::Battlefield);
+        game.object_mut(reducer_id)
+            .expect("reducer exists")
+            .abilities
+            .push(Ability::static_ability(
+                StaticAbility::reduce_activated_ability_costs(
+                    ObjectFilter::creature().you_control(),
+                    2,
+                    Some(1),
+                ),
+            ));
+
+        let actions_without_mana = compute_legal_actions(&game, alice);
+        assert!(
+            !actions_without_mana.iter().any(|action| matches!(
+                action,
+                LegalAction::ActivateAbility {
+                    source,
+                    ability_index: 0
+                } if *source == creature_id
+            )),
+            "with no mana, reduced {{2}} ability should still be unavailable"
+        );
+
+        game.player_mut(alice)
+            .expect("player exists")
+            .mana_pool
+            .add(ManaSymbol::Colorless, 1);
+
+        let actions_with_one = compute_legal_actions(&game, alice);
+        assert!(
+            actions_with_one.iter().any(|action| matches!(
+                action,
+                LegalAction::ActivateAbility {
+                    source,
+                    ability_index: 0
+                } if *source == creature_id
+            )),
+            "with one mana, {{2}} ability should be reduced to {{1}}"
+        );
+        assert!(
+            actions_with_one.iter().any(|action| matches!(
+                action,
+                LegalAction::ActivateAbility {
+                    source,
+                    ability_index: 1
+                } if *source == creature_id
+            )),
+            "minimum-one-mana floor should keep {{1}} ability at {{1}}"
+        );
+
+        let reduced_one = calculate_effective_activation_total_cost(
+            &game,
+            alice,
+            creature_id,
+            &TotalCost::mana(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(1)]])),
+        );
+        assert_eq!(
+            reduced_one
+                .mana_cost()
+                .expect("reduced cost keeps mana component")
+                .generic_mana_total(),
+            1,
+            "minimum-one-mana floor should not reduce a {{1}} activation cost to zero"
         );
     }
 

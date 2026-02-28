@@ -107,6 +107,7 @@ pub enum StaticAbilityId {
 
     // === Cost modifiers ===
     CostReduction,
+    ActivatedAbilityCostReduction,
     ThisSpellCostReduction,
     ThisSpellCostReductionManaCost,
     CostIncrease,

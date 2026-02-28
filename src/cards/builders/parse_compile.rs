@@ -695,6 +695,7 @@ pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::BecomeColorChoice { target, .. }
         | EffectAst::SetBasePower { target, .. }
         | EffectAst::SetBasePowerToughness { target, .. }
+        | EffectAst::BecomeBasePtCreature { target, .. }
         | EffectAst::SetColors { target, .. }
         | EffectAst::MakeColorless { target, .. }
         | EffectAst::PumpForEach { target, .. }
@@ -1191,6 +1192,7 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
         | EffectAst::BecomeColorChoice { target, .. }
         | EffectAst::SetBasePower { target, .. }
         | EffectAst::SetBasePowerToughness { target, .. }
+        | EffectAst::BecomeBasePtCreature { target, .. }
         | EffectAst::SetColors { target, .. }
         | EffectAst::MakeColorless { target, .. }
         | EffectAst::PumpForEach { target, .. }
@@ -1720,6 +1722,7 @@ pub(crate) fn collect_tag_spans_from_effect(
         | EffectAst::BecomeColorChoice { target, .. }
         | EffectAst::SetBasePower { target, .. }
         | EffectAst::SetBasePowerToughness { target, .. }
+        | EffectAst::BecomeBasePtCreature { target, .. }
         | EffectAst::SetColors { target, .. }
         | EffectAst::MakeColorless { target, .. }
         | EffectAst::PumpByLastEffect { target, .. }
@@ -4509,6 +4512,53 @@ pub(crate) fn compile_effect(
             let effect = Effect::reveal_top(player_filter, tag);
             Ok((vec![effect], choices))
         }
+        EffectAst::RevealTopChooseCardTypePutToHandRestBottom { player, count } => {
+            use crate::effect::{Condition, EffectMode, Value};
+
+            let (player_filter, choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, false)?;
+            let mut modes = Vec::new();
+            let card_type_modes = [
+                ("Artifact", CardType::Artifact),
+                ("Battle", CardType::Battle),
+                ("Creature", CardType::Creature),
+                ("Enchantment", CardType::Enchantment),
+                ("Instant", CardType::Instant),
+                ("Kindred", CardType::Kindred),
+                ("Land", CardType::Land),
+                ("Planeswalker", CardType::Planeswalker),
+                ("Sorcery", CardType::Sorcery),
+            ];
+
+            for (label, card_type) in card_type_modes {
+                let looked_tag = ctx.next_tag("revealed");
+                let mut card_type_filter = ObjectFilter::default();
+                card_type_filter.card_types.push(card_type);
+
+                let reveal = Effect::look_at_top_cards(
+                    player_filter.clone(),
+                    Value::Fixed(*count as i32),
+                    TagKey::from(looked_tag.as_str()),
+                );
+                let reveal_tagged =
+                    Effect::new(crate::effects::RevealTaggedEffect::new(looked_tag.clone()));
+                let move_by_type = Effect::for_each_tagged(
+                    looked_tag,
+                    vec![Effect::conditional(
+                        Condition::TaggedObjectMatches(TagKey::from("__it__"), card_type_filter),
+                        vec![Effect::move_to_zone(ChooseSpec::Iterated, Zone::Hand, false)],
+                        vec![Effect::move_to_zone(ChooseSpec::Iterated, Zone::Library, false)],
+                    )],
+                );
+
+                modes.push(EffectMode {
+                    description: label.to_string(),
+                    effects: vec![reveal, reveal_tagged, move_by_type],
+                });
+            }
+
+            Ok((vec![Effect::choose_one(modes)], choices))
+        }
         EffectAst::RevealTagged { tag } => {
             let resolved_tag = if tag.as_str() == IT_TAG {
                 if let Some(existing) = ctx.last_object_tag.clone() {
@@ -5467,6 +5517,26 @@ pub(crate) fn compile_effect(
                     duration.clone(),
                 )
                 .require_creature_target()
+                .resolve_set_pt_values_at_resolution(),
+            )
+        }),
+        EffectAst::BecomeBasePtCreature {
+            power,
+            toughness,
+            target,
+            duration,
+        } => compile_tagged_effect_for_target(target, ctx, "animated_creature", |spec| {
+            Effect::new(
+                crate::effects::ApplyContinuousEffect::with_spec(
+                    spec,
+                    crate::continuous::Modification::AddCardTypes(vec![CardType::Creature]),
+                    duration.clone(),
+                )
+                .with_additional_modification(crate::continuous::Modification::SetPowerToughness {
+                    power: power.clone(),
+                    toughness: toughness.clone(),
+                    sublayer: crate::continuous::PtSublayer::Setting,
+                })
                 .resolve_set_pt_values_at_resolution(),
             )
         }),

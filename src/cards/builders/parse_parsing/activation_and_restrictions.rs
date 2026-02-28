@@ -2614,6 +2614,56 @@ pub(crate) fn parse_cost_reduction_line(tokens: &[Token]) -> Result<Option<Stati
         let text = format!("This cost is reduced by {amount_text} {tail}");
         return Ok(Some(StaticAbility::custom("cost_reduction_text", text)));
     }
+
+    if line_words.starts_with(&["activated", "abilities", "of"]) {
+        let Some(cost_idx) = line_words
+            .iter()
+            .position(|word| *word == "cost" || *word == "costs")
+        else {
+            return Ok(None);
+        };
+        if cost_idx <= 3 {
+            return Ok(None);
+        }
+        let subject_tokens = trim_commas(&tokens[3..cost_idx]);
+        if subject_tokens.is_empty() {
+            return Ok(None);
+        }
+        let mut filter = parse_object_filter(&subject_tokens, false).map_err(|_| {
+            CardTextError::ParseError(format!(
+                "unsupported activated-ability cost reduction subject (clause: '{}')",
+                line_words.join(" ")
+            ))
+        })?;
+        if filter.zone.is_none() {
+            filter.zone = Some(Zone::Battlefield);
+        }
+
+        let amount_tokens = trim_commas(&tokens[cost_idx + 1..]);
+        let Some((amount_value, used)) = parse_cost_modifier_amount(&amount_tokens) else {
+            return Ok(None);
+        };
+        let reduction = match amount_value {
+            Value::Fixed(value) if value > 0 => value as u32,
+            _ => {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported activated-ability cost reduction amount (clause: '{}')",
+                    line_words.join(" ")
+                )));
+            }
+        };
+        let tail_words = words(&amount_tokens[used..]);
+        if !tail_words.starts_with(&["less", "to", "activate"]) {
+            return Ok(None);
+        }
+
+        return Ok(Some(StaticAbility::reduce_activated_ability_costs(
+            filter,
+            reduction,
+            Some(1),
+        )));
+    }
+
     if !line_words.starts_with(&["this", "spell", "costs"]) {
         return Ok(None);
     }
@@ -7512,6 +7562,147 @@ pub(crate) fn parse_target_player_choose_objects_clause(
     Ok(Some((chooser, choose_filter, count)))
 }
 
+pub(crate) fn parse_you_choose_objects_clause(
+    tokens: &[Token],
+) -> Result<Option<(PlayerAst, ObjectFilter, ChoiceCount)>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.is_empty() {
+        return Ok(None);
+    }
+
+    let choose_word_idx = if clause_words.first().copied() == Some("you") {
+        1usize
+    } else {
+        0usize
+    };
+    if !matches!(
+        clause_words.get(choose_word_idx).copied(),
+        Some("choose" | "chooses")
+    ) {
+        return Ok(None);
+    }
+
+    let choose_word_token_idx =
+        token_index_for_word_index(tokens, choose_word_idx).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing choose keyword in choose clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+    let mut choose_object_tokens = trim_commas(&tokens[choose_word_token_idx + 1..]);
+    if choose_object_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing chosen object after choose clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let mut choose_words = words(&choose_object_tokens);
+    let mut count = ChoiceCount::exactly(1);
+    if choose_words.starts_with(&["up", "to"])
+        && let Some((value, used)) = parse_number(
+            &choose_words[2..]
+                .iter()
+                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .collect::<Vec<_>>(),
+        )
+    {
+        count = ChoiceCount {
+            min: 0,
+            max: Some(value as usize),
+            dynamic_x: false,
+        };
+        choose_words = choose_words[2 + used..].to_vec();
+    } else if let Some((value, used)) = parse_number(
+        &choose_words
+            .iter()
+            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .collect::<Vec<_>>(),
+    ) {
+        count = ChoiceCount::exactly(value as usize);
+        choose_words = choose_words[used..].to_vec();
+    } else if choose_words
+        .first()
+        .is_some_and(|word| is_article(word))
+    {
+        choose_words = choose_words[1..].to_vec();
+    }
+
+    let mut references_it = false;
+    loop {
+        let len = choose_words.len();
+        let trailing_it = len >= 2
+            && matches!(choose_words[len - 2], "from" | "in")
+            && matches!(choose_words[len - 1], "it" | "them");
+        let trailing_there = len >= 3
+            && matches!(choose_words[len - 3], "from" | "in")
+            && choose_words[len - 2] == "there"
+            && choose_words[len - 1] == "in";
+        if trailing_it {
+            references_it = true;
+            choose_words.truncate(len - 2);
+            continue;
+        }
+        if trailing_there {
+            references_it = true;
+            choose_words.truncate(len - 3);
+            continue;
+        }
+        break;
+    }
+
+    if choose_words.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing chosen object filter in choose clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    let choose_filter_tokens = choose_words
+        .iter()
+        .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+        .collect::<Vec<_>>();
+    if find_verb(&choose_filter_tokens).is_some() {
+        return Ok(None);
+    }
+
+    let mut choose_filter = parse_object_filter(&choose_filter_tokens, false).map_err(|_| {
+        CardTextError::ParseError(format!(
+            "unsupported chosen object filter in choose clause (clause: '{}')",
+            clause_words.join(" ")
+        ))
+    })?;
+    if references_it {
+        if choose_filter.zone.is_none() {
+            choose_filter.zone = Some(Zone::Hand);
+        }
+        if !choose_filter
+            .tagged_constraints
+            .iter()
+            .any(|constraint| constraint.tag.as_str() == IT_TAG)
+        {
+            choose_filter.tagged_constraints.push(TaggedObjectConstraint {
+                tag: TagKey::from(IT_TAG),
+                relation: TaggedOpbjectRelation::IsTaggedObject,
+            });
+        }
+    }
+    if matches!(
+        choose_filter.zone,
+        Some(Zone::Graveyard | Zone::Hand | Zone::Library | Zone::Exile)
+    ) {
+        choose_filter.controller = None;
+    }
+    if references_it {
+        choose_filter.controller = None;
+        choose_filter.owner = None;
+    } else if choose_filter.controller.is_none() && choose_filter.owner.is_none() {
+        choose_filter.controller = Some(PlayerFilter::You);
+    }
+
+    Ok(Some((PlayerAst::You, choose_filter, count)))
+}
+
 pub(crate) fn parse_target_player_chooses_then_other_cant_block(
     first: &[Token],
     second: &[Token],
@@ -7601,6 +7792,80 @@ pub(crate) fn parse_target_player_chooses_then_other_cant_block(
             duration: Until::EndOfTurn,
         },
     ]))
+}
+
+pub(crate) fn parse_choose_card_type_then_reveal_top_and_put_chosen_to_hand(
+    first: &[Token],
+    second: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let first_words = words(first);
+    if first_words.is_empty() || !matches!(first_words[0], "choose" | "chooses") {
+        return Ok(None);
+    }
+
+    let mut idx = 1usize;
+    if first_words.get(idx).is_some_and(|word| is_article(word)) {
+        idx += 1;
+    }
+    if first_words.get(idx) != Some(&"card") || first_words.get(idx + 1) != Some(&"type") {
+        return Ok(None);
+    }
+    idx += 2;
+
+    let reveal_words = &first_words[idx..];
+    if !reveal_words.starts_with(&["then", "reveal", "the", "top"]) {
+        return Ok(None);
+    }
+    let reveal_tokens = reveal_words[4..]
+        .iter()
+        .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+        .collect::<Vec<_>>();
+    let (count, used) = parse_number(&reveal_tokens).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "missing reveal count in choose-card-type reveal clause (clause: '{}')",
+            first_words.join(" ")
+        ))
+    })?;
+    if reveal_tokens
+        .get(used)
+        .and_then(Token::as_word)
+        .is_none_or(|word| word != "card" && word != "cards")
+    {
+        return Err(CardTextError::ParseError(format!(
+            "missing card keyword in choose-card-type reveal clause (clause: '{}')",
+            first_words.join(" ")
+        )));
+    }
+    let reveal_tail = words(&reveal_tokens[used + 1..]);
+    if !reveal_tail.ends_with(&["of", "your", "library"]) {
+        return Ok(None);
+    }
+
+    let second_words = words(second);
+    if !matches!(second_words.first().copied(), Some("put" | "puts")) {
+        return Ok(None);
+    }
+    let has_chosen_type = second_words
+        .windows(2)
+        .any(|window| window == ["chosen", "type"]);
+    let has_revealed_this_way = second_words
+        .windows(3)
+        .any(|window| window == ["revealed", "this", "way"]);
+    let has_into_your_hand = second_words
+        .windows(3)
+        .any(|window| window == ["into", "your", "hand"]);
+    let has_bottom_of_library = second_words
+        .windows(4)
+        .any(|window| window == ["bottom", "of", "your", "library"]);
+    if !has_chosen_type || !has_revealed_this_way || !has_into_your_hand || !has_bottom_of_library
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(vec![EffectAst::RevealTopChooseCardTypePutToHandRestBottom {
+        player: PlayerAst::You,
+        count,
+    }]))
 }
 
 pub(crate) fn parse_choose_creature_type_then_become_type(

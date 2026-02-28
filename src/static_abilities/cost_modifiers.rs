@@ -571,6 +571,62 @@ impl StaticAbilityKind for CostReduction {
     }
 }
 
+/// Activated-ability cost reduction:
+/// "Activated abilities of <objects> cost {N} less to activate."
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActivatedAbilityCostReduction {
+    pub filter: ObjectFilter,
+    pub reduction: u32,
+    pub minimum_total_mana: Option<u32>,
+}
+
+impl ActivatedAbilityCostReduction {
+    pub fn new(filter: ObjectFilter, reduction: u32) -> Self {
+        Self {
+            filter,
+            reduction,
+            minimum_total_mana: None,
+        }
+    }
+
+    pub fn with_minimum_total_mana(mut self, minimum_total_mana: u32) -> Self {
+        self.minimum_total_mana = Some(minimum_total_mana);
+        self
+    }
+}
+
+impl StaticAbilityKind for ActivatedAbilityCostReduction {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::ActivatedAbilityCostReduction
+    }
+
+    fn display(&self) -> String {
+        let mut line = format!(
+            "Activated abilities of {} cost {{{}}} less to activate",
+            self.filter.description(),
+            self.reduction
+        );
+        if let Some(minimum) = self.minimum_total_mana
+            && minimum == 1
+        {
+            line.push_str(". This effect can't reduce the mana in that cost to less than one mana");
+        }
+        line
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+
+    fn modifies_costs(&self) -> bool {
+        true
+    }
+
+    fn activated_ability_cost_reduction(&self) -> Option<&ActivatedAbilityCostReduction> {
+        Some(self)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ThisSpellCostCondition {
     Always,

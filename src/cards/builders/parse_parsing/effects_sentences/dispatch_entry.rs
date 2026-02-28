@@ -88,6 +88,20 @@ pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>,
             continue;
         }
         if sentence_idx + 1 < sentences.len()
+            && let Some(mut combined) = parse_choose_card_type_then_reveal_top_and_put_chosen_to_hand(
+                sentence,
+                &sentences[sentence_idx + 1],
+            )?
+        {
+            parser_trace(
+                "parse_effect_sentences:sequence-hit:choose-card-type-then-reveal-and-put",
+                sentence,
+            );
+            effects.append(&mut combined);
+            sentence_idx += 2;
+            continue;
+        }
+        if sentence_idx + 1 < sentences.len()
             && let Some(mut combined) =
                 parse_choose_creature_type_then_become_type(sentence, &sentences[sentence_idx + 1])?
         {
@@ -116,6 +130,24 @@ pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>,
                 "parse_effect_sentences:skip:if-you-search-library-this-way-shuffle",
                 &sentence_tokens,
             );
+            sentence_idx += 1;
+            continue;
+        }
+
+        let sentence_words = words(&sentence_tokens);
+        let is_still_lands_followup = matches!(
+            sentence_words.as_slice(),
+            ["theyre", "still", "land"]
+                | ["theyre", "still", "lands"]
+                | ["its", "still", "a", "land"]
+                | ["its", "still", "land"]
+        );
+        if is_still_lands_followup
+            && effects
+                .last()
+                .is_some_and(|effect| matches!(effect, EffectAst::BecomeBasePtCreature { .. }))
+        {
+            parser_trace("parse_effect_sentences:skip:still-lands-followup", &sentence_tokens);
             sentence_idx += 1;
             continue;
         }

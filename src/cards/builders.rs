@@ -870,6 +870,10 @@ enum EffectAst {
     RevealTop {
         player: PlayerAst,
     },
+    RevealTopChooseCardTypePutToHandRestBottom {
+        player: PlayerAst,
+        count: u32,
+    },
     RevealTagged {
         tag: TagKey,
     },
@@ -1216,6 +1220,12 @@ enum EffectAst {
         duration: Until,
     },
     SetBasePowerToughness {
+        power: Value,
+        toughness: Value,
+        target: TargetAst,
+        duration: Until,
+    },
+    BecomeBasePtCreature {
         power: Value,
         toughness: Value,
         target: TargetAst,
@@ -8261,6 +8271,100 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             static_ids.contains(&StaticAbilityId::SetBasePowerToughnessForFilter),
             "expected SetBasePowerToughnessForFilter static ability for lands becoming 1/1, got {static_ids:?}"
+        );
+    }
+
+    #[test]
+    fn parse_lands_become_pt_creatures_until_end_of_turn_spell_line() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Life Variant")
+            .card_types(vec![CardType::Sorcery])
+            .parse_text("All lands you control become 1/1 creatures until end of turn. They're still lands.")
+            .expect("lands animation spell line should parse");
+
+        let debug = format!("{:?}", def.spell_effect);
+        assert!(
+            debug.contains("AddCardTypes")
+                && debug.contains("SetPowerToughness")
+                && debug.contains("EndOfTurn"),
+            "expected animated-creature continuous effect lowering, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_you_choose_nonland_card_from_revealed_hand_clause() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Venarian Variant")
+            .card_types(vec![CardType::Sorcery])
+            .parse_text("Target player reveals their hand. You choose a nonland card with mana value X or less from it. That player discards that card.")
+            .expect("you-choose-from-revealed-hand clause should parse");
+
+        let debug = format!("{:?}", def.spell_effect);
+        assert!(
+            debug.contains("ChooseObjectsEffect")
+                && debug.contains("mana_value")
+                && debug.contains("DiscardEffect"),
+            "expected choose-from-hand and discard lowering, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_choose_card_type_then_reveal_and_put_matching_cards() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Alrund Variant")
+            .card_types(vec![CardType::Creature])
+            .parse_text("At the beginning of your end step, choose a card type, then reveal the top three cards of your library. Put all cards of the chosen type revealed this way into your hand and the rest on the bottom of your library in any order.")
+            .expect("choose-card-type reveal/put sequence should parse");
+
+        let debug = format!("{:?}", def);
+        assert!(
+            debug.contains("ChooseModeEffect")
+                && debug.contains("LookAtTopCardsEffect")
+                && debug.contains("RevealTaggedEffect"),
+            "expected choose-mode reveal/put lowering for chosen card type, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_activated_ability_cost_reduction_static_line() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Training Grounds Variant")
+            .card_types(vec![CardType::Enchantment])
+            .parse_text(
+                "Activated abilities of creatures you control cost {2} less to activate.\nThis effect can't reduce the mana in that cost to less than one mana.",
+            )
+            .expect("activated-ability cost reduction static line should parse");
+
+        let static_ids: Vec<_> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Static(static_ability) => Some(static_ability.id()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            static_ids.contains(&StaticAbilityId::ActivatedAbilityCostReduction),
+            "expected activated-ability cost reduction static ability, got {static_ids:?}"
+        );
+    }
+
+    #[test]
+    fn parse_enchanted_creature_gets_xx_where_x_creature_cards_in_graveyard() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Wreath Variant")
+            .card_types(vec![CardType::Enchantment])
+            .parse_text(
+                "Enchant creature\nEnchanted creature gets +X/+X, where X is the number of creature cards in your graveyard.",
+            )
+            .expect("where-X enchanted-creature anthem should parse");
+
+        let static_ids: Vec<_> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Static(static_ability) => Some(static_ability.id()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            static_ids.contains(&StaticAbilityId::Anthem),
+            "expected anthem static ability for +X/+X where-X clause, got {static_ids:?}"
         );
     }
 

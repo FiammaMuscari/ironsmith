@@ -543,9 +543,15 @@ fn can_activate_mana_ability(
     if let crate::ability::AbilityKind::Activated(mana_ability) = &ability.kind
         && mana_ability.is_mana_ability()
     {
+        let total_cost = crate::decision::calculate_effective_activation_total_cost(
+            game,
+            player,
+            permanent_id,
+            &mana_ability.mana_cost,
+        );
         // Check mana costs from TotalCost (for abilities like Blood Celebrant that cost {B})
         let ctx = CostContext::new(permanent_id, player, decision_maker);
-        for cost in mana_ability.mana_cost.costs() {
+        for cost in total_cost.costs() {
             // For mana costs, use can_potentially_pay to show abilities that could
             // be activated after tapping mana sources.
             if cost.processing_mode().is_mana_payment() {
@@ -617,9 +623,15 @@ fn can_activate_mana_ability_check(
     if let crate::ability::AbilityKind::Activated(mana_ability) = &ability.kind
         && mana_ability.is_mana_ability()
     {
+        let total_cost = crate::decision::calculate_effective_activation_total_cost(
+            game,
+            player,
+            permanent_id,
+            &mana_ability.mana_cost,
+        );
         // Check mana costs from TotalCost (for abilities like Blood Celebrant that cost {B})
         let ctx = CostCheckContext::new(permanent_id, player);
-        for cost in mana_ability.mana_cost.costs() {
+        for cost in total_cost.costs() {
             // For mana costs, use can_potentially_pay to show abilities that could
             // be activated after tapping mana sources.
             if cost.processing_mode().is_mana_payment() {
@@ -683,7 +695,12 @@ pub fn perform_activate_mana_ability(
     if let crate::ability::AbilityKind::Activated(mana_ability) = &ability.kind
         && mana_ability.is_mana_ability()
     {
-        let total_cost = mana_ability.mana_cost.clone();
+        let total_cost = crate::decision::calculate_effective_activation_total_cost(
+            game,
+            player,
+            permanent_id,
+            &mana_ability.mana_cost,
+        );
         let effects = mana_ability.effects.clone();
         let mana = mana_ability.mana_output.clone().unwrap_or_default();
 

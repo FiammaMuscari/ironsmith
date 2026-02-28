@@ -377,6 +377,11 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// Get activated-ability cost reduction details.
+    fn activated_ability_cost_reduction(&self) -> Option<&ActivatedAbilityCostReduction> {
+        None
+    }
+
     /// Get cost increase details if this is a cost increase ability.
     fn cost_increase(&self) -> Option<&CostIncrease> {
         None
@@ -671,6 +676,10 @@ impl StaticAbility {
 
     pub fn cost_reduction(&self) -> Option<&CostReduction> {
         self.0.cost_reduction()
+    }
+
+    pub fn activated_ability_cost_reduction(&self) -> Option<&ActivatedAbilityCostReduction> {
+        self.0.activated_ability_cost_reduction()
     }
 
     pub fn this_spell_cost_reduction(&self) -> Option<&ThisSpellCostReduction> {
@@ -1252,6 +1261,18 @@ impl StaticAbility {
 
     pub fn cost_increase_per_target_beyond_first(amount: u32) -> Self {
         Self::new(CostIncreasePerAdditionalTarget::new(amount))
+    }
+
+    pub fn reduce_activated_ability_costs(
+        filter: crate::target::ObjectFilter,
+        reduction: u32,
+        minimum_total_mana: Option<u32>,
+    ) -> Self {
+        let mut ability = ActivatedAbilityCostReduction::new(filter, reduction);
+        if let Some(minimum) = minimum_total_mana {
+            ability = ability.with_minimum_total_mana(minimum);
+        }
+        Self::new(ability)
     }
 
     pub fn delve() -> Self {

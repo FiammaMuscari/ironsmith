@@ -504,7 +504,14 @@ pub fn apply_priority_response_with_dm(
             state.save_checkpoint(game);
 
             // Get the ability cost, effects, tracking info, and source info for the stack entry
-            let (cost, effects, is_turn_capped, source_stable_id, source_name, source_snapshot) =
+            let (
+                base_cost,
+                effects,
+                is_turn_capped,
+                source_stable_id,
+                source_name,
+                source_snapshot,
+            ) =
                 if let Some(obj) = game.object(*source) {
                     let stable_id = obj.stable_id;
                     let name = obj.name.clone();
@@ -552,6 +559,12 @@ pub fn apply_priority_response_with_dm(
                 .turn
                 .priority_player
                 .ok_or_else(|| GameLoopError::InvalidState("No priority player".to_string()))?;
+            let cost = crate::decision::calculate_effective_activation_total_cost(
+                game,
+                player,
+                *source,
+                &base_cost,
+            );
 
             // Pay immediate costs and collect costs that need choices
             let mut mana_cost_to_pay: Option<crate::mana::ManaCost> = None;
@@ -560,7 +573,7 @@ pub fn apply_priority_response_with_dm(
 
             let mut cost_ctx = CostContext::new(*source, player, &mut *decision_maker);
 
-            for cost_component in cost.costs().iter() {
+            for cost_component in cost.costs() {
                 use crate::costs::CostProcessingMode;
 
                 match cost_component.processing_mode() {
@@ -720,7 +733,13 @@ pub fn apply_priority_response_with_dm(
             {
                 let mana_to_add = mana_ability.mana_output.clone().unwrap_or_default();
                 let effects_to_run = mana_ability.effects.clone();
-                let cost = mana_ability.mana_cost.clone();
+                let base_cost = mana_ability.mana_cost.clone();
+                let cost = crate::decision::calculate_effective_activation_total_cost(
+                    game,
+                    player,
+                    *source,
+                    &base_cost,
+                );
 
                 // Separate mana costs from other costs
                 let mut mana_cost: Option<crate::mana::ManaCost> = None;
