@@ -365,7 +365,7 @@ fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String 
     } else {
         None
     };
-    let has_self_exile_from_hand = exile_from_hand_noun.is_some();
+    let _has_self_exile_from_hand = exile_from_hand_noun.is_some();
     let has_basic_landcycling = oracle_lower.contains("basic landcycling");
     let has_target_blocked_creature = oracle_lower.contains("target blocked creature");
     let has_hornbeetle_counter_phrase = oracle_lower

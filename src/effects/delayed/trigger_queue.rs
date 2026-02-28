@@ -141,6 +141,7 @@ impl DelayedTriggerTemplate {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_choices(mut self, choices: Vec<crate::target::ChooseSpec>) -> Self {
         self.choices = choices;
         self

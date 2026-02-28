@@ -135,7 +135,7 @@ fn max_x_from_cost_effects(
     use crate::effects::helpers::resolve_player_filter;
 
     let mut dm = crate::decision::SelectFirstDecisionMaker;
-    let mut ctx = ExecutionContext::new(source, caster, &mut dm);
+    let ctx = ExecutionContext::new(source, caster, &mut dm);
     let filter_ctx = ctx.filter_context(game);
 
     let mut max_x: Option<u32> = None;

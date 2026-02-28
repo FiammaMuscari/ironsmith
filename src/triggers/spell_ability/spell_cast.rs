@@ -166,7 +166,7 @@ impl TriggerMatcher for SpellCastTrigger {
             .map(describe_spell_filter)
             .unwrap_or_else(|| "a spell".to_string());
         let mut suffix = String::new();
-        let mut suppress_turn_suffix = false;
+        let suppress_turn_suffix = false;
         if let Some(exact_spells) = self.exact_spells_this_turn {
             let ordinal = ordinal_word(exact_spells);
             if spell_text == "a spell" || spell_text == "spell" {
