@@ -189,6 +189,19 @@ use super::*;
     }
 
     #[test]
+    fn parse_put_into_library_second_from_top_clause() {
+        let tokens = tokenize_line(
+            "Put target creature into its owner's library second from the top.",
+            0,
+        );
+        let effects = parse_effect_sentence(&tokens).expect("parse put second-from-top sentence");
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            EffectAst::MoveToLibrarySecondFromTop { .. }
+        )));
+    }
+
+    #[test]
     fn parse_keyword_for_mirrodin_line() {
         let tokens = tokenize_line("For Mirrodin!", 0);
         let actions = parse_ability_line(&tokens).expect("expected keyword actions");

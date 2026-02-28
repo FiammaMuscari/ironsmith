@@ -3785,6 +3785,17 @@ pub(crate) fn compile_effect(
             }
             Ok((vec![effect], choices))
         }
+        EffectAst::MoveToLibrarySecondFromTop { target } => {
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let mut effect =
+                Effect::new(crate::effects::MoveToLibrarySecondFromTopEffect::new(spec.clone()));
+            if choose_spec_targets_object(&spec) && ctx.auto_tag_object_targets {
+                let tag = ctx.next_tag("moved");
+                ctx.last_object_tag = Some(tag.clone());
+                effect = effect.tag(tag);
+            }
+            Ok((vec![effect], choices))
+        }
         EffectAst::MoveToZone {
             target,
             zone,

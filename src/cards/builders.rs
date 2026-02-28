@@ -966,6 +966,9 @@ enum EffectAst {
         battlefield_tapped: bool,
         attached_to: Option<TargetAst>,
     },
+    MoveToLibrarySecondFromTop {
+        target: TargetAst,
+    },
     ReturnAllToHand {
         filter: ObjectFilter,
     },

@@ -3315,6 +3315,15 @@ fn describe_effect_impl(effect: &Effect) -> String {
             Zone::Command => format!("Move {target} to the command zone"),
         };
     }
+    if let Some(move_to_second) =
+        effect.downcast_ref::<crate::effects::MoveToLibrarySecondFromTopEffect>()
+    {
+        let target = describe_choose_spec(&move_to_second.target);
+        return format!(
+            "Put {target} into {} second from the top",
+            owner_library_phrase_for_spec(&move_to_second.target)
+        );
+    }
     if let Some(put_onto_battlefield) =
         effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()
     {

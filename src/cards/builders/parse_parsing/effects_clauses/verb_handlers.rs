@@ -2665,6 +2665,12 @@ pub(crate) fn parse_put_into_hand(
             || destination_words.contains(&"graveyards")
         {
             Some(Zone::Graveyard)
+        } else if destination_words.contains(&"library")
+            && destination_words.ends_with(&["second", "from", "top"])
+        {
+            return Ok(EffectAst::MoveToLibrarySecondFromTop {
+                target: parse_target_phrase(&target_tokens)?,
+            });
         } else {
             None
         };
