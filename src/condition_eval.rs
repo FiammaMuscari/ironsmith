@@ -340,6 +340,10 @@ pub fn evaluate_condition_external(
                     .is_some_and(|obj| obj.subtypes.contains(&Subtype::Aura))
             })
         }),
+        Condition::EnchantedPermanentIsCreature => game
+            .object(ctx.source)
+            .and_then(|source_obj| source_obj.attached_to)
+            .is_some_and(|attached| game.object_has_card_type(attached, CardType::Creature)),
         Condition::EquippedCreatureTapped => game
             .object(ctx.source)
             .and_then(|source_obj| source_obj.attached_to)
@@ -941,6 +945,7 @@ fn evaluate_condition_simple(
         | Condition::MaxActivationsPerTurn(_)
         | Condition::SourceIsEquipped
         | Condition::SourceIsEnchanted
+        | Condition::EnchantedPermanentIsCreature
         | Condition::EquippedCreatureTapped
         | Condition::EquippedCreatureUntapped
         | Condition::CountComparison { .. }
@@ -1621,6 +1626,12 @@ fn evaluate_condition(
                     .is_some_and(|obj| obj.subtypes.contains(&crate::types::Subtype::Aura))
             })
         })),
+        Condition::EnchantedPermanentIsCreature => Ok(game
+            .object(ctx.source)
+            .and_then(|source_obj| source_obj.attached_to)
+            .is_some_and(|attached| {
+                game.object_has_card_type(attached, crate::types::CardType::Creature)
+            })),
         Condition::EquippedCreatureTapped => Ok(game
             .object(ctx.source)
             .and_then(|source_obj| source_obj.attached_to)
@@ -1800,6 +1811,45 @@ mod tests {
             count: 5,
         };
         assert!(!evaluate_condition_external(&game, &too_many, &ctx));
+    }
+
+    #[test]
+    fn enchanted_permanent_is_creature_uses_attached_object_types() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let aura = CardBuilder::new(CardId::from_raw(31), "Rune Variant")
+            .card_types(vec![CardType::Enchantment])
+            .subtypes(vec![Subtype::Aura])
+            .build();
+        let target = CardBuilder::new(CardId::from_raw(32), "Vehicle Variant")
+            .card_types(vec![CardType::Artifact])
+            .build();
+
+        let aura_id = game.create_object_from_card(&aura, alice, Zone::Battlefield);
+        let target_id = game.create_object_from_card(&target, alice, Zone::Battlefield);
+        game.object_mut(aura_id)
+            .expect("aura should exist")
+            .attached_to = Some(target_id);
+
+        let condition = Condition::EnchantedPermanentIsCreature;
+        let ctx = ExternalEvaluationContext {
+            controller: alice,
+            source: aura_id,
+            filter_source: Some(aura_id),
+            triggering_event: None,
+            trigger_identity: None,
+            ability_index: None,
+            options: ExternalEvaluationOptions::default(),
+        };
+
+        assert!(!evaluate_condition_external(&game, &condition, &ctx));
+
+        game.object_mut(target_id)
+            .expect("target permanent should exist")
+            .card_types
+            .push(CardType::Creature);
+        assert!(evaluate_condition_external(&game, &condition, &ctx));
     }
 
     #[test]

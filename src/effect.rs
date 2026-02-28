@@ -1690,6 +1690,9 @@ pub enum Condition {
     /// Static condition: "as long as this creature is enchanted".
     SourceIsEnchanted,
 
+    /// Static condition for Auras: "as long as enchanted permanent is a creature".
+    EnchantedPermanentIsCreature,
+
     /// Static condition for equipment: "as long as equipped creature is tapped".
     EquippedCreatureTapped,
 

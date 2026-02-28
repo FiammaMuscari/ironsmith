@@ -7032,6 +7032,9 @@ fn describe_condition(condition: &Condition) -> String {
         }
         Condition::SourceIsEquipped => "this permanent is equipped".to_string(),
         Condition::SourceIsEnchanted => "this permanent is enchanted".to_string(),
+        Condition::EnchantedPermanentIsCreature => {
+            "enchanted permanent is a creature".to_string()
+        }
         Condition::EquippedCreatureTapped => "equipped creature is tapped".to_string(),
         Condition::EquippedCreatureUntapped => "equipped creature is untapped".to_string(),
         Condition::CountComparison { display, .. } => display

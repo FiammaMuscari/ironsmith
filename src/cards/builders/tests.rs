@@ -11529,6 +11529,25 @@ fn parse_as_long_as_its_enchanted_condition_line() {
 }
 
 #[test]
+fn parse_as_long_as_enchanted_permanent_is_a_creature_condition_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Rune of Flight Variant")
+        .card_types(vec![CardType::Enchantment])
+        .subtypes(vec![Subtype::Aura])
+        .parse_text("Enchant permanent\nAs long as enchanted permanent is a creature, it has flying.")
+        .expect("enchanted-permanent creature condition line should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("has flying"),
+        "expected attached keyword grant in rendered static text, got {rendered}"
+    );
+    assert!(
+        rendered.contains("as long as enchanted permanent is a creature"),
+        "expected enchanted-permanent creature condition in rendered static text, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_each_creature_assigns_combat_damage_with_toughness_static_line() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Doran Variant")
         .card_types(vec![CardType::Creature])
