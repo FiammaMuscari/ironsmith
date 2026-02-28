@@ -278,6 +278,9 @@ pub(crate) fn parse_static_ability_line(
     if let Some(ability) = parse_ward_static_ability_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) = parse_filter_dont_untap_during_controllers_untap_steps_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_static_text_marker_line(tokens) {
         return Ok(Some(vec![ability]));
     }
@@ -515,6 +518,9 @@ pub(crate) fn parse_static_ability_line(
         return Ok(Some(vec![ability]));
     }
     if let Some(ability) = parse_grant_flash_to_noncreature_spells_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
+    if let Some(ability) = parse_prevent_all_combat_damage_to_source_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
     if let Some(ability) = parse_prevent_all_damage_to_source_by_creatures_line(tokens)? {
@@ -987,6 +993,56 @@ pub(crate) fn parse_static_text_marker_line(tokens: &[Token]) -> Option<StaticAb
     }
 
     None
+}
+
+pub(crate) fn parse_filter_dont_untap_during_controllers_untap_steps_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let line_words = words(tokens);
+    let Some(dont_word_idx) = line_words
+        .iter()
+        .position(|word| *word == "dont" || *word == "doesnt")
+    else {
+        return Ok(None);
+    };
+    if line_words.get(dont_word_idx + 1) != Some(&"untap") {
+        return Ok(None);
+    }
+
+    let tail = line_words.get(dont_word_idx + 2..).unwrap_or_default();
+    let has_supported_tail = (tail.starts_with(&["during", "their", "controllers", "untap"])
+        || tail.starts_with(&["during", "its", "controllers", "untap"]))
+        && matches!(tail.last(), Some(&"step") | Some(&"steps"));
+    if !has_supported_tail {
+        return Ok(None);
+    }
+
+    let dont_token_idx = token_index_for_word_index(tokens, dont_word_idx).ok_or_else(|| {
+        CardTextError::ParseError(format!(
+            "unable to map negated untap subject (clause: '{}')",
+            line_words.join(" ")
+        ))
+    })?;
+    let subject_tokens = trim_commas(&tokens[..dont_token_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let filter = parse_object_filter(&subject_tokens, false)?;
+    let subject_text = words(&subject_tokens).join(" ");
+    let mut display = format!("{subject_text} don't untap during their controllers' untap steps");
+    if let Some(first) = display
+        .chars()
+        .next()
+        .map(|ch| ch.to_ascii_uppercase().to_string())
+    {
+        display.replace_range(0..1, &first);
+    }
+
+    Ok(Some(StaticAbility::restriction(
+        crate::effect::Restriction::untap(filter),
+        display,
+    )))
 }
 
 pub(crate) fn parse_subject_cant_be_blocked_line(
@@ -6064,6 +6120,59 @@ pub(crate) fn parse_prevent_all_damage_dealt_to_creatures_line(
     {
         return Ok(Some(StaticAbility::prevent_all_damage_dealt_to_creatures()));
     }
+    Ok(None)
+}
+
+pub(crate) fn parse_prevent_all_combat_damage_to_source_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    let is_this_creature = words.as_slice()
+        == [
+            "prevent",
+            "all",
+            "combat",
+            "damage",
+            "that",
+            "would",
+            "be",
+            "dealt",
+            "to",
+            "this",
+            "creature",
+        ];
+    let is_this_permanent = words.as_slice()
+        == [
+            "prevent",
+            "all",
+            "combat",
+            "damage",
+            "that",
+            "would",
+            "be",
+            "dealt",
+            "to",
+            "this",
+            "permanent",
+        ];
+    let is_it = words.as_slice()
+        == [
+            "prevent",
+            "all",
+            "combat",
+            "damage",
+            "that",
+            "would",
+            "be",
+            "dealt",
+            "to",
+            "it",
+        ];
+
+    if is_this_creature || is_this_permanent || is_it {
+        return Ok(Some(StaticAbility::prevent_all_combat_damage_to_self()));
+    }
+
     Ok(None)
 }
 

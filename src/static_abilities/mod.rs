@@ -1227,6 +1227,10 @@ impl StaticAbility {
         Self::new(PreventAllDamageDealtToCreatures)
     }
 
+    pub fn prevent_all_combat_damage_to_self() -> Self {
+        Self::new(PreventAllCombatDamageToSelf)
+    }
+
     pub fn prevent_all_damage_to_self_by_creatures() -> Self {
         Self::new(PreventAllDamageToSelfByCreatures)
     }

@@ -791,6 +791,69 @@ mod tests {
     }
 
     #[test]
+    fn test_execute_untap_step_respects_power_filtered_cant_untap_restriction() {
+        let mut game = test_game();
+        let active_player = game.turn.active_player;
+
+        use crate::card::{CardBuilder, PowerToughness};
+        use crate::effect::{Restriction, Until};
+        use crate::filter::Comparison;
+        use crate::ids::CardId;
+        use crate::mana::{ManaCost, ManaSymbol};
+        use crate::target::ObjectFilter;
+        use crate::types::{CardType, Subtype};
+
+        let source_card = CardBuilder::new(CardId::from_raw(99), "Restriction Source")
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Blue]]))
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Wizard])
+            .power_toughness(PowerToughness::fixed(1, 1))
+            .build();
+        let source_id =
+            game.create_object_from_card(&source_card, active_player, Zone::Battlefield);
+
+        let big_creature = CardBuilder::new(CardId::from_raw(1), "Big Creature")
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Green]]))
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Beast])
+            .power_toughness(PowerToughness::fixed(4, 4))
+            .build();
+        let big_id = game.create_object_from_card(&big_creature, active_player, Zone::Battlefield);
+        game.tap(big_id);
+
+        let small_creature = CardBuilder::new(CardId::from_raw(2), "Small Creature")
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Green]]))
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Bear])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let small_id =
+            game.create_object_from_card(&small_creature, active_player, Zone::Battlefield);
+        game.tap(small_id);
+
+        game.add_restriction_effect(
+            Restriction::untap(
+                ObjectFilter::creature().with_power(Comparison::GreaterThanOrEqual(3)),
+            ),
+            Until::YouStopControllingThis,
+            source_id,
+            active_player,
+        );
+        game.update_cant_effects();
+
+        execute_untap_step(&mut game);
+
+        assert!(
+            game.is_tapped(big_id),
+            "power-4 creature should stay tapped under restriction"
+        );
+        assert!(
+            !game.is_tapped(small_id),
+            "power-2 creature should untap because it does not match restriction"
+        );
+    }
+
+    #[test]
     fn test_execute_draw_step() {
         let mut game = test_game();
         let active_player = game.turn.active_player;
@@ -841,8 +904,7 @@ mod tests {
 
         let id = game.create_object_from_card(&card, active_player, Zone::Battlefield);
         game.mark_damage(id, 1);
-        game
-            .continuous_effects
+        game.continuous_effects
             .add_effect(crate::continuous::ContinuousEffect::pump(
                 id,
                 active_player,

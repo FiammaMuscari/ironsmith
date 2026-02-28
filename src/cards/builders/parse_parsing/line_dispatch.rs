@@ -293,11 +293,36 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         && line_words.iter().any(|word| *word == "remove");
     let is_prevent_all_damage_to_source_by_creatures_static = line_words.starts_with(&[
         "prevent", "all", "damage", "that", "would", "be", "dealt", "to", "this",
-    ]) && line_words.ends_with(&["by", "creatures"]);
+    ]) && line_words
+        .ends_with(&["by", "creatures"]);
+    let is_prevent_all_combat_damage_to_source_static = line_words
+        == [
+            "prevent", "all", "combat", "damage", "that", "would", "be", "dealt", "to", "this",
+            "creature",
+        ]
+        || line_words
+            == [
+                "prevent",
+                "all",
+                "combat",
+                "damage",
+                "that",
+                "would",
+                "be",
+                "dealt",
+                "to",
+                "this",
+                "permanent",
+            ]
+        || line_words
+            == [
+                "prevent", "all", "combat", "damage", "that", "would", "be", "dealt", "to", "it",
+            ];
     if starts_with_statement_effect_head
         && !is_each_other_player_untap_static
         && !is_damage_prevent_with_remove_static
         && !is_prevent_all_damage_to_source_by_creatures_static
+        && !is_prevent_all_combat_damage_to_source_static
     {
         match parse_effect_sentences(&tokens) {
             Ok(effects) if !effects.is_empty() => {
@@ -381,7 +406,6 @@ pub(crate) fn parse_additional_cost_choice_options(
 
     let mut options = Vec::new();
     for option in normalized_options {
-
         let effects = parse_effect_sentences(&option)?;
         if effects.is_empty() {
             return Err(CardTextError::ParseError(format!(
@@ -504,4 +528,3 @@ pub(crate) fn parse_flashback_line(
         cost_effects,
     }))
 }
-

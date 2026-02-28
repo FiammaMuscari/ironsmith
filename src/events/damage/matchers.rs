@@ -478,6 +478,64 @@ impl ReplacementMatcher for DamageToSelfMatcher {
     }
 }
 
+/// Matches preventable combat damage events to the source of the replacement effect
+/// (self-replacement).
+#[derive(Debug, Clone)]
+pub struct DamageToSelfCombatMatcher {
+    pub self_replacement: bool,
+}
+
+impl DamageToSelfCombatMatcher {
+    pub fn new() -> Self {
+        Self {
+            self_replacement: true,
+        }
+    }
+}
+
+impl Default for DamageToSelfCombatMatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ReplacementMatcher for DamageToSelfCombatMatcher {
+    fn matches_event(&self, event: &dyn GameEventType, ctx: &EventContext) -> bool {
+        if event.event_kind() != EventKind::Damage {
+            return false;
+        }
+
+        let Some(damage) = downcast_event::<DamageEvent>(event) else {
+            return false;
+        };
+
+        if damage.is_unpreventable || !damage.is_combat {
+            return false;
+        }
+
+        match damage.target {
+            DamageTarget::Object(object_id) => ctx.source == Some(object_id),
+            DamageTarget::Player(_) => false,
+        }
+    }
+
+    fn priority(&self) -> ReplacementPriority {
+        if self.self_replacement {
+            ReplacementPriority::SelfReplacement
+        } else {
+            ReplacementPriority::Other
+        }
+    }
+
+    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
+        Box::new(self.clone())
+    }
+
+    fn display(&self) -> String {
+        "When combat damage would be dealt to this permanent".to_string()
+    }
+}
+
 /// Matches preventable damage events dealt to the source of the replacement effect
 /// by sources that satisfy a filter.
 #[derive(Debug, Clone)]
@@ -524,7 +582,8 @@ impl ReplacementMatcher for DamageToSelfFromSourceFilterMatcher {
             return false;
         };
 
-        self.source_filter.matches(source_obj, &ctx.filter_ctx, ctx.game)
+        self.source_filter
+            .matches(source_obj, &ctx.filter_ctx, ctx.game)
     }
 
     fn priority(&self) -> ReplacementPriority {
@@ -618,6 +677,32 @@ mod tests {
     }
 
     #[test]
+    fn test_damage_to_self_combat_matcher() {
+        let game = setup_game();
+        let alice = crate::ids::PlayerId::from_index(0);
+        let src = ObjectId::from_raw(42);
+
+        let matcher = DamageToSelfCombatMatcher::new();
+        let ctx = EventContext::for_replacement_effect(alice, src, &game);
+
+        let combat_to_self = DamageEvent::new(src, DamageTarget::Object(src), 3, true);
+        assert!(matcher.matches_event(&combat_to_self, &ctx));
+
+        let noncombat_to_self = DamageEvent::new(src, DamageTarget::Object(src), 3, false);
+        assert!(!matcher.matches_event(&noncombat_to_self, &ctx));
+
+        let combat_to_other =
+            DamageEvent::new(src, DamageTarget::Object(ObjectId::from_raw(7)), 3, true);
+        assert!(!matcher.matches_event(&combat_to_other, &ctx));
+
+        let combat_to_player = DamageEvent::new(src, DamageTarget::Player(alice), 3, true);
+        assert!(!matcher.matches_event(&combat_to_player, &ctx));
+
+        let unpreventable = DamageEvent::unpreventable(src, DamageTarget::Object(src), 3, true);
+        assert!(!matcher.matches_event(&unpreventable, &ctx));
+    }
+
+    #[test]
     fn test_damage_from_self_matcher() {
         let game = setup_game();
         let alice = crate::ids::PlayerId::from_index(0);
@@ -664,14 +749,20 @@ mod tests {
         let matcher = DamageToSelfFromSourceFilterMatcher::from_creature();
         let ctx = EventContext::for_replacement_effect(alice, target, &game);
 
-        let creature_damage = DamageEvent::new(creature_source, DamageTarget::Object(target), 3, false);
+        let creature_damage =
+            DamageEvent::new(creature_source, DamageTarget::Object(target), 3, false);
         assert!(matcher.matches_event(&creature_damage, &ctx));
 
-        let noncreature_damage = DamageEvent::new(artifact_source, DamageTarget::Object(target), 3, false);
+        let noncreature_damage =
+            DamageEvent::new(artifact_source, DamageTarget::Object(target), 3, false);
         assert!(!matcher.matches_event(&noncreature_damage, &ctx));
 
-        let wrong_target_damage =
-            DamageEvent::new(creature_source, DamageTarget::Object(artifact_source), 3, false);
+        let wrong_target_damage = DamageEvent::new(
+            creature_source,
+            DamageTarget::Object(artifact_source),
+            3,
+            false,
+        );
         assert!(!matcher.matches_event(&wrong_target_damage, &ctx));
 
         let unpreventable =

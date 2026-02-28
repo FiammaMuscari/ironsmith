@@ -3270,6 +3270,33 @@ fn test_prevent_all_combat_damage_from_target_rendering() {
 }
 
 #[test]
+fn test_parse_static_prevent_all_combat_damage_to_this_creature_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Everdawn Champion Variant")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Prevent all combat damage that would be dealt to this creature.")
+        .expect("parse static prevent-all-combat-damage to this creature");
+
+    let ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        ids.contains(&StaticAbilityId::PreventAllCombatDamageToSelf),
+        "expected PreventAllCombatDamageToSelf ability id, got {ids:?}"
+    );
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("prevent all combat damage that would be dealt to this creature"),
+        "expected static prevent-all-combat-damage text, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_modal_choose_one_that_hasnt_been_chosen_sets_mode_memory() {
     let oracle = "{2}, {T}: Choose one that hasn't been chosen —\n\
 • This artifact deals 2 damage to target creature.\n\
@@ -6328,8 +6355,7 @@ fn parse_reveal_hand_choose_card_from_it_clause() {
         .expect("reveal-hand choose-from-it clause should parse");
     let joined = compiled_lines(&def).join(" ").to_lowercase();
     assert!(
-        joined.contains("reveals their hand")
-            && joined.contains("exiles a card from their hand"),
+        joined.contains("reveals their hand") && joined.contains("exiles a card from their hand"),
         "expected reveal/exile sequence to be preserved, got {joined}"
     );
 }
@@ -6741,9 +6767,7 @@ fn parse_create_supported_role_tokens_attached_to_creature() {
     ];
 
     for role_name in role_names {
-        let text = format!(
-            "Create a {role_name} token attached to target creature you control."
-        );
+        let text = format!("Create a {role_name} token attached to target creature you control.");
         let def = CardDefinitionBuilder::new(CardId::new(), format!("{role_name} Variant"))
             .parse_text(&text)
             .unwrap_or_else(|err| panic!("{role_name} token creation should parse: {err:?}"));
@@ -8925,7 +8949,9 @@ fn parse_destroy_source_and_target_blocking_sentence() {
 fn parse_destroy_target_artifact_creature_enchantment_and_land_sentence() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Decimate Variant")
         .card_types(vec![CardType::Sorcery])
-        .parse_text("Destroy target artifact, target creature, target enchantment, and target land.")
+        .parse_text(
+            "Destroy target artifact, target creature, target enchantment, and target land.",
+        )
         .expect("parse four-target destroy sentence");
 
     let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
@@ -9381,7 +9407,9 @@ fn parse_delayed_return_at_next_end_step_parses() {
 #[test]
 fn parse_delayed_return_at_your_next_upkeep_parses() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Upkeep Return Variant")
-        .parse_text("Return target creature to its owner's hand at the beginning of your next upkeep.")
+        .parse_text(
+            "Return target creature to its owner's hand at the beginning of your next upkeep.",
+        )
         .expect("next-upkeep return should parse");
 
     let debug = format!("{:?}", def.spell_effect.as_ref().expect("spell effects"));
@@ -11158,7 +11186,9 @@ fn parse_as_long_as_its_enchanted_condition_line() {
 fn parse_each_creature_assigns_combat_damage_with_toughness_static_line() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Doran Variant")
         .card_types(vec![CardType::Creature])
-        .parse_text("Each creature assigns combat damage equal to its toughness rather than its power.")
+        .parse_text(
+            "Each creature assigns combat damage equal to its toughness rather than its power.",
+        )
         .expect("global toughness-combat-damage static line should parse");
 
     let static_ids: Vec<_> = def
@@ -11442,7 +11472,9 @@ fn parse_target_creature_becomes_color_or_colors_of_your_choice_until_end_of_tur
 fn parse_this_creature_becomes_creature_type_of_your_choice_until_end_of_turn() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Mistform Dreamer Variant")
         .card_types(vec![CardType::Creature])
-        .parse_text("{1}: This creature becomes the creature type of your choice until end of turn.")
+        .parse_text(
+            "{1}: This creature becomes the creature type of your choice until end of turn.",
+        )
         .expect("becomes-creature-type-of-choice clause should parse");
 
     let abilities_debug = format!("{:#?}", def.abilities).to_ascii_lowercase();

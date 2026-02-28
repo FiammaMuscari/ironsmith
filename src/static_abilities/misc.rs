@@ -9,7 +9,7 @@ use crate::effect::{Condition, Effect, Value};
 use crate::events::cards::matchers::{WouldDiscardMatcher, WouldDrawCardMatcher};
 use crate::events::damage::matchers::{
     DamageFromSelfMatcher, DamageToObjectMatcher, DamageToPlayerOrObjectMatcher,
-    DamageToSelfFromSourceFilterMatcher,
+    DamageToSelfCombatMatcher, DamageToSelfFromSourceFilterMatcher,
 };
 use crate::events::traits::{EventKind, ReplacementMatcher, ReplacementPriority, downcast_event};
 use crate::events::zones::matchers::{
@@ -1290,6 +1290,37 @@ impl StaticAbilityKind for PreventAllDamageDealtToCreatures {
     }
 }
 
+/// "Prevent all combat damage that would be dealt to this creature."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PreventAllCombatDamageToSelf;
+
+impl StaticAbilityKind for PreventAllCombatDamageToSelf {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::PreventAllCombatDamageToSelf
+    }
+
+    fn display(&self) -> String {
+        "Prevent all combat damage that would be dealt to this creature.".to_string()
+    }
+
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(*self)
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            DamageToSelfCombatMatcher::new(),
+            ReplacementAction::Prevent,
+        ))
+    }
+}
+
 /// "Prevent all damage that would be dealt to this creature by creatures."
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PreventAllDamageToSelfByCreatures;
@@ -1841,7 +1872,10 @@ impl StaticAbilityKind for ReduceMaximumHandSize {
                 )
             }
             PlayerFilter::Any => {
-                format!("Each player's maximum hand size is reduced by {}.", self.amount)
+                format!(
+                    "Each player's maximum hand size is reduced by {}.",
+                    self.amount
+                )
             }
             _ => format!("Maximum hand size is reduced by {}.", self.amount),
         }
@@ -2170,7 +2204,9 @@ mod tests {
         let source = ObjectId::from_raw(42);
         ability.apply_restrictions(&mut game, source, alice);
         assert_eq!(
-            game.player(alice).expect("alice should exist").max_hand_size,
+            game.player(alice)
+                .expect("alice should exist")
+                .max_hand_size,
             i32::MAX
         );
     }
@@ -2187,13 +2223,12 @@ mod tests {
         ability.apply_restrictions(&mut game, source, alice);
 
         assert_eq!(
-            game.player(alice).expect("alice should exist").max_hand_size,
+            game.player(alice)
+                .expect("alice should exist")
+                .max_hand_size,
             7
         );
-        assert_eq!(
-            game.player(bob).expect("bob should exist").max_hand_size,
-            3
-        );
+        assert_eq!(game.player(bob).expect("bob should exist").max_hand_size, 3);
     }
 
     #[test]
@@ -2444,9 +2479,43 @@ mod tests {
             DamageEvent::new(creature_source, DamageTarget::Object(protected), 3, false);
         assert!(matcher.matches_event(&creature_damage, &ctx));
 
-        let noncreature_damage =
-            DamageEvent::new(noncreature_source, DamageTarget::Object(protected), 3, false);
+        let noncreature_damage = DamageEvent::new(
+            noncreature_source,
+            DamageTarget::Object(protected),
+            3,
+            false,
+        );
         assert!(!matcher.matches_event(&noncreature_damage, &ctx));
+    }
+
+    #[test]
+    fn test_prevent_all_combat_damage_to_self_generates_replacement() {
+        let game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let protected = ObjectId::from_raw(42);
+        let source = ObjectId::from_raw(7);
+
+        let ability = PreventAllCombatDamageToSelf;
+        let replacement = ability
+            .generate_replacement_effect(protected, alice)
+            .expect("should generate replacement effect");
+        assert_eq!(replacement.replacement, ReplacementAction::Prevent);
+
+        let matcher = replacement
+            .matcher
+            .as_ref()
+            .expect("replacement must have a matcher");
+        let ctx = EventContext::for_replacement_effect(alice, protected, &game);
+
+        let combat_damage = DamageEvent::new(source, DamageTarget::Object(protected), 3, true);
+        assert!(matcher.matches_event(&combat_damage, &ctx));
+
+        let noncombat_damage = DamageEvent::new(source, DamageTarget::Object(protected), 3, false);
+        assert!(!matcher.matches_event(&noncombat_damage, &ctx));
+
+        let unpreventable =
+            DamageEvent::unpreventable(source, DamageTarget::Object(protected), 3, true);
+        assert!(!matcher.matches_event(&unpreventable, &ctx));
     }
 
     #[test]

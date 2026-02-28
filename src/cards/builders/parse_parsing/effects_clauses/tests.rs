@@ -125,6 +125,70 @@ use super::*;
     }
 
     #[test]
+    fn parse_prevent_all_combat_damage_to_source_static_line() {
+        let tokens =
+            tokenize_line("Prevent all combat damage that would be dealt to this creature.", 0);
+        let abilities = parse_static_ability_line(&tokens)
+            .expect("parse static ability line")
+            .expect("expected static ability");
+        assert!(abilities
+            .iter()
+            .any(|ability| ability.id() == StaticAbilityId::PreventAllCombatDamageToSelf));
+    }
+
+    #[test]
+    fn parse_line_prevent_all_combat_damage_to_source_prefers_static() {
+        let parsed = parse_line(
+            "Prevent all combat damage that would be dealt to this creature.",
+            0,
+        )
+        .expect("parse line");
+        let ability = match parsed {
+            LineAst::StaticAbility(ability) => ability,
+            LineAst::StaticAbilities(mut abilities) if abilities.len() == 1 => abilities
+                .pop()
+                .expect("single static ability"),
+            other => panic!("expected static ability parse, got {other:?}"),
+        };
+        assert_eq!(ability.id(), StaticAbilityId::PreventAllCombatDamageToSelf);
+    }
+
+    #[test]
+    fn parse_creatures_with_power_or_greater_dont_untap_static_line() {
+        let tokens = tokenize_line(
+            "Creatures with power 3 or greater don't untap during their controllers' untap steps.",
+            0,
+        );
+        let abilities = parse_static_ability_line(&tokens)
+            .expect("parse static ability line")
+            .expect("expected static ability");
+        assert!(abilities
+            .iter()
+            .any(|ability| ability.id() == StaticAbilityId::RuleRestriction));
+        assert!(abilities.iter().any(|ability| {
+            let text = ability.display().to_ascii_lowercase();
+            text.contains("power 3 or greater") && text.contains("untap during")
+        }));
+    }
+
+    #[test]
+    fn parse_line_creatures_with_power_or_greater_dont_untap_prefers_static() {
+        let parsed = parse_line(
+            "Creatures with power 3 or greater don't untap during their controllers' untap steps.",
+            0,
+        )
+        .expect("parse line");
+        let ability = match parsed {
+            LineAst::StaticAbility(ability) => ability,
+            LineAst::StaticAbilities(mut abilities) if abilities.len() == 1 => abilities
+                .pop()
+                .expect("single static ability"),
+            other => panic!("expected static ability parse, got {other:?}"),
+        };
+        assert_eq!(ability.id(), StaticAbilityId::RuleRestriction);
+    }
+
+    #[test]
     fn parse_keyword_for_mirrodin_line() {
         let tokens = tokenize_line("For Mirrodin!", 0);
         let actions = parse_ability_line(&tokens).expect("expected keyword actions");
