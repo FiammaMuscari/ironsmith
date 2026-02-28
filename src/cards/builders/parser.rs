@@ -369,19 +369,19 @@ fn collect_line_infos(
     }
 
     let card_name = builder.card_builder.name_ref().to_string();
-    let short_name = card_name
+    let front_face_name = card_name
         .split("//")
         .next()
         .unwrap_or(card_name.as_str())
         .trim()
         .to_string();
-    let short_name = short_name
+    let short_name = front_face_name
         .split(',')
         .next()
-        .unwrap_or(short_name.as_str())
+        .unwrap_or(front_face_name.as_str())
         .trim()
         .to_string();
-    let full_lower = normalize_card_name_for_self_reference(card_name.as_str());
+    let full_lower = normalize_card_name_for_self_reference(front_face_name.as_str());
     let short_lower = normalize_card_name_for_self_reference(short_name.as_str());
 
     let mut annotations = ParseAnnotations::default();
