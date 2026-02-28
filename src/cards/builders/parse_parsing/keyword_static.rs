@@ -4546,6 +4546,25 @@ pub(crate) fn parse_anthem_clause(
     if !tail_tokens.is_empty() {
         if words_start_with(&tail_tokens, &["for", "each"]) {
             scale = Some(parse_anthem_for_each_expression(&tail_tokens)?);
+        } else if words_start_with(&tail_tokens, &["where", "x", "is"]) {
+            let x_value = parse_where_x_value_clause(&tail_tokens).ok_or_else(|| {
+                CardTextError::ParseError(format!(
+                    "unsupported where-x anthem clause (clause: '{}')",
+                    words(tokens).join(" ")
+                ))
+            })?;
+            scale = Some(match x_value {
+                Value::Count(filter) => AnthemCountExpression::MatchingFilter(filter),
+                Value::BasicLandTypesAmong(filter) => {
+                    AnthemCountExpression::BasicLandTypesAmong(filter)
+                }
+                _ => {
+                    return Err(CardTextError::ParseError(format!(
+                        "unsupported where-x anthem value (clause: '{}')",
+                        words(tokens).join(" ")
+                    )));
+                }
+            });
         } else if words_start_with(&tail_tokens, &["as", "long", "as"]) {
             suffix_condition = Some(parse_static_condition_clause(&tail_tokens[3..])?);
         } else {
