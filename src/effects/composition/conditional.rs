@@ -82,42 +82,15 @@ impl EffectExecutor for ConditionalEffect {
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
-        self.if_true
-            .iter()
-            .find_map(|effect| effect.0.get_target_spec())
-            .or_else(|| {
-                self.if_false
-                    .iter()
-                    .find_map(|effect| effect.0.get_target_spec())
-            })
+        super::target_metadata::first_target_spec(&[&self.if_true, &self.if_false])
     }
 
     fn target_description(&self) -> &'static str {
-        for effect in &self.if_true {
-            if effect.0.get_target_spec().is_some() {
-                return effect.0.target_description();
-            }
-        }
-        for effect in &self.if_false {
-            if effect.0.get_target_spec().is_some() {
-                return effect.0.target_description();
-            }
-        }
-        "target"
+        super::target_metadata::first_target_description(&[&self.if_true, &self.if_false], "target")
     }
 
     fn get_target_count(&self) -> Option<crate::effect::ChoiceCount> {
-        for effect in &self.if_true {
-            if effect.0.get_target_spec().is_some() {
-                return effect.0.get_target_count();
-            }
-        }
-        for effect in &self.if_false {
-            if effect.0.get_target_spec().is_some() {
-                return effect.0.get_target_count();
-            }
-        }
-        None
+        super::target_metadata::first_target_count(&[&self.if_true, &self.if_false])
     }
 
     fn get_modal_spec_with_context(

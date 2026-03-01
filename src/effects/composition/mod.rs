@@ -34,6 +34,7 @@ mod tag_triggering_damage_target;
 mod tag_triggering_object;
 mod tagged;
 mod tagging_runtime;
+mod target_metadata;
 mod target_only;
 mod unless_action;
 mod unless_pays;

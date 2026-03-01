@@ -4,6 +4,7 @@ use crate::effect::{Effect, EffectOutcome};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
+use crate::target::ChooseSpec;
 
 /// A vote option with a name and effects to execute per vote.
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +98,33 @@ impl EffectExecutor for VoteEffect {
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
+    }
+
+    fn get_target_spec(&self) -> Option<&ChooseSpec> {
+        let groups: Vec<&[Effect]> = self
+            .options
+            .iter()
+            .map(|option| option.effects_per_vote.as_slice())
+            .collect();
+        super::target_metadata::first_target_spec(&groups)
+    }
+
+    fn target_description(&self) -> &'static str {
+        let groups: Vec<&[Effect]> = self
+            .options
+            .iter()
+            .map(|option| option.effects_per_vote.as_slice())
+            .collect();
+        super::target_metadata::first_target_description(&groups, "target")
+    }
+
+    fn get_target_count(&self) -> Option<crate::effect::ChoiceCount> {
+        let groups: Vec<&[Effect]> = self
+            .options
+            .iter()
+            .map(|option| option.effects_per_vote.as_slice())
+            .collect();
+        super::target_metadata::first_target_count(&groups)
     }
 }
 
@@ -229,5 +257,16 @@ mod tests {
         )]);
         let cloned = vote.clone_box();
         assert!(format!("{:?}", cloned).contains("VoteEffect"));
+    }
+
+    #[test]
+    fn vote_effect_forwards_nested_target_metadata() {
+        let vote = VoteEffect::basic(vec![
+            VoteOption::new("counter", vec![Effect::counter(ChooseSpec::target_spell())]),
+            VoteOption::new("life", vec![Effect::gain_life(2)]),
+        ]);
+
+        assert!(vote.get_target_spec().is_some());
+        assert_eq!(vote.target_description(), "spell to counter");
     }
 }

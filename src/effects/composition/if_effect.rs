@@ -93,42 +93,15 @@ impl EffectExecutor for IfEffect {
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
-        self.then
-            .iter()
-            .find_map(|effect| effect.0.get_target_spec())
-            .or_else(|| {
-                self.else_
-                    .iter()
-                    .find_map(|effect| effect.0.get_target_spec())
-            })
+        super::target_metadata::first_target_spec(&[&self.then, &self.else_])
     }
 
     fn target_description(&self) -> &'static str {
-        for effect in &self.then {
-            if effect.0.get_target_spec().is_some() {
-                return effect.0.target_description();
-            }
-        }
-        for effect in &self.else_ {
-            if effect.0.get_target_spec().is_some() {
-                return effect.0.target_description();
-            }
-        }
-        "target"
+        super::target_metadata::first_target_description(&[&self.then, &self.else_], "target")
     }
 
     fn get_target_count(&self) -> Option<crate::effect::ChoiceCount> {
-        for effect in &self.then {
-            if effect.0.get_target_spec().is_some() {
-                return effect.0.get_target_count();
-            }
-        }
-        for effect in &self.else_ {
-            if effect.0.get_target_spec().is_some() {
-                return effect.0.get_target_count();
-            }
-        }
-        None
+        super::target_metadata::first_target_count(&[&self.then, &self.else_])
     }
 }
 

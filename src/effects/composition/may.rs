@@ -126,27 +126,15 @@ impl EffectExecutor for MayEffect {
     }
 
     fn get_target_spec(&self) -> Option<&crate::target::ChooseSpec> {
-        self.effects
-            .iter()
-            .find_map(|effect| effect.0.get_target_spec())
+        super::target_metadata::first_target_spec(&[&self.effects])
     }
 
     fn target_description(&self) -> &'static str {
-        for effect in &self.effects {
-            if effect.0.get_target_spec().is_some() {
-                return effect.0.target_description();
-            }
-        }
-        "target"
+        super::target_metadata::first_target_description(&[&self.effects], "target")
     }
 
     fn get_target_count(&self) -> Option<crate::effect::ChoiceCount> {
-        for effect in &self.effects {
-            if effect.0.get_target_spec().is_some() {
-                return effect.0.get_target_count();
-            }
-        }
-        None
+        super::target_metadata::first_target_count(&[&self.effects])
     }
 }
 
