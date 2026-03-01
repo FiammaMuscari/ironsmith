@@ -2744,8 +2744,23 @@ fn test_parse_prevent_all_damage_duration_before_target_order_clause() {
 
     let spell_debug = format!("{:#?}", def.spell_effect);
     assert!(
+        spell_debug.contains("PreventAllDamageEffect")
+            && spell_debug.contains("PermanentsMatching"),
+        "expected non-targeted prevent-all-damage effect in parsed spell text, got {spell_debug}"
+    );
+}
+
+#[test]
+fn test_parse_prevent_all_damage_to_explicit_target_stays_targeted() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Targeted Prevention Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Prevent all damage that would be dealt this turn to target creature.")
+        .expect("targeted prevent-all damage clause should parse");
+
+    let spell_debug = format!("{:#?}", def.spell_effect);
+    assert!(
         spell_debug.contains("PreventAllDamageToTarget"),
-        "expected prevent-all-damage target effect in parsed spell text, got {spell_debug}"
+        "expected targeted prevent-all-damage effect in parsed spell text, got {spell_debug}"
     );
 }
 

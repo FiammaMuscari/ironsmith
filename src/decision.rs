@@ -7501,6 +7501,35 @@ mod tests {
     }
 
     #[test]
+    fn test_can_cast_spell_with_non_targeted_prevent_all_damage_without_creatures() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+
+        let definition =
+            crate::cards::CardDefinitionBuilder::new(CardId::from_raw(13000), "Sivvi Cast Probe")
+                .card_types(vec![CardType::Instant])
+                .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::White]]))
+                .parse_text("Prevent all damage that would be dealt this turn to creatures you control.")
+                .expect("prevent-all damage line should parse as a non-targeted effect");
+
+        let spell_id = game.create_object_from_definition(&definition, alice, Zone::Hand);
+        game.player_mut(alice)
+            .expect("player should exist")
+            .mana_pool
+            .add(ManaSymbol::White, 1);
+
+        let spell_obj = game.object(spell_id).expect("spell should exist").clone();
+        assert!(
+            can_cast_spell(&game, alice, &spell_obj, &CastingMethod::Normal),
+            "spell should be castable without creatures because effect is non-targeted"
+        );
+    }
+
+    #[test]
     fn test_compute_legal_targets_respects_cant_target_player_restriction() {
         use crate::target::{ChooseSpec, PlayerFilter};
 

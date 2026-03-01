@@ -8261,6 +8261,53 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
                     condition.is_some(),
                     "expected parsed cast-time condition for conditional self free-cast"
                 );
+                let condition = condition.as_ref().expect("condition should exist");
+                let crate::static_abilities::ThisSpellCostCondition::ConditionExpr {
+                    condition: condition_expr,
+                    ..
+                } = condition
+                else {
+                    panic!("expected condition expression for conditional self free-cast");
+                };
+                let crate::ConditionExpr::And(left, right) = condition_expr else {
+                    panic!("expected conjunction for mixed-controller cost condition");
+                };
+                let matches_clause =
+                    |expr: &crate::ConditionExpr,
+                     controller: crate::target::PlayerFilter,
+                     subtype: Subtype| {
+                        let crate::ConditionExpr::CountComparison {
+                            count, comparison, ..
+                        } = expr
+                        else {
+                            return false;
+                        };
+                        let crate::static_abilities::AnthemCountExpression::MatchingFilter(
+                            filter,
+                        ) = count
+                        else {
+                            return false;
+                        };
+                        *comparison == crate::effect::Comparison::GreaterThanOrEqual(1)
+                            && filter.controller == Some(controller)
+                            && filter.subtypes == vec![subtype]
+                    };
+                let left_is_opponent_mountain =
+                    matches_clause(left, crate::target::PlayerFilter::Opponent, Subtype::Mountain);
+                let left_is_you_plains =
+                    matches_clause(left, crate::target::PlayerFilter::You, Subtype::Plains);
+                let right_is_opponent_mountain = matches_clause(
+                    right,
+                    crate::target::PlayerFilter::Opponent,
+                    Subtype::Mountain,
+                );
+                let right_is_you_plains =
+                    matches_clause(right, crate::target::PlayerFilter::You, Subtype::Plains);
+                assert!(
+                    (left_is_opponent_mountain && right_is_you_plains)
+                        || (left_is_you_plains && right_is_opponent_mountain),
+                    "expected conjunction of opponent-controls-Mountain and you-control-Plains, got {condition_expr:?}"
+                );
             }
             other => panic!("expected Composed, got {other:?}"),
         }

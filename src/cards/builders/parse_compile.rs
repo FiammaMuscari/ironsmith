@@ -3231,6 +3231,18 @@ pub(crate) fn compile_effect(
             })
         }
         EffectAst::PreventAllDamageToTarget { target, duration } => {
+            if let TargetAst::Object(filter, explicit_target_span, _) = target
+                && explicit_target_span.is_none()
+            {
+                let resolved_filter = resolve_it_tag(filter, ctx)?;
+                return Ok((
+                    vec![Effect::prevent_all_damage_to(
+                        resolved_filter,
+                        duration.clone(),
+                    )],
+                    Vec::new(),
+                ));
+            }
             compile_effect_for_target(target, ctx, |spec| {
                 Effect::prevent_all_damage_to_target(spec, duration.clone())
             })

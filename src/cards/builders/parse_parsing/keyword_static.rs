@@ -2551,6 +2551,13 @@ pub(crate) fn parse_this_spell_cost_condition(
         }
     }
 
+    if let Some(condition_expr) = parse_conjoined_this_spell_cost_condition(tokens) {
+        return Some(ThisSpellCostCondition::ConditionExpr {
+            condition: condition_expr,
+            display: w.join(" "),
+        });
+    }
+
     if let Ok(condition_expr) = parse_static_condition_clause(tokens) {
         return Some(ThisSpellCostCondition::ConditionExpr {
             condition: condition_expr,
@@ -2558,6 +2565,32 @@ pub(crate) fn parse_this_spell_cost_condition(
         });
     }
 
+    None
+}
+
+fn parse_conjoined_this_spell_cost_condition(tokens: &[Token]) -> Option<crate::ConditionExpr> {
+    let words = words(tokens);
+    let and_positions = words
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, word)| (*word == "and").then_some(idx))
+        .collect::<Vec<_>>();
+    for and_word_idx in and_positions {
+        let and_token_idx = token_index_for_word_index(tokens, and_word_idx)?;
+        let left_tokens = trim_commas(&tokens[..and_token_idx]);
+        let right_tokens = trim_commas(&tokens[and_token_idx + 1..]);
+        if left_tokens.is_empty() || right_tokens.is_empty() {
+            continue;
+        }
+        let Ok(left) = parse_static_condition_clause(&left_tokens) else {
+            continue;
+        };
+        let right = parse_conjoined_this_spell_cost_condition(&right_tokens)
+            .or_else(|| parse_static_condition_clause(&right_tokens).ok());
+        if let Some(right) = right {
+            return Some(crate::ConditionExpr::And(Box::new(left), Box::new(right)));
+        }
+    }
     None
 }
 
