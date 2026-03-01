@@ -85,6 +85,10 @@ impl EffectExecutor for MayEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
+        if self.should_auto_decline_without_prompt(game, ctx)? {
+            return Ok(EffectOutcome::from_result(EffectResult::Declined));
+        }
+
         // Generate a description from the effects
         let description = format!("{:?}", self.effects);
 
@@ -146,9 +150,41 @@ impl EffectExecutor for MayEffect {
     }
 }
 
+impl MayEffect {
+    /// Some parsed patterns compile to "may (if condition, do X)" where the
+    /// condition is a strict gate (no else branch). If the gate is false, skip
+    /// prompting entirely so UI doesn't offer an option that cannot do anything.
+    fn should_auto_decline_without_prompt(
+        &self,
+        game: &GameState,
+        ctx: &ExecutionContext,
+    ) -> Result<bool, ExecutionError> {
+        if self.effects.len() != 1 {
+            return Ok(false);
+        }
+
+        let Some(conditional) = self.effects[0].downcast_ref::<crate::effects::ConditionalEffect>()
+        else {
+            return Ok(false);
+        };
+
+        if !conditional.if_false.is_empty() {
+            return Ok(false);
+        }
+
+        let condition_met = crate::condition_eval::evaluate_condition_resolution(
+            game,
+            &conditional.condition,
+            ctx,
+        )?;
+        Ok(!condition_met)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::effect::Condition;
     use crate::ids::PlayerId;
     use crate::target::{ChooseSpec, PlayerFilter};
 
@@ -218,5 +254,44 @@ mod tests {
 
         assert!(effect.get_target_spec().is_some());
         assert_eq!(effect.target_description(), "spell to counter");
+    }
+
+    #[derive(Default)]
+    struct PanicOnBooleanDecisionMaker;
+
+    impl crate::decision::DecisionMaker for PanicOnBooleanDecisionMaker {
+        fn decide_boolean(
+            &mut self,
+            _game: &GameState,
+            _ctx: &crate::decisions::context::BooleanContext,
+        ) -> bool {
+            panic!("boolean prompt should be skipped for false guarded condition");
+        }
+    }
+
+    #[test]
+    fn may_skips_prompt_for_single_guarded_conditional_when_false() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut dm = PanicOnBooleanDecisionMaker;
+        let mut ctx = ExecutionContext::new_default(source, alice).with_decision_maker(&mut dm);
+        let initial_life = game.player(alice).expect("alice should exist").life;
+
+        let guarded = Effect::new(crate::effects::ConditionalEffect::if_only(
+            Condition::LifeTotalOrLess(0),
+            vec![Effect::gain_life(5)],
+        ));
+        let effect = MayEffect::new(vec![guarded]);
+
+        let result = effect
+            .execute(&mut game, &mut ctx)
+            .expect("effect should execute");
+
+        assert_eq!(result.result, EffectResult::Declined);
+        assert_eq!(
+            game.player(alice).expect("alice should exist").life,
+            initial_life
+        );
     }
 }

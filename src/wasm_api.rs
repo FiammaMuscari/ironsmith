@@ -2998,17 +2998,32 @@ fn describe_action(game: &GameState, action: &LegalAction) -> String {
         } => {
             let method = match casting_method {
                 crate::alternative_cast::CastingMethod::Normal => "normal".to_string(),
-                crate::alternative_cast::CastingMethod::Alternative(index) => {
-                    format!("alternative #{index}")
-                }
+                crate::alternative_cast::CastingMethod::Alternative(index) => game
+                    .object(*spell_id)
+                    .and_then(|obj| obj.alternative_casts.get(*index))
+                    .map(|method| method.name().to_ascii_lowercase())
+                    .unwrap_or_else(|| format!("alternative #{index}")),
                 crate::alternative_cast::CastingMethod::GrantedEscape { .. } => {
                     "granted escape".to_string()
                 }
                 crate::alternative_cast::CastingMethod::GrantedFlashback => {
                     "granted flashback".to_string()
                 }
-                crate::alternative_cast::CastingMethod::PlayFrom { zone, .. } => {
-                    format!("play from {:?}", zone)
+                crate::alternative_cast::CastingMethod::PlayFrom {
+                    zone,
+                    use_alternative,
+                    ..
+                } => {
+                    if let Some(index) = use_alternative {
+                        let alt = game
+                            .object(*spell_id)
+                            .and_then(|obj| obj.alternative_casts.get(*index))
+                            .map(|method| method.name().to_ascii_lowercase())
+                            .unwrap_or_else(|| format!("alternative #{index}"));
+                        format!("play from {:?} ({alt})", zone)
+                    } else {
+                        format!("play from {:?}", zone)
+                    }
                 }
             };
             format!(
