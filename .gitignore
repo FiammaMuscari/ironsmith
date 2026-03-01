@@ -7,3 +7,6 @@ parse_report*
 /docs
 scripts/
 /reports
+*.txt
+*.json
+*.csv

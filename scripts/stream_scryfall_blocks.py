@@ -62,6 +62,21 @@ DIGITAL_ONLY_ORACLE_MARKERS = (
     "spellbook",
 )
 
+NON_PLAYABLE_TYPE_TOKENS = frozenset(
+    {
+        "token",
+        "emblem",
+        "plane",
+        "scheme",
+        "vanguard",
+        "phenomenon",
+        "conspiracy",
+        "dungeon",
+        "attraction",
+        "contraption",
+    }
+)
+
 
 def contains_marker_with_boundaries(text, marker):
     start = text.find(marker)
@@ -83,6 +98,27 @@ def has_digital_only_oracle_marker(oracle_text):
         contains_marker_with_boundaries(lower, marker)
         for marker in DIGITAL_ONLY_ORACLE_MARKERS
     )
+
+
+def type_line_tokens(type_line):
+    normalized = (
+        type_line.replace("—", " ")
+        .replace("–", " ")
+        .replace("/", " ")
+        .replace(",", " ")
+    )
+    return {token.strip().lower() for token in normalized.split() if token.strip()}
+
+
+def is_non_paper_print(card):
+    games = card.get("games") or []
+    if isinstance(games, list):
+        normalized_games = {
+            game.strip().lower() for game in games if isinstance(game, str) and game.strip()
+        }
+        if normalized_games and "paper" not in normalized_games:
+            return True
+    return bool(card.get("digital"))
 
 
 def is_non_playable(card, type_line, oracle_text):
@@ -111,28 +147,21 @@ def is_non_playable(card, type_line, oracle_text):
         return True
 
     if type_line:
-        non_playable_types = (
-            "Token",
-            "Emblem",
-            "Plane",
-            "Scheme",
-            "Vanguard",
-            "Phenomenon",
-            "Conspiracy",
-            "Dungeon",
-            "Attraction",
-            "Contraption",
-        )
-        if any(label in type_line for label in non_playable_types):
+        tokens = type_line_tokens(type_line)
+        if tokens & NON_PLAYABLE_TYPE_TOKENS:
             return True
 
         # Jumpstart theme cards show up as "Type: Card".
-        if type_line.strip() == "Card":
+        if type_line.strip().lower() == "card":
             return True
 
     if oracle_text and "Theme color" in oracle_text:
         return True
-    if oracle_text and has_digital_only_oracle_marker(oracle_text):
+    if (
+        oracle_text
+        and has_digital_only_oracle_marker(oracle_text)
+        and is_non_paper_print(card)
+    ):
         return True
 
     return False

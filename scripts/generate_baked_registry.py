@@ -10,51 +10,19 @@ import struct
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from stream_scryfall_blocks import build_block, is_non_playable, iter_json_array
+from stream_scryfall_blocks import (
+    build_block,
+    has_digital_only_oracle_marker,
+    is_non_paper_print,
+    is_non_playable,
+    iter_json_array,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CARDS_JSON = ROOT / "cards.json"
 OUT_FILE = ROOT / "src" / "cards" / "generated_registry.rs"
 PAYLOAD_FILE_NAME = "generated_registry_payload.bin"
-
-DIGITAL_ONLY_ORACLE_MARKERS = (
-    "boon",
-    "conjure",
-    "double team",
-    "draft",
-    "heist",
-    "incorporate",
-    "intensity",
-    "intensify",
-    "perpetually",
-    "seek",
-    "specialize",
-    "spellbook",
-)
-
-
-def contains_marker_with_boundaries(text: str, marker: str) -> bool:
-    start = text.find(marker)
-    while start != -1:
-        before = text[start - 1] if start > 0 else ""
-        after_index = start + len(marker)
-        after = text[after_index] if after_index < len(text) else ""
-        before_is_letter = before.isalpha()
-        after_is_letter = after.isalpha()
-        if not before_is_letter and not after_is_letter:
-            return True
-        start = text.find(marker, start + 1)
-    return False
-
-
-def has_digital_only_oracle_marker(oracle_text: str) -> bool:
-    lower = oracle_text.lower()
-    return any(
-        contains_marker_with_boundaries(lower, marker)
-        for marker in DIGITAL_ONLY_ORACLE_MARKERS
-    )
-
 
 def card_oracle_text(card: dict) -> str | None:
     oracle_text = card.get("oracle_text")
@@ -108,7 +76,11 @@ def collect_unique_blocks(
     flips: List[FlipPair] = []
     for card in iter_json_array(CARDS_JSON):
         oracle_text = card_oracle_text(card)
-        if oracle_text and has_digital_only_oracle_marker(oracle_text):
+        if (
+            oracle_text
+            and has_digital_only_oracle_marker(oracle_text)
+            and is_non_paper_print(card)
+        ):
             continue
 
         layout = (card.get("layout") or "").strip().lower()
