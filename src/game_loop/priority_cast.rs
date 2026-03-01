@@ -434,6 +434,10 @@ fn check_modes_or_continue(
     {
         let player = pending.caster;
         let source = pending.spell_id;
+        let spell_effects = game
+            .object(source)
+            .and_then(|obj| obj.spell_effect.as_deref())
+            .unwrap_or(&[]);
 
         // Resolve min/max mode counts
         let max_modes = match &modal_spec.max_modes {
@@ -450,6 +454,29 @@ fn check_modes_or_continue(
             .map(|o| o.name.clone())
             .unwrap_or_else(|| "spell".to_string());
 
+        if !spell_has_legal_targets(game, spell_effects, player, Some(source)) {
+            return Err(GameLoopError::InvalidState(
+                "No legal mode/target combination available".to_string(),
+            ));
+        }
+
+        let mode_options: Vec<crate::decisions::specs::ModeOption> = modal_spec
+            .mode_descriptions
+            .iter()
+            .enumerate()
+            .map(|(i, desc)| {
+                let selected_mode = [i];
+                let legal = spell_has_legal_targets_with_modes(
+                    game,
+                    spell_effects,
+                    player,
+                    Some(source),
+                    Some(&selected_mode),
+                );
+                crate::decisions::specs::ModeOption::with_legality(i, desc.clone(), legal)
+            })
+            .collect();
+
         // Set up pending cast for modes stage
         let mut pending = pending;
         pending.stage = CastStage::ChoosingModes;
@@ -463,18 +490,7 @@ fn check_modes_or_continue(
                     spell_name,
                     spec: crate::decisions::ModesSpec::new(
                         source,
-                        modal_spec
-                            .mode_descriptions
-                            .iter()
-                            .enumerate()
-                            .map(|(i, desc)| {
-                                crate::decisions::specs::ModeOption::with_legality(
-                                    i,
-                                    desc.clone(),
-                                    true,
-                                )
-                            })
-                            .collect(),
+                        mode_options,
                         min_modes,
                         max_modes,
                     ),

@@ -13,6 +13,7 @@ use crate::object::CounterType;
 use crate::target::ObjectFilter;
 use crate::types::CardType;
 use crate::zone::Zone;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// A remove counters cost.
@@ -102,7 +103,7 @@ impl CostPayer for RemoveCountersCost {
         if self.count == 1 {
             format!(
                 "Remove {} {} counter from ~",
-                counter_article(counter_name),
+                counter_article(&counter_name),
                 counter_name
             )
         } else {
@@ -602,7 +603,7 @@ impl CostPayer for RemoveAnyCountersAmongCost {
                 let counter_name = format_counter_type(&counter_type);
                 format!(
                     "Remove {} {} counter from {}",
-                    counter_article(counter_name),
+                    counter_article(&counter_name),
                     counter_name,
                     target_phrase_single
                 )
@@ -630,46 +631,47 @@ impl CostPayer for RemoveAnyCountersAmongCost {
 }
 
 /// Format a counter type for display.
-fn format_counter_type(counter_type: &CounterType) -> &'static str {
+fn format_counter_type(counter_type: &CounterType) -> Cow<'static, str> {
     match counter_type {
-        CounterType::PlusOnePlusOne => "+1/+1",
-        CounterType::MinusOneMinusOne => "-1/-1",
-        CounterType::Loyalty => "loyalty",
-        CounterType::Charge => "charge",
-        CounterType::Storage => "storage",
-        CounterType::Age => "age",
-        CounterType::Time => "time",
-        CounterType::Level => "level",
-        CounterType::Lore => "lore",
-        CounterType::Page => "page",
-        CounterType::Quest => "quest",
-        CounterType::Verse => "verse",
-        CounterType::Fade => "fade",
-        CounterType::Fuse => "fuse",
-        CounterType::Trap => "trap",
-        CounterType::Shield => "shield",
-        CounterType::Flood => "flood",
-        CounterType::Blood => "blood",
-        CounterType::Study => "study",
-        CounterType::Knowledge => "knowledge",
-        CounterType::Muster => "muster",
-        CounterType::Strife => "strife",
-        CounterType::Slumber => "slumber",
-        CounterType::Filibuster => "filibuster",
-        CounterType::Pressure => "pressure",
-        CounterType::Divinity => "divinity",
-        CounterType::Gem => "gem",
-        CounterType::Isolation => "isolation",
-        CounterType::Doom => "doom",
-        CounterType::Incarnation => "incarnation",
-        CounterType::Depletion => "depletion",
-        CounterType::Music => "music",
-        CounterType::Ice => "ice",
-        CounterType::Wind => "wind",
-        CounterType::Luck => "luck",
-        CounterType::Oil => "oil",
+        CounterType::PlusOnePlusOne => Cow::Borrowed("+1/+1"),
+        CounterType::MinusOneMinusOne => Cow::Borrowed("-1/-1"),
+        CounterType::Loyalty => Cow::Borrowed("loyalty"),
+        CounterType::Charge => Cow::Borrowed("charge"),
+        CounterType::Storage => Cow::Borrowed("storage"),
+        CounterType::Age => Cow::Borrowed("age"),
+        CounterType::Time => Cow::Borrowed("time"),
+        CounterType::Level => Cow::Borrowed("level"),
+        CounterType::Lore => Cow::Borrowed("lore"),
+        CounterType::Page => Cow::Borrowed("page"),
+        CounterType::Quest => Cow::Borrowed("quest"),
+        CounterType::Verse => Cow::Borrowed("verse"),
+        CounterType::Fade => Cow::Borrowed("fade"),
+        CounterType::Fuse => Cow::Borrowed("fuse"),
+        CounterType::Trap => Cow::Borrowed("trap"),
+        CounterType::Shield => Cow::Borrowed("shield"),
+        CounterType::Flood => Cow::Borrowed("flood"),
+        CounterType::Blood => Cow::Borrowed("blood"),
+        CounterType::Study => Cow::Borrowed("study"),
+        CounterType::Knowledge => Cow::Borrowed("knowledge"),
+        CounterType::Muster => Cow::Borrowed("muster"),
+        CounterType::Strife => Cow::Borrowed("strife"),
+        CounterType::Slumber => Cow::Borrowed("slumber"),
+        CounterType::Filibuster => Cow::Borrowed("filibuster"),
+        CounterType::Pressure => Cow::Borrowed("pressure"),
+        CounterType::Divinity => Cow::Borrowed("divinity"),
+        CounterType::Gem => Cow::Borrowed("gem"),
+        CounterType::Isolation => Cow::Borrowed("isolation"),
+        CounterType::Doom => Cow::Borrowed("doom"),
+        CounterType::Incarnation => Cow::Borrowed("incarnation"),
+        CounterType::Depletion => Cow::Borrowed("depletion"),
+        CounterType::Music => Cow::Borrowed("music"),
+        CounterType::Ice => Cow::Borrowed("ice"),
+        CounterType::Wind => Cow::Borrowed("wind"),
+        CounterType::Luck => Cow::Borrowed("luck"),
+        CounterType::Oil => Cow::Borrowed("oil"),
+        CounterType::Named(name) => Cow::Owned((*name).to_string()),
         // Match any other counter types with a generic name
-        _ => "counter",
+        _ => Cow::Borrowed("counter"),
     }
 }
 
@@ -823,6 +825,10 @@ mod tests {
             RemoveCountersCost::charge(3).display(),
             "Remove 3 charge counters from ~"
         );
+        assert_eq!(
+            RemoveCountersCost::new(CounterType::Named("wish"), 1).display(),
+            "Remove a wish counter from ~"
+        );
     }
 
     #[test]
@@ -942,6 +948,10 @@ mod tests {
         assert_eq!(
             AddCountersCost::plus_one(2).display(),
             "Put 2 +1/+1 counters on ~"
+        );
+        assert_eq!(
+            AddCountersCost::new(CounterType::Named("wish"), 1).display(),
+            "Put a wish counter on ~"
         );
     }
 

@@ -5,10 +5,8 @@
 //! - Triggered: Go on the stack when a condition is met
 //! - Activated: Can be activated by paying a cost (mana abilities are a subtype with `mana_output`)
 
-use crate::color::ColorSet;
 use crate::cost::TotalCost;
 use crate::effect::Effect;
-use crate::filter::{AlternativeCastKind, Comparison};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaSymbol;
 use crate::static_abilities::StaticAbility as NewStaticAbility;
@@ -276,62 +274,6 @@ impl LevelAbility {
     }
 }
 
-/// Filter for spells (for cost modification).
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct SpellFilter {
-    /// Card types the spell must have
-    pub card_types: Vec<CardType>,
-
-    /// Card types the spell must not have
-    pub excluded_card_types: Vec<CardType>,
-
-    /// Subtypes the spell must have
-    pub subtypes: Vec<crate::types::Subtype>,
-
-    /// Colors the spell must have
-    pub colors: Option<ColorSet>,
-
-    /// Power comparison for creature spells (if applicable).
-    pub power: Option<Comparison>,
-
-    /// Toughness comparison for creature spells (if applicable).
-    pub toughness: Option<Comparison>,
-
-    /// Mana value comparison.
-    pub mana_value: Option<Comparison>,
-
-    /// If set, only match spells that target a player matching this filter.
-    pub targets_player: Option<PlayerFilter>,
-
-    /// If set, only match spells that target an object matching this filter.
-    pub targets_object: Option<ObjectFilter>,
-
-    /// Controller filter
-    pub controller: Option<PlayerFilter>,
-
-    /// Restrict to spells cast with a specific alternative casting method.
-    pub alternative_cast: Option<AlternativeCastKind>,
-}
-
-impl SpellFilter {
-    pub fn description(&self) -> String {
-        let mut filter = ObjectFilter::default();
-        filter.zone = Some(Zone::Stack);
-        filter.card_types = self.card_types.clone();
-        filter.excluded_card_types = self.excluded_card_types.clone();
-        filter.subtypes = self.subtypes.clone();
-        filter.colors = self.colors;
-        filter.power = self.power.clone();
-        filter.toughness = self.toughness.clone();
-        filter.mana_value = self.mana_value.clone();
-        filter.controller = self.controller.clone();
-        filter.alternative_cast = self.alternative_cast;
-        filter.targets_player = self.targets_player.clone();
-        filter.targets_object = self.targets_object.clone().map(Box::new);
-        filter.description()
-    }
-}
-
 // === Triggered Abilities ===
 
 /// A triggered ability that fires when a condition is met.
@@ -532,19 +474,31 @@ fn parse_activation_max_times_per_turn(restriction: &str) -> Option<u32> {
         .collect::<String>();
 
     let words: Vec<&str> = normalized.split_whitespace().collect();
-    if words.len() < 4 || !words.starts_with(&["activate", "only"]) {
+    if words.len() < 4 || !words.contains(&"activate") {
         return None;
     }
 
     let each_turn_pos = words
         .windows(2)
         .position(|window| window[0] == "each" && window[1] == "turn")?;
+    if each_turn_pos == 0 {
+        return None;
+    }
 
-    let count_pos = each_turn_pos.checked_sub(2)?;
-    let mut count_word = words[count_pos];
-    if count_word == "time" || count_word == "times" {
-        let count_pos = each_turn_pos.checked_sub(3)?;
-        count_word = words[count_pos];
+    // Handle "activate no more than twice each turn" and similar.
+    if each_turn_pos >= 4 {
+        for idx in 0..=each_turn_pos - 4 {
+            if words[idx] == "no" && words[idx + 1] == "more" && words[idx + 2] == "than" {
+                if let Some(parsed) = parse_named_count_word(words[idx + 3]) {
+                    return Some(parsed);
+                }
+            }
+        }
+    }
+
+    let mut count_word = words[each_turn_pos - 1];
+    if (count_word == "time" || count_word == "times") && each_turn_pos >= 2 {
+        count_word = words[each_turn_pos - 2];
     }
 
     parse_named_count_word(count_word)
@@ -940,5 +894,40 @@ mod tests {
         // Verify it functions on the battlefield
         assert!(blood_artist_ability.functions_in(&Zone::Battlefield));
         assert!(!blood_artist_ability.functions_in(&Zone::Graveyard));
+    }
+
+    #[test]
+    fn parse_activation_cap_from_activate_only_once_each_turn() {
+        assert_eq!(
+            parse_activation_max_times_per_turn("Activate only once each turn."),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn parse_activation_cap_from_activate_no_more_than_twice_each_turn() {
+        assert_eq!(
+            parse_activation_max_times_per_turn("Activate no more than twice each turn."),
+            Some(2)
+        );
+        assert_eq!(
+            parse_activation_max_times_per_turn("Activate no more than 2 times each turn."),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn activated_ability_max_activations_per_turn_uses_no_more_than_clause() {
+        let ability = ActivatedAbility {
+            mana_cost: TotalCost::free(),
+            effects: vec![Effect::draw(1)],
+            choices: vec![],
+            timing: ActivationTiming::AnyTime,
+            additional_restrictions: vec!["Activate no more than twice each turn.".to_string()],
+            mana_output: None,
+            activation_condition: None,
+        };
+
+        assert_eq!(ability.max_activations_per_turn(), Some(2));
     }
 }

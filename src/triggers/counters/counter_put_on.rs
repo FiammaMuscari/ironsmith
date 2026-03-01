@@ -70,6 +70,7 @@ impl TriggerMatcher for CounterPutOnTrigger {
             match counter_type {
                 CounterType::PlusOnePlusOne => "+1/+1".to_string(),
                 CounterType::MinusOneMinusOne => "-1/-1".to_string(),
+                CounterType::Named(name) => name.to_string(),
                 other => format!("{other:?}").to_ascii_lowercase(),
             }
         }

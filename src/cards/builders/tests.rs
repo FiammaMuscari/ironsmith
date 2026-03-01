@@ -612,6 +612,80 @@ fn test_parse_cant_gain_life_from_text() {
 }
 
 #[test]
+fn test_parse_deafening_silence_noncreature_cast_limit() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Deafening Silence Variant")
+        .parse_text("Each player can't cast more than one noncreature spell each turn.")
+        .expect("parse each-player noncreature cast limit");
+
+    let has_rule_restriction = def.abilities.iter().any(|ability| {
+        matches!(
+            &ability.kind,
+            AbilityKind::Static(ability) if ability.id() == StaticAbilityId::RuleRestriction
+        )
+    });
+    assert!(
+        has_rule_restriction,
+        "expected a rule restriction static ability"
+    );
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("each player can't cast more than one noncreature spell each turn")
+            || rendered.contains("each player cant cast more than one noncreature spell each turn"),
+        "expected deafening silence cast-limit text, got {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_you_cant_cast_more_than_one_spell_each_turn() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Moderation Variant")
+        .parse_text("You can't cast more than one spell each turn.")
+        .expect("parse you-cant-cast-more-than-one-spell restriction");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("you can't cast more than one spell each turn")
+            || rendered.contains("you cant cast more than one spell each turn"),
+        "expected player-scoped cast-limit text, got {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_canonist_style_nonartifact_cast_limit() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Canonist Variant")
+        .parse_text("Each player who has cast a nonartifact spell this turn can't cast additional nonartifact spells.")
+        .expect("parse canonist-style nonartifact cast limit");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains(
+            "each player who has cast a nonartifact spell this turn can't cast additional nonartifact spells"
+        )
+            || rendered.contains(
+                "each player who has cast a nonartifact spell this turn cant cast additional nonartifact spells"
+            )
+            || rendered.contains("each player can't cast more than one nonartifact spell each turn")
+            || rendered.contains("each player cant cast more than one nonartifact spell each turn"),
+        "expected canonist-style cast-limit normalization, got {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_nonphyrexian_cast_limit() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Phyrexian Censor Variant")
+        .parse_text("Each player can't cast more than one non-Phyrexian spell each turn.")
+        .expect("parse non-phyrexian cast limit");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("each player can't cast more than one non-phyrexian spell each turn")
+            || rendered
+                .contains("each player cant cast more than one non-phyrexian spell each turn"),
+        "expected non-phyrexian cast-limit text, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_uncounterable_from_text() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "No Counter")
         .parse_text("This spell can't be countered.")
@@ -1704,6 +1778,21 @@ fn test_parse_trigger_deals_combat_damage_with_subject_filter() {
             ))
             && !joined.contains("whenever this creature deals combat damage to a player"),
         "expected trigger subject to remain filtered, got {joined}"
+    );
+}
+
+#[test]
+fn test_parse_trigger_deals_combat_damage_to_you_preserves_recipient() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Combat Damage Recipient Probe")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("Whenever a creature deals combat damage to you, you gain 1 life.")
+        .expect("parse combat-damage recipient trigger");
+
+    let joined = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        joined.contains("whenever creature deals combat damage to you")
+            || joined.contains("whenever a creature deals combat damage to you"),
+        "expected trigger recipient to remain 'you', got {joined}"
     );
 }
 

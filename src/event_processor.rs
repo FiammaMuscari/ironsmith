@@ -883,13 +883,15 @@ fn apply_trait_replacement(
                     .object(effect.source)
                     .map(|o| o.name.clone())
                     .unwrap_or_else(|| "permanent".to_string());
+                let discard_phrase = describe_discard_filter_card_phrase(filter);
+                let redirect_phrase = describe_redirect_zone_phrase(*redirect_zone);
                 let decision_ctx = crate::decisions::context::DecisionContext::SelectObjects(
                     crate::decisions::context::SelectObjectsContext::new(
                         controller,
                         Some(effect.source),
                         format!(
-                            "Discard a card to put {} onto the battlefield, or it goes to {:?}",
-                            source_name, redirect_zone
+                            "Discard {} to put {} onto the battlefield, or it goes to {}",
+                            discard_phrase, source_name, redirect_phrase
                         ),
                         candidates,
                         1,       // min
@@ -989,6 +991,54 @@ fn apply_trait_replacement(
                 filter: None,
             }
         }
+    }
+}
+
+fn indefinite_article(text: &str) -> &'static str {
+    let first = text
+        .chars()
+        .find(|ch| ch.is_ascii_alphabetic())
+        .map(|ch| ch.to_ascii_lowercase());
+    match first {
+        Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
+        _ => "a",
+    }
+}
+
+fn describe_discard_filter_card_phrase(filter: &crate::target::ObjectFilter) -> String {
+    let mut phrase = filter.description().trim().to_string();
+    if phrase.is_empty() {
+        return "a card".to_string();
+    }
+
+    let lower = phrase.to_ascii_lowercase();
+    let has_determiner = lower.starts_with("a ")
+        || lower.starts_with("an ")
+        || lower.starts_with("the ")
+        || lower.starts_with("target ")
+        || lower.starts_with("another ")
+        || lower.starts_with("any ")
+        || lower.starts_with("each ");
+    if !has_determiner {
+        phrase = format!("{} {}", indefinite_article(&phrase), phrase);
+    }
+
+    let lower = phrase.to_ascii_lowercase();
+    if !lower.contains(" card") && !lower.ends_with("card") {
+        phrase.push_str(" card");
+    }
+    phrase
+}
+
+fn describe_redirect_zone_phrase(zone: Zone) -> &'static str {
+    match zone {
+        Zone::Graveyard => "its owner's graveyard",
+        Zone::Hand => "its owner's hand",
+        Zone::Library => "its owner's library",
+        Zone::Battlefield => "the battlefield",
+        Zone::Stack => "the stack",
+        Zone::Exile => "exile",
+        Zone::Command => "the command zone",
     }
 }
 

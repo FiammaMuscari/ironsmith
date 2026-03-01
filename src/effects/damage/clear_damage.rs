@@ -2,7 +2,8 @@
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
+use crate::effects::helpers::resolve_single_object_from_spec;
+use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
 
@@ -53,25 +54,8 @@ impl EffectExecutor for ClearDamageEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        // Resolve the target creature
-        let target_id = match &self.target {
-            ChooseSpec::Source => ctx.source,
-            ChooseSpec::SpecificObject(id) => *id,
-            ChooseSpec::Object(_) => {
-                // Get from resolved targets
-                ctx.targets
-                    .iter()
-                    .find_map(|t| {
-                        if let ResolvedTarget::Object(id) = t {
-                            Some(*id)
-                        } else {
-                            None
-                        }
-                    })
-                    .ok_or(ExecutionError::InvalidTarget)?
-            }
-            _ => return Err(ExecutionError::InvalidTarget),
-        };
+        // Resolve the target creature through ChooseSpec (targets, tags, source, etc.).
+        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
 
         // Clear all damage from the creature
         game.clear_damage(target_id);
@@ -100,6 +84,7 @@ mod tests {
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
+    use crate::snapshot::ObjectSnapshot;
     use crate::types::CardType;
     use crate::zone::Zone;
 
@@ -177,6 +162,26 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx).unwrap();
 
         // Should succeed even with no damage
+        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(game.damage_on(creature_id), 0);
+    }
+
+    #[test]
+    fn test_clear_damage_tagged_target_without_ctx_targets() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source_id = game.new_object_id();
+        let creature_id = create_creature(&mut game, "Bear", alice);
+        game.mark_damage(creature_id, 2);
+        assert_eq!(game.damage_on(creature_id), 2);
+
+        let mut ctx = ExecutionContext::new_default(source_id, alice);
+        let snapshot = ObjectSnapshot::from_object(game.object(creature_id).unwrap(), &game);
+        ctx.tag_object("clear_target", snapshot);
+
+        let effect = ClearDamageEffect::new(ChooseSpec::Tagged("clear_target".into()));
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
         assert_eq!(result.result, EffectResult::Resolved);
         assert_eq!(game.damage_on(creature_id), 0);
     }

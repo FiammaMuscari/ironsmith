@@ -3,7 +3,7 @@
 use crate::ability::AbilityKind;
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::find_target_object;
+use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -16,7 +16,7 @@ use crate::zone::Zone;
 ///
 /// # Fields
 ///
-/// * `target` - Which spell to counter (resolved from ctx.targets)
+/// * `target` - Which spell to counter
 ///
 /// # Example
 ///
@@ -51,9 +51,7 @@ impl EffectExecutor for CounterEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        // Counter removes the spell/ability from the stack
-        // Find the target in our resolved targets
-        let target_id = find_target_object(&ctx.targets)?;
+        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
 
         // Check if the spell can't be countered
         if let Some(obj) = game.object(target_id) {

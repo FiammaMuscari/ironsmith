@@ -5,7 +5,7 @@ use super::battlefield_entry::{
 };
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::find_target_object;
+use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -17,7 +17,7 @@ use crate::zone::Zone;
 ///
 /// # Fields
 ///
-/// * `target` - Which card to return (resolved from ctx.targets)
+/// * `target` - Which card to return
 /// * `tapped` - Whether the permanent enters tapped
 ///
 /// # Example
@@ -76,7 +76,7 @@ impl EffectExecutor for ReturnFromGraveyardToBattlefieldEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = find_target_object(&ctx.targets)?;
+        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
 
         // Verify target is in a graveyard
         let obj = game
@@ -128,6 +128,7 @@ mod tests {
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
+    use crate::snapshot::ObjectSnapshot;
     use crate::types::CardType;
 
     fn setup_game() -> GameState {
@@ -273,6 +274,29 @@ mod tests {
 
         // Should return error - no target
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reanimate_tagged_target_without_ctx_targets() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let creature_id = create_creature_in_graveyard(&mut game, "Griselbrand", alice);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        let snapshot = ObjectSnapshot::from_object(game.object(creature_id).unwrap(), &game);
+        ctx.tag_object("reanimate_target", snapshot);
+
+        let effect = ReturnFromGraveyardToBattlefieldEffect::new(
+            ChooseSpec::Tagged("reanimate_target".into()),
+            false,
+        );
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        let EffectResult::Objects(ids) = result.result else {
+            panic!("Expected Objects result");
+        };
+        assert_eq!(ids.len(), 1);
+        assert!(game.battlefield.contains(&ids[0]));
     }
 
     #[test]

@@ -531,6 +531,96 @@ mod tests {
     }
 
     #[test]
+    fn test_spell_has_legal_targets_with_choose_mode_allows_non_target_mode() {
+        let game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let effects = vec![Effect::choose_one(vec![
+            crate::effect::EffectMode {
+                description: "Counter target spell".to_string(),
+                effects: vec![Effect::counter(ChooseSpec::spell())],
+            },
+            crate::effect::EffectMode {
+                description: "Gain 3 life".to_string(),
+                effects: vec![Effect::gain_life(3)],
+            },
+        ])];
+
+        let has_targets = spell_has_legal_targets(&game, &effects, alice, None);
+        assert!(
+            has_targets,
+            "modal spell should be castable when at least one legal mode exists"
+        );
+    }
+
+    #[test]
+    fn test_spell_has_legal_targets_with_choose_mode_requires_enough_legal_modes() {
+        let game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let effects = vec![Effect::new(crate::effects::ChooseModeEffect::choose_exactly(
+            2,
+            vec![
+                crate::effect::EffectMode {
+                    description: "Counter target spell".to_string(),
+                    effects: vec![Effect::counter(ChooseSpec::spell())],
+                },
+                crate::effect::EffectMode {
+                    description: "Gain 3 life".to_string(),
+                    effects: vec![Effect::gain_life(3)],
+                },
+            ],
+        ))];
+
+        let has_targets = spell_has_legal_targets(&game, &effects, alice, None);
+        assert!(
+            !has_targets,
+            "choose-exactly modal spell should fail if too few legal modes exist"
+        );
+    }
+
+    #[test]
+    fn test_spell_has_legal_targets_with_mode_selection_respects_selected_mode_legality() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let effects = vec![Effect::choose_one(vec![
+            crate::effect::EffectMode {
+                description: "Counter target spell".to_string(),
+                effects: vec![Effect::counter(ChooseSpec::spell())],
+            },
+            crate::effect::EffectMode {
+                description: "Gain 3 life".to_string(),
+                effects: vec![Effect::gain_life(3)],
+            },
+        ])];
+
+        let counter_mode = [0usize];
+        let gain_mode = [1usize];
+
+        assert!(
+            !spell_has_legal_targets_with_modes(&game, &effects, alice, None, Some(&counter_mode)),
+            "counter mode should be illegal without a spell on the stack"
+        );
+        assert!(
+            spell_has_legal_targets_with_modes(&game, &effects, alice, None, Some(&gain_mode)),
+            "non-targeting mode should remain legal"
+        );
+
+        let card = CardBuilder::new(CardId::from_raw(999), "Target Spell")
+            .card_types(vec![CardType::Instant])
+            .mana_cost(crate::mana::ManaCost::from_pips(vec![vec![
+                crate::mana::ManaSymbol::Blue,
+            ]]))
+            .build();
+        let target_spell = game.create_object_from_card(&card, bob, Zone::Stack);
+        game.push_to_stack(StackEntry::new(target_spell, bob));
+
+        assert!(
+            spell_has_legal_targets_with_modes(&game, &effects, alice, None, Some(&counter_mode)),
+            "counter mode should become legal when a spell is available to target"
+        );
+    }
+
+    #[test]
     fn test_apply_blocker_declarations_allows_blocking_multiple_attackers_with_ability() {
         let mut game = setup_game();
         let mut tq = TriggerQueue::new();
@@ -2059,6 +2149,111 @@ mod tests {
         // Simulate next turn - tracking should be cleared
         game.next_turn();
         assert!(!game.ability_activated_this_turn(creature_id, 0));
+    }
+
+    #[test]
+    fn test_activate_no_more_than_twice_each_turn_restriction() {
+        use crate::ability::{AbilityKind, ActivatedAbility, ActivationTiming};
+        use crate::cost::TotalCost;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let creature_id = create_creature(&mut game, "Battleflies Test", alice, 0, 1);
+
+        game.object_mut(creature_id)
+            .unwrap()
+            .abilities
+            .push(Ability {
+                kind: AbilityKind::Activated(ActivatedAbility {
+                    mana_cost: TotalCost::free(),
+                    effects: vec![Effect::draw(1)],
+                    choices: vec![],
+                    timing: ActivationTiming::AnyTime,
+                    additional_restrictions: vec![
+                        "Activate no more than twice each turn.".to_string(),
+                    ],
+                    mana_output: None,
+                    activation_condition: None,
+                }),
+                functional_zones: vec![Zone::Battlefield],
+                text: None,
+            });
+
+        let ability = match &game
+            .object(creature_id)
+            .expect("battleflies test creature exists")
+            .abilities[0]
+            .kind
+        {
+            AbilityKind::Activated(activated) => activated.clone(),
+            _ => panic!("expected activated ability"),
+        };
+
+        assert!(
+            can_activate_ability_with_restrictions(&game, creature_id, 0, &ability),
+            "ability should be activatable before any uses this turn"
+        );
+
+        game.record_ability_activation(creature_id, 0);
+        assert!(
+            can_activate_ability_with_restrictions(&game, creature_id, 0, &ability),
+            "ability should still be activatable after first use"
+        );
+
+        game.record_ability_activation(creature_id, 0);
+        assert!(
+            !can_activate_ability_with_restrictions(&game, creature_id, 0, &ability),
+            "ability should be blocked after two uses in the same turn"
+        );
+    }
+
+    #[test]
+    fn test_non_mana_activation_condition_max_activations_per_turn_is_enforced() {
+        use crate::ability::{AbilityKind, ActivatedAbility, ActivationTiming};
+        use crate::cost::TotalCost;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let creature_id = create_creature(&mut game, "Activation Condition Test", alice, 1, 1);
+
+        game.object_mut(creature_id)
+            .unwrap()
+            .abilities
+            .push(Ability {
+                kind: AbilityKind::Activated(ActivatedAbility {
+                    mana_cost: TotalCost::free(),
+                    effects: vec![Effect::draw(1)],
+                    choices: vec![],
+                    timing: ActivationTiming::AnyTime,
+                    additional_restrictions: vec![],
+                    mana_output: None,
+                    activation_condition: Some(crate::ConditionExpr::MaxActivationsPerTurn(2)),
+                }),
+                functional_zones: vec![Zone::Battlefield],
+                text: None,
+            });
+
+        let ability = match &game
+            .object(creature_id)
+            .expect("activation condition test creature exists")
+            .abilities[0]
+            .kind
+        {
+            AbilityKind::Activated(activated) => activated.clone(),
+            _ => panic!("expected activated ability"),
+        };
+
+        assert!(can_activate_ability_with_restrictions(
+            &game, creature_id, 0, &ability
+        ));
+        game.record_ability_activation(creature_id, 0);
+        assert!(can_activate_ability_with_restrictions(
+            &game, creature_id, 0, &ability
+        ));
+        game.record_ability_activation(creature_id, 0);
+        assert!(!can_activate_ability_with_restrictions(
+            &game, creature_id, 0, &ability
+        ));
     }
 
     #[test]

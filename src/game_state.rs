@@ -202,6 +202,12 @@ pub struct CantEffectTracker {
 
     /// Players who can't cast more than one spell each turn.
     pub cant_cast_more_than_one_spell_each_turn: HashSet<PlayerId>,
+    /// Players who can't cast more than one noncreature spell each turn.
+    pub cant_cast_more_than_one_noncreature_spell_each_turn: HashSet<PlayerId>,
+    /// Players who can't cast more than one nonartifact spell each turn.
+    pub cant_cast_more_than_one_nonartifact_spell_each_turn: HashSet<PlayerId>,
+    /// Players who can't cast more than one non-Phyrexian spell each turn.
+    pub cant_cast_more_than_one_nonphyrexian_spell_each_turn: HashSet<PlayerId>,
 
     /// Players who can't draw cards.
     /// Example: Notion Thief redirecting draws
@@ -383,6 +389,12 @@ impl CantEffectTracker {
             .extend(other.cant_cast_creature_spells);
         self.cant_cast_more_than_one_spell_each_turn
             .extend(other.cant_cast_more_than_one_spell_each_turn);
+        self.cant_cast_more_than_one_noncreature_spell_each_turn
+            .extend(other.cant_cast_more_than_one_noncreature_spell_each_turn);
+        self.cant_cast_more_than_one_nonartifact_spell_each_turn
+            .extend(other.cant_cast_more_than_one_nonartifact_spell_each_turn);
+        self.cant_cast_more_than_one_nonphyrexian_spell_each_turn
+            .extend(other.cant_cast_more_than_one_nonphyrexian_spell_each_turn);
         self.cant_draw.extend(other.cant_draw);
         self.cant_draw_extra_cards
             .extend(other.cant_draw_extra_cards);
@@ -422,6 +434,12 @@ impl CantEffectTracker {
         self.cant_activate_non_mana_abilities_of.clear();
         self.cant_cast_creature_spells.clear();
         self.cant_cast_more_than_one_spell_each_turn.clear();
+        self.cant_cast_more_than_one_noncreature_spell_each_turn
+            .clear();
+        self.cant_cast_more_than_one_nonartifact_spell_each_turn
+            .clear();
+        self.cant_cast_more_than_one_nonphyrexian_spell_each_turn
+            .clear();
         self.cant_draw.clear();
         self.cant_draw_extra_cards.clear();
         self.cant_be_blocked.clear();
@@ -581,6 +599,27 @@ impl CantEffectTracker {
     pub fn can_cast_additional_spell_this_turn(&self, player: PlayerId) -> bool {
         !self
             .cant_cast_more_than_one_spell_each_turn
+            .contains(&player)
+    }
+
+    /// Check if a player can cast an additional noncreature spell this turn.
+    pub fn can_cast_additional_noncreature_spell_this_turn(&self, player: PlayerId) -> bool {
+        !self
+            .cant_cast_more_than_one_noncreature_spell_each_turn
+            .contains(&player)
+    }
+
+    /// Check if a player can cast an additional nonartifact spell this turn.
+    pub fn can_cast_additional_nonartifact_spell_this_turn(&self, player: PlayerId) -> bool {
+        !self
+            .cant_cast_more_than_one_nonartifact_spell_each_turn
+            .contains(&player)
+    }
+
+    /// Check if a player can cast an additional non-Phyrexian spell this turn.
+    pub fn can_cast_additional_nonphyrexian_spell_this_turn(&self, player: PlayerId) -> bool {
+        !self
+            .cant_cast_more_than_one_nonphyrexian_spell_each_turn
             .contains(&player)
     }
 
@@ -1620,6 +1659,24 @@ impl GameState {
     pub fn can_cast_additional_spell_this_turn(&self, player: PlayerId) -> bool {
         self.cant_effects
             .can_cast_additional_spell_this_turn(player)
+    }
+
+    /// Can the player cast another noncreature spell this turn?
+    pub fn can_cast_additional_noncreature_spell_this_turn(&self, player: PlayerId) -> bool {
+        self.cant_effects
+            .can_cast_additional_noncreature_spell_this_turn(player)
+    }
+
+    /// Can the player cast another nonartifact spell this turn?
+    pub fn can_cast_additional_nonartifact_spell_this_turn(&self, player: PlayerId) -> bool {
+        self.cant_effects
+            .can_cast_additional_nonartifact_spell_this_turn(player)
+    }
+
+    /// Can the player cast another non-Phyrexian spell this turn?
+    pub fn can_cast_additional_nonphyrexian_spell_this_turn(&self, player: PlayerId) -> bool {
+        self.cant_effects
+            .can_cast_additional_nonphyrexian_spell_this_turn(player)
     }
 
     /// Can counters be placed on this permanent?
@@ -3434,6 +3491,7 @@ impl GameState {
         crate::target::FilterContext {
             you: Some(controller),
             source,
+            caster: None,
             active_player: Some(self.turn.active_player),
             opponents,
             teammates: Vec::new(), // Team formats are not modeled yet.

@@ -352,8 +352,14 @@ enum TriggerSpec {
     BeginningOfPrecombatMain(PlayerFilter),
     ThisEntersBattlefield,
     ThisDealsCombatDamageToPlayer,
-    DealsCombatDamageToPlayer(ObjectFilter),
-    DealsCombatDamageToPlayerOneOrMore(ObjectFilter),
+    DealsCombatDamageToPlayer {
+        source: ObjectFilter,
+        player: PlayerFilter,
+    },
+    DealsCombatDamageToPlayerOneOrMore {
+        source: ObjectFilter,
+        player: PlayerFilter,
+    },
     YouCastThisSpell,
     KeywordAction {
         action: crate::events::KeywordActionKind,
@@ -2712,7 +2718,7 @@ impl CardDefinitionBuilder {
     /// Undaunted means "This spell costs {1} less to cast for each opponent."
     pub fn undaunted(self) -> Self {
         let reduction = crate::static_abilities::CostReduction::new(
-            crate::ability::SpellFilter::default(),
+            ObjectFilter::default(),
             Value::CountPlayers(PlayerFilter::Opponent),
         );
         self.with_ability(

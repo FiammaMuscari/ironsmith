@@ -2,7 +2,7 @@
 
 use crate::effect::{EffectOutcome, EffectResult, Value};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{find_target_object, resolve_value};
+use crate::effects::helpers::{resolve_single_object_from_spec, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::object::CounterType;
@@ -63,7 +63,7 @@ impl EffectExecutor for RemoveCountersEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = find_target_object(&ctx.targets)?;
+        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
         let count = resolve_value(game, &self.count, ctx)?.max(0) as u32;
 
         // Verify the object exists
@@ -227,6 +227,29 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_remove_counters_from_source_spec() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let creature_id = create_creature_with_counters(
+            &mut game,
+            "Echo Host",
+            alice,
+            CounterType::PlusOnePlusOne,
+            2,
+        );
+        let mut ctx = ExecutionContext::new_default(creature_id, alice);
+
+        let effect = RemoveCountersEffect::plus_one_counters(1, ChooseSpec::Source);
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.result, EffectResult::Count(1));
+        assert_eq!(
+            game.counter_count(creature_id, CounterType::PlusOnePlusOne),
+            1
+        );
     }
 
     #[test]

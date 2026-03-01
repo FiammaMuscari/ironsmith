@@ -1,3 +1,8 @@
+/// Compile a list of effects to human-readable text (for stack ability display).
+pub fn compile_effect_list(effects: &[Effect]) -> String {
+    describe_effect_list(effects)
+}
+
 fn describe_effect_list(effects: &[Effect]) -> String {
     let has_non_target_only = effects.iter().any(|effect| {
         effect

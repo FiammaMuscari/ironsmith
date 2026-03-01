@@ -2836,7 +2836,7 @@ pub(crate) fn parse_spells_cost_modifier_line(
     }
 
     let mut filter = if is_this_spell {
-        crate::ability::SpellFilter::default()
+        ObjectFilter::default()
     } else {
         parse_spell_filter(&subject_tokens)
     };
@@ -2875,7 +2875,7 @@ pub(crate) fn parse_spells_cost_modifier_line(
             .windows(2)
             .any(|window| window == ["you", "cast"])
         {
-            filter.controller = Some(PlayerFilter::You);
+            filter.cast_by = Some(PlayerFilter::You);
         }
         if between_words
             .iter()
@@ -2884,10 +2884,10 @@ pub(crate) fn parse_spells_cost_modifier_line(
                 .iter()
                 .any(|word| *word == "cast" || *word == "casts")
         {
-            filter.controller = Some(PlayerFilter::Opponent);
+            filter.cast_by = Some(PlayerFilter::Opponent);
         }
         let mut target_player: Option<PlayerFilter> = None;
-        let mut target_object: Option<ObjectFilter> = None;
+        let mut target_object: Option<Box<ObjectFilter>> = None;
         let mut targets_idx = None;
         for (idx, token) in between_tokens.iter().enumerate() {
             if token.is_word("target") || token.is_word("targets") {
@@ -2917,7 +2917,7 @@ pub(crate) fn parse_spells_cost_modifier_line(
             {
                 target_player = Some(PlayerFilter::Any);
             } else {
-                target_object = Some(parse_object_filter(target_tokens, false)?);
+                target_object = Some(Box::new(parse_object_filter(target_tokens, false)?));
             }
             filter.targets_player = target_player;
             filter.targets_object = target_object;
@@ -3088,7 +3088,7 @@ pub(crate) fn parse_spells_cost_modifier_line(
 }
 
 pub(crate) fn parse_trailing_targets_condition_in_cost_modifier(
-    filter: &mut crate::ability::SpellFilter,
+    filter: &mut ObjectFilter,
     remaining_tokens: &[Token],
     clause_words: &[&str],
 ) -> Result<(), CardTextError> {
@@ -3138,7 +3138,7 @@ pub(crate) fn parse_trailing_targets_condition_in_cost_modifier(
         return Ok(());
     }
 
-    filter.targets_object = Some(parse_object_filter(target_tokens, false)?);
+    filter.targets_object = Some(Box::new(parse_object_filter(target_tokens, false)?));
     filter.targets_player = None;
     Ok(())
 }
@@ -3175,13 +3175,13 @@ pub(crate) fn parse_flashback_cost_modifier_line(
         ));
     }
 
-    let mut filter = crate::ability::SpellFilter::default();
+    let mut filter = ObjectFilter::default();
     filter.alternative_cast = Some(crate::filter::AlternativeCastKind::Flashback);
     if clause_words
         .windows(2)
         .any(|window| window == ["you", "pay"])
     {
-        filter.controller = Some(PlayerFilter::You);
+        filter.cast_by = Some(PlayerFilter::You);
     } else if clause_words
         .windows(3)
         .any(|window| window == ["your", "opponents", "pay"])
@@ -3189,7 +3189,7 @@ pub(crate) fn parse_flashback_cost_modifier_line(
             .windows(2)
             .any(|window| window == ["opponents", "pay"] || window == ["opponent", "pays"])
     {
-        filter.controller = Some(PlayerFilter::Opponent);
+        filter.cast_by = Some(PlayerFilter::Opponent);
     }
 
     if is_less {

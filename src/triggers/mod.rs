@@ -407,14 +407,19 @@ impl Trigger {
         Self::new(ThisDealsDamageToTrigger::combat_only(filter))
     }
 
-    /// Create a "when [filter] deals combat damage to a player" trigger.
-    pub fn deals_combat_damage_to_player(filter: ObjectFilter) -> Self {
-        Self::new(DealsCombatDamageToPlayerTrigger::new(filter))
+    /// Create a "when [filter] deals combat damage to [player]" trigger.
+    pub fn deals_combat_damage_to_player(filter: ObjectFilter, player: PlayerFilter) -> Self {
+        Self::new(DealsCombatDamageToPlayerTrigger::new(filter, player))
     }
 
-    /// Create a "when one or more [filter] deal combat damage to a player" trigger.
-    pub fn deals_combat_damage_to_player_one_or_more(filter: ObjectFilter) -> Self {
-        Self::new(DealsCombatDamageToPlayerTrigger::one_or_more(filter))
+    /// Create a "when one or more [filter] deal combat damage to [player]" trigger.
+    pub fn deals_combat_damage_to_player_one_or_more(
+        filter: ObjectFilter,
+        player: PlayerFilter,
+    ) -> Self {
+        Self::new(DealsCombatDamageToPlayerTrigger::one_or_more(
+            filter, player,
+        ))
     }
 
     /// Create a "when [filter] deals combat damage" trigger.

@@ -1698,9 +1698,10 @@ fn parse_trigger_clause_player_subject_combat_damage_uses_one_or_more() {
     let tokens = tokenize_line("you deal combat damage to a player", 0);
     let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
     match trigger {
-        TriggerSpec::DealsCombatDamageToPlayerOneOrMore(filter) => {
-            assert_eq!(filter.controller, Some(PlayerFilter::You));
-            assert!(filter.card_types.contains(&CardType::Creature));
+        TriggerSpec::DealsCombatDamageToPlayerOneOrMore { source, player } => {
+            assert_eq!(source.controller, Some(PlayerFilter::You));
+            assert!(source.card_types.contains(&CardType::Creature));
+            assert_eq!(player, PlayerFilter::Any);
         }
         other => panic!("expected DealsCombatDamageToPlayerOneOrMore trigger, got {other:?}"),
     }
@@ -1742,8 +1743,22 @@ fn parse_trigger_clause_combat_damage_to_one_of_your_opponents() {
     let tokens = tokenize_line("a creature deals combat damage to one of your opponents", 0);
     let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
     match trigger {
-        TriggerSpec::DealsCombatDamageToPlayer(filter) => {
-            assert!(filter.card_types.contains(&CardType::Creature));
+        TriggerSpec::DealsCombatDamageToPlayer { source, player } => {
+            assert!(source.card_types.contains(&CardType::Creature));
+            assert_eq!(player, PlayerFilter::Opponent);
+        }
+        other => panic!("expected DealsCombatDamageToPlayer trigger, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_trigger_clause_combat_damage_to_you() {
+    let tokens = tokenize_line("a creature deals combat damage to you", 0);
+    let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
+    match trigger {
+        TriggerSpec::DealsCombatDamageToPlayer { source, player } => {
+            assert!(source.card_types.contains(&CardType::Creature));
+            assert_eq!(player, PlayerFilter::You);
         }
         other => panic!("expected DealsCombatDamageToPlayer trigger, got {other:?}"),
     }

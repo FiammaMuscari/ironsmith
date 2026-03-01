@@ -25,7 +25,7 @@ pub enum BattlefieldController {
 ///
 /// # Fields
 ///
-/// * `target` - Which object to move (resolved from ctx.targets)
+/// * `target` - Which object to move (resolved from `ChooseSpec`)
 /// * `zone` - The destination zone
 /// * `to_top` - If moving to library, whether to put on top (vs bottom)
 ///

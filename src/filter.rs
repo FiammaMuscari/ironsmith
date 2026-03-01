@@ -89,6 +89,9 @@ pub struct FilterContext {
     /// The source object of the ability
     pub source: Option<ObjectId>,
 
+    /// The player casting the spell currently being evaluated, if any.
+    pub caster: Option<PlayerId>,
+
     /// The active player (whose turn it is)
     pub active_player: Option<PlayerId>,
 
@@ -130,6 +133,12 @@ impl FilterContext {
     /// Set the source object.
     pub fn with_source(mut self, source: ObjectId) -> Self {
         self.source = Some(source);
+        self
+    }
+
+    /// Set the caster for cast-context filter evaluation.
+    pub fn with_caster(mut self, caster: Option<PlayerId>) -> Self {
+        self.caster = caster;
         self
     }
 
@@ -456,6 +465,11 @@ pub struct ObjectFilter {
 
     /// Controller filter (None = any controller)
     pub controller: Option<PlayerFilter>,
+
+    /// Caster filter for spell-card evaluation (None = any caster).
+    ///
+    /// This is used for phrases like "spells you cast".
+    pub cast_by: Option<PlayerFilter>,
 
     /// Owner filter (None = any owner)
     pub owner: Option<PlayerFilter>,
@@ -897,6 +911,17 @@ impl ObjectFilter {
     pub fn controlled_by(mut self, controller: PlayerFilter) -> Self {
         self.controller = Some(controller);
         self
+    }
+
+    /// Set the caster filter for spell matching.
+    pub fn cast_by(mut self, caster: PlayerFilter) -> Self {
+        self.cast_by = Some(caster);
+        self
+    }
+
+    /// Require the object to be cast by "you".
+    pub fn cast_by_you(self) -> Self {
+        self.cast_by(PlayerFilter::You)
     }
 
     /// Require the object to be controlled by "you" (the source's controller).
@@ -1463,6 +1488,23 @@ impl ObjectFilter {
             && !controller_filter.matches_player(object.controller, ctx)
         {
             return false;
+        }
+
+        // Caster check
+        if let Some(caster_filter) = &self.cast_by {
+            let cast_player = ctx.caster.or_else(|| {
+                if object.zone == Zone::Stack {
+                    stack_entry.map(|entry| entry.controller)
+                } else {
+                    None
+                }
+            });
+            let Some(cast_player) = cast_player else {
+                return false;
+            };
+            if !caster_filter.matches_player(cast_player, ctx) {
+                return false;
+            }
         }
 
         // Owner check
@@ -2180,6 +2222,23 @@ impl ObjectFilter {
             return false;
         }
 
+        // Caster check
+        if let Some(caster_filter) = &self.cast_by {
+            let cast_player = ctx.caster.or_else(|| {
+                if snapshot.zone == Zone::Stack {
+                    Some(snapshot.controller)
+                } else {
+                    None
+                }
+            });
+            let Some(cast_player) = cast_player else {
+                return false;
+            };
+            if !caster_filter.matches_player(cast_player, ctx) {
+                return false;
+            }
+        }
+
         // Owner check
         if let Some(owner_filter) = &self.owner
             && !owner_filter.matches_player(snapshot.owner, ctx)
@@ -2791,6 +2850,10 @@ impl ObjectFilter {
                 PlayerFilter::ControllerOf(_) => parts.push("a controller's".to_string()),
                 PlayerFilter::OwnerOf(_) => parts.push("an owner's".to_string()),
             }
+        }
+
+        if let Some(cast_by) = &self.cast_by {
+            post_noun_qualifiers.push(format!("cast by {}", describe_player_filter(cast_by)));
         }
 
         // Handle owner on object-level filters (battlefield/stack/any-zone object references).
@@ -3975,6 +4038,7 @@ fn describe_counter_type(counter_type: CounterType) -> String {
     match counter_type {
         CounterType::PlusOnePlusOne => "+1/+1".to_string(),
         CounterType::MinusOneMinusOne => "-1/-1".to_string(),
+        CounterType::Named(name) => name.to_string(),
         other => format!("{other:?}").to_ascii_lowercase(),
     }
 }
@@ -4180,6 +4244,86 @@ mod tests {
         assert!(
             filter.matches(object, &ctx, &game),
             "spell cast with a graveyard alternative method should satisfy graveyard origin filter"
+        );
+    }
+
+    #[test]
+    fn test_filter_cast_by_matches_context_caster_for_nonstack_cards() {
+        use crate::card::CardBuilder;
+        use crate::ids::CardId;
+        use crate::zone::Zone;
+
+        let mut game =
+            crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let spell = CardBuilder::new(CardId::from_raw(3), "Borrowed Probe")
+            .card_types(vec![CardType::Instant])
+            .build();
+        let spell_id = game.create_object_from_card(&spell, bob, Zone::Exile);
+        let object = game.object(spell_id).expect("spell card should exist");
+
+        let filter = ObjectFilter::default()
+            .with_type(CardType::Instant)
+            .cast_by_you();
+        let alice_casting_ctx = FilterContext::new(alice).with_caster(Some(alice));
+        assert!(
+            filter.matches(object, &alice_casting_ctx, &game),
+            "cast-by filter should use context caster for non-stack card objects"
+        );
+
+        let bob_casting_ctx = FilterContext::new(alice).with_caster(Some(bob));
+        assert!(
+            !filter.matches(object, &bob_casting_ctx, &game),
+            "cast-by filter should reject when context caster does not match"
+        );
+
+        let no_caster_ctx = FilterContext::new(alice);
+        assert!(
+            !filter.matches(object, &no_caster_ctx, &game),
+            "cast-by filter should not match non-stack cards without explicit caster context"
+        );
+    }
+
+    #[test]
+    fn test_filter_cast_by_uses_stack_controller_when_caster_missing() {
+        use crate::alternative_cast::CastingMethod;
+        use crate::card::CardBuilder;
+        use crate::game_state::StackEntry;
+        use crate::ids::CardId;
+        use crate::mana::{ManaCost, ManaSymbol};
+        use crate::zone::Zone;
+
+        let mut game =
+            crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let spell = CardBuilder::new(CardId::from_raw(4), "Stack Probe")
+            .card_types(vec![CardType::Instant])
+            .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Blue]]))
+            .build();
+        let hand_id = game.create_object_from_card(&spell, alice, Zone::Hand);
+        let stack_id = game
+            .move_object(hand_id, Zone::Stack)
+            .expect("move spell to stack");
+        game.push_to_stack(
+            StackEntry::new(stack_id, alice).with_casting_method(CastingMethod::Normal),
+        );
+        game.spell_cast_order_this_turn.insert(stack_id, 1);
+
+        let filter = ObjectFilter::spell().cast_by_you();
+        let object = game.object(stack_id).expect("stack spell should exist");
+        let alice_ctx = FilterContext::new(alice);
+        assert!(
+            filter.matches(object, &alice_ctx, &game),
+            "cast-by filter should fall back to stack controller when caster context is absent"
+        );
+        let bob_ctx = FilterContext::new(bob);
+        assert!(
+            !filter.matches(object, &bob_ctx, &game),
+            "cast-by filter should respect 'you' against the stack spell controller"
         );
     }
 

@@ -25,6 +25,90 @@ fn strip_parenthetical(text: &str) -> String {
     out
 }
 
+fn rewrite_grant_play_tagged_effect_scaffolding(text: &str) -> String {
+    let markers = [
+        "you may Effect(GrantPlayTaggedEffect",
+        "You may Effect(GrantPlayTaggedEffect",
+    ];
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+
+    while cursor < text.len() {
+        let mut next_match: Option<(usize, &str)> = None;
+        for marker in markers {
+            if let Some(rel) = text[cursor..].find(marker) {
+                let idx = cursor + rel;
+                if next_match.map_or(true, |(best_idx, _)| idx < best_idx) {
+                    next_match = Some((idx, marker));
+                }
+            }
+        }
+
+        let Some((start, marker)) = next_match else {
+            out.push_str(&text[cursor..]);
+            break;
+        };
+
+        out.push_str(&text[cursor..start]);
+        let Some(open_offset) = marker.find('(') else {
+            out.push_str(marker);
+            cursor = start + marker.len();
+            continue;
+        };
+        let open_idx = start + open_offset;
+        let mut idx = open_idx;
+        let mut depth = 0u32;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut end_idx = text.len();
+
+        while idx < text.len() {
+            let ch = text[idx..].chars().next().unwrap();
+            let ch_len = ch.len_utf8();
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+                idx += ch_len;
+                continue;
+            }
+
+            if ch == '"' {
+                in_string = true;
+                idx += ch_len;
+                continue;
+            }
+
+            if ch == '(' {
+                depth += 1;
+            } else if ch == ')' {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end_idx = idx + ch_len;
+                    break;
+                }
+            }
+            idx += ch_len;
+        }
+
+        let effect_call = &text[start..end_idx];
+        if effect_call.contains("UntilYourNextTurn") {
+            out.push_str("you may play that card until your next turn");
+        } else if effect_call.contains("UntilEndOfTurn") {
+            out.push_str("you may play that card this turn");
+        } else {
+            out.push_str(effect_call);
+        }
+        cursor = end_idx;
+    }
+
+    out
+}
+
 fn looks_like_reminder_quote(content: &str) -> bool {
     let lower = content
         .trim()
@@ -310,6 +394,12 @@ fn split_common_clause_conjunctions(text: &str) -> String {
 
     normalized = strip_compiled_prefixes(&normalized);
     normalized = strip_not_named_phrase(&normalized);
+    normalized = normalized
+        .replace("Flashback—", "Flashback ")
+        .replace("flashback—", "flashback ")
+        .replace("Buyback—", "Buyback ")
+        .replace("buyback—", "buyback ")
+        .replace(" a a ", " a ");
     let normalized_lower = normalized.to_ascii_lowercase();
     if normalized_lower.starts_with(
         "target opponent chooses target creature an opponent controls. exile it. exile all ",
@@ -318,6 +408,19 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     {
         normalized =
             "Target opponent exiles a creature they control and their graveyard.".to_string();
+    }
+    // Canonicalize expanded keyword scaffolding for comparison.
+    if normalized.contains("SoulbondPairEffect") {
+        normalized = "Soulbond".to_string();
+    }
+    if normalized.eq_ignore_ascii_case("Whenever a creature you control enters, effect") {
+        normalized = "Soulbond".to_string();
+    }
+    let normalized_lower = normalized.to_ascii_lowercase();
+    if normalized_lower.starts_with(
+        "whenever this creature attacks the player with the most life or tied for most life, put a +1/+1 counter on this creature",
+    ) {
+        normalized = "Dethrone".to_string();
     }
     for (from, to) in [
         (
@@ -396,6 +499,55 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         "whenever another creature enters under your control",
         "whenever another creature you control enters",
     );
+    normalized = normalized
+        .replace("Each land is a ", "Lands are ")
+        .replace("each land is a ", "lands are ")
+        .replace(
+            "As long as this is paired with another creature each of those creatures has ",
+            "As long as this creature is paired with another creature, each of those creatures has ",
+        )
+        .replace(
+            "as long as this is paired with another creature each of those creatures has ",
+            "as long as this creature is paired with another creature, each of those creatures has ",
+        );
+    normalized = normalized
+        .replace(
+            "target opponent's nonland spell or an opponent's nonland permanent",
+            "target spell or nonland permanent an opponent controls",
+        )
+        .replace(
+            "Target opponent's nonland spell or an opponent's nonland permanent",
+            "Target spell or nonland permanent an opponent controls",
+        )
+        .replace(
+            "target opponent's nonland permanent",
+            "target nonland permanent an opponent controls",
+        )
+        .replace(
+            "Target opponent's nonland permanent",
+            "Target nonland permanent an opponent controls",
+        );
+    for (from, to) in [
+        (
+            " from your hand if you dont this land enters tapped",
+            " from your hand. If you don't, this land enters tapped",
+        ),
+        (
+            " from your hand if you don't this land enters tapped",
+            " from your hand. If you don't, this land enters tapped",
+        ),
+        (
+            " from your hand if you dont this permanent enters tapped",
+            " from your hand. If you don't, this permanent enters tapped",
+        ),
+        (
+            " from your hand if you don't this permanent enters tapped",
+            " from your hand. If you don't, this permanent enters tapped",
+        ),
+    ] {
+        normalized = normalized.replace(from, to);
+        normalized = normalized.replace(&from.to_ascii_lowercase(), &to.to_ascii_lowercase());
+    }
 
     // Canonicalize "no permanents other than this <type>" to "no other permanents".
     // This wording difference is semantically irrelevant (it's a self-reference), but
@@ -479,6 +631,27 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     ] {
         normalized = normalized.replace(from, to);
     }
+    for (from, to) in [
+        (
+            " until this enchantment leaves the battlefield and you get ",
+            " until this enchantment leaves the battlefield. You get ",
+        ),
+        (
+            " until this artifact leaves the battlefield and you get ",
+            " until this artifact leaves the battlefield. You get ",
+        ),
+        (
+            " until this permanent leaves the battlefield and you get ",
+            " until this permanent leaves the battlefield. You get ",
+        ),
+        (
+            " until this creature leaves the battlefield and you get ",
+            " until this creature leaves the battlefield. You get ",
+        ),
+    ] {
+        normalized = normalized.replace(from, to);
+        normalized = normalized.replace(&from.to_ascii_lowercase(), &to.to_ascii_lowercase());
+    }
 
     // Normalize clauses that omit the subject.
     if normalized.starts_with("Can't attack unless defending player controls ") {
@@ -551,6 +724,43 @@ fn split_common_clause_conjunctions(text: &str) -> String {
             right.trim_end_matches('.')
         );
     }
+    if let Some((left, right)) = normalized.split_once(". it gains ")
+        && {
+            let left_lower = left.to_ascii_lowercase();
+            left_lower.contains("target creature gets ")
+                || (left_lower.contains("target ") && left_lower.contains(" creature gets "))
+        }
+    {
+        normalized = format!("{} and gains {}", left.trim_end_matches('.'), right.trim());
+    }
+    if let Some((left, right)) = normalized.split_once(". It gains ")
+        && {
+            let left_lower = left.to_ascii_lowercase();
+            left_lower.contains("target creature gets ")
+                || (left_lower.contains("target ") && left_lower.contains(" creature gets "))
+        }
+    {
+        normalized = format!("{} and gains {}", left.trim_end_matches('.'), right.trim());
+    }
+    if let Some((left, right)) = normalized
+        .split_once(" control you may spend mana as though it were mana of any color to activate those abilities")
+        && left
+            .to_ascii_lowercase()
+            .contains("has all activated abilities of all creatures your opponents")
+    {
+        let tail = right.trim();
+        normalized = if tail.is_empty() {
+            format!(
+                "{} control. You may spend mana as though it were mana of any color to activate those abilities",
+                left.trim_end_matches('.')
+            )
+        } else {
+            format!(
+                "{} control. You may spend mana as though it were mana of any color to activate those abilities {tail}",
+                left.trim_end_matches('.')
+            )
+        };
+    }
     normalized = normalized.replace(
         "that an opponent's land could produce",
         "that a land an opponent controls could produce",
@@ -617,6 +827,45 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         .replace(": It deals ", ": This creature deals ")
         .replace(": it deals ", ": this creature deals ")
         .replace(
+            "Add 2 mana in any combination of {W} and/or {U} and/or {B} and/or {R} and/or {G}",
+            "Add two mana in any combination of colors",
+        )
+        .replace(
+            "add 2 mana in any combination of {w} and/or {u} and/or {b} and/or {r} and/or {g}",
+            "add two mana in any combination of colors",
+        )
+        .replace(
+            "Whenever a player taps a enchanted ",
+            "Whenever enchanted ",
+        )
+        .replace(
+            "whenever a player taps a enchanted ",
+            "whenever enchanted ",
+        )
+        .replace(
+            "Whenever a player taps an enchanted ",
+            "Whenever enchanted ",
+        )
+        .replace(
+            "whenever a player taps an enchanted ",
+            "whenever enchanted ",
+        )
+        .replace(" for mana: Add ", " is tapped for mana, its controller adds ")
+        .replace(" for mana: add ", " is tapped for mana, its controller adds ")
+        .replace(" for mana: Add {", " for mana, add an additional {")
+        .replace(" for mana: add {", " for mana, add an additional {")
+        .replace("that object's controller adds ", "its controller adds ")
+        .replace(
+            " for mana: its controller adds ",
+            " is tapped for mana, its controller adds ",
+        )
+        .replace(" is tapped for mana, its controller adds {", " is tapped for mana, its controller adds an additional {")
+        .replace(
+            "adds one mana of the chosen color",
+            "adds an additional one mana of the chosen color",
+        )
+        .replace(" to its controller's mana pool", "")
+        .replace(
             "have t add one mana of any color",
             "have {T}: add one mana of any color",
         )
@@ -630,9 +879,19 @@ fn split_common_clause_conjunctions(text: &str) -> String {
             "have t this creature deals ",
             "have {T}: this creature deals ",
         )
+        .replace("they pays", "they pay")
+        .replace("They pays", "They pay")
+        .replace("they pays ", "they pay ")
+        .replace("They pays ", "They pay ")
+        .replace("mills its power cards", "mills cards equal to its power")
+        .replace("Mills its power cards", "mills cards equal to its power")
+        .replace("the sacrificed creature's power", "its power")
+        .replace("The sacrificed creature's power", "its power")
+        .replace("named(\"wish\") counters", "wish counters")
+        .replace("named(\"wish\") counter", "wish counter")
         .replace(
-            "target creature an opponent controls",
-            "target creature you don't control",
+            "Remove a wish counter from this artifact: Search your library for a card, put it into your hand, then shuffle. an opponent gains control of this artifact",
+            "Remove a wish counter from this artifact: Search your library for a card, put it into your hand, then shuffle. An opponent gains control of this artifact",
         )
         .replace(
             "This creature can't block and can't be blocked",
@@ -655,9 +914,174 @@ fn split_common_clause_conjunctions(text: &str) -> String {
             "Exile a card from your hand",
         )
         .replace(
+            "choose up to one - ",
+            "choose up to one — ",
+        )
+        .replace(
+            "Choose up to one - ",
+            "Choose up to one — ",
+        )
+        .replace(
+            "choose up to one - Return ",
+            "choose up to one — Return ",
+        )
+        .replace(
+            "Choose up to one - Return ",
+            "Choose up to one — Return ",
+        )
+        .replace(
+            "choose up to one —. Return ",
+            "choose up to one — Return ",
+        )
+        .replace(
+            "Choose up to one —. Return ",
+            "Choose up to one — Return ",
+        )
+        .replace(
+            ", choose up to one — Return ",
+            ", choose up to one —. Return ",
+        )
+        .replace(
+            ", choose up to one — ",
+            ", choose up to one —. ",
+        )
+        .replace(
+            ", Choose up to one — Return ",
+            ", Choose up to one —. Return ",
+        )
+        .replace(
+            ", Choose up to one — ",
+            ", Choose up to one —. ",
+        )
+        .replace(
+            ": choose up to one — Return ",
+            ": choose up to one —. Return ",
+        )
+        .replace(
+            ": choose up to one — ",
+            ": choose up to one —. ",
+        )
+        .replace(
+            ": Choose up to one — Return ",
+            ": Choose up to one —. Return ",
+        )
+        .replace(
+            ": Choose up to one — ",
+            ": Choose up to one —. ",
+        )
+        .replace(
             ", choose another target attacking creature. another target attacking creature ",
             ", another target attacking creature ",
+        )
+        .replace(
+            "If that doesn't happen, you lose the game",
+            "If you don't, you lose the game",
+        )
+        .replace(
+            "if that doesn't happen, you lose the game",
+            "if you don't, you lose the game",
+        )
+        .replace("unless you Pay ", "unless you pay ")
+        .replace("Unless you Pay ", "Unless you pay ")
+        .replace(
+            "exile all cards from target player's graveyard",
+            "exile target player's graveyard",
+        )
+        .replace(
+            "Exile all cards from target player's graveyard",
+            "Exile target player's graveyard",
+        )
+        .replace(
+            "except it has haste and \"At the beginning of the end step, exile this token.\"",
+            "with haste, and exile it at the beginning of the next end step",
+        )
+        .replace(
+            "except it has haste and \"at the beginning of the end step, exile this token.\"",
+            "with haste, and exile it at the beginning of the next end step",
+        )
+        .replace(
+            "except their power is half that creature's power and their toughness is half that creature's toughness. Round up each time",
+            "except their power and toughness are each half that creature's power and toughness, rounded up",
+        )
+        .replace(
+            "except their power is half that permanent's power and their toughness is half that permanent's toughness. Round up each time",
+            "except their power and toughness are each half that permanent's power and toughness, rounded up",
+        )
+        .replace(". Round up each time", ", rounded up")
+        .replace(". round up each time", ", rounded up")
+        .replace(
+            "If that permanent dies this way, Create two tokens that are copies of it under its controller's control, except",
+            "If that creature dies this way, its controller creates two tokens that are copies of that creature, except",
+        )
+        .replace(
+            "if that permanent dies this way, create two tokens that are copies of it under its controller's control, except",
+            "if that creature dies this way, its controller creates two tokens that are copies of that creature, except",
+        )
+        .replace(
+            "number of card exileds with this Vehicle",
+            "number of cards exiled with this Vehicle",
+        )
+        .replace(
+            "number of card exileds with this creature",
+            "number of cards exiled with this creature",
+        )
+        .replace(
+            "number of card exileds with this permanent",
+            "number of cards exiled with this permanent",
+        )
+        .replace(
+            "This Saga gains \"{T}: Add {C}.\"",
+            "Grant {T}: Add {C} to this Saga",
+        )
+        .replace(
+            "this Saga gains \"{T}: Add {C}.\"",
+            "grant {T}: add {C} to this Saga",
+        )
+        .replace(
+            "artifact card with mana cost {0} or {1}",
+            "artifact card with mana value 1 or less",
+        )
+        .replace(
+            "Artifact card with mana cost {0} or {1}",
+            "Artifact card with mana value 1 or less",
         );
+    if let Some((prefix, add_tail)) = normalized.split_once(": Add ")
+        && add_tail.contains(", {")
+        && add_tail.contains(", or {")
+        && add_tail.trim().starts_with('{')
+    {
+        normalized = format!(
+            "{prefix}: Add {}",
+            add_tail.replace(", or ", " or ").replace(", ", " or ")
+        );
+    }
+    if let Some((prefix, add_tail)) = normalized.split_once(": add ")
+        && add_tail.contains(", {")
+        && add_tail.contains(", or {")
+        && add_tail.trim().starts_with('{')
+    {
+        normalized = format!(
+            "{prefix}: add {}",
+            add_tail.replace(", or ", " or ").replace(", ", " or ")
+        );
+    }
+    if normalized
+        .to_ascii_lowercase()
+        .starts_with("whenever you tap ")
+        && normalized.contains(" is tapped for mana, its controller adds ")
+    {
+        normalized = normalized.replace(
+            " is tapped for mana, its controller adds ",
+            " for mana, add ",
+        );
+    }
+    if normalized
+        .to_ascii_lowercase()
+        .starts_with("whenever you tap ")
+        && normalized.contains(" for mana, add {")
+    {
+        normalized = normalized.replace(" for mana, add {", " for mana, add an additional {");
+    }
     if normalized.starts_with("Surveil ") || normalized.starts_with("surveil ") {
         normalized = normalized
             .replace(", then draw ", ". Draw ")
@@ -750,17 +1174,40 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     if let Some(rest) = normalized.strip_prefix("Choose one or both — ") {
         normalized = format!("Choose one or both —. {rest}");
     }
+    if let Some(rest) = normalized.strip_prefix("Choose up to one — ") {
+        normalized = format!("Choose up to one —. {rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("choose up to one — ") {
+        normalized = format!("choose up to one —. {rest}");
+    }
+    if let Some(cost) = normalized
+        .strip_prefix("At the beginning of your upkeep, you pay ")
+        .and_then(|rest| rest.strip_suffix(". If you don't, you lose the game"))
+    {
+        normalized = format!(
+            "At the beginning of your next upkeep, pay {cost}. If you don't, you lose the game"
+        );
+    } else if let Some(cost) = normalized
+        .strip_prefix("at the beginning of your upkeep, you pay ")
+        .and_then(|rest| rest.strip_suffix(". if you don't, you lose the game"))
+    {
+        normalized = format!(
+            "at the beginning of your next upkeep, pay {cost}. if you don't, you lose the game"
+        );
+    }
 
-    let normalized = normalized
+    let mut normalized = normalized
+        .replace("choose up to one -", "choose up to one —")
+        .replace("Choose up to one -", "Choose up to one —")
         .replace(" • ", ". ")
         .replace("• ", ". ")
         .replace(
             "Activate only during your turn, before attackers are declared",
-            "",
+            "Activate only during your turn before attackers are declared",
         )
         .replace(
             "activate only during your turn, before attackers are declared",
-            "",
+            "activate only during your turn before attackers are declared",
         )
         .replace(
             "Activate only during your turn and Activate only during your turn before attackers are declared",
@@ -770,8 +1217,6 @@ fn split_common_clause_conjunctions(text: &str) -> String {
             "activate only during your turn and activate only during your turn before attackers are declared",
             "activate only during your turn",
         )
-        .replace(" Activate only during your turn", "")
-        .replace(" activate only during your turn", "")
         .replace(" and untap it", ". Untap it")
         .replace(". Untap it", ". Untap that creature")
         .replace(" and untap that creature", ". Untap it")
@@ -780,6 +1225,30 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         .replace(" and investigate", ". Investigate")
         .replace(" and draw a card", ". Draw a card")
         .replace(" and discard a card", ". Discard a card")
+        .replace(
+            ": you draw a card. target opponent draws a card",
+            ": You and target opponent each draw a card",
+        )
+        .replace(
+            ": draw a card. target opponent draws a card",
+            ": You and target opponent each draw a card",
+        )
+        .replace(
+            ": You draw a card. target opponent draws a card",
+            ": You and target opponent each draw a card",
+        )
+        .replace(
+            ": you draw a card. Target opponent draws a card",
+            ": You and target opponent each draw a card",
+        )
+        .replace(
+            ": draw a card. Target opponent draws a card",
+            ": You and target opponent each draw a card",
+        )
+        .replace(
+            ": You draw a card. Target opponent draws a card",
+            ": You and target opponent each draw a card",
+        )
         .replace(" and this creature deals ", ". Deal ")
         .replace(" and this permanent deals ", ". Deal ")
         .replace(" and this spell deals ", ". Deal ")
@@ -808,6 +1277,14 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         .replace("sacrifice a land you control", "sacrifice a land")
         .replace("Sacrifice a land you control", "Sacrifice a land")
         .replace(
+            "sacrifice a nonland permanent you control",
+            "sacrifice a nonland permanent",
+        )
+        .replace(
+            "Sacrifice a nonland permanent you control",
+            "Sacrifice a nonland permanent",
+        )
+        .replace(
             "sacrifice three creatures you control",
             "sacrifice three creatures",
         )
@@ -825,14 +1302,60 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         )
         .replace(
             "Destroy target tagged object 'enchanted'",
-            "Destroy enchanted creature",
+            "Destroy enchanted object",
         )
         .replace(
             "destroy target tagged object 'enchanted'",
-            "destroy enchanted creature",
+            "destroy enchanted object",
+        )
+        .replace(
+            "this creature enters or this creature attacks",
+            "this creature enters or attacks",
+        )
+        .replace(
+            "this permanent enters or this permanent attacks",
+            "this permanent enters or attacks",
         )
         .replace("Counter spell", "Counter that spell")
         .replace("counter spell", "counter that spell");
+    let lower_normalized = normalized.to_ascii_lowercase();
+    if lower_normalized.contains("copy target instant or sorcery spell")
+        || lower_normalized.contains("copy target instant and sorcery spell")
+    {
+        normalized = normalized
+            .replace(
+                "target instant and sorcery spell 1 time(s)",
+                "target instant or sorcery spell",
+            )
+            .replace(
+                "Target instant and sorcery spell 1 time(s)",
+                "Target instant or sorcery spell",
+            )
+            .replace(
+                "target instant and sorcery spell",
+                "target instant or sorcery spell",
+            )
+            .replace(
+                "choose new targets for this spell",
+                "choose new targets for the copy",
+            );
+        normalized = normalized.replace(
+            "choose new targets for it",
+            "choose new targets for the copy",
+        );
+    }
+    if normalized
+        .to_ascii_lowercase()
+        .contains("if that creature dies this way")
+        && normalized
+            .to_ascii_lowercase()
+            .contains("copies of that creature")
+    {
+        normalized = normalized.replace(
+            "half that permanent's power and toughness",
+            "half that creature's power and toughness",
+        );
+    }
     let normalized = normalized
         .replace(
             "Remove a counter from among permanents you control",
@@ -852,6 +1375,71 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         .replace("if effect #0 that doesn't happen", "if you don't")
         .replace("If effect #0 happened", "If you do")
         .replace("if effect #0 happened", "if you do");
+
+    if let Some((prefix, _)) = normalized.split_once("you may Effect(GrantPlayTaggedEffect")
+        && normalized.contains("UntilEndOfTurn")
+    {
+        normalized = format!("{prefix}you may play that card this turn");
+    } else if let Some((prefix, _)) = normalized.split_once("You may Effect(GrantPlayTaggedEffect")
+        && normalized.contains("UntilEndOfTurn")
+    {
+        normalized = format!("{prefix}you may play that card this turn");
+    } else if let Some((prefix, _)) = normalized.split_once("you may Effect(GrantPlayTaggedEffect")
+        && normalized.contains("UntilYourNextTurn")
+    {
+        normalized = format!("{prefix}you may play that card until your next turn");
+    } else if let Some((prefix, _)) = normalized.split_once("You may Effect(GrantPlayTaggedEffect")
+        && normalized.contains("UntilYourNextTurn")
+    {
+        normalized = format!("{prefix}you may play that card until your next turn");
+    }
+    if normalized.contains("GrantPlayTaggedEffect") && normalized.contains("UntilEndOfTurn") {
+        normalized = normalized
+            .replace(
+                "you may Effect(GrantPlayTaggedEffect",
+                "you may play that card this turn",
+            )
+            .replace(
+                "You may Effect(GrantPlayTaggedEffect",
+                "you may play that card this turn",
+            );
+        if let Some(idx) = normalized.find("play that card this turn") {
+            normalized = normalized[..idx + "play that card this turn".len()].to_string();
+        }
+    }
+    if normalized.contains("GrantPlayTaggedEffect") && normalized.contains("UntilYourNextTurn") {
+        normalized = normalized
+            .replace(
+                "you may Effect(GrantPlayTaggedEffect",
+                "you may play that card until your next turn",
+            )
+            .replace(
+                "You may Effect(GrantPlayTaggedEffect",
+                "you may play that card until your next turn",
+            );
+        if let Some(idx) = normalized.find("play that card until your next turn") {
+            normalized =
+                normalized[..idx + "play that card until your next turn".len()].to_string();
+        }
+    }
+
+    let normalized_trimmed = normalized.trim().trim_end_matches('.').trim();
+    let normalized_lower = normalized_trimmed.to_ascii_lowercase();
+    if normalized_lower == "this creature enters with an echo counter on it"
+        || normalized_lower == "this permanent enters with an echo counter on it"
+    {
+        normalized.clear();
+    } else if normalized_lower
+        .starts_with("at the beginning of your upkeep, remove an echo counter from this ")
+        && normalized_lower.contains(" unless you pay ")
+    {
+        if let Some(idx) = normalized_lower.find(" unless you pay ") {
+            let cost = normalized_trimmed[idx + " unless you pay ".len()..]
+                .trim()
+                .trim_end_matches('.');
+            normalized = format!("Echo {cost}");
+        }
+    }
 
     // Normalize "this X enters with..." and "enters the battlefield with..." phrasing
     // into a shared comparator form for counter and counter-like entry effects.
@@ -882,33 +1470,7 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         .replace("enters with 9 ", "enters with nine ")
         .replace("enters with 10 ", "enters with ten ")
         .replace(" counter(s).", " counters.")
-        .replace(" counter(s)", " counters")
-        .replace(
-            "Remove a +1/+1 counter or a charge counter from",
-            "Remove a counter from",
-        )
-        .replace("Remove a +1/+1 counter from", "Remove a counter from")
-        .replace("Remove a -1/-1 counter from", "Remove a counter from")
-        .replace("Remove a time counter from", "Remove a counter from")
-        .replace("remove a +1/+1 counter from", "remove a counter from")
-        .replace("remove a -1/-1 counter from", "remove a counter from")
-        .replace("remove a time counter from", "remove a counter from")
-        .replace(
-            "Remove a counter from a creature you control",
-            "Remove a counter from a permanent you control",
-        )
-        .replace(
-            "remove a counter from a creature you control",
-            "remove a counter from a permanent you control",
-        )
-        .replace(
-            "Remove a counter from among permanents you control",
-            "Remove a counter from a permanent you control",
-        )
-        .replace(
-            "remove a counter from among permanents you control",
-            "remove a counter from a permanent you control",
-        );
+        .replace(" counter(s)", " counters");
 
     if let Some((left, right)) = normalized.split_once(". Proliferate") {
         let left = left.trim().trim_end_matches('.');
@@ -965,6 +1527,12 @@ fn split_common_clause_conjunctions(text: &str) -> String {
             normalized = format!("{left}, then scry {scry_tail}.");
         }
     }
+
+    let normalized = normalized
+        .replace("they pays", "they pay")
+        .replace("They pays", "They pay")
+        .replace("they pays ", "they pay ")
+        .replace("They pays ", "They pay ");
 
     normalize_target_count_wording(&normalized)
 }
@@ -1127,7 +1695,9 @@ fn semantic_clauses(text: &str) -> Vec<String> {
                 continue;
             }
         } else {
-            let no_parenthetical = strip_parenthetical(raw_line);
+            let grant_play_scaffolding_rewritten =
+                rewrite_grant_play_tagged_effect_scaffolding(raw_line);
+            let no_parenthetical = strip_parenthetical(&grant_play_scaffolding_rewritten);
             let no_inline_reminder = strip_inline_token_reminders(&no_parenthetical);
             let no_quote_reminder = strip_reminder_like_quotes(&no_inline_reminder);
             normalize_clause_line(&no_quote_reminder)
@@ -1279,10 +1849,7 @@ fn normalize_word(token: &str) -> Option<String> {
         return None;
     }
 
-    let mut base = token.trim_matches('\'').to_string();
-    if base.ends_with("'s") {
-        base.truncate(base.len().saturating_sub(2));
-    }
+    let mut base = token.trim_matches('\'').replace('\'', "");
     if base.len() > 4 && base.ends_with('s') {
         base.pop();
     }
@@ -1546,6 +2113,225 @@ fn count_unless_pay_role_mismatches(
     mismatches
 }
 
+fn best_clause_match(
+    oracle_token_set: &[String],
+    compiled_tokens: &[Vec<String>],
+) -> Option<(usize, f32)> {
+    let mut best_match: Option<(usize, f32)> = None;
+    for (compiled_idx, compiled_token_set) in compiled_tokens.iter().enumerate() {
+        let score = jaccard_similarity(oracle_token_set, compiled_token_set);
+        if best_match.is_none_or(|(_, best)| score > best) {
+            best_match = Some((compiled_idx, score));
+        }
+    }
+    best_match
+}
+
+fn has_reflexive_when_you_do(clause: &str) -> bool {
+    clause.to_ascii_lowercase().contains("when you do")
+}
+
+fn has_conditional_if_you_do(clause: &str) -> bool {
+    clause.to_ascii_lowercase().contains("if you do")
+}
+
+fn count_reflexive_when_you_do_mismatches(
+    oracle_clauses: &[String],
+    oracle_tokens: &[Vec<String>],
+    compiled_clauses: &[String],
+    compiled_tokens: &[Vec<String>],
+) -> usize {
+    let mut mismatches = 0usize;
+
+    for (idx, oracle_clause) in oracle_clauses.iter().enumerate() {
+        let oracle_when = has_reflexive_when_you_do(oracle_clause);
+        let oracle_if = has_conditional_if_you_do(oracle_clause);
+        if !oracle_when && !oracle_if {
+            continue;
+        }
+
+        let Some(oracle_token_set) = oracle_tokens.get(idx) else {
+            continue;
+        };
+        let Some((compiled_idx, overlap)) = best_clause_match(oracle_token_set, compiled_tokens)
+        else {
+            continue;
+        };
+        if overlap < 0.55 {
+            continue;
+        }
+
+        let Some(compiled_clause) = compiled_clauses.get(compiled_idx) else {
+            continue;
+        };
+        let compiled_when = has_reflexive_when_you_do(compiled_clause);
+        let compiled_if = has_conditional_if_you_do(compiled_clause);
+
+        if (oracle_when && compiled_if) || (oracle_if && compiled_when) {
+            mismatches += 1;
+        }
+    }
+
+    mismatches
+}
+
+fn has_first_noncreature_each_turn(clause: &str) -> bool {
+    clause
+        .to_ascii_lowercase()
+        .contains("first noncreature spell each turn")
+}
+
+fn has_noncreature_as_first_spell_this_turn(clause: &str) -> bool {
+    let lower = clause.to_ascii_lowercase();
+    lower.contains("noncreature spell as that player's first spell this turn")
+        || lower.contains("noncreature spell as their first spell this turn")
+        || lower.contains("noncreature spell as its first spell this turn")
+}
+
+fn count_first_noncreature_scope_mismatches(
+    oracle_clauses: &[String],
+    oracle_tokens: &[Vec<String>],
+    compiled_clauses: &[String],
+    compiled_tokens: &[Vec<String>],
+) -> usize {
+    let mut mismatches = 0usize;
+
+    for (idx, oracle_clause) in oracle_clauses.iter().enumerate() {
+        let oracle_each_turn = has_first_noncreature_each_turn(oracle_clause);
+        let oracle_first_spell = has_noncreature_as_first_spell_this_turn(oracle_clause);
+        if !oracle_each_turn && !oracle_first_spell {
+            continue;
+        }
+
+        let Some(oracle_token_set) = oracle_tokens.get(idx) else {
+            continue;
+        };
+        let Some((compiled_idx, overlap)) = best_clause_match(oracle_token_set, compiled_tokens)
+        else {
+            continue;
+        };
+        if overlap < 0.55 {
+            continue;
+        }
+
+        let Some(compiled_clause) = compiled_clauses.get(compiled_idx) else {
+            continue;
+        };
+        let compiled_each_turn = has_first_noncreature_each_turn(compiled_clause);
+        let compiled_first_spell = has_noncreature_as_first_spell_this_turn(compiled_clause);
+
+        if (oracle_each_turn && compiled_first_spell) || (oracle_first_spell && compiled_each_turn)
+        {
+            mismatches += 1;
+        }
+    }
+
+    mismatches
+}
+
+fn has_target_instant_and_sorcery(clause: &str) -> bool {
+    clause
+        .to_ascii_lowercase()
+        .contains("target instant and sorcery spell")
+}
+
+fn has_target_instant_or_sorcery(clause: &str) -> bool {
+    clause
+        .to_ascii_lowercase()
+        .contains("target instant or sorcery spell")
+}
+
+fn count_instant_and_or_target_mismatches(
+    oracle_clauses: &[String],
+    oracle_tokens: &[Vec<String>],
+    compiled_clauses: &[String],
+    compiled_tokens: &[Vec<String>],
+) -> usize {
+    let mut mismatches = 0usize;
+
+    for (idx, oracle_clause) in oracle_clauses.iter().enumerate() {
+        let oracle_and = has_target_instant_and_sorcery(oracle_clause);
+        let oracle_or = has_target_instant_or_sorcery(oracle_clause);
+        if !oracle_and && !oracle_or {
+            continue;
+        }
+
+        let Some(oracle_token_set) = oracle_tokens.get(idx) else {
+            continue;
+        };
+        let Some((compiled_idx, overlap)) = best_clause_match(oracle_token_set, compiled_tokens)
+        else {
+            continue;
+        };
+        if overlap < 0.55 {
+            continue;
+        }
+
+        let Some(compiled_clause) = compiled_clauses.get(compiled_idx) else {
+            continue;
+        };
+        let compiled_and = has_target_instant_and_sorcery(compiled_clause);
+        let compiled_or = has_target_instant_or_sorcery(compiled_clause);
+
+        if (oracle_and && compiled_or) || (oracle_or && compiled_and) {
+            mismatches += 1;
+        }
+    }
+
+    mismatches
+}
+
+fn has_opponent_controls_qualifier(clause: &str) -> bool {
+    clause.to_ascii_lowercase().contains("an opponent controls")
+}
+
+fn has_you_dont_control_qualifier(clause: &str) -> bool {
+    let lower = clause.to_ascii_lowercase();
+    lower.contains("you don't control") || lower.contains("you dont control")
+}
+
+fn count_opponent_control_scope_mismatches(
+    oracle_clauses: &[String],
+    oracle_tokens: &[Vec<String>],
+    compiled_clauses: &[String],
+    compiled_tokens: &[Vec<String>],
+) -> usize {
+    let mut mismatches = 0usize;
+
+    for (idx, oracle_clause) in oracle_clauses.iter().enumerate() {
+        let oracle_opponent_controls = has_opponent_controls_qualifier(oracle_clause);
+        let oracle_you_dont_control = has_you_dont_control_qualifier(oracle_clause);
+        if !oracle_opponent_controls && !oracle_you_dont_control {
+            continue;
+        }
+
+        let Some(oracle_token_set) = oracle_tokens.get(idx) else {
+            continue;
+        };
+        let Some((compiled_idx, overlap)) = best_clause_match(oracle_token_set, compiled_tokens)
+        else {
+            continue;
+        };
+        if overlap < 0.55 {
+            continue;
+        }
+
+        let Some(compiled_clause) = compiled_clauses.get(compiled_idx) else {
+            continue;
+        };
+        let compiled_opponent_controls = has_opponent_controls_qualifier(compiled_clause);
+        let compiled_you_dont_control = has_you_dont_control_qualifier(compiled_clause);
+
+        if (oracle_opponent_controls && compiled_you_dont_control)
+            || (oracle_you_dont_control && compiled_opponent_controls)
+        {
+            mismatches += 1;
+        }
+    }
+
+    mismatches
+}
+
 fn directional_coverage(from: &[Vec<String>], to: &[Vec<String>]) -> f32 {
     if from.is_empty() {
         return if to.is_empty() { 1.0 } else { 0.0 };
@@ -1613,27 +2399,41 @@ fn split_mana_add_line(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim().trim_end_matches('.');
     let (cost, effect) = trimmed.split_once(':')?;
     let add_tail = effect.trim().strip_prefix("Add ")?;
-    if add_tail.is_empty() {
+    let add_tail = add_tail.trim();
+    if add_tail.is_empty() || add_tail.contains('.') || add_tail.contains(';') {
         return None;
     }
-    Some((cost.trim().to_string(), add_tail.trim().to_string()))
+    Some((cost.trim().to_string(), add_tail.to_string()))
 }
 
 fn merge_simple_mana_add_compiled_lines(lines: &[String]) -> Vec<String> {
     let mut merged = Vec::with_capacity(lines.len());
     let mut idx = 0usize;
     while idx < lines.len() {
-        if idx + 1 < lines.len()
-            && let (Some((left_cost, left_add)), Some((right_cost, right_add))) = (
-                split_mana_add_line(&lines[idx]),
-                split_mana_add_line(&lines[idx + 1]),
-            )
-            && left_cost.eq_ignore_ascii_case(&right_cost)
-            && !left_add.eq_ignore_ascii_case(&right_add)
-        {
-            merged.push(format!("{left_cost}: Add {left_add} or {right_add}"));
-            idx += 2;
-            continue;
+        if let Some((base_cost, first_add)) = split_mana_add_line(&lines[idx]) {
+            let mut adds = vec![first_add];
+            let mut consumed = 1usize;
+            while idx + consumed < lines.len() {
+                let Some((next_cost, next_add)) = split_mana_add_line(&lines[idx + consumed])
+                else {
+                    break;
+                };
+                if !next_cost.eq_ignore_ascii_case(&base_cost) {
+                    break;
+                }
+                if !adds
+                    .iter()
+                    .any(|existing| existing.eq_ignore_ascii_case(&next_add))
+                {
+                    adds.push(next_add);
+                }
+                consumed += 1;
+            }
+            if adds.len() >= 2 {
+                merged.push(format!("{base_cost}: Add {}", adds.join(" or ")));
+                idx += consumed;
+                continue;
+            }
         }
         merged.push(lines[idx].clone());
         idx += 1;
@@ -1827,6 +2627,30 @@ pub fn compare_semantics_scored(
         &compiled_clauses,
         &compiled_tokens,
     );
+    let reflexive_when_you_do_mismatch_count = count_reflexive_when_you_do_mismatches(
+        &oracle_clauses,
+        &oracle_tokens,
+        &compiled_clauses,
+        &compiled_tokens,
+    );
+    let first_noncreature_scope_mismatch_count = count_first_noncreature_scope_mismatches(
+        &oracle_clauses,
+        &oracle_tokens,
+        &compiled_clauses,
+        &compiled_tokens,
+    );
+    let instant_and_or_target_mismatch_count = count_instant_and_or_target_mismatches(
+        &oracle_clauses,
+        &oracle_tokens,
+        &compiled_clauses,
+        &compiled_tokens,
+    );
+    let opponent_control_scope_mismatch_count = count_opponent_control_scope_mismatches(
+        &oracle_clauses,
+        &oracle_tokens,
+        &compiled_clauses,
+        &compiled_tokens,
+    );
 
     if let Some(cfg) = embedding {
         let oracle_emb = oracle_clauses
@@ -1854,6 +2678,26 @@ pub fn compare_semantics_scored(
         similarity_score = (similarity_score - penalty).max(0.0);
         mismatch = true;
     }
+    if reflexive_when_you_do_mismatch_count > 0 {
+        let penalty = 0.20 * reflexive_when_you_do_mismatch_count as f32;
+        similarity_score = (similarity_score - penalty).max(0.0);
+        mismatch = true;
+    }
+    if first_noncreature_scope_mismatch_count > 0 {
+        let penalty = 0.20 * first_noncreature_scope_mismatch_count as f32;
+        similarity_score = (similarity_score - penalty).max(0.0);
+        mismatch = true;
+    }
+    if instant_and_or_target_mismatch_count > 0 {
+        let penalty = 0.20 * instant_and_or_target_mismatch_count as f32;
+        similarity_score = (similarity_score - penalty).max(0.0);
+        mismatch = true;
+    }
+    if opponent_control_scope_mismatch_count > 0 {
+        let penalty = 0.20 * opponent_control_scope_mismatch_count as f32;
+        similarity_score = (similarity_score - penalty).max(0.0);
+        mismatch = true;
+    }
 
     (
         oracle_coverage,
@@ -1876,7 +2720,14 @@ pub fn compare_semantics(
 
 #[cfg(test)]
 mod tests {
-    use super::{EmbeddingConfig, compare_semantics_scored};
+    use super::{EmbeddingConfig, compare_semantics_scored, semantic_clauses};
+
+    fn strict_embedding() -> Option<EmbeddingConfig> {
+        Some(EmbeddingConfig {
+            dims: 384,
+            mismatch_threshold: 0.99,
+        })
+    }
 
     #[test]
     fn compare_semantics_ignores_choose_scaffolding_clause() {
@@ -2092,14 +2943,7 @@ mod tests {
             "Triggered ability 1: Whenever an opponent casts a spell, you may draw a card unless you pay {1}.",
         )];
         let (_oracle_coverage, _compiled_coverage, similarity, _line_delta, mismatch) =
-            compare_semantics_scored(
-                oracle,
-                &compiled,
-                Some(EmbeddingConfig {
-                    dims: 384,
-                    mismatch_threshold: 0.99,
-                }),
-            );
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
         assert!(
             mismatch,
             "payer-role inversion must count as semantic mismatch"
@@ -2107,6 +2951,676 @@ mod tests {
         assert!(
             similarity < 0.99,
             "payer-role inversion should not remain above strict 0.99 score floor (score={similarity})"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_any_combination_of_colors_wording() {
+        let oracle = "Add two mana in any combination of colors.\nDraw a card.";
+        let compiled = vec![String::from(
+            "Spell effects: Add 2 mana in any combination of {W} and/or {U} and/or {B} and/or {R} and/or {G}. Draw a card.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected any-combination mana wording normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for any-combination mana wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_keeps_side_effect_on_second_mana_ability() {
+        let oracle =
+            "{T}: Add {C}.\n{T}: Add one mana of any color. This land deals 3 damage to you.";
+        let compiled = vec![
+            String::from("Mana ability 1: {T}: Add {C}."),
+            String::from("Mana ability 2: {T}: Add one mana of any color. Deal 3 damage to you."),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected side-effect mana ability normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for side-effect mana ability"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_reveal_land_then_enters_tapped_dual_land_wording() {
+        let oracle = "As this land enters, you may reveal a Forest or Plains card from your hand. If you don't, this land enters tapped.\n{T}: Add {G} or {W}.";
+        let compiled = vec![
+            String::from(
+                "Static ability 1: As this land enters you may reveal a forest or plains card from your hand if you dont this land enters tapped.",
+            ),
+            String::from("Mana ability 2: {T}: Add {G}."),
+            String::from("Mana ability 3: {T}: Add {W}."),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected reveal-dual normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(!mismatch, "expected no mismatch for reveal-dual wording");
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_tapped_for_mana_enchantment_wording() {
+        let oracle = "Enchant land\nWhenever enchanted land is tapped for mana, its controller adds an additional {G}.";
+        let compiled = vec![
+            String::from("Enchant land"),
+            String::from(
+                "Triggered ability 1: Whenever a player taps a enchanted land for mana: that object's controller adds {G}.",
+            ),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected tapped-for-mana enchantment normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for tapped-for-mana enchantment wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_copy_spell_wording() {
+        let oracle =
+            "Copy target instant or sorcery spell. You may choose new targets for the copy.";
+        let compiled = vec![String::from(
+            "Spell effects: Copy target instant and sorcery spell 1 time(s). you may choose new targets for this spell.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected copy-spell wording normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(!mismatch, "expected no mismatch for copy-spell wording");
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_split_gets_and_gains_clause() {
+        let oracle =
+            "{X}{R}{G}, {T}: Target creature gets +X/+0 and gains trample until end of turn.";
+        let compiled = vec![String::from(
+            "Activated ability 2: {X}{R}{G}, {T}: target creature gets +X/+0 until end of turn. it gains Trample until end of turn.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected split gets/gains normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for split gets/gains wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_you_and_target_opponent_each_draw_wording() {
+        let oracle = "{T}: You and target opponent each draw a card.";
+        let compiled = vec![String::from(
+            "Activated ability 3: {T}: you draw a card. target opponent draws a card.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected each-draw wording normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(!mismatch, "expected no mismatch for each-draw wording");
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_target_spell_or_nonland_permanent_wording() {
+        let oracle =
+            "Return target spell or nonland permanent an opponent controls to its owner's hand.";
+        let compiled = vec![String::from(
+            "Spell effects: Return target opponent's nonland spell or an opponent's nonland permanent to its owner's hand.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected opponent-controlled spell/permanent wording normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for opponent-controlled spell/permanent wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_each_land_basic_type_wording() {
+        let oracle = "Each land is a Swamp in addition to its other land types.";
+        let compiled = vec![String::from(
+            "Static ability 1: Lands are Swamps in addition to their other types.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected each-land-type wording normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(!mismatch, "expected no mismatch for each-land-type wording");
+    }
+
+    #[test]
+    fn compare_semantics_flags_reflexive_when_you_do_vs_if_you_do_mismatch() {
+        let oracle = "Whenever Felothar enters or attacks, you may sacrifice a nonland permanent. When you do, put a +1/+1 counter on each creature you control.";
+        let compiled = vec![String::from(
+            "Triggered ability 2: When Felothar enters or this creature attacks, you may sacrifice a nonland permanent you control. If you do, Put a +1/+1 counter on each creature you control.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity < 0.99,
+            "expected reflexive-trigger vs conditional wording to stay below strict threshold, got {similarity}"
+        );
+        assert!(
+            mismatch,
+            "expected mismatch for reflexive-trigger vs conditional wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_soulbond_keyword_scaffolding() {
+        let oracle = "Soulbond (You may pair this creature with another unpaired creature when either enters. They remain paired for as long as you control both of them.)
+As long as this creature is paired with another creature, each of those creatures has \"Whenever this creature deals damage to an opponent, draw a card.\"";
+        let compiled = vec![
+            String::from(
+                "Triggered ability 1: Whenever a creature you control enters, effect(SoulbondPairEffect)",
+            ),
+            String::from(
+                "Static ability 2: As long as this is paired with another creature each of those creatures has \"Whenever this creature deals damage to an opponent, draw a card.\"",
+            ),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        if std::env::var("DEBUG_SEMANTIC_COMPARE").is_ok() {
+            eprintln!("oracle_clauses={:?}", semantic_clauses(oracle));
+            eprintln!(
+                "compiled_clauses={:?}",
+                semantic_clauses(&compiled.join("\n"))
+            );
+            eprintln!("similarity={similarity} mismatch={mismatch}");
+        }
+        assert!(
+            similarity >= 0.99,
+            "expected soulbond keyword normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for soulbond keyword scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_dethrone_keyword_scaffolding() {
+        let oracle = "Dethrone (Whenever this creature attacks the player with the most life or tied for most life, put a +1/+1 counter on it.)
+Pay 3 life: Add {R}.";
+        let compiled = vec![
+            String::from(
+                "Triggered ability 1: Whenever this creature attacks the player with the most life or tied for most life, put a +1/+1 counter on this creature.",
+            ),
+            String::from("Mana ability 2: Pay 3 life: Add {R}."),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected dethrone keyword normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for dethrone keyword scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_echo_counter_scaffolding() {
+        let oracle = "Flying, protection from black
+Echo {3}{W}{W}
+When this creature enters, return target creature card from your graveyard to the battlefield.";
+        let compiled = vec![
+            String::from("Keyword ability 1: Flying, Protection from black"),
+            String::from("Static ability 3: This creature enters with an echo counter on it."),
+            String::from(
+                "Triggered ability 4: At the beginning of your upkeep, remove an echo counter from this creature. If effect #0 happened, Sacrifice this creature unless you pay {3}{W}{W}.",
+            ),
+            String::from(
+                "Triggered ability 5: When this creature enters, return target creature card from your graveyard to the battlefield.",
+            ),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected echo scaffolding normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for echo counter scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_flags_missing_esper_sentinel_where_x_power_clause() {
+        let oracle = "Whenever an opponent casts their first noncreature spell each turn, draw a card unless that player pays {X}, where X is this creature's power.";
+        let compiled = vec![String::from(
+            "Triggered ability 1: Whenever an opponent casts noncreature spell as that player's first spell this turn, you draw a card unless they pay {X}.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        if std::env::var("DEBUG_SEMANTIC_COMPARE").is_ok() {
+            eprintln!("oracle_clauses={:?}", semantic_clauses(oracle));
+            eprintln!(
+                "compiled_clauses={:?}",
+                semantic_clauses(&compiled.join("\n"))
+            );
+            eprintln!("similarity={similarity} mismatch={mismatch}");
+        }
+        assert!(
+            similarity < 0.99,
+            "expected missing where-X power clause to stay below strict threshold, got {similarity}"
+        );
+        assert!(
+            mismatch,
+            "expected mismatch when where-X power clause is missing"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_flags_first_noncreature_scope_mismatch() {
+        let oracle =
+            "Whenever an opponent casts their first noncreature spell each turn, draw a card.";
+        let compiled = vec![String::from(
+            "Triggered ability 1: Whenever an opponent casts noncreature spell as that player's first spell this turn, draw a card.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            mismatch,
+            "expected mismatch when first-noncreature scope is rewritten to first-spell scope"
+        );
+        assert!(
+            similarity < 0.99,
+            "first-noncreature scope mismatch should stay below strict 0.99 threshold (score={similarity})"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_flags_opponent_controls_vs_you_dont_control_mismatch() {
+        let oracle = "Destroy target creature an opponent controls.";
+        let compiled = vec![String::from(
+            "Spell effects: Destroy target creature you don't control.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            mismatch,
+            "expected mismatch when opponent-controls scope is rewritten to you-don't-control scope"
+        );
+        assert!(
+            similarity < 0.99,
+            "opponent-controls scope mismatch should stay below strict 0.99 threshold (score={similarity})"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_flags_instant_and_or_target_mismatch_outside_copy_context() {
+        let oracle = "Counter target instant or sorcery spell.";
+        let compiled = vec![String::from(
+            "Spell effects: Counter target instant and sorcery spell.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            mismatch,
+            "expected mismatch when instant-or-sorcery target is rewritten as instant-and-sorcery"
+        );
+        assert!(
+            similarity < 0.99,
+            "instant-and/or target mismatch should stay below strict 0.99 threshold (score={similarity})"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_flags_missing_activated_ability_cost_floor_clause() {
+        let oracle = "Activated abilities of creatures you control cost {2} less to activate.
+This effect can't reduce the mana in that cost to less than one mana.";
+        let compiled = vec![String::from(
+            "Static ability 1: Activated abilities of creatures you control cost {2} less to activate.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity < 0.99,
+            "expected missing minimum-cost clause to stay below strict threshold, got {similarity}"
+        );
+        assert!(
+            mismatch,
+            "expected mismatch when activated-ability cost floor clause is missing"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_flags_counter_type_erasure_in_remove_cost() {
+        let oracle = "{T}, Remove a +1/+1 counter from this creature: Draw a card.";
+        let compiled = vec![String::from(
+            "Activated ability 1: {T}, Remove a counter from this creature: Draw a card.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity < 0.99,
+            "expected counter-type erasure to stay below strict threshold, got {similarity}"
+        );
+        assert!(
+            mismatch,
+            "expected mismatch when specific counter type is erased"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_flags_enchanted_type_erasure_from_tagged_object_scaffolding() {
+        let oracle = "Destroy enchanted creature.";
+        let compiled = vec![String::from(
+            "Spell effects: Tag the object attached to this Aura as 'enchanted'. Destroy target tagged object 'enchanted'.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity < 0.99,
+            "expected enchanted-type erasure to stay below strict threshold, got {similarity}"
+        );
+        assert!(
+            mismatch,
+            "expected mismatch when enchanted target type is reduced to generic tagged object"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_grant_play_tagged_scaffolding() {
+        let oracle = "Sacrifice a Treasure: Exile the top card of your library. You may play that card this turn.";
+        let compiled = vec![String::from(
+            "Activated ability 3: Sacrifice a Treasure you control: you exile the top card of your library. you may Effect(GrantPlayTaggedEffect { tag: TagKey(\"exiled_0\"), player: You, duration: UntilEndOfTurn })",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        if std::env::var("DEBUG_SEMANTIC_COMPARE").is_ok() {
+            eprintln!("oracle_clauses={:?}", semantic_clauses(oracle));
+            eprintln!(
+                "compiled_clauses={:?}",
+                semantic_clauses(&compiled.join("\n"))
+            );
+            eprintln!("similarity={similarity} mismatch={mismatch}");
+        }
+        assert!(
+            similarity >= 0.99,
+            "expected grant-play-tagged normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for grant-play-tagged scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_flags_generic_effect_scaffolding_not_as_play_permission() {
+        let oracle = "Sacrifice a Treasure: Exile the top card of your library. You may play that card this turn.";
+        let compiled = vec![String::from(
+            "Activated ability 3: Sacrifice a Treasure you control: you exile the top card of your library. you may Effect(SomeOtherEffect { player: You })",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            mismatch,
+            "generic Effect(...) scaffolding should not be normalized as play permission (score={similarity})"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_named_wish_counter_wording() {
+        let oracle = "This artifact enters with three wish counters on it.
+{1}, {T}, Remove a wish counter from this artifact: Search your library for a card, put it into your hand, then shuffle. An opponent gains control of this artifact. Activate only during your turn.";
+        let compiled = vec![
+            String::from("Static ability 1: This artifact enters with three wish counters on it."),
+            String::from(
+                "Activated ability 2: {1}, {T}, Remove a wish counter from this artifact: Search your library for a card, put it into your hand, then shuffle. An opponent gains control of this artifact. Activate only during your turn.",
+            ),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        if std::env::var("DEBUG_SEMANTIC_COMPARE").is_ok() {
+            eprintln!("oracle_clauses={:?}", semantic_clauses(oracle));
+            eprintln!(
+                "compiled_clauses={:?}",
+                semantic_clauses(&compiled.join("\n"))
+            );
+            eprintln!("similarity={similarity} mismatch={mismatch}");
+        }
+        assert!(
+            similarity >= 0.99,
+            "expected named-counter normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(!mismatch, "expected no mismatch for named-counter wording");
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_pact_upkeep_payment_clause() {
+        let oracle = "Counter target spell.
+At the beginning of your next upkeep, pay {3}{U}{U}. If you don't, you lose the game.";
+        let compiled = vec![
+            String::from("Spell effects: Counter target spell."),
+            String::from(
+                "Triggered ability 1: At the beginning of your upkeep, you pay {3}{U}{U}. If that doesn't happen, you lose the game.",
+            ),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected pact upkeep normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(!mismatch, "expected no mismatch for pact upkeep wording");
+    }
+
+    #[test]
+    fn compare_semantics_flags_homeward_path_owned_creatures_quantifier_loss() {
+        let oracle = "{T}: Add {C}.
+{T}: Each player gains control of all creatures they own.";
+        let compiled = vec![
+            String::from("Mana ability 1: {T}: Add {C}."),
+            String::from(
+                "Activated ability 2: {T}: For each player, that player gains control of a creature that player owns.",
+            ),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            mismatch,
+            "quantifier loss from 'all creatures' to singular should be a mismatch (score={similarity})"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_heat_shimmer_temporary_copy_clause() {
+        let oracle = "Create a token that's a copy of target creature, except it has haste and \"At the beginning of the end step, exile this token.\"";
+        let compiled = vec![String::from(
+            "Spell effects: Create a token that's a copy of target creature, with haste, and exile it at the beginning of the next end step.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected temporary-copy normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(!mismatch, "expected no mismatch for temporary-copy wording");
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_boggart_trawler_graveyard_exile_clause() {
+        let oracle = "When this creature enters, exile target player's graveyard.";
+        let compiled = vec![String::from(
+            "Triggered ability 1: When this creature enters, exile all cards from target player's graveyard.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected graveyard-exile normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for graveyard-exile wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_static_prison_sentence_split_and_pay_typo() {
+        let oracle = "When this enchantment enters, exile target nonland permanent an opponent controls until this enchantment leaves the battlefield. You get {E}{E}.
+At the beginning of your first main phase, sacrifice this enchantment unless you pay {E}.";
+        let compiled = vec![
+            String::from(
+                "Triggered ability 1: When this enchantment enters, exile target opponent's nonland permanent until this enchantment leaves the battlefield and you get {E}{E}.",
+            ),
+            String::from(
+                "Triggered ability 2: At the beginning of your first main phase, sacrifice this enchantment unless you Pay {E}.",
+            ),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected static-prison normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for static-prison sentence/typo wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_saw_in_half_death_copy_wording() {
+        let oracle = "Destroy target creature. If that creature dies this way, its controller creates two tokens that are copies of that creature, except their power is half that creature's power and their toughness is half that creature's toughness. Round up each time.";
+        let compiled = vec![String::from(
+            "Spell effects: Destroy target creature. If that permanent dies this way, Create two tokens that are copies of it under its controller's control, except their power and toughness are each half that permanent's power and toughness, rounded up.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected saw-in-half normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for saw-in-half death-copy wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_hullbreaker_horror_modal_bullet_formatting() {
+        let oracle = "Whenever you cast a spell, choose up to one —
+• Return target spell you don't control to its owner's hand.
+• Return target nonland permanent to its owner's hand.";
+        let compiled = vec![String::from(
+            "Triggered ability 3: Whenever you cast a spell, choose up to one - Return target spell you don't control to its owner's hand. • Return target nonland permanent to its owner's hand.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        if std::env::var("DEBUG_SEMANTIC_COMPARE").is_ok() {
+            eprintln!("oracle_clauses={:?}", semantic_clauses(oracle));
+            eprintln!(
+                "compiled_clauses={:?}",
+                semantic_clauses(&compiled.join("\n"))
+            );
+            let oracle_tokens = semantic_clauses(oracle)
+                .iter()
+                .map(|clause| super::comparison_tokens(clause))
+                .collect::<Vec<_>>();
+            let compiled_tokens = semantic_clauses(&compiled.join("\n"))
+                .iter()
+                .map(|clause| super::comparison_tokens(clause))
+                .collect::<Vec<_>>();
+            eprintln!("oracle_tokens={:?}", oracle_tokens);
+            eprintln!("compiled_tokens={:?}", compiled_tokens);
+            eprintln!("similarity={similarity} mismatch={mismatch}");
+        }
+        assert!(
+            similarity >= 0.99,
+            "expected hullbreaker modal formatting normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for hullbreaker modal formatting wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_ertai_modal_bullet_formatting() {
+        let oracle = "When this creature enters, choose up to one —
+• Counter target spell, activated ability, or triggered ability. Its controller draws a card.
+• Destroy another target creature or planeswalker. Its controller draws a card.";
+        let compiled = vec![String::from(
+            "Triggered ability 2: When this creature enters, choose up to one - Counter target spell, activated ability, or triggered ability. Its controller draws a card. • Destroy another target creature or planeswalker. Its controller draws a card.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        if std::env::var("DEBUG_SEMANTIC_COMPARE").is_ok() {
+            eprintln!("oracle_clauses={:?}", semantic_clauses(oracle));
+            eprintln!(
+                "compiled_clauses={:?}",
+                semantic_clauses(&compiled.join("\n"))
+            );
+            let oracle_tokens = semantic_clauses(oracle)
+                .iter()
+                .map(|clause| super::comparison_tokens(clause))
+                .collect::<Vec<_>>();
+            let compiled_tokens = semantic_clauses(&compiled.join("\n"))
+                .iter()
+                .map(|clause| super::comparison_tokens(clause))
+                .collect::<Vec<_>>();
+            eprintln!("oracle_tokens={:?}", oracle_tokens);
+            eprintln!("compiled_tokens={:?}", compiled_tokens);
+            eprintln!("similarity={similarity} mismatch={mismatch}");
+        }
+        assert!(
+            similarity >= 0.99,
+            "expected ertai modal formatting normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for ertai modal formatting wording"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_urzas_saga_zero_or_one_mana_cost_wording() {
+        let oracle = "III — Search your library for an artifact card with mana cost {0} or {1}, put it onto the battlefield, then shuffle.";
+        let compiled = vec![String::from(
+            "Triggered ability 3: III — Search your library for an artifact card with mana value 1 or less, put it onto the battlefield, then shuffle.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected urza-saga mana-cost normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for urza-saga mana-cost wording"
         );
     }
 }

@@ -1,29 +1,32 @@
-//! "Whenever [filter] deals combat damage to a player" trigger.
+//! "Whenever [filter] deals combat damage to [player]" trigger.
 
 use crate::events::DamageEvent;
 use crate::events::EventKind;
 use crate::game_event::DamageTarget;
-use crate::target::ObjectFilter;
+use crate::target::{ObjectFilter, PlayerFilter};
 use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DealsCombatDamageToPlayerTrigger {
     pub filter: ObjectFilter,
+    pub player: PlayerFilter,
     pub one_or_more: bool,
 }
 
 impl DealsCombatDamageToPlayerTrigger {
-    pub fn new(filter: ObjectFilter) -> Self {
+    pub fn new(filter: ObjectFilter, player: PlayerFilter) -> Self {
         Self {
             filter,
+            player,
             one_or_more: false,
         }
     }
 
-    pub fn one_or_more(filter: ObjectFilter) -> Self {
+    pub fn one_or_more(filter: ObjectFilter, player: PlayerFilter) -> Self {
         Self {
             filter,
+            player,
             one_or_more: true,
         }
     }
@@ -56,26 +59,30 @@ impl TriggerMatcher for DealsCombatDamageToPlayerTrigger {
         let Some(e) = event.downcast::<DamageEvent>() else {
             return false;
         };
-        // Must be combat damage to a player
-        if !e.is_combat || !matches!(e.target, DamageTarget::Player(_)) {
+        // Must be combat damage to a player.
+        if !e.is_combat {
             return false;
         }
+        let DamageTarget::Player(damaged_player) = e.target else {
+            return false;
+        };
         let Some(obj) = ctx.game.object(e.source) else {
             return false;
         };
         if !self.filter.matches(obj, &ctx.filter_ctx, ctx.game) {
             return false;
         }
+        if !self.player.matches_player(damaged_player, &ctx.filter_ctx) {
+            return false;
+        }
         if !self.one_or_more {
             return true;
         }
-        let DamageTarget::Player(player) = e.target else {
-            return false;
-        };
-        self.first_matching_hit_to_player_in_batch(player, ctx)
+        self.first_matching_hit_to_player_in_batch(damaged_player, ctx)
     }
 
     fn display(&self) -> String {
+        let player = self.player.description();
         if self.one_or_more {
             let mut subject = self.filter.description();
             if let Some(stripped) = subject.strip_prefix("a ") {
@@ -83,11 +90,12 @@ impl TriggerMatcher for DealsCombatDamageToPlayerTrigger {
             } else if let Some(stripped) = subject.strip_prefix("an ") {
                 subject = stripped.to_string();
             }
-            return format!("Whenever one or more {subject} deal combat damage to a player");
+            return format!("Whenever one or more {subject} deal combat damage to {player}");
         }
         format!(
-            "Whenever {} deals combat damage to a player",
-            self.filter.description()
+            "Whenever {} deals combat damage to {}",
+            self.filter.description(),
+            player
         )
     }
 
@@ -119,7 +127,8 @@ mod tests {
 
     #[test]
     fn test_display() {
-        let trigger = DealsCombatDamageToPlayerTrigger::new(ObjectFilter::creature());
+        let trigger =
+            DealsCombatDamageToPlayerTrigger::new(ObjectFilter::creature(), PlayerFilter::Any);
         assert!(trigger.display().contains("deals combat damage"));
     }
 
@@ -132,7 +141,10 @@ mod tests {
         let attacker_one = create_creature(&mut game, "A", alice);
         let attacker_two = create_creature(&mut game, "B", alice);
 
-        let trigger = DealsCombatDamageToPlayerTrigger::one_or_more(ObjectFilter::creature());
+        let trigger = DealsCombatDamageToPlayerTrigger::one_or_more(
+            ObjectFilter::creature(),
+            PlayerFilter::Any,
+        );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let first_event = TriggerEvent::new(DamageEvent::new(
             attacker_one,
@@ -151,5 +163,41 @@ mod tests {
             true,
         ));
         assert!(!trigger.matches(&second_event, &ctx));
+    }
+
+    #[test]
+    fn test_matches_respects_damaged_player_filter() {
+        let mut game = GameState::new(
+            vec![
+                "Alice".to_string(),
+                "Bob".to_string(),
+                "Charlie".to_string(),
+            ],
+            20,
+        );
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let charlie = PlayerId::from_index(2);
+        let source_id = ObjectId::from_raw(100);
+        let attacker = create_creature(&mut game, "Attacker", bob);
+        let trigger =
+            DealsCombatDamageToPlayerTrigger::new(ObjectFilter::creature(), PlayerFilter::You);
+        let ctx = TriggerContext::for_source(source_id, alice, &game);
+
+        let hits_charlie = TriggerEvent::new(DamageEvent::new(
+            attacker,
+            DamageTarget::Player(charlie),
+            2,
+            true,
+        ));
+        assert!(!trigger.matches(&hits_charlie, &ctx));
+
+        let hits_alice = TriggerEvent::new(DamageEvent::new(
+            attacker,
+            DamageTarget::Player(alice),
+            2,
+            true,
+        ));
+        assert!(trigger.matches(&hits_alice, &ctx));
     }
 }

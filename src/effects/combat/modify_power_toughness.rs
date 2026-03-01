@@ -2,7 +2,7 @@
 
 use crate::continuous::{EffectTarget, Modification};
 use crate::effect::{Effect, EffectOutcome, EffectResult, Until, Value};
-use crate::effects::helpers::{find_target_object, resolve_value};
+use crate::effects::helpers::{resolve_single_object_from_spec, resolve_value};
 use crate::effects::{ApplyContinuousEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
@@ -82,11 +82,7 @@ impl EffectExecutor for ModifyPowerToughnessEffect {
         let power_mod = resolve_value(game, &self.power, ctx)?;
         let toughness_mod = resolve_value(game, &self.toughness, ctx)?;
 
-        // Determine target - either from resolved targets or from Source
-        let target_id = match &self.target {
-            ChooseSpec::Source => ctx.source,
-            _ => find_target_object(&ctx.targets)?,
-        };
+        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
 
         // Verify the target exists and is a creature
         let target = game
@@ -131,6 +127,7 @@ mod tests {
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::Object;
+    use crate::snapshot::ObjectSnapshot;
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
@@ -281,6 +278,28 @@ mod tests {
         let result = effect.execute(&mut game, &mut ctx);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pump_tagged_target_without_ctx_targets() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let creature = create_creature(&mut game, "Tagged Bear", 2, 2, alice);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        let snapshot = ObjectSnapshot::from_object(game.object(creature).unwrap(), &game);
+        ctx.tag_object("tagged_target", snapshot);
+
+        let effect = ModifyPowerToughnessEffect::new(
+            ChooseSpec::Tagged("tagged_target".into()),
+            3,
+            3,
+            Until::EndOfTurn,
+        );
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.result, EffectResult::Resolved);
+        assert_eq!(game.continuous_effects.effects_sorted().len(), 1);
     }
 
     #[test]

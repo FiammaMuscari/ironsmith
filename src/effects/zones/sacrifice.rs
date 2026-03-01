@@ -2,7 +2,10 @@
 
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{normalize_object_selection, resolve_player_filter, resolve_value};
+use crate::effects::helpers::{
+    normalize_object_selection, resolve_player_filter, resolve_single_object_from_spec,
+    resolve_value,
+};
 use crate::event_processor::{EventOutcome, process_zone_change};
 use crate::events::permanents::SacrificeEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
@@ -256,31 +259,11 @@ impl EffectExecutor for SacrificeTargetEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        // Resolve the target based on the spec
-        let object_id: Option<ObjectId> = match &self.target {
-            ChooseSpec::Source => Some(ctx.source),
-            ChooseSpec::SpecificObject(id) => Some(*id),
-            ChooseSpec::Tagged(tag) => {
-                // Get tagged objects - extract ObjectId from ObjectSnapshot
-                ctx.tagged_objects
-                    .get(tag)
-                    .and_then(|objects| objects.first())
-                    .map(|snapshot| snapshot.object_id)
-            }
-            _ => {
-                // For other target specs, try to get from resolved targets
-                ctx.targets.first().and_then(|t| {
-                    if let crate::executor::ResolvedTarget::Object(id) = t {
-                        Some(*id)
-                    } else {
-                        None
-                    }
-                })
-            }
-        };
-
-        let Some(object_id) = object_id else {
-            return Ok(EffectOutcome::count(0));
+        // Resolve through ChooseSpec helpers (targets, source, tagged, specific object, etc.).
+        let object_id = match resolve_single_object_from_spec(game, &self.target, ctx) {
+            Ok(id) => id,
+            Err(ExecutionError::InvalidTarget) => return Ok(EffectOutcome::count(0)),
+            Err(err) => return Err(err),
         };
 
         let (sacrificed, event) = Self::sacrifice_object(game, ctx, object_id)?;
@@ -297,5 +280,57 @@ impl EffectExecutor for SacrificeTargetEffect {
 
     fn is_sacrifice_source_cost(&self) -> bool {
         matches!(self.target, ChooseSpec::Source)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::ids::{CardId, PlayerId};
+    use crate::mana::{ManaCost, ManaSymbol};
+    use crate::object::Object;
+    use crate::types::CardType;
+
+    fn setup_game() -> GameState {
+        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+    }
+
+    fn create_creature_on_battlefield(
+        game: &mut GameState,
+        name: &str,
+        controller: PlayerId,
+    ) -> ObjectId {
+        let id = game.new_object_id();
+        let card = CardBuilder::new(CardId::from_raw(id.0 as u32), name)
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(1)],
+                vec![ManaSymbol::Green],
+            ]))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let object = Object::from_card(id, &card, controller, Zone::Battlefield);
+        game.add_object(object);
+        id
+    }
+
+    #[test]
+    fn test_sacrifice_target_tagged_without_ctx_targets() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let target_id = create_creature_on_battlefield(&mut game, "Bear", alice);
+        let snapshot = ObjectSnapshot::from_object(game.object(target_id).unwrap(), &game);
+
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        ctx.tag_object("sac_target", snapshot);
+
+        let effect = SacrificeTargetEffect::new(ChooseSpec::Tagged("sac_target".into()));
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert_eq!(result.result, crate::effect::EffectResult::Count(1));
+        assert!(!game.battlefield.contains(&target_id));
+        assert_eq!(game.players[0].graveyard.len(), 1);
     }
 }

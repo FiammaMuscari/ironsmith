@@ -3,7 +3,7 @@
 use crate::combat_state::{AttackerInfo, get_attack_target};
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::find_target_object;
+use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -27,7 +27,7 @@ impl EffectExecutor for EnterAttackingEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let creature_id = find_target_object(&ctx.targets)?;
+        let creature_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
 
         if let Some(ref mut combat) = game.combat
             && let Some(target) = get_attack_target(combat, ctx.source).cloned()

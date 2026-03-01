@@ -733,8 +733,32 @@ fn apply_modes_response(
         GameLoopError::InvalidState("No pending cast for modes response".to_string())
     })?;
 
+    let effects = game
+        .object(pending.spell_id)
+        .and_then(|obj| obj.spell_effect.as_deref())
+        .unwrap_or(&[]);
+
+    if !spell_has_legal_targets_with_modes(
+        game,
+        effects,
+        pending.caster,
+        Some(pending.spell_id),
+        Some(modes),
+    ) {
+        return Err(GameLoopError::InvalidState(
+            "Selected mode combination has no legal targets".to_string(),
+        ));
+    }
+
     // Store the chosen modes
     pending.chosen_modes = Some(modes.to_vec());
+    pending.remaining_requirements = extract_target_requirements_with_modes(
+        game,
+        effects,
+        pending.caster,
+        Some(pending.spell_id),
+        Some(modes),
+    );
 
     // Continue to optional costs
     check_optional_costs_or_continue(game, trigger_queue, state, pending, decision_maker)

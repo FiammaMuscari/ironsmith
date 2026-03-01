@@ -1626,6 +1626,7 @@ fn resolve_value_direct(
             let filter_ctx = FilterContext {
                 you: Some(controller),
                 source: Some(source),
+                caster: None,
                 active_player: None,
                 opponents: Vec::new(),
                 teammates: Vec::new(),
@@ -1647,6 +1648,7 @@ fn resolve_value_direct(
             let filter_ctx = FilterContext {
                 you: Some(controller),
                 source: Some(source),
+                caster: None,
                 active_player: None,
                 opponents: Vec::new(),
                 teammates: Vec::new(),
@@ -1670,6 +1672,7 @@ fn resolve_value_direct(
             let filter_ctx = FilterContext {
                 you: Some(controller),
                 source: Some(source),
+                caster: None,
                 active_player: None,
                 opponents: Vec::new(),
                 teammates: Vec::new(),
@@ -2530,6 +2533,7 @@ fn resolve_value_with_context(
             let filter_ctx = FilterContext {
                 you: Some(controller),
                 source: Some(source),
+                caster: None,
                 active_player: None,
                 opponents: Vec::new(), // Would need game state for full resolution
                 teammates: Vec::new(),
@@ -2558,6 +2562,7 @@ fn resolve_value_with_context(
             let filter_ctx = FilterContext {
                 you: Some(controller),
                 source: Some(source),
+                caster: None,
                 active_player: None,
                 opponents: Vec::new(),
                 teammates: Vec::new(),
@@ -2589,6 +2594,7 @@ fn resolve_value_with_context(
             let filter_ctx = FilterContext {
                 you: Some(controller),
                 source: Some(source),
+                caster: None,
                 active_player: None,
                 opponents: Vec::new(),
                 teammates: Vec::new(),
@@ -2632,6 +2638,7 @@ fn resolve_value_with_context(
             let filter_ctx = FilterContext {
                 you: Some(controller),
                 source: Some(source),
+                caster: None,
                 active_player: None,
                 opponents: Vec::new(),
                 teammates: Vec::new(),
@@ -2681,6 +2688,7 @@ fn resolve_value_with_context(
             let filter_ctx = FilterContext {
                 you: Some(controller),
                 source: Some(source),
+                caster: None,
                 active_player: None,
                 opponents: Vec::new(),
                 teammates: Vec::new(),
@@ -2713,6 +2721,7 @@ fn resolve_value_with_context(
             let filter_ctx = FilterContext {
                 you: Some(controller),
                 source: Some(source),
+                caster: None,
                 active_player: None,
                 opponents: Vec::new(),
                 teammates: Vec::new(),

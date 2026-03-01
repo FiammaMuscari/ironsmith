@@ -2,7 +2,7 @@
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::find_target_object;
+use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
@@ -31,11 +31,7 @@ impl EffectExecutor for FlipEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = match &self.target {
-            ChooseSpec::Source => ctx.source,
-            ChooseSpec::SpecificObject(id) => *id,
-            _ => find_target_object(&ctx.targets)?,
-        };
+        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
 
         if game.is_flipped(target_id) {
             return Ok(EffectOutcome::resolved());

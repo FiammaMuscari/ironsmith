@@ -3,7 +3,6 @@
 //! These abilities modify the costs of spells being cast.
 
 use super::{StaticAbilityId, StaticAbilityKind};
-use crate::ability::SpellFilter;
 use crate::color::{Color, ColorSet};
 use crate::effect::Value;
 use crate::filter::{AlternativeCastKind, Comparison};
@@ -11,6 +10,7 @@ use crate::mana::ManaCost;
 use crate::object::CounterType;
 use crate::target::{ObjectFilter, PlayerFilter};
 use crate::types::CardType;
+use std::borrow::Cow;
 
 fn join_with_and(parts: &[String]) -> String {
     match parts.len() {
@@ -113,36 +113,37 @@ fn describe_alternative_cast_kind(kind: AlternativeCastKind) -> &'static str {
     }
 }
 
-fn describe_counter_type(counter_type: CounterType) -> &'static str {
+fn describe_counter_type(counter_type: CounterType) -> Cow<'static, str> {
     match counter_type {
-        CounterType::PlusOnePlusOne => "+1/+1",
-        CounterType::MinusOneMinusOne => "-1/-1",
-        CounterType::DoubleStrike => "double strike",
-        CounterType::FirstStrike => "first strike",
-        CounterType::Deathtouch => "deathtouch",
-        CounterType::Flying => "flying",
-        CounterType::Haste => "haste",
-        CounterType::Hexproof => "hexproof",
-        CounterType::Indestructible => "indestructible",
-        CounterType::Lifelink => "lifelink",
-        CounterType::Menace => "menace",
-        CounterType::Reach => "reach",
-        CounterType::Trample => "trample",
-        CounterType::Vigilance => "vigilance",
-        CounterType::Loyalty => "loyalty",
-        CounterType::Charge => "charge",
-        CounterType::Stun => "stun",
-        CounterType::Depletion => "depletion",
-        CounterType::Storage => "storage",
-        CounterType::Ki => "ki",
-        CounterType::Energy => "energy",
-        CounterType::Age => "age",
-        CounterType::Finality => "finality",
-        CounterType::Time => "time",
-        CounterType::Brain => "brain",
-        CounterType::Level => "level",
-        CounterType::Lore => "lore",
-        _ => "counter",
+        CounterType::PlusOnePlusOne => Cow::Borrowed("+1/+1"),
+        CounterType::MinusOneMinusOne => Cow::Borrowed("-1/-1"),
+        CounterType::DoubleStrike => Cow::Borrowed("double strike"),
+        CounterType::FirstStrike => Cow::Borrowed("first strike"),
+        CounterType::Deathtouch => Cow::Borrowed("deathtouch"),
+        CounterType::Flying => Cow::Borrowed("flying"),
+        CounterType::Haste => Cow::Borrowed("haste"),
+        CounterType::Hexproof => Cow::Borrowed("hexproof"),
+        CounterType::Indestructible => Cow::Borrowed("indestructible"),
+        CounterType::Lifelink => Cow::Borrowed("lifelink"),
+        CounterType::Menace => Cow::Borrowed("menace"),
+        CounterType::Reach => Cow::Borrowed("reach"),
+        CounterType::Trample => Cow::Borrowed("trample"),
+        CounterType::Vigilance => Cow::Borrowed("vigilance"),
+        CounterType::Loyalty => Cow::Borrowed("loyalty"),
+        CounterType::Charge => Cow::Borrowed("charge"),
+        CounterType::Stun => Cow::Borrowed("stun"),
+        CounterType::Depletion => Cow::Borrowed("depletion"),
+        CounterType::Storage => Cow::Borrowed("storage"),
+        CounterType::Ki => Cow::Borrowed("ki"),
+        CounterType::Energy => Cow::Borrowed("energy"),
+        CounterType::Age => Cow::Borrowed("age"),
+        CounterType::Finality => Cow::Borrowed("finality"),
+        CounterType::Time => Cow::Borrowed("time"),
+        CounterType::Brain => Cow::Borrowed("brain"),
+        CounterType::Level => Cow::Borrowed("level"),
+        CounterType::Lore => Cow::Borrowed("lore"),
+        CounterType::Named(name) => Cow::Owned((*name).to_string()),
+        _ => Cow::Borrowed("counter"),
     }
 }
 
@@ -350,7 +351,7 @@ fn cost_modifier_condition_is_active(
     crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx)
 }
 
-fn describe_spell_filter(filter: &SpellFilter) -> String {
+fn describe_spell_filter(filter: &ObjectFilter) -> String {
     let mut qualifiers = Vec::<String>::new();
     if let Some(colors) = filter.colors {
         let color_text = describe_colors(colors);
@@ -383,7 +384,7 @@ fn describe_spell_filter(filter: &SpellFilter) -> String {
     } else {
         format!("{} spells", qualifiers.join(" "))
     };
-    match filter.controller.as_ref() {
+    match filter.cast_by.as_ref() {
         Some(PlayerFilter::You) => description.push_str(" you cast"),
         Some(PlayerFilter::Opponent) => description.push_str(" your opponents cast"),
         _ => {}
@@ -416,7 +417,7 @@ fn describe_spell_filter(filter: &SpellFilter) -> String {
     description
 }
 
-fn describe_flashback_cost_subject(filter: &SpellFilter) -> Option<&'static str> {
+fn describe_flashback_cost_subject(filter: &ObjectFilter) -> Option<&'static str> {
     if filter.alternative_cast != Some(AlternativeCastKind::Flashback)
         || !filter.card_types.is_empty()
         || !filter.excluded_card_types.is_empty()
@@ -430,7 +431,7 @@ fn describe_flashback_cost_subject(filter: &SpellFilter) -> Option<&'static str>
     {
         return None;
     }
-    match filter.controller.as_ref() {
+    match filter.cast_by.as_ref() {
         Some(PlayerFilter::You) => Some("Flashback costs you pay"),
         Some(PlayerFilter::Opponent) => Some("Flashback costs your opponents pay"),
         None | Some(PlayerFilter::Any) => Some("Flashback costs"),
@@ -545,13 +546,13 @@ impl StaticAbilityKind for Improvise {
 /// Cost reduction: "Spells cost {N} less to cast"
 #[derive(Debug, Clone, PartialEq)]
 pub struct CostReduction {
-    pub filter: SpellFilter,
+    pub filter: ObjectFilter,
     pub reduction: Value,
     pub condition: Option<crate::ConditionExpr>,
 }
 
 impl CostReduction {
-    pub fn new(filter: SpellFilter, reduction: Value) -> Self {
+    pub fn new(filter: ObjectFilter, reduction: Value) -> Self {
         Self {
             filter,
             reduction,
@@ -1278,13 +1279,13 @@ impl StaticAbilityKind for ThisSpellCostReductionManaCost {
 /// Cost increase: "Spells cost {N} more to cast"
 #[derive(Debug, Clone, PartialEq)]
 pub struct CostIncrease {
-    pub filter: SpellFilter,
+    pub filter: ObjectFilter,
     pub increase: Value,
     pub condition: Option<crate::ConditionExpr>,
 }
 
 impl CostIncrease {
-    pub fn new(filter: SpellFilter, increase: Value) -> Self {
+    pub fn new(filter: ObjectFilter, increase: Value) -> Self {
         Self {
             filter,
             increase,
@@ -1345,13 +1346,13 @@ impl StaticAbilityKind for CostIncrease {
 /// Mana-symbol cost reduction: "Spells cost {B} less to cast"
 #[derive(Debug, Clone, PartialEq)]
 pub struct CostReductionManaCost {
-    pub filter: SpellFilter,
+    pub filter: ObjectFilter,
     pub reduction: ManaCost,
     pub condition: Option<crate::ConditionExpr>,
 }
 
 impl CostReductionManaCost {
-    pub fn new(filter: SpellFilter, reduction: ManaCost) -> Self {
+    pub fn new(filter: ObjectFilter, reduction: ManaCost) -> Self {
         Self {
             filter,
             reduction,
@@ -1399,13 +1400,13 @@ impl StaticAbilityKind for CostReductionManaCost {
 /// Mana-symbol cost increase: "Spells cost {B} more to cast"
 #[derive(Debug, Clone, PartialEq)]
 pub struct CostIncreaseManaCost {
-    pub filter: SpellFilter,
+    pub filter: ObjectFilter,
     pub increase: ManaCost,
     pub condition: Option<crate::ConditionExpr>,
 }
 
 impl CostIncreaseManaCost {
-    pub fn new(filter: SpellFilter, increase: ManaCost) -> Self {
+    pub fn new(filter: ObjectFilter, increase: ManaCost) -> Self {
         Self {
             filter,
             increase,

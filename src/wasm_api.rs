@@ -118,26 +118,9 @@ fn protected_object_ids_for_decision(decision: Option<&DecisionContext>) -> Hash
     };
 
     match decision {
-        DecisionContext::Priority(priority) => {
-            for action in &priority.actions {
-                match action {
-                    LegalAction::CastSpell { spell_id, .. } => {
-                        ids.insert(*spell_id);
-                    }
-                    LegalAction::ActivateAbility { source, .. }
-                    | LegalAction::ActivateManaAbility { source, .. } => {
-                        ids.insert(*source);
-                    }
-                    LegalAction::PlayLand { land_id } => {
-                        ids.insert(*land_id);
-                    }
-                    LegalAction::TurnFaceUp { creature_id } => {
-                        ids.insert(*creature_id);
-                    }
-                    LegalAction::SpecialAction(_) | LegalAction::PassPriority => {}
-                }
-            }
-        }
+        // Priority: don't force-ungroup — identical permanents should stay stacked.
+        // The UI picks actions by index, not by specific object ID.
+        DecisionContext::Priority(_) => {}
         DecisionContext::Targets(targets) => {
             for requirement in &targets.requirements {
                 for target in &requirement.legal_targets {
@@ -304,6 +287,10 @@ struct StackObjectSnapshot {
     id: u64,
     name: String,
     effect_text: Option<String>,
+    /// "Triggered", "Activated", or null for spells.
+    ability_kind: Option<String>,
+    /// Compiled text of the specific ability effects (for inspector display).
+    ability_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -330,6 +317,7 @@ struct ObjectDetailsSnapshot {
     tapped: bool,
     counters: Vec<CounterSnapshot>,
     abilities: Vec<String>,
+    raw_compilation: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -443,24 +431,42 @@ impl GameSnapshot {
                 let name = obj
                     .map(|o| o.name.clone())
                     .unwrap_or_else(|| format!("Object#{}", entry.object_id.0));
-                let effect_text = if entry.is_ability {
-                    // For abilities, use source_name + any captured text
-                    entry.source_name.clone()
-                } else if let Some(o) = obj {
-                    // For spells, compile the oracle text
-                    let lines = crate::compiled_text::compiled_lines(&o.to_card_definition());
-                    if lines.is_empty() {
-                        None
+                if entry.is_ability {
+                    let ability_kind = if entry.triggering_event.is_some() {
+                        "Triggered"
                     } else {
-                        Some(lines.join("; "))
+                        "Activated"
+                    };
+                    let ability_text = entry
+                        .ability_effects
+                        .as_ref()
+                        .map(|effects| crate::compiled_text::compile_effect_list(effects))
+                        .filter(|s| !s.is_empty());
+                    StackObjectSnapshot {
+                        id: entry.object_id.0,
+                        name,
+                        effect_text: None,
+                        ability_kind: Some(ability_kind.to_string()),
+                        ability_text,
                     }
                 } else {
-                    None
-                };
-                StackObjectSnapshot {
-                    id: entry.object_id.0,
-                    name,
-                    effect_text,
+                    let effect_text = if let Some(o) = obj {
+                        let lines = crate::compiled_text::compiled_lines(&o.to_card_definition());
+                        if lines.is_empty() {
+                            None
+                        } else {
+                            Some(lines.join("; "))
+                        }
+                    } else {
+                        None
+                    };
+                    StackObjectSnapshot {
+                        id: entry.object_id.0,
+                        name,
+                        effect_text,
+                        ability_kind: None,
+                        ability_text: None,
+                    }
                 }
             })
             .collect();
@@ -487,6 +493,8 @@ impl GameSnapshot {
                     id: stack_id.0,
                     name: obj.name.clone(),
                     effect_text: pending_effect_text,
+                    ability_kind: None,
+                    ability_text: None,
                 },
             );
             stack_size += 1;
@@ -1613,6 +1621,67 @@ impl WasmGame {
         );
         self.recompute_ui_decision()?;
         Ok(object_id.0)
+    }
+
+    /// Add a specific card by name to a player's zone.
+    ///
+    /// When `skip_triggers` is true the card is placed directly without
+    /// processing ETB or other zone-change triggers.
+    #[wasm_bindgen(js_name = addCardToZone)]
+    pub fn add_card_to_zone(
+        &mut self,
+        player_index: u8,
+        card_name: String,
+        zone_name: String,
+        skip_triggers: bool,
+    ) -> Result<u64, JsValue> {
+        let player_id = PlayerId::from_index(player_index);
+        if self.game.player(player_id).is_none() {
+            return Err(JsValue::from_str("invalid player index"));
+        }
+
+        let query = card_name.trim();
+        if query.is_empty() {
+            return Err(JsValue::from_str("card name cannot be empty"));
+        }
+
+        let zone = match zone_name.trim().to_lowercase().as_str() {
+            "hand" => crate::zone::Zone::Hand,
+            "battlefield" => crate::zone::Zone::Battlefield,
+            "graveyard" => crate::zone::Zone::Graveyard,
+            "exile" => crate::zone::Zone::Exile,
+            "library" => crate::zone::Zone::Library,
+            "command" => crate::zone::Zone::Command,
+            other => {
+                return Err(JsValue::from_str(&format!("unknown zone: {other}")));
+            }
+        };
+
+        self.registry.ensure_cards_loaded([query]);
+        let definition = self
+            .find_card_definition(query)
+            .cloned()
+            .ok_or_else(|| JsValue::from_str(&format!("unknown card name: {query}")))?;
+
+        if skip_triggers {
+            let object_id = self
+                .game
+                .create_object_from_definition(&definition, player_id, zone);
+            self.recompute_ui_decision()?;
+            Ok(object_id.0)
+        } else {
+            // Create in Command zone first, then move to target zone so that
+            // zone-change triggers (ETB, etc.) fire naturally.
+            let temp_id = self.game.create_object_from_definition(
+                &definition,
+                player_id,
+                crate::zone::Zone::Command,
+            );
+            let object_id = self.game.move_object(temp_id, zone).unwrap_or(temp_id);
+            crate::game_loop::drain_pending_trigger_events(&mut self.game, &mut self.trigger_queue);
+            self.recompute_ui_decision()?;
+            Ok(object_id.0)
+        }
     }
 
     /// Draw opening hands for all players.
@@ -2925,12 +2994,14 @@ fn build_object_details_snapshot(game: &GameState, id: ObjectId) -> Option<Objec
         tapped: game.is_tapped(obj.id),
         counters,
         abilities: {
-            let mut lines = crate::compiled_text::compiled_lines(&obj.to_card_definition());
+            let def = obj.to_card_definition();
+            let mut lines = crate::compiled_text::compiled_lines(&def);
             for granted in obj.level_granted_abilities() {
                 lines.push(format!("Level bonus: {}", granted.display()));
             }
             lines
         },
+        raw_compilation: format!("{:#?}", obj.to_card_definition()),
     })
 }
 

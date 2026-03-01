@@ -181,6 +181,24 @@ mod tests {
         assert!(def.card.oracle_text.contains("any color"));
     }
 
+    #[test]
+    fn test_mox_diamond_static_display_keeps_land_restriction() {
+        let def = mox_diamond();
+        let static_display = match &def.abilities[0].kind {
+            AbilityKind::Static(static_ability) => static_ability.display().to_ascii_lowercase(),
+            other => panic!("expected static ability, got {other:?}"),
+        };
+
+        assert!(
+            static_display.contains("discard a land card"),
+            "expected land discard restriction in static display, got: {static_display}"
+        );
+        assert!(
+            static_display.contains("its owner's graveyard"),
+            "expected owner graveyard redirect in static display, got: {static_display}"
+        );
+    }
+
     // =========================================================================
     // Full ETB Replacement Effect Integration Tests
     // =========================================================================

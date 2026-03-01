@@ -5,6 +5,7 @@ use crate::effects::{EffectExecutor, ModalSpec};
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
+use crate::target::ChooseSpec;
 
 /// Effect that branches based on game state conditions.
 ///
@@ -80,6 +81,45 @@ impl EffectExecutor for ConditionalEffect {
         Box::new(self.clone())
     }
 
+    fn get_target_spec(&self) -> Option<&ChooseSpec> {
+        self.if_true
+            .iter()
+            .find_map(|effect| effect.0.get_target_spec())
+            .or_else(|| {
+                self.if_false
+                    .iter()
+                    .find_map(|effect| effect.0.get_target_spec())
+            })
+    }
+
+    fn target_description(&self) -> &'static str {
+        for effect in &self.if_true {
+            if effect.0.get_target_spec().is_some() {
+                return effect.0.target_description();
+            }
+        }
+        for effect in &self.if_false {
+            if effect.0.get_target_spec().is_some() {
+                return effect.0.target_description();
+            }
+        }
+        "target"
+    }
+
+    fn get_target_count(&self) -> Option<crate::effect::ChoiceCount> {
+        for effect in &self.if_true {
+            if effect.0.get_target_spec().is_some() {
+                return effect.0.get_target_count();
+            }
+        }
+        for effect in &self.if_false {
+            if effect.0.get_target_spec().is_some() {
+                return effect.0.get_target_count();
+            }
+        }
+        None
+    }
+
     fn get_modal_spec_with_context(
         &self,
         game: &GameState,
@@ -130,4 +170,33 @@ fn evaluate_condition(
     ctx: &ExecutionContext,
 ) -> Result<bool, ExecutionError> {
     crate::condition_eval::evaluate_condition_resolution(game, condition, ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::effect::Condition;
+
+    #[test]
+    fn conditional_forwards_inner_target_spec_from_if_true() {
+        let effect = ConditionalEffect::if_only(
+            Condition::YourTurn,
+            vec![Effect::counter(ChooseSpec::target_spell())],
+        );
+
+        assert!(effect.get_target_spec().is_some());
+        assert_eq!(effect.target_description(), "spell to counter");
+    }
+
+    #[test]
+    fn conditional_forwards_inner_target_spec_from_if_false() {
+        let effect = ConditionalEffect::new(
+            Condition::YourTurn,
+            vec![Effect::draw(1)],
+            vec![Effect::counter(ChooseSpec::target_spell())],
+        );
+
+        assert!(effect.get_target_spec().is_some());
+        assert_eq!(effect.target_description(), "spell to counter");
+    }
 }

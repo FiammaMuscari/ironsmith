@@ -147,11 +147,11 @@ pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         }
         TriggerSpec::ThisEntersBattlefield => Trigger::this_enters_battlefield(),
         TriggerSpec::ThisDealsCombatDamageToPlayer => Trigger::this_deals_combat_damage_to_player(),
-        TriggerSpec::DealsCombatDamageToPlayer(filter) => {
-            Trigger::deals_combat_damage_to_player(filter)
+        TriggerSpec::DealsCombatDamageToPlayer { source, player } => {
+            Trigger::deals_combat_damage_to_player(source, player)
         }
-        TriggerSpec::DealsCombatDamageToPlayerOneOrMore(filter) => {
-            Trigger::deals_combat_damage_to_player_one_or_more(filter)
+        TriggerSpec::DealsCombatDamageToPlayerOneOrMore { source, player } => {
+            Trigger::deals_combat_damage_to_player_one_or_more(source, player)
         }
         TriggerSpec::YouCastThisSpell => Trigger::you_cast_this_spell(),
         TriggerSpec::KeywordAction { action, player } => Trigger::keyword_action(action, player),
@@ -268,8 +268,8 @@ pub(crate) fn trigger_supports_event_value(trigger: &TriggerSpec, spec: &EventVa
             | TriggerSpec::DealsCombatDamage(_)
             | TriggerSpec::DealsCombatDamageTo { .. }
             | TriggerSpec::ThisDealsCombatDamageToPlayer
-            | TriggerSpec::DealsCombatDamageToPlayer(_)
-            | TriggerSpec::DealsCombatDamageToPlayerOneOrMore(_) => true,
+            | TriggerSpec::DealsCombatDamageToPlayer { .. }
+            | TriggerSpec::DealsCombatDamageToPlayerOneOrMore { .. } => true,
             TriggerSpec::Either(left, right) => {
                 trigger_supports_event_value(left, spec)
                     && trigger_supports_event_value(right, spec)

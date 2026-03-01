@@ -32,6 +32,7 @@ fn describe_counter_type(counter_type: CounterType) -> String {
     match counter_type {
         CounterType::PlusOnePlusOne => "+1/+1".to_string(),
         CounterType::MinusOneMinusOne => "-1/-1".to_string(),
+        CounterType::Named(name) => name.to_string(),
         other => format!("{other:?}").to_ascii_lowercase(),
     }
 }
@@ -94,6 +95,54 @@ fn capitalize_first(text: &str) -> String {
     match chars.next() {
         Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
         None => String::new(),
+    }
+}
+
+fn indefinite_article(text: &str) -> &'static str {
+    let first = text
+        .chars()
+        .find(|ch| ch.is_ascii_alphabetic())
+        .map(|ch| ch.to_ascii_lowercase());
+    match first {
+        Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
+        _ => "a",
+    }
+}
+
+fn describe_discard_filter_card_phrase(filter: &ObjectFilter) -> String {
+    let mut phrase = filter.description().trim().to_string();
+    if phrase.is_empty() {
+        return "a card".to_string();
+    }
+
+    let lower = phrase.to_ascii_lowercase();
+    let has_determiner = lower.starts_with("a ")
+        || lower.starts_with("an ")
+        || lower.starts_with("the ")
+        || lower.starts_with("target ")
+        || lower.starts_with("another ")
+        || lower.starts_with("any ")
+        || lower.starts_with("each ");
+    if !has_determiner {
+        phrase = format!("{} {}", indefinite_article(&phrase), phrase);
+    }
+
+    let lower = phrase.to_ascii_lowercase();
+    if !lower.contains(" card") && !lower.ends_with("card") {
+        phrase.push_str(" card");
+    }
+    phrase
+}
+
+fn describe_redirect_zone_phrase(zone: Zone) -> &'static str {
+    match zone {
+        Zone::Graveyard => "its owner's graveyard",
+        Zone::Hand => "its owner's hand",
+        Zone::Library => "its owner's library",
+        Zone::Battlefield => "the battlefield",
+        Zone::Stack => "the stack",
+        Zone::Exile => "exile",
+        Zone::Command => "the command zone",
     }
 }
 
@@ -2281,9 +2330,11 @@ impl StaticAbilityKind for DiscardOrRedirectReplacement {
     }
 
     fn display(&self) -> String {
+        let discard_phrase = describe_discard_filter_card_phrase(&self.filter);
+        let redirect_phrase = describe_redirect_zone_phrase(self.redirect_zone);
         format!(
-            "If this would enter the battlefield, you may discard a card. If you don't, put it into {:?}",
-            self.redirect_zone
+            "If this would enter the battlefield, you may discard {} instead. If you do, put it onto the battlefield. If you don't, put it into {}.",
+            discard_phrase, redirect_phrase
         )
     }
 

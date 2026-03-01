@@ -2232,8 +2232,8 @@ pub(crate) fn parse_object_filter(
     Ok(filter)
 }
 
-pub(crate) fn parse_spell_filter(tokens: &[Token]) -> crate::ability::SpellFilter {
-    let mut filter = crate::ability::SpellFilter::default();
+pub(crate) fn parse_spell_filter(tokens: &[Token]) -> ObjectFilter {
+    let mut filter = ObjectFilter::default();
     let words: Vec<&str> = words(tokens)
         .into_iter()
         .filter(|word| !is_article(word))
@@ -2314,7 +2314,7 @@ pub(crate) fn parse_spell_filter(tokens: &[Token]) -> crate::ability::SpellFilte
     filter
 }
 
-pub(crate) fn spell_filter_has_identity(filter: &crate::ability::SpellFilter) -> bool {
+pub(crate) fn spell_filter_has_identity(filter: &ObjectFilter) -> bool {
     !filter.card_types.is_empty()
         || !filter.excluded_card_types.is_empty()
         || !filter.subtypes.is_empty()
@@ -2322,13 +2322,13 @@ pub(crate) fn spell_filter_has_identity(filter: &crate::ability::SpellFilter) ->
         || filter.power.is_some()
         || filter.toughness.is_some()
         || filter.mana_value.is_some()
+        || filter.cast_by.is_some()
+        || filter.targets_player.is_some()
+        || filter.targets_object.is_some()
         || filter.alternative_cast.is_some()
 }
 
-pub(crate) fn merge_spell_filters(
-    base: &mut crate::ability::SpellFilter,
-    extra: crate::ability::SpellFilter,
-) {
+pub(crate) fn merge_spell_filters(base: &mut ObjectFilter, extra: ObjectFilter) {
     for card_type in extra.card_types {
         if !base.card_types.contains(&card_type) {
             base.card_types.push(card_type);
@@ -2359,6 +2359,15 @@ pub(crate) fn merge_spell_filters(
     }
     if base.mana_value.is_none() {
         base.mana_value = extra.mana_value;
+    }
+    if base.cast_by.is_none() {
+        base.cast_by = extra.cast_by;
+    }
+    if base.targets_player.is_none() {
+        base.targets_player = extra.targets_player;
+    }
+    if base.targets_object.is_none() {
+        base.targets_object = extra.targets_object;
     }
 }
 

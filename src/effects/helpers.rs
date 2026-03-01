@@ -1166,6 +1166,23 @@ pub fn find_target_object(targets: &[ResolvedTarget]) -> Result<ObjectId, Execut
     Err(ExecutionError::InvalidTarget)
 }
 
+/// Resolve a [`ChooseSpec`] to a single object id.
+///
+/// This supports non-target references (e.g. `Source`, `Tagged`, `Iterated`)
+/// in addition to classic `ctx.targets`-backed target specs.
+/// If multiple objects resolve, this returns the first one to preserve legacy
+/// single-target executor behavior.
+pub fn resolve_single_object_from_spec(
+    game: &GameState,
+    spec: &ChooseSpec,
+    ctx: &ExecutionContext,
+) -> Result<ObjectId, ExecutionError> {
+    resolve_objects_from_spec(game, spec, ctx)?
+        .into_iter()
+        .next()
+        .ok_or(ExecutionError::InvalidTarget)
+}
+
 /// Find the first player target in the targets list.
 pub fn find_target_player(targets: &[ResolvedTarget]) -> Result<PlayerId, ExecutionError> {
     for target in targets {
@@ -1916,6 +1933,18 @@ mod tests {
     fn test_find_target_object_not_found() {
         let targets = vec![ResolvedTarget::Player(PlayerId(1))];
         assert!(find_target_object(&targets).is_err());
+    }
+
+    #[test]
+    fn test_resolve_single_object_from_spec_source() {
+        let mut game = new_test_game();
+        let player_id = game.players[0].id;
+        let source_id = game.new_object_id();
+        let ctx = ExecutionContext::new_default(source_id, player_id);
+
+        let resolved =
+            resolve_single_object_from_spec(&game, &ChooseSpec::Source, &ctx).unwrap();
+        assert_eq!(resolved, source_id);
     }
 
     #[test]

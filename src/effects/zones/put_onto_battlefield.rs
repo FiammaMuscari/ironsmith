@@ -5,7 +5,7 @@ use super::battlefield_entry::{
 };
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{find_target_object, resolve_player_filter};
+use crate::effects::helpers::{resolve_objects_from_spec, resolve_player_filter};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::{ChooseSpec, ObjectRef, PlayerFilter};
@@ -18,7 +18,7 @@ use crate::target::{ChooseSpec, ObjectRef, PlayerFilter};
 ///
 /// # Fields
 ///
-/// * `target` - Which card to put onto the battlefield (resolved from ctx.targets)
+/// * `target` - Which card to put onto the battlefield
 /// * `tapped` - Whether the permanent enters tapped
 /// * `controller` - Who controls the permanent when it enters
 ///
@@ -70,30 +70,36 @@ impl EffectExecutor for PutOntoBattlefieldEffect {
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         let controller_id = resolve_player_filter(game, &self.controller, ctx)?;
-        let target_id = find_target_object(&ctx.targets)?;
+        let object_ids = resolve_objects_from_spec(game, &self.target, ctx)?;
+        if object_ids.is_empty() {
+            return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
+        }
 
-        // Check if object exists
-        let _obj = game
-            .object(target_id)
-            .ok_or(ExecutionError::ObjectNotFound(target_id))?;
+        let mut moved_ids = Vec::new();
+        let mut prevented = false;
 
-        let outcome = move_to_battlefield_with_options(
-            game,
-            ctx,
-            target_id,
-            BattlefieldEntryOptions::specific(controller_id, self.tapped),
-        );
-
-        match outcome {
-            BattlefieldEntryOutcome::Moved(new_id) => {
-                Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
-                    new_id,
-                ])))
+        for object_id in object_ids {
+            if game.object(object_id).is_none() {
+                continue;
             }
-            BattlefieldEntryOutcome::Prevented => {
-                // ETB was prevented entirely (e.g., "if this would enter, exile it instead")
-                Ok(EffectOutcome::from_result(EffectResult::Impossible))
+            let outcome = move_to_battlefield_with_options(
+                game,
+                ctx,
+                object_id,
+                BattlefieldEntryOptions::specific(controller_id, self.tapped),
+            );
+            match outcome {
+                BattlefieldEntryOutcome::Moved(new_id) => moved_ids.push(new_id),
+                BattlefieldEntryOutcome::Prevented => prevented = true,
             }
+        }
+
+        if !moved_ids.is_empty() {
+            Ok(EffectOutcome::from_result(EffectResult::Objects(moved_ids)))
+        } else if prevented {
+            Ok(EffectOutcome::from_result(EffectResult::Impossible))
+        } else {
+            Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
         }
     }
 
@@ -114,6 +120,7 @@ impl EffectExecutor for PutOntoBattlefieldEffect {
 mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::effect::{ChoiceCount, Effect, EffectResult};
     use crate::executor::ResolvedTarget;
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
@@ -149,6 +156,24 @@ mod tests {
         let id = game.new_object_id();
         let card = make_creature_card(id.0 as u32, name);
         let obj = Object::from_card(id, &card, owner, Zone::Graveyard);
+        game.add_object(obj);
+        id
+    }
+
+    fn create_creature_in_library(game: &mut GameState, name: &str, owner: PlayerId) -> ObjectId {
+        let id = game.new_object_id();
+        let card = make_creature_card(id.0 as u32, name);
+        let obj = Object::from_card(id, &card, owner, Zone::Library);
+        game.add_object(obj);
+        id
+    }
+
+    fn create_land_in_library(game: &mut GameState, name: &str, owner: PlayerId) -> ObjectId {
+        let id = game.new_object_id();
+        let card = CardBuilder::new(CardId::from_raw(id.0 as u32), name)
+            .card_types(vec![CardType::Land])
+            .build();
+        let obj = Object::from_card(id, &card, owner, Zone::Library);
         game.add_object(obj);
         id
     }
@@ -265,6 +290,29 @@ mod tests {
     }
 
     #[test]
+    fn test_put_onto_battlefield_iterated_object_from_library() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let creature_id = create_creature_in_library(&mut game, "Library Creature", alice);
+        let source = game.new_object_id();
+
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        ctx.iterated_object = Some(creature_id);
+
+        let effect = PutOntoBattlefieldEffect::you_control(ChooseSpec::Iterated, true);
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        if let EffectResult::Objects(ids) = result.result {
+            assert_eq!(ids.len(), 1);
+            let new_id = ids[0];
+            assert!(game.battlefield.contains(&new_id));
+            assert!(game.is_tapped(new_id));
+        } else {
+            panic!("Expected Objects result");
+        }
+    }
+
+    #[test]
     fn test_put_onto_battlefield_no_target() {
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);
@@ -276,9 +324,47 @@ mod tests {
             false,
         );
         let result = effect.execute(&mut game, &mut ctx);
+        assert_eq!(result, Err(ExecutionError::InvalidTarget));
+    }
 
-        // Should return error - no target
-        assert!(result.is_err());
+    #[test]
+    fn test_map_the_frontier_style_sequence_puts_chosen_cards_onto_battlefield_tapped() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        create_land_in_library(&mut game, "Forest", alice);
+        create_land_in_library(&mut game, "Desert", alice);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let effect = crate::effects::SequenceEffect::new(vec![
+            Effect::choose_objects(
+                ObjectFilter::land().in_zone(Zone::Library),
+                ChoiceCount::up_to(2),
+                PlayerFilter::You,
+                "searched_0",
+            ),
+            Effect::for_each_tagged(
+                "searched_0",
+                vec![Effect::put_onto_battlefield(
+                    ChooseSpec::Iterated,
+                    true,
+                    PlayerFilter::You,
+                )],
+            ),
+            Effect::shuffle_library_player(PlayerFilter::You),
+        ]);
+
+        effect.execute(&mut game, &mut ctx).unwrap();
+
+        assert!(
+            game.player(alice).unwrap().library.is_empty(),
+            "chosen cards should leave the library"
+        );
+        assert_eq!(game.battlefield.len(), 2);
+        for object_id in game.battlefield.clone() {
+            assert!(game.is_tapped(object_id));
+            assert_eq!(game.object(object_id).unwrap().zone, Zone::Battlefield);
+        }
     }
 
     #[test]

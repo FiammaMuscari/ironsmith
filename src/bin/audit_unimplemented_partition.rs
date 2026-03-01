@@ -100,14 +100,6 @@ fn read_partition_names(path: &str) -> Result<HashSet<String>, Box<dyn std::erro
     Ok(out)
 }
 
-fn is_stream_metadata_line(line: &str) -> bool {
-    line.starts_with("Mana cost:")
-        || line.starts_with("Type:")
-        || line.starts_with("Power/Toughness:")
-        || line.starts_with("Loyalty:")
-        || line.starts_with("Defense:")
-}
-
 fn parse_stream_block(lines: &[String]) -> Option<CardInput> {
     if lines.is_empty() {
         return None;
@@ -121,20 +113,6 @@ fn parse_stream_block(lines: &[String]) -> Option<CardInput> {
     let parse_lines = lines[1..].to_vec();
     let parse_input = parse_lines.join("\n").trim().to_string();
     if parse_input.is_empty() {
-        return None;
-    }
-
-    // Validate oracle text exists in the stream (after metadata lines).
-    let mut oracle_start = None;
-    for (idx, line) in parse_lines.iter().enumerate() {
-        if !is_stream_metadata_line(line.trim()) {
-            oracle_start = Some(idx);
-            break;
-        }
-    }
-    let oracle_start = oracle_start?;
-    let oracle_text = parse_lines[oracle_start..].join("\n").trim().to_string();
-    if oracle_text.is_empty() {
         return None;
     }
 

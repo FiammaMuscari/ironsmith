@@ -747,6 +747,15 @@ pub enum EventValueSpec {
 }
 
 /// A rule restriction ("can't" effect) specification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CastSpellLimitScope {
+    AnySpell,
+    NonCreatureSpell,
+    NonArtifactSpell,
+    NonPhyrexianSpell,
+}
+
+/// A rule restriction ("can't" effect) specification.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Restriction {
     GainLife(PlayerFilter),
@@ -760,7 +769,7 @@ pub enum Restriction {
     /// Non-mana activated abilities of matching objects can't be activated (mana abilities are still allowed).
     ActivateNonManaAbilitiesOf(ObjectFilter),
     CastCreatureSpells(PlayerFilter),
-    CastMoreThanOneSpellEachTurn(PlayerFilter),
+    CastMoreThanOneSpellEachTurn(PlayerFilter, CastSpellLimitScope),
     DrawCards(PlayerFilter),
     DrawExtraCards(PlayerFilter),
     ChangeLifeTotal(PlayerFilter),
@@ -827,7 +836,19 @@ impl Restriction {
     }
 
     pub fn cast_more_than_one_spell_each_turn(filter: PlayerFilter) -> Self {
-        Self::CastMoreThanOneSpellEachTurn(filter)
+        Self::CastMoreThanOneSpellEachTurn(filter, CastSpellLimitScope::AnySpell)
+    }
+
+    pub fn cast_more_than_one_noncreature_spell_each_turn(filter: PlayerFilter) -> Self {
+        Self::CastMoreThanOneSpellEachTurn(filter, CastSpellLimitScope::NonCreatureSpell)
+    }
+
+    pub fn cast_more_than_one_nonartifact_spell_each_turn(filter: PlayerFilter) -> Self {
+        Self::CastMoreThanOneSpellEachTurn(filter, CastSpellLimitScope::NonArtifactSpell)
+    }
+
+    pub fn cast_more_than_one_nonphyrexian_spell_each_turn(filter: PlayerFilter) -> Self {
+        Self::CastMoreThanOneSpellEachTurn(filter, CastSpellLimitScope::NonPhyrexianSpell)
     }
 
     pub fn draw_cards(filter: PlayerFilter) -> Self {
@@ -1021,16 +1042,35 @@ impl Restriction {
                     }
                 }
             }
-            Restriction::CastMoreThanOneSpellEachTurn(filter) => {
+            Restriction::CastMoreThanOneSpellEachTurn(filter, scope) => {
                 for player in &game.players {
                     if player.is_in_game()
                         && player_matches_filter_with_combat(
                             player.id, filter, game, controller, combat,
                         )
                     {
-                        tracker
-                            .cant_cast_more_than_one_spell_each_turn
-                            .insert(player.id);
+                        match scope {
+                            CastSpellLimitScope::AnySpell => {
+                                tracker
+                                    .cant_cast_more_than_one_spell_each_turn
+                                    .insert(player.id);
+                            }
+                            CastSpellLimitScope::NonCreatureSpell => {
+                                tracker
+                                    .cant_cast_more_than_one_noncreature_spell_each_turn
+                                    .insert(player.id);
+                            }
+                            CastSpellLimitScope::NonArtifactSpell => {
+                                tracker
+                                    .cant_cast_more_than_one_nonartifact_spell_each_turn
+                                    .insert(player.id);
+                            }
+                            CastSpellLimitScope::NonPhyrexianSpell => {
+                                tracker
+                                    .cant_cast_more_than_one_nonphyrexian_spell_each_turn
+                                    .insert(player.id);
+                            }
+                        }
                     }
                 }
             }

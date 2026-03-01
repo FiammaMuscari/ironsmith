@@ -2,7 +2,7 @@
 
 use crate::continuous::{EffectTarget, Modification};
 use crate::effect::{Effect, EffectOutcome, Until};
-use crate::effects::helpers::find_target_object;
+use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::effects::{ApplyContinuousEffect, EffectExecutor};
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
@@ -37,7 +37,7 @@ impl EffectExecutor for GrantAbilitiesTargetEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = find_target_object(&ctx.targets)?;
+        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
         if self.abilities.is_empty() {
             return Ok(EffectOutcome::resolved());
         }

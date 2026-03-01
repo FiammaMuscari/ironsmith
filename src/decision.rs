@@ -727,36 +727,7 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                     }
                     // Validate the ability's cost can be paid
                     if can_pay_ability_cost(game, perm_id, player, &activated.mana_cost) {
-                        let max_activations_per_turn = activated.max_activations_per_turn();
-                        let restrictions_ok =
-                            can_activate_ability_with_restrictions(game, perm_id, i, activated);
-
-                        let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
-                            controller: player,
-                            source: perm_id,
-                            filter_source: Some(perm_id),
-                            triggering_event: None,
-                            trigger_identity: None,
-                            ability_index: Some(i),
-                            options: Default::default(),
-                        };
-
-                        let timing_ok = crate::condition_eval::evaluate_condition_external(
-                            game,
-                            &crate::effect::Condition::ActivationTiming(activated.timing.clone()),
-                            &eval_ctx,
-                        );
-
-                        let under_turn_limit = match max_activations_per_turn {
-                            Some(max) => crate::condition_eval::evaluate_condition_external(
-                                game,
-                                &crate::effect::Condition::MaxActivationsPerTurn(max),
-                                &eval_ctx,
-                            ),
-                            None => true,
-                        };
-
-                        if timing_ok && under_turn_limit && restrictions_ok {
+                        if can_activate_ability_with_restrictions(game, perm_id, i, activated) {
                             actions.push(LegalAction::ActivateAbility {
                                 source: perm_id,
                                 ability_index: i,
@@ -826,36 +797,7 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                         continue;
                     }
 
-                    let max_activations_per_turn = activated.max_activations_per_turn();
-                    let restrictions_ok =
-                        can_activate_ability_with_restrictions(game, source_id, i, activated);
-
-                    let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
-                        controller: player,
-                        source: source_id,
-                        filter_source: Some(source_id),
-                        triggering_event: None,
-                        trigger_identity: None,
-                        ability_index: Some(i),
-                        options: Default::default(),
-                    };
-
-                    let timing_ok = crate::condition_eval::evaluate_condition_external(
-                        game,
-                        &crate::effect::Condition::ActivationTiming(activated.timing.clone()),
-                        &eval_ctx,
-                    );
-
-                    let under_turn_limit = match max_activations_per_turn {
-                        Some(max) => crate::condition_eval::evaluate_condition_external(
-                            game,
-                            &crate::effect::Condition::MaxActivationsPerTurn(max),
-                            &eval_ctx,
-                        ),
-                        None => true,
-                    };
-
-                    if timing_ok && under_turn_limit && restrictions_ok {
+                    if can_activate_ability_with_restrictions(game, source_id, i, activated) {
                         actions.push(LegalAction::ActivateAbility {
                             source: source_id,
                             ability_index: i,
@@ -877,6 +819,20 @@ pub(crate) fn can_activate_ability_with_restrictions(
     ability_index: usize,
     activated: &crate::ability::ActivatedAbility,
 ) -> bool {
+    let controller = game
+        .object(source)
+        .map(|obj| obj.controller)
+        .unwrap_or(game.turn.active_player);
+    let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+        controller,
+        source,
+        filter_source: Some(source),
+        triggering_event: None,
+        trigger_identity: None,
+        ability_index: Some(ability_index),
+        options: Default::default(),
+    };
+
     if let Some(obj) = game.object(source)
         && !game.can_activate_non_mana_abilities(obj.controller)
     {
@@ -894,10 +850,24 @@ pub(crate) fn can_activate_ability_with_restrictions(
         return false;
     }
 
+    if !crate::condition_eval::evaluate_condition_external(
+        game,
+        &crate::effect::Condition::ActivationTiming(activated.timing.clone()),
+        &eval_ctx,
+    ) {
+        return false;
+    }
+
     let max_activations_per_turn = activated.max_activations_per_turn();
     let activation_count = game.ability_activation_count_this_turn(source, ability_index);
     if let Some(max_activations) = max_activations_per_turn
         && activation_count >= max_activations
+    {
+        return false;
+    }
+
+    if let Some(condition) = &activated.activation_condition
+        && !crate::condition_eval::evaluate_condition_external(game, condition, &eval_ctx)
     {
         return false;
     }
@@ -1207,6 +1177,100 @@ pub(crate) fn resolve_play_from_alternative_method(
     granted.get(granted_idx).map(|entry| entry.method.clone())
 }
 
+fn cast_limit_scope_filter(
+    scope: crate::effect::CastSpellLimitScope,
+) -> crate::target::ObjectFilter {
+    use crate::target::ObjectFilter;
+    use crate::types::{CardType, Subtype};
+
+    match scope {
+        crate::effect::CastSpellLimitScope::AnySpell => ObjectFilter::default(),
+        crate::effect::CastSpellLimitScope::NonCreatureSpell => {
+            ObjectFilter::default().without_type(CardType::Creature)
+        }
+        crate::effect::CastSpellLimitScope::NonArtifactSpell => {
+            ObjectFilter::default().without_type(CardType::Artifact)
+        }
+        crate::effect::CastSpellLimitScope::NonPhyrexianSpell => {
+            ObjectFilter::default().without_subtype(Subtype::Phyrexian)
+        }
+    }
+}
+
+fn spell_matches_cast_limit_scope(
+    game: &GameState,
+    spell: &crate::object::Object,
+    scope: crate::effect::CastSpellLimitScope,
+) -> bool {
+    cast_limit_scope_filter(scope).matches(spell, &crate::target::FilterContext::default(), game)
+}
+
+fn snapshot_matches_cast_limit_scope(
+    game: &GameState,
+    snapshot: &crate::snapshot::ObjectSnapshot,
+    scope: crate::effect::CastSpellLimitScope,
+) -> bool {
+    cast_limit_scope_filter(scope).matches_snapshot(
+        snapshot,
+        &crate::target::FilterContext::default(),
+        game,
+    )
+}
+
+fn spells_cast_this_turn_in_scope(
+    game: &GameState,
+    player: PlayerId,
+    scope: crate::effect::CastSpellLimitScope,
+) -> u32 {
+    if scope == crate::effect::CastSpellLimitScope::AnySpell {
+        return game
+            .spells_cast_this_turn
+            .get(&player)
+            .copied()
+            .unwrap_or(0);
+    }
+
+    game.spells_cast_this_turn_snapshots
+        .iter()
+        .filter(|snapshot| {
+            snapshot.controller == player
+                && snapshot_matches_cast_limit_scope(game, snapshot, scope)
+        })
+        .count() as u32
+}
+
+fn can_cast_additional_spell_in_scope(
+    game: &GameState,
+    player: PlayerId,
+    scope: crate::effect::CastSpellLimitScope,
+) -> bool {
+    match scope {
+        crate::effect::CastSpellLimitScope::AnySpell => {
+            game.can_cast_additional_spell_this_turn(player)
+        }
+        crate::effect::CastSpellLimitScope::NonCreatureSpell => {
+            game.can_cast_additional_noncreature_spell_this_turn(player)
+        }
+        crate::effect::CastSpellLimitScope::NonArtifactSpell => {
+            game.can_cast_additional_nonartifact_spell_this_turn(player)
+        }
+        crate::effect::CastSpellLimitScope::NonPhyrexianSpell => {
+            game.can_cast_additional_nonphyrexian_spell_this_turn(player)
+        }
+    }
+}
+
+fn violates_cast_limit(
+    game: &GameState,
+    player: PlayerId,
+    spell: &crate::object::Object,
+    scope: crate::effect::CastSpellLimitScope,
+) -> bool {
+    spell_matches_cast_limit_scope(game, spell, scope)
+        && !can_cast_additional_spell_in_scope(game, player, scope)
+        && spells_cast_this_turn_in_scope(game, player, scope) >= 1
+}
+
 /// Check if a spell can be cast by a player using the given casting method.
 pub fn can_cast_spell(
     game: &GameState,
@@ -1227,16 +1291,16 @@ pub fn can_cast_spell(
         return false;
     }
 
-    // Check "can't cast more than one spell each turn" style restrictions.
-    if !game.can_cast_additional_spell_this_turn(player)
-        && game
-            .spells_cast_this_turn
-            .get(&player)
-            .copied()
-            .unwrap_or(0)
-            >= 1
-    {
-        return false;
+    // Check "can't cast more than one [scope] spell each turn" style restrictions.
+    for scope in [
+        crate::effect::CastSpellLimitScope::AnySpell,
+        crate::effect::CastSpellLimitScope::NonCreatureSpell,
+        crate::effect::CastSpellLimitScope::NonArtifactSpell,
+        crate::effect::CastSpellLimitScope::NonPhyrexianSpell,
+    ] {
+        if violates_cast_limit(game, player, spell, scope) {
+            return false;
+        }
     }
 
     // Lands cannot be cast - they are played as a special action
@@ -1582,15 +1646,15 @@ pub fn can_cast_with_alternative_from_hand(
             if !game.can_cast_spells(player) {
                 return false;
             }
-            if !game.can_cast_additional_spell_this_turn(player)
-                && game
-                    .spells_cast_this_turn
-                    .get(&player)
-                    .copied()
-                    .unwrap_or(0)
-                    >= 1
-            {
-                return false;
+            for scope in [
+                crate::effect::CastSpellLimitScope::AnySpell,
+                crate::effect::CastSpellLimitScope::NonCreatureSpell,
+                crate::effect::CastSpellLimitScope::NonArtifactSpell,
+                crate::effect::CastSpellLimitScope::NonPhyrexianSpell,
+            ] {
+                if violates_cast_limit(game, player, spell, scope) {
+                    return false;
+                }
             }
 
             if !can_cast_with_cost(
@@ -2021,9 +2085,9 @@ fn apply_battlefield_spell_cost_modifiers(
     chosen_target_count: usize,
 ) -> crate::mana::ManaCost {
     use crate::ability::AbilityKind;
-    use crate::ability::SpellFilter;
     use crate::filter::FilterContext;
     use crate::mana::{ManaCost, ManaSymbol};
+    use crate::target::ObjectFilter;
 
     fn opponents_of(game: &GameState, player: PlayerId) -> Vec<PlayerId> {
         game.turn_order
@@ -2037,40 +2101,10 @@ fn apply_battlefield_spell_cost_modifiers(
         game: &GameState,
         spell: &crate::object::Object,
         caster: PlayerId,
-        filter: &SpellFilter,
+        filter: &ObjectFilter,
         ctx: &FilterContext,
         _chosen_target_count: usize,
     ) -> bool {
-        if let Some(controller) = &filter.controller {
-            if !controller.matches_player(caster, ctx) {
-                return false;
-            }
-        }
-
-        for excluded in &filter.excluded_card_types {
-            if game.object_has_card_type(spell.id, *excluded) {
-                return false;
-            }
-        }
-        for required in &filter.card_types {
-            if !game.object_has_card_type(spell.id, *required) {
-                return false;
-            }
-        }
-        for subtype in &filter.subtypes {
-            if !game.calculated_subtypes(spell.id).contains(subtype) {
-                return false;
-            }
-        }
-        if let Some(colors) = filter.colors {
-            let spell_colors = game
-                .calculated_characteristics(spell.id)
-                .map(|c| c.colors)
-                .unwrap_or_else(|| spell.colors());
-            if spell_colors.intersection(colors).is_empty() {
-                return false;
-            }
-        }
         if filter.targets_object.is_some() || filter.targets_player.is_some() {
             // Target-dependent cost modifiers require target selection context.
             return false;
@@ -2079,7 +2113,11 @@ fn apply_battlefield_spell_cost_modifiers(
             // Alternative casting method isn't tracked for cost computation yet.
             return false;
         }
-        true
+        let mut cast_filter = filter.clone();
+        cast_filter.targets_player = None;
+        cast_filter.targets_object = None;
+        cast_filter.alternative_cast = None;
+        cast_filter.matches(spell, &ctx.clone().with_caster(Some(caster)), game)
     }
 
     let mut total_increase: i32 = 0;
@@ -6349,17 +6387,18 @@ pub fn init_input_manager(record_file: Option<&str>, replay_file: Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ability::{Ability, SpellFilter};
+    use crate::ability::Ability;
     use crate::card::{CardBuilder, PowerToughness};
     use crate::color::ColorSet;
-    use crate::effect::Value;
+    use crate::effect::{Effect, Value};
+    use crate::filter::Comparison;
     use crate::grant::Grantable;
     use crate::grant_registry::GrantSource;
     use crate::ids::CardId;
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::static_abilities::StaticAbility;
     use crate::target::{ObjectFilter, PlayerFilter};
-    use crate::types::CardType;
+    use crate::types::{CardType, Subtype};
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
@@ -6609,9 +6648,9 @@ mod tests {
             .card_types(vec![CardType::Creature])
             .build();
         let tax_id = game.create_object_from_card(&tax_card, alice, Zone::Battlefield);
-        let mut filter = SpellFilter::default();
+        let mut filter = ObjectFilter::default();
         filter.colors = Some(ColorSet::BLACK);
-        filter.controller = Some(PlayerFilter::You);
+        filter.cast_by = Some(PlayerFilter::You);
         let tax = StaticAbility::new(crate::static_abilities::CostIncreaseManaCost::new(
             filter,
             ManaCost::from_symbols(vec![ManaSymbol::Black]),
@@ -6635,6 +6674,82 @@ mod tests {
 
         let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
         assert_eq!(effective.to_oracle(), "{1}{B}{B}");
+    }
+
+    #[test]
+    fn global_spell_cost_increase_matches_spell_filter_power() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let tax_card = CardBuilder::new(CardId::from_raw(12), "Power Tax")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let tax_id = game.create_object_from_card(&tax_card, alice, Zone::Battlefield);
+        let mut filter = ObjectFilter::default();
+        filter.power = Some(Comparison::GreaterThanOrEqual(4));
+        let tax = StaticAbility::new(crate::static_abilities::CostIncrease::new(
+            filter,
+            Value::Fixed(1),
+        ));
+        game.object_mut(tax_id)
+            .expect("tax permanent exists")
+            .abilities
+            .push(Ability::static_ability(tax));
+
+        let creature_spell = CardBuilder::new(CardId::from_raw(13), "Large Creature")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(4, 4))
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(3)],
+                vec![ManaSymbol::Green],
+            ]))
+            .build();
+        let spell_id = game.create_object_from_card(&creature_spell, alice, Zone::Hand);
+        let spell_obj = game.object(spell_id).expect("spell exists");
+        let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
+
+        let effective = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective.to_oracle(), "{3}{G}{1}");
+    }
+
+    #[test]
+    fn global_spell_cost_increase_uses_caster_for_spell_filter_controller() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let tax_card = CardBuilder::new(CardId::from_raw(14), "Caster Tax")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let tax_id = game.create_object_from_card(&tax_card, alice, Zone::Battlefield);
+        let mut filter = ObjectFilter::default();
+        filter.cast_by = Some(PlayerFilter::You);
+        let tax = StaticAbility::new(crate::static_abilities::CostIncrease::new(
+            filter,
+            Value::Fixed(1),
+        ));
+        game.object_mut(tax_id)
+            .expect("tax permanent exists")
+            .abilities
+            .push(Ability::static_ability(tax));
+
+        let spell_card = CardBuilder::new(CardId::from_raw(15), "Borrowed Spell")
+            .card_types(vec![CardType::Sorcery])
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(2)],
+                vec![ManaSymbol::Blue],
+            ]))
+            .build();
+        // Bob owns/controls the card object, but we evaluate castability for Alice.
+        let spell_id = game.create_object_from_card(&spell_card, bob, Zone::Exile);
+        let spell_obj = game.object(spell_id).expect("spell exists");
+        let base_cost = spell_obj.mana_cost.as_ref().expect("spell has mana cost");
+
+        let effective_for_alice = calculate_effective_mana_cost(&game, alice, spell_obj, base_cost);
+        assert_eq!(effective_for_alice.to_oracle(), "{2}{U}{1}");
+
+        let effective_for_bob = calculate_effective_mana_cost(&game, bob, spell_obj, base_cost);
+        assert_eq!(effective_for_bob.to_oracle(), "{2}{U}");
     }
 
     #[test]
@@ -6663,7 +6778,7 @@ mod tests {
         let mut filter = ObjectFilter::land().you_control();
         filter.zone = Some(Zone::Battlefield);
         let reduction = StaticAbility::new(crate::static_abilities::CostReduction::new(
-            SpellFilter::default(),
+            ObjectFilter::default(),
             Value::DistinctNames(filter),
         ));
 
@@ -7545,6 +7660,250 @@ mod tests {
         assert!(
             !can_cast_spell(&game, alice, &instant_obj, &CastingMethod::Normal),
             "second spell in same turn should be blocked by one-spell limit"
+        );
+    }
+
+    #[test]
+    fn test_can_cast_spell_respects_noncreature_cast_limit() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let instant = CardBuilder::new(CardId::from_raw(79), "Restriction Snuff")
+            .card_types(vec![CardType::Instant])
+            .build();
+        let instant_id = game.create_object_from_card(&instant, alice, Zone::Hand);
+        let instant_obj = game
+            .object(instant_id)
+            .expect("instant in hand must exist")
+            .clone();
+
+        let prior_noncreature = CardBuilder::new(CardId::from_raw(80), "Prior Noncreature")
+            .card_types(vec![CardType::Sorcery])
+            .build();
+        let prior_noncreature_id =
+            game.create_object_from_card(&prior_noncreature, alice, Zone::Graveyard);
+        let prior_snapshot = crate::snapshot::ObjectSnapshot::from_object(
+            game.object(prior_noncreature_id)
+                .expect("prior noncreature must exist"),
+            &game,
+        );
+        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
+        game.spells_cast_this_turn.insert(alice, 1);
+        game.cant_effects
+            .cant_cast_more_than_one_noncreature_spell_each_turn
+            .insert(alice);
+
+        assert!(
+            !can_cast_spell(&game, alice, &instant_obj, &CastingMethod::Normal),
+            "second noncreature spell in same turn should be blocked by noncreature cast limit"
+        );
+    }
+
+    #[test]
+    fn test_can_cast_spell_noncreature_limit_still_allows_creature() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+
+        let creature = CardBuilder::new(CardId::from_raw(81), "Restriction Beast")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let creature_id = game.create_object_from_card(&creature, alice, Zone::Hand);
+        let creature_obj = game
+            .object(creature_id)
+            .expect("creature in hand must exist")
+            .clone();
+
+        let prior_noncreature = CardBuilder::new(CardId::from_raw(82), "Prior Noncreature")
+            .card_types(vec![CardType::Instant])
+            .build();
+        let prior_noncreature_id =
+            game.create_object_from_card(&prior_noncreature, alice, Zone::Graveyard);
+        let prior_snapshot = crate::snapshot::ObjectSnapshot::from_object(
+            game.object(prior_noncreature_id)
+                .expect("prior noncreature must exist"),
+            &game,
+        );
+        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
+        game.spells_cast_this_turn.insert(alice, 1);
+        game.cant_effects
+            .cant_cast_more_than_one_noncreature_spell_each_turn
+            .insert(alice);
+
+        assert!(
+            can_cast_spell(&game, alice, &creature_obj, &CastingMethod::Normal),
+            "noncreature cast limit should still allow creature spell"
+        );
+    }
+
+    #[test]
+    fn test_can_cast_spell_respects_nonartifact_cast_limit() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let nonartifact_spell = CardBuilder::new(CardId::from_raw(83), "Restriction Chant")
+            .card_types(vec![CardType::Instant])
+            .build();
+        let nonartifact_spell_id =
+            game.create_object_from_card(&nonartifact_spell, alice, Zone::Hand);
+        let nonartifact_spell_obj = game
+            .object(nonartifact_spell_id)
+            .expect("nonartifact spell in hand must exist")
+            .clone();
+
+        let prior_nonartifact = CardBuilder::new(CardId::from_raw(84), "Prior Nonartifact")
+            .card_types(vec![CardType::Sorcery])
+            .build();
+        let prior_nonartifact_id =
+            game.create_object_from_card(&prior_nonartifact, alice, Zone::Graveyard);
+        let prior_snapshot = crate::snapshot::ObjectSnapshot::from_object(
+            game.object(prior_nonartifact_id)
+                .expect("prior nonartifact must exist"),
+            &game,
+        );
+        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
+        game.spells_cast_this_turn.insert(alice, 1);
+        game.cant_effects
+            .cant_cast_more_than_one_nonartifact_spell_each_turn
+            .insert(alice);
+
+        assert!(
+            !can_cast_spell(&game, alice, &nonartifact_spell_obj, &CastingMethod::Normal),
+            "second nonartifact spell in same turn should be blocked by nonartifact cast limit"
+        );
+    }
+
+    #[test]
+    fn test_can_cast_spell_nonartifact_limit_allows_artifact() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+
+        let artifact_spell = CardBuilder::new(CardId::from_raw(85), "Restriction Relic")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        let artifact_spell_id = game.create_object_from_card(&artifact_spell, alice, Zone::Hand);
+        let artifact_spell_obj = game
+            .object(artifact_spell_id)
+            .expect("artifact spell in hand must exist")
+            .clone();
+
+        let prior_nonartifact = CardBuilder::new(CardId::from_raw(86), "Prior Nonartifact")
+            .card_types(vec![CardType::Instant])
+            .build();
+        let prior_nonartifact_id =
+            game.create_object_from_card(&prior_nonartifact, alice, Zone::Graveyard);
+        let prior_snapshot = crate::snapshot::ObjectSnapshot::from_object(
+            game.object(prior_nonartifact_id)
+                .expect("prior nonartifact must exist"),
+            &game,
+        );
+        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
+        game.spells_cast_this_turn.insert(alice, 1);
+        game.cant_effects
+            .cant_cast_more_than_one_nonartifact_spell_each_turn
+            .insert(alice);
+
+        assert!(
+            can_cast_spell(&game, alice, &artifact_spell_obj, &CastingMethod::Normal),
+            "nonartifact cast limit should still allow artifact spell"
+        );
+    }
+
+    #[test]
+    fn test_can_cast_spell_respects_nonphyrexian_cast_limit() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let nonphyrexian_spell = CardBuilder::new(CardId::from_raw(87), "Restriction Spell")
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Elf])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let nonphyrexian_spell_id =
+            game.create_object_from_card(&nonphyrexian_spell, alice, Zone::Hand);
+        let nonphyrexian_spell_obj = game
+            .object(nonphyrexian_spell_id)
+            .expect("non-Phyrexian spell in hand must exist")
+            .clone();
+
+        let prior_nonphyrexian = CardBuilder::new(CardId::from_raw(88), "Prior Nonphyrexian")
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Human])
+            .power_toughness(PowerToughness::fixed(1, 1))
+            .build();
+        let prior_nonphyrexian_id =
+            game.create_object_from_card(&prior_nonphyrexian, alice, Zone::Graveyard);
+        let prior_snapshot = crate::snapshot::ObjectSnapshot::from_object(
+            game.object(prior_nonphyrexian_id)
+                .expect("prior non-Phyrexian must exist"),
+            &game,
+        );
+        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
+        game.spells_cast_this_turn.insert(alice, 1);
+        game.cant_effects
+            .cant_cast_more_than_one_nonphyrexian_spell_each_turn
+            .insert(alice);
+
+        assert!(
+            !can_cast_spell(
+                &game,
+                alice,
+                &nonphyrexian_spell_obj,
+                &CastingMethod::Normal
+            ),
+            "second non-Phyrexian spell in same turn should be blocked by non-Phyrexian cast limit"
+        );
+    }
+
+    #[test]
+    fn test_can_cast_spell_nonphyrexian_limit_allows_phyrexian() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+
+        let phyrexian_spell = CardBuilder::new(CardId::from_raw(89), "Restriction Horror")
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Phyrexian])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let phyrexian_spell_id = game.create_object_from_card(&phyrexian_spell, alice, Zone::Hand);
+        let phyrexian_spell_obj = game
+            .object(phyrexian_spell_id)
+            .expect("Phyrexian spell in hand must exist")
+            .clone();
+
+        let prior_nonphyrexian = CardBuilder::new(CardId::from_raw(90), "Prior Nonphyrexian")
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Elf])
+            .power_toughness(PowerToughness::fixed(1, 1))
+            .build();
+        let prior_nonphyrexian_id =
+            game.create_object_from_card(&prior_nonphyrexian, alice, Zone::Graveyard);
+        let prior_snapshot = crate::snapshot::ObjectSnapshot::from_object(
+            game.object(prior_nonphyrexian_id)
+                .expect("prior non-Phyrexian must exist"),
+            &game,
+        );
+        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
+        game.spells_cast_this_turn.insert(alice, 1);
+        game.cant_effects
+            .cant_cast_more_than_one_nonphyrexian_spell_each_turn
+            .insert(alice);
+
+        assert!(
+            can_cast_spell(&game, alice, &phyrexian_spell_obj, &CastingMethod::Normal),
+            "non-Phyrexian cast limit should still allow a Phyrexian spell"
         );
     }
 
@@ -8463,6 +8822,147 @@ mod tests {
         assert!(
             !can_cast,
             "counter-unless-pays spells must not be castable without a legal spell target on stack"
+        );
+    }
+
+    #[test]
+    fn test_conditional_counter_spell_not_castable_without_stack_target() {
+        use crate::cards::definitions::basic_island;
+        use crate::effect::Condition;
+        use crate::game_state::StackEntry;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        // Give Alice the mana to cast the conditional counterspell.
+        let island = basic_island();
+        game.create_object_from_definition(&island, alice, Zone::Battlefield);
+
+        // Corrupted Resolve-shaped payload:
+        // "Counter target spell if its controller is poisoned."
+        let card = CardBuilder::new(CardId::from_raw(91), "Corrupted Resolve Variant")
+            .card_types(vec![CardType::Instant])
+            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Blue]))
+            .build();
+        let spell_id = game.create_object_from_card(&card, alice, Zone::Hand);
+        game.object_mut(spell_id)
+            .expect("spell exists")
+            .spell_effect = Some(vec![Effect::conditional(
+            Condition::TargetSpellControllerIsPoisoned,
+            vec![Effect::counter(ChooseSpec::target_spell())],
+            vec![],
+        )]);
+
+        // With no spell on stack, the counterspell must not be castable.
+        let actions_without_stack = compute_legal_actions(&game, alice);
+        let can_cast_without_stack = actions_without_stack.iter().any(|action| {
+            matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id: id,
+                    from_zone: Zone::Hand,
+                    casting_method: CastingMethod::Normal,
+                } if *id == spell_id
+            )
+        });
+        assert!(
+            !can_cast_without_stack,
+            "conditional counterspell should not be castable without a legal spell target on stack"
+        );
+
+        // Add a dummy spell to the stack and verify the cast action appears.
+        let dummy_spell = CardBuilder::new(CardId::from_raw(92), "Stack Dummy")
+            .card_types(vec![CardType::Instant])
+            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Blue]))
+            .build();
+        let dummy_id = game.create_object_from_card(&dummy_spell, bob, Zone::Stack);
+        game.push_to_stack(StackEntry::new(dummy_id, bob));
+
+        let actions_with_stack = compute_legal_actions(&game, alice);
+        let can_cast_with_stack = actions_with_stack.iter().any(|action| {
+            matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id: id,
+                    from_zone: Zone::Hand,
+                    casting_method: CastingMethod::Normal,
+                } if *id == spell_id
+            )
+        });
+        assert!(
+            can_cast_with_stack,
+            "conditional counterspell should be castable once a legal spell target exists on stack"
+        );
+    }
+
+    #[test]
+    fn test_if_effect_counter_spell_not_castable_without_stack_target() {
+        use crate::cards::definitions::basic_island;
+        use crate::game_state::StackEntry;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        // Give Alice the mana to cast the spell.
+        let island = basic_island();
+        game.create_object_from_definition(&island, alice, Zone::Battlefield);
+
+        // "If you do, counter target spell." shape:
+        // represented as IfEffect branching on a prior effect result.
+        let card = CardBuilder::new(CardId::from_raw(93), "If Counter Variant")
+            .card_types(vec![CardType::Instant])
+            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Blue]))
+            .build();
+        let spell_id = game.create_object_from_card(&card, alice, Zone::Hand);
+        game.object_mut(spell_id)
+            .expect("spell exists")
+            .spell_effect = Some(vec![Effect::if_then(
+            crate::effect::EffectId(0),
+            crate::effect::EffectPredicate::Happened,
+            vec![Effect::counter(ChooseSpec::target_spell())],
+        )]);
+
+        // With no spell on stack, the spell must not be castable.
+        let actions_without_stack = compute_legal_actions(&game, alice);
+        let can_cast_without_stack = actions_without_stack.iter().any(|action| {
+            matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id: id,
+                    from_zone: Zone::Hand,
+                    casting_method: CastingMethod::Normal,
+                } if *id == spell_id
+            )
+        });
+        assert!(
+            !can_cast_without_stack,
+            "if-effect counterspell should not be castable without a legal spell target on stack"
+        );
+
+        // Add a legal stack spell; cast action should appear.
+        let dummy_spell = CardBuilder::new(CardId::from_raw(94), "If Stack Dummy")
+            .card_types(vec![CardType::Instant])
+            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Blue]))
+            .build();
+        let dummy_id = game.create_object_from_card(&dummy_spell, bob, Zone::Stack);
+        game.push_to_stack(StackEntry::new(dummy_id, bob));
+
+        let actions_with_stack = compute_legal_actions(&game, alice);
+        let can_cast_with_stack = actions_with_stack.iter().any(|action| {
+            matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id: id,
+                    from_zone: Zone::Hand,
+                    casting_method: CastingMethod::Normal,
+                } if *id == spell_id
+            )
+        });
+        assert!(
+            can_cast_with_stack,
+            "if-effect counterspell should be castable once a legal spell target exists on stack"
         );
     }
 }

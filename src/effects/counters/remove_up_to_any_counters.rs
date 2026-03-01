@@ -4,7 +4,7 @@ use crate::decision::FallbackStrategy;
 use crate::decisions::{CounterRemovalSpec, make_decision_with_fallback};
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
-use crate::effects::helpers::{find_target_object, resolve_value};
+use crate::effects::helpers::{resolve_single_object_from_spec, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::object::CounterType;
@@ -49,7 +49,7 @@ impl EffectExecutor for RemoveUpToAnyCountersEffect {
         game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let target_id = find_target_object(&ctx.targets)?;
+        let target_id = resolve_single_object_from_spec(game, &self.target, ctx)?;
         let max_count = resolve_value(game, &self.max_count, ctx)?.max(0) as u32;
 
         // Get available counters on the target

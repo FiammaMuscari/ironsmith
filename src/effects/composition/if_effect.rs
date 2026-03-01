@@ -4,6 +4,7 @@ use crate::effect::{Effect, EffectId, EffectOutcome, EffectPredicate};
 use crate::effects::EffectExecutor;
 use crate::executor::{ExecutionContext, ExecutionError, execute_effect};
 use crate::game_state::GameState;
+use crate::target::ChooseSpec;
 
 /// Effect that branches based on a prior effect's result.
 ///
@@ -89,6 +90,45 @@ impl EffectExecutor for IfEffect {
 
     fn clone_box(&self) -> Box<dyn EffectExecutor> {
         Box::new(self.clone())
+    }
+
+    fn get_target_spec(&self) -> Option<&ChooseSpec> {
+        self.then
+            .iter()
+            .find_map(|effect| effect.0.get_target_spec())
+            .or_else(|| {
+                self.else_
+                    .iter()
+                    .find_map(|effect| effect.0.get_target_spec())
+            })
+    }
+
+    fn target_description(&self) -> &'static str {
+        for effect in &self.then {
+            if effect.0.get_target_spec().is_some() {
+                return effect.0.target_description();
+            }
+        }
+        for effect in &self.else_ {
+            if effect.0.get_target_spec().is_some() {
+                return effect.0.target_description();
+            }
+        }
+        "target"
+    }
+
+    fn get_target_count(&self) -> Option<crate::effect::ChoiceCount> {
+        for effect in &self.then {
+            if effect.0.get_target_spec().is_some() {
+                return effect.0.get_target_count();
+            }
+        }
+        for effect in &self.else_ {
+            if effect.0.get_target_spec().is_some() {
+                return effect.0.get_target_count();
+            }
+        }
+        None
     }
 }
 
@@ -203,5 +243,30 @@ mod tests {
         );
         let cloned = effect.clone_box();
         assert!(format!("{:?}", cloned).contains("IfEffect"));
+    }
+
+    #[test]
+    fn if_effect_forwards_inner_target_spec_from_then_branch() {
+        let effect = IfEffect::if_then(
+            EffectId(0),
+            EffectPredicate::Happened,
+            vec![Effect::counter(ChooseSpec::target_spell())],
+        );
+
+        assert!(effect.get_target_spec().is_some());
+        assert_eq!(effect.target_description(), "spell to counter");
+    }
+
+    #[test]
+    fn if_effect_forwards_inner_target_spec_from_else_branch() {
+        let effect = IfEffect::new(
+            EffectId(0),
+            EffectPredicate::Happened,
+            vec![Effect::draw(1)],
+            vec![Effect::counter(ChooseSpec::target_spell())],
+        );
+
+        assert!(effect.get_target_spec().is_some());
+        assert_eq!(effect.target_description(), "spell to counter");
     }
 }

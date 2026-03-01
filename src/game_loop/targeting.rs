@@ -320,7 +320,7 @@ fn apply_keyword_payment_tags_for_resolution(
 }
 
 /// Drain pending death and custom trigger events and enqueue all matches.
-fn drain_pending_trigger_events(game: &mut GameState, trigger_queue: &mut TriggerQueue) {
+pub(crate) fn drain_pending_trigger_events(game: &mut GameState, trigger_queue: &mut TriggerQueue) {
     let pending_events = game.take_pending_trigger_events();
     for event in pending_events {
         queue_triggers_from_event(game, trigger_queue, event, true);
@@ -356,6 +356,221 @@ pub fn extract_target_spec(effect: &Effect) -> Option<ExtractedTarget<'_>> {
     })
 }
 
+fn resolve_modal_mode_counts(choose_mode: &crate::effects::ChooseModeEffect) -> (usize, usize) {
+    let max_modes = match choose_mode.choose_count {
+        crate::effect::Value::Fixed(n) => n.max(0) as usize,
+        _ => 1,
+    };
+    let min_modes = match choose_mode.min_choose_count.as_ref() {
+        Some(crate::effect::Value::Fixed(n)) => (*n).max(0) as usize,
+        Some(_) => max_modes,
+        None => max_modes,
+    };
+    (min_modes, max_modes)
+}
+
+fn effect_mode_has_legal_targets(
+    game: &GameState,
+    mode: &crate::effect::EffectMode,
+    caster: PlayerId,
+    source_id: Option<ObjectId>,
+) -> bool {
+    mode.effects
+        .iter()
+        .all(|effect| spell_effect_has_legal_targets(game, effect, caster, source_id, None))
+}
+
+fn choose_mode_has_legal_targets(
+    game: &GameState,
+    choose_mode: &crate::effects::ChooseModeEffect,
+    caster: PlayerId,
+    source_id: Option<ObjectId>,
+    chosen_modes: Option<&[usize]>,
+) -> bool {
+    let (min_modes, max_modes) = resolve_modal_mode_counts(choose_mode);
+    if min_modes > max_modes {
+        return false;
+    }
+    if choose_mode.modes.is_empty() || max_modes == 0 {
+        return min_modes == 0;
+    }
+
+    if let Some(chosen_modes) = chosen_modes {
+        let mut selected_count = 0usize;
+        let mut seen_modes = std::collections::HashSet::new();
+
+        for mode_idx in chosen_modes {
+            let Some(mode) = choose_mode.modes.get(*mode_idx) else {
+                return false;
+            };
+
+            if !choose_mode.allow_repeated_modes && !seen_modes.insert(*mode_idx) {
+                return false;
+            }
+
+            if !effect_mode_has_legal_targets(game, mode, caster, source_id) {
+                return false;
+            }
+            selected_count += 1;
+        }
+
+        return selected_count >= min_modes && selected_count <= max_modes;
+    }
+
+    let legal_mode_count = choose_mode
+        .modes
+        .iter()
+        .filter(|mode| effect_mode_has_legal_targets(game, mode, caster, source_id))
+        .count();
+
+    if min_modes == 0 {
+        return true;
+    }
+
+    if choose_mode.allow_repeated_modes {
+        legal_mode_count > 0
+    } else {
+        legal_mode_count >= min_modes
+    }
+}
+
+fn spell_effect_has_legal_targets(
+    game: &GameState,
+    effect: &Effect,
+    caster: PlayerId,
+    source_id: Option<ObjectId>,
+    chosen_modes: Option<&[usize]>,
+) -> bool {
+    let mut consumed_modal_selection = false;
+    spell_effect_has_legal_targets_internal(
+        game,
+        effect,
+        caster,
+        source_id,
+        chosen_modes,
+        &mut consumed_modal_selection,
+    )
+}
+
+fn spell_effect_has_legal_targets_internal(
+    game: &GameState,
+    effect: &Effect,
+    caster: PlayerId,
+    source_id: Option<ObjectId>,
+    chosen_modes: Option<&[usize]>,
+    consumed_modal_selection: &mut bool,
+) -> bool {
+    if let Some(choose_mode) = effect.downcast_ref::<crate::effects::ChooseModeEffect>() {
+        let modes_for_this_choose_mode = if !*consumed_modal_selection {
+            *consumed_modal_selection = true;
+            chosen_modes
+        } else {
+            None
+        };
+        return choose_mode_has_legal_targets(
+            game,
+            choose_mode,
+            caster,
+            source_id,
+            modes_for_this_choose_mode,
+        );
+    }
+
+    if let Some(extracted) = extract_target_spec(effect)
+        && requires_target_selection(extracted.spec)
+    {
+        // For "any number" effects, we can cast even with no legal targets.
+        if extracted.min_targets == 0 {
+            return true;
+        }
+        let legal_targets = compute_legal_targets(game, extracted.spec, caster, source_id);
+        return legal_targets.len() >= extracted.min_targets;
+    }
+
+    true
+}
+
+fn extract_target_requirements_from_effect_internal(
+    game: &GameState,
+    effect: &Effect,
+    caster: PlayerId,
+    source_id: Option<ObjectId>,
+    chosen_modes: Option<&[usize]>,
+    consumed_modal_selection: &mut bool,
+    requirements: &mut Vec<TargetRequirement>,
+) {
+    if let Some(choose_mode) = effect.downcast_ref::<crate::effects::ChooseModeEffect>() {
+        let modes_for_this_choose_mode = if !*consumed_modal_selection {
+            *consumed_modal_selection = true;
+            chosen_modes
+        } else {
+            None
+        };
+        if let Some(chosen_modes) = modes_for_this_choose_mode {
+            for mode_idx in chosen_modes {
+                if let Some(mode) = choose_mode.modes.get(*mode_idx) {
+                    for inner in &mode.effects {
+                        extract_target_requirements_from_effect_internal(
+                            game,
+                            inner,
+                            caster,
+                            source_id,
+                            None,
+                            consumed_modal_selection,
+                            requirements,
+                        );
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    if let Some(extracted) = extract_target_spec(effect)
+        && requires_target_selection(extracted.spec)
+    {
+        let legal_targets = compute_legal_targets(game, extracted.spec, caster, source_id);
+        // For "any number" effects (min_targets == 0), we can cast even with no legal targets.
+        // For required targets (min_targets > 0), we need at least min_targets legal targets.
+        let has_enough_targets = extracted.min_targets == 0 || legal_targets.len() >= extracted.min_targets;
+        if has_enough_targets {
+            requirements.push(TargetRequirement {
+                spec: extracted.spec.clone(),
+                legal_targets,
+                description: extracted.description.to_string(),
+                min_targets: extracted.min_targets,
+                max_targets: extracted.max_targets,
+            });
+        }
+    }
+}
+
+/// Extract target requirements from a list of effects with optional mode choices.
+fn extract_target_requirements_with_modes(
+    game: &GameState,
+    effects: &[Effect],
+    caster: PlayerId,
+    source_id: Option<ObjectId>,
+    chosen_modes: Option<&[usize]>,
+) -> Vec<TargetRequirement> {
+    let mut requirements = Vec::new();
+    let mut consumed_modal_selection = false;
+
+    for effect in effects {
+        extract_target_requirements_from_effect_internal(
+            game,
+            effect,
+            caster,
+            source_id,
+            chosen_modes,
+            &mut consumed_modal_selection,
+            &mut requirements,
+        );
+    }
+
+    requirements
+}
+
 /// Extract target requirements from a list of effects.
 fn extract_target_requirements(
     game: &GameState,
@@ -363,30 +578,30 @@ fn extract_target_requirements(
     caster: PlayerId,
     source_id: Option<ObjectId>,
 ) -> Vec<TargetRequirement> {
-    let mut requirements = Vec::new();
+    extract_target_requirements_with_modes(game, effects, caster, source_id, None)
+}
 
+pub(crate) fn spell_has_legal_targets_with_modes(
+    game: &GameState,
+    effects: &[Effect],
+    caster: PlayerId,
+    source_id: Option<ObjectId>,
+    chosen_modes: Option<&[usize]>,
+) -> bool {
+    let mut consumed_modal_selection = false;
     for effect in effects {
-        if let Some(extracted) = extract_target_spec(effect)
-            && requires_target_selection(extracted.spec)
-        {
-            let legal_targets = compute_legal_targets(game, extracted.spec, caster, source_id);
-            // For "any number" effects (min_targets == 0), we can cast even with no legal targets.
-            // For required targets (min_targets > 0), we need at least min_targets legal targets.
-            let has_enough_targets =
-                extracted.min_targets == 0 || legal_targets.len() >= extracted.min_targets;
-            if has_enough_targets {
-                requirements.push(TargetRequirement {
-                    spec: extracted.spec.clone(),
-                    legal_targets,
-                    description: extracted.description.to_string(),
-                    min_targets: extracted.min_targets,
-                    max_targets: extracted.max_targets,
-                });
-            }
+        if !spell_effect_has_legal_targets_internal(
+            game,
+            effect,
+            caster,
+            source_id,
+            chosen_modes,
+            &mut consumed_modal_selection,
+        ) {
+            return false;
         }
     }
-
-    requirements
+    true
 }
 
 /// Check if a spell has all required legal targets.
@@ -399,21 +614,7 @@ pub fn spell_has_legal_targets(
     caster: PlayerId,
     source_id: Option<ObjectId>,
 ) -> bool {
-    for effect in effects {
-        if let Some(extracted) = extract_target_spec(effect)
-            && requires_target_selection(extracted.spec)
-        {
-            // For "any number" effects, we can cast even with no legal targets
-            if extracted.min_targets == 0 {
-                continue;
-            }
-            let legal_targets = compute_legal_targets(game, extracted.spec, caster, source_id);
-            if legal_targets.len() < extracted.min_targets {
-                return false;
-            }
-        }
-    }
-    true
+    spell_has_legal_targets_with_modes(game, effects, caster, source_id, None)
 }
 
 /// Compute legal targets for a given ChooseSpec.

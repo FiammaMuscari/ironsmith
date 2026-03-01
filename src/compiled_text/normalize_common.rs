@@ -5469,6 +5469,7 @@ fn describe_counter_type(counter_type: crate::object::CounterType) -> String {
     match counter_type {
         crate::object::CounterType::PlusOnePlusOne => "+1/+1".to_string(),
         crate::object::CounterType::MinusOneMinusOne => "-1/-1".to_string(),
+        crate::object::CounterType::Named(name) => name.to_string(),
         other => {
             let raw = format!("{other:?}");
             let mut out = String::with_capacity(raw.len() + 4);
@@ -6368,12 +6369,24 @@ fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
                 describe_player_set_filter(filter)
             )
         }
-        crate::effect::Restriction::CastMoreThanOneSpellEachTurn(filter) => {
-            format!(
+        crate::effect::Restriction::CastMoreThanOneSpellEachTurn(filter, scope) => match scope {
+            crate::effect::CastSpellLimitScope::AnySpell => format!(
                 "{} can't cast more than one spell each turn",
                 describe_player_set_filter(filter)
-            )
-        }
+            ),
+            crate::effect::CastSpellLimitScope::NonCreatureSpell => format!(
+                "{} can't cast more than one noncreature spell each turn",
+                describe_player_set_filter(filter)
+            ),
+            crate::effect::CastSpellLimitScope::NonArtifactSpell => format!(
+                "{} can't cast more than one nonartifact spell each turn",
+                describe_player_set_filter(filter)
+            ),
+            crate::effect::CastSpellLimitScope::NonPhyrexianSpell => format!(
+                "{} can't cast more than one non-Phyrexian spell each turn",
+                describe_player_set_filter(filter)
+            ),
+        },
         crate::effect::Restriction::DrawCards(filter) => {
             format!("{} can't draw cards", describe_player_set_filter(filter))
         }

@@ -465,6 +465,7 @@ fn evaluate_value(
             let filter_ctx = crate::filter::FilterContext {
                 you: Some(effect_controller),
                 source: Some(source),
+                caster: None,
                 active_player: None,
                 opponents: Vec::new(),
                 teammates: Vec::new(),
