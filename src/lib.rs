@@ -30,6 +30,7 @@ pub mod marker;
 #[cfg(feature = "net")]
 pub mod net;
 pub mod object;
+pub(crate) mod object_query;
 pub mod player;
 pub mod prevention;
 pub mod replacement;

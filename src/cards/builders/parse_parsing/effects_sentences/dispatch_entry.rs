@@ -7,48 +7,17 @@ pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>,
     let mut carried_context: Option<CarryContext> = None;
 
     fn effect_contains_search_library(effect: &EffectAst) -> bool {
-        match effect {
-            EffectAst::SearchLibrary { .. } => true,
-            EffectAst::Conditional {
-                if_true, if_false, ..
-            } => {
-                if_true.iter().any(effect_contains_search_library)
-                    || if_false.iter().any(effect_contains_search_library)
-            }
-            EffectAst::UnlessPays { effects, .. }
-            | EffectAst::May { effects }
-            | EffectAst::MayByPlayer { effects, .. }
-            | EffectAst::MayByTaggedController { effects, .. }
-            | EffectAst::IfResult { effects, .. }
-            | EffectAst::ForEachOpponent { effects }
-            | EffectAst::ForEachPlayersFiltered { effects, .. }
-            | EffectAst::ForEachPlayer { effects }
-            | EffectAst::ForEachTargetPlayers { effects, .. }
-            | EffectAst::ForEachObject { effects, .. }
-            | EffectAst::ForEachTagged { effects, .. }
-            | EffectAst::ForEachOpponentDoesNot { effects }
-            | EffectAst::ForEachPlayerDoesNot { effects }
-            | EffectAst::ForEachOpponentDid { effects, .. }
-            | EffectAst::ForEachPlayerDid { effects, .. }
-            | EffectAst::ForEachTaggedPlayer { effects, .. }
-            | EffectAst::DelayedUntilNextEndStep { effects, .. }
-            | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
-            | EffectAst::DelayedUntilEndOfCombat { effects }
-            | EffectAst::DelayedTriggerThisTurn { effects, .. }
-            | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
-            | EffectAst::VoteOption { effects, .. } => {
-                effects.iter().any(effect_contains_search_library)
-            }
-            EffectAst::UnlessAction {
-                effects,
-                alternative,
-                ..
-            } => {
-                effects.iter().any(effect_contains_search_library)
-                    || alternative.iter().any(effect_contains_search_library)
-            }
-            _ => false,
+        if matches!(effect, EffectAst::SearchLibrary { .. }) {
+            return true;
         }
+
+        let mut found = false;
+        for_each_nested_effects(effect, true, |nested| {
+            if !found {
+                found = nested.iter().any(effect_contains_search_library);
+            }
+        });
+        found
     }
 
     fn is_if_you_search_library_this_way_shuffle_sentence(tokens: &[Token]) -> bool {
@@ -425,6 +394,157 @@ pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>,
     Ok(effects)
 }
 
+fn for_each_nested_effects(
+    effect: &EffectAst,
+    include_unless_action_alternative: bool,
+    mut visit: impl FnMut(&[EffectAst]),
+) {
+    match effect {
+        EffectAst::Conditional {
+            if_true, if_false, ..
+        } => {
+            visit(if_true);
+            visit(if_false);
+        }
+        EffectAst::UnlessPays { effects, .. }
+        | EffectAst::May { effects }
+        | EffectAst::MayByPlayer { effects, .. }
+        | EffectAst::MayByTaggedController { effects, .. }
+        | EffectAst::IfResult { effects, .. }
+        | EffectAst::ForEachOpponent { effects }
+        | EffectAst::ForEachPlayersFiltered { effects, .. }
+        | EffectAst::ForEachPlayer { effects }
+        | EffectAst::ForEachTargetPlayers { effects, .. }
+        | EffectAst::ForEachObject { effects, .. }
+        | EffectAst::ForEachTagged { effects, .. }
+        | EffectAst::ForEachOpponentDoesNot { effects }
+        | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDid { effects, .. }
+        | EffectAst::ForEachPlayerDid { effects, .. }
+        | EffectAst::ForEachTaggedPlayer { effects, .. }
+        | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
+        | EffectAst::DelayedUntilEndOfCombat { effects }
+        | EffectAst::DelayedTriggerThisTurn { effects, .. }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
+        | EffectAst::VoteOption { effects, .. } => {
+            visit(effects);
+        }
+        EffectAst::UnlessAction {
+            effects,
+            alternative,
+            ..
+        } => {
+            visit(effects);
+            if include_unless_action_alternative {
+                visit(alternative);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn for_each_nested_effects_mut(
+    effect: &mut EffectAst,
+    include_unless_action_alternative: bool,
+    mut visit: impl FnMut(&mut [EffectAst]),
+) {
+    match effect {
+        EffectAst::Conditional {
+            if_true, if_false, ..
+        } => {
+            visit(if_true);
+            visit(if_false);
+        }
+        EffectAst::UnlessPays { effects, .. }
+        | EffectAst::May { effects }
+        | EffectAst::MayByPlayer { effects, .. }
+        | EffectAst::MayByTaggedController { effects, .. }
+        | EffectAst::IfResult { effects, .. }
+        | EffectAst::ForEachOpponent { effects }
+        | EffectAst::ForEachPlayersFiltered { effects, .. }
+        | EffectAst::ForEachPlayer { effects }
+        | EffectAst::ForEachTargetPlayers { effects, .. }
+        | EffectAst::ForEachObject { effects, .. }
+        | EffectAst::ForEachTagged { effects, .. }
+        | EffectAst::ForEachOpponentDoesNot { effects }
+        | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDid { effects, .. }
+        | EffectAst::ForEachPlayerDid { effects, .. }
+        | EffectAst::ForEachTaggedPlayer { effects, .. }
+        | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
+        | EffectAst::DelayedUntilEndOfCombat { effects }
+        | EffectAst::DelayedTriggerThisTurn { effects, .. }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
+        | EffectAst::VoteOption { effects, .. } => {
+            visit(effects);
+        }
+        EffectAst::UnlessAction {
+            effects,
+            alternative,
+            ..
+        } => {
+            visit(effects);
+            if include_unless_action_alternative {
+                visit(alternative);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn try_for_each_nested_effects_mut<E>(
+    effect: &mut EffectAst,
+    include_unless_action_alternative: bool,
+    mut visit: impl FnMut(&mut [EffectAst]) -> Result<(), E>,
+) -> Result<(), E> {
+    match effect {
+        EffectAst::Conditional {
+            if_true, if_false, ..
+        } => {
+            visit(if_true)?;
+            visit(if_false)?;
+        }
+        EffectAst::UnlessPays { effects, .. }
+        | EffectAst::May { effects }
+        | EffectAst::MayByPlayer { effects, .. }
+        | EffectAst::MayByTaggedController { effects, .. }
+        | EffectAst::IfResult { effects, .. }
+        | EffectAst::ForEachOpponent { effects }
+        | EffectAst::ForEachPlayersFiltered { effects, .. }
+        | EffectAst::ForEachPlayer { effects }
+        | EffectAst::ForEachTargetPlayers { effects, .. }
+        | EffectAst::ForEachObject { effects, .. }
+        | EffectAst::ForEachTagged { effects, .. }
+        | EffectAst::ForEachOpponentDoesNot { effects }
+        | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDid { effects, .. }
+        | EffectAst::ForEachPlayerDid { effects, .. }
+        | EffectAst::ForEachTaggedPlayer { effects, .. }
+        | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
+        | EffectAst::DelayedUntilEndOfCombat { effects }
+        | EffectAst::DelayedTriggerThisTurn { effects, .. }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
+        | EffectAst::VoteOption { effects, .. } => {
+            visit(effects)?;
+        }
+        EffectAst::UnlessAction {
+            effects,
+            alternative,
+            ..
+        } => {
+            visit(effects)?;
+            if include_unless_action_alternative {
+                visit(alternative)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub(crate) fn is_cant_be_regenerated_followup_sentence(tokens: &[Token]) -> bool {
     let words = normalize_cant_words(tokens);
     matches!(
@@ -498,45 +618,15 @@ fn apply_cant_be_regenerated_to_effect(effect: &mut EffectAst) -> bool {
             *effect = EffectAst::DestroyAllOfChosenColorNoRegeneration { filter };
             true
         }
-        EffectAst::Conditional {
-            if_true, if_false, ..
-        } => {
-            apply_cant_be_regenerated_to_effects_tail(if_true)
-                || apply_cant_be_regenerated_to_effects_tail(if_false)
+        _ => {
+            let mut applied = false;
+            for_each_nested_effects_mut(effect, true, |nested| {
+                if !applied {
+                    applied = apply_cant_be_regenerated_to_effects_tail(nested);
+                }
+            });
+            applied
         }
-        EffectAst::UnlessPays { effects, .. }
-        | EffectAst::May { effects }
-        | EffectAst::MayByPlayer { effects, .. }
-        | EffectAst::MayByTaggedController { effects, .. }
-        | EffectAst::IfResult { effects, .. }
-        | EffectAst::ForEachOpponent { effects }
-        | EffectAst::ForEachPlayersFiltered { effects, .. }
-        | EffectAst::ForEachPlayer { effects }
-        | EffectAst::ForEachTargetPlayers { effects, .. }
-        | EffectAst::ForEachObject { effects, .. }
-        | EffectAst::ForEachTagged { effects, .. }
-        | EffectAst::ForEachOpponentDoesNot { effects }
-        | EffectAst::ForEachPlayerDoesNot { effects }
-        | EffectAst::ForEachOpponentDid { effects, .. }
-        | EffectAst::ForEachPlayerDid { effects, .. }
-        | EffectAst::ForEachTaggedPlayer { effects, .. }
-        | EffectAst::DelayedUntilNextEndStep { effects, .. }
-        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
-        | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedTriggerThisTurn { effects, .. }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
-        | EffectAst::VoteOption { effects, .. } => {
-            apply_cant_be_regenerated_to_effects_tail(effects)
-        }
-        EffectAst::UnlessAction {
-            effects,
-            alternative,
-            ..
-        } => {
-            apply_cant_be_regenerated_to_effects_tail(effects)
-                || apply_cant_be_regenerated_to_effects_tail(alternative)
-        }
-        _ => false,
     }
 }
 
@@ -554,40 +644,15 @@ pub(crate) fn primary_damage_target_from_effect(effect: &EffectAst) -> Option<Ta
         EffectAst::DealDamage { target, .. } | EffectAst::DealDamageEqualToPower { target, .. } => {
             Some(target.clone())
         }
-        EffectAst::Conditional {
-            if_true, if_false, ..
-        } => if_true
-            .iter()
-            .find_map(primary_damage_target_from_effect)
-            .or_else(|| if_false.iter().find_map(primary_damage_target_from_effect)),
-        EffectAst::UnlessPays { effects, .. }
-        | EffectAst::May { effects }
-        | EffectAst::MayByPlayer { effects, .. }
-        | EffectAst::MayByTaggedController { effects, .. }
-        | EffectAst::IfResult { effects, .. }
-        | EffectAst::ForEachOpponent { effects }
-        | EffectAst::ForEachPlayersFiltered { effects, .. }
-        | EffectAst::ForEachPlayer { effects }
-        | EffectAst::ForEachTargetPlayers { effects, .. }
-        | EffectAst::ForEachObject { effects, .. }
-        | EffectAst::ForEachTagged { effects, .. }
-        | EffectAst::ForEachPlayerDoesNot { effects, .. }
-        | EffectAst::ForEachOpponentDoesNot { effects, .. }
-        | EffectAst::ForEachPlayerDid { effects, .. }
-        | EffectAst::ForEachOpponentDid { effects, .. }
-        | EffectAst::ForEachTaggedPlayer { effects, .. }
-        | EffectAst::DelayedUntilNextEndStep { effects, .. }
-        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
-        | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedTriggerThisTurn { effects, .. }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
-        | EffectAst::VoteOption { effects, .. }
-        | EffectAst::UnlessAction {
-            effects,
-            alternative: _,
-            ..
-        } => effects.iter().find_map(primary_damage_target_from_effect),
-        _ => None,
+        _ => {
+            let mut found = None;
+            for_each_nested_effects(effect, false, |nested| {
+                if found.is_none() {
+                    found = nested.iter().find_map(primary_damage_target_from_effect);
+                }
+            });
+            found
+        }
     }
 }
 
@@ -631,40 +696,15 @@ pub(crate) fn primary_target_from_effect(effect: &EffectAst) -> Option<TargetAst
         | EffectAst::RedirectNextDamageFromSourceToTarget { target, .. }
         | EffectAst::RedirectNextTimeDamageToSource { target, .. }
         | EffectAst::GainControl { target, .. } => Some(target.clone()),
-        EffectAst::Conditional {
-            if_true, if_false, ..
-        } => if_true
-            .iter()
-            .find_map(primary_target_from_effect)
-            .or_else(|| if_false.iter().find_map(primary_target_from_effect)),
-        EffectAst::UnlessPays { effects, .. }
-        | EffectAst::May { effects }
-        | EffectAst::MayByPlayer { effects, .. }
-        | EffectAst::MayByTaggedController { effects, .. }
-        | EffectAst::IfResult { effects, .. }
-        | EffectAst::ForEachOpponent { effects }
-        | EffectAst::ForEachPlayersFiltered { effects, .. }
-        | EffectAst::ForEachPlayer { effects }
-        | EffectAst::ForEachTargetPlayers { effects, .. }
-        | EffectAst::ForEachObject { effects, .. }
-        | EffectAst::ForEachTagged { effects, .. }
-        | EffectAst::ForEachPlayerDoesNot { effects, .. }
-        | EffectAst::ForEachOpponentDoesNot { effects, .. }
-        | EffectAst::ForEachPlayerDid { effects, .. }
-        | EffectAst::ForEachOpponentDid { effects, .. }
-        | EffectAst::ForEachTaggedPlayer { effects, .. }
-        | EffectAst::DelayedUntilNextEndStep { effects, .. }
-        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
-        | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedTriggerThisTurn { effects, .. }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
-        | EffectAst::VoteOption { effects, .. }
-        | EffectAst::UnlessAction {
-            effects,
-            alternative: _,
-            ..
-        } => effects.iter().find_map(primary_target_from_effect),
-        _ => None,
+        _ => {
+            let mut found = None;
+            for_each_nested_effects(effect, false, |nested| {
+                if found.is_none() {
+                    found = nested.iter().find_map(primary_target_from_effect);
+                }
+            });
+            found
+        }
     }
 }
 
@@ -710,45 +750,9 @@ pub(crate) fn replace_placeholder_damage_target(effect: &mut EffectAst, target: 
                 *damage_target = target.clone();
             }
         }
-        EffectAst::Conditional {
-            if_true, if_false, ..
-        } => {
-            replace_placeholder_damage_target_in_effects(if_true, target);
-            replace_placeholder_damage_target_in_effects(if_false, target);
-        }
-        EffectAst::UnlessPays { effects, .. }
-        | EffectAst::May { effects }
-        | EffectAst::MayByPlayer { effects, .. }
-        | EffectAst::MayByTaggedController { effects, .. }
-        | EffectAst::IfResult { effects, .. }
-        | EffectAst::ForEachOpponent { effects }
-        | EffectAst::ForEachPlayersFiltered { effects, .. }
-        | EffectAst::ForEachPlayer { effects }
-        | EffectAst::ForEachTargetPlayers { effects, .. }
-        | EffectAst::ForEachObject { effects, .. }
-        | EffectAst::ForEachTagged { effects, .. }
-        | EffectAst::ForEachPlayerDoesNot { effects, .. }
-        | EffectAst::ForEachOpponentDoesNot { effects, .. }
-        | EffectAst::ForEachPlayerDid { effects, .. }
-        | EffectAst::ForEachOpponentDid { effects, .. }
-        | EffectAst::ForEachTaggedPlayer { effects, .. }
-        | EffectAst::DelayedUntilNextEndStep { effects, .. }
-        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
-        | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedTriggerThisTurn { effects, .. }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
-        | EffectAst::VoteOption { effects, .. } => {
-            replace_placeholder_damage_target_in_effects(effects, target);
-        }
-        EffectAst::UnlessAction {
-            effects,
-            alternative,
-            ..
-        } => {
-            replace_placeholder_damage_target_in_effects(effects, target);
-            replace_placeholder_damage_target_in_effects(alternative, target);
-        }
-        _ => {}
+        _ => for_each_nested_effects_mut(effect, true, |nested| {
+            replace_placeholder_damage_target_in_effects(nested, target);
+        }),
     }
 }
 
@@ -777,45 +781,11 @@ pub(crate) fn replace_unbound_x_in_damage_effect(
                 *amount = replace_unbound_x_with_value(amount.clone(), replacement, clause)?;
             }
         }
-        EffectAst::Conditional {
-            if_true, if_false, ..
-        } => {
-            replace_unbound_x_in_damage_effects(if_true, replacement, clause)?;
-            replace_unbound_x_in_damage_effects(if_false, replacement, clause)?;
+        _ => {
+            try_for_each_nested_effects_mut(effect, true, |nested| {
+                replace_unbound_x_in_damage_effects(nested, replacement, clause)
+            })?;
         }
-        EffectAst::UnlessPays { effects, .. }
-        | EffectAst::May { effects }
-        | EffectAst::MayByPlayer { effects, .. }
-        | EffectAst::MayByTaggedController { effects, .. }
-        | EffectAst::IfResult { effects, .. }
-        | EffectAst::ForEachOpponent { effects }
-        | EffectAst::ForEachPlayersFiltered { effects, .. }
-        | EffectAst::ForEachPlayer { effects }
-        | EffectAst::ForEachTargetPlayers { effects, .. }
-        | EffectAst::ForEachObject { effects, .. }
-        | EffectAst::ForEachTagged { effects, .. }
-        | EffectAst::ForEachPlayerDoesNot { effects, .. }
-        | EffectAst::ForEachOpponentDoesNot { effects, .. }
-        | EffectAst::ForEachPlayerDid { effects, .. }
-        | EffectAst::ForEachOpponentDid { effects, .. }
-        | EffectAst::ForEachTaggedPlayer { effects, .. }
-        | EffectAst::DelayedUntilNextEndStep { effects, .. }
-        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
-        | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedTriggerThisTurn { effects, .. }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
-        | EffectAst::VoteOption { effects, .. } => {
-            replace_unbound_x_in_damage_effects(effects, replacement, clause)?;
-        }
-        EffectAst::UnlessAction {
-            effects,
-            alternative,
-            ..
-        } => {
-            replace_unbound_x_in_damage_effects(effects, replacement, clause)?;
-            replace_unbound_x_in_damage_effects(alternative, replacement, clause)?;
-        }
-        _ => {}
     }
     Ok(())
 }
@@ -905,45 +875,11 @@ pub(crate) fn replace_unbound_x_in_effect_anywhere(
                 replace_value(generic, replacement, clause)?;
             }
         }
-        EffectAst::Conditional {
-            if_true, if_false, ..
-        } => {
-            replace_unbound_x_in_effects_anywhere(if_true, replacement, clause)?;
-            replace_unbound_x_in_effects_anywhere(if_false, replacement, clause)?;
+        _ => {
+            try_for_each_nested_effects_mut(effect, true, |nested| {
+                replace_unbound_x_in_effects_anywhere(nested, replacement, clause)
+            })?;
         }
-        EffectAst::UnlessPays { effects, .. }
-        | EffectAst::May { effects }
-        | EffectAst::MayByPlayer { effects, .. }
-        | EffectAst::MayByTaggedController { effects, .. }
-        | EffectAst::IfResult { effects, .. }
-        | EffectAst::ForEachOpponent { effects }
-        | EffectAst::ForEachPlayersFiltered { effects, .. }
-        | EffectAst::ForEachPlayer { effects }
-        | EffectAst::ForEachTargetPlayers { effects, .. }
-        | EffectAst::ForEachObject { effects, .. }
-        | EffectAst::ForEachTagged { effects, .. }
-        | EffectAst::ForEachPlayerDoesNot { effects, .. }
-        | EffectAst::ForEachOpponentDoesNot { effects, .. }
-        | EffectAst::ForEachPlayerDid { effects, .. }
-        | EffectAst::ForEachOpponentDid { effects, .. }
-        | EffectAst::ForEachTaggedPlayer { effects, .. }
-        | EffectAst::DelayedUntilNextEndStep { effects, .. }
-        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
-        | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedTriggerThisTurn { effects, .. }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
-        | EffectAst::VoteOption { effects, .. } => {
-            replace_unbound_x_in_effects_anywhere(effects, replacement, clause)?;
-        }
-        EffectAst::UnlessAction {
-            effects,
-            alternative,
-            ..
-        } => {
-            replace_unbound_x_in_effects_anywhere(effects, replacement, clause)?;
-            replace_unbound_x_in_effects_anywhere(alternative, replacement, clause)?;
-        }
-        _ => {}
     }
     Ok(())
 }
@@ -990,45 +926,9 @@ pub(crate) fn replace_it_damage_target(effect: &mut EffectAst, target: &TargetAs
                 *damage_target = target.clone();
             }
         }
-        EffectAst::Conditional {
-            if_true, if_false, ..
-        } => {
-            replace_it_damage_target_in_effects(if_true, target);
-            replace_it_damage_target_in_effects(if_false, target);
-        }
-        EffectAst::UnlessPays { effects, .. }
-        | EffectAst::May { effects }
-        | EffectAst::MayByPlayer { effects, .. }
-        | EffectAst::MayByTaggedController { effects, .. }
-        | EffectAst::IfResult { effects, .. }
-        | EffectAst::ForEachOpponent { effects }
-        | EffectAst::ForEachPlayersFiltered { effects, .. }
-        | EffectAst::ForEachPlayer { effects }
-        | EffectAst::ForEachTargetPlayers { effects, .. }
-        | EffectAst::ForEachObject { effects, .. }
-        | EffectAst::ForEachTagged { effects, .. }
-        | EffectAst::ForEachPlayerDoesNot { effects, .. }
-        | EffectAst::ForEachOpponentDoesNot { effects, .. }
-        | EffectAst::ForEachPlayerDid { effects, .. }
-        | EffectAst::ForEachOpponentDid { effects, .. }
-        | EffectAst::ForEachTaggedPlayer { effects, .. }
-        | EffectAst::DelayedUntilNextEndStep { effects, .. }
-        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
-        | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedTriggerThisTurn { effects, .. }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
-        | EffectAst::VoteOption { effects, .. } => {
-            replace_it_damage_target_in_effects(effects, target);
-        }
-        EffectAst::UnlessAction {
-            effects,
-            alternative,
-            ..
-        } => {
-            replace_it_damage_target_in_effects(effects, target);
-            replace_it_damage_target_in_effects(alternative, target);
-        }
-        _ => {}
+        _ => for_each_nested_effects_mut(effect, true, |nested| {
+            replace_it_damage_target_in_effects(nested, target);
+        }),
     }
 }
 
@@ -1173,45 +1073,9 @@ pub(crate) fn replace_it_target(effect: &mut EffectAst, target: &TargetAst) {
                 *effect_target = target.clone();
             }
         }
-        EffectAst::Conditional {
-            if_true, if_false, ..
-        } => {
-            replace_it_target_in_effects(if_true, target);
-            replace_it_target_in_effects(if_false, target);
-        }
-        EffectAst::UnlessPays { effects, .. }
-        | EffectAst::May { effects }
-        | EffectAst::MayByPlayer { effects, .. }
-        | EffectAst::MayByTaggedController { effects, .. }
-        | EffectAst::IfResult { effects, .. }
-        | EffectAst::ForEachOpponent { effects }
-        | EffectAst::ForEachPlayersFiltered { effects, .. }
-        | EffectAst::ForEachPlayer { effects }
-        | EffectAst::ForEachTargetPlayers { effects, .. }
-        | EffectAst::ForEachObject { effects, .. }
-        | EffectAst::ForEachTagged { effects, .. }
-        | EffectAst::ForEachPlayerDoesNot { effects, .. }
-        | EffectAst::ForEachOpponentDoesNot { effects, .. }
-        | EffectAst::ForEachPlayerDid { effects, .. }
-        | EffectAst::ForEachOpponentDid { effects, .. }
-        | EffectAst::ForEachTaggedPlayer { effects, .. }
-        | EffectAst::DelayedUntilNextEndStep { effects, .. }
-        | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
-        | EffectAst::DelayedUntilEndOfCombat { effects }
-        | EffectAst::DelayedTriggerThisTurn { effects, .. }
-        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. }
-        | EffectAst::VoteOption { effects, .. } => {
-            replace_it_target_in_effects(effects, target);
-        }
-        EffectAst::UnlessAction {
-            effects,
-            alternative,
-            ..
-        } => {
-            replace_it_target_in_effects(effects, target);
-            replace_it_target_in_effects(alternative, target);
-        }
-        _ => {}
+        _ => for_each_nested_effects_mut(effect, true, |nested| {
+            replace_it_target_in_effects(nested, target);
+        }),
     }
 }
 

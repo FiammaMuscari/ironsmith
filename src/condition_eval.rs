@@ -4,6 +4,7 @@ use crate::effects::helpers::resolve_value;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId, StableId};
+use crate::object_query::candidate_ids_for_zone;
 use crate::target::PlayerFilter;
 use crate::zone::Zone;
 
@@ -591,27 +592,7 @@ pub fn evaluate_condition_resolution(
 }
 
 fn condition_candidate_ids_for_zone(game: &GameState, zone: Option<Zone>) -> Vec<ObjectId> {
-    match zone {
-        Some(Zone::Battlefield) | None => game.battlefield.clone(),
-        Some(Zone::Graveyard) => game
-            .players
-            .iter()
-            .flat_map(|player| player.graveyard.iter().copied())
-            .collect(),
-        Some(Zone::Hand) => game
-            .players
-            .iter()
-            .flat_map(|player| player.hand.iter().copied())
-            .collect(),
-        Some(Zone::Library) => game
-            .players
-            .iter()
-            .flat_map(|player| player.library.iter().copied())
-            .collect(),
-        Some(Zone::Stack) => game.stack.iter().map(|entry| entry.object_id).collect(),
-        Some(Zone::Exile) => game.exile.clone(),
-        Some(Zone::Command) => game.command_zone.clone(),
-    }
+    candidate_ids_for_zone(game, zone)
 }
 
 fn condition_object_matches_player_zone(

@@ -20,6 +20,7 @@ use crate::filter::ObjectRef;
 use crate::game_event::DamageTarget;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
+use crate::object_query::candidate_ids_for_filter;
 use crate::snapshot::ObjectSnapshot;
 use crate::tag::{SOURCE_EXILED_TAG, TagKey};
 use crate::target::{ChooseSpec, FilterContext, PlayerFilter};
@@ -650,55 +651,6 @@ fn get_optional_costs_paid<'a>(
     }
     // Fallback to context (empty)
     &ctx.optional_costs_paid
-}
-
-fn candidate_ids_for_zone(game: &GameState, zone: Option<crate::zone::Zone>) -> Vec<ObjectId> {
-    match zone {
-        Some(crate::zone::Zone::Battlefield) => game.battlefield.clone(),
-        Some(crate::zone::Zone::Graveyard) => game
-            .players
-            .iter()
-            .flat_map(|player| player.graveyard.iter().copied())
-            .collect(),
-        Some(crate::zone::Zone::Hand) => game
-            .players
-            .iter()
-            .flat_map(|player| player.hand.iter().copied())
-            .collect(),
-        Some(crate::zone::Zone::Library) => game
-            .players
-            .iter()
-            .flat_map(|player| player.library.iter().copied())
-            .collect(),
-        Some(crate::zone::Zone::Stack) => game.stack.iter().map(|entry| entry.object_id).collect(),
-        Some(crate::zone::Zone::Exile) => game.exile.clone(),
-        Some(crate::zone::Zone::Command) => game.command_zone.clone(),
-        None => game.battlefield.clone(),
-    }
-}
-
-fn candidate_ids_for_filter(
-    game: &GameState,
-    filter: &crate::filter::ObjectFilter,
-) -> Vec<ObjectId> {
-    if let Some(zone) = filter.zone {
-        return candidate_ids_for_zone(game, Some(zone));
-    }
-    if filter.any_of.is_empty() {
-        return candidate_ids_for_zone(game, None);
-    }
-
-    let mut ids = std::collections::HashSet::new();
-    for nested in &filter.any_of {
-        for id in candidate_ids_for_zone(game, nested.zone) {
-            ids.insert(id);
-        }
-    }
-    if ids.is_empty() {
-        candidate_ids_for_zone(game, None)
-    } else {
-        ids.into_iter().collect()
-    }
 }
 
 /// Resolve a Value to a concrete i32.
