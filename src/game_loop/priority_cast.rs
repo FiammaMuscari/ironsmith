@@ -1133,7 +1133,13 @@ fn continue_spell_cast_mana_payment(
             &mut pending.payment_trace,
             Some(&mut pending.mana_spent_to_cast),
         )?;
-        queue_mana_ability_event_for_action(game, trigger_queue, &action, player_id);
+        queue_mana_ability_event_for_action(
+            game,
+            trigger_queue,
+            &mut *decision_maker,
+            &action,
+            player_id,
+        );
         drain_pending_trigger_events(game, trigger_queue);
         if pip_paid {
             record_keyword_payment_contribution(
@@ -2047,7 +2053,13 @@ fn continue_activation(
                     &mut pending.payment_trace,
                     None,
                 )?;
-                queue_mana_ability_event_for_action(game, trigger_queue, &action, player_id);
+                queue_mana_ability_event_for_action(
+                    game,
+                    trigger_queue,
+                    &mut *decision_maker,
+                    &action,
+                    player_id,
+                );
                 drain_pending_trigger_events(game, trigger_queue);
                 if pip_paid {
                     pending.remaining_mana_pips.remove(0);
@@ -2110,6 +2122,7 @@ fn continue_activation(
             queue_ability_activated_event(
                 game,
                 trigger_queue,
+                &mut *decision_maker,
                 pending.source,
                 pending.activator,
                 false,

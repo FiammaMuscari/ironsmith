@@ -95,6 +95,125 @@ mod tests {
     }
 
     #[test]
+    fn test_triggered_mana_ability_resolves_immediately_without_stack() {
+        let mut game = setup_game();
+        let mut trigger_queue = TriggerQueue::new();
+        let mut dm = crate::decision::SelectFirstDecisionMaker;
+        let alice = PlayerId::from_index(0);
+
+        let swamp_card = CardBuilder::new(CardId::new(), "Test Swamp")
+            .card_types(vec![CardType::Land])
+            .subtypes(vec![crate::types::Subtype::Swamp])
+            .build();
+        let swamp_id = game.create_object_from_card(&swamp_card, alice, Zone::Battlefield);
+        if let Some(swamp) = game.object_mut(swamp_id) {
+            swamp.abilities.push(Ability::mana(
+                crate::cost::TotalCost::free(),
+                vec![crate::mana::ManaSymbol::Black],
+            ));
+        }
+
+        let enchantment_card = CardBuilder::new(CardId::new(), "Mana Echo")
+            .card_types(vec![CardType::Enchantment])
+            .build();
+        let enchantment_id =
+            game.create_object_from_card(&enchantment_card, alice, Zone::Battlefield);
+        if let Some(enchantment) = game.object_mut(enchantment_id) {
+            enchantment.abilities.push(Ability::triggered(
+                Trigger::player_taps_for_mana(
+                    crate::target::PlayerFilter::You,
+                    crate::filter::ObjectFilter::land().with_subtype(crate::types::Subtype::Swamp),
+                ),
+                vec![Effect::add_mana(vec![crate::mana::ManaSymbol::Black])],
+            ));
+        }
+
+        queue_ability_activated_event(
+            &mut game,
+            &mut trigger_queue,
+            &mut dm,
+            swamp_id,
+            alice,
+            true,
+            None,
+        );
+
+        assert!(
+            trigger_queue.is_empty(),
+            "triggered mana ability should resolve immediately"
+        );
+        assert!(
+            game.stack.is_empty(),
+            "triggered mana abilities should not use the stack"
+        );
+        assert_eq!(
+            game.player(alice).expect("alice").mana_pool.black,
+            1,
+            "triggered mana ability should add mana immediately"
+        );
+    }
+
+    #[test]
+    fn test_non_mana_tap_for_mana_trigger_still_uses_stack() {
+        let mut game = setup_game();
+        let mut trigger_queue = TriggerQueue::new();
+        let mut dm = crate::decision::SelectFirstDecisionMaker;
+        let alice = PlayerId::from_index(0);
+
+        let swamp_card = CardBuilder::new(CardId::new(), "Test Swamp")
+            .card_types(vec![CardType::Land])
+            .subtypes(vec![crate::types::Subtype::Swamp])
+            .build();
+        let swamp_id = game.create_object_from_card(&swamp_card, alice, Zone::Battlefield);
+        if let Some(swamp) = game.object_mut(swamp_id) {
+            swamp.abilities.push(Ability::mana(
+                crate::cost::TotalCost::free(),
+                vec![crate::mana::ManaSymbol::Black],
+            ));
+        }
+
+        let enchantment_card = CardBuilder::new(CardId::new(), "Mana Barbs Test")
+            .card_types(vec![CardType::Enchantment])
+            .build();
+        let enchantment_id =
+            game.create_object_from_card(&enchantment_card, alice, Zone::Battlefield);
+        if let Some(enchantment) = game.object_mut(enchantment_id) {
+            enchantment.abilities.push(Ability::triggered(
+                Trigger::player_taps_for_mana(
+                    crate::target::PlayerFilter::Any,
+                    crate::filter::ObjectFilter::land(),
+                ),
+                vec![Effect::lose_life_player(
+                    1,
+                    crate::target::PlayerFilter::Specific(alice),
+                )],
+            ));
+        }
+
+        queue_ability_activated_event(
+            &mut game,
+            &mut trigger_queue,
+            &mut dm,
+            swamp_id,
+            alice,
+            true,
+            None,
+        );
+
+        assert!(
+            !trigger_queue.is_empty(),
+            "non-mana trigger should remain queued"
+        );
+        put_triggers_on_stack_with_dm(&mut game, &mut trigger_queue, &mut dm)
+            .expect("should put trigger on stack");
+        assert_eq!(
+            game.stack.len(),
+            1,
+            "non-mana tap-for-mana trigger should use stack"
+        );
+    }
+
+    #[test]
     fn test_drain_pending_events_checks_delayed_zone_change_triggers() {
         let mut game = setup_game();
         let mut trigger_queue = TriggerQueue::new();

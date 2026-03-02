@@ -1606,9 +1606,12 @@ fn prepend_missing_target_choice_prelude(
         if !choice.is_target() {
             continue;
         }
-        let already_exposed = compiled
-            .iter()
-            .any(|effect| effect.0.get_target_spec().is_some_and(|spec| spec == choice));
+        let already_exposed = compiled.iter().any(|effect| {
+            effect
+                .0
+                .get_target_spec()
+                .is_some_and(|spec| spec == choice)
+        });
         if !already_exposed {
             prelude.push(Effect::new(crate::effects::TargetOnlyEffect::new(
                 choice.clone(),
@@ -3657,10 +3660,7 @@ pub(crate) fn compile_effect(
                 effects.push(Effect::new(crate::effects::SacrificeTargetEffect::new(
                     ChooseSpec::tagged(tag),
                 )));
-                return Ok((
-                    effects,
-                    choices,
-                ));
+                return Ok((effects, choices));
             }
 
             let tag = ctx.next_tag("sacrificed");

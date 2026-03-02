@@ -789,25 +789,25 @@ pub(crate) fn maybe_apply_carried_player(effect: &mut EffectAst, carried_context
                 other => other,
             };
             match effect {
-            EffectAst::Draw { player, .. }
-            | EffectAst::DiscardHand { player }
-            | EffectAst::Discard { player, .. }
-            | EffectAst::GainLife { player, .. }
-            | EffectAst::LoseLife { player, .. }
-            | EffectAst::Scry { player, .. }
-            | EffectAst::Surveil { player, .. }
-            | EffectAst::Mill { player, .. }
-            | EffectAst::PoisonCounters { player, .. }
-            | EffectAst::EnergyCounters { player, .. }
-            | EffectAst::RevealTop { player }
-            | EffectAst::RevealHand { player }
-            | EffectAst::PutIntoHand { player, .. } => {
-                if matches!(*player, PlayerAst::Implicit) {
-                    *player = carried_player;
+                EffectAst::Draw { player, .. }
+                | EffectAst::DiscardHand { player }
+                | EffectAst::Discard { player, .. }
+                | EffectAst::GainLife { player, .. }
+                | EffectAst::LoseLife { player, .. }
+                | EffectAst::Scry { player, .. }
+                | EffectAst::Surveil { player, .. }
+                | EffectAst::Mill { player, .. }
+                | EffectAst::PoisonCounters { player, .. }
+                | EffectAst::EnergyCounters { player, .. }
+                | EffectAst::RevealTop { player }
+                | EffectAst::RevealHand { player }
+                | EffectAst::PutIntoHand { player, .. } => {
+                    if matches!(*player, PlayerAst::Implicit) {
+                        *player = carried_player;
+                    }
                 }
+                _ => {}
             }
-            _ => {}
-        }
         }
         CarryContext::ForEachPlayer => {
             if effect_uses_implicit_player(effect) {

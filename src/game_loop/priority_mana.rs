@@ -960,7 +960,15 @@ fn apply_mana_payment_response(
         }
         drain_pending_trigger_events(game, trigger_queue);
 
-        queue_ability_activated_event(game, trigger_queue, perm_id, pending.caster, true, None);
+        queue_ability_activated_event(
+            game,
+            trigger_queue,
+            &mut *decision_maker,
+            perm_id,
+            pending.caster,
+            true,
+            None,
+        );
 
         // Record the mana ability activation in the payment trace.
         record_cast_mana_ability_payment(&mut pending, perm_id, ability_index);
@@ -1043,7 +1051,15 @@ fn apply_mana_payment_response_mana_ability(
         }
         drain_pending_trigger_events(game, trigger_queue);
 
-        queue_ability_activated_event(game, trigger_queue, perm_id, pending.activator, true, None);
+        queue_ability_activated_event(
+            game,
+            trigger_queue,
+            &mut *decision_maker,
+            perm_id,
+            pending.activator,
+            true,
+            None,
+        );
 
         // Check if player can now pay
         let can_pay_now = game.can_pay_mana_cost(
@@ -1171,6 +1187,7 @@ fn execute_pending_mana_ability(
     queue_ability_activated_event(
         game,
         trigger_queue,
+        &mut *decision_maker,
         pending.source,
         pending.activator,
         true,
@@ -1214,7 +1231,15 @@ fn apply_mana_payment_response_activation(
         }
         drain_pending_trigger_events(game, trigger_queue);
 
-        queue_ability_activated_event(game, trigger_queue, perm_id, pending.activator, true, None);
+        queue_ability_activated_event(
+            game,
+            trigger_queue,
+            &mut *decision_maker,
+            perm_id,
+            pending.activator,
+            true,
+            None,
+        );
 
         // Record the mana ability activation in the payment trace.
         record_activation_mana_ability_payment(&mut pending, perm_id, ability_index);
@@ -1335,7 +1360,13 @@ fn apply_pip_payment_response_activation(
         &mut pending.payment_trace,
         None,
     )?;
-    queue_mana_ability_event_for_action(game, trigger_queue, action, pending.activator);
+    queue_mana_ability_event_for_action(
+        game,
+        trigger_queue,
+        &mut *decision_maker,
+        action,
+        pending.activator,
+    );
     drain_pending_trigger_events(game, trigger_queue);
 
     // Only remove the pip if it was actually paid (not just mana generated)
@@ -1402,7 +1433,13 @@ fn apply_pip_payment_response_cast(
         &mut pending.payment_trace,
         Some(&mut pending.mana_spent_to_cast),
     )?;
-    queue_mana_ability_event_for_action(game, trigger_queue, action, pending.caster);
+    queue_mana_ability_event_for_action(
+        game,
+        trigger_queue,
+        &mut *decision_maker,
+        action,
+        pending.caster,
+    );
     drain_pending_trigger_events(game, trigger_queue);
 
     // Only remove the pip if it was actually paid (not just mana generated)

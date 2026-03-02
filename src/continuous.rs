@@ -890,6 +890,7 @@ fn calculate_with_layers_direct_internal(
     game: &crate::game_state::GameState,
     sort_mode: DependencySortMode,
 ) -> CalculatedCharacteristics {
+    use crate::dependency::needs_baseline_dependency_sort;
     use crate::dependency::sort_layer_effects;
     use crate::dependency::sort_layer_effects_with_baseline;
 
@@ -942,16 +943,20 @@ fn calculate_with_layers_direct_internal(
         let sorted_effects = match sort_mode {
             DependencySortMode::Heuristic => sort_layer_effects(&layer_effects),
             DependencySortMode::Baseline => {
-                let baseline = build_layer_baseline(
-                    objects,
-                    effects,
-                    battlefield,
-                    commanders,
-                    game,
-                    layer,
-                    None,
-                );
-                sort_layer_effects_with_baseline(&layer_effects, &baseline, objects, game)
+                if needs_baseline_dependency_sort(&layer_effects) {
+                    let baseline = build_layer_baseline(
+                        objects,
+                        effects,
+                        battlefield,
+                        commanders,
+                        game,
+                        layer,
+                        None,
+                    );
+                    sort_layer_effects_with_baseline(&layer_effects, &baseline, objects, game)
+                } else {
+                    sort_layer_effects(&layer_effects)
+                }
             }
         };
 
@@ -1010,16 +1015,20 @@ fn calculate_with_layers_direct_internal(
         let sorted_pt = match sort_mode {
             DependencySortMode::Heuristic => sort_layer_effects(pt_effects),
             DependencySortMode::Baseline => {
-                let baseline = build_layer_baseline(
-                    objects,
-                    effects,
-                    battlefield,
-                    commanders,
-                    game,
-                    Layer::PowerToughness,
-                    None,
-                );
-                sort_layer_effects_with_baseline(pt_effects, &baseline, objects, game)
+                if needs_baseline_dependency_sort(pt_effects) {
+                    let baseline = build_layer_baseline(
+                        objects,
+                        effects,
+                        battlefield,
+                        commanders,
+                        game,
+                        Layer::PowerToughness,
+                        None,
+                    );
+                    sort_layer_effects_with_baseline(pt_effects, &baseline, objects, game)
+                } else {
+                    sort_layer_effects(pt_effects)
+                }
             }
         };
 
@@ -1576,6 +1585,8 @@ fn resolve_value_direct(
 
 /// Apply all layers to calculate final characteristics.
 fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> CalculatedCharacteristics {
+    use crate::dependency::needs_baseline_dependency_sort;
+    use crate::dependency::sort_layer_effects;
     use crate::dependency::sort_layer_effects_with_baseline;
 
     // Start with base characteristics
@@ -1631,16 +1642,20 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
         // Apply dependency-aware sorting within this layer
         // This handles Rule 613.8 - effects that depend on each other
         let sorted_effects = {
-            let baseline = build_layer_baseline(
-                ctx.objects,
-                &all_effects,
-                ctx.battlefield,
-                &ctx.game.commanders,
-                ctx.game,
-                layer,
-                None,
-            );
-            sort_layer_effects_with_baseline(&layer_effects, &baseline, ctx.objects, ctx.game)
+            if needs_baseline_dependency_sort(&layer_effects) {
+                let baseline = build_layer_baseline(
+                    ctx.objects,
+                    &all_effects,
+                    ctx.battlefield,
+                    &ctx.game.commanders,
+                    ctx.game,
+                    layer,
+                    None,
+                );
+                sort_layer_effects_with_baseline(&layer_effects, &baseline, ctx.objects, ctx.game)
+            } else {
+                sort_layer_effects(&layer_effects)
+            }
         };
 
         // Apply effects in dependency order
@@ -1938,6 +1953,8 @@ fn apply_layer_7_effects(
     chars: &mut CalculatedCharacteristics,
     _abilities_removed: bool,
 ) {
+    use crate::dependency::needs_baseline_dependency_sort;
+    use crate::dependency::sort_layer_effects;
     use crate::dependency::sort_layer_effects_with_baseline;
 
     let effects = ctx.effects.effects_sorted();
@@ -1956,16 +1973,20 @@ fn apply_layer_7_effects(
 
     // Sort by sublayer with dependency handling inside each sublayer.
     let pt_effects = {
-        let baseline = build_layer_baseline(
-            ctx.objects,
-            &all_effects,
-            ctx.battlefield,
-            &ctx.game.commanders,
-            ctx.game,
-            Layer::PowerToughness,
-            None,
-        );
-        sort_layer_effects_with_baseline(&pt_effects, &baseline, ctx.objects, ctx.game)
+        if needs_baseline_dependency_sort(&pt_effects) {
+            let baseline = build_layer_baseline(
+                ctx.objects,
+                &all_effects,
+                ctx.battlefield,
+                &ctx.game.commanders,
+                ctx.game,
+                Layer::PowerToughness,
+                None,
+            );
+            sort_layer_effects_with_baseline(&pt_effects, &baseline, ctx.objects, ctx.game)
+        } else {
+            sort_layer_effects(&pt_effects)
+        }
     };
 
     // Get counter timestamp for proper 7c ordering

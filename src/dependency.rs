@@ -1227,6 +1227,125 @@ pub fn sort_with_dependencies<'a>(effects: &[&'a ContinuousEffect]) -> Vec<&'a C
     result
 }
 
+/// Return true when full baseline simulation is required to sort this effect set safely.
+///
+/// This is a conservative gate: we only return `false` when we can prove that
+/// dependency ordering cannot matter for the given set.
+pub fn needs_baseline_dependency_sort(effects: &[&ContinuousEffect]) -> bool {
+    if effects.len() <= 1 {
+        return false;
+    }
+
+    let layer = effects[0].modification.layer();
+    if effects
+        .iter()
+        .any(|effect| effect.modification.layer() != layer)
+    {
+        return true;
+    }
+
+    // For non-P/T layers we currently keep full baseline sorting when multiple
+    // effects are present.
+    if layer != Layer::PowerToughness {
+        return true;
+    }
+
+    // Dependencies are only meaningful within the same P/T sublayer.
+    let mut by_sublayer: HashMap<Option<PtSublayer>, Vec<&ContinuousEffect>> = HashMap::new();
+    for &effect in effects {
+        by_sublayer
+            .entry(effect.modification.pt_sublayer())
+            .or_default()
+            .push(effect);
+    }
+
+    for sublayer_effects in by_sublayer.values() {
+        if sublayer_effects.len() <= 1 {
+            continue;
+        }
+        if !sublayer_group_has_trivial_ordering(sublayer_effects) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn sublayer_group_has_trivial_ordering(effects: &[&ContinuousEffect]) -> bool {
+    // Fixed +/- modifiers in 7c are commutative and never dependency-sensitive.
+    if effects.iter().all(|effect| {
+        matches!(
+            effect.modification,
+            Modification::ModifyPower(_)
+                | Modification::ModifyToughness(_)
+                | Modification::ModifyPowerToughness { .. }
+        )
+    }) {
+        return true;
+    }
+
+    // Characteristic-defining "count" effects that only use simple filter
+    // counts are independent from each other.
+    effects
+        .iter()
+        .all(|effect| is_independent_characteristic_defining_count_effect(effect))
+}
+
+fn is_independent_characteristic_defining_count_effect(effect: &ContinuousEffect) -> bool {
+    if !matches!(effect.source_type, EffectSourceType::CharacteristicDefining) {
+        return false;
+    }
+
+    if !matches!(
+        effect.applies_to,
+        EffectTarget::Specific(_) | EffectTarget::Source
+    ) {
+        return false;
+    }
+
+    match &effect.modification {
+        Modification::SetPower { value, sublayer }
+            if *sublayer == PtSublayer::CharacteristicDefining =>
+        {
+            value_is_independent_count_or_fixed(value)
+        }
+        Modification::SetToughness { value, sublayer }
+            if *sublayer == PtSublayer::CharacteristicDefining =>
+        {
+            value_is_independent_count_or_fixed(value)
+        }
+        Modification::SetPowerToughness {
+            power,
+            toughness,
+            sublayer,
+        } if *sublayer == PtSublayer::CharacteristicDefining => {
+            value_is_independent_count_or_fixed(power)
+                && value_is_independent_count_or_fixed(toughness)
+        }
+        _ => false,
+    }
+}
+
+fn value_is_independent_count_or_fixed(value: &Value) -> bool {
+    match value {
+        Value::Fixed(_) => true,
+        Value::Count(filter) | Value::CountScaled(filter, _) => {
+            filter_has_no_pt_constraints_for_fast_path(filter)
+        }
+        Value::Add(left, right) => {
+            value_is_independent_count_or_fixed(left) && value_is_independent_count_or_fixed(right)
+        }
+        _ => false,
+    }
+}
+
+fn filter_has_no_pt_constraints_for_fast_path(filter: &ObjectFilter) -> bool {
+    filter.power.is_none()
+        && filter.toughness.is_none()
+        && filter.power_relative_to_source.is_none()
+        && filter.any_of.is_empty()
+}
+
 pub fn sort_layer_effects_with_baseline<'a>(
     effects: &[&'a ContinuousEffect],
     baseline: &HashMap<ObjectId, CalculatedCharacteristics>,
@@ -1973,5 +2092,95 @@ mod tests {
 
         // Setter with creature count doesn't depend on P/T modifier
         assert!(!effect_depends_on(&setter, &modifier));
+    }
+
+    #[test]
+    fn test_needs_baseline_dependency_sort_skips_independent_cda_counts() {
+        use crate::effect::Value;
+
+        let mut cda_a = create_test_effect(
+            1,
+            10,
+            Modification::SetPowerToughness {
+                power: Value::Count(ObjectFilter::creature().you_control()),
+                toughness: Value::Count(ObjectFilter::creature().you_control()),
+                sublayer: PtSublayer::CharacteristicDefining,
+            },
+        );
+        cda_a.applies_to = EffectTarget::Specific(cda_a.source);
+        cda_a.source_type = EffectSourceType::CharacteristicDefining;
+
+        let mut cda_b = create_test_effect(
+            2,
+            20,
+            Modification::SetPowerToughness {
+                power: Value::Count(ObjectFilter::creature().you_control()),
+                toughness: Value::Count(ObjectFilter::creature().you_control()),
+                sublayer: PtSublayer::CharacteristicDefining,
+            },
+        );
+        cda_b.applies_to = EffectTarget::Specific(cda_b.source);
+        cda_b.source_type = EffectSourceType::CharacteristicDefining;
+
+        let effects = vec![&cda_a, &cda_b];
+        assert!(!needs_baseline_dependency_sort(&effects));
+    }
+
+    #[test]
+    fn test_needs_baseline_dependency_sort_for_dynamic_cda_non_count_values() {
+        use crate::effect::Value;
+
+        let mut cda_source_power = create_test_effect(
+            1,
+            10,
+            Modification::SetPowerToughness {
+                power: Value::SourcePower,
+                toughness: Value::Fixed(1),
+                sublayer: PtSublayer::CharacteristicDefining,
+            },
+        );
+        cda_source_power.applies_to = EffectTarget::Specific(cda_source_power.source);
+        cda_source_power.source_type = EffectSourceType::CharacteristicDefining;
+
+        let mut cda_fixed = create_test_effect(
+            2,
+            20,
+            Modification::SetPowerToughness {
+                power: Value::Fixed(2),
+                toughness: Value::Fixed(2),
+                sublayer: PtSublayer::CharacteristicDefining,
+            },
+        );
+        cda_fixed.applies_to = EffectTarget::Specific(cda_fixed.source);
+        cda_fixed.source_type = EffectSourceType::CharacteristicDefining;
+
+        let effects = vec![&cda_source_power, &cda_fixed];
+        assert!(needs_baseline_dependency_sort(&effects));
+    }
+
+    #[test]
+    fn test_needs_baseline_dependency_sort_skips_when_each_pt_sublayer_has_one_effect() {
+        use crate::effect::Value;
+
+        let cda = create_test_effect(
+            1,
+            10,
+            Modification::SetPowerToughness {
+                power: Value::Fixed(2),
+                toughness: Value::Fixed(2),
+                sublayer: PtSublayer::CharacteristicDefining,
+            },
+        );
+        let modifier = create_test_effect(
+            2,
+            20,
+            Modification::ModifyPowerToughness {
+                power: 1,
+                toughness: 1,
+            },
+        );
+
+        let effects = vec![&cda, &modifier];
+        assert!(!needs_baseline_dependency_sort(&effects));
     }
 }

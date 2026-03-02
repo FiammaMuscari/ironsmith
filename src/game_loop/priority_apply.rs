@@ -736,6 +736,7 @@ pub fn apply_priority_response_with_dm(
                 queue_ability_activated_event(
                     game,
                     trigger_queue,
+                    &mut *decision_maker,
                     *source,
                     player,
                     false,
@@ -836,7 +837,15 @@ pub fn apply_priority_response_with_dm(
                         drain_pending_trigger_events(game, trigger_queue);
                     }
 
-                    queue_ability_activated_event(game, trigger_queue, *source, player, true, None);
+                    queue_ability_activated_event(
+                        game,
+                        trigger_queue,
+                        &mut *decision_maker,
+                        *source,
+                        player,
+                        true,
+                        None,
+                    );
 
                     // Player retains priority after activating mana ability
                     return advance_priority_with_dm(game, trigger_queue, decision_maker);
@@ -941,6 +950,7 @@ pub fn apply_priority_response_with_dm(
                     queue_ability_activated_event(
                         game,
                         trigger_queue,
+                        &mut *decision_maker,
                         *permanent_id,
                         player,
                         true,

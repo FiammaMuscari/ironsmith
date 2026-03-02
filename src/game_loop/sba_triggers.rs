@@ -78,6 +78,10 @@ pub fn put_triggers_on_stack_with_dm(
     trigger_queue: &mut TriggerQueue,
     decision_maker: &mut dyn DecisionMaker,
 ) -> Result<(), GameLoopError> {
+    // Triggered mana abilities resolve immediately and never use the stack.
+    // Flush them first so only non-mana triggers remain to be stacked.
+    resolve_triggered_mana_abilities_with_dm(game, trigger_queue, decision_maker);
+
     // Group triggers by controller (APNAP order)
     let active_player = game.turn.active_player;
     let mut active_triggers = Vec::new();
@@ -118,6 +122,253 @@ pub fn put_triggers_on_stack_with_dm(
     }
 
     Ok(())
+}
+
+fn is_triggered_mana_ability(game: &GameState, trigger: &TriggeredAbilityEntry) -> bool {
+    if !trigger.ability.choices.is_empty() {
+        return false;
+    }
+
+    let Some(activated_event) = trigger
+        .triggering_event
+        .downcast::<crate::events::spells::AbilityActivatedEvent>()
+    else {
+        return false;
+    };
+    if !activated_event.is_mana_ability {
+        return false;
+    }
+
+    effects_could_add_mana(
+        game,
+        trigger.source,
+        trigger.controller,
+        &trigger.ability.effects,
+    )
+}
+
+fn effects_could_add_mana(
+    game: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    effects: &[crate::effect::Effect],
+) -> bool {
+    effects
+        .iter()
+        .any(|effect| effect_could_add_mana(game, source, controller, effect))
+}
+
+fn effect_could_add_mana(
+    game: &GameState,
+    source: ObjectId,
+    controller: PlayerId,
+    effect: &crate::effect::Effect,
+) -> bool {
+    if effect
+        .producible_mana_symbols(game, source, controller)
+        .is_some_and(|symbols| !symbols.is_empty())
+    {
+        return true;
+    }
+
+    if let Some(sequence) = effect.downcast_ref::<crate::effects::SequenceEffect>() {
+        return effects_could_add_mana(game, source, controller, &sequence.effects);
+    }
+    if let Some(may) = effect.downcast_ref::<crate::effects::MayEffect>() {
+        return effects_could_add_mana(game, source, controller, &may.effects);
+    }
+    if let Some(conditional) = effect.downcast_ref::<crate::effects::ConditionalEffect>() {
+        return effects_could_add_mana(game, source, controller, &conditional.if_true)
+            || effects_could_add_mana(game, source, controller, &conditional.if_false);
+    }
+    if let Some(if_effect) = effect.downcast_ref::<crate::effects::IfEffect>() {
+        return effects_could_add_mana(game, source, controller, &if_effect.then)
+            || effects_could_add_mana(game, source, controller, &if_effect.else_);
+    }
+    if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
+        return effect_could_add_mana(game, source, controller, &with_id.effect);
+    }
+    if let Some(choose_mode) = effect.downcast_ref::<crate::effects::ChooseModeEffect>() {
+        return choose_mode
+            .modes
+            .iter()
+            .any(|mode| effects_could_add_mana(game, source, controller, &mode.effects));
+    }
+    if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
+        return effect_could_add_mana(game, source, controller, &tagged.effect);
+    }
+    if let Some(tag_all) = effect.downcast_ref::<crate::effects::TagAllEffect>() {
+        return effect_could_add_mana(game, source, controller, &tag_all.effect);
+    }
+    if let Some(for_each) = effect.downcast_ref::<crate::effects::ForEachObject>() {
+        return effects_could_add_mana(game, source, controller, &for_each.effects);
+    }
+    if let Some(for_players) = effect.downcast_ref::<crate::effects::ForPlayersEffect>() {
+        return effects_could_add_mana(game, source, controller, &for_players.effects);
+    }
+    if let Some(for_each_tagged) = effect.downcast_ref::<crate::effects::ForEachTaggedEffect>() {
+        return effects_could_add_mana(game, source, controller, &for_each_tagged.effects);
+    }
+    if let Some(for_each_controller) =
+        effect.downcast_ref::<crate::effects::ForEachControllerOfTaggedEffect>()
+    {
+        return effects_could_add_mana(game, source, controller, &for_each_controller.effects);
+    }
+    if let Some(for_each_tagged_player) =
+        effect.downcast_ref::<crate::effects::ForEachTaggedPlayerEffect>()
+    {
+        return effects_could_add_mana(game, source, controller, &for_each_tagged_player.effects);
+    }
+    if let Some(unless_action) = effect.downcast_ref::<crate::effects::UnlessActionEffect>() {
+        return effects_could_add_mana(game, source, controller, &unless_action.effects)
+            || effects_could_add_mana(game, source, controller, &unless_action.alternative);
+    }
+    if let Some(unless_pays) = effect.downcast_ref::<crate::effects::UnlessPaysEffect>() {
+        return effects_could_add_mana(game, source, controller, &unless_pays.effects);
+    }
+
+    false
+}
+
+fn resolve_triggered_stack_entry_immediately(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    decision_maker: &mut dyn DecisionMaker,
+    entry: StackEntry,
+) {
+    // Mirror stack-resolution context as closely as possible, but without using the stack.
+    let mut ctx = ExecutionContext::new(entry.object_id, entry.controller, decision_maker)
+        .with_optional_costs_paid(entry.optional_costs_paid.clone())
+        .with_cause(EventCause::from_effect(entry.object_id, entry.controller));
+    if let Some(x) = entry.x_value {
+        ctx = ctx.with_x(x);
+    }
+    if let Some(defending) = entry.defending_player {
+        ctx = ctx.with_defending_player(defending);
+    }
+    if let Some(triggering_event) = entry.triggering_event.clone() {
+        ctx = ctx.with_triggering_event(triggering_event);
+    }
+    if let Some(source_snapshot) = entry.source_snapshot.clone() {
+        ctx = ctx.with_source_snapshot(source_snapshot);
+    }
+    if !entry.tagged_objects.is_empty() {
+        ctx = ctx.with_tagged_objects(entry.tagged_objects.clone());
+    }
+    if let Some(ref modes) = entry.chosen_modes {
+        ctx = ctx.with_chosen_modes(Some(modes.clone()));
+    }
+    apply_keyword_payment_tags_for_resolution(game, &entry, &mut ctx);
+
+    let (valid_targets, all_targets_invalid) = validate_stack_entry_targets(game, &entry);
+    if !entry.targets.is_empty() && all_targets_invalid {
+        return;
+    }
+
+    if let Some(ref condition) = entry.intervening_if
+        && let Some(ref triggering_event) = entry.triggering_event
+        && !verify_intervening_if(
+            game,
+            condition,
+            entry.controller,
+            triggering_event,
+            entry.object_id,
+            None,
+        )
+    {
+        return;
+    }
+
+    ctx = ctx.with_targets(valid_targets);
+    ctx.snapshot_targets(game);
+
+    let effects = if let Some(ref ability_effects) = entry.ability_effects {
+        ability_effects.clone()
+    } else if let Some(obj) = game.object(entry.object_id) {
+        get_effects_for_stack_entry(game, &entry, obj)
+    } else {
+        Vec::new()
+    };
+
+    let mut all_events = Vec::new();
+    for effect in &effects {
+        if let Ok(outcome) = execute_effect(game, effect, &mut ctx) {
+            all_events.extend(outcome.events);
+        }
+    }
+
+    for event in all_events {
+        let triggers = check_triggers(game, &event);
+        for trigger in triggers {
+            trigger_queue.add(trigger);
+        }
+    }
+    drain_pending_trigger_events(game, trigger_queue);
+
+    if let Some(saga_id) = entry.saga_final_chapter_source {
+        mark_saga_final_chapter_resolved(game, saga_id);
+    }
+}
+
+fn resolve_triggered_mana_abilities_with_dm(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    decision_maker: &mut dyn DecisionMaker,
+) {
+    loop {
+        let mut pending = trigger_queue.take_all();
+        if pending.is_empty() {
+            break;
+        }
+
+        let active_player = game.turn.active_player;
+        let mut active_mana_triggers = Vec::new();
+        let mut other_mana_triggers = Vec::new();
+        let mut remaining_triggers = Vec::new();
+
+        for trigger in pending.drain(..) {
+            if is_triggered_mana_ability(game, &trigger) {
+                if trigger.controller == active_player {
+                    active_mana_triggers.push(trigger);
+                } else {
+                    other_mana_triggers.push(trigger);
+                }
+            } else {
+                remaining_triggers.push(trigger);
+            }
+        }
+
+        if active_mana_triggers.is_empty() && other_mana_triggers.is_empty() {
+            trigger_queue.entries.extend(remaining_triggers);
+            break;
+        }
+
+        for trigger in active_mana_triggers
+            .into_iter()
+            .chain(other_mana_triggers.into_iter())
+        {
+            if !can_stack_trigger_this_turn(game, &trigger) {
+                continue;
+            }
+
+            if let Some(entry) =
+                create_triggered_stack_entry_with_targets(game, &trigger, decision_maker)
+            {
+                game.record_trigger_fired(trigger.source, trigger.trigger_identity);
+                resolve_triggered_stack_entry_immediately(
+                    game,
+                    trigger_queue,
+                    decision_maker,
+                    entry,
+                );
+            }
+        }
+
+        // Preserve non-mana triggers while appending any triggers emitted during
+        // immediate mana-trigger resolution.
+        remaining_triggers.extend(trigger_queue.take_all());
+        trigger_queue.entries.extend(remaining_triggers);
+    }
 }
 
 fn can_stack_trigger_this_turn(game: &GameState, trigger: &TriggeredAbilityEntry) -> bool {
@@ -380,4 +631,3 @@ fn triggered_to_stack_entry(game: &GameState, trigger: &TriggeredAbilityEntry) -
 
     entry
 }
-

@@ -199,6 +199,7 @@ fn queue_becomes_targeted_events(
 fn queue_ability_activated_event(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
+    decision_maker: &mut dyn DecisionMaker,
     source: ObjectId,
     activator: PlayerId,
     is_mana_ability: bool,
@@ -228,16 +229,28 @@ fn queue_ability_activated_event(
         AbilityActivatedEvent::new(source, activator, is_mana_ability).with_snapshot(snapshot),
     );
     queue_triggers_from_event(game, trigger_queue, event, true);
+    if is_mana_ability {
+        resolve_triggered_mana_abilities_with_dm(game, trigger_queue, decision_maker);
+    }
 }
 
 fn queue_mana_ability_event_for_action(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
+    decision_maker: &mut dyn DecisionMaker,
     action: &ManaPipPaymentAction,
     activator: PlayerId,
 ) {
     if let ManaPipPaymentAction::ActivateManaAbility { source_id, .. } = action {
-        queue_ability_activated_event(game, trigger_queue, *source_id, activator, true, None);
+        queue_ability_activated_event(
+            game,
+            trigger_queue,
+            decision_maker,
+            *source_id,
+            activator,
+            true,
+            None,
+        );
     }
 }
 
