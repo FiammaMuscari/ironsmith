@@ -513,6 +513,99 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_target_specs_two_distinct_targets_create_two_requirements() {
+        use crate::cards::CardDefinitionBuilder;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Spiteful Blow Variant")
+            .card_types(vec![CardType::Sorcery])
+            .parse_text("Destroy target creature and target land.")
+            .expect("two-distinct-target clause should parse");
+
+        let effects = def.spell_effect.expect("expected spell effects");
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let creature_id = create_creature(&mut game, "Target Creature", bob, 2, 2);
+        let land_card = CardBuilder::new(CardId::from_raw(2), "Target Land")
+            .card_types(vec![CardType::Land])
+            .build();
+        let land_id = game.create_object_from_card(&land_card, bob, Zone::Battlefield);
+
+        let requirements = extract_target_requirements(&game, &effects, alice, None);
+        assert_eq!(
+            requirements.len(),
+            2,
+            "expected two target requirements, got {:?}",
+            requirements
+        );
+        assert!(
+            requirements
+                .iter()
+                .any(|req| req.legal_targets == vec![Target::Object(creature_id)]),
+            "expected one requirement to target only the creature, got {:?}",
+            requirements
+        );
+        assert!(
+            requirements
+                .iter()
+                .any(|req| req.legal_targets == vec![Target::Object(land_id)]),
+            "expected one requirement to target only the land, got {:?}",
+            requirements
+        );
+        assert!(
+            requirements
+                .iter()
+                .all(|req| req.min_targets == 1 && req.max_targets == Some(1)),
+            "expected both requirements to be single-target, got {:?}",
+            requirements
+        );
+    }
+
+    #[test]
+    fn test_extract_target_specs_exactly_two_targets_uses_single_requirement_with_count_two() {
+        use crate::cards::CardDefinitionBuilder;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Aether Tradewinds Variant")
+            .card_types(vec![CardType::Sorcery])
+            .parse_text("Return two target creatures to their owners' hands.")
+            .expect("exactly-two-target clause should parse");
+
+        let effects = def.spell_effect.expect("expected spell effects");
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let creature_a = create_creature(&mut game, "Target A", bob, 2, 2);
+        let creature_b = create_creature(&mut game, "Target B", bob, 3, 3);
+
+        let requirements = extract_target_requirements(&game, &effects, alice, None);
+        assert_eq!(
+            requirements.len(),
+            1,
+            "expected one requirement with count two, got {:?}",
+            requirements
+        );
+        assert_eq!(
+            requirements[0].min_targets, 2,
+            "expected minimum target count 2, got {:?}",
+            requirements
+        );
+        assert_eq!(
+            requirements[0].max_targets,
+            Some(2),
+            "expected maximum target count 2, got {:?}",
+            requirements
+        );
+        assert!(
+            requirements[0].legal_targets.contains(&Target::Object(creature_a))
+                && requirements[0].legal_targets.contains(&Target::Object(creature_b)),
+            "expected both creatures to be legal targets, got {:?}",
+            requirements
+        );
+    }
+
+    #[test]
     fn test_spell_has_legal_targets_any_number_with_no_targets() {
         let game = setup_game();
         let alice = PlayerId::from_index(0);
