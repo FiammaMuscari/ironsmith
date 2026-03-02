@@ -25,7 +25,7 @@ export default function DecisionPanel() {
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
-        <div className="flex flex-col gap-1.5 pr-1">
+        <div className="flex flex-col gap-1.5 p-1.5">
           {decision ? (
             <DecisionRouter decision={decision} canAct={canAct} />
           ) : (

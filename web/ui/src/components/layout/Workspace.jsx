@@ -4,7 +4,7 @@ import TableCore from "@/components/board/TableCore";
 import RightRail from "@/components/right-rail/RightRail";
 
 export default function Workspace({ zoneView }) {
-  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
 
   return (

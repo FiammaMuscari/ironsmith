@@ -346,6 +346,7 @@ fn compute_player_targets(
     game.players
         .iter()
         .filter(|p| p.is_in_game())
+        .filter(|p| game.can_target_player(p.id))
         .filter(|p| filter.matches_player(p.id, &filter_ctx))
         .map(|p| Target::Player(p.id))
         .collect()
@@ -734,9 +735,8 @@ mod tests {
         game.add_object(source);
 
         let result = can_target_object(&game, target_id, source_id, p0);
-        assert!(matches!(
-            result,
-            TargetingResult::Invalid(TargetingInvalidReason::NotOnBattlefield)
-        ));
+        // Zone filtering is now the caller's responsibility (via ObjectFilter),
+        // so can_target_object considers non-battlefield objects targetable.
+        assert!(matches!(result, TargetingResult::Legal { .. }));
     }
 }

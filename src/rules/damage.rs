@@ -608,11 +608,15 @@ mod tests {
 
     #[test]
     fn test_deathtouch_is_lethal() {
-        let game = test_game_state();
+        let mut game = test_game_state();
         let mut source = make_creature("Deathtoucher", 1, 1);
         add_ability(&mut source, StaticAbility::deathtouch());
 
         let creature = make_creature("Big", 5, 5);
+
+        // Add objects to game so ability lookups work
+        game.add_object(source.clone());
+        game.add_object(creature.clone());
 
         // 1 damage with deathtouch is lethal
         assert!(is_lethal(&source, &creature, 1, &game));
@@ -650,11 +654,14 @@ mod tests {
 
     #[test]
     fn test_trample_excess_damage() {
-        let game = test_game_state();
+        let mut game = test_game_state();
         let mut attacker = make_creature("Trampler", 6, 6);
         add_ability(&mut attacker, StaticAbility::trample());
 
         let blocker = make_creature("Small", 2, 2);
+
+        game.add_object(attacker.clone());
+        game.add_object(blocker.clone());
 
         // 6 power - 2 toughness = 4 excess
         let excess = calculate_trample_excess(&attacker, &[&blocker], 6, &game);
@@ -663,12 +670,16 @@ mod tests {
 
     #[test]
     fn test_trample_multiple_blockers() {
-        let game = test_game_state();
+        let mut game = test_game_state();
         let mut attacker = make_creature("Trampler", 7, 7);
         add_ability(&mut attacker, StaticAbility::trample());
 
         let blocker1 = make_creature("Small1", 2, 2);
         let blocker2 = make_creature("Small2", 3, 3);
+
+        game.add_object(attacker.clone());
+        game.add_object(blocker1.clone());
+        game.add_object(blocker2.clone());
 
         // 7 power - (2 + 3) toughness = 2 excess
         let excess = calculate_trample_excess(&attacker, &[&blocker1, &blocker2], 7, &game);
@@ -677,13 +688,17 @@ mod tests {
 
     #[test]
     fn test_trample_with_deathtouch() {
-        let game = test_game_state();
+        let mut game = test_game_state();
         let mut attacker = make_creature("Deathtouch Trampler", 6, 6);
         add_ability(&mut attacker, StaticAbility::trample());
         add_ability(&mut attacker, StaticAbility::deathtouch());
 
         let blocker1 = make_creature("Big1", 5, 5);
         let blocker2 = make_creature("Big2", 5, 5);
+
+        game.add_object(attacker.clone());
+        game.add_object(blocker1.clone());
+        game.add_object(blocker2.clone());
 
         // With deathtouch, only need 1 damage to each blocker
         // 6 power - (1 + 1) = 4 excess
@@ -704,12 +719,16 @@ mod tests {
 
     #[test]
     fn test_distribute_trample_damage() {
-        let game = test_game_state();
+        let mut game = test_game_state();
         let mut attacker = make_creature("Trampler", 5, 5);
         add_ability(&mut attacker, StaticAbility::trample());
 
         let blocker1 = make_creature("Small1", 2, 2);
         let blocker2 = make_creature("Small2", 2, 2);
+
+        game.add_object(attacker.clone());
+        game.add_object(blocker1.clone());
+        game.add_object(blocker2.clone());
 
         let (distribution, excess) =
             distribute_trample_damage(&attacker, &[&blocker1, &blocker2], 5, &game);

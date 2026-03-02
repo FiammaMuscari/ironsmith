@@ -552,10 +552,13 @@ mod tests {
         GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
     }
 
+    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
     fn make_creature(name: &str, power: i32, toughness: i32) -> Object {
+        let raw = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Object {
-            id: ObjectId::from_raw(1),
-            stable_id: StableId::from_raw(1),
+            id: ObjectId::from_raw(raw),
+            stable_id: StableId::from_raw(raw),
             kind: crate::object::ObjectKind::Card,
             card: None,
             zone: Zone::Battlefield,
@@ -998,9 +1001,10 @@ mod tests {
 
     #[test]
     fn test_defender_cant_attack() {
-        let game = test_game_state();
+        let mut game = test_game_state();
         let mut defender = make_creature("Defender", 0, 4);
         add_ability(&mut defender, StaticAbility::defender());
+        game.add_object(defender.clone());
         assert!(!can_attack(&defender, &game));
 
         // With "can attack as though no defender"
@@ -1008,6 +1012,7 @@ mod tests {
             &mut defender,
             StaticAbility::can_attack_as_though_no_defender(),
         );
+        *game.object_mut(defender.id).unwrap() = defender.clone();
         assert!(can_attack(&defender, &game));
     }
 
@@ -1015,12 +1020,14 @@ mod tests {
     fn test_summoning_sickness() {
         let mut game = test_game_state();
         let creature = make_creature("New", 2, 2);
+        game.add_object(creature.clone());
         game.set_summoning_sick(creature.id);
         assert!(!can_attack(&creature, &game));
 
         // With haste - add ability to creature
         let mut creature_with_haste = make_creature("New", 2, 2);
         add_ability(&mut creature_with_haste, StaticAbility::haste());
+        game.add_object(creature_with_haste.clone());
         game.set_summoning_sick(creature_with_haste.id);
         assert!(can_attack(&creature_with_haste, &game));
     }

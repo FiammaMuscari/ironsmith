@@ -4011,7 +4011,7 @@
     }
 
     function renderSelectObjectsDecision(decision, canAct) {
-      if (decision.min === 1 && decision.max === 1) {
+      if (decision.max === 1) {
         decision.candidates.forEach((candidate) => {
           el.decisionBody.appendChild(
             createActionButton(candidate.name, !canAct || !candidate.legal, () => {
@@ -4019,6 +4019,13 @@
             })
           );
         });
+        if (decision.min === 0) {
+          el.decisionBody.appendChild(
+            createActionButton("Skip", !canAct, () => {
+              sendCommand({ type: "select_objects", object_ids: [] }, "Selection skipped");
+            })
+          );
+        }
         return;
       }
 

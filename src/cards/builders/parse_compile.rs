@@ -2563,6 +2563,18 @@ pub(crate) fn compile_effect(
     effect: &EffectAst,
     ctx: &mut CompileContext,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
+    // This function has a ~929 KB stack frame in debug builds (191 match arms with
+    // union-sized locals). Use stacker to dynamically grow the stack for recursive
+    // calls, preventing overflow on deeply nested card texts like Braids.
+    stacker::maybe_grow(1024 * 1024, 2 * 1024 * 1024, || {
+        compile_effect_inner(effect, ctx)
+    })
+}
+
+fn compile_effect_inner(
+    effect: &EffectAst,
+    ctx: &mut CompileContext,
+) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
     match effect {
         EffectAst::DealDamage { amount, target } => {
             let resolved_amount = resolve_value_it_tag(amount, ctx)?;

@@ -15,7 +15,7 @@ function ActionButton({ action, canAct, dispatch, label }) {
       key={action.index}
       variant="outline"
       size="sm"
-      className="h-7 text-[11px] justify-start px-2 whitespace-normal text-left"
+      className="h-auto min-h-7 py-1 text-[11px] justify-start px-2.5 whitespace-normal text-left"
       disabled={!canAct}
       onClick={() =>
         dispatch(
@@ -95,7 +95,7 @@ export default function PriorityDecision({ decision, canAct }) {
         <Button
           variant="outline"
           size="sm"
-          className="h-7 text-[11px] justify-start px-2 whitespace-normal text-left border-[#f7b869]/50 text-[#f7b869] hover:bg-[#f7b869]/10 hover:text-[#f7b869]"
+          className="h-auto min-h-7 py-1.5 mb-1.5 text-[11px] justify-start px-3 whitespace-normal text-left border-[#f7b869]/50 text-[#f7b869] hover:bg-[#f7b869]/10 hover:text-[#f7b869]"
           disabled={!canAct}
           onClick={() =>
             dispatch(

@@ -1,7 +1,7 @@
 import { useRef, useLayoutEffect, useEffect, useCallback } from "react";
 import GameCard from "@/components/cards/GameCard";
 
-export default function BattlefieldRow({ cards = [], compact = false, selectedObjectId, onInspect }) {
+export default function BattlefieldRow({ cards = [], compact = false, selectedObjectId, onInspect, onCardClick, activatableMap }) {
   const rowRef = useRef(null);
 
   const fitCards = useCallback(() => {
@@ -70,21 +70,25 @@ export default function BattlefieldRow({ cards = [], compact = false, selectedOb
         gridAutoRows: "var(--bf-card-height, 96px)",
       }}
     >
-      {cards.map((card) => (
-        <GameCard
-          key={card.id}
-          card={card}
-          compact={compact}
-          isInspected={selectedObjectId === card.id}
-          onClick={() => onInspect?.(card.id)}
-          style={{
-            width: "var(--bf-card-width, 124px)",
-            minWidth: "var(--bf-card-width, 124px)",
-            height: "var(--bf-card-height, 96px)",
-            minHeight: "var(--bf-card-height, 96px)",
-          }}
-        />
-      ))}
+      {cards.map((card) => {
+        const isActivatable = activatableMap?.has(Number(card.id));
+        return (
+          <GameCard
+            key={card.id}
+            card={card}
+            compact={compact}
+            isInspected={selectedObjectId === card.id}
+            isPlayable={isActivatable}
+            onClick={onCardClick ? (e) => onCardClick(e, card) : () => onInspect?.(card.id)}
+            style={{
+              width: "var(--bf-card-width, 124px)",
+              minWidth: "var(--bf-card-width, 124px)",
+              height: "var(--bf-card-height, 96px)",
+              minHeight: "var(--bf-card-height, 96px)",
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
