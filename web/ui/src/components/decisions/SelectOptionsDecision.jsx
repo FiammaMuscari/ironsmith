@@ -17,7 +17,9 @@ export default function SelectOptionsDecision({ decision, canAct }) {
   if (decision.counter_type || reason.includes("counter")) {
     return <CountersDecision decision={decision} canAct={canAct} />;
   }
-  if (decision.repeatable) {
+  // Route to RepeatableDecision if any individual option is repeatable.
+  const hasRepeatableOption = (decision.options || []).some((opt) => opt.repeatable);
+  if (decision.repeatable || hasRepeatableOption) {
     return <RepeatableDecision decision={decision} canAct={canAct} />;
   }
 

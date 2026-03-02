@@ -1473,6 +1473,8 @@ pub struct WasmGame {
     /// True when the pending_decision came from TurnRunner (attacker/blocker/discard
     /// decisions) rather than from the priority loop.
     runner_pending_decision: bool,
+    /// When true, cleanup discard decisions are auto-resolved with random cards.
+    auto_cleanup_discard: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1509,6 +1511,7 @@ impl WasmGame {
             runner: None,
             runner_awaiting_priority: false,
             runner_pending_decision: false,
+            auto_cleanup_discard: true,
         }
     }
 
@@ -1818,6 +1821,12 @@ impl WasmGame {
         self.runner_pending_decision = false;
         self.recompute_ui_decision()?;
         Ok(())
+    }
+
+    /// Toggle automatic cleanup discard (random cards).
+    #[wasm_bindgen(js_name = setAutoCleanupDiscard)]
+    pub fn set_auto_cleanup_discard(&mut self, enabled: bool) {
+        self.auto_cleanup_discard = enabled;
     }
 
     /// Switch local perspective to the next player.
@@ -2213,6 +2222,7 @@ impl WasmGame {
     }
 
     fn advance_until_decision(&mut self) -> Result<(), JsValue> {
+        use crate::game_state::Step;
         use crate::turn_runner::TurnAction;
 
         // Lazily create the TurnRunner on first call.
@@ -2235,6 +2245,27 @@ impl WasmGame {
                     TurnAction::Continue => continue,
 
                     TurnAction::Decision(ctx) => {
+                        // Auto-resolve cleanup discards when the flag is set.
+                        if self.auto_cleanup_discard {
+                            if let DecisionContext::SelectObjects(ref obj) = ctx {
+                                if self.game.turn.step == Some(Step::Cleanup) && obj.min > 0 {
+                                    use rand::seq::SliceRandom;
+                                    let mut ids: Vec<_> = obj
+                                        .candidates
+                                        .iter()
+                                        .filter(|c| c.legal)
+                                        .map(|c| c.id)
+                                        .collect();
+                                    ids.shuffle(&mut rand::rng());
+                                    ids.truncate(obj.min);
+                                    self.runner
+                                        .as_mut()
+                                        .unwrap()
+                                        .respond_discard(ids);
+                                    continue;
+                                }
+                            }
+                        }
                         self.pending_decision = Some(ctx);
                         self.runner_pending_decision = true;
                         return Ok(());
@@ -2356,24 +2387,55 @@ impl WasmGame {
         command: UiCommand,
     ) -> Result<JsValue, JsValue> {
         let runner = self.runner.as_mut().ok_or_else(|| {
+            // Restore decision on structural error so UI can retry.
+            self.pending_decision = Some(pending_ctx.clone());
+            self.runner_pending_decision = true;
             JsValue::from_str("runner_pending_decision set but no runner present")
         })?;
 
+        let restore_on_err = |this: &mut Self, ctx: DecisionContext, err: JsValue| -> JsValue {
+            this.pending_decision = Some(ctx);
+            this.runner_pending_decision = true;
+            err
+        };
+
         match (&pending_ctx, command) {
             (DecisionContext::Attackers(actx), UiCommand::DeclareAttackers { declarations }) => {
-                let converted = validate_attacker_declarations(actx, &declarations)?;
-                runner.respond_attackers(converted);
+                let converted = validate_attacker_declarations(actx, &declarations)
+                    .map_err(|e| restore_on_err(self, pending_ctx.clone(), e))?;
+                self.runner
+                    .as_mut()
+                    .unwrap()
+                    .respond_attackers(converted);
             }
             (DecisionContext::Blockers(bctx), UiCommand::DeclareBlockers { declarations }) => {
-                let converted = validate_blocker_declarations(bctx, &declarations)?;
-                runner.respond_blockers(converted, bctx.player);
+                let player = bctx.player;
+                let converted = validate_blocker_declarations(bctx, &declarations)
+                    .map_err(|e| restore_on_err(self, pending_ctx.clone(), e))?;
+                self.runner
+                    .as_mut()
+                    .unwrap()
+                    .respond_blockers(converted, player);
             }
-            (DecisionContext::SelectObjects(_), UiCommand::SelectObjects { object_ids }) => {
+            (DecisionContext::SelectObjects(obj_ctx), UiCommand::SelectObjects { object_ids }) => {
+                // Validate discard selection against the decision context.
+                let legal_ids: Vec<u64> = obj_ctx
+                    .candidates
+                    .iter()
+                    .filter(|c| c.legal)
+                    .map(|c| c.id.0)
+                    .collect();
+                validate_object_selection(obj_ctx.min, obj_ctx.max, &object_ids, &legal_ids)
+                    .map_err(|e| restore_on_err(self, pending_ctx.clone(), e))?;
+
                 let cards: Vec<ObjectId> = object_ids
                     .iter()
                     .map(|&id| ObjectId::from_raw(id))
                     .collect();
-                runner.respond_discard(cards);
+                self.runner
+                    .as_mut()
+                    .unwrap()
+                    .respond_discard(cards);
             }
             _ => {
                 self.pending_decision = Some(pending_ctx);
@@ -2710,18 +2772,8 @@ impl WasmGame {
                 }
                 Ok(ReplayDecisionAnswer::Proliferate(response))
             }
-            (DecisionContext::Targets(_), UiCommand::SelectTargets { targets }) => {
-                let converted: Vec<Target> = targets
-                    .into_iter()
-                    .map(|target| match target {
-                        TargetInput::Player { player } => {
-                            Target::Player(PlayerId::from_index(player))
-                        }
-                        TargetInput::Object { object } => {
-                            Target::Object(ObjectId::from_raw(object))
-                        }
-                    })
-                    .collect();
+            (DecisionContext::Targets(targets_ctx), UiCommand::SelectTargets { targets }) => {
+                let converted = convert_and_validate_targets(targets_ctx, targets)?;
                 Ok(ReplayDecisionAnswer::Targets(converted))
             }
             (
@@ -2881,23 +2933,24 @@ impl WasmGame {
                 {
                     Ok(PriorityResponse::CardCostChoice(ObjectId::from_raw(chosen)))
                 } else {
-                    Err(JsValue::from_str(
-                        "unsupported SelectObjects context in priority flow",
-                    ))
+                    let cast_stage = self
+                        .priority_state
+                        .pending_cast
+                        .as_ref()
+                        .map(|p| format!("{:?}", p.stage));
+                    let act_stage = self
+                        .priority_state
+                        .pending_activation
+                        .as_ref()
+                        .map(|p| format!("{:?}", p.stage));
+                    Err(JsValue::from_str(&format!(
+                        "unsupported SelectObjects context in priority flow \
+                         (pending_cast={cast_stage:?}, pending_activation={act_stage:?})"
+                    )))
                 }
             }
-            (DecisionContext::Targets(_), UiCommand::SelectTargets { targets }) => {
-                let converted: Vec<Target> = targets
-                    .into_iter()
-                    .map(|target| match target {
-                        TargetInput::Player { player } => {
-                            Target::Player(PlayerId::from_index(player))
-                        }
-                        TargetInput::Object { object } => {
-                            Target::Object(ObjectId::from_raw(object))
-                        }
-                    })
-                    .collect();
+            (DecisionContext::Targets(targets_ctx), UiCommand::SelectTargets { targets }) => {
+                let converted = convert_and_validate_targets(targets_ctx, targets)?;
                 Ok(PriorityResponse::Targets(converted))
             }
             (
@@ -3034,9 +3087,25 @@ impl WasmGame {
             return Ok(PriorityResponse::ManaPipPayment(choice));
         }
 
-        Err(JsValue::from_str(
-            "unsupported SelectOptions context in priority flow",
-        ))
+        // Build diagnostic info about current priority state.
+        let cast_stage = self
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| format!("{:?}", p.stage));
+        let act_stage = self
+            .priority_state
+            .pending_activation
+            .as_ref()
+            .map(|p| format!("{:?}", p.stage));
+        Err(JsValue::from_str(&format!(
+            "unsupported SelectOptions context in priority flow \
+             (pending_cast={cast_stage:?}, pending_activation={act_stage:?}, \
+             pending_mana_ability={}, pending_method={}, replacement={})",
+            self.priority_state.pending_mana_ability.is_some(),
+            self.priority_state.pending_method_selection.is_some(),
+            self.game.pending_replacement_choice.is_some(),
+        )))
     }
 }
 
@@ -3589,7 +3658,18 @@ fn validate_blocker_declarations(
         .iter()
         .map(|option| (option.attacker.0, option))
         .collect();
-    let mut blockers_used = HashSet::new();
+
+    // Compute per-blocker max assignments: the number of distinct attacker options
+    // that list this blocker as valid (i.e. how many attackers it can block).
+    let mut blocker_max_assignments: HashMap<u64, usize> = HashMap::new();
+    for option in &blockers.blocker_options {
+        for (blocker_id, _) in &option.valid_blockers {
+            *blocker_max_assignments.entry(blocker_id.0).or_insert(0) += 1;
+        }
+    }
+
+    let mut blocker_assignment_count: HashMap<u64, usize> = HashMap::new();
+    let mut blocker_attacker_pairs: HashSet<(u64, u64)> = HashSet::new();
     let mut counts_by_attacker: HashMap<u64, usize> = HashMap::new();
     let mut converted = Vec::new();
 
@@ -3610,10 +3690,26 @@ fn validate_blocker_declarations(
                 declaration.blocker, declaration.blocking
             )));
         }
-        if !blockers_used.insert(declaration.blocker) {
+        // Reject duplicate (blocker, attacker) pairs.
+        if !blocker_attacker_pairs.insert((declaration.blocker, declaration.blocking)) {
             return Err(JsValue::from_str(&format!(
-                "blocker {} assigned more than once",
-                declaration.blocker
+                "blocker {} already assigned to attacker {}",
+                declaration.blocker, declaration.blocking
+            )));
+        }
+        // Check per-blocker assignment limit.
+        let count = blocker_assignment_count
+            .entry(declaration.blocker)
+            .or_insert(0);
+        *count += 1;
+        let max = blocker_max_assignments
+            .get(&declaration.blocker)
+            .copied()
+            .unwrap_or(1);
+        if *count > max {
+            return Err(JsValue::from_str(&format!(
+                "blocker {} cannot block more than {} attacker(s)",
+                declaration.blocker, max
             )));
         }
         *counts_by_attacker.entry(declaration.blocking).or_insert(0) += 1;
@@ -3695,6 +3791,79 @@ fn validate_object_selection(
         }
     }
     Ok(())
+}
+
+/// Convert and validate target inputs against the requirements in a TargetsContext.
+///
+/// Validates that:
+/// - Each selected target is legal in at least one requirement
+/// - Total count meets the aggregate min across all requirements
+/// - Total count does not exceed the aggregate max
+fn convert_and_validate_targets(
+    ctx: &crate::decisions::context::TargetsContext,
+    inputs: Vec<TargetInput>,
+) -> Result<Vec<Target>, JsValue> {
+    let converted: Vec<Target> = inputs
+        .into_iter()
+        .map(|target| match target {
+            TargetInput::Player { player } => Target::Player(PlayerId::from_index(player)),
+            TargetInput::Object { object } => Target::Object(ObjectId::from_raw(object)),
+        })
+        .collect();
+
+    // Build the set of all legal targets across all requirements.
+    let all_legal: HashSet<Target> = ctx
+        .requirements
+        .iter()
+        .flat_map(|req| req.legal_targets.iter().copied())
+        .collect();
+
+    // Validate every chosen target is legal somewhere.
+    for target in &converted {
+        if !all_legal.contains(target) {
+            return Err(JsValue::from_str(&format!(
+                "target {} is not a legal choice",
+                match target {
+                    Target::Player(p) => format!("player {}", p.0),
+                    Target::Object(o) => format!("object {}", o.0),
+                }
+            )));
+        }
+    }
+
+    // Aggregate min/max across requirements.
+    let total_min: usize = ctx.requirements.iter().map(|r| r.min_targets).sum();
+    let total_max: Option<usize> = {
+        let mut sum: usize = 0;
+        let mut unbounded = false;
+        for req in &ctx.requirements {
+            match req.max_targets {
+                Some(max) => sum = sum.saturating_add(max),
+                None => {
+                    unbounded = true;
+                    break;
+                }
+            }
+        }
+        if unbounded { None } else { Some(sum) }
+    };
+
+    if converted.len() < total_min {
+        return Err(JsValue::from_str(&format!(
+            "must select at least {total_min} target(s), got {}",
+            converted.len()
+        )));
+    }
+    if let Some(max) = total_max {
+        if converted.len() > max {
+            return Err(JsValue::from_str(&format!(
+                "must select at most {max} target(s), got {}",
+                converted.len()
+            )));
+        }
+    }
+
+    Ok(converted)
 }
 
 #[cfg(test)]

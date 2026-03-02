@@ -1,27 +1,71 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useGame } from "@/context/GameContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+/**
+ * The engine emits attacker-centric blocker options:
+ *   { attacker, attacker_name, valid_blockers: [{ id, name }], min_blockers }
+ *
+ * We pivot to blocker-centric UI: each blocker shows which attackers it can block.
+ * Declarations are sent as { blocker, blocking } (blocker creature, attacker it blocks).
+ */
+function pivotToBlockerCentric(attackerOptions) {
+  const blockerMap = new Map();
+  for (const opt of attackerOptions) {
+    const attackerId = Number(opt.attacker);
+    const attackerName = opt.attacker_name || `Attacker ${attackerId}`;
+    for (const b of opt.valid_blockers || []) {
+      const bid = Number(b.id);
+      if (!blockerMap.has(bid)) {
+        blockerMap.set(bid, {
+          blocker: bid,
+          name: b.name || `Creature ${bid}`,
+          valid_attackers: [],
+        });
+      }
+      blockerMap.get(bid).valid_attackers.push({
+        attacker: attackerId,
+        name: attackerName,
+        min_blockers: opt.min_blockers || 0,
+      });
+    }
+  }
+  return Array.from(blockerMap.values());
+}
+
 export default function BlockersDecision({ decision, canAct }) {
   const { dispatch } = useGame();
-  const options = decision.blocker_options || [];
+  const attackerOptions = decision.blocker_options || [];
+  const blockerOptions = useMemo(
+    () => pivotToBlockerCentric(attackerOptions),
+    [attackerOptions]
+  );
+  // declarations: array of { blocker, blocking } — can have multiple entries
+  // per blocker if it can block multiple attackers
   const [declarations, setDeclarations] = useState([]);
 
-  const getBlockerDeclaration = (blockerId) =>
-    declarations.find((d) => d.blocker === Number(blockerId));
+  const getBlockerDeclarations = (blockerId) =>
+    declarations.filter((d) => d.blocker === Number(blockerId));
 
-  const toggleBlocker = (opt, attackerId) => {
-    const blockerId = Number(opt.blocker);
-    const existing = getBlockerDeclaration(blockerId);
-    if (existing && existing.attacker === Number(attackerId)) {
-      // Remove
-      setDeclarations((prev) => prev.filter((d) => d.blocker !== blockerId));
+  const isBlockingAttacker = (blockerId, attackerId) =>
+    declarations.some(
+      (d) => d.blocker === Number(blockerId) && d.blocking === Number(attackerId)
+    );
+
+  const toggleBlocker = (blockerId, attackerId) => {
+    blockerId = Number(blockerId);
+    attackerId = Number(attackerId);
+    if (isBlockingAttacker(blockerId, attackerId)) {
+      // Remove this specific assignment
+      setDeclarations((prev) =>
+        prev.filter((d) => !(d.blocker === blockerId && d.blocking === attackerId))
+      );
     } else {
-      // Add or change target
+      // For single-block creatures, replace existing assignment; for multi-block, add
       setDeclarations((prev) => [
         ...prev.filter((d) => d.blocker !== blockerId),
-        { blocker: blockerId, attacker: Number(attackerId) },
+        { blocker: blockerId, blocking: attackerId },
       ]);
     }
   };
@@ -30,25 +74,25 @@ export default function BlockersDecision({ decision, canAct }) {
     <div className="flex flex-col gap-2">
       <div className="text-[12px] text-muted-foreground">Declare blockers</div>
       <div className="flex flex-col gap-1.5">
-        {options.map((opt) => {
-          const blockerId = Number(opt.blocker);
-          const name = opt.name || `Creature ${blockerId}`;
-          const currentDecl = getBlockerDeclaration(blockerId);
+        {blockerOptions.map((opt) => {
+          const blockerId = opt.blocker;
+          const name = opt.name;
+          const currentDecls = getBlockerDeclarations(blockerId);
           const validAttackers = opt.valid_attackers || [];
 
           return (
             <div key={blockerId} className="border border-game-line-2 p-1 rounded-sm">
               <div className={cn(
                 "text-[11px] font-bold mb-0.5",
-                currentDecl && "text-[rgba(174,118,255,0.95)]"
+                currentDecls.length > 0 && "text-[rgba(174,118,255,0.95)]"
               )}>
                 {name}
               </div>
               <div className="flex flex-wrap gap-0.5">
                 {validAttackers.map((attacker) => {
-                  const attackerId = Number(attacker.attacker || attacker.id || attacker);
-                  const attackerName = attacker.name || `Attacker ${attackerId}`;
-                  const isBlocking = currentDecl?.attacker === attackerId;
+                  const attackerId = Number(attacker.attacker);
+                  const attackerName = attacker.name;
+                  const blocking = isBlockingAttacker(blockerId, attackerId);
                   return (
                     <Button
                       key={attackerId}
@@ -56,12 +100,12 @@ export default function BlockersDecision({ decision, canAct }) {
                       size="sm"
                       className={cn(
                         "h-5 text-[10px] px-1.5",
-                        isBlocking && "border-[rgba(174,118,255,0.95)] bg-[rgba(174,118,255,0.08)]"
+                        blocking && "border-[rgba(174,118,255,0.95)] bg-[rgba(174,118,255,0.08)]"
                       )}
                       disabled={!canAct}
-                      onClick={() => toggleBlocker(opt, attackerId)}
+                      onClick={() => toggleBlocker(blockerId, attackerId)}
                     >
-                      {isBlocking ? "\u2694 " : ""}Block {attackerName}
+                      {blocking ? "\u2694 " : ""}Block {attackerName}
                     </Button>
                   );
                 })}
