@@ -3,10 +3,15 @@ import OpponentZone from "./OpponentZone";
 import MyZone from "./MyZone";
 import PhaseTrack from "./PhaseTrack";
 import HandZone from "./HandZone";
+import DeckLoadingView from "./DeckLoadingView";
 
-export default function TableCore({ selectedObjectId, onInspect, zoneView }) {
+export default function TableCore({ selectedObjectId, onInspect, zoneView, deckLoadingMode, onLoadDecks, onCancelDeckLoading }) {
   const { state } = useGame();
   if (!state?.players?.length) return <main className="table-gradient rail-gradient rounded min-h-0" />;
+
+  if (deckLoadingMode) {
+    return <DeckLoadingView onLoad={onLoadDecks} onCancel={onCancelDeckLoading} />;
+  }
 
   const players = state.players;
   const perspective = state.perspective;

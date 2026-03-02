@@ -1,8 +1,11 @@
 import { useState, useCallback } from "react";
 import { useGame } from "@/context/GameContext";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+
+const pill = "text-[10px] uppercase cursor-pointer hover:brightness-125 transition-all select-none";
+const inputPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[10px] font-medium border-0 outline-none focus:ring-1 focus:ring-primary/50";
+const selectPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[10px] font-medium border-0 outline-none cursor-pointer uppercase tracking-wide";
 
 export default function AddCardBar({ zoneView, setZoneView }) {
   const { game, state, refresh, setStatus } = useGame();
@@ -34,9 +37,9 @@ export default function AddCardBar({ zoneView, setZoneView }) {
   }, [cardName, game, playerIndex, perspective, zone, skipTriggers, refresh, setStatus]);
 
   return (
-    <div className="panel-gradient flex items-center gap-2 rounded px-2.5 py-1">
+    <div className="panel-gradient flex items-center gap-1.5 rounded px-2.5 py-1">
       <select
-        className="h-6 text-[11px] px-1.5 bg-[#0b1118] border border-[#344a61] text-foreground rounded-sm uppercase tracking-wide cursor-pointer"
+        className={selectPill}
         value={playerIndex || perspective}
         onChange={(e) => setPlayerIndex(Number(e.target.value))}
       >
@@ -47,8 +50,8 @@ export default function AddCardBar({ zoneView, setZoneView }) {
         ))}
       </select>
 
-      <Input
-        className="h-6 text-[12px] w-36 bg-transparent"
+      <input
+        className={`${inputPill} w-36`}
         placeholder="Card name"
         value={cardName}
         onChange={(e) => setCardName(e.target.value)}
@@ -61,7 +64,7 @@ export default function AddCardBar({ zoneView, setZoneView }) {
       />
 
       <select
-        className="h-6 text-[11px] px-1.5 bg-[#0b1118] border border-[#344a61] text-foreground rounded-sm uppercase tracking-wide cursor-pointer"
+        className={selectPill}
         value={zone}
         onChange={(e) => setZone(e.target.value)}
       >
@@ -71,7 +74,7 @@ export default function AddCardBar({ zoneView, setZoneView }) {
         <option value="exile">Exile</option>
       </select>
 
-      <label className="flex items-center gap-1 text-muted-foreground text-[11px] whitespace-nowrap cursor-pointer">
+      <label className="flex items-center gap-1 text-muted-foreground text-[10px] whitespace-nowrap cursor-pointer uppercase">
         <input
           type="checkbox"
           checked={skipTriggers}
@@ -81,9 +84,7 @@ export default function AddCardBar({ zoneView, setZoneView }) {
         Skip triggers
       </label>
 
-      <Button variant="outline" size="sm" className="h-6 text-[12px] px-2" onClick={handleAdd}>
-        ADD
-      </Button>
+      <Badge variant="secondary" className={pill} onClick={handleAdd}>Add</Badge>
 
       <div className="flex-1" />
 

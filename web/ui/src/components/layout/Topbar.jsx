@@ -1,10 +1,12 @@
 import { useGame } from "@/context/GameContext";
 import { formatStep } from "@/lib/constants";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
+
+const pill = "text-[10px] uppercase cursor-pointer hover:brightness-125 transition-all select-none";
+const inputPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[10px] font-medium border-0 outline-none focus:ring-1 focus:ring-primary/50";
+const selectPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[10px] font-medium border-0 outline-none cursor-pointer uppercase tracking-wide";
 
 export default function Topbar({
   playerNames,
@@ -12,12 +14,13 @@ export default function Topbar({
   startingLife,
   setStartingLife,
   onReset,
-  onLoadDecks,
-  onDraw,
+  onLoadDemoDecks,
   onAdvance,
   onChangePerspective,
   onRefresh,
   onToggleLog,
+  onEnterDeckLoading,
+  deckLoadingMode,
 }) {
   const {
     state,
@@ -45,33 +48,29 @@ export default function Topbar({
         Maishik
       </h1>
 
-      <Input
-        className="h-6 text-[11px] w-auto min-w-[60px] bg-transparent"
+      <input
+        className={`${inputPill} min-w-[60px] w-auto`}
         value={playerNames}
         onChange={(e) => setPlayerNames(e.target.value)}
       />
-      <Input
-        className="h-6 text-[11px] w-12 bg-transparent"
+      <input
+        className={`${inputPill} w-16 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
         type="number"
         value={startingLife}
         min={1}
         onChange={(e) => setStartingLife(Number(e.target.value) || 20)}
       />
-      <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" onClick={onReset}>
-        Reset
-      </Button>
-      <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" onClick={onLoadDecks}>
-        Decks
-      </Button>
-      <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" onClick={onDraw}>
-        Draw 7
-      </Button>
+
+      <Badge variant="secondary" className={pill} onClick={onReset}>Reset</Badge>
+      <Badge variant="secondary" className={pill} onClick={onLoadDemoDecks}>Decks</Badge>
+      <Badge variant="secondary" className={pill} onClick={onEnterDeckLoading}>
+        {deckLoadingMode ? "Cancel Load" : "Load Decks"}
+      </Badge>
 
       <Separator orientation="vertical" className="h-4.5 mx-0.5" />
 
-      <span className="text-muted-foreground text-[11px] whitespace-nowrap">Player</span>
       <select
-        className="h-6 text-[11px] px-1.5 bg-[#0b1118] border border-[#344a61] text-foreground rounded-sm uppercase tracking-wide cursor-pointer"
+        className={selectPill}
         value={perspective ?? ""}
         onChange={(e) => onChangePerspective(Number(e.target.value))}
       >
@@ -81,18 +80,13 @@ export default function Topbar({
           </option>
         ))}
       </select>
-      <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" onClick={onAdvance}>
-        Advance
-      </Button>
-      <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" onClick={onRefresh}>
-        Refresh
-      </Button>
+      <Badge variant="secondary" className={pill} onClick={onAdvance}>Advance</Badge>
+      <Badge variant="secondary" className={pill} onClick={onRefresh}>Refresh</Badge>
 
       <Separator orientation="vertical" className="h-4.5 mx-0.5" />
 
-      <span className="text-muted-foreground text-[11px] whitespace-nowrap">Hold</span>
       <select
-        className="h-6 text-[11px] px-1.5 bg-[#0b1118] border border-[#344a61] text-foreground rounded-sm cursor-pointer"
+        className={selectPill}
         value={holdRule}
         onChange={(e) => setHoldRule(e.target.value)}
       >
@@ -104,7 +98,7 @@ export default function Topbar({
         <option value="ending">Ending</option>
         <option value="always">Always</option>
       </select>
-      <label className="flex items-center gap-1 text-muted-foreground text-[11px] whitespace-nowrap cursor-pointer">
+      <label className="flex items-center gap-1 text-muted-foreground text-[10px] whitespace-nowrap cursor-pointer uppercase">
         <Checkbox
           checked={autoPassEnabled}
           onCheckedChange={(v) => setAutoPassEnabled(!!v)}
@@ -131,9 +125,7 @@ export default function Topbar({
         Step {formatStep(state?.step)}
       </Badge>
 
-      <Button variant="outline" size="sm" className="h-6 text-[11px] px-2" onClick={onToggleLog}>
-        Log
-      </Button>
+      <Badge variant="secondary" className={pill} onClick={onToggleLog}>Log</Badge>
     </header>
   );
 }

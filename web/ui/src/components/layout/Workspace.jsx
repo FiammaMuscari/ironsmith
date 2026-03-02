@@ -3,7 +3,7 @@ import LeftRail from "@/components/left-rail/LeftRail";
 import TableCore from "@/components/board/TableCore";
 import RightRail from "@/components/right-rail/RightRail";
 
-export default function Workspace({ zoneView }) {
+export default function Workspace({ zoneView, deckLoadingMode, onLoadDecks, onCancelDeckLoading }) {
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
 
@@ -19,6 +19,9 @@ export default function Workspace({ zoneView }) {
         selectedObjectId={selectedObjectId}
         onInspect={setSelectedObjectId}
         zoneView={zoneView}
+        deckLoadingMode={deckLoadingMode}
+        onLoadDecks={onLoadDecks}
+        onCancelDeckLoading={onCancelDeckLoading}
       />
       <RightRail
         inspectorOpen={inspectorOpen}

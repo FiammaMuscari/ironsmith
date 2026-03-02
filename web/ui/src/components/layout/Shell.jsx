@@ -23,6 +23,7 @@ export default function Shell() {
   const [startingLife, setStartingLife] = useState(20);
   const [logOpen, setLogOpen] = useState(false);
   const [zoneView, setZoneView] = useState("battlefield");
+  const [deckLoadingMode, setDeckLoadingMode] = useState(false);
 
   // Initialize game when WASM loads
   useEffect(() => {
@@ -108,29 +109,42 @@ export default function Shell() {
     if (!game) return;
     try {
       await game.reset(parseNames(playerNames), startingLife);
+      setDeckLoadingMode(false);
       await refresh("Game reset");
     } catch (err) {
       setStatus(`Reset failed: ${err}`, true);
     }
   }, [game, playerNames, startingLife, refresh, setStatus]);
 
-  const handleLoadDecks = useCallback(async () => {
+  const handleLoadDemoDecks = useCallback(async () => {
     if (!game) return;
     try {
       await game.loadDemoDecks();
+      setDeckLoadingMode(false);
       await refresh("Demo decks loaded");
     } catch (err) {
       setStatus(`Load decks failed: ${err}`, true);
     }
   }, [game, refresh, setStatus]);
 
-  const handleDraw = useCallback(async () => {
+  const handleLoadCustomDecks = useCallback(async (decks) => {
     if (!game) return;
     try {
-      await game.drawOpeningHands(7);
-      await refresh("Each player drew 7 cards");
+      const result = await game.loadDecks(decks);
+      setDeckLoadingMode(false);
+      const loaded = result?.loaded ?? 0;
+      const failed = result?.failed || [];
+      if (failed.length > 0) {
+        const unique = [...new Set(failed)];
+        const failedStr = unique.length <= 5
+          ? unique.join(", ")
+          : `${unique.slice(0, 5).join(", ")} (+${unique.length - 5} more)`;
+        await refresh(`Loaded ${loaded} cards. ${failed.length} failed: ${failedStr}`);
+      } else {
+        await refresh(`Loaded ${loaded} cards`);
+      }
     } catch (err) {
-      setStatus(`Draw failed: ${err}`, true);
+      setStatus(`Load decks failed: ${err}`, true);
     }
   }, [game, refresh, setStatus]);
 
@@ -223,15 +237,21 @@ export default function Shell() {
         startingLife={startingLife}
         setStartingLife={setStartingLife}
         onReset={handleReset}
-        onLoadDecks={handleLoadDecks}
-        onDraw={handleDraw}
+        onLoadDemoDecks={handleLoadDemoDecks}
         onAdvance={handleAdvance}
         onChangePerspective={handleChangePerspective}
         onRefresh={() => refresh("Refreshed")}
         onToggleLog={() => setLogOpen((o) => !o)}
+        onEnterDeckLoading={() => setDeckLoadingMode((m) => !m)}
+        deckLoadingMode={deckLoadingMode}
       />
       <AddCardBar zoneView={zoneView} setZoneView={setZoneView} />
-      <Workspace zoneView={zoneView} />
+      <Workspace
+        zoneView={zoneView}
+        deckLoadingMode={deckLoadingMode}
+        onLoadDecks={handleLoadCustomDecks}
+        onCancelDeckLoading={() => setDeckLoadingMode(false)}
+      />
       <LogDrawer open={logOpen} onOpenChange={setLogOpen} />
     </div>
   );

@@ -1786,8 +1786,10 @@ impl WasmGame {
     /// Load explicit decks by card name. JS format: `string[][]`.
     ///
     /// Deck list index maps to player index.
+    /// Returns a JSON object: `{ loaded: number, failed: string[] }`.
+    /// Unknown cards are skipped rather than aborting the entire load.
     #[wasm_bindgen(js_name = loadDecks)]
-    pub fn load_decks(&mut self, decks_js: JsValue) -> Result<(), JsValue> {
+    pub fn load_decks(&mut self, decks_js: JsValue) -> Result<JsValue, JsValue> {
         let decks: Vec<Vec<String>> = serde_wasm_bindgen::from_value(decks_js)
             .map_err(|e| JsValue::from_str(&format!("invalid decks payload: {e}")))?;
 
@@ -1801,13 +1803,49 @@ impl WasmGame {
         let starting_life = self.game.players.first().map_or(20, |p| p.life);
         self.game = GameState::new(names, starting_life);
 
+        let mut loaded: u32 = 0;
+        let mut failed: Vec<String> = Vec::new();
+
         let player_ids: Vec<PlayerId> = self.game.players.iter().map(|p| p.id).collect();
         for (player_id, deck) in player_ids.into_iter().zip(decks.iter()) {
-            self.populate_player_library(player_id, deck)?;
+            self.registry
+                .ensure_cards_loaded(deck.iter().map(|name| name.as_str()));
+
+            for name in deck {
+                if let Some(definition) = self.find_card_definition(name).cloned() {
+                    self.game.create_object_from_definition(
+                        &definition,
+                        player_id,
+                        crate::zone::Zone::Library,
+                    );
+                    loaded += 1;
+                } else {
+                    failed.push(name.clone());
+                }
+            }
+
+            if let Some(player) = self.game.player_mut(player_id) {
+                player.shuffle_library();
+            }
         }
+
         self.reset_runtime_state();
         self.recompute_ui_decision()?;
-        Ok(())
+
+        // Return { loaded, failed } to JS
+        let result = js_sys::Object::new();
+        js_sys::Reflect::set(
+            &result,
+            &JsValue::from_str("loaded"),
+            &JsValue::from(loaded),
+        )
+        .ok();
+        let failed_arr = js_sys::Array::new();
+        for name in &failed {
+            failed_arr.push(&JsValue::from_str(name));
+        }
+        js_sys::Reflect::set(&result, &JsValue::from_str("failed"), &failed_arr).ok();
+        Ok(result.into())
     }
 
     /// Advance to next phase (or next turn if ending phase).
