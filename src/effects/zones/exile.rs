@@ -5,11 +5,13 @@ use crate::effects::EffectExecutor;
 use crate::effects::helpers::{
     ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
 };
-use crate::event_processor::{EventOutcome, process_zone_change};
+use crate::event_processor::EventOutcome;
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget};
 use crate::game_state::GameState;
 use crate::target::{ChooseSpec, ObjectFilter};
 use crate::zone::Zone;
+
+use super::apply_zone_change;
 
 /// Effect that exiles permanents.
 ///
@@ -105,8 +107,8 @@ impl ExileEffect {
         if let Some(obj) = game.object(object_id) {
             let from_zone = obj.zone;
 
-            // Process through replacement effects with decision maker
-            let result = process_zone_change(
+            // Process through replacement effects with decision maker.
+            let result = apply_zone_change(
                 game,
                 object_id,
                 from_zone,
@@ -116,9 +118,9 @@ impl ExileEffect {
 
             match result {
                 EventOutcome::Prevented => return Ok(Some(EffectResult::Prevented)),
-                EventOutcome::Proceed(final_zone) => {
-                    if let Some(new_id) = game.move_object(object_id, final_zone)
-                        && final_zone == Zone::Exile
+                EventOutcome::Proceed(result) => {
+                    if let Some(new_id) = result.new_object_id
+                        && result.final_zone == Zone::Exile
                     {
                         if face_down {
                             game.set_face_down(new_id);
@@ -189,14 +191,32 @@ impl EffectExecutor for ExileEffect {
             &self.spec,
             ObjectApplyResultPolicy::CountApplied,
             |game, ctx, object_id| {
-                if let Some(new_id) = game.move_object(object_id, Zone::Exile) {
-                    if self.face_down {
-                        game.set_face_down(new_id);
+                let Some(from_zone) = game.object(object_id).map(|obj| obj.zone) else {
+                    return Ok(false);
+                };
+                match apply_zone_change(
+                    game,
+                    object_id,
+                    from_zone,
+                    Zone::Exile,
+                    &mut ctx.decision_maker,
+                ) {
+                    EventOutcome::Proceed(result) => {
+                        if let Some(new_id) = result.new_object_id {
+                            if self.face_down && result.final_zone == Zone::Exile {
+                                game.set_face_down(new_id);
+                            }
+                            if result.final_zone == Zone::Exile {
+                                game.add_exiled_with_source_link(ctx.source, new_id);
+                            }
+                            Ok(true)
+                        } else {
+                            Ok(false)
+                        }
                     }
-                    game.add_exiled_with_source_link(ctx.source, new_id);
-                    Ok(true)
-                } else {
-                    Ok(false)
+                    EventOutcome::Prevented
+                    | EventOutcome::Replaced
+                    | EventOutcome::NotApplicable => Ok(false),
                 }
             },
         ) {

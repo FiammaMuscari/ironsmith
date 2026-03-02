@@ -5,61 +5,77 @@ use super::EffectAst;
 macro_rules! nested_effects_variants {
     ($effects:ident) => {
         EffectAst::UnlessPays {
-            effects: $effects, ..
-        }
-            | EffectAst::May { effects: $effects }
+            effects: $effects,
+            ..
+        } | EffectAst::May { effects: $effects }
             | EffectAst::MayByPlayer {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::MayByTaggedController {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::IfResult {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::ForEachOpponent { effects: $effects }
             | EffectAst::ForEachPlayersFiltered {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::ForEachPlayer { effects: $effects }
             | EffectAst::ForEachTargetPlayers {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::ForEachObject {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::ForEachTagged {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::ForEachOpponentDoesNot { effects: $effects }
             | EffectAst::ForEachPlayerDoesNot { effects: $effects }
             | EffectAst::ForEachOpponentDid {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::ForEachPlayerDid {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::ForEachTaggedPlayer {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::DelayedUntilNextEndStep {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::DelayedUntilNextUpkeep {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::DelayedUntilEndStepOfExtraTurn {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::DelayedUntilEndOfCombat { effects: $effects }
             | EffectAst::DelayedTriggerThisTurn {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::DelayedWhenLastObjectDiesThisTurn {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
             | EffectAst::VoteOption {
-                effects: $effects, ..
+                effects: $effects,
+                ..
             }
     };
 }

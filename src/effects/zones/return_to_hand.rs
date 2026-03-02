@@ -5,11 +5,13 @@ use crate::effects::EffectExecutor;
 use crate::effects::helpers::{
     ObjectApplyResultPolicy, apply_single_target_object_from_context, apply_to_selected_objects,
 };
-use crate::event_processor::{EventOutcome, process_zone_change};
+use crate::event_processor::EventOutcome;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::{ChooseSpec, ObjectFilter};
 use crate::zone::Zone;
+
+use super::apply_zone_change;
 
 /// Effect that returns permanents to their owners' hands.
 ///
@@ -88,8 +90,8 @@ impl ReturnToHandEffect {
         if let Some(obj) = game.object(object_id) {
             let from_zone = obj.zone;
 
-            // Process through replacement effects with decision maker
-            let result = process_zone_change(
+            // Process through replacement effects with decision maker.
+            let result = apply_zone_change(
                 game,
                 object_id,
                 from_zone,
@@ -99,8 +101,7 @@ impl ReturnToHandEffect {
 
             match result {
                 EventOutcome::Prevented => return Ok(Some(EffectResult::Prevented)),
-                EventOutcome::Proceed(final_zone) => {
-                    game.move_object(object_id, final_zone);
+                EventOutcome::Proceed(_) => {
                     return Ok(None); // Successfully returned
                 }
                 EventOutcome::Replaced => {
@@ -136,7 +137,23 @@ impl EffectExecutor for ReturnToHandEffect {
             ctx,
             &self.spec,
             ObjectApplyResultPolicy::CountApplied,
-            |game, _ctx, object_id| Ok(game.move_object(object_id, Zone::Hand).is_some()),
+            |game, ctx, object_id| {
+                let Some(from_zone) = game.object(object_id).map(|obj| obj.zone) else {
+                    return Ok(false);
+                };
+                match apply_zone_change(
+                    game,
+                    object_id,
+                    from_zone,
+                    Zone::Hand,
+                    &mut ctx.decision_maker,
+                ) {
+                    EventOutcome::Proceed(result) => Ok(result.new_object_id.is_some()),
+                    EventOutcome::Prevented
+                    | EventOutcome::Replaced
+                    | EventOutcome::NotApplicable => Ok(false),
+                }
+            },
         ) {
             Ok(result) => result,
             Err(_) => return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid)),

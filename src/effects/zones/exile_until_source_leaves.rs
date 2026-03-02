@@ -3,11 +3,13 @@
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
-use crate::event_processor::{EventOutcome, process_zone_change};
+use crate::event_processor::EventOutcome;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
 use crate::zone::Zone;
+
+use super::apply_zone_change;
 
 /// Duration for "exile ... until ..." effects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +72,7 @@ impl EffectExecutor for ExileUntilEffect {
             };
             let from_zone = obj.zone;
 
-            let result = process_zone_change(
+            let result = apply_zone_change(
                 game,
                 object_id,
                 from_zone,
@@ -78,9 +80,9 @@ impl EffectExecutor for ExileUntilEffect {
                 &mut ctx.decision_maker,
             );
 
-            if let EventOutcome::Proceed(final_zone) = result
-                && let Some(new_id) = game.move_object(object_id, final_zone)
-                && final_zone == Zone::Exile
+            if let EventOutcome::Proceed(result) = result
+                && let Some(new_id) = result.new_object_id
+                && result.final_zone == Zone::Exile
             {
                 if self.face_down {
                     game.set_face_down(new_id);

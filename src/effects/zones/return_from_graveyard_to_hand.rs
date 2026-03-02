@@ -3,12 +3,14 @@
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
-use crate::event_processor::{EventOutcome, process_zone_change};
+use crate::event_processor::EventOutcome;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::ids::ObjectId;
 use crate::target::ChooseSpec;
 use crate::zone::Zone;
+
+use super::apply_zone_change;
 
 /// Effect that returns a target card from a graveyard to its owner's hand.
 ///
@@ -55,14 +57,14 @@ impl ReturnFromGraveyardToHandEffect {
             return None;
         }
 
-        match process_zone_change(
+        match apply_zone_change(
             game,
             object_id,
             Zone::Graveyard,
             Zone::Hand,
             &mut ctx.decision_maker,
         ) {
-            EventOutcome::Proceed(final_zone) => game.move_object(object_id, final_zone),
+            EventOutcome::Proceed(result) => result.new_object_id,
             EventOutcome::Prevented | EventOutcome::Replaced | EventOutcome::NotApplicable => None,
         }
     }

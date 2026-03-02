@@ -93,16 +93,13 @@ fn resolve_stack_entry_full(
             && !entry.is_ability
         {
             // Move spell to owner's graveyard (via replacement effects)
-            let outcome = crate::event_processor::process_zone_change(
+            let _ = crate::effects::zones::apply_zone_change(
                 game,
                 entry.object_id,
                 Zone::Stack,
                 Zone::Graveyard,
                 &mut *decision_maker,
             );
-            if let crate::event_processor::EventOutcome::Proceed(final_zone) = outcome {
-                game.move_object(entry.object_id, final_zone);
-            }
         }
         return Ok(());
     }
@@ -338,8 +335,8 @@ fn resolve_stack_entry_full(
                         *zone,
                         *idx,
                     )
-                        .map(|m| m.exiles_after_resolution())
-                        .unwrap_or(false)
+                    .map(|m| m.exiles_after_resolution())
+                    .unwrap_or(false)
                 }
                 CastingMethod::PlayFrom {
                     use_alternative: None,
@@ -376,16 +373,13 @@ fn resolve_stack_entry_full(
             } else {
                 // Process zone change through replacement effects
                 // (e.g., Yawgmoth's Will exiles cards going to graveyard)
-                let outcome = crate::event_processor::process_zone_change(
+                let _ = crate::effects::zones::apply_zone_change(
                     game,
                     entry.object_id,
                     Zone::Stack,
                     Zone::Graveyard,
                     &mut *decision_maker,
                 );
-                if let crate::event_processor::ZoneChangeOutcome::Proceed(final_zone) = outcome {
-                    game.move_object(entry.object_id, final_zone);
-                }
             }
         }
         // Abilities just disappear from the stack

@@ -3,11 +3,13 @@
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_objects_from_spec;
-use crate::event_processor::{EventOutcome, process_zone_change};
+use crate::event_processor::EventOutcome;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::ChooseSpec;
 use crate::zone::Zone;
+
+use super::apply_zone_change;
 
 /// "Put target [object] into its owner's library second from the top."
 #[derive(Debug, Clone, PartialEq)]
@@ -41,7 +43,7 @@ impl EffectExecutor for MoveToLibrarySecondFromTopEffect {
             };
             let from_zone = obj.zone;
 
-            let result = process_zone_change(
+            let result = apply_zone_change(
                 game,
                 object_id,
                 from_zone,
@@ -53,11 +55,11 @@ impl EffectExecutor for MoveToLibrarySecondFromTopEffect {
                 EventOutcome::Prevented => {
                     return Ok(EffectOutcome::from_result(EffectResult::Prevented));
                 }
-                EventOutcome::Proceed(final_zone) => {
-                    if let Some(new_id) = game.move_object(object_id, final_zone) {
-                        if final_zone == Zone::Exile {
+                EventOutcome::Proceed(result) => {
+                    if let Some(new_id) = result.new_object_id {
+                        if result.final_zone == Zone::Exile {
                             game.add_exiled_with_source_link(ctx.source, new_id);
-                        } else if final_zone == Zone::Library
+                        } else if result.final_zone == Zone::Library
                             && let Some(owner) = game.object(new_id).map(|o| o.owner)
                             && let Some(player) = game.player_mut(owner)
                             && let Some(pos) = player.library.iter().position(|id| *id == new_id)

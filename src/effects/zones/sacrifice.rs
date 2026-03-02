@@ -6,7 +6,7 @@ use crate::effects::helpers::{
     normalize_object_selection, resolve_player_filter, resolve_single_object_from_spec,
     resolve_value,
 };
-use crate::event_processor::{EventOutcome, process_zone_change};
+use crate::event_processor::EventOutcome;
 use crate::events::permanents::SacrificeEvent;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
@@ -15,6 +15,8 @@ use crate::snapshot::ObjectSnapshot;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
+
+use super::apply_zone_change;
 
 /// Effect that makes a player sacrifice permanents.
 ///
@@ -133,7 +135,7 @@ impl EffectExecutor for SacrificeEffect {
             let sacrificing_player = pre_snapshot.as_ref().map(|snapshot| snapshot.controller);
 
             // Process each sacrifice through replacement effects with decision maker
-            let result = process_zone_change(
+            let result = apply_zone_change(
                 game,
                 id,
                 Zone::Battlefield,
@@ -146,10 +148,9 @@ impl EffectExecutor for SacrificeEffect {
                     // Sacrifice was prevented (unusual but possible)
                     continue;
                 }
-                EventOutcome::Proceed(final_zone) => {
-                    game.move_object(id, final_zone);
+                EventOutcome::Proceed(result) => {
                     sacrificed_count += 1;
-                    if final_zone == Zone::Graveyard {
+                    if result.final_zone == Zone::Graveyard {
                         sacrifice_events.push(TriggerEvent::new(
                             SacrificeEvent::new(id, Some(ctx.source))
                                 .with_snapshot(pre_snapshot, sacrificing_player),
@@ -225,7 +226,7 @@ impl SacrificeTargetEffect {
         let sacrificing_player = pre_snapshot.as_ref().map(|snapshot| snapshot.controller);
 
         // Process sacrifice through replacement effects
-        let result = process_zone_change(
+        let result = apply_zone_change(
             game,
             object_id,
             Zone::Battlefield,
@@ -235,9 +236,8 @@ impl SacrificeTargetEffect {
 
         match result {
             EventOutcome::Prevented => Ok((false, None)),
-            EventOutcome::Proceed(final_zone) => {
-                game.move_object(object_id, final_zone);
-                let event = if final_zone == Zone::Graveyard {
+            EventOutcome::Proceed(result) => {
+                let event = if result.final_zone == Zone::Graveyard {
                     Some(TriggerEvent::new(
                         SacrificeEvent::new(object_id, Some(ctx.source))
                             .with_snapshot(pre_snapshot, sacrificing_player),

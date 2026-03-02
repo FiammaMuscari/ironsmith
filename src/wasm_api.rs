@@ -228,6 +228,13 @@ fn grouped_battlefield_for_player(
             let name = representative
                 .map(|obj| obj.name.clone())
                 .unwrap_or_else(|| key.name.clone());
+            let power_toughness = representative.and_then(|obj| {
+                let p = game.calculated_power(obj.id)
+                    .or_else(|| obj.power())?;
+                let t = game.calculated_toughness(obj.id)
+                    .or_else(|| obj.toughness())?;
+                Some(format!("{p}/{t}"))
+            });
             PermanentSnapshot {
                 id,
                 name,
@@ -235,6 +242,7 @@ fn grouped_battlefield_for_player(
                 count: member_ids.len().max(1),
                 member_ids,
                 lane: key.lane.as_str().to_string(),
+                power_toughness,
             }
         })
         .collect();
@@ -250,6 +258,7 @@ struct PermanentSnapshot {
     count: usize,
     member_ids: Vec<u64>,
     lane: String,
+    power_toughness: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

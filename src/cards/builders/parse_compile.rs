@@ -1,5 +1,5 @@
-use super::*;
 use super::effect_ast_traversal::{for_each_nested_effects, for_each_nested_effects_mut};
+use super::*;
 
 pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
     match trigger {
@@ -687,86 +687,233 @@ pub(crate) fn effects_reference_tag(effects: &[EffectAst], tag: &str) -> bool {
         .any(|effect| effect_references_tag(effect, tag))
 }
 
-pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
+// Keep direct target-bearing variants in one place to prevent drift across
+// tag-reference checks and tag-span collection.
+macro_rules! direct_target_effect_variants {
+    ($target:ident) => {
+        EffectAst::DealDamage {
+            target: $target,
+            ..
+        } | EffectAst::Counter { target: $target }
+            | EffectAst::CounterUnlessPays {
+                target: $target,
+                ..
+            }
+            | EffectAst::Explore { target: $target }
+            | EffectAst::Connive { target: $target }
+            | EffectAst::Goad { target: $target }
+            | EffectAst::PutCounters {
+                target: $target,
+                ..
+            }
+            | EffectAst::PutOrRemoveCounters {
+                target: $target,
+                ..
+            }
+            | EffectAst::ForEachCounterKindPutOrRemove { target: $target }
+            | EffectAst::Tap { target: $target }
+            | EffectAst::Untap { target: $target }
+            | EffectAst::RemoveFromCombat { target: $target }
+            | EffectAst::TapOrUntap { target: $target }
+            | EffectAst::Destroy { target: $target }
+            | EffectAst::DestroyNoRegeneration { target: $target }
+            | EffectAst::Exile {
+                target: $target,
+                ..
+            }
+            | EffectAst::ExileWhenSourceLeaves { target: $target }
+            | EffectAst::SacrificeSourceWhenLeaves { target: $target }
+            | EffectAst::ExileUntilSourceLeaves {
+                target: $target,
+                ..
+            }
+            | EffectAst::LookAtHand { target: $target }
+            | EffectAst::Transform { target: $target }
+            | EffectAst::Flip { target: $target }
+            | EffectAst::Regenerate { target: $target }
+            | EffectAst::TargetOnly { target: $target }
+            | EffectAst::RemoveUpToAnyCounters {
+                target: $target,
+                ..
+            }
+            | EffectAst::ReturnToHand {
+                target: $target,
+                ..
+            }
+            | EffectAst::ReturnToBattlefield {
+                target: $target,
+                ..
+            }
+            | EffectAst::Pump {
+                target: $target,
+                ..
+            }
+            | EffectAst::BecomeBasicLandTypeChoice {
+                target: $target,
+                ..
+            }
+            | EffectAst::BecomeCreatureTypeChoice {
+                target: $target,
+                ..
+            }
+            | EffectAst::BecomeColorChoice {
+                target: $target,
+                ..
+            }
+            | EffectAst::SetBasePower {
+                target: $target,
+                ..
+            }
+            | EffectAst::SetBasePowerToughness {
+                target: $target,
+                ..
+            }
+            | EffectAst::BecomeBasePtCreature {
+                target: $target,
+                ..
+            }
+            | EffectAst::AddCardTypes {
+                target: $target,
+                ..
+            }
+            | EffectAst::AddSubtypes {
+                target: $target,
+                ..
+            }
+            | EffectAst::SetColors {
+                target: $target,
+                ..
+            }
+            | EffectAst::MakeColorless {
+                target: $target,
+                ..
+            }
+            | EffectAst::PumpForEach {
+                target: $target,
+                ..
+            }
+            | EffectAst::PumpByLastEffect {
+                target: $target,
+                ..
+            }
+            | EffectAst::GrantAbilitiesToTarget {
+                target: $target,
+                ..
+            }
+            | EffectAst::RemoveAbilitiesFromTarget {
+                target: $target,
+                ..
+            }
+            | EffectAst::GrantAbilitiesChoiceToTarget {
+                target: $target,
+                ..
+            }
+            | EffectAst::GrantProtectionChoice {
+                target: $target,
+                ..
+            }
+            | EffectAst::PreventDamage {
+                target: $target,
+                ..
+            }
+            | EffectAst::PreventAllDamageToTarget {
+                target: $target,
+                ..
+            }
+            | EffectAst::RedirectNextDamageFromSourceToTarget {
+                target: $target,
+                ..
+            }
+            | EffectAst::RedirectNextTimeDamageToSource {
+                target: $target,
+                ..
+            }
+            | EffectAst::GainControl {
+                target: $target,
+                ..
+            }
+            | EffectAst::CopySpell {
+                target: $target,
+                ..
+            }
+            | EffectAst::MoveToLibrarySecondFromTop { target: $target }
+            | EffectAst::CreateTokenCopyFromSource {
+                source: $target,
+                ..
+            }
+            | EffectAst::PreventAllCombatDamageFromSource {
+                source: $target,
+                ..
+            }
+    };
+}
+
+fn with_direct_effect_targets(effect: &EffectAst, mut visit: impl FnMut(&TargetAst)) {
     match effect {
         EffectAst::Fight {
             creature1,
             creature2,
         } => {
-            matches!(creature1, TargetAst::Tagged(t, _) if t.as_str() == tag)
-                || matches!(creature2, TargetAst::Tagged(t, _) if t.as_str() == tag)
+            visit(creature1);
+            visit(creature2);
         }
         EffectAst::FightIterated { creature2 } => {
-            matches!(creature2, TargetAst::Tagged(t, _) if t.as_str() == tag)
+            visit(creature2);
         }
         EffectAst::DealDamageEqualToPower { source, target } => {
-            matches!(source, TargetAst::Tagged(t, _) if t.as_str() == tag)
-                || matches!(target, TargetAst::Tagged(t, _) if t.as_str() == tag)
+            visit(source);
+            visit(target);
         }
-        EffectAst::DealDamage { target, .. }
-        | EffectAst::Counter { target }
-        | EffectAst::CounterUnlessPays { target, .. }
-        | EffectAst::Explore { target }
-        | EffectAst::Connive { target }
-        | EffectAst::Goad { target }
-        | EffectAst::PutCounters { target, .. }
-        | EffectAst::PutOrRemoveCounters { target, .. }
-        | EffectAst::ForEachCounterKindPutOrRemove { target }
-        | EffectAst::Tap { target }
-        | EffectAst::Untap { target }
-        | EffectAst::RemoveFromCombat { target }
-        | EffectAst::TapOrUntap { target }
-        | EffectAst::Destroy { target }
-        | EffectAst::DestroyNoRegeneration { target }
-        | EffectAst::Exile { target, .. }
-        | EffectAst::ExileWhenSourceLeaves { target }
-        | EffectAst::SacrificeSourceWhenLeaves { target }
-        | EffectAst::ExileUntilSourceLeaves { target, .. }
-        | EffectAst::LookAtHand { target }
-        | EffectAst::Transform { target }
-        | EffectAst::Flip { target }
-        | EffectAst::Regenerate { target }
-        | EffectAst::TargetOnly { target }
-        | EffectAst::RemoveUpToAnyCounters { target, .. }
-        | EffectAst::ReturnToHand { target, .. }
-        | EffectAst::ReturnToBattlefield { target, .. }
-        | EffectAst::Pump { target, .. }
-        | EffectAst::BecomeBasicLandTypeChoice { target, .. }
-        | EffectAst::BecomeCreatureTypeChoice { target, .. }
-        | EffectAst::BecomeColorChoice { target, .. }
-        | EffectAst::SetBasePower { target, .. }
-        | EffectAst::SetBasePowerToughness { target, .. }
-        | EffectAst::BecomeBasePtCreature { target, .. }
-        | EffectAst::AddCardTypes { target, .. }
-        | EffectAst::AddSubtypes { target, .. }
-        | EffectAst::SetColors { target, .. }
-        | EffectAst::MakeColorless { target, .. }
-        | EffectAst::PumpForEach { target, .. }
-        | EffectAst::PumpByLastEffect { target, .. }
-        | EffectAst::GrantAbilitiesToTarget { target, .. }
-        | EffectAst::RemoveAbilitiesFromTarget { target, .. }
-        | EffectAst::GrantAbilitiesChoiceToTarget { target, .. }
-        | EffectAst::GrantProtectionChoice { target, .. }
-        | EffectAst::PreventAllDamageToTarget { target, .. }
-        | EffectAst::RedirectNextDamageFromSourceToTarget { target, .. }
-        | EffectAst::RedirectNextTimeDamageToSource { target, .. }
-        | EffectAst::GainControl { target, .. }
-        | EffectAst::CreateTokenCopyFromSource { source: target, .. } => {
-            matches!(target, TargetAst::Tagged(t, _) if t.as_str() == tag)
+        direct_target_effect_variants!(target) => {
+            visit(target);
         }
         EffectAst::MoveToZone {
             target,
             attached_to,
             ..
         } => {
-            matches!(target, TargetAst::Tagged(t, _) if t.as_str() == tag)
-                || attached_to.as_ref().is_some_and(
-                    |target| matches!(target, TargetAst::Tagged(t, _) if t.as_str() == tag),
-                )
+            visit(target);
+            if let Some(attach_target) = attached_to {
+                visit(attach_target);
+            }
         }
-        EffectAst::PreventAllCombatDamageFromSource { source: target, .. } => {
-            matches!(target, TargetAst::Tagged(t, _) if t.as_str() == tag)
+        EffectAst::MoveAllCounters { from, to } => {
+            visit(from);
+            visit(to);
         }
+        EffectAst::DestroyAllAttachedTo { target, .. } => {
+            visit(target);
+        }
+        EffectAst::Attach { object, target } => {
+            visit(object);
+            visit(target);
+        }
+        EffectAst::RetargetStackObject { target, mode, .. } => {
+            visit(target);
+            if let RetargetModeAst::OneToFixed { target: fixed } = mode {
+                visit(fixed);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn direct_effect_targets_reference_tag(effect: &EffectAst, tag: &str) -> bool {
+    let mut references = false;
+    with_direct_effect_targets(effect, |target| {
+        if !references {
+            references = target_references_tag(target, tag);
+        }
+    });
+    references
+}
+
+pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
+    if direct_effect_targets_reference_tag(effect, tag) {
+        return true;
+    }
+
+    match effect {
         EffectAst::Conditional {
             predicate,
             if_true,
@@ -804,45 +951,25 @@ pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
             .tagged_constraints
             .iter()
             .any(|constraint| constraint.tag.as_str() == tag),
-        EffectAst::MoveAllCounters { from, to } => {
-            matches!(from, TargetAst::Tagged(t, _) if t.as_str() == tag)
-                || matches!(to, TargetAst::Tagged(t, _) if t.as_str() == tag)
-        }
-        EffectAst::DestroyAllAttachedTo { filter, target } => {
-            matches!(target, TargetAst::Tagged(t, _) if t.as_str() == tag)
-                || filter
-                    .tagged_constraints
-                    .iter()
-                    .any(|constraint| constraint.tag.as_str() == tag)
-        }
-        EffectAst::Attach { object, target } => {
-            matches!(object, TargetAst::Tagged(t, _) if t.as_str() == tag)
-                || matches!(target, TargetAst::Tagged(t, _) if t.as_str() == tag)
-        }
-        EffectAst::PutIntoHand { object, .. } => {
-            matches!(object, ObjectRefAst::It) && tag == IT_TAG
-        }
-        EffectAst::CopySpell { target, .. } => {
-            matches!(target, TargetAst::Tagged(t, _) if t.as_str() == tag)
-        }
+        EffectAst::DestroyAllAttachedTo { filter, .. } => filter
+            .tagged_constraints
+            .iter()
+            .any(|constraint| constraint.tag.as_str() == tag),
         EffectAst::RetargetStackObject {
-            target,
-            mode,
             new_target_restriction,
             ..
         } => {
-            let mut references = target_references_tag(target, tag);
-            if let RetargetModeAst::OneToFixed { target: fixed } = mode {
-                references = references || target_references_tag(fixed, tag);
-            }
             if let Some(NewTargetRestrictionAst::Object(filter)) = new_target_restriction {
-                references = references
-                    || filter
-                        .tagged_constraints
-                        .iter()
-                        .any(|constraint| constraint.tag.as_str() == tag);
+                filter
+                    .tagged_constraints
+                    .iter()
+                    .any(|constraint| constraint.tag.as_str() == tag)
+            } else {
+                false
             }
-            references
+        }
+        EffectAst::PutIntoHand { object, .. } => {
+            matches!(object, ObjectRefAst::It) && tag == IT_TAG
         }
         EffectAst::CreateTokenCopy { object, .. } => {
             matches!(object, ObjectRefAst::It) && tag == IT_TAG
@@ -1084,18 +1211,12 @@ pub(crate) fn effect_references_its_controller(effect: &EffectAst) -> bool {
 }
 
 pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
+    if direct_effect_targets_reference_tag(effect, IT_TAG) {
+        return true;
+    }
+
     match effect {
-        EffectAst::DealDamage { amount, target } => {
-            target_references_tag(target, IT_TAG) || value_references_tag(amount, IT_TAG)
-        }
-        EffectAst::Fight {
-            creature1,
-            creature2,
-        } => target_references_tag(creature1, IT_TAG) || target_references_tag(creature2, IT_TAG),
-        EffectAst::FightIterated { creature2 } => target_references_tag(creature2, IT_TAG),
-        EffectAst::DealDamageEqualToPower { source, target } => {
-            target_references_tag(source, IT_TAG) || target_references_tag(target, IT_TAG)
-        }
+        EffectAst::DealDamage { amount, .. } => value_references_tag(amount, IT_TAG),
         EffectAst::DealDamageEach { amount, filter } => {
             value_references_tag(amount, IT_TAG)
                 || filter
@@ -1107,9 +1228,7 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
         EffectAst::LoseLife { amount, .. } | EffectAst::GainLife { amount, .. } => {
             value_references_tag(amount, IT_TAG)
         }
-        EffectAst::PreventDamage { amount, target, .. } => {
-            value_references_tag(amount, IT_TAG) || target_references_tag(target, IT_TAG)
-        }
+        EffectAst::PreventDamage { amount, .. } => value_references_tag(amount, IT_TAG),
         EffectAst::PreventDamageEach { amount, filter, .. } => {
             value_references_tag(amount, IT_TAG)
                 || filter
@@ -1117,9 +1236,7 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
                     .iter()
                     .any(|constraint| constraint.tag.as_str() == IT_TAG)
         }
-        EffectAst::PutCounters { count, target, .. } => {
-            value_references_tag(count, IT_TAG) || target_references_tag(target, IT_TAG)
-        }
+        EffectAst::PutCounters { count, .. } => value_references_tag(count, IT_TAG),
         EffectAst::PutCountersAll { count, filter, .. } => {
             value_references_tag(count, IT_TAG)
                 || filter
@@ -1128,79 +1245,15 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
                     .any(|constraint| constraint.tag.as_str() == IT_TAG)
         }
         EffectAst::CounterUnlessPays {
-            target,
             life,
             additional_generic,
             ..
         } => {
-            target_references_tag(target, IT_TAG)
-                || life
-                    .as_ref()
-                    .is_some_and(|value| value_references_tag(value, IT_TAG))
+            life.as_ref()
+                .is_some_and(|value| value_references_tag(value, IT_TAG))
                 || additional_generic
                     .as_ref()
                     .is_some_and(|value| value_references_tag(value, IT_TAG))
-        }
-        EffectAst::Counter { target }
-        | EffectAst::Explore { target }
-        | EffectAst::Connive { target }
-        | EffectAst::Goad { target }
-        | EffectAst::PutOrRemoveCounters { target, .. }
-        | EffectAst::ForEachCounterKindPutOrRemove { target }
-        | EffectAst::Tap { target }
-        | EffectAst::Untap { target }
-        | EffectAst::RemoveFromCombat { target }
-        | EffectAst::TapOrUntap { target }
-        | EffectAst::Destroy { target }
-        | EffectAst::DestroyNoRegeneration { target }
-        | EffectAst::Exile { target, .. }
-        | EffectAst::ExileWhenSourceLeaves { target }
-        | EffectAst::SacrificeSourceWhenLeaves { target }
-        | EffectAst::ExileUntilSourceLeaves { target, .. }
-        | EffectAst::LookAtHand { target }
-        | EffectAst::Transform { target }
-        | EffectAst::Flip { target }
-        | EffectAst::Regenerate { target }
-        | EffectAst::TargetOnly { target }
-        | EffectAst::RemoveUpToAnyCounters { target, .. }
-        | EffectAst::ReturnToHand { target, .. }
-        | EffectAst::ReturnToBattlefield { target, .. }
-        | EffectAst::Pump { target, .. }
-        | EffectAst::BecomeBasicLandTypeChoice { target, .. }
-        | EffectAst::BecomeCreatureTypeChoice { target, .. }
-        | EffectAst::BecomeColorChoice { target, .. }
-        | EffectAst::SetBasePower { target, .. }
-        | EffectAst::SetBasePowerToughness { target, .. }
-        | EffectAst::BecomeBasePtCreature { target, .. }
-        | EffectAst::AddCardTypes { target, .. }
-        | EffectAst::AddSubtypes { target, .. }
-        | EffectAst::SetColors { target, .. }
-        | EffectAst::MakeColorless { target, .. }
-        | EffectAst::PumpForEach { target, .. }
-        | EffectAst::PumpByLastEffect { target, .. }
-        | EffectAst::GrantAbilitiesToTarget { target, .. }
-        | EffectAst::RemoveAbilitiesFromTarget { target, .. }
-        | EffectAst::GrantAbilitiesChoiceToTarget { target, .. }
-        | EffectAst::GrantProtectionChoice { target, .. }
-        | EffectAst::PreventAllDamageToTarget { target, .. }
-        | EffectAst::RedirectNextDamageFromSourceToTarget { target, .. }
-        | EffectAst::RedirectNextTimeDamageToSource { target, .. }
-        | EffectAst::GainControl { target, .. }
-        | EffectAst::CreateTokenCopyFromSource { source: target, .. } => {
-            target_references_tag(target, IT_TAG)
-        }
-        EffectAst::MoveToZone {
-            target,
-            attached_to,
-            ..
-        } => {
-            target_references_tag(target, IT_TAG)
-                || attached_to
-                    .as_ref()
-                    .is_some_and(|target| target_references_tag(target, IT_TAG))
-        }
-        EffectAst::PreventAllCombatDamageFromSource { source: target, .. } => {
-            target_references_tag(target, IT_TAG)
         }
         EffectAst::Conditional {
             predicate,
@@ -1242,40 +1295,24 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
             .tagged_constraints
             .iter()
             .any(|constraint| constraint.tag.as_str() == IT_TAG),
-        EffectAst::MoveAllCounters { from, to } => {
-            target_references_tag(from, IT_TAG) || target_references_tag(to, IT_TAG)
-        }
-        EffectAst::DestroyAllAttachedTo { filter, target } => {
-            target_references_tag(target, IT_TAG)
-                || filter
-                    .tagged_constraints
-                    .iter()
-                    .any(|constraint| constraint.tag.as_str() == IT_TAG)
-        }
-        EffectAst::Attach { object, target } => {
-            target_references_tag(object, IT_TAG) || target_references_tag(target, IT_TAG)
-        }
+        EffectAst::DestroyAllAttachedTo { filter, .. } => filter
+            .tagged_constraints
+            .iter()
+            .any(|constraint| constraint.tag.as_str() == IT_TAG),
         EffectAst::PutIntoHand { object, .. } => matches!(object, ObjectRefAst::It),
         EffectAst::PutRestOnBottomOfLibrary => true,
-        EffectAst::CopySpell { target, .. } => target_references_tag(target, IT_TAG),
         EffectAst::RetargetStackObject {
-            target,
-            mode,
             new_target_restriction,
             ..
         } => {
-            let mut references = target_references_tag(target, IT_TAG);
-            if let RetargetModeAst::OneToFixed { target: fixed } = mode {
-                references = references || target_references_tag(fixed, IT_TAG);
-            }
             if let Some(NewTargetRestrictionAst::Object(filter)) = new_target_restriction {
-                references = references
-                    || filter
-                        .tagged_constraints
-                        .iter()
-                        .any(|constraint| constraint.tag.as_str() == IT_TAG);
+                filter
+                    .tagged_constraints
+                    .iter()
+                    .any(|constraint| constraint.tag.as_str() == IT_TAG)
+            } else {
+                false
             }
-            references
         }
         EffectAst::CreateTokenCopy { object, .. } => matches!(object, ObjectRefAst::It),
         EffectAst::GrantPlayTaggedUntilEndOfTurn { tag, .. }
@@ -1646,82 +1683,29 @@ pub(crate) fn collect_tag_spans_from_effects_with_context(
     }
 }
 
+fn collect_direct_effect_target_spans(
+    effect: &EffectAst,
+    annotations: &mut ParseAnnotations,
+    ctx: &NormalizedLine,
+) -> bool {
+    let mut collected = false;
+    with_direct_effect_targets(effect, |target| {
+        collect_tag_spans_from_target(target, annotations, ctx);
+        collected = true;
+    });
+    collected
+}
+
 pub(crate) fn collect_tag_spans_from_effect(
     effect: &EffectAst,
     annotations: &mut ParseAnnotations,
     ctx: &NormalizedLine,
 ) {
+    if collect_direct_effect_target_spans(effect, annotations, ctx) {
+        return;
+    }
+
     match effect {
-        EffectAst::Fight {
-            creature1,
-            creature2,
-        } => {
-            collect_tag_spans_from_target(creature1, annotations, ctx);
-            collect_tag_spans_from_target(creature2, annotations, ctx);
-        }
-        EffectAst::FightIterated { creature2 } => {
-            collect_tag_spans_from_target(creature2, annotations, ctx);
-        }
-        EffectAst::DealDamageEqualToPower { source, target } => {
-            collect_tag_spans_from_target(source, annotations, ctx);
-            collect_tag_spans_from_target(target, annotations, ctx);
-        }
-        EffectAst::DealDamage { target, .. }
-        | EffectAst::Counter { target }
-        | EffectAst::Explore { target }
-        | EffectAst::Goad { target }
-        | EffectAst::PutCounters { target, .. }
-        | EffectAst::PutOrRemoveCounters { target, .. }
-        | EffectAst::ForEachCounterKindPutOrRemove { target }
-        | EffectAst::Tap { target }
-        | EffectAst::Untap { target }
-        | EffectAst::RemoveFromCombat { target }
-        | EffectAst::TapOrUntap { target }
-        | EffectAst::Destroy { target }
-        | EffectAst::Exile { target, .. }
-        | EffectAst::ExileWhenSourceLeaves { target }
-        | EffectAst::SacrificeSourceWhenLeaves { target }
-        | EffectAst::ExileUntilSourceLeaves { target, .. }
-        | EffectAst::LookAtHand { target }
-        | EffectAst::Transform { target }
-        | EffectAst::Flip { target }
-        | EffectAst::Regenerate { target }
-        | EffectAst::TargetOnly { target }
-        | EffectAst::RemoveUpToAnyCounters { target, .. }
-        | EffectAst::ReturnToHand { target, .. }
-        | EffectAst::ReturnToBattlefield { target, .. }
-        | EffectAst::Pump { target, .. }
-        | EffectAst::BecomeBasicLandTypeChoice { target, .. }
-        | EffectAst::BecomeCreatureTypeChoice { target, .. }
-        | EffectAst::BecomeColorChoice { target, .. }
-        | EffectAst::SetBasePower { target, .. }
-        | EffectAst::SetBasePowerToughness { target, .. }
-        | EffectAst::BecomeBasePtCreature { target, .. }
-        | EffectAst::AddCardTypes { target, .. }
-        | EffectAst::AddSubtypes { target, .. }
-        | EffectAst::SetColors { target, .. }
-        | EffectAst::MakeColorless { target, .. }
-        | EffectAst::PumpByLastEffect { target, .. }
-        | EffectAst::GrantAbilitiesToTarget { target, .. }
-        | EffectAst::RemoveAbilitiesFromTarget { target, .. }
-        | EffectAst::GrantAbilitiesChoiceToTarget { target, .. }
-        | EffectAst::PreventAllDamageToTarget { target, .. } => {
-            collect_tag_spans_from_target(target, annotations, ctx);
-        }
-        EffectAst::MoveToZone {
-            target,
-            attached_to,
-            ..
-        } => {
-            collect_tag_spans_from_target(target, annotations, ctx);
-            if let Some(attach_target) = attached_to {
-                collect_tag_spans_from_target(attach_target, annotations, ctx);
-            }
-        }
-        EffectAst::MoveAllCounters { from, to } => {
-            collect_tag_spans_from_target(from, annotations, ctx);
-            collect_tag_spans_from_target(to, annotations, ctx);
-        }
         EffectAst::RemoveCountersAll { .. } => {}
         _ => for_each_nested_effects(effect, true, |nested| {
             collect_tag_spans_from_effects_with_context(nested, annotations, ctx);
@@ -8477,5 +8461,98 @@ mod parse_compile_tests {
             .downcast_ref::<InvestigateEffect>()
             .expect("investigate effect");
         assert_eq!(investigate.count, Value::Fixed(2));
+    }
+
+    fn test_ctx(line: &str) -> NormalizedLine {
+        NormalizedLine {
+            original: line.to_string(),
+            normalized: line.to_string(),
+            char_map: (0..line.len()).collect(),
+        }
+    }
+
+    #[test]
+    fn collect_tag_spans_tracks_connive_and_destroy_no_regeneration_targets() {
+        let mut annotations = ParseAnnotations::default();
+        let ctx = test_ctx("alpha beta");
+        let alpha = TagKey::from("alpha");
+        let beta = TagKey::from("beta");
+
+        collect_tag_spans_from_effect(
+            &EffectAst::Connive {
+                target: TargetAst::Tagged(
+                    alpha.clone(),
+                    Some(TextSpan {
+                        line: 0,
+                        start: 0,
+                        end: 5,
+                    }),
+                ),
+            },
+            &mut annotations,
+            &ctx,
+        );
+        collect_tag_spans_from_effect(
+            &EffectAst::DestroyNoRegeneration {
+                target: TargetAst::Tagged(
+                    beta.clone(),
+                    Some(TextSpan {
+                        line: 0,
+                        start: 6,
+                        end: 10,
+                    }),
+                ),
+            },
+            &mut annotations,
+            &ctx,
+        );
+
+        assert!(
+            annotations
+                .tag_spans
+                .get(&alpha)
+                .is_some_and(|spans| spans.len() == 1),
+            "expected span recorded for connive target tag"
+        );
+        assert!(
+            annotations
+                .tag_spans
+                .get(&beta)
+                .is_some_and(|spans| spans.len() == 1),
+            "expected span recorded for destroy-no-regeneration target tag"
+        );
+    }
+
+    #[test]
+    fn collect_tag_spans_tracks_counter_unless_pays_target() {
+        let mut annotations = ParseAnnotations::default();
+        let ctx = test_ctx("gamma");
+        let gamma = TagKey::from("gamma");
+        let effect = EffectAst::CounterUnlessPays {
+            target: TargetAst::Tagged(
+                gamma.clone(),
+                Some(TextSpan {
+                    line: 0,
+                    start: 0,
+                    end: 5,
+                }),
+            ),
+            mana: vec![],
+            life: None,
+            additional_generic: None,
+        };
+
+        collect_tag_spans_from_effect(&effect, &mut annotations, &ctx);
+        assert!(
+            annotations
+                .tag_spans
+                .get(&gamma)
+                .is_some_and(|spans| spans.len() == 1),
+            "expected span recorded for counter-unless-pays target tag"
+        );
+        assert!(
+            effect_references_tag(&effect, "gamma"),
+            "counter-unless-pays tagged target should be detected by tag reference checks"
+        );
     }
 }
