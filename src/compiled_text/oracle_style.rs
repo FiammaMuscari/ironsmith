@@ -1333,15 +1333,7 @@ fn card_self_subject_for_oracle_lines(def: &CardDefinition) -> &'static str {
         return "land";
     }
     if card_types.len() == 1 {
-        return match card_types[0] {
-            CardType::Land
-            | CardType::Artifact
-            | CardType::Enchantment
-            | CardType::Planeswalker
-            | CardType::Battle
-            | CardType::Kindred => card_types[0].name(),
-            CardType::Instant | CardType::Sorcery | CardType::Creature => "permanent",
-        };
+        return card_types[0].self_subject("permanent");
     }
     "permanent"
 }

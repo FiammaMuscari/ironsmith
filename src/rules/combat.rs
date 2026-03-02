@@ -25,14 +25,6 @@ pub enum EvasionType {
     Unblockable,
 }
 
-fn has_ability_id_with_game(
-    object: &Object,
-    game: &crate::game_state::GameState,
-    ability_id: StaticAbilityId,
-) -> bool {
-    game.object_has_static_ability_id(object.id, ability_id)
-}
-
 /// Check if an object has any of the specified static abilities.
 #[allow(dead_code)]
 fn has_any_ability_id(object: &Object, ability_ids: &[StaticAbilityId]) -> bool {
@@ -335,7 +327,7 @@ pub fn minimum_blockers(attacker: &Object) -> usize {
 /// Returns the minimum number of blockers required to block an attacker,
 /// accounting for granted abilities from continuous effects.
 pub fn minimum_blockers_with_game(attacker: &Object, game: &crate::game_state::GameState) -> usize {
-    if has_ability_id_with_game(attacker, game, StaticAbilityId::Menace) {
+    if game.object_has_static_ability_id(attacker.id, StaticAbilityId::Menace) {
         2
     } else {
         1
@@ -370,22 +362,22 @@ pub fn can_attack(creature: &Object, game: &crate::game_state::GameState) -> boo
     }
 
     // Defender prevents attacking
-    if has_ability_id_with_game(creature, game, StaticAbilityId::Defender) {
+    if game.object_has_static_ability_id(creature.id, StaticAbilityId::Defender) {
         // Unless it has "can attack as though it didn't have defender"
-        if !has_ability_id_with_game(creature, game, StaticAbilityId::CanAttackAsThoughNoDefender) {
+        if !game.object_has_static_ability_id(creature.id, StaticAbilityId::CanAttackAsThoughNoDefender) {
             return false;
         }
     }
 
     // Summoning sickness prevents attacking (unless haste)
     if game.is_summoning_sick(creature.id)
-        && !has_ability_id_with_game(creature, game, StaticAbilityId::Haste)
+        && !game.object_has_static_ability_id(creature.id, StaticAbilityId::Haste)
     {
         return false;
     }
 
     // "Can't attack" ability
-    if has_ability_id_with_game(creature, game, StaticAbilityId::CantAttack) {
+    if game.object_has_static_ability_id(creature.id, StaticAbilityId::CantAttack) {
         return false;
     }
 
@@ -454,7 +446,7 @@ pub fn must_attack(creature: &Object) -> bool {
 
 /// Check if a creature must attack this turn if able, with continuous effects applied.
 pub fn must_attack_with_game(creature: &Object, game: &crate::game_state::GameState) -> bool {
-    has_ability_id_with_game(creature, game, StaticAbilityId::MustAttack)
+    game.object_has_static_ability_id(creature.id, StaticAbilityId::MustAttack)
         || game.is_goaded(creature.id)
 }
 
@@ -465,7 +457,7 @@ pub fn must_block(creature: &Object) -> bool {
 
 /// Check if a creature must block this turn if able, with continuous effects applied.
 pub fn must_block_with_game(creature: &Object, game: &crate::game_state::GameState) -> bool {
-    has_ability_id_with_game(creature, game, StaticAbilityId::MustBlock)
+    game.object_has_static_ability_id(creature.id, StaticAbilityId::MustBlock)
 }
 
 /// Check if a creature has vigilance (doesn't tap to attack).
@@ -475,7 +467,7 @@ pub fn has_vigilance(creature: &Object) -> bool {
 
 /// Check if a creature has vigilance (doesn't tap to attack), with continuous effects applied.
 pub fn has_vigilance_with_game(creature: &Object, game: &crate::game_state::GameState) -> bool {
-    has_ability_id_with_game(creature, game, StaticAbilityId::Vigilance)
+    game.object_has_static_ability_id(creature.id, StaticAbilityId::Vigilance)
 }
 
 /// Check if a creature has first strike.

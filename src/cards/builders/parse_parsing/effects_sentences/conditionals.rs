@@ -1951,13 +1951,5 @@ pub(crate) fn parse_mana_spent_to_cast_predicate(
 }
 
 pub(crate) fn parse_mana_symbol_word(word: &str) -> Option<ManaSymbol> {
-    match word {
-        "white" => Some(ManaSymbol::White),
-        "blue" => Some(ManaSymbol::Blue),
-        "black" => Some(ManaSymbol::Black),
-        "red" => Some(ManaSymbol::Red),
-        "green" => Some(ManaSymbol::Green),
-        "colorless" => Some(ManaSymbol::Colorless),
-        _ => None,
-    }
+    parse_mana_symbol_word_flexible(word)
 }

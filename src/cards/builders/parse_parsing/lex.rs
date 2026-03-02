@@ -278,25 +278,13 @@ pub(crate) fn replace_names_with_map(
     }
 
     fn is_keyword_ability_name(name: &str) -> bool {
-        matches!(
-            name,
-            "flying"
-                | "first strike"
-                | "double strike"
-                | "vigilance"
-                | "trample"
-                | "haste"
-                | "deathtouch"
-                | "lifelink"
-                | "reach"
-                | "defender"
-                | "hexproof"
-                | "shroud"
-                | "menace"
-                | "indestructible"
-                | "flash"
-                | "ward"
-        )
+        if name == "first strike" || name == "double strike" || name == "ward" {
+            return true;
+        }
+        if name.contains(' ') {
+            return false;
+        }
+        parse_single_word_keyword_action(name).is_some()
     }
 
     fn preceded_by_named_keyword(bytes: &[u8], mut idx: usize) -> bool {

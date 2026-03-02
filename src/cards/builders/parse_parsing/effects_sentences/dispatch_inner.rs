@@ -2754,7 +2754,7 @@ pub(crate) fn parse_double_target_power_sentence(
     }
 
     let tail_words = &words[power_idx + 1..];
-    if !tail_words.is_empty() && tail_words != ["until", "end", "of", "turn"] {
+    if !tail_words.is_empty() && !is_until_end_of_turn(tail_words) {
         return Ok(None);
     }
 

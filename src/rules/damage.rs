@@ -52,14 +52,6 @@ pub struct DamageResult {
     pub has_lifelink: bool,
 }
 
-fn has_ability_id_with_game(
-    source: &Object,
-    game: &GameState,
-    ability_id: StaticAbilityId,
-) -> bool {
-    game.object_has_static_ability_id(source.id, ability_id)
-}
-
 fn build_damage_result(
     target: DamageTarget,
     amount: u32,
@@ -147,10 +139,10 @@ pub fn calculate_damage_with_game(
         return DamageResult::default();
     }
 
-    let has_deathtouch = has_ability_id_with_game(source, game, StaticAbilityId::Deathtouch);
-    let has_infect = has_ability_id_with_game(source, game, StaticAbilityId::Infect);
-    let has_wither = has_ability_id_with_game(source, game, StaticAbilityId::Wither);
-    let has_lifelink = has_ability_id_with_game(source, game, StaticAbilityId::Lifelink);
+    let has_deathtouch = game.object_has_static_ability_id(source.id, StaticAbilityId::Deathtouch);
+    let has_infect = game.object_has_static_ability_id(source.id, StaticAbilityId::Infect);
+    let has_wither = game.object_has_static_ability_id(source.id, StaticAbilityId::Wither);
+    let has_lifelink = game.object_has_static_ability_id(source.id, StaticAbilityId::Lifelink);
 
     build_damage_result(
         target,
@@ -187,7 +179,7 @@ pub fn is_lethal(
     }
 
     // Deathtouch: any damage is lethal
-    if has_ability_id_with_game(source, game, StaticAbilityId::Deathtouch) {
+    if game.object_has_static_ability_id(source.id, StaticAbilityId::Deathtouch) {
         return true;
     }
 
@@ -225,11 +217,11 @@ pub fn calculate_trample_excess(
     game: &crate::game_state::GameState,
 ) -> u32 {
     // Must have trample
-    if !has_ability_id_with_game(attacker, game, StaticAbilityId::Trample) {
+    if !game.object_has_static_ability_id(attacker.id, StaticAbilityId::Trample) {
         return 0;
     }
 
-    let has_deathtouch = has_ability_id_with_game(attacker, game, StaticAbilityId::Deathtouch);
+    let has_deathtouch = game.object_has_static_ability_id(attacker.id, StaticAbilityId::Deathtouch);
 
     // Calculate minimum damage needed to kill each blocker
     let mut damage_needed: u32 = 0;
@@ -270,13 +262,13 @@ pub fn distribute_trample_damage(
         return (vec![], total_damage);
     }
 
-    let has_deathtouch = has_ability_id_with_game(attacker, game, StaticAbilityId::Deathtouch);
-    let has_trample = has_ability_id_with_game(attacker, game, StaticAbilityId::Trample);
+    let has_deathtouch = game.object_has_static_ability_id(attacker.id, StaticAbilityId::Deathtouch);
+    let has_trample = game.object_has_static_ability_id(attacker.id, StaticAbilityId::Trample);
 
     let mut distribution = Vec::with_capacity(blockers.len());
     let mut remaining_damage = total_damage;
 
-    for (idx, blocker) in blockers.iter().enumerate() {
+    for blocker in blockers {
         let existing_damage = game.damage_on(blocker.id);
         let lethal = if has_deathtouch {
             1
@@ -317,7 +309,7 @@ pub fn distribute_combat_damage_to_creatures(
         return vec![];
     }
 
-    let has_deathtouch = has_ability_id_with_game(source, game, StaticAbilityId::Deathtouch);
+    let has_deathtouch = game.object_has_static_ability_id(source.id, StaticAbilityId::Deathtouch);
     let mut distribution = Vec::with_capacity(recipients.len());
     let mut remaining_damage = total_damage;
 

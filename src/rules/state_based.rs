@@ -7,7 +7,7 @@ use crate::effects::helpers::validate_target;
 use crate::executor::{ExecutionContext, ResolvedTarget};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
-use crate::object::{CounterType, Object};
+use crate::object::CounterType;
 use crate::snapshot::ObjectSnapshot;
 use crate::static_abilities::StaticAbilityId;
 use crate::targeting::has_protection_from_source;
@@ -72,14 +72,6 @@ pub enum LoseReason {
     DrewFromEmptyLibrary,
     /// 21 or more combat damage from a single commander (Commander format).
     CommanderDamage,
-}
-
-fn has_ability_id_with_game(
-    object: &Object,
-    game: &GameState,
-    ability_id: StaticAbilityId,
-) -> bool {
-    game.object_has_static_ability_id(object.id, ability_id)
 }
 
 /// Check state-based actions and return a list of actions that need to be performed.
@@ -157,7 +149,7 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
         // IMPORTANT: Use calculated_toughness to account for counters and effects!
         if game.object_has_card_type(obj_id, CardType::Creature) {
             let is_indestructible = !game.can_be_destroyed(obj_id)
-                || has_ability_id_with_game(obj, game, StaticAbilityId::Indestructible);
+                || game.object_has_static_ability_id(obj.id, StaticAbilityId::Indestructible);
 
             // Use calculated toughness to include -1/-1 counters, pump effects, etc.
             if let Some(toughness) = game.calculated_toughness(obj_id)

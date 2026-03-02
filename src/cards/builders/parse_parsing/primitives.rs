@@ -65,14 +65,25 @@ pub(crate) fn push_outlaw_subtypes(out: &mut Vec<Subtype>) {
 }
 
 pub(crate) fn parse_color(word: &str) -> Option<ColorSet> {
-    match word {
-        "white" => Some(ColorSet::WHITE),
-        "blue" => Some(ColorSet::BLUE),
-        "black" => Some(ColorSet::BLACK),
-        "red" => Some(ColorSet::RED),
-        "green" => Some(ColorSet::GREEN),
+    crate::color::Color::from_name(word).map(ColorSet::from_color)
+}
+
+pub(crate) fn parse_mana_symbol_color_word(word: &str) -> Option<ManaSymbol> {
+    match parse_color(word)? {
+        ColorSet::WHITE => Some(ManaSymbol::White),
+        ColorSet::BLUE => Some(ManaSymbol::Blue),
+        ColorSet::BLACK => Some(ManaSymbol::Black),
+        ColorSet::RED => Some(ManaSymbol::Red),
+        ColorSet::GREEN => Some(ManaSymbol::Green),
         _ => None,
     }
+}
+
+pub(crate) fn parse_mana_symbol_word_flexible(word: &str) -> Option<ManaSymbol> {
+    if word == "colorless" {
+        return Some(ManaSymbol::Colorless);
+    }
+    parse_mana_symbol_color_word(word)
 }
 
 pub(crate) fn parse_number_word_i32(word: &str) -> Option<i32> {
@@ -110,6 +121,24 @@ pub(crate) fn parse_number_word_u32(word: &str) -> Option<u32> {
     parse_number_word_i32(word).and_then(|value| value.try_into().ok())
 }
 
+pub(crate) fn is_until_end_of_turn(words: &[&str]) -> bool {
+    words == ["until", "end", "of", "turn"]
+}
+
+pub(crate) fn starts_with_until_end_of_turn(words: &[&str]) -> bool {
+    words.starts_with(&["until", "end", "of", "turn"])
+}
+
+pub(crate) fn ends_with_until_end_of_turn(words: &[&str]) -> bool {
+    words.ends_with(&["until", "end", "of", "turn"])
+}
+
+pub(crate) fn contains_until_end_of_turn(words: &[&str]) -> bool {
+    words
+        .windows(4)
+        .any(|window| is_until_end_of_turn(window))
+}
+
 pub(crate) fn parse_zone_word(word: &str) -> Option<Zone> {
     match word {
         "battlefield" => Some(Zone::Battlefield),
@@ -144,46 +173,46 @@ pub(crate) fn keyword_action_to_filter_constraint(
     action: KeywordAction,
 ) -> Option<FilterKeywordConstraint> {
     use FilterKeywordConstraint::{Marker, Static};
-    let ability = match action {
-        KeywordAction::Flying => Static(StaticAbilityId::Flying),
-        KeywordAction::Menace => Static(StaticAbilityId::Menace),
-        KeywordAction::Hexproof => Static(StaticAbilityId::Hexproof),
-        KeywordAction::Haste => Static(StaticAbilityId::Haste),
-        KeywordAction::FirstStrike => Static(StaticAbilityId::FirstStrike),
-        KeywordAction::DoubleStrike => Static(StaticAbilityId::DoubleStrike),
-        KeywordAction::Deathtouch => Static(StaticAbilityId::Deathtouch),
-        KeywordAction::Lifelink => Static(StaticAbilityId::Lifelink),
-        KeywordAction::Vigilance => Static(StaticAbilityId::Vigilance),
-        KeywordAction::Trample => Static(StaticAbilityId::Trample),
-        KeywordAction::Reach => Static(StaticAbilityId::Reach),
-        KeywordAction::Defender => Static(StaticAbilityId::Defender),
-        KeywordAction::Flash => Static(StaticAbilityId::Flash),
-        KeywordAction::Indestructible => Static(StaticAbilityId::Indestructible),
-        KeywordAction::Shroud => Static(StaticAbilityId::Shroud),
-        KeywordAction::Wither => Static(StaticAbilityId::Wither),
-        KeywordAction::Infect => Static(StaticAbilityId::Infect),
-        KeywordAction::Fear => Static(StaticAbilityId::Fear),
-        KeywordAction::Intimidate => Static(StaticAbilityId::Intimidate),
-        KeywordAction::Shadow => Static(StaticAbilityId::Shadow),
-        KeywordAction::Horsemanship => Static(StaticAbilityId::Horsemanship),
-        KeywordAction::Flanking => Static(StaticAbilityId::Flanking),
-        KeywordAction::Landwalk(subtype) => {
-            let marker = match subtype {
-                Subtype::Island => "islandwalk",
-                Subtype::Swamp => "swampwalk",
-                Subtype::Mountain => "mountainwalk",
-                Subtype::Forest => "forestwalk",
-                Subtype::Plains => "plainswalk",
-                _ => return Some(Static(StaticAbilityId::Landwalk)),
-            };
-            Marker(marker)
-        }
-        KeywordAction::Bloodthirst(_) => return None,
-        KeywordAction::Rampage(_) => return None,
-        KeywordAction::Changeling => Static(StaticAbilityId::Changeling),
-        _ => return None,
-    };
-    Some(ability)
+
+    if let KeywordAction::Landwalk(subtype) = action {
+        let constraint = match subtype {
+            Subtype::Island => Marker("islandwalk"),
+            Subtype::Swamp => Marker("swampwalk"),
+            Subtype::Mountain => Marker("mountainwalk"),
+            Subtype::Forest => Marker("forestwalk"),
+            Subtype::Plains => Marker("plainswalk"),
+            _ => Static(StaticAbilityId::Landwalk),
+        };
+        return Some(constraint);
+    }
+
+    let static_id = keyword_action_to_static_ability(action)?.id();
+    match static_id {
+        StaticAbilityId::Flying
+        | StaticAbilityId::Menace
+        | StaticAbilityId::Hexproof
+        | StaticAbilityId::Haste
+        | StaticAbilityId::FirstStrike
+        | StaticAbilityId::DoubleStrike
+        | StaticAbilityId::Deathtouch
+        | StaticAbilityId::Lifelink
+        | StaticAbilityId::Vigilance
+        | StaticAbilityId::Trample
+        | StaticAbilityId::Reach
+        | StaticAbilityId::Defender
+        | StaticAbilityId::Flash
+        | StaticAbilityId::Indestructible
+        | StaticAbilityId::Shroud
+        | StaticAbilityId::Wither
+        | StaticAbilityId::Infect
+        | StaticAbilityId::Fear
+        | StaticAbilityId::Intimidate
+        | StaticAbilityId::Shadow
+        | StaticAbilityId::Horsemanship
+        | StaticAbilityId::Flanking
+        | StaticAbilityId::Changeling => Some(Static(static_id)),
+        _ => None,
+    }
 }
 
 pub(crate) fn parse_filter_keyword_constraint_words(

@@ -95,20 +95,9 @@ impl CostPayer for RevealFromHandCost {
     }
 
     fn display(&self) -> String {
-        let type_str = self.card_type.map_or("card".to_string(), |ct| {
-            match ct {
-                CardType::Creature => "creature card",
-                CardType::Artifact => "artifact card",
-                CardType::Enchantment => "enchantment card",
-                CardType::Land => "land card",
-                CardType::Planeswalker => "planeswalker card",
-                CardType::Instant => "instant card",
-                CardType::Sorcery => "sorcery card",
-                CardType::Battle => "battle card",
-                CardType::Kindred => "kindred card",
-            }
-            .to_string()
-        });
+        let type_str = self
+            .card_type
+            .map_or("card".to_string(), |ct| ct.card_phrase().to_string());
 
         if self.count == 1 {
             format!("Reveal a {} from your hand", type_str)

@@ -498,7 +498,7 @@ fn evaluate_value(
                         let v = match value {
                             Value::PowerOf(_) => chars.power,
                             Value::ToughnessOf(_) => chars.toughness,
-                            _ => None,
+                            _ => unreachable!("Value::PowerOf/ToughnessOf arm received non-PT value"),
                         };
                         if let Some(v) = v {
                             values.push(v);
@@ -522,14 +522,27 @@ fn evaluate_value(
                         let v = match value {
                             Value::PowerOf(_) => chars.power,
                             Value::ToughnessOf(_) => chars.toughness,
-                            _ => None,
+                            _ => unreachable!("Value::PowerOf/ToughnessOf arm received non-PT value"),
                         };
                         if let Some(v) = v {
                             values.push(v);
                         }
                     }
                 }
-                _ => {}
+                ChooseSpec::Target(_)
+                | ChooseSpec::Player(_)
+                | ChooseSpec::SpecificObject(_)
+                | ChooseSpec::SpecificPlayer(_)
+                | ChooseSpec::AnyTarget
+                | ChooseSpec::PlayerOrPlaneswalker(_)
+                | ChooseSpec::AttackedPlayerOrPlaneswalker
+                | ChooseSpec::SourceController
+                | ChooseSpec::SourceOwner
+                | ChooseSpec::Tagged(_)
+                | ChooseSpec::All(_)
+                | ChooseSpec::EachPlayer(_)
+                | ChooseSpec::Iterated
+                | ChooseSpec::WithCount(_, _) => {}
             }
             values.sort();
             ValueEval::Set(values)
@@ -662,7 +675,19 @@ fn object_matches_filter_with_chars(
                 }
             }
             PlayerFilter::Any => {}
-            _ => {}
+            // Dependency-layer matching doesn't have enough context to resolve
+            // these controller-relative player filters safely. Fail closed.
+            PlayerFilter::NotYou
+            | PlayerFilter::Teammate
+            | PlayerFilter::Active
+            | PlayerFilter::Defending
+            | PlayerFilter::Attacking
+            | PlayerFilter::DamagedPlayer
+            | PlayerFilter::IteratedPlayer
+            | PlayerFilter::Target(_)
+            | PlayerFilter::Excluding { .. }
+            | PlayerFilter::ControllerOf(_)
+            | PlayerFilter::OwnerOf(_) => return false,
         }
     }
 

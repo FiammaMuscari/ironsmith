@@ -835,10 +835,7 @@ pub(crate) fn parse_composed_anthem_effects_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     let clause_words = words(tokens);
-    if clause_words
-        .windows(4)
-        .any(|window| window == ["until", "end", "of", "turn"])
-    {
+    if contains_until_end_of_turn(&clause_words) {
         return Ok(None);
     }
 
@@ -5644,10 +5641,7 @@ pub(crate) fn parse_anthem_and_type_color_addition_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     let words = words(tokens);
-    if words
-        .windows(4)
-        .any(|window| window == ["until", "end", "of", "turn"])
-    {
+    if contains_until_end_of_turn(&words) {
         return Ok(None);
     }
 
@@ -5736,10 +5730,7 @@ pub(crate) fn parse_anthem_and_keyword_line(
     let pre_grant_words = words(&tokens[..have_token_idx]);
     // "until end of turn" in the pump clause indicates a one-shot effect.
     // Ignore timing text that appears only inside a quoted granted ability.
-    if pre_grant_words
-        .windows(4)
-        .any(|window| window == ["until", "end", "of", "turn"])
-    {
+    if contains_until_end_of_turn(&pre_grant_words) {
         return Ok(None);
     }
 
@@ -5963,10 +5954,7 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     let clause_words = words(tokens);
-    if clause_words
-        .windows(4)
-        .any(|window| window == ["until", "end", "of", "turn"])
-    {
+    if contains_until_end_of_turn(&clause_words) {
         return Ok(None);
     }
 
@@ -6427,10 +6415,7 @@ pub(crate) fn parse_anthem_and_granted_ability_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     let clause_words = words(tokens);
-    if clause_words
-        .windows(4)
-        .any(|window| window == ["until", "end", "of", "turn"])
-    {
+    if contains_until_end_of_turn(&clause_words) {
         return Ok(None);
     }
 
@@ -6481,10 +6466,7 @@ pub(crate) fn parse_anthem_line(tokens: &[Token]) -> Result<Option<StaticAbility
         return Ok(None);
     }
     // "until end of turn" indicates a temporary effect, not a permanent anthem.
-    if words
-        .windows(4)
-        .any(|w| w == ["until", "end", "of", "turn"])
-    {
+    if contains_until_end_of_turn(&words) {
         return Ok(None);
     }
 
@@ -6516,7 +6498,7 @@ pub(crate) fn parse_has_base_power_toughness_static_line(
     if subject_words.contains(&"target") {
         return Ok(None);
     }
-    if subject_words.starts_with(&["until", "end", "of", "turn"])
+    if starts_with_until_end_of_turn(&subject_words)
         || subject_words.starts_with(&["until", "your", "next", "turn"])
     {
         return Ok(None);
@@ -6585,11 +6567,7 @@ pub(crate) fn parse_isnt_creature_line(
     if all_words.len() < 3 {
         return Ok(None);
     }
-    if all_words.contains(&"target")
-        || all_words
-            .windows(4)
-            .any(|window| window == ["until", "end", "of", "turn"])
-    {
+    if all_words.contains(&"target") || contains_until_end_of_turn(&all_words) {
         return Ok(None);
     }
 
@@ -10157,7 +10135,7 @@ pub(crate) fn parse_has_base_power_toughness_and_granted_keywords_static_line(
     if subject_words.contains(&"target") {
         return Ok(None);
     }
-    if subject_words.starts_with(&["until", "end", "of", "turn"])
+    if starts_with_until_end_of_turn(&subject_words)
         || subject_words.starts_with(&["until", "your", "next", "turn"])
     {
         return Ok(None);

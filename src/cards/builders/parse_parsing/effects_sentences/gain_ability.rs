@@ -12,7 +12,7 @@ pub(crate) fn parse_simple_ability_duration(
 ) -> Option<(usize, usize, Until)> {
     if let Some(idx) = words_after_verb
         .windows(4)
-        .position(|window| window == ["until", "end", "of", "turn"])
+        .position(is_until_end_of_turn)
     {
         return Some((idx, 4, Until::EndOfTurn));
     }
@@ -240,7 +240,7 @@ pub(crate) fn parse_gain_ability_sentence(
         }
     }
 
-    let leading_duration_phrase = if word_list.starts_with(&["until", "end", "of", "turn"]) {
+    let leading_duration_phrase = if starts_with_until_end_of_turn(&word_list) {
         Some((4usize, Until::EndOfTurn))
     } else if word_list.starts_with(&["until", "your", "next", "turn"])
         || word_list.starts_with(&["until", "your", "next", "upkeep"])
@@ -273,7 +273,7 @@ pub(crate) fn parse_gain_ability_sentence(
 
     let duration_phrase = if let Some(idx) = after_gain
         .windows(4)
-        .position(|window| window == ["until", "end", "of", "turn"])
+        .position(is_until_end_of_turn)
     {
         Some((idx, 4usize, Until::EndOfTurn))
     } else if let Some(idx) = after_gain.windows(4).position(|window| {

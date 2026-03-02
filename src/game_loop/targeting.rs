@@ -697,17 +697,6 @@ pub fn player_matches_filter_with_combat(
     }
 }
 
-/// Check if an object has protection from a source that would prevent targeting.
-///
-/// Protection from a quality prevents:
-/// - Damage from sources with that quality
-/// - Enchanting/Equipping by permanents with that quality
-/// - Blocking by creatures with that quality
-/// - Targeting by spells/abilities from sources with that quality
-fn has_protection_from_source(game: &GameState, target_id: ObjectId, source_id: ObjectId) -> bool {
-    crate::targeting::has_protection_from_source(game, target_id, source_id)
-}
-
 /// Validate targets for a stack entry that's about to resolve.
 ///
 /// Per MTG Rule 608.2b:
@@ -752,7 +741,8 @@ fn validate_stack_entry_targets(
                     let in_valid_zone = obj.zone == Zone::Battlefield || obj.zone == Zone::Stack;
 
                     // Check if object now has protection from the source
-                    let has_protection = has_protection_from_source(game, *obj_id, entry.object_id);
+                    let has_protection =
+                        crate::targeting::has_protection_from_source(game, *obj_id, entry.object_id);
 
                     // Check hexproof/shroud
                     let is_untargetable = game.is_untargetable(*obj_id);

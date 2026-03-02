@@ -5816,6 +5816,275 @@ fn describe_effect_impl(effect: &Effect) -> String {
             describe_effect_list(&for_each_tagged_player.effects)
         );
     }
+    if let Some(_apply_replacement) = effect.downcast_ref::<crate::effects::ApplyReplacementEffect>()
+    {
+        return "Apply a replacement effect".to_string();
+    }
+    if let Some(become_color) = effect.downcast_ref::<crate::effects::BecomeColorChoiceEffect>() {
+        return format!(
+            "{} becomes the color of {} choice {}",
+            describe_choose_spec(&become_color.target),
+            describe_possessive_player_filter(&become_color.chooser),
+            describe_until(&become_color.until)
+        );
+    }
+    if let Some(become_type) =
+        effect.downcast_ref::<crate::effects::BecomeCreatureTypeChoiceEffect>()
+    {
+        if become_type.excluded_subtypes.is_empty() {
+            return format!(
+                "{} becomes the creature type of {} choice {}",
+                describe_choose_spec(&become_type.target),
+                describe_possessive_player_filter(&become_type.chooser),
+                describe_until(&become_type.until)
+            );
+        }
+        let excluded = become_type
+            .excluded_subtypes
+            .iter()
+            .map(|subtype| format!("{subtype:?}").to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        return format!(
+            "{} becomes the creature type of {} choice (other than {}) {}",
+            describe_choose_spec(&become_type.target),
+            describe_possessive_player_filter(&become_type.chooser),
+            join_with_or(&excluded),
+            describe_until(&become_type.until)
+        );
+    }
+    if effect
+        .downcast_ref::<crate::effects::BecomeSaddledUntilEotEffect>()
+        .is_some()
+    {
+        return "This permanent becomes saddled until end of turn".to_string();
+    }
+    if effect
+        .downcast_ref::<crate::effects::CascadeEffect>()
+        .is_some()
+    {
+        return "Cascade".to_string();
+    }
+    if let Some(cast_source) = effect.downcast_ref::<crate::effects::CastSourceEffect>() {
+        let mut parts = Vec::new();
+        if cast_source.require_exile {
+            parts.push("Cast this card from exile".to_string());
+        } else {
+            parts.push("Cast this card".to_string());
+        }
+        if cast_source.without_paying_mana_cost {
+            parts.push("without paying its mana cost".to_string());
+        }
+        return parts.join(" ");
+    }
+    if effect.downcast_ref::<crate::effects::ClashEffect>().is_some() {
+        return "Clash with an opponent".to_string();
+    }
+    if let Some(clear_damage) = effect.downcast_ref::<crate::effects::ClearDamageEffect>() {
+        return format!(
+            "Remove all damage from {}",
+            describe_choose_spec(&clear_damage.target)
+        );
+    }
+    if let Some(create_emblem) = effect.downcast_ref::<crate::effects::CreateEmblemEffect>() {
+        return format!("Create an emblem named {}", create_emblem.emblem.name);
+    }
+    if let Some(crew) = effect.downcast_ref::<crate::effects::CrewCostEffect>() {
+        return format!(
+            "Tap any number of untapped creatures you control with total power {} or more",
+            crew.required_power
+        );
+    }
+    if let Some(enter_attacking) = effect.downcast_ref::<crate::effects::EnterAttackingEffect>() {
+        return format!(
+            "Put {} onto the battlefield tapped and attacking",
+            describe_choose_spec(&enter_attacking.target)
+        );
+    }
+    if effect.downcast_ref::<crate::effects::EvolveEffect>().is_some() {
+        return "Evolve".to_string();
+    }
+    if let Some(exchange_life) = effect.downcast_ref::<crate::effects::ExchangeLifeTotalsEffect>() {
+        return format!(
+            "Exchange life totals of {} and {}",
+            describe_player_filter(&exchange_life.player1),
+            describe_player_filter(&exchange_life.player2)
+        );
+    }
+    if let Some(exile_top) = effect.downcast_ref::<crate::effects::ExileTopOfLibraryEffect>() {
+        let (count_text, noun, _) = describe_look_count_and_noun(&exile_top.count);
+        return format!(
+            "Exile the top {count_text} {noun} of {} library",
+            describe_possessive_player_filter(&exile_top.player)
+        );
+    }
+    if let Some(experience) = effect.downcast_ref::<crate::effects::ExperienceCountersEffect>() {
+        let player = describe_player_filter(&experience.player);
+        return format!(
+            "{player} {} {} experience counter{}",
+            player_verb(&player, "get", "gets"),
+            describe_value(&experience.count),
+            if matches!(&experience.count, Value::Fixed(1)) {
+                ""
+            } else {
+                "s"
+            }
+        );
+    }
+    if let Some(for_each_counter_kind) =
+        effect.downcast_ref::<crate::effects::ForEachCounterKindPutOrRemoveEffect>()
+    {
+        return format!(
+            "For each kind of counter on {}, choose to put or remove one of that kind",
+            describe_choose_spec(&for_each_counter_kind.target)
+        );
+    }
+    if let Some(grant) = effect.downcast_ref::<crate::effects::GrantEffect>() {
+        let duration = match grant.duration {
+            crate::grant::GrantDuration::UntilEndOfTurn => " until end of turn",
+            crate::grant::GrantDuration::Forever => "",
+        };
+        return format!(
+            "{} gains {}{}",
+            describe_choose_spec(&grant.target),
+            grant.grantable.display(),
+            duration
+        );
+    }
+    if let Some(grant_play_tagged) = effect.downcast_ref::<crate::effects::GrantPlayTaggedEffect>()
+    {
+        let timing = match grant_play_tagged.duration {
+            crate::effects::GrantPlayTaggedDuration::UntilEndOfTurn => "until end of turn",
+            crate::effects::GrantPlayTaggedDuration::UntilYourNextTurnEnd => {
+                "until the end of your next turn"
+            }
+        };
+        return format!(
+            "{} may play tagged '{}' cards {timing}",
+            describe_player_filter(&grant_play_tagged.player),
+            grant_play_tagged.tag.as_str()
+        );
+    }
+    if let Some(grant_tagged_spell_life) =
+        effect.downcast_ref::<crate::effects::GrantTaggedSpellLifeCostByManaValueEffect>()
+    {
+        return format!(
+            "{} may cast tagged '{}' spells from exile this turn by paying life equal to their mana value",
+            describe_player_filter(&grant_tagged_spell_life.player),
+            grant_tagged_spell_life.tag.as_str()
+        );
+    }
+    if effect
+        .downcast_ref::<crate::effects::player::MayCastForMiracleCostEffect>()
+        .is_some()
+    {
+        return "You may cast it for its miracle cost".to_string();
+    }
+    if let Some(move_counters) = effect.downcast_ref::<crate::effects::MoveCountersEffect>() {
+        return format!(
+            "Move {} from {} to {}",
+            describe_put_counter_phrase(&move_counters.count, move_counters.counter_type),
+            describe_choose_spec(&move_counters.from),
+            describe_choose_spec(&move_counters.to)
+        );
+    }
+    if effect
+        .downcast_ref::<crate::effects::NinjutsuCostEffect>()
+        .is_some()
+    {
+        return "Return an unblocked attacker you control to its owner's hand".to_string();
+    }
+    if effect.downcast_ref::<crate::effects::NinjutsuEffect>().is_some() {
+        return "Put this card onto the battlefield tapped and attacking".to_string();
+    }
+    if let Some(remove_from_combat) = effect.downcast_ref::<crate::effects::RemoveFromCombatEffect>()
+    {
+        return format!(
+            "Remove {} from combat",
+            describe_choose_spec(&remove_from_combat.spec)
+        );
+    }
+    if let Some(renown) = effect.downcast_ref::<crate::effects::RenownEffect>() {
+        return format!(
+            "If this creature isn't renowned, put {} +1/+1 counter{} on it and it becomes renowned",
+            renown.amount,
+            if renown.amount == 1 { "" } else { "s" }
+        );
+    }
+    if let Some(return_from_graveyard_or_exile) =
+        effect.downcast_ref::<crate::effects::ReturnFromGraveyardOrExileToBattlefieldEffect>()
+    {
+        return format!(
+            "Return this card from your graveyard or exile to the battlefield{}",
+            if return_from_graveyard_or_exile.tapped {
+                " tapped"
+            } else {
+                ""
+            }
+        );
+    }
+    if let Some(sac_source_when_tagged_leaves) =
+        effect.downcast_ref::<crate::effects::SacrificeSourceWhenTaggedLeavesEffect>()
+    {
+        return format!(
+            "When tagged '{}' object leaves the battlefield, sacrifice this source",
+            sac_source_when_tagged_leaves.tag.as_str()
+        );
+    }
+    if let Some(saddle) = effect.downcast_ref::<crate::effects::SaddleCostEffect>() {
+        return format!(
+            "Tap any number of untapped creatures you control other than this permanent with total power {} or more",
+            saddle.required_power
+        );
+    }
+    if let Some(schedule_tagged_leaves) =
+        effect.downcast_ref::<crate::effects::ScheduleEffectsWhenTaggedLeavesEffect>()
+    {
+        return format!(
+            "When tagged '{}' object leaves the battlefield, {}",
+            schedule_tagged_leaves.tag.as_str(),
+            describe_effect_list(&schedule_tagged_leaves.effects)
+        );
+    }
+    if effect
+        .downcast_ref::<crate::effects::SoulbondPairEffect>()
+        .is_some()
+    {
+        return "Pair this creature with another unpaired creature you control".to_string();
+    }
+    if effect.downcast_ref::<crate::effects::UnearthEffect>().is_some() {
+        return "Unearth".to_string();
+    }
+    if let Some(vote) = effect.downcast_ref::<crate::effects::VoteEffect>() {
+        let choices = vote
+            .options
+            .iter()
+            .map(|option| option.name.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        let mut suffix = String::new();
+        if vote.controller_extra_votes > 0 {
+            suffix.push_str(&format!(
+                "; you vote an additional {} time{}",
+                vote.controller_extra_votes,
+                if vote.controller_extra_votes == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+        if vote.controller_optional_extra_votes > 0 {
+            suffix.push_str(&format!(
+                "; you may vote an additional {} time{}",
+                vote.controller_optional_extra_votes,
+                if vote.controller_optional_extra_votes == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+        return format!("Each player votes for {}{}", join_with_or(&choices), suffix);
+    }
     if effect
         .downcast_ref::<crate::effects::EmitKeywordActionEffect>()
         .is_some()

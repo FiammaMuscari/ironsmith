@@ -1448,7 +1448,7 @@ pub(crate) fn parse_restriction_duration(
         return Ok(None);
     }
 
-    if all_words.starts_with(&["until", "end", "of", "turn"]) {
+    if starts_with_until_end_of_turn(&all_words) {
         let comma_idx = tokens
             .iter()
             .position(|token| matches!(token, Token::Comma(_)));
@@ -1495,7 +1495,7 @@ pub(crate) fn parse_restriction_duration(
         return Ok(Some((Until::YouStopControllingThis, remainder)));
     }
 
-    if all_words.ends_with(&["until", "end", "of", "turn"]) {
+    if ends_with_until_end_of_turn(&all_words) {
         let end_idx = tokens
             .iter()
             .rposition(|token| token.is_word("until"))
@@ -1593,7 +1593,7 @@ pub(crate) fn parse_play_from_graveyard_sentence(
     tokens: &[Token],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let line_words = words(tokens);
-    if line_words.len() < 8 || !line_words.starts_with(&["until", "end", "of", "turn"]) {
+    if line_words.len() < 8 || !starts_with_until_end_of_turn(&line_words) {
         return Ok(None);
     }
 

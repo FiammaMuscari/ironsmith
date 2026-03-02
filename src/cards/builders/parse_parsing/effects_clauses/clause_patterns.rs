@@ -116,7 +116,7 @@ pub(crate) fn parse_until_end_of_turn_may_play_tagged_clause(
     let clause_words = words(tokens);
     let prefix_len = if clause_words.starts_with(&["until", "the", "end", "of", "turn"]) {
         5
-    } else if clause_words.starts_with(&["until", "end", "of", "turn"]) {
+    } else if starts_with_until_end_of_turn(&clause_words) {
         4
     } else {
         return Ok(None);
@@ -217,7 +217,7 @@ pub(crate) fn parse_cast_or_play_tagged_clause(
 
     let has_this_turn_duration = tail == ["this", "turn"];
     let has_until_end_of_turn_duration =
-        tail == ["until", "end", "of", "turn"] || tail == ["until", "the", "end", "of", "turn"];
+        is_until_end_of_turn(tail) || tail == ["until", "the", "end", "of", "turn"];
     if has_this_turn_duration || has_until_end_of_turn_duration {
         return Ok(Some(EffectAst::GrantPlayTaggedUntilEndOfTurn {
             tag: TagKey::from(IT_TAG),

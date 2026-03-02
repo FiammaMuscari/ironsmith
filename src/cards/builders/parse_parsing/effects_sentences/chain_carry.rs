@@ -1878,7 +1878,7 @@ pub(crate) fn parse_until_duration_triggered_clause(
     tokens: &[Token],
 ) -> Result<Option<EffectAst>, CardTextError> {
     let clause_words = words(tokens);
-    let has_leading_duration = clause_words.starts_with(&["until", "end", "of", "turn"])
+    let has_leading_duration = starts_with_until_end_of_turn(&clause_words)
         || clause_words.starts_with(&["until", "your", "next", "turn"])
         || clause_words.starts_with(&["until", "your", "next", "upkeep"])
         || clause_words.starts_with(&["until", "your", "next", "untap", "step"])

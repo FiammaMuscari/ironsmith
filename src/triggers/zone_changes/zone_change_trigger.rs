@@ -318,16 +318,7 @@ impl ZoneChangeTrigger {
             return "creature";
         }
         if self.object_filter.card_types.len() == 1 {
-            return match self.object_filter.card_types[0] {
-                CardType::Land
-                | CardType::Artifact
-                | CardType::Enchantment
-                | CardType::Planeswalker
-                | CardType::Battle
-                | CardType::Kindred => self.object_filter.card_types[0].name(),
-                CardType::Instant | CardType::Sorcery => fallback,
-                CardType::Creature => "creature",
-            };
+            return self.object_filter.card_types[0].self_subject(fallback);
         }
         fallback
     }

@@ -15,6 +15,38 @@ impl Color {
         Color::Red,
         Color::Green,
     ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Color::White => "white",
+            Color::Blue => "blue",
+            Color::Black => "black",
+            Color::Red => "red",
+            Color::Green => "green",
+        }
+    }
+
+    pub fn from_name(word: &str) -> Option<Self> {
+        match word {
+            "white" => Some(Color::White),
+            "blue" => Some(Color::Blue),
+            "black" => Some(Color::Black),
+            "red" => Some(Color::Red),
+            "green" => Some(Color::Green),
+            _ => None,
+        }
+    }
+
+    pub fn from_mana_code_or_name(word: &str) -> Option<Self> {
+        match word {
+            "w" => Some(Color::White),
+            "u" => Some(Color::Blue),
+            "b" => Some(Color::Black),
+            "r" => Some(Color::Red),
+            "g" => Some(Color::Green),
+            _ => Self::from_name(word),
+        }
+    }
 }
 
 /// A set of colors represented as bitflags for efficient operations.

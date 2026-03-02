@@ -1098,13 +1098,13 @@ fn effect_applies_to_direct(
         EffectTarget::AllCreatures => {
             object.zone == Zone::Battlefield && chars.card_types.contains(&CardType::Creature)
         }
-        EffectTarget::Filter(filter) => filter_matches_direct(
+        EffectTarget::Filter(filter) => filter_matches_with_characteristics(
             filter,
             object,
             chars,
+            game,
             effect.controller,
             effect.source,
-            game,
         ),
         EffectTarget::AttachedTo(source_id) => {
             // The effect applies to whatever permanent the source is attached to
@@ -1197,25 +1197,6 @@ fn filter_matches_with_characteristics(
     }
 
     true
-}
-
-/// Check if an object matches a filter (direct version without CalculationContext).
-fn filter_matches_direct(
-    filter: &ObjectFilter,
-    object: &Object,
-    chars: &CalculatedCharacteristics,
-    effect_controller: PlayerId,
-    effect_source: ObjectId,
-    game: &crate::game_state::GameState,
-) -> bool {
-    filter_matches_with_characteristics(
-        filter,
-        object,
-        chars,
-        game,
-        effect_controller,
-        effect_source,
-    )
 }
 
 /// Apply a modification to calculated characteristics.
@@ -1378,7 +1359,7 @@ fn apply_modification_to_chars(
                     continue;
                 };
 
-                if !filter_matches_with_controller(
+                if !filter_matches_with_characteristics(
                     filter,
                     candidate,
                     &candidate_chars,
@@ -2428,7 +2409,7 @@ fn effect_applies_to(
         }
         EffectTarget::Filter(filter) => {
             // Check if object matches filter
-            filter_matches(
+            filter_matches_with_characteristics(
                 filter,
                 object,
                 chars,
@@ -2446,44 +2427,6 @@ fn effect_applies_to(
             }
         }
     }
-}
-
-/// Check if an object matches a filter (using calculated characteristics where available).
-fn filter_matches(
-    filter: &ObjectFilter,
-    object: &Object,
-    chars: &CalculatedCharacteristics,
-    game: &crate::game_state::GameState,
-    effect_controller: PlayerId,
-    effect_source: ObjectId,
-) -> bool {
-    filter_matches_with_characteristics(
-        filter,
-        object,
-        chars,
-        game,
-        effect_controller,
-        effect_source,
-    )
-}
-
-/// Check if an object matches a filter using calculated characteristics and a known controller.
-fn filter_matches_with_controller(
-    filter: &ObjectFilter,
-    object: &Object,
-    chars: &CalculatedCharacteristics,
-    game: &crate::game_state::GameState,
-    effect_controller: PlayerId,
-    effect_source: ObjectId,
-) -> bool {
-    filter_matches_with_characteristics(
-        filter,
-        object,
-        chars,
-        game,
-        effect_controller,
-        effect_source,
-    )
 }
 
 /// Resolve a Value to an i32 for continuous effect calculations.

@@ -219,10 +219,8 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
                 let modifier_tail = &tokens[verb_idx + 1..];
                 if let Some(count) = parse_get_for_each_count_value(modifier_tail)? {
                     let modifier_words = words(modifier_tail);
-                    let duration = if modifier_words.starts_with(&["until", "end", "of", "turn"])
-                        || modifier_words
-                            .windows(4)
-                            .any(|window| window == ["until", "end", "of", "turn"])
+                    let duration = if starts_with_until_end_of_turn(&modifier_words)
+                        || contains_until_end_of_turn(&modifier_words)
                     {
                         Until::EndOfTurn
                     } else {

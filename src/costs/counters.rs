@@ -773,17 +773,7 @@ fn card_type_name_singular(card_type: CardType) -> &'static str {
 }
 
 fn card_type_name_plural(card_type: CardType) -> &'static str {
-    match card_type {
-        CardType::Land => "lands",
-        CardType::Creature => "creatures",
-        CardType::Artifact => "artifacts",
-        CardType::Enchantment => "enchantments",
-        CardType::Planeswalker => "planeswalkers",
-        CardType::Instant => "instants",
-        CardType::Sorcery => "sorceries",
-        CardType::Battle => "battles",
-        CardType::Kindred => "kindred cards",
-    }
+    card_type.plural_name()
 }
 
 #[cfg(test)]

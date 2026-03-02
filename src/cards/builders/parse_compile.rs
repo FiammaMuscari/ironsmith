@@ -8257,9 +8257,7 @@ pub(crate) fn token_definition_for(name: &str) -> Option<CardDefinition> {
             && words.contains(&"token")
             && words.contains(&"gets")
             && words.contains(&"+1/+0")
-            && words
-                .windows(4)
-                .any(|window| window == ["until", "end", "of", "turn"]);
+            && contains_until_end_of_turn(&words);
         if is_land_you_control_enters_pump_token {
             let ability = Ability {
                 kind: AbilityKind::Triggered(crate::ability::TriggeredAbility {

@@ -33,6 +33,49 @@ impl CardType {
             CardType::Kindred => "kindred",
         }
     }
+
+    pub fn card_phrase(self) -> &'static str {
+        match self {
+            CardType::Land => "land card",
+            CardType::Creature => "creature card",
+            CardType::Artifact => "artifact card",
+            CardType::Enchantment => "enchantment card",
+            CardType::Planeswalker => "planeswalker card",
+            CardType::Instant => "instant card",
+            CardType::Sorcery => "sorcery card",
+            CardType::Battle => "battle card",
+            CardType::Kindred => "kindred card",
+        }
+    }
+
+    pub fn plural_name(self) -> &'static str {
+        match self {
+            CardType::Land => "lands",
+            CardType::Creature => "creatures",
+            CardType::Artifact => "artifacts",
+            CardType::Enchantment => "enchantments",
+            CardType::Planeswalker => "planeswalkers",
+            CardType::Instant => "instants",
+            CardType::Sorcery => "sorceries",
+            CardType::Battle => "battles",
+            CardType::Kindred => "kindred cards",
+        }
+    }
+
+    pub fn selection_name(self) -> &'static str {
+        match self {
+            CardType::Battle | CardType::Kindred => "permanent",
+            _ => self.name(),
+        }
+    }
+
+    pub fn self_subject(self, fallback: &'static str) -> &'static str {
+        match self {
+            CardType::Instant | CardType::Sorcery => fallback,
+            CardType::Creature => "creature",
+            _ => self.name(),
+        }
+    }
 }
 
 impl std::fmt::Display for CardType {

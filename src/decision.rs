@@ -5827,13 +5827,14 @@ fn prompt_choose_colors(count: u32, same_color: bool) -> Vec<crate::color::Color
 
             let input = read_input().unwrap_or_default();
 
-            let color = match input.trim() {
-                "0" | "w" | "white" => Some(Color::White),
-                "1" | "u" | "blue" => Some(Color::Blue),
-                "2" | "b" | "black" => Some(Color::Black),
-                "3" | "r" | "red" => Some(Color::Red),
-                "4" | "g" | "green" => Some(Color::Green),
-                _ => None,
+            let normalized = input.trim().to_ascii_lowercase();
+            let color = match normalized.as_str() {
+                "0" => Some(Color::White),
+                "1" => Some(Color::Blue),
+                "2" => Some(Color::Black),
+                "3" => Some(Color::Red),
+                "4" => Some(Color::Green),
+                _ => Color::from_mana_code_or_name(normalized.as_str()),
             };
 
             if let Some(c) = color {

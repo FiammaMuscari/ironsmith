@@ -9,7 +9,6 @@ use crate::filter::ObjectFilter;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::snapshot::ObjectSnapshot;
-use crate::types::CardType;
 use crate::zone::Zone;
 
 use super::choose_objects::ChooseObjectsEffect;
@@ -25,10 +24,7 @@ fn describe_choose_from_filter(
     verb: &str,
 ) -> String {
     let type_word = if filter.card_types.len() == 1 {
-        match filter.card_types[0] {
-            CardType::Battle | CardType::Kindred => "permanent",
-            card_type => card_type.name(),
-        }
+        filter.card_types[0].selection_name()
     } else if filter.card_types.is_empty() {
         "permanent"
     } else {

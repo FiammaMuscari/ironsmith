@@ -406,7 +406,7 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         || tokens
             .first()
             .is_some_and(|token| token.is_word("choose") || token.is_word("if"))
-        || line_words.starts_with(&["until", "end", "of", "turn"]);
+        || starts_with_until_end_of_turn(&line_words);
     let is_damage_prevent_with_remove_static = line_words
         .starts_with(&["if", "damage", "would", "be", "dealt", "to", "this"])
         && line_words

@@ -232,24 +232,24 @@ pub(crate) fn parse_has_base_power_clause(
         .collect();
     if tail_words.is_empty() {
         let has_target_subject = subject_words.contains(&"target");
-        let has_leading_until_eot = subject_words.starts_with(&["until", "end", "of", "turn"]);
+        let has_leading_until_eot = starts_with_until_end_of_turn(&subject_words);
         let has_temporal_words = words_all
             .windows(4)
-            .any(|window| window == ["until", "end", "of", "turn"])
+            .any(is_until_end_of_turn)
             || words_all
                 .windows(2)
                 .any(|window| window == ["this", "turn"] || window == ["next", "turn"]);
         if !has_target_subject && !has_leading_until_eot && !has_temporal_words {
             return Ok(None);
         }
-    } else if tail_words.as_slice() != ["until", "end", "of", "turn"] {
+    } else if !is_until_end_of_turn(tail_words.as_slice()) {
         return Err(CardTextError::ParseError(format!(
             "unsupported trailing base power clause (clause: '{}')",
             words_all.join(" ")
         )));
     }
 
-    let target_tokens: Vec<Token> = if subject_words.starts_with(&["until", "end", "of", "turn"]) {
+    let target_tokens: Vec<Token> = if starts_with_until_end_of_turn(&subject_words) {
         let mut skip_idx = 4usize;
         if subject_tokens
             .get(skip_idx)
@@ -300,10 +300,10 @@ pub(crate) fn parse_has_base_power_toughness_clause(
     let tail = &rest_words[5..];
     if tail.is_empty() {
         let has_target_subject = subject_words.contains(&"target");
-        let has_leading_until_eot = subject_words.starts_with(&["until", "end", "of", "turn"]);
+        let has_leading_until_eot = starts_with_until_end_of_turn(&subject_words);
         let has_temporal_words = words_all
             .windows(4)
-            .any(|window| window == ["until", "end", "of", "turn"])
+            .any(is_until_end_of_turn)
             || words_all
                 .windows(2)
                 .any(|window| window == ["this", "turn"] || window == ["next", "turn"]);
@@ -311,14 +311,14 @@ pub(crate) fn parse_has_base_power_toughness_clause(
             return Ok(None);
         }
     }
-    if !tail.is_empty() && tail != ["until", "end", "of", "turn"] {
+    if !tail.is_empty() && !is_until_end_of_turn(tail) {
         return Err(CardTextError::ParseError(format!(
             "unsupported trailing base power/toughness clause (clause: '{}')",
             words_all.join(" ")
         )));
     }
 
-    let target_tokens: Vec<Token> = if subject_words.starts_with(&["until", "end", "of", "turn"]) {
+    let target_tokens: Vec<Token> = if starts_with_until_end_of_turn(&subject_words) {
         let mut skip_idx = 4usize;
         if subject_tokens
             .get(skip_idx)
@@ -474,7 +474,7 @@ pub(crate) fn parse_get_modifier_values_with_tail(
 
     let after_modifier = &modifier_tokens[1..];
     let after_modifier_words = words(after_modifier);
-    let until_word_count = if after_modifier_words.starts_with(&["until", "end", "of", "turn"]) {
+    let until_word_count = if starts_with_until_end_of_turn(&after_modifier_words) {
         4usize
     } else {
         0usize
@@ -517,7 +517,7 @@ pub(crate) fn parse_get_modifier_values_with_tail(
         && parse_pt_modifier_values(alt_mod).is_ok()
     {
         let alt_tail = &tail_words[2..];
-        if alt_tail.is_empty() || alt_tail == ["until", "end", "of", "turn"] {
+        if alt_tail.is_empty() || is_until_end_of_turn(alt_tail) {
             return Ok((out_power, out_toughness, duration, condition));
         }
     }
