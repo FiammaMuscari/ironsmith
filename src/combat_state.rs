@@ -236,27 +236,36 @@ pub fn end_combat(combat: &mut CombatState) {
 }
 
 fn battlefield_static_abilities(game: &GameState) -> Vec<StaticAbility> {
+    let all_effects = game.all_continuous_effects();
     let mut out = Vec::new();
     for &object_id in &game.battlefield {
-        if let Some(calc) = game.calculated_characteristics(object_id) {
-            out.extend(calc.static_abilities);
-            continue;
-        }
-        if let Some(object) = game.object(object_id) {
-            out.extend(
-                object
-                    .abilities
-                    .iter()
-                    .filter_map(|ability| match &ability.kind {
-                        crate::ability::AbilityKind::Static(static_ability) => {
-                            Some(static_ability.clone())
-                        }
-                        _ => None,
-                    }),
-            );
-        }
+        out.extend(static_abilities_for_object(game, object_id, &all_effects));
     }
     out
+}
+
+fn static_abilities_for_object(
+    game: &GameState,
+    object_id: ObjectId,
+    effects: &[crate::continuous::ContinuousEffect],
+) -> Vec<StaticAbility> {
+    if let Some(calc) = game.calculated_characteristics_with_effects(object_id, effects) {
+        return calc.static_abilities;
+    }
+    game.object(object_id)
+        .map(|object| {
+            object
+                .abilities
+                .iter()
+                .filter_map(|ability| match &ability.kind {
+                    crate::ability::AbilityKind::Static(static_ability) => {
+                        Some(static_ability.clone())
+                    }
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn max_creatures_can_attack_each_combat(game: &GameState) -> Option<usize> {
@@ -310,6 +319,7 @@ pub fn declare_attackers(
 ) -> Result<(), CombatError> {
     let active_player = game.turn.active_player;
     let declared_attackers: Vec<ObjectId> = declarations.iter().map(|(id, _)| *id).collect();
+    let all_effects = game.all_continuous_effects();
     let mut additional_attack_mana_cost = 0u32;
 
     // First pass: validate all declarations
@@ -330,7 +340,11 @@ pub fn declare_attackers(
         }
 
         // Must be a creature
-        if !game.object_has_card_type(*creature_id, crate::types::CardType::Creature) {
+        if !game.object_has_card_type_with_effects(
+            *creature_id,
+            crate::types::CardType::Creature,
+            &all_effects,
+        ) {
             return Err(CombatError::NotACreature(*creature_id));
         }
 
@@ -363,7 +377,11 @@ pub fn declare_attackers(
                     .object(*pw_id)
                     .ok_or_else(|| CombatError::InvalidAttackTarget(target.clone()))?;
                 if pw.zone != Zone::Battlefield
-                    || !game.object_has_card_type(*pw_id, crate::types::CardType::Planeswalker)
+                    || !game.object_has_card_type_with_effects(
+                        *pw_id,
+                        crate::types::CardType::Planeswalker,
+                        &all_effects,
+                    )
                 {
                     return Err(CombatError::InvalidAttackTarget(target.clone()));
                 }
@@ -379,21 +397,7 @@ pub fn declare_attackers(
             return Err(CombatError::CreatureCannotAttack(*creature_id));
         }
 
-        let abilities = game
-            .calculated_characteristics(creature.id)
-            .map(|c| c.static_abilities)
-            .unwrap_or_else(|| {
-                creature
-                    .abilities
-                    .iter()
-                    .filter_map(|ability| match &ability.kind {
-                        crate::ability::AbilityKind::Static(static_ability) => {
-                            Some(static_ability.clone())
-                        }
-                        _ => None,
-                    })
-                    .collect()
-            });
+        let abilities = static_abilities_for_object(game, creature.id, &all_effects);
         for ability in &abilities {
             if let Some(can_attack) = ability.can_attack_with_attacking_group(
                 game,
@@ -515,28 +519,19 @@ pub fn declare_blockers(
     combat: &mut CombatState,
     declarations: Vec<(ObjectId, ObjectId)>,
 ) -> Result<(), CombatError> {
+    let all_effects = game.all_continuous_effects();
+
     // Group blockers by attacker for menace validation
     let mut blockers_by_attacker: HashMap<ObjectId, Vec<ObjectId>> = HashMap::new();
     let mut attackers_by_blocker: HashMap<ObjectId, Vec<ObjectId>> = HashMap::new();
     let mut blocker_counts: HashMap<ObjectId, usize> = HashMap::new();
 
-    fn max_attackers_this_blocker_can_block(game: &GameState, blocker_id: ObjectId) -> usize {
-        let static_abilities = game
-            .calculated_characteristics(blocker_id)
-            .map(|c| c.static_abilities)
-            .unwrap_or_else(|| {
-                game.object(blocker_id)
-                    .map(|o| {
-                        o.abilities
-                            .iter()
-                            .filter_map(|a| match &a.kind {
-                                crate::ability::AbilityKind::Static(sa) => Some(sa.clone()),
-                                _ => None,
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            });
+    fn max_attackers_this_blocker_can_block(
+        game: &GameState,
+        blocker_id: ObjectId,
+        effects: &[crate::continuous::ContinuousEffect],
+    ) -> usize {
+        let static_abilities = static_abilities_for_object(game, blocker_id, effects);
 
         let extra: usize = static_abilities
             .iter()
@@ -553,7 +548,7 @@ pub fn declare_blockers(
             .ok_or(CombatError::NotOnBattlefield(*blocker_id))?;
 
         // Check for blockers declared against too many attackers.
-        let max_attackers = max_attackers_this_blocker_can_block(game, *blocker_id);
+        let max_attackers = max_attackers_this_blocker_can_block(game, *blocker_id, &all_effects);
         let entry = blocker_counts.entry(*blocker_id).or_insert(0);
         *entry += 1;
         if *entry > max_attackers {
@@ -565,7 +560,11 @@ pub fn declare_blockers(
         }
 
         // Must be a creature
-        if !game.object_has_card_type(*blocker_id, crate::types::CardType::Creature) {
+        if !game.object_has_card_type_with_effects(
+            *blocker_id,
+            crate::types::CardType::Creature,
+            &all_effects,
+        ) {
             return Err(CombatError::NotACreature(*blocker_id));
         }
 
@@ -592,8 +591,11 @@ pub fn declare_blockers(
         }
 
         // Check if blocker has "can't block" from abilities or effects
-        if game.object_has_ability(*blocker_id, &StaticAbility::cant_block())
-            || !game.can_block(*blocker_id)
+        if game.object_has_ability_with_effects(
+            *blocker_id,
+            &StaticAbility::cant_block(),
+            &all_effects,
+        ) || !game.can_block(*blocker_id)
         {
             return Err(CombatError::CreatureCannotBlock {
                 blocker: *blocker_id,
@@ -659,7 +661,11 @@ pub fn declare_blockers(
             continue;
         };
         if blocker.zone != Zone::Battlefield
-            || !game.object_has_card_type(blocker_id, crate::types::CardType::Creature)
+            || !game.object_has_card_type_with_effects(
+                blocker_id,
+                crate::types::CardType::Creature,
+                &all_effects,
+            )
             || game.is_tapped(blocker_id)
         {
             continue;
@@ -677,7 +683,11 @@ pub fn declare_blockers(
                 && game.can_block_attacker(blocker_id, required_attacker)
                 && game.can_block(blocker_id)
                 && game.can_be_blocked(required_attacker)
-                && !game.object_has_ability(blocker_id, &StaticAbility::cant_block());
+                && !game.object_has_ability_with_effects(
+                    blocker_id,
+                    &StaticAbility::cant_block(),
+                    &all_effects,
+                );
             if !can_legally_block_required {
                 continue;
             }

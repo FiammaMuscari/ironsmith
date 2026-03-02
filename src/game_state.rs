@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::alternative_cast::CastingMethod;
 use crate::card::Card;
-use crate::continuous::ContinuousEffectManager;
+use crate::continuous::{ContinuousEffect, ContinuousEffectManager};
 use crate::cost::OptionalCostsPaid;
 use crate::decision::KeywordPaymentContribution;
 use crate::events::{Event, EventKind};
@@ -2560,22 +2560,80 @@ impl GameState {
     /// This includes effects from:
     /// - Registered continuous effects (from resolved spells/abilities)
     /// - Static abilities on permanents (generated dynamically)
-    pub fn calculated_characteristics(
+    pub fn all_continuous_effects(&self) -> Vec<ContinuousEffect> {
+        crate::static_ability_processor::get_all_continuous_effects(self)
+    }
+
+    /// Calculate all characteristics for an object using precomputed continuous effects.
+    ///
+    /// This avoids rebuilding/allocating the full effect list when multiple
+    /// characteristic lookups happen in the same operation.
+    pub fn calculated_characteristics_with_effects(
         &self,
         id: ObjectId,
+        effects: &[ContinuousEffect],
     ) -> Option<crate::continuous::CalculatedCharacteristics> {
-        // Get all continuous effects including those generated from static abilities
-        let all_effects = crate::static_ability_processor::get_all_continuous_effects(self);
-
-        // Use the calculation function that takes effects directly
         crate::continuous::calculate_characteristics_with_effects(
             id,
             &self.objects,
-            &all_effects,
+            effects,
             &self.battlefield,
             &self.commanders,
             self,
         )
+    }
+
+    pub fn calculated_characteristics(
+        &self,
+        id: ObjectId,
+    ) -> Option<crate::continuous::CalculatedCharacteristics> {
+        let all_effects = self.all_continuous_effects();
+        self.calculated_characteristics_with_effects(id, &all_effects)
+    }
+
+    /// Check if an object has a specific static ability using precomputed effects.
+    pub fn object_has_ability_with_effects(
+        &self,
+        id: ObjectId,
+        ability: &StaticAbility,
+        effects: &[ContinuousEffect],
+    ) -> bool {
+        self.calculated_characteristics_with_effects(id, effects)
+            .map(|c| c.static_abilities.contains(ability))
+            .unwrap_or(false)
+    }
+
+    /// Check if an object has a specific card type using precomputed effects.
+    pub fn object_has_card_type_with_effects(
+        &self,
+        id: ObjectId,
+        card_type: crate::types::CardType,
+        effects: &[ContinuousEffect],
+    ) -> bool {
+        self.calculated_characteristics_with_effects(id, effects)
+            .map(|c| c.card_types.contains(&card_type))
+            .unwrap_or(false)
+    }
+
+    /// Get calculated subtypes using precomputed effects.
+    pub fn calculated_subtypes_with_effects(
+        &self,
+        id: ObjectId,
+        effects: &[ContinuousEffect],
+    ) -> Vec<crate::types::Subtype> {
+        self.calculated_characteristics_with_effects(id, effects)
+            .map(|c| c.subtypes)
+            .unwrap_or_default()
+    }
+
+    /// Get calculated toughness using precomputed effects.
+    pub fn calculated_toughness_with_effects(
+        &self,
+        id: ObjectId,
+        effects: &[ContinuousEffect],
+    ) -> Option<i32> {
+        self.calculated_characteristics_with_effects(id, effects)
+            .and_then(|c| c.toughness)
     }
 
     /// Get the calculated power of a creature (with continuous effects applied).

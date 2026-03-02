@@ -46,7 +46,7 @@ use crate::game_state::GameState;
 pub fn generate_continuous_effects_from_static_abilities(
     game: &GameState,
 ) -> Vec<ContinuousEffect> {
-    let mut effects = Vec::new();
+    let mut effects = Vec::with_capacity(game.battlefield.len());
 
     // Iterate over all permanents on the battlefield
     for &permanent_id in &game.battlefield {
@@ -97,6 +97,7 @@ pub fn get_all_continuous_effects(game: &GameState) -> Vec<ContinuousEffect> {
 
     // Add effects from static abilities
     let static_effects = generate_continuous_effects_from_static_abilities(game);
+    effects.reserve(static_effects.len());
     effects.extend(static_effects);
 
     effects

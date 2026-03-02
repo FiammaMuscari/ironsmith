@@ -80,15 +80,16 @@ pub enum LoseReason {
 /// State-based actions happen simultaneously.
 pub fn check_state_based_actions(game: &GameState) -> Vec<StateBasedAction> {
     let mut actions = Vec::new();
+    let all_effects = game.all_continuous_effects();
 
     // Check player state-based actions
     check_player_sbas(game, &mut actions);
 
     // Check permanent state-based actions
-    check_permanent_sbas(game, &mut actions);
+    check_permanent_sbas(game, &all_effects, &mut actions);
 
     // Check Role Aura uniqueness (one Role Aura per controller per permanent)
-    check_role_sbas(game, &mut actions);
+    check_role_sbas(game, &all_effects, &mut actions);
 
     // Check token/copy cleanup
     check_token_cleanup(game, &mut actions);
@@ -135,24 +136,35 @@ fn check_player_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
 }
 
 /// Check permanent-related state-based actions.
-fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
+fn check_permanent_sbas(
+    game: &GameState,
+    all_effects: &[crate::continuous::ContinuousEffect],
+    actions: &mut Vec<StateBasedAction>,
+) {
     for &obj_id in &game.battlefield {
         let Some(obj) = game.object(obj_id) else {
             continue;
         };
-        let calculated_subtypes = game.calculated_subtypes(obj_id);
+        let calculated_subtypes = game.calculated_subtypes_with_effects(obj_id, all_effects);
 
         // Creature with 0 or less toughness dies (unless indestructible)
         // Check both:
         // 1. CantEffectTracker (catches indestructibility from external sources)
         // 2. Direct ability check (in case tracker hasn't been refreshed)
         // IMPORTANT: Use calculated_toughness to account for counters and effects!
-        if game.object_has_card_type(obj_id, CardType::Creature) {
+        if game.object_has_card_type_with_effects(obj_id, CardType::Creature, all_effects) {
             let is_indestructible = !game.can_be_destroyed(obj_id)
+                || game
+                    .calculated_characteristics_with_effects(obj.id, all_effects)
+                    .is_some_and(|c| {
+                        c.static_abilities
+                            .iter()
+                            .any(|ability| ability.id() == StaticAbilityId::Indestructible)
+                    })
                 || game.object_has_static_ability_id(obj.id, StaticAbilityId::Indestructible);
 
             // Use calculated toughness to include -1/-1 counters, pump effects, etc.
-            if let Some(toughness) = game.calculated_toughness(obj_id)
+            if let Some(toughness) = game.calculated_toughness_with_effects(obj_id, all_effects)
                 && toughness <= 0
                 && !is_indestructible
             {
@@ -163,7 +175,7 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
             // Creature with lethal damage dies (unless indestructible)
             let damage_marked = game.damage_on(obj_id);
             let toughness_for_lethal = game
-                .calculated_toughness(obj_id)
+                .calculated_toughness_with_effects(obj_id, all_effects)
                 .or_else(|| obj.toughness());
             if toughness_for_lethal
                 .is_some_and(|toughness| toughness > 0 && damage_marked >= toughness as u32)
@@ -175,7 +187,7 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
         }
 
         // Planeswalker with 0 or less loyalty
-        if game.object_has_card_type(obj_id, CardType::Planeswalker) {
+        if game.object_has_card_type_with_effects(obj_id, CardType::Planeswalker, all_effects) {
             let loyalty_counters = obj
                 .counters
                 .get(&CounterType::Loyalty)
@@ -188,7 +200,7 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
         }
 
         // Aura not attached to anything or attached to illegal permanent
-        if game.object_has_card_type(obj_id, CardType::Enchantment)
+        if game.object_has_card_type_with_effects(obj_id, CardType::Enchantment, all_effects)
             && calculated_subtypes.contains(&Subtype::Aura)
         {
             if obj.attached_to.is_none() {
@@ -224,12 +236,16 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
         }
 
         // Equipment not attached to a creature
-        if game.object_has_card_type(obj_id, CardType::Artifact)
+        if game.object_has_card_type_with_effects(obj_id, CardType::Artifact, all_effects)
             && calculated_subtypes.contains(&Subtype::Equipment)
             && let Some(attached_id) = obj.attached_to
         {
             if game.object(attached_id).is_some() {
-                if !game.object_has_card_type(attached_id, CardType::Creature) {
+                if !game.object_has_card_type_with_effects(
+                    attached_id,
+                    CardType::Creature,
+                    all_effects,
+                ) {
                     actions.push(StateBasedAction::EquipmentFallsOff(obj_id));
                 }
             } else {
@@ -260,7 +276,11 @@ fn check_permanent_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
 /// Per MTG rule 704.5y: if a permanent has multiple Role Auras attached that are
 /// controlled by the same player, the one with the most recent timestamp stays
 /// and the others are put into their owners' graveyards.
-fn check_role_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
+fn check_role_sbas(
+    game: &GameState,
+    all_effects: &[crate::continuous::ContinuousEffect],
+    actions: &mut Vec<StateBasedAction>,
+) {
     use std::collections::HashMap;
 
     let mut roles_by_target_and_controller: HashMap<(ObjectId, PlayerId), Vec<ObjectId>> =
@@ -270,10 +290,10 @@ fn check_role_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
         let Some(obj) = game.object(obj_id) else {
             continue;
         };
-        if !game.object_has_card_type(obj_id, CardType::Enchantment) {
+        if !game.object_has_card_type_with_effects(obj_id, CardType::Enchantment, all_effects) {
             continue;
         }
-        let calculated_subtypes = game.calculated_subtypes(obj_id);
+        let calculated_subtypes = game.calculated_subtypes_with_effects(obj_id, all_effects);
         if !calculated_subtypes.contains(&Subtype::Aura)
             || !calculated_subtypes.contains(&Subtype::Role)
         {
@@ -463,6 +483,8 @@ pub fn apply_state_based_actions_with(
         return false;
     }
 
+    let all_effects = game.all_continuous_effects();
+
     // Per Rule 704.7, pre-capture snapshots for all dying creatures BEFORE
     // any state-based actions are applied. This ensures LKI is derived from
     // the game state before any SBAs were performed.
@@ -473,7 +495,11 @@ pub fn apply_state_based_actions_with(
                 game.object(*obj_id).map(|obj| {
                     (
                         *obj_id,
-                        ObjectSnapshot::from_object_with_calculated_characteristics(obj, game),
+                        ObjectSnapshot::from_object_with_calculated_characteristics_and_effects(
+                            obj,
+                            game,
+                            &all_effects,
+                        ),
                     )
                 })
             } else {

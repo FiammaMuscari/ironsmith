@@ -1088,6 +1088,7 @@ pub fn calculate_effective_activation_mana_cost(
     let Some(ability_source_object) = game.object(ability_source) else {
         return adjusted;
     };
+    let all_effects = game.all_continuous_effects();
 
     for &perm_id in &game.battlefield {
         let Some(perm) = game.object(perm_id) else {
@@ -1100,7 +1101,7 @@ pub fn calculate_effective_activation_mana_cost(
             .with_opponents(opponents_of(game, controller));
 
         let static_abilities = game
-            .calculated_characteristics(perm_id)
+            .calculated_characteristics_with_effects(perm_id, &all_effects)
             .map(|c| c.static_abilities)
             .unwrap_or_else(|| {
                 perm.abilities

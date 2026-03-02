@@ -912,7 +912,7 @@ fn calculate_with_layers_direct_internal(
     add_abilities_from_counters(object, &mut chars);
 
     // Group effects by layer for dependency-aware sorting within each layer
-    let mut effects_by_layer: HashMap<Layer, Vec<&ContinuousEffect>> = HashMap::new();
+    let mut effects_by_layer: HashMap<Layer, Vec<&ContinuousEffect>> = HashMap::with_capacity(7);
     for effect in effects {
         effects_by_layer
             .entry(effect.modification.layer())
@@ -935,15 +935,15 @@ fn calculate_with_layers_direct_internal(
 
     for layer in layers_1_to_6 {
         let layer_effects = match effects_by_layer.get(&layer) {
-            Some(effects) => effects.clone(),
+            Some(effects) => effects,
             None => continue,
         };
 
         // Apply dependency-aware sorting within this layer
         let sorted_effects = match sort_mode {
-            DependencySortMode::Heuristic => sort_layer_effects(&layer_effects),
+            DependencySortMode::Heuristic => sort_layer_effects(layer_effects),
             DependencySortMode::Baseline => {
-                if needs_baseline_dependency_sort(&layer_effects) {
+                if needs_baseline_dependency_sort(layer_effects) {
                     let baseline = build_layer_baseline(
                         objects,
                         effects,
@@ -953,9 +953,9 @@ fn calculate_with_layers_direct_internal(
                         layer,
                         None,
                     );
-                    sort_layer_effects_with_baseline(&layer_effects, &baseline, objects, game)
+                    sort_layer_effects_with_baseline(layer_effects, &baseline, objects, game)
                 } else {
-                    sort_layer_effects(&layer_effects)
+                    sort_layer_effects(layer_effects)
                 }
             }
         };
@@ -1608,10 +1608,10 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
 
     // Get all effects sorted by layer/sublayer/timestamp
     let effects = ctx.effects.effects_sorted();
-    let all_effects: Vec<ContinuousEffect> = effects.iter().map(|e| (*e).clone()).collect();
+    let mut all_effects: Option<Vec<ContinuousEffect>> = None;
 
     // Group effects by layer for dependency-aware sorting within each layer
-    let mut effects_by_layer: HashMap<Layer, Vec<&ContinuousEffect>> = HashMap::new();
+    let mut effects_by_layer: HashMap<Layer, Vec<&ContinuousEffect>> = HashMap::with_capacity(7);
     for effect in &effects {
         effects_by_layer
             .entry(effect.modification.layer())
@@ -1635,26 +1635,28 @@ fn calculate_with_layers(object: &Object, ctx: &CalculationContext) -> Calculate
 
     for layer in layers {
         let layer_effects = match effects_by_layer.get(&layer) {
-            Some(effects) => effects.clone(),
+            Some(effects) => effects,
             None => continue,
         };
 
         // Apply dependency-aware sorting within this layer
         // This handles Rule 613.8 - effects that depend on each other
         let sorted_effects = {
-            if needs_baseline_dependency_sort(&layer_effects) {
+            if needs_baseline_dependency_sort(layer_effects) {
+                let all_effects = all_effects
+                    .get_or_insert_with(|| effects.iter().map(|e| (*e).clone()).collect());
                 let baseline = build_layer_baseline(
                     ctx.objects,
-                    &all_effects,
+                    all_effects,
                     ctx.battlefield,
                     &ctx.game.commanders,
                     ctx.game,
                     layer,
                     None,
                 );
-                sort_layer_effects_with_baseline(&layer_effects, &baseline, ctx.objects, ctx.game)
+                sort_layer_effects_with_baseline(layer_effects, &baseline, ctx.objects, ctx.game)
             } else {
-                sort_layer_effects(&layer_effects)
+                sort_layer_effects(layer_effects)
             }
         };
 
@@ -1958,7 +1960,7 @@ fn apply_layer_7_effects(
     use crate::dependency::sort_layer_effects_with_baseline;
 
     let effects = ctx.effects.effects_sorted();
-    let all_effects: Vec<ContinuousEffect> = effects.iter().map(|e| (*e).clone()).collect();
+    let mut all_effects: Option<Vec<ContinuousEffect>> = None;
 
     // Track P/T through sublayers
     let mut power = chars.power;
@@ -1966,7 +1968,8 @@ fn apply_layer_7_effects(
 
     // Collect all Layer 7 effects that apply to this object
     let pt_effects: Vec<&ContinuousEffect> = effects
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|e| e.modification.layer() == Layer::PowerToughness)
         .filter(|e| effect_applies_to(e, object, chars, ctx))
         .collect();
@@ -1974,9 +1977,11 @@ fn apply_layer_7_effects(
     // Sort by sublayer with dependency handling inside each sublayer.
     let pt_effects = {
         if needs_baseline_dependency_sort(&pt_effects) {
+            let all_effects =
+                all_effects.get_or_insert_with(|| effects.iter().map(|e| (*e).clone()).collect());
             let baseline = build_layer_baseline(
                 ctx.objects,
-                &all_effects,
+                all_effects,
                 ctx.battlefield,
                 &ctx.game.commanders,
                 ctx.game,
@@ -2189,6 +2194,127 @@ fn effect_applies_to(
     }
 }
 
+fn continuous_filter_context(
+    controller: PlayerId,
+    source: ObjectId,
+) -> crate::target::FilterContext {
+    crate::target::FilterContext {
+        you: Some(controller),
+        source: Some(source),
+        caster: None,
+        active_player: None,
+        opponents: Vec::new(),
+        teammates: Vec::new(),
+        defending_player: None,
+        attacking_player: None,
+        your_commanders: Vec::new(),
+        iterated_player: None,
+        target_players: Vec::new(),
+        tagged_objects: std::collections::HashMap::new(),
+    }
+}
+
+fn for_each_zone_candidate(
+    ctx: &CalculationContext<'_>,
+    zone: Zone,
+    mut visitor: impl FnMut(&Object),
+) {
+    match zone {
+        Zone::Battlefield => {
+            for &id in &ctx.game.battlefield {
+                if let Some(obj) = ctx.objects.get(&id) {
+                    visitor(obj);
+                }
+            }
+        }
+        Zone::Graveyard => {
+            for player in &ctx.game.players {
+                for &id in &player.graveyard {
+                    if let Some(obj) = ctx.objects.get(&id) {
+                        visitor(obj);
+                    }
+                }
+            }
+        }
+        Zone::Hand => {
+            for player in &ctx.game.players {
+                for &id in &player.hand {
+                    if let Some(obj) = ctx.objects.get(&id) {
+                        visitor(obj);
+                    }
+                }
+            }
+        }
+        Zone::Library => {
+            for player in &ctx.game.players {
+                for &id in &player.library {
+                    if let Some(obj) = ctx.objects.get(&id) {
+                        visitor(obj);
+                    }
+                }
+            }
+        }
+        Zone::Stack => {
+            for entry in &ctx.game.stack {
+                if let Some(obj) = ctx.objects.get(&entry.object_id) {
+                    visitor(obj);
+                }
+            }
+        }
+        Zone::Exile => {
+            for &id in &ctx.game.exile {
+                if let Some(obj) = ctx.objects.get(&id) {
+                    visitor(obj);
+                }
+            }
+        }
+        Zone::Command => {
+            for &id in &ctx.game.command_zone {
+                if let Some(obj) = ctx.objects.get(&id) {
+                    visitor(obj);
+                }
+            }
+        }
+    }
+}
+
+fn for_each_filter_candidate(
+    ctx: &CalculationContext<'_>,
+    filter: &ObjectFilter,
+    mut visitor: impl FnMut(&Object),
+) {
+    // Fast path: explicit zone filters and default-battlefield filters can be
+    // scanned directly without allocating a candidate ID vector.
+    if let Some(zone) = filter.zone {
+        for_each_zone_candidate(ctx, zone, visitor);
+        return;
+    }
+    if filter.any_of.is_empty() {
+        for_each_zone_candidate(ctx, Zone::Battlefield, visitor);
+        return;
+    }
+
+    for id in candidate_ids_for_filter(ctx.game, filter) {
+        if let Some(obj) = ctx.objects.get(&id) {
+            visitor(obj);
+        }
+    }
+}
+
+fn count_filter_matches(
+    filter: &ObjectFilter,
+    ctx: &CalculationContext<'_>,
+    filter_ctx: &crate::target::FilterContext,
+) -> i32 {
+    let mut count = 0i32;
+    for_each_filter_candidate(ctx, filter, |obj| {
+        if filter.matches_non_recursive(obj, filter_ctx, ctx.game) {
+            count += 1;
+        }
+    });
+    count
+}
+
 /// Resolve a Value to an i32 for continuous effect calculations.
 ///
 /// This is used during layer system calculations where we have access to game objects
@@ -2199,8 +2325,6 @@ fn resolve_value_with_context(
     source: ObjectId,
     controller: PlayerId,
 ) -> i32 {
-    use crate::target::FilterContext;
-
     match value {
         Value::Fixed(n) => *n,
         Value::Add(left, right) => {
@@ -2211,104 +2335,40 @@ fn resolve_value_with_context(
         Value::X => 0, // X is 0 unless specified (resolved at cast time, not layer time)
 
         Value::Count(filter) => {
-            let filter_ctx = FilterContext {
-                you: Some(controller),
-                source: Some(source),
-                caster: None,
-                active_player: None,
-                opponents: Vec::new(), // Would need game state for full resolution
-                teammates: Vec::new(),
-                defending_player: None,
-                attacking_player: None,
-                your_commanders: Vec::new(),
-                iterated_player: None,
-                target_players: Vec::new(),
-                tagged_objects: std::collections::HashMap::new(),
-            };
-
-            candidate_ids_for_filter(ctx.game, filter)
-                .iter()
-                .filter_map(|id| ctx.objects.get(id))
-                .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, ctx.game))
-                .count() as i32
+            let filter_ctx = continuous_filter_context(controller, source);
+            count_filter_matches(filter, ctx, &filter_ctx)
         }
         Value::CountScaled(filter, multiplier) => {
-            let filter_ctx = FilterContext {
-                you: Some(controller),
-                source: Some(source),
-                caster: None,
-                active_player: None,
-                opponents: Vec::new(),
-                teammates: Vec::new(),
-                defending_player: None,
-                attacking_player: None,
-                your_commanders: Vec::new(),
-                iterated_player: None,
-                target_players: Vec::new(),
-                tagged_objects: std::collections::HashMap::new(),
-            };
-
-            let count = candidate_ids_for_filter(ctx.game, filter)
-                .iter()
-                .filter_map(|id| ctx.objects.get(id))
-                .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, ctx.game))
-                .count() as i32;
+            let filter_ctx = continuous_filter_context(controller, source);
+            let count = count_filter_matches(filter, ctx, &filter_ctx);
             count * *multiplier
         }
         Value::BasicLandTypesAmong(filter) => {
             use std::collections::HashSet;
 
-            let filter_ctx = FilterContext {
-                you: Some(controller),
-                source: Some(source),
-                caster: None,
-                active_player: None,
-                opponents: Vec::new(),
-                teammates: Vec::new(),
-                defending_player: None,
-                attacking_player: None,
-                your_commanders: Vec::new(),
-                iterated_player: None,
-                target_players: Vec::new(),
-                tagged_objects: std::collections::HashMap::new(),
-            };
+            let filter_ctx = continuous_filter_context(controller, source);
 
             let mut seen = HashSet::new();
-            for obj in candidate_ids_for_filter(ctx.game, filter)
-                .iter()
-                .filter_map(|id| ctx.objects.get(id))
-                .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, ctx.game))
-            {
-                for subtype in &obj.subtypes {
-                    if matches!(
-                        subtype,
-                        Subtype::Plains
-                            | Subtype::Island
-                            | Subtype::Swamp
-                            | Subtype::Mountain
-                            | Subtype::Forest
-                    ) {
-                        seen.insert(subtype.clone());
+            for_each_filter_candidate(ctx, filter, |obj| {
+                if filter.matches_non_recursive(obj, &filter_ctx, ctx.game) {
+                    for subtype in &obj.subtypes {
+                        if matches!(
+                            subtype,
+                            Subtype::Plains
+                                | Subtype::Island
+                                | Subtype::Swamp
+                                | Subtype::Mountain
+                                | Subtype::Forest
+                        ) {
+                            seen.insert(subtype.clone());
+                        }
                     }
                 }
-            }
+            });
             seen.len() as i32
         }
         Value::ColorsAmong(filter) => {
-            let filter_ctx = FilterContext {
-                you: Some(controller),
-                source: Some(source),
-                caster: None,
-                active_player: None,
-                opponents: Vec::new(),
-                teammates: Vec::new(),
-                defending_player: None,
-                attacking_player: None,
-                your_commanders: Vec::new(),
-                iterated_player: None,
-                target_players: Vec::new(),
-                tagged_objects: std::collections::HashMap::new(),
-            };
+            let filter_ctx = continuous_filter_context(controller, source);
 
             let mut has_white = false;
             let mut has_blue = false;
@@ -2316,18 +2376,16 @@ fn resolve_value_with_context(
             let mut has_red = false;
             let mut has_green = false;
 
-            for obj in candidate_ids_for_filter(ctx.game, filter)
-                .iter()
-                .filter_map(|id| ctx.objects.get(id))
-                .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, ctx.game))
-            {
-                let colors = obj.colors();
-                has_white |= colors.contains(crate::color::Color::White);
-                has_blue |= colors.contains(crate::color::Color::Blue);
-                has_black |= colors.contains(crate::color::Color::Black);
-                has_red |= colors.contains(crate::color::Color::Red);
-                has_green |= colors.contains(crate::color::Color::Green);
-            }
+            for_each_filter_candidate(ctx, filter, |obj| {
+                if filter.matches_non_recursive(obj, &filter_ctx, ctx.game) {
+                    let colors = obj.colors();
+                    has_white |= colors.contains(crate::color::Color::White);
+                    has_blue |= colors.contains(crate::color::Color::Blue);
+                    has_black |= colors.contains(crate::color::Color::Black);
+                    has_red |= colors.contains(crate::color::Color::Red);
+                    has_green |= colors.contains(crate::color::Color::Green);
+                }
+            });
 
             (has_white as i32)
                 + (has_blue as i32)
@@ -2338,47 +2396,19 @@ fn resolve_value_with_context(
         Value::DistinctNames(filter) => {
             use std::collections::HashSet;
 
-            let filter_ctx = FilterContext {
-                you: Some(controller),
-                source: Some(source),
-                caster: None,
-                active_player: None,
-                opponents: Vec::new(),
-                teammates: Vec::new(),
-                defending_player: None,
-                attacking_player: None,
-                your_commanders: Vec::new(),
-                iterated_player: None,
-                target_players: Vec::new(),
-                tagged_objects: std::collections::HashMap::new(),
-            };
+            let filter_ctx = continuous_filter_context(controller, source);
 
-            let mut seen: HashSet<&str> = HashSet::new();
-            for obj in candidate_ids_for_filter(ctx.game, filter)
-                .iter()
-                .filter_map(|id| ctx.objects.get(id))
-                .filter(|obj| filter.matches_non_recursive(obj, &filter_ctx, ctx.game))
-            {
-                seen.insert(obj.name.as_str());
-            }
+            let mut seen: HashSet<String> = HashSet::new();
+            for_each_filter_candidate(ctx, filter, |obj| {
+                if filter.matches_non_recursive(obj, &filter_ctx, ctx.game) {
+                    seen.insert(obj.name.clone());
+                }
+            });
             seen.len() as i32
         }
         Value::CreaturesDiedThisTurn => ctx.game.creatures_died_this_turn as i32,
         Value::CreaturesDiedThisTurnControlledBy(player_filter) => {
-            let filter_ctx = FilterContext {
-                you: Some(controller),
-                source: Some(source),
-                caster: None,
-                active_player: None,
-                opponents: Vec::new(),
-                teammates: Vec::new(),
-                defending_player: None,
-                attacking_player: None,
-                your_commanders: Vec::new(),
-                iterated_player: None,
-                target_players: Vec::new(),
-                tagged_objects: std::collections::HashMap::new(),
-            };
+            let filter_ctx = continuous_filter_context(controller, source);
             let mut total = 0i32;
             for player in ctx.game.players.iter().filter(|p| p.is_in_game()) {
                 if !player_filter.matches_player(player.id, &filter_ctx) {
@@ -2412,35 +2442,40 @@ fn resolve_value_with_context(
             .map(|o| o.counters.get(counter_type).copied().unwrap_or(0) as i32)
             .unwrap_or(0),
 
-        Value::MaxCardsInHand(player_filter) => {
-            let players: Vec<crate::ids::PlayerId> = match player_filter {
-                crate::target::PlayerFilter::You => vec![controller],
-                crate::target::PlayerFilter::Any => ctx
-                    .game
-                    .players
-                    .iter()
-                    .filter(|p| p.is_in_game())
-                    .map(|p| p.id)
-                    .collect(),
-                crate::target::PlayerFilter::NotYou | crate::target::PlayerFilter::Opponent => ctx
-                    .game
-                    .players
-                    .iter()
-                    .filter(|p| p.id != controller && p.is_in_game())
-                    .map(|p| p.id)
-                    .collect(),
-                crate::target::PlayerFilter::Specific(id) => vec![*id],
-                crate::target::PlayerFilter::Active => vec![ctx.game.turn.active_player],
-                _ => Vec::new(),
-            };
-
-            players
-                .into_iter()
-                .filter_map(|pid| ctx.game.player(pid))
+        Value::MaxCardsInHand(player_filter) => match player_filter {
+            crate::target::PlayerFilter::You => ctx
+                .game
+                .player(controller)
+                .map(|p| p.hand.len() as i32)
+                .unwrap_or(0),
+            crate::target::PlayerFilter::Any => ctx
+                .game
+                .players
+                .iter()
+                .filter(|p| p.is_in_game())
                 .map(|p| p.hand.len() as i32)
                 .max()
-                .unwrap_or(0)
-        }
+                .unwrap_or(0),
+            crate::target::PlayerFilter::NotYou | crate::target::PlayerFilter::Opponent => ctx
+                .game
+                .players
+                .iter()
+                .filter(|p| p.id != controller && p.is_in_game())
+                .map(|p| p.hand.len() as i32)
+                .max()
+                .unwrap_or(0),
+            crate::target::PlayerFilter::Specific(id) => ctx
+                .game
+                .player(*id)
+                .map(|p| p.hand.len() as i32)
+                .unwrap_or(0),
+            crate::target::PlayerFilter::Active => ctx
+                .game
+                .player(ctx.game.turn.active_player)
+                .map(|p| p.hand.len() as i32)
+                .unwrap_or(0),
+            _ => 0,
+        },
 
         // For these, we'd need more complex resolution (game state, execution context)
         // Return 0 as fallback (these are rare in continuous effects anyway)
@@ -2497,27 +2532,27 @@ fn build_layer_baseline(
     layer: Layer,
     sublayer: Option<PtSublayer>,
 ) -> HashMap<ObjectId, CalculatedCharacteristics> {
-    let filtered: Vec<ContinuousEffect> = effects
-        .iter()
-        .filter(|&effect| {
-            let effect_layer = effect.modification.layer();
-            if effect_layer < layer {
-                return true;
+    let mut filtered: Vec<ContinuousEffect> = Vec::with_capacity(effects.len());
+    for effect in effects {
+        let effect_layer = effect.modification.layer();
+        let include = if effect_layer < layer {
+            true
+        } else if layer == Layer::PowerToughness && effect_layer == Layer::PowerToughness {
+            if let Some(current_sublayer) = sublayer {
+                effect.modification.pt_sublayer() < Some(current_sublayer)
+            } else {
+                false
             }
-
-            if layer == Layer::PowerToughness
-                && effect_layer == Layer::PowerToughness
-                && let Some(current_sublayer) = sublayer
-            {
-                return effect.modification.pt_sublayer() < Some(current_sublayer);
-            }
-
+        } else {
             false
-        })
-        .cloned()
-        .collect();
+        };
 
-    let mut baseline = HashMap::new();
+        if include {
+            filtered.push(effect.clone());
+        }
+    }
+
+    let mut baseline = HashMap::with_capacity(objects.len());
     for &id in objects.keys() {
         if let Some(chars) = calculate_characteristics_with_effects_simple(
             id,

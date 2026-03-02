@@ -1155,7 +1155,7 @@ pub fn sort_with_dependencies<'a>(effects: &[&'a ContinuousEffect]) -> Vec<&'a C
 
     // Build dependency graph: dependencies[i] contains effects that i depends on
     // If A depends on B, B must come before A in the result
-    let mut depends_on: HashMap<usize, HashSet<usize>> = HashMap::new();
+    let mut depends_on: HashMap<usize, HashSet<usize>> = HashMap::with_capacity(effects.len());
     for i in 0..effects.len() {
         depends_on.insert(i, HashSet::new());
     }
@@ -1195,7 +1195,7 @@ pub fn sort_with_dependencies<'a>(effects: &[&'a ContinuousEffect]) -> Vec<&'a C
     }
 
     // Build reverse map: depended_by[j] = effects that depend on j
-    let mut depended_by: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut depended_by: HashMap<usize, Vec<usize>> = HashMap::with_capacity(effects.len());
     for i in 0..effects.len() {
         depended_by.insert(i, Vec::new());
     }
@@ -1205,7 +1205,7 @@ pub fn sort_with_dependencies<'a>(effects: &[&'a ContinuousEffect]) -> Vec<&'a C
         }
     }
 
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(effects.len());
     let mut ready: Vec<usize> = (0..effects.len()).filter(|&i| in_degree[i] == 0).collect();
 
     // Sort ready queue so oldest timestamp is popped first.
@@ -1251,7 +1251,8 @@ pub fn needs_baseline_dependency_sort(effects: &[&ContinuousEffect]) -> bool {
     }
 
     // Dependencies are only meaningful within the same P/T sublayer.
-    let mut by_sublayer: HashMap<Option<PtSublayer>, Vec<&ContinuousEffect>> = HashMap::new();
+    let mut by_sublayer: HashMap<Option<PtSublayer>, Vec<&ContinuousEffect>> =
+        HashMap::with_capacity(4);
     for &effect in effects {
         by_sublayer
             .entry(effect.modification.pt_sublayer())
@@ -1360,7 +1361,8 @@ pub fn sort_layer_effects_with_baseline<'a>(
 
     if layer == Layer::PowerToughness {
         // Group by sublayer
-        let mut by_sublayer: HashMap<Option<PtSublayer>, Vec<&ContinuousEffect>> = HashMap::new();
+        let mut by_sublayer: HashMap<Option<PtSublayer>, Vec<&ContinuousEffect>> =
+            HashMap::with_capacity(4);
         for &effect in effects {
             let sublayer = effect.modification.pt_sublayer();
             by_sublayer.entry(sublayer).or_default().push(effect);
@@ -1369,7 +1371,7 @@ pub fn sort_layer_effects_with_baseline<'a>(
         let mut sublayers: Vec<_> = by_sublayer.keys().cloned().collect();
         sublayers.sort();
 
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(effects.len());
         for sublayer in sublayers {
             let sublayer_effects = &by_sublayer[&sublayer];
             let sorted =
@@ -1393,7 +1395,7 @@ fn sort_with_dependencies_with_baseline<'a>(
         return effects.to_vec();
     }
 
-    let mut depends_on: HashMap<usize, HashSet<usize>> = HashMap::new();
+    let mut depends_on: HashMap<usize, HashSet<usize>> = HashMap::with_capacity(effects.len());
     for i in 0..effects.len() {
         depends_on.insert(i, HashSet::new());
     }
@@ -1427,7 +1429,7 @@ fn sort_with_dependencies_with_baseline<'a>(
         in_degree[*i] = deps.len();
     }
 
-    let mut depended_by: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut depended_by: HashMap<usize, Vec<usize>> = HashMap::with_capacity(effects.len());
     for i in 0..effects.len() {
         depended_by.insert(i, Vec::new());
     }
@@ -1437,7 +1439,7 @@ fn sort_with_dependencies_with_baseline<'a>(
         }
     }
 
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(effects.len());
     let mut ready: Vec<usize> = (0..effects.len()).filter(|&i| in_degree[i] == 0).collect();
 
     ready.sort_by_key(|&i| std::cmp::Reverse(effects[i].timestamp));

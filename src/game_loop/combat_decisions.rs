@@ -49,7 +49,33 @@ fn generic_mana_cost(amount: u32) -> crate::mana::ManaCost {
     crate::mana::ManaCost::from_pips(pips)
 }
 
-fn generic_attack_tax_per_attacker_against_player(game: &GameState, defending_player: PlayerId) -> u32 {
+fn static_abilities_for_object_with_effects(
+    game: &GameState,
+    object_id: ObjectId,
+    effects: &[crate::continuous::ContinuousEffect],
+) -> Vec<crate::static_abilities::StaticAbility> {
+    if let Some(calc) = game.calculated_characteristics_with_effects(object_id, effects) {
+        return calc.static_abilities;
+    }
+    game.object(object_id)
+        .map(|object| {
+            object
+                .abilities
+                .iter()
+                .filter_map(|ability| match &ability.kind {
+                    AbilityKind::Static(static_ability) => Some(static_ability.clone()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn generic_attack_tax_per_attacker_against_player(
+    game: &GameState,
+    defending_player: PlayerId,
+    effects: &[crate::continuous::ContinuousEffect],
+) -> u32 {
     let mut tax = 0u32;
 
     for &object_id in &game.battlefield {
@@ -60,19 +86,7 @@ fn generic_attack_tax_per_attacker_against_player(game: &GameState, defending_pl
             continue;
         }
 
-        let abilities = game
-            .calculated_characteristics(object_id)
-            .map(|c| c.static_abilities)
-            .unwrap_or_else(|| {
-                object
-                    .abilities
-                    .iter()
-                    .filter_map(|ability| match &ability.kind {
-                        AbilityKind::Static(static_ability) => Some(static_ability.clone()),
-                        _ => None,
-                    })
-                    .collect()
-            });
+        let abilities = static_abilities_for_object_with_effects(game, object_id, effects);
 
         for ability in abilities {
             if let Some(per_attacker_tax) =
@@ -97,10 +111,14 @@ pub fn apply_attacker_declarations(
     use crate::triggers::AttackEventTarget;
     use std::collections::{HashMap, HashSet};
 
+    let all_effects = game.all_continuous_effects();
+
     // Validate that all creatures with "must attack if able" are declared
     let legal_attackers = compute_legal_attackers(game, combat);
     let declared_creatures: HashSet<ObjectId> = declarations.iter().map(|d| d.creature).collect();
     let attacking_creatures: Vec<ObjectId> = declarations.iter().map(|d| d.creature).collect();
+    let mut attacker_static_abilities: HashMap<ObjectId, Vec<crate::static_abilities::StaticAbility>> =
+        HashMap::new();
 
     if declarations.len() == 1 && !game.can_attack_alone(declarations[0].creature) {
         return Err(ResponseError::InvalidAttackers(
@@ -150,19 +168,7 @@ pub fn apply_attacker_declarations(
             return Err(ResponseError::InvalidAttackers("Not a creature".to_string()).into());
         }
 
-        let abilities = game
-            .calculated_characteristics(creature.id)
-            .map(|c| c.static_abilities)
-            .unwrap_or_else(|| {
-                creature
-                    .abilities
-                    .iter()
-                    .filter_map(|ability| match &ability.kind {
-                        AbilityKind::Static(static_ability) => Some(static_ability.clone()),
-                        _ => None,
-                    })
-                    .collect()
-            });
+        let abilities = static_abilities_for_object_with_effects(game, creature.id, &all_effects);
         for ability in &abilities {
             if let Some(can_attack) = ability.can_attack_with_attacking_group(
                 game,
@@ -192,6 +198,7 @@ pub fn apply_attacker_declarations(
                 additional_attack_mana_cost = additional_attack_mana_cost.saturating_add(cost);
             }
         }
+        attacker_static_abilities.insert(creature.id, abilities);
 
         if let AttackTarget::Player(defending_player) = &decl.target {
             *attackers_per_defending_player
@@ -203,8 +210,11 @@ pub fn apply_attacker_declarations(
     let total_attack_tax = attackers_per_defending_player
         .into_iter()
         .fold(0u32, |acc, (defending_player, attackers)| {
-            let per_attacker_tax =
-                generic_attack_tax_per_attacker_against_player(game, defending_player);
+            let per_attacker_tax = generic_attack_tax_per_attacker_against_player(
+                game,
+                defending_player,
+                &all_effects,
+            );
             acc.saturating_add(per_attacker_tax.saturating_mul(attackers))
         });
     let total_generic_attack_mana_cost =
@@ -218,18 +228,11 @@ pub fn apply_attacker_declarations(
         };
         let creature_source = creature.id;
         let creature_controller = creature.controller;
-        let abilities = game
-            .calculated_characteristics(creature_source)
-            .map(|c| c.static_abilities)
+        let abilities = attacker_static_abilities
+            .get(&creature_source)
+            .cloned()
             .unwrap_or_else(|| {
-                creature
-                    .abilities
-                    .iter()
-                    .filter_map(|ability| match &ability.kind {
-                        AbilityKind::Static(static_ability) => Some(static_ability.clone()),
-                        _ => None,
-                    })
-                    .collect()
+                static_abilities_for_object_with_effects(game, creature_source, &all_effects)
             });
         for ability in abilities {
             if let Some(result) =

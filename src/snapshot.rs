@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 use crate::ability::{Ability, AbilityKind};
 use crate::color::ColorSet;
+use crate::continuous::ContinuousEffect;
 use crate::ids::CardId;
 use crate::ids::{ObjectId, PlayerId, StableId};
 use crate::mana::ManaCost;
@@ -192,11 +193,21 @@ impl ObjectSnapshot {
         obj: &Object,
         game: &crate::game_state::GameState,
     ) -> Self {
+        let all_effects = game.all_continuous_effects();
+        Self::from_object_with_calculated_characteristics_and_effects(obj, game, &all_effects)
+    }
+
+    /// Create a snapshot from an object with calculated characteristics using precomputed effects.
+    pub fn from_object_with_calculated_characteristics_and_effects(
+        obj: &Object,
+        game: &crate::game_state::GameState,
+        effects: &[ContinuousEffect],
+    ) -> Self {
         let mut snapshot = Self::from_object(obj, game);
 
         // If the object is on the battlefield, use calculated characteristics
         // which include continuous effects like anthems, pumps, etc.
-        if let Some(calculated) = game.calculated_characteristics(obj.id) {
+        if let Some(calculated) = game.calculated_characteristics_with_effects(obj.id, effects) {
             // Override with calculated values (these include continuous effects)
             snapshot.power = calculated.power;
             snapshot.toughness = calculated.toughness;
