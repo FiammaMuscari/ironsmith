@@ -50,6 +50,7 @@ mod keywords;
 mod misc;
 mod protection;
 mod restrictions;
+mod text_utils;
 
 // Re-export the ID enum
 pub use id::StaticAbilityId;

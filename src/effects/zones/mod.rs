@@ -34,6 +34,17 @@ pub(crate) struct AppliedZoneChange {
     pub new_object_id: Option<ObjectId>,
 }
 
+pub(crate) fn finalize_zone_change_move(
+    game: &mut GameState,
+    object_id: ObjectId,
+    final_zone: Zone,
+) -> AppliedZoneChange {
+    AppliedZoneChange {
+        final_zone,
+        new_object_id: game.move_object(object_id, final_zone),
+    }
+}
+
 pub(crate) fn apply_zone_change(
     game: &mut GameState,
     object_id: ObjectId,
@@ -42,10 +53,9 @@ pub(crate) fn apply_zone_change(
     decision_maker: &mut (impl DecisionMaker + ?Sized),
 ) -> EventOutcome<AppliedZoneChange> {
     match process_zone_change(game, object_id, from, to, decision_maker) {
-        EventOutcome::Proceed(final_zone) => EventOutcome::Proceed(AppliedZoneChange {
-            final_zone,
-            new_object_id: game.move_object(object_id, final_zone),
-        }),
+        EventOutcome::Proceed(final_zone) => {
+            EventOutcome::Proceed(finalize_zone_change_move(game, object_id, final_zone))
+        }
         EventOutcome::Prevented => EventOutcome::Prevented,
         EventOutcome::Replaced => EventOutcome::Replaced,
         EventOutcome::NotApplicable => EventOutcome::NotApplicable,

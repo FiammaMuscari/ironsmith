@@ -39,6 +39,92 @@ fn player_has_card_in_hand_matching(
     })
 }
 
+fn assert_condition_variant_coverage(condition: &Condition) {
+    match condition {
+        Condition::YouControl(..) => {}
+        Condition::OpponentControls(..) => {}
+        Condition::PlayerControls { .. } => {}
+        Condition::PlayerControlsAtLeast { .. } => {}
+        Condition::PlayerControlsExactly { .. } => {}
+        Condition::PlayerControlsAtLeastWithDifferentPowers { .. } => {}
+        Condition::PlayerControlsMost { .. } => {}
+        Condition::LifeTotalOrLess(..) => {}
+        Condition::LifeTotalOrGreater(..) => {}
+        Condition::CardsInHandOrMore(..) => {}
+        Condition::YouHaveCardInHandMatching(..) => {}
+        Condition::YourTurn => {}
+        Condition::CreatureDiedThisTurn => {}
+        Condition::CastSpellThisTurn => {}
+        Condition::AttackedThisTurn => {}
+        Condition::OpponentLostLifeThisTurn => {}
+        Condition::PermanentLeftBattlefieldUnderYourControlThisTurn => {}
+        Condition::SourceWasCast => {}
+        Condition::NoSpellsWereCastLastTurn => {}
+        Condition::TargetIsTapped => {}
+        Condition::TargetIsAttacking => {}
+        Condition::TargetIsBlocked => {}
+        Condition::TargetWasKicked => {}
+        Condition::ThisSpellWasKicked => {}
+        Condition::TargetSpellCastOrderThisTurn(..) => {}
+        Condition::TargetSpellControllerIsPoisoned => {}
+        Condition::TargetSpellManaSpentToCastAtLeast { .. } => {}
+        Condition::YouControlMoreCreaturesThanTargetSpellController => {}
+        Condition::TargetHasGreatestPowerAmongCreatures => {}
+        Condition::TargetManaValueLteColorsSpentToCastThisSpell => {}
+        Condition::SourceIsTapped => {}
+        Condition::SourceHasNoCounter(..) => {}
+        Condition::SourceHasCounterAtLeast { .. } => {}
+        Condition::ManaSpentToCastThisSpellAtLeast { .. } => {}
+        Condition::ColorsOfManaSpentToCastThisSpellOrMore(..) => {}
+        Condition::YouControlCommander => {}
+        Condition::TaggedObjectMatches(..) => {}
+        Condition::TargetMatches(..) => {}
+        Condition::PlayerTaggedObjectMatches { .. } => {}
+        Condition::PlayerOwnsCardNamedInZones { .. } => {}
+        Condition::FirstTimeThisTurn => {}
+        Condition::MaxTimesEachTurn(..) => {}
+        Condition::TriggeringObjectWasEnchanted => {}
+        Condition::TriggeringObjectHadCounters { .. } => {}
+        Condition::ControlLandWithSubtype(..) => {}
+        Condition::ControlAtLeastArtifacts(..) => {}
+        Condition::ControlAtLeastLands(..) => {}
+        Condition::ControlCreatureWithPowerAtLeast(..) => {}
+        Condition::ControlCreaturesTotalPowerAtLeast(..) => {}
+        Condition::CardInYourGraveyard { .. } => {}
+        Condition::ActivationTiming(..) => {}
+        Condition::MaxActivationsPerTurn(..) => {}
+        Condition::SourceIsEquipped => {}
+        Condition::SourceIsEnchanted => {}
+        Condition::EnchantedPermanentIsCreature => {}
+        Condition::EnchantedPermanentIsEquipment => {}
+        Condition::EnchantedPermanentIsVehicle => {}
+        Condition::EquippedCreatureTapped => {}
+        Condition::EquippedCreatureUntapped => {}
+        Condition::CountComparison { .. } => {}
+        Condition::OwnsCardExiledWithCounter(..) => {}
+        Condition::SourceAttackedThisTurn => {}
+        Condition::SourceIsUntapped => {}
+        Condition::SourceIsAttacking => {}
+        Condition::SourceIsBlocking => {}
+        Condition::SourceIsSoulbondPaired => {}
+        Condition::XValueAtLeast(..) => {}
+        Condition::Custom(..) => {}
+        Condition::Unmodeled(..) => {}
+        Condition::Not(..) => {}
+        Condition::And(..) => {}
+        Condition::Or(..) => {}
+        Condition::PlayerCastSpellsThisTurnOrMore { .. } => {}
+        Condition::PlayerTappedLandForManaThisTurn { .. } => {}
+        Condition::PlayerHadLandEnterBattlefieldThisTurn { .. } => {}
+        Condition::PlayerCardsInHandOrMore { .. } => {}
+        Condition::PlayerCardsInHandOrFewer { .. } => {}
+        Condition::PlayerControlsBasicLandTypesAmongLandsOrMore { .. } => {}
+        Condition::PlayerHasCardTypesInGraveyardOrMore { .. } => {}
+        Condition::PlayerHasLessLifeThanYou { .. } => {}
+        Condition::PlayerGraveyardHasCardsAtLeast { .. } => {}
+    }
+}
+
 /// Condition evaluation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConditionEvaluationMode {
@@ -81,6 +167,7 @@ pub fn evaluate_condition_external(
     condition: &Condition,
     ctx: &ExternalEvaluationContext<'_>,
 ) -> bool {
+    assert_condition_variant_coverage(condition);
     use crate::types::{CardType, Subtype};
 
     match condition {
@@ -668,6 +755,7 @@ fn evaluate_condition_simple(
     controller: PlayerId,
     source: ObjectId,
 ) -> bool {
+    assert_condition_variant_coverage(condition);
     // Build a simple filter context with opponents
     let opponents: Vec<PlayerId> = game
         .players
@@ -1159,6 +1247,7 @@ fn evaluate_condition(
     condition: &Condition,
     ctx: &ExecutionContext,
 ) -> Result<bool, ExecutionError> {
+    assert_condition_variant_coverage(condition);
     match condition {
         Condition::YouControl(filter) => {
             let filter_ctx = ctx.filter_context(game);

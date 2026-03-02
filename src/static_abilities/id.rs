@@ -209,8 +209,184 @@ pub enum StaticAbilityId {
 }
 
 impl StaticAbilityId {
+    fn exhaustive_classification_guard(id: StaticAbilityId) {
+        use StaticAbilityId::*;
+        match id {
+            Flying
+            | FirstStrike
+            | DoubleStrike
+            | Deathtouch
+            | Defender
+            | Flash
+            | Haste
+            | Hexproof
+            | HexproofFrom
+            | Indestructible
+            | Intimidate
+            | Lifelink
+            | Menace
+            | Protection
+            | Reach
+            | Shroud
+            | Trample
+            | Vigilance
+            | Ward
+            | Fear
+            | Skulk
+            | Flanking
+            | Landwalk
+            | CantBeBlockedAsLongAsDefendingPlayerControlsCardType
+            | CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes
+            | Bloodthirst
+            | Morph
+            | Megamorph
+            | Shadow
+            | Horsemanship
+            | Phasing
+            | Wither
+            | Infect
+            | Changeling
+            | Partner
+            | Assist
+            | SplitSecond
+            | Rebound
+            | Cascade
+            | Unleash
+            | ConditionalSpellKeyword
+            | Unblockable
+            | FlyingRestriction
+            | FlyingOnlyRestriction
+            | CanBlockFlying
+            | CanBlockOnlyFlying
+            | CanBlockAdditionalCreatureEachCombat
+            | MaxCreaturesCanAttackEachCombat
+            | MaxCreaturesCanBlockEachCombat
+            | CantBeBlockedByPowerOrLess
+            | CantBeBlockedByPowerOrGreater
+            | CantBeBlockedByMoreThan
+            | CanAttackAsThoughNoDefender
+            | MustAttack
+            | MustBlock
+            | CantAttack
+            | CantAttackUnlessControllerCastCreatureSpellThisTurn
+            | CantAttackUnlessControllerCastNonCreatureSpellThisTurn
+            | CantAttackUnlessDefendingPlayerControlsLandSubtype
+            | CantAttackUnlessCondition
+            | CantAttackYouUnlessControllerPaysPerAttacker
+            | CantAttackYouUnlessControllerPaysPerAttackerBasicLandTypesAmongLandsYouControl
+            | CantBlock
+            | MayAssignDamageAsUnblocked
+            | CreaturesAssignCombatDamageUsingToughness
+            | CreaturesYouControlAssignCombatDamageUsingToughness
+            | Anthem
+            | GrantAbility
+            | RemoveAbilityForFilter
+            | RemoveAllAbilitiesForFilter
+            | RemoveAllAbilitiesExceptManaForFilter
+            | SetBasePowerToughnessForFilter
+            | EquipmentGrant
+            | BloodMoon
+            | Humility
+            | BelloBardOfTheBrambles
+            | CharacteristicDefiningPT
+            | AddCardTypes
+            | RemoveCardTypes
+            | SetCardTypes
+            | AddSubtypes
+            | SetCreatureSubtypes
+            | AddColors
+            | CopyActivatedAbilities
+            | ManascapeRefractor
+            | SquirrelNest
+            | MycosynthLattice
+            | TophFirstMetalbender
+            | MarvinMurderousMimic
+            | SoulbondSharedBonus
+            | AttachedAbilityGrant
+            | ControlAttachedPermanent
+            | GrantObjectAbilityForFilter
+            | SetColors
+            | SetName
+            | MakeColorless
+            | AddSupertypes
+            | RemoveSupertypes
+            | CostReduction
+            | ActivatedAbilityCostReduction
+            | ThisSpellCostReduction
+            | ThisSpellCostReductionManaCost
+            | CostIncrease
+            | CostReductionManaCost
+            | CostIncreaseManaCost
+            | CostIncreasePerAdditionalTarget
+            | AffinityForArtifacts
+            | Delve
+            | Convoke
+            | Improvise
+            | PlayersCantGainLife
+            | PlayersCantSearch
+            | DamageCantBePrevented
+            | YouCantLoseGame
+            | OpponentsCantWinGame
+            | YourLifeTotalCantChange
+            | PermanentsCantBeSacrificed
+            | OpponentsCantCastSpells
+            | OpponentsCantDrawExtraCards
+            | CantHaveCountersPlaced
+            | CantBeCountered
+            | PlayersCantCycle
+            | PlayersSkipUpkeep
+            | DamageNotRemovedDuringCleanup
+            | ChooseColorAsEnters
+            | ChooseBasicLandTypeAsEnters
+            | EnchantedLandIsChosenType
+            | RedirectDamageToSource
+            | PreventAllDamageDealtByThisPermanent
+            | PreventAllDamageDealtToCreatures
+            | PreventAllCombatDamageToSelf
+            | PreventAllDamageToSelfByCreatures
+            | PreventDamageToSelfRemoveCounter
+            | DoesntUntap
+            | MayChooseNotToUntapDuringUntapStep
+            | EntersTapped
+            | EntersTappedUnlessControlTwoOrMoreOtherLands
+            | EntersTappedUnlessControlTwoOrFewerOtherLands
+            | EntersTappedUnlessControlTwoOrMoreBasicLands
+            | EntersTappedUnlessAPlayerHas13OrLessLife
+            | EntersTappedUnlessTwoOrMoreOpponents
+            | EntersTappedUnlessCondition
+            | EnterWithCounters
+            | EnterWithCountersIfCondition
+            | ShuffleIntoLibraryFromGraveyard
+            | AllPermanentsEnterTapped
+            | EnterTappedForFilter
+            | EnterWithCountersForFilter
+            | CanBeCommander
+            | LevelAbilities
+            | NoMaximumHandSize
+            | ReduceMaximumHandSize
+            | MaximumHandSizeSevenMinusYourGraveyardCardTypes
+            | LibraryOfLengDiscardReplacement
+            | DrawReplacementExileTopFaceDown
+            | CreaturesEnteringDontCauseAbilitiesToTrigger
+            | StartingLifeBonus
+            | BuybackCostReduction
+            | LegendRuleDoesntApply
+            | AdditionalLandPlay
+            | SpendManaAsAnyColor
+            | SpendManaAsAnyColorActivationCosts
+            | RuleRestriction
+            | DiscardOrRedirectReplacement
+            | PayLifeOrEnterTappedReplacement
+            | KeywordMarker
+            | RuleTextPlaceholder
+            | UnsupportedParserLine
+            | Grants => {}
+        }
+    }
+
     /// Returns true if this is a keyword ability.
     pub fn is_keyword(&self) -> bool {
+        Self::exhaustive_classification_guard(*self);
         use StaticAbilityId::*;
         matches!(
             self,
@@ -257,6 +433,7 @@ impl StaticAbilityId {
 
     /// Returns true if this ability grants evasion.
     pub fn grants_evasion(&self) -> bool {
+        Self::exhaustive_classification_guard(*self);
         use StaticAbilityId::*;
         matches!(
             self,
@@ -279,6 +456,7 @@ impl StaticAbilityId {
 
     /// Returns true if this ability affects combat.
     pub fn affects_combat(&self) -> bool {
+        Self::exhaustive_classification_guard(*self);
         use StaticAbilityId::*;
         matches!(
             self,
@@ -329,6 +507,7 @@ impl StaticAbilityId {
 
     /// Returns true if this ability generates continuous effects.
     pub fn generates_continuous_effects(&self) -> bool {
+        Self::exhaustive_classification_guard(*self);
         use StaticAbilityId::*;
         matches!(
             self,

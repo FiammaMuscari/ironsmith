@@ -352,8 +352,7 @@ pub fn apply_priority_response_with_dm(
 
             // Move spell to stack immediately per MTG rule 601.2a
             // This happens at the start of proposal, before any choices are made
-            let stack_id =
-                propose_spell_cast(game, *spell_id, *from_zone, player, casting_method)?;
+            let stack_id = propose_spell_cast(game, *spell_id, *from_zone, player, casting_method)?;
 
             // Get the spell's mana cost and effects, considering casting method
             // Note: We use stack_id now since the spell has been moved to stack
@@ -389,19 +388,20 @@ pub fn apply_priority_response_with_dm(
                         use_alternative: Some(idx),
                         zone,
                         ..
-                    } => {
-                        crate::decision::resolve_play_from_alternative_method(
-                            game, player, obj, *zone, *idx,
-                        )
-                        .map(|method| {
-                            if method.total_cost().is_some() {
-                                method.mana_cost().cloned()
-                            } else {
-                                method.mana_cost().cloned().or_else(|| obj.mana_cost.clone())
-                            }
-                        })
-                        .unwrap_or_else(|| obj.mana_cost.clone())
-                    }
+                    } => crate::decision::resolve_play_from_alternative_method(
+                        game, player, obj, *zone, *idx,
+                    )
+                    .map(|method| {
+                        if method.total_cost().is_some() {
+                            method.mana_cost().cloned()
+                        } else {
+                            method
+                                .mana_cost()
+                                .cloned()
+                                .or_else(|| obj.mana_cost.clone())
+                        }
+                    })
+                    .unwrap_or_else(|| obj.mana_cost.clone()),
                 };
                 (cost, obj.spell_effect.clone().unwrap_or_default())
             } else {
@@ -427,28 +427,18 @@ pub fn apply_priority_response_with_dm(
                     .map(|obj| OptionalCostsPaid::from_costs(&obj.optional_costs))
                     .unwrap_or_default();
 
-                state.pending_cast = Some(PendingCast {
-                    spell_id: stack_id, // Use stack_id since spell is now on stack
-                    from_zone: *from_zone,
-                    caster: player,
-                    stage: CastStage::ChoosingX,
-                    x_value: None,
-                    chosen_targets: Vec::new(),
-                    remaining_requirements: requirements,
-                    casting_method: casting_method.clone(),
-                    optional_costs_paid,
-                    payment_trace: Vec::new(),
-                    mana_spent_to_cast: ManaPool::default(),
-                    mana_cost_to_pay: None,
-                    remaining_mana_pips: Vec::new(),
-                    pre_chosen_card_cost_objects: Vec::new(),
-                    remaining_card_choice_costs: Vec::new(),
-                    chosen_modes: None,
-                    hybrid_choices: Vec::new(),
-                    pending_hybrid_pips: Vec::new(),
+                state.pending_cast = Some(PendingCast::new(
                     stack_id,
-                    keyword_payment_contributions: Vec::new(),
-                });
+                    *from_zone,
+                    player,
+                    CastStage::ChoosingX,
+                    None,
+                    requirements,
+                    casting_method.clone(),
+                    optional_costs_paid,
+                    None,
+                    stack_id,
+                ));
 
                 let ctx = crate::decisions::context::NumberContext::x_value(
                     player, stack_id, // Use stack_id
@@ -468,28 +458,18 @@ pub fn apply_priority_response_with_dm(
                     .map(|obj| OptionalCostsPaid::from_costs(&obj.optional_costs))
                     .unwrap_or_default();
 
-                let pending = PendingCast {
-                    spell_id: stack_id, // Use stack_id since spell is now on stack
-                    from_zone: *from_zone,
-                    caster: player,
-                    stage: CastStage::ChoosingModes, // Will be updated by helper
-                    x_value: None,
-                    chosen_targets: Vec::new(),
-                    remaining_requirements: requirements,
-                    casting_method: casting_method.clone(),
-                    optional_costs_paid,
-                    payment_trace: Vec::new(),
-                    mana_spent_to_cast: ManaPool::default(),
-                    mana_cost_to_pay: None,
-                    remaining_mana_pips: Vec::new(),
-                    pre_chosen_card_cost_objects: Vec::new(),
-                    remaining_card_choice_costs: Vec::new(),
-                    chosen_modes: None,
-                    hybrid_choices: Vec::new(),
-                    pending_hybrid_pips: Vec::new(),
+                let pending = PendingCast::new(
                     stack_id,
-                    keyword_payment_contributions: Vec::new(),
-                };
+                    *from_zone,
+                    player,
+                    CastStage::ChoosingModes, // Will be updated by helper
+                    None,
+                    requirements,
+                    casting_method.clone(),
+                    optional_costs_paid,
+                    None,
+                    stack_id,
+                );
 
                 check_modes_or_continue(game, trigger_queue, state, pending, &mut *decision_maker)
             }
@@ -542,33 +522,22 @@ pub fn apply_priority_response_with_dm(
                 source_stable_id,
                 source_name,
                 source_snapshot,
-            ) =
-                if let Some(obj) = game.object(*source) {
-                    let stable_id = obj.stable_id;
-                    let name = obj.name.clone();
-                    let snapshot =
-                        ObjectSnapshot::from_object_with_calculated_characteristics(obj, game);
-                    if let Some(ability) = obj.abilities.get(*ability_index) {
-                        if let AbilityKind::Activated(activated) = &ability.kind {
-                            let is_turn_capped = activated.max_activations_per_turn().is_some();
-                            (
-                                activated.mana_cost.clone(),
-                                activated.effects.clone(),
-                                is_turn_capped,
-                                stable_id,
-                                name,
-                                snapshot,
-                            )
-                        } else {
-                            (
-                                crate::cost::TotalCost::free(),
-                                Vec::new(),
-                                false,
-                                stable_id,
-                                name,
-                                snapshot,
-                            )
-                        }
+            ) = if let Some(obj) = game.object(*source) {
+                let stable_id = obj.stable_id;
+                let name = obj.name.clone();
+                let snapshot =
+                    ObjectSnapshot::from_object_with_calculated_characteristics(obj, game);
+                if let Some(ability) = obj.abilities.get(*ability_index) {
+                    if let AbilityKind::Activated(activated) = &ability.kind {
+                        let is_turn_capped = activated.max_activations_per_turn().is_some();
+                        (
+                            activated.mana_cost.clone(),
+                            activated.effects.clone(),
+                            is_turn_capped,
+                            stable_id,
+                            name,
+                            snapshot,
+                        )
                     } else {
                         (
                             crate::cost::TotalCost::free(),
@@ -580,21 +549,28 @@ pub fn apply_priority_response_with_dm(
                         )
                     }
                 } else {
-                    // Source doesn't exist - return error or use defaults
-                    return Err(GameLoopError::InvalidState(
-                        "Ability source no longer exists".to_string(),
-                    ));
-                };
+                    (
+                        crate::cost::TotalCost::free(),
+                        Vec::new(),
+                        false,
+                        stable_id,
+                        name,
+                        snapshot,
+                    )
+                }
+            } else {
+                // Source doesn't exist - return error or use defaults
+                return Err(GameLoopError::InvalidState(
+                    "Ability source no longer exists".to_string(),
+                ));
+            };
 
             let player = game
                 .turn
                 .priority_player
                 .ok_or_else(|| GameLoopError::InvalidState("No priority player".to_string()))?;
             let cost = crate::decision::calculate_effective_activation_total_cost(
-                game,
-                player,
-                *source,
-                &base_cost,
+                game, player, *source, &base_cost,
             );
 
             // Pay immediate costs and collect costs that need choices
@@ -724,31 +700,26 @@ pub fn apply_priority_response_with_dm(
                     ActivationStage::PayingMana
                 };
 
-                let pending = PendingActivation {
-                    source: *source,
-                    ability_index: *ability_index,
-                    activator: player,
+                let pending = PendingActivation::new(
+                    *source,
+                    *ability_index,
+                    player,
                     stage,
-                    effects: effects.to_vec(),
-                    chosen_targets: Vec::new(),
-                    remaining_requirements: target_requirements,
+                    effects.to_vec(),
+                    target_requirements,
                     mana_cost_to_pay,
                     payment_trace,
-                    remaining_mana_pips: Vec::new(), // Populated when entering PayingMana stage
-                    remaining_sacrifice_costs: sacrifice_costs,
-                    remaining_card_choice_costs: card_choice_costs,
-                    tagged_objects: cost_ctx.tagged_objects.clone(),
-                    next_sacrifice_cost_tag_index: next_sacrifice_cost_tag_index(
-                        &cost_ctx.tagged_objects,
-                    ),
-                    is_once_per_turn: is_turn_capped,
+                    sacrifice_costs,
+                    card_choice_costs,
+                    cost_ctx.tagged_objects.clone(),
+                    next_sacrifice_cost_tag_index(&cost_ctx.tagged_objects),
+                    is_turn_capped,
                     source_stable_id,
-                    source_name,
                     source_snapshot,
-                    x_value: None,
-                    hybrid_choices: Vec::new(),
-                    pending_hybrid_pips: pips_to_announce,
-                };
+                    source_name,
+                    None,
+                    pips_to_announce,
+                );
 
                 continue_activation(game, trigger_queue, state, pending, &mut *decision_maker)
             } else {
@@ -794,10 +765,7 @@ pub fn apply_priority_response_with_dm(
                 let effects_to_run = mana_ability.effects.clone();
                 let base_cost = mana_ability.mana_cost.clone();
                 let cost = crate::decision::calculate_effective_activation_total_cost(
-                    game,
-                    player,
-                    *source,
-                    &base_cost,
+                    game, player, *source, &base_cost,
                 );
 
                 // Separate mana costs from other costs

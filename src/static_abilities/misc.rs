@@ -5,6 +5,7 @@
 use super::{
     ChooseBasicLandTypeAsEntersSpec, ChooseColorAsEntersSpec, ConditionalSpellKeywordKind,
     ConditionalSpellKeywordSpec, GraveyardCountMetric, StaticAbilityId, StaticAbilityKind,
+    text_utils::{capitalize_first, join_with_and, number_word_u32},
 };
 use crate::ability::LevelAbility;
 use crate::color::Color;
@@ -28,15 +29,6 @@ use crate::replacement::{RedirectTarget, RedirectWhich, ReplacementAction, Repla
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::zone::Zone;
 
-fn describe_counter_type(counter_type: CounterType) -> String {
-    match counter_type {
-        CounterType::PlusOnePlusOne => "+1/+1".to_string(),
-        CounterType::MinusOneMinusOne => "-1/-1".to_string(),
-        CounterType::Named(name) => name.to_string(),
-        other => format!("{other:?}").to_ascii_lowercase(),
-    }
-}
-
 fn card_type_word(card_type: crate::types::CardType) -> &'static str {
     card_type.name()
 }
@@ -46,45 +38,6 @@ fn pluralize(word: &str) -> String {
         word.to_string()
     } else {
         format!("{word}s")
-    }
-}
-
-fn number_word(n: u32) -> Option<&'static str> {
-    match n {
-        0 => Some("zero"),
-        1 => Some("one"),
-        2 => Some("two"),
-        3 => Some("three"),
-        4 => Some("four"),
-        5 => Some("five"),
-        6 => Some("six"),
-        7 => Some("seven"),
-        8 => Some("eight"),
-        9 => Some("nine"),
-        10 => Some("ten"),
-        _ => None,
-    }
-}
-
-fn join_with_and(items: &[String]) -> String {
-    match items.len() {
-        0 => String::new(),
-        1 => items[0].clone(),
-        2 => format!("{} and {}", items[0], items[1]),
-        _ => {
-            let mut out = items[..items.len() - 1].join(", ");
-            out.push_str(", and ");
-            out.push_str(&items[items.len() - 1]);
-            out
-        }
-    }
-}
-
-fn capitalize_first(text: &str) -> String {
-    let mut chars = text.chars();
-    match chars.next() {
-        Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
-        None => String::new(),
     }
 }
 
@@ -890,7 +843,7 @@ impl StaticAbilityKind for EntersWithCounters {
     }
 
     fn display(&self) -> String {
-        let counter = describe_counter_type(self.counter_type);
+        let counter = self.counter_type.description().into_owned();
         match &self.count {
             Value::Fixed(v) => {
                 if *v == 1 {
@@ -902,7 +855,7 @@ impl StaticAbilityKind for EntersWithCounters {
                 } else {
                     let rendered = u32::try_from(*v)
                         .ok()
-                        .and_then(number_word)
+                        .and_then(number_word_u32)
                         .map(str::to_string)
                         .unwrap_or_else(|| v.to_string());
                     format!("Enters the battlefield with {rendered} {counter} counters on it")
@@ -1478,8 +1431,8 @@ impl StaticAbilityKind for PreventDamageToSelfRemoveCounter {
     }
 
     fn display(&self) -> String {
-        let counter = describe_counter_type(self.counter_type);
-        let amount_word = number_word(self.amount)
+        let counter = self.counter_type.description().into_owned();
+        let amount_word = number_word_u32(self.amount)
             .map(str::to_string)
             .unwrap_or_else(|| self.amount.to_string());
         let suffix = if self.amount == 1 { "" } else { "s" };
@@ -2119,7 +2072,7 @@ impl StaticAbilityKind for ConditionalSpellKeyword {
             GraveyardCountMetric::CardTypes => "card types",
             GraveyardCountMetric::ManaValues => "mana values",
         };
-        let threshold = number_word(self.spec.threshold)
+        let threshold = number_word_u32(self.spec.threshold)
             .map(str::to_string)
             .unwrap_or_else(|| self.spec.threshold.to_string());
         format!(

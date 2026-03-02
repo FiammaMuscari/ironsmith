@@ -450,10 +450,7 @@ pub(crate) fn parse_create(
     tokens: &[Token],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
     let clause_words = words(tokens);
     let has_unsupported_dynamic_count = clause_words.starts_with(&["a", "number", "of"])
         || clause_words.starts_with(&["the", "number", "of"]);

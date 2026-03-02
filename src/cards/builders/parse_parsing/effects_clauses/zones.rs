@@ -56,10 +56,7 @@ pub(crate) fn parse_sacrifice(
         )));
     }
 
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     if tokens
         .first()
@@ -173,10 +170,7 @@ pub(crate) fn parse_discard(
     tokens: &[Token],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     let clause_words = words(tokens);
     if clause_words.contains(&"hand") {
@@ -994,10 +988,7 @@ pub(crate) fn parse_mill(
         }
     }
 
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     Ok(EffectAst::Mill { count, player })
 }
@@ -1228,10 +1219,7 @@ pub(crate) fn parse_get(
     if clause_words.contains(&"poison")
         && (clause_words.contains(&"counter") || clause_words.contains(&"counters"))
     {
-        let player = match subject {
-            Some(SubjectAst::Player(player)) => player,
-            _ => PlayerAst::Implicit,
-        };
+        let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
         let count = if matches!(
             clause_words.first().copied(),
             Some("a" | "an" | "another" | "one")
@@ -1247,10 +1235,7 @@ pub(crate) fn parse_get(
 
     let energy_count = tokens.iter().filter(|token| token.is_word("e")).count();
     if energy_count > 0 {
-        let player = match subject {
-            Some(SubjectAst::Player(player)) => player,
-            _ => PlayerAst::Implicit,
-        };
+        let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
         let count = parse_add_mana_equal_amount_value(tokens)
             .or(parse_equal_to_number_of_filter_value(tokens))
             .or(parse_dynamic_cost_modifier_value(tokens)?)
@@ -1259,10 +1244,7 @@ pub(crate) fn parse_get(
     }
 
     if clause_words.as_slice() == ["tk"] {
-        let player = match subject {
-            Some(SubjectAst::Player(player)) => player,
-            _ => PlayerAst::Implicit,
-        };
+        let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
         return Ok(EffectAst::EnergyCounters {
             count: Value::Fixed(1),
             player,
@@ -1340,10 +1322,7 @@ pub(crate) fn parse_add_mana(
     tokens: &[Token],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
     parser_trace_stack("parse_add_mana:entry", tokens);
     let clause_words = words(tokens);
 
@@ -2738,10 +2717,7 @@ pub(crate) fn parse_scry(
         ))
     })?;
 
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     Ok(EffectAst::Scry { count, player })
 }
@@ -2757,10 +2733,7 @@ pub(crate) fn parse_surveil(
         ))
     })?;
 
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     Ok(EffectAst::Surveil { count, player })
 }
@@ -2769,10 +2742,7 @@ pub(crate) fn parse_pay(
     tokens: &[Token],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     let clause_words = words(tokens);
     if clause_words.starts_with(&["any", "amount", "of"]) && clause_words.contains(&"e") {

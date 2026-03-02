@@ -842,6 +842,31 @@ fn apply_optional_costs_response(
 /// Per MTG rule 601.2b (and 602.2b for abilities), players announce how they'll pay
 /// hybrid/Phyrexian costs before choosing targets. This handler stores the choice
 /// and either prompts for the next pip or continues to target selection.
+fn apply_next_hybrid_choice(
+    pending_hybrid_pips: &mut Vec<(usize, Vec<crate::mana::ManaSymbol>)>,
+    hybrid_choices: &mut Vec<(usize, crate::mana::ManaSymbol)>,
+    choice: usize,
+    context_label: &str,
+) -> Result<(), GameLoopError> {
+    if pending_hybrid_pips.is_empty() {
+        return Err(GameLoopError::InvalidState(format!(
+            "No pending hybrid pips for hybrid choice response{context_label}",
+        )));
+    }
+
+    let (pip_idx, alternatives) = pending_hybrid_pips.remove(0);
+    if choice >= alternatives.len() {
+        return Err(GameLoopError::InvalidState(format!(
+            "Invalid hybrid choice {} for pip with {} alternatives{context_label}",
+            choice,
+            alternatives.len()
+        )));
+    }
+
+    hybrid_choices.push((pip_idx, alternatives[choice]));
+    Ok(())
+}
+
 fn apply_hybrid_choice_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
@@ -851,27 +876,15 @@ fn apply_hybrid_choice_response(
 ) -> Result<GameProgress, GameLoopError> {
     // Check if this is for a pending cast (spell) or pending activation (ability)
     if let Some(mut pending) = state.pending_cast.take() {
-        // Handle spell casting hybrid choice
-        if pending.pending_hybrid_pips.is_empty() {
+        if let Err(err) = apply_next_hybrid_choice(
+            &mut pending.pending_hybrid_pips,
+            &mut pending.hybrid_choices,
+            choice,
+            "",
+        ) {
             state.pending_cast = Some(pending);
-            return Err(GameLoopError::InvalidState(
-                "No pending hybrid pips for hybrid choice response".to_string(),
-            ));
+            return Err(err);
         }
-
-        let (pip_idx, alternatives) = pending.pending_hybrid_pips.remove(0);
-
-        if choice >= alternatives.len() {
-            state.pending_cast = Some(pending);
-            return Err(GameLoopError::InvalidState(format!(
-                "Invalid hybrid choice {} for pip with {} alternatives",
-                choice,
-                alternatives.len()
-            )));
-        }
-
-        let chosen_symbol = alternatives[choice];
-        pending.hybrid_choices.push((pip_idx, chosen_symbol));
 
         if !pending.pending_hybrid_pips.is_empty() {
             return prompt_for_next_hybrid_pip(game, state, pending);
@@ -887,27 +900,15 @@ fn apply_hybrid_choice_response(
     }
 
     if let Some(mut pending) = state.pending_activation.take() {
-        // Handle ability activation hybrid choice (per MTG rule 602.2b)
-        if pending.pending_hybrid_pips.is_empty() {
+        if let Err(err) = apply_next_hybrid_choice(
+            &mut pending.pending_hybrid_pips,
+            &mut pending.hybrid_choices,
+            choice,
+            " (activation)",
+        ) {
             state.pending_activation = Some(pending);
-            return Err(GameLoopError::InvalidState(
-                "No pending hybrid pips for hybrid choice response (activation)".to_string(),
-            ));
+            return Err(err);
         }
-
-        let (pip_idx, alternatives) = pending.pending_hybrid_pips.remove(0);
-
-        if choice >= alternatives.len() {
-            state.pending_activation = Some(pending);
-            return Err(GameLoopError::InvalidState(format!(
-                "Invalid hybrid choice {} for pip with {} alternatives (activation)",
-                choice,
-                alternatives.len()
-            )));
-        }
-
-        let chosen_symbol = alternatives[choice];
-        pending.hybrid_choices.push((pip_idx, chosen_symbol));
 
         // Keep stage as AnnouncingCost and let continue_activation handle the transition
         // This ensures the validation logic runs when all pips have been announced
@@ -1771,28 +1772,18 @@ fn apply_casting_method_choice_response(
             .map(|obj| OptionalCostsPaid::from_costs(&obj.optional_costs))
             .unwrap_or_default();
 
-        state.pending_cast = Some(PendingCast {
-            spell_id: stack_id, // Use stack_id since spell is now on stack
+        state.pending_cast = Some(PendingCast::new(
+            stack_id,
             from_zone,
-            caster: player,
-            stage: CastStage::ChoosingX,
-            x_value: None,
-            chosen_targets: Vec::new(),
-            remaining_requirements: requirements,
+            player,
+            CastStage::ChoosingX,
+            None,
+            requirements,
             casting_method,
             optional_costs_paid,
-            payment_trace: Vec::new(),
-            mana_spent_to_cast: ManaPool::default(),
-            mana_cost_to_pay: None,
-            remaining_mana_pips: Vec::new(),
-            pre_chosen_card_cost_objects: Vec::new(),
-            remaining_card_choice_costs: Vec::new(),
-            chosen_modes: None,
-            hybrid_choices: Vec::new(),
-            pending_hybrid_pips: Vec::new(),
+            None,
             stack_id,
-            keyword_payment_contributions: Vec::new(),
-        });
+        ));
 
         let ctx = crate::decisions::context::NumberContext::x_value(
             player, stack_id, // Use stack_id
@@ -1811,28 +1802,18 @@ fn apply_casting_method_choice_response(
             .map(|obj| OptionalCostsPaid::from_costs(&obj.optional_costs))
             .unwrap_or_default();
 
-        let new_pending = PendingCast {
-            spell_id: stack_id, // Use stack_id since spell is now on stack
+        let new_pending = PendingCast::new(
+            stack_id,
             from_zone,
-            caster: player,
-            stage: CastStage::ChoosingModes, // Will be updated by helper
-            x_value: None,
-            chosen_targets: Vec::new(),
-            remaining_requirements: requirements,
+            player,
+            CastStage::ChoosingModes, // Will be updated by helper
+            None,
+            requirements,
             casting_method,
             optional_costs_paid,
-            payment_trace: Vec::new(),
-            mana_spent_to_cast: ManaPool::default(),
-            mana_cost_to_pay: None,
-            remaining_mana_pips: Vec::new(),
-            pre_chosen_card_cost_objects: Vec::new(),
-            remaining_card_choice_costs: Vec::new(),
-            chosen_modes: None,
-            hybrid_choices: Vec::new(),
-            pending_hybrid_pips: Vec::new(),
+            None,
             stack_id,
-            keyword_payment_contributions: Vec::new(),
-        };
+        );
 
         check_modes_or_continue(game, trigger_queue, state, new_pending, decision_maker)
     }
@@ -2392,16 +2373,12 @@ fn apply_decision_context_with_dm<D: DecisionMaker>(
                 GameLoopError::InvalidState("No object selected for required choice".to_string())
             })?;
 
-            if state
-                .pending_activation
-                .as_ref()
-                .is_some_and(|pending| {
-                    matches!(
-                        pending.stage,
-                        ActivationStage::ChoosingSacrifice | ActivationStage::ChoosingCardCost
-                    )
-                })
-            {
+            if state.pending_activation.as_ref().is_some_and(|pending| {
+                matches!(
+                    pending.stage,
+                    ActivationStage::ChoosingSacrifice | ActivationStage::ChoosingCardCost
+                )
+            }) {
                 apply_sacrifice_target_response(game, trigger_queue, state, chosen, decision_maker)
             } else if state
                 .pending_cast

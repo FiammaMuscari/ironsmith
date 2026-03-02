@@ -415,7 +415,7 @@ pub(crate) fn parse_become_clause(
     };
 
     // Player "life total becomes N"
-    if let Some(SubjectAst::Player(player)) = Some(subject) {
+    if let Some(player) = extract_subject_player(Some(subject)) {
         if subject_words.contains(&"life") && subject_words.contains(&"total") {
             let amount = parse_value(&become_tokens)
                 .map(|(value, _)| value)

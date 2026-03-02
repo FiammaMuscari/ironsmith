@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::ability::Ability;
@@ -184,6 +185,35 @@ impl CounterType {
             _ => None,
         }
     }
+
+    /// Human-readable counter type for oracle/rules text rendering.
+    pub fn description(self) -> Cow<'static, str> {
+        match self {
+            CounterType::PlusOnePlusOne => Cow::Borrowed("+1/+1"),
+            CounterType::MinusOneMinusOne => Cow::Borrowed("-1/-1"),
+            CounterType::PlusOnePlusZero => Cow::Borrowed("+1/+0"),
+            CounterType::PlusZeroPlusOne => Cow::Borrowed("+0/+1"),
+            CounterType::PlusOnePlusTwo => Cow::Borrowed("+1/+2"),
+            CounterType::PlusTwoPlusTwo => Cow::Borrowed("+2/+2"),
+            CounterType::MinusZeroMinusTwo => Cow::Borrowed("-0/-2"),
+            CounterType::MinusTwoMinusTwo => Cow::Borrowed("-2/-2"),
+            CounterType::DoubleStrike => Cow::Borrowed("double strike"),
+            CounterType::FirstStrike => Cow::Borrowed("first strike"),
+            CounterType::Named(name) => Cow::Owned(name.to_string()),
+            other => Cow::Owned(split_pascal_case_identifier(&format!("{other:?}"))),
+        }
+    }
+}
+
+fn split_pascal_case_identifier(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 4);
+    for (idx, ch) in raw.chars().enumerate() {
+        if idx > 0 && ch.is_ascii_uppercase() {
+            out.push(' ');
+        }
+        out.push(ch.to_ascii_lowercase());
+    }
+    out
 }
 
 /// The kind of game object.
@@ -1298,6 +1328,15 @@ mod tests {
         obj.add_counters(CounterType::PlusOnePlusTwo, 1);
         assert_eq!(obj.power(), Some(4));
         assert_eq!(obj.toughness(), Some(4));
+    }
+
+    #[test]
+    fn test_counter_type_description() {
+        assert_eq!(CounterType::PlusOnePlusOne.description(), "+1/+1");
+        assert_eq!(CounterType::PlusOnePlusZero.description(), "+1/+0");
+        assert_eq!(CounterType::DoubleStrike.description(), "double strike");
+        assert_eq!(CounterType::Finality.description(), "finality");
+        assert_eq!(CounterType::Named("burden").description(), "burden");
     }
 
     #[test]

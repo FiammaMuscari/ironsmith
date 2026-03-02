@@ -99,18 +99,7 @@ pub(crate) fn parse_counter_type_from_tokens(tokens: &[Token]) -> Option<Counter
 }
 
 pub(crate) fn describe_counter_type_for_mode(counter_type: CounterType) -> String {
-    match counter_type {
-        CounterType::PlusOnePlusOne => "+1/+1".to_string(),
-        CounterType::MinusOneMinusOne => "-1/-1".to_string(),
-        CounterType::PlusOnePlusZero => "+1/+0".to_string(),
-        CounterType::PlusZeroPlusOne => "+0/+1".to_string(),
-        CounterType::PlusOnePlusTwo => "+1/+2".to_string(),
-        CounterType::PlusTwoPlusTwo => "+2/+2".to_string(),
-        CounterType::MinusZeroMinusTwo => "-0/-2".to_string(),
-        CounterType::MinusTwoMinusTwo => "-2/-2".to_string(),
-        CounterType::Named(name) => name.to_string(),
-        other => format!("{other:?}").to_ascii_lowercase(),
-    }
+    counter_type.description().into_owned()
 }
 
 pub(crate) fn describe_counter_phrase_for_mode(count: u32, counter_type: CounterType) -> String {

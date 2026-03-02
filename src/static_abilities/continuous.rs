@@ -3,7 +3,7 @@
 //! These abilities generate continuous effects that modify other objects
 //! through the layer system.
 
-use super::{StaticAbility, StaticAbilityId, StaticAbilityKind};
+use super::{StaticAbility, StaticAbilityId, StaticAbilityKind, text_utils::join_with_and};
 use crate::ability::Ability;
 use crate::continuous::{
     ContinuousEffect, EffectSourceType, EffectTarget, Modification, PtSublayer,
@@ -45,20 +45,6 @@ fn effect_target_for_filter(source: ObjectId, filter: &ObjectFilter) -> EffectTa
         EffectTarget::AttachedTo(source)
     } else {
         EffectTarget::Filter(filter.clone())
-    }
-}
-
-fn join_with_and(items: &[String]) -> String {
-    match items.len() {
-        0 => String::new(),
-        1 => items[0].clone(),
-        2 => format!("{} and {}", items[0], items[1]),
-        _ => {
-            let mut out = items[..items.len() - 1].join(", ");
-            out.push_str(", and ");
-            out.push_str(items.last().map(String::as_str).unwrap_or_default());
-            out
-        }
     }
 }
 

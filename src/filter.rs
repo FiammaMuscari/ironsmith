@@ -11,8 +11,9 @@
 
 use crate::color::ColorSet;
 use crate::effect::ChoiceCount;
-use crate::ids::{ObjectId, PlayerId};
+use crate::ids::{ObjectId, PlayerId, StableId};
 use crate::object::{CounterType, Object, ObjectKind};
+use crate::snapshot::ObjectSnapshot;
 use crate::static_abilities::StaticAbilityId;
 use crate::tag::TagKey;
 use crate::types::{CardType, Subtype, Supertype};
@@ -27,6 +28,276 @@ fn normalize_name_for_match(name: &str) -> String {
 
 fn names_match(lhs: &str, rhs: &str) -> bool {
     lhs.eq_ignore_ascii_case(rhs) || normalize_name_for_match(lhs) == normalize_name_for_match(rhs)
+}
+
+trait TaggedConstraintSubject {
+    fn subject_object_id(&self) -> ObjectId;
+    fn subject_stable_id(&self) -> StableId;
+    fn subject_name(&self) -> &str;
+    fn subject_controller(&self) -> PlayerId;
+    fn subject_card_types(&self) -> &[CardType];
+    fn subject_subtypes(&self) -> &[Subtype];
+    fn subject_colors(&self) -> ColorSet;
+    fn subject_mana_value(&self) -> i32;
+    fn subject_attached_to(&self) -> Option<ObjectId>;
+}
+
+trait TailMatchSubject: TaggedConstraintSubject {
+    fn tail_object_id(&self) -> ObjectId;
+    fn tail_name(&self) -> &str;
+    fn tail_counters(&self) -> &std::collections::HashMap<CounterType, u32>;
+    fn tail_abilities(&self) -> &[crate::ability::Ability];
+    fn tail_has_alternative_cast_kind(
+        &self,
+        kind: AlternativeCastKind,
+        game: &crate::game_state::GameState,
+        ctx: &FilterContext,
+    ) -> bool;
+    fn tail_has_static_ability_id(&self, ability_id: StaticAbilityId) -> bool;
+    fn tail_has_ability_marker(&self, marker: &str) -> bool;
+    fn tail_has_tap_activated_ability(&self) -> bool;
+    fn tail_is_commander(&self, game: &crate::game_state::GameState) -> bool;
+}
+
+impl TaggedConstraintSubject for Object {
+    fn subject_object_id(&self) -> ObjectId {
+        self.id
+    }
+
+    fn subject_stable_id(&self) -> StableId {
+        self.stable_id
+    }
+
+    fn subject_name(&self) -> &str {
+        &self.name
+    }
+
+    fn subject_controller(&self) -> PlayerId {
+        self.controller
+    }
+
+    fn subject_card_types(&self) -> &[CardType] {
+        &self.card_types
+    }
+
+    fn subject_subtypes(&self) -> &[Subtype] {
+        &self.subtypes
+    }
+
+    fn subject_colors(&self) -> ColorSet {
+        self.colors()
+    }
+
+    fn subject_mana_value(&self) -> i32 {
+        self.mana_cost
+            .as_ref()
+            .map_or(0, |mana_cost| mana_cost.mana_value() as i32)
+    }
+
+    fn subject_attached_to(&self) -> Option<ObjectId> {
+        self.attached_to
+    }
+}
+
+impl TailMatchSubject for Object {
+    fn tail_object_id(&self) -> ObjectId {
+        self.id
+    }
+
+    fn tail_name(&self) -> &str {
+        &self.name
+    }
+
+    fn tail_counters(&self) -> &std::collections::HashMap<CounterType, u32> {
+        &self.counters
+    }
+
+    fn tail_abilities(&self) -> &[crate::ability::Ability] {
+        &self.abilities
+    }
+
+    fn tail_has_alternative_cast_kind(
+        &self,
+        kind: AlternativeCastKind,
+        game: &crate::game_state::GameState,
+        ctx: &FilterContext,
+    ) -> bool {
+        object_has_alternative_cast_kind(self, kind, game, ctx)
+    }
+
+    fn tail_has_static_ability_id(&self, ability_id: StaticAbilityId) -> bool {
+        object_has_static_ability_id(self, ability_id)
+    }
+
+    fn tail_has_ability_marker(&self, marker: &str) -> bool {
+        object_has_ability_marker(self, marker)
+    }
+
+    fn tail_has_tap_activated_ability(&self) -> bool {
+        object_has_tap_activated_ability(self)
+    }
+
+    fn tail_is_commander(&self, game: &crate::game_state::GameState) -> bool {
+        game.is_commander(self.id)
+    }
+}
+
+impl TaggedConstraintSubject for ObjectSnapshot {
+    fn subject_object_id(&self) -> ObjectId {
+        self.object_id
+    }
+
+    fn subject_stable_id(&self) -> StableId {
+        self.stable_id
+    }
+
+    fn subject_name(&self) -> &str {
+        &self.name
+    }
+
+    fn subject_controller(&self) -> PlayerId {
+        self.controller
+    }
+
+    fn subject_card_types(&self) -> &[CardType] {
+        &self.card_types
+    }
+
+    fn subject_subtypes(&self) -> &[Subtype] {
+        &self.subtypes
+    }
+
+    fn subject_colors(&self) -> ColorSet {
+        self.colors
+    }
+
+    fn subject_mana_value(&self) -> i32 {
+        self.mana_cost
+            .as_ref()
+            .map_or(0, |mana_cost| mana_cost.mana_value() as i32)
+    }
+
+    fn subject_attached_to(&self) -> Option<ObjectId> {
+        self.attached_to
+    }
+}
+
+impl TailMatchSubject for ObjectSnapshot {
+    fn tail_object_id(&self) -> ObjectId {
+        self.object_id
+    }
+
+    fn tail_name(&self) -> &str {
+        &self.name
+    }
+
+    fn tail_counters(&self) -> &std::collections::HashMap<CounterType, u32> {
+        &self.counters
+    }
+
+    fn tail_abilities(&self) -> &[crate::ability::Ability] {
+        &self.abilities
+    }
+
+    fn tail_has_alternative_cast_kind(
+        &self,
+        kind: AlternativeCastKind,
+        game: &crate::game_state::GameState,
+        ctx: &FilterContext,
+    ) -> bool {
+        game.object(self.object_id)
+            .is_some_and(|obj| object_has_alternative_cast_kind(obj, kind, game, ctx))
+    }
+
+    fn tail_has_static_ability_id(&self, ability_id: StaticAbilityId) -> bool {
+        snapshot_has_static_ability_id(self, ability_id)
+    }
+
+    fn tail_has_ability_marker(&self, marker: &str) -> bool {
+        snapshot_has_ability_marker(self, marker)
+    }
+
+    fn tail_has_tap_activated_ability(&self) -> bool {
+        snapshot_has_tap_activated_ability(self)
+    }
+
+    fn tail_is_commander(&self, _game: &crate::game_state::GameState) -> bool {
+        self.is_commander
+    }
+}
+
+fn tagged_constraint_matches_subject(
+    subject: &impl TaggedConstraintSubject,
+    tagged_snapshots: &[ObjectSnapshot],
+    relation: TaggedOpbjectRelation,
+) -> bool {
+    match relation {
+        TaggedOpbjectRelation::IsTaggedObject => tagged_snapshots
+            .iter()
+            .any(|snapshot| snapshot.object_id == subject.subject_object_id()),
+        TaggedOpbjectRelation::SharesCardType => {
+            let tagged_types: std::collections::HashSet<CardType> = tagged_snapshots
+                .iter()
+                .flat_map(|snapshot| snapshot.card_types.iter().copied())
+                .collect();
+            subject
+                .subject_card_types()
+                .iter()
+                .any(|card_type| tagged_types.contains(card_type))
+        }
+        TaggedOpbjectRelation::SharesSubtypeWithTagged => {
+            let tagged_subtypes: std::collections::HashSet<Subtype> = tagged_snapshots
+                .iter()
+                .flat_map(|snapshot| snapshot.subtypes.iter().copied())
+                .collect();
+            subject
+                .subject_subtypes()
+                .iter()
+                .any(|subtype| tagged_subtypes.contains(subtype))
+        }
+        TaggedOpbjectRelation::SharesColorWithTagged => tagged_snapshots.iter().any(|snapshot| {
+            !subject
+                .subject_colors()
+                .intersection(snapshot.colors)
+                .is_empty()
+        }),
+        TaggedOpbjectRelation::SameStableId => tagged_snapshots
+            .iter()
+            .any(|snapshot| snapshot.stable_id == subject.subject_stable_id()),
+        TaggedOpbjectRelation::SameNameAsTagged => tagged_snapshots
+            .iter()
+            .any(|snapshot| names_match(&snapshot.name, subject.subject_name())),
+        TaggedOpbjectRelation::SameControllerAsTagged => tagged_snapshots
+            .iter()
+            .any(|snapshot| snapshot.controller == subject.subject_controller()),
+        TaggedOpbjectRelation::SameManaValueAsTagged => tagged_snapshots.iter().any(|snapshot| {
+            snapshot
+                .mana_cost
+                .as_ref()
+                .map_or(0, |mana_cost| mana_cost.mana_value() as i32)
+                == subject.subject_mana_value()
+        }),
+        TaggedOpbjectRelation::ManaValueLteTagged => tagged_snapshots.iter().any(|snapshot| {
+            subject.subject_mana_value()
+                <= snapshot
+                    .mana_cost
+                    .as_ref()
+                    .map_or(0, |mana_cost| mana_cost.mana_value() as i32)
+        }),
+        TaggedOpbjectRelation::ManaValueLtTagged => tagged_snapshots.iter().any(|snapshot| {
+            subject.subject_mana_value()
+                < snapshot
+                    .mana_cost
+                    .as_ref()
+                    .map_or(0, |mana_cost| mana_cost.mana_value() as i32)
+        }),
+        TaggedOpbjectRelation::AttachedToTaggedObject => tagged_snapshots
+            .iter()
+            .any(|snapshot| subject.subject_attached_to() == Some(snapshot.object_id)),
+        TaggedOpbjectRelation::IsNotTaggedObject => tagged_snapshots
+            .iter()
+            .all(|snapshot| snapshot.object_id != subject.subject_object_id()),
+    }
 }
 
 // ============================================================================
@@ -1330,6 +1601,229 @@ impl ObjectFilter {
         self.matches_internal(object, ctx, game, false)
     }
 
+    fn matches_shared_tail<S: TailMatchSubject>(
+        &self,
+        subject: &S,
+        ctx: &FilterContext,
+        game: &crate::game_state::GameState,
+        stack_entry: Option<&crate::game_state::StackEntry>,
+    ) -> bool {
+        // Name check
+        if let Some(required_name) = &self.name
+            && !names_match(subject.tail_name(), required_name)
+        {
+            return false;
+        }
+        if let Some(excluded_name) = &self.excluded_name
+            && names_match(subject.tail_name(), excluded_name)
+        {
+            return false;
+        }
+
+        if let Some(counter_requirement) = self.with_counter {
+            let has_counter = match counter_requirement {
+                CounterConstraint::Any => subject.tail_counters().values().any(|count| *count > 0),
+                CounterConstraint::Typed(counter_type) => {
+                    subject
+                        .tail_counters()
+                        .get(&counter_type)
+                        .copied()
+                        .unwrap_or(0)
+                        > 0
+                }
+            };
+            if !has_counter {
+                return false;
+            }
+        }
+        if let Some(counter_exclusion) = self.without_counter {
+            let has_excluded_counter = match counter_exclusion {
+                CounterConstraint::Any => subject.tail_counters().values().any(|count| *count > 0),
+                CounterConstraint::Typed(counter_type) => {
+                    subject
+                        .tail_counters()
+                        .get(&counter_type)
+                        .copied()
+                        .unwrap_or(0)
+                        > 0
+                }
+            };
+            if has_excluded_counter {
+                return false;
+            }
+        }
+
+        if let Some(kind) = self.alternative_cast
+            && !subject.tail_has_alternative_cast_kind(kind, game, ctx)
+        {
+            return false;
+        }
+
+        // Required static ability IDs
+        if self
+            .static_abilities
+            .iter()
+            .any(|ability_id| !subject.tail_has_static_ability_id(*ability_id))
+        {
+            return false;
+        }
+
+        // Excluded static ability IDs
+        if self
+            .excluded_static_abilities
+            .iter()
+            .any(|ability_id| subject.tail_has_static_ability_id(*ability_id))
+        {
+            return false;
+        }
+
+        // Required/excluded ability markers
+        if self
+            .ability_markers
+            .iter()
+            .any(|marker| !subject.tail_has_ability_marker(marker))
+        {
+            return false;
+        }
+        if self
+            .excluded_ability_markers
+            .iter()
+            .any(|marker| subject.tail_has_ability_marker(marker))
+        {
+            return false;
+        }
+
+        if self.has_tap_activated_ability && !subject.tail_has_tap_activated_ability() {
+            return false;
+        }
+        if self.no_abilities && !subject.tail_abilities().is_empty() {
+            return false;
+        }
+
+        // Commander check
+        if self.is_commander && !subject.tail_is_commander(game) {
+            return false;
+        }
+        if self.noncommander && subject.tail_is_commander(game) {
+            return false;
+        }
+
+        for constraint in &self.tagged_constraints {
+            let Some(tagged_snapshots) = ctx.tagged_objects.get(constraint.tag.as_str()) else {
+                if Self::tagged_constraint_requires_existing_tag(constraint.relation) {
+                    return false;
+                }
+                continue;
+            };
+            if !tagged_constraint_matches_subject(subject, tagged_snapshots, constraint.relation) {
+                return false;
+            }
+        }
+
+        let object_id = subject.tail_object_id();
+
+        // Targeting checks (spell/ability targets on the stack)
+        if self.targets_player.is_some() || self.targets_object.is_some() {
+            let Some(entry) =
+                stack_entry.or_else(|| game.stack.iter().find(|e| e.object_id == object_id))
+            else {
+                return false;
+            };
+
+            let matches_player = self.targets_player.as_ref().is_none_or(|player_filter| {
+                entry.targets.iter().any(|target| match target {
+                    crate::game_state::Target::Player(pid) => {
+                        player_filter.matches_player(*pid, ctx)
+                    }
+                    _ => false,
+                })
+            });
+
+            let matches_object = self.targets_object.as_ref().is_none_or(|object_filter| {
+                entry.targets.iter().any(|target| match target {
+                    crate::game_state::Target::Object(obj_id) => game
+                        .object(*obj_id)
+                        .is_some_and(|obj| object_filter.matches(obj, ctx, game)),
+                    _ => false,
+                })
+            });
+
+            let matches = if self.targets_any_of
+                && self.targets_player.is_some()
+                && self.targets_object.is_some()
+            {
+                matches_player || matches_object
+            } else {
+                matches_player && matches_object
+            };
+            if !matches {
+                return false;
+            }
+        }
+
+        if self.target_count.is_some()
+            || self.targets_only_player.is_some()
+            || self.targets_only_object.is_some()
+        {
+            let Some(entry) =
+                stack_entry.or_else(|| game.stack.iter().find(|e| e.object_id == object_id))
+            else {
+                return false;
+            };
+
+            if let Some(count) = self.target_count {
+                let total = entry.targets.len();
+                if total < count.min {
+                    return false;
+                }
+                if let Some(max) = count.max
+                    && total > max
+                {
+                    return false;
+                }
+            }
+
+            if self.targets_only_player.is_some() || self.targets_only_object.is_some() {
+                if entry.targets.is_empty() {
+                    return false;
+                }
+
+                let matches_target = |target: &crate::game_state::Target| -> bool {
+                    let matches_player = self.targets_only_player.as_ref().is_some_and(
+                        |player_filter| match target {
+                            crate::game_state::Target::Player(pid) => {
+                                player_filter.matches_player(*pid, ctx)
+                            }
+                            _ => false,
+                        },
+                    );
+                    let matches_object = self.targets_only_object.as_ref().is_some_and(
+                        |object_filter| match target {
+                            crate::game_state::Target::Object(obj_id) => game
+                                .object(*obj_id)
+                                .is_some_and(|obj| object_filter.matches(obj, ctx, game)),
+                            _ => false,
+                        },
+                    );
+
+                    if self.targets_only_player.is_some() && self.targets_only_object.is_some() {
+                        matches_player || matches_object
+                    } else if self.targets_only_player.is_some() {
+                        matches_player
+                    } else {
+                        matches_object
+                    }
+                };
+
+                if !entry.targets.iter().all(matches_target) {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
     fn matches_internal(
         &self,
         object: &Object,
@@ -1834,324 +2328,7 @@ impl ObjectFilter {
             return false;
         }
 
-        // Name check
-        if let Some(required_name) = &self.name
-            && !names_match(&object.name, required_name)
-        {
-            return false;
-        }
-        if let Some(excluded_name) = &self.excluded_name
-            && names_match(&object.name, excluded_name)
-        {
-            return false;
-        }
-
-        if let Some(counter_requirement) = self.with_counter {
-            let has_counter = match counter_requirement {
-                CounterConstraint::Any => object.counters.values().any(|count| *count > 0),
-                CounterConstraint::Typed(counter_type) => {
-                    object.counters.get(&counter_type).copied().unwrap_or(0) > 0
-                }
-            };
-            if !has_counter {
-                return false;
-            }
-        }
-        if let Some(counter_exclusion) = self.without_counter {
-            let has_excluded_counter = match counter_exclusion {
-                CounterConstraint::Any => object.counters.values().any(|count| *count > 0),
-                CounterConstraint::Typed(counter_type) => {
-                    object.counters.get(&counter_type).copied().unwrap_or(0) > 0
-                }
-            };
-            if has_excluded_counter {
-                return false;
-            }
-        }
-
-        if let Some(kind) = self.alternative_cast
-            && !object_has_alternative_cast_kind(object, kind, game, ctx)
-        {
-            return false;
-        }
-
-        // Required static ability IDs
-        if self
-            .static_abilities
-            .iter()
-            .any(|ability_id| !object_has_static_ability_id(object, *ability_id))
-        {
-            return false;
-        }
-
-        // Excluded static ability IDs
-        if self
-            .excluded_static_abilities
-            .iter()
-            .any(|ability_id| object_has_static_ability_id(object, *ability_id))
-        {
-            return false;
-        }
-
-        // Required/excluded ability markers
-        if self
-            .ability_markers
-            .iter()
-            .any(|marker| !object_has_ability_marker(object, marker))
-        {
-            return false;
-        }
-        if self
-            .excluded_ability_markers
-            .iter()
-            .any(|marker| object_has_ability_marker(object, marker))
-        {
-            return false;
-        }
-
-        if self.has_tap_activated_ability && !object_has_tap_activated_ability(object) {
-            return false;
-        }
-        if self.no_abilities && !object.abilities.is_empty() {
-            return false;
-        }
-
-        // Commander check
-        if self.is_commander && !game.is_commander(object.id) {
-            return false;
-        }
-        if self.noncommander && game.is_commander(object.id) {
-            return false;
-        }
-
-        for constraint in &self.tagged_constraints {
-            let Some(tagged_snapshots) = ctx.tagged_objects.get(constraint.tag.as_str()) else {
-                // Tag not found - no match possible for positive constraints.
-                if matches!(
-                    constraint.relation,
-                    TaggedOpbjectRelation::IsTaggedObject
-                        | TaggedOpbjectRelation::AttachedToTaggedObject
-                        | TaggedOpbjectRelation::SameManaValueAsTagged
-                        | TaggedOpbjectRelation::ManaValueLteTagged
-                        | TaggedOpbjectRelation::ManaValueLtTagged
-                ) {
-                    return false;
-                }
-                // For negative constraints, missing tag means nothing is excluded.
-                continue;
-            };
-
-            match constraint.relation {
-                TaggedOpbjectRelation::IsTaggedObject => {
-                    // Object must be one of the tagged objects.
-                    if !tagged_snapshots.iter().any(|s| s.object_id == object.id) {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SharesCardType => {
-                    // Object must share at least one card type with any tagged object.
-                    let tagged_types: std::collections::HashSet<CardType> = tagged_snapshots
-                        .iter()
-                        .flat_map(|s| s.card_types.iter().cloned())
-                        .collect();
-                    if !object.card_types.iter().any(|t| tagged_types.contains(t)) {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SharesSubtypeWithTagged => {
-                    let tagged_subtypes: std::collections::HashSet<Subtype> = tagged_snapshots
-                        .iter()
-                        .flat_map(|s| s.subtypes.iter().cloned())
-                        .collect();
-                    if !object.subtypes.iter().any(|t| tagged_subtypes.contains(t)) {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SharesColorWithTagged => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| !object.colors().intersection(s.colors).is_empty())
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SameStableId => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| s.stable_id == object.stable_id)
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SameNameAsTagged => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| names_match(&s.name, &object.name))
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SameControllerAsTagged => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| s.controller == object.controller)
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SameManaValueAsTagged => {
-                    let object_mana_value = object
-                        .mana_cost
-                        .as_ref()
-                        .map_or(0, |mc| mc.mana_value() as i32);
-                    if !tagged_snapshots.iter().any(|s| {
-                        s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
-                            == object_mana_value
-                    }) {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::ManaValueLteTagged => {
-                    let object_mana_value = object
-                        .mana_cost
-                        .as_ref()
-                        .map_or(0, |mc| mc.mana_value() as i32);
-                    if !tagged_snapshots.iter().any(|s| {
-                        object_mana_value
-                            <= s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
-                    }) {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::ManaValueLtTagged => {
-                    let object_mana_value = object
-                        .mana_cost
-                        .as_ref()
-                        .map_or(0, |mc| mc.mana_value() as i32);
-                    if !tagged_snapshots.iter().any(|s| {
-                        object_mana_value
-                            < s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
-                    }) {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::AttachedToTaggedObject => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| object.attached_to == Some(s.object_id))
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::IsNotTaggedObject => {
-                    // Object must NOT be one of the tagged objects.
-                    if tagged_snapshots.iter().any(|s| s.object_id == object.id) {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        // Targeting checks (spell/ability targets on the stack)
-        if self.targets_player.is_some() || self.targets_object.is_some() {
-            let Some(entry) =
-                stack_entry.or_else(|| game.stack.iter().find(|e| e.object_id == object.id))
-            else {
-                return false;
-            };
-
-            let matches_player = self.targets_player.as_ref().is_none_or(|player_filter| {
-                entry.targets.iter().any(|target| match target {
-                    crate::game_state::Target::Player(pid) => {
-                        player_filter.matches_player(*pid, ctx)
-                    }
-                    _ => false,
-                })
-            });
-
-            let matches_object = self.targets_object.as_ref().is_none_or(|object_filter| {
-                entry.targets.iter().any(|target| match target {
-                    crate::game_state::Target::Object(obj_id) => game
-                        .object(*obj_id)
-                        .is_some_and(|obj| object_filter.matches(obj, ctx, game)),
-                    _ => false,
-                })
-            });
-
-            let matches = if self.targets_any_of
-                && self.targets_player.is_some()
-                && self.targets_object.is_some()
-            {
-                matches_player || matches_object
-            } else {
-                matches_player && matches_object
-            };
-            if !matches {
-                return false;
-            }
-        }
-
-        if self.target_count.is_some()
-            || self.targets_only_player.is_some()
-            || self.targets_only_object.is_some()
-        {
-            let Some(entry) =
-                stack_entry.or_else(|| game.stack.iter().find(|e| e.object_id == object.id))
-            else {
-                return false;
-            };
-
-            if let Some(count) = self.target_count {
-                let total = entry.targets.len();
-                if total < count.min {
-                    return false;
-                }
-                if let Some(max) = count.max
-                    && total > max
-                {
-                    return false;
-                }
-            }
-
-            if self.targets_only_player.is_some() || self.targets_only_object.is_some() {
-                if entry.targets.is_empty() {
-                    return false;
-                }
-
-                let matches_target = |target: &crate::game_state::Target| -> bool {
-                    let matches_player = self.targets_only_player.as_ref().is_some_and(
-                        |player_filter| match target {
-                            crate::game_state::Target::Player(pid) => {
-                                player_filter.matches_player(*pid, ctx)
-                            }
-                            _ => false,
-                        },
-                    );
-                    let matches_object = self.targets_only_object.as_ref().is_some_and(
-                        |object_filter| match target {
-                            crate::game_state::Target::Object(obj_id) => game
-                                .object(*obj_id)
-                                .is_some_and(|obj| object_filter.matches(obj, ctx, game)),
-                            _ => false,
-                        },
-                    );
-
-                    if self.targets_only_player.is_some() && self.targets_only_object.is_some() {
-                        matches_player || matches_object
-                    } else if self.targets_only_player.is_some() {
-                        matches_player
-                    } else {
-                        matches_object
-                    }
-                };
-
-                if !entry.targets.iter().all(matches_target) {
-                    return false;
-                }
-            }
-        }
-
-        true
+        self.matches_shared_tail(object, ctx, game, stack_entry)
     }
 
     fn stack_entry_matches_kind(
@@ -2169,6 +2346,10 @@ impl ObjectFilter {
             }
             StackObjectKind::SpellOrAbility => true,
         }
+    }
+
+    fn tagged_constraint_requires_existing_tag(relation: TaggedOpbjectRelation) -> bool {
+        !matches!(relation, TaggedOpbjectRelation::IsNotTaggedObject)
     }
 
     /// Check if a snapshot matches this filter.
@@ -2489,282 +2670,7 @@ impl ObjectFilter {
             return false;
         }
 
-        // Name check
-        if let Some(required_name) = &self.name
-            && !names_match(&snapshot.name, required_name)
-        {
-            return false;
-        }
-        if let Some(excluded_name) = &self.excluded_name
-            && names_match(&snapshot.name, excluded_name)
-        {
-            return false;
-        }
-
-        if let Some(counter_requirement) = self.with_counter {
-            let has_counter = match counter_requirement {
-                CounterConstraint::Any => snapshot.counters.values().any(|count| *count > 0),
-                CounterConstraint::Typed(counter_type) => {
-                    snapshot.counters.get(&counter_type).copied().unwrap_or(0) > 0
-                }
-            };
-            if !has_counter {
-                return false;
-            }
-        }
-        if let Some(counter_exclusion) = self.without_counter {
-            let has_excluded_counter = match counter_exclusion {
-                CounterConstraint::Any => snapshot.counters.values().any(|count| *count > 0),
-                CounterConstraint::Typed(counter_type) => {
-                    snapshot.counters.get(&counter_type).copied().unwrap_or(0) > 0
-                }
-            };
-            if has_excluded_counter {
-                return false;
-            }
-        }
-
-        if let Some(kind) = self.alternative_cast {
-            let has_kind = game
-                .object(snapshot.object_id)
-                .is_some_and(|obj| object_has_alternative_cast_kind(obj, kind, game, ctx));
-            if !has_kind {
-                return false;
-            }
-        }
-
-        // Required static ability IDs
-        if self
-            .static_abilities
-            .iter()
-            .any(|ability_id| !snapshot_has_static_ability_id(snapshot, *ability_id))
-        {
-            return false;
-        }
-
-        // Excluded static ability IDs
-        if self
-            .excluded_static_abilities
-            .iter()
-            .any(|ability_id| snapshot_has_static_ability_id(snapshot, *ability_id))
-        {
-            return false;
-        }
-
-        // Required/excluded ability markers
-        if self
-            .ability_markers
-            .iter()
-            .any(|marker| !snapshot_has_ability_marker(snapshot, marker))
-        {
-            return false;
-        }
-        if self
-            .excluded_ability_markers
-            .iter()
-            .any(|marker| snapshot_has_ability_marker(snapshot, marker))
-        {
-            return false;
-        }
-
-        if self.has_tap_activated_ability && !snapshot_has_tap_activated_ability(snapshot) {
-            return false;
-        }
-        if self.no_abilities && !snapshot.abilities.is_empty() {
-            return false;
-        }
-
-        // Commander check
-        if self.is_commander && !snapshot.is_commander {
-            return false;
-        }
-        if self.noncommander && snapshot.is_commander {
-            return false;
-        }
-
-        for constraint in &self.tagged_constraints {
-            let Some(tagged_snapshots) = ctx.tagged_objects.get(constraint.tag.as_str()) else {
-                if matches!(
-                    constraint.relation,
-                    TaggedOpbjectRelation::IsTaggedObject
-                        | TaggedOpbjectRelation::AttachedToTaggedObject
-                        | TaggedOpbjectRelation::SharesSubtypeWithTagged
-                        | TaggedOpbjectRelation::SharesColorWithTagged
-                        | TaggedOpbjectRelation::SameStableId
-                        | TaggedOpbjectRelation::SameNameAsTagged
-                        | TaggedOpbjectRelation::SameControllerAsTagged
-                        | TaggedOpbjectRelation::SameManaValueAsTagged
-                        | TaggedOpbjectRelation::ManaValueLteTagged
-                        | TaggedOpbjectRelation::ManaValueLtTagged
-                ) {
-                    return false;
-                }
-                continue;
-            };
-
-            match constraint.relation {
-                TaggedOpbjectRelation::IsTaggedObject => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| s.object_id == snapshot.object_id)
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SharesCardType => {
-                    let tagged_types: std::collections::HashSet<CardType> = tagged_snapshots
-                        .iter()
-                        .flat_map(|s| s.card_types.iter().cloned())
-                        .collect();
-                    if !snapshot.card_types.iter().any(|t| tagged_types.contains(t)) {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SharesSubtypeWithTagged => {
-                    let tagged_subtypes: std::collections::HashSet<Subtype> = tagged_snapshots
-                        .iter()
-                        .flat_map(|s| s.subtypes.iter().cloned())
-                        .collect();
-                    if !snapshot
-                        .subtypes
-                        .iter()
-                        .any(|t| tagged_subtypes.contains(t))
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SharesColorWithTagged => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| !snapshot.colors.intersection(s.colors).is_empty())
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::IsNotTaggedObject => {
-                    if tagged_snapshots
-                        .iter()
-                        .any(|s| s.object_id == snapshot.object_id)
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SameStableId => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| s.stable_id == snapshot.stable_id)
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SameNameAsTagged => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| names_match(&s.name, &snapshot.name))
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SameControllerAsTagged => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| s.controller == snapshot.controller)
-                    {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::SameManaValueAsTagged => {
-                    let snapshot_mana_value = snapshot
-                        .mana_cost
-                        .as_ref()
-                        .map_or(0, |mc| mc.mana_value() as i32);
-                    if !tagged_snapshots.iter().any(|s| {
-                        s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
-                            == snapshot_mana_value
-                    }) {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::ManaValueLteTagged => {
-                    let snapshot_mana_value = snapshot
-                        .mana_cost
-                        .as_ref()
-                        .map_or(0, |mc| mc.mana_value() as i32);
-                    if !tagged_snapshots.iter().any(|s| {
-                        snapshot_mana_value
-                            <= s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
-                    }) {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::ManaValueLtTagged => {
-                    let snapshot_mana_value = snapshot
-                        .mana_cost
-                        .as_ref()
-                        .map_or(0, |mc| mc.mana_value() as i32);
-                    if !tagged_snapshots.iter().any(|s| {
-                        snapshot_mana_value
-                            < s.mana_cost.as_ref().map_or(0, |mc| mc.mana_value() as i32)
-                    }) {
-                        return false;
-                    }
-                }
-                TaggedOpbjectRelation::AttachedToTaggedObject => {
-                    if !tagged_snapshots
-                        .iter()
-                        .any(|s| snapshot.attached_to == Some(s.object_id))
-                    {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        if self.targets_player.is_some() || self.targets_object.is_some() {
-            if snapshot.zone != Zone::Stack {
-                return false;
-            }
-
-            let entry = game
-                .stack
-                .iter()
-                .find(|e| e.object_id == snapshot.object_id);
-            let Some(entry) = entry else {
-                return false;
-            };
-
-            let matches_player = self.targets_player.as_ref().is_none_or(|player_filter| {
-                entry.targets.iter().any(|target| match target {
-                    crate::game_state::Target::Player(pid) => {
-                        player_filter.matches_player(*pid, ctx)
-                    }
-                    _ => false,
-                })
-            });
-
-            let matches_object = self.targets_object.as_ref().is_none_or(|object_filter| {
-                entry.targets.iter().any(|target| match target {
-                    crate::game_state::Target::Object(obj_id) => game
-                        .object(*obj_id)
-                        .is_some_and(|obj| object_filter.matches(obj, ctx, game)),
-                    _ => false,
-                })
-            });
-
-            let matches = if self.targets_any_of
-                && self.targets_player.is_some()
-                && self.targets_object.is_some()
-            {
-                matches_player || matches_object
-            } else {
-                matches_player && matches_object
-            };
-            if !matches {
-                return false;
-            }
-        }
-
-        true
+        self.matches_shared_tail(snapshot, ctx, game, None)
     }
 
     /// Generate a human-readable description of this filter.
@@ -3363,7 +3269,7 @@ impl ObjectFilter {
         if let Some(counter_type) = self.mana_value_eq_counters_on_source {
             parts.push(format!(
                 "with mana value equal to the number of {} counters on this artifact",
-                describe_counter_type(counter_type)
+                counter_type.description()
             ));
         }
         if let Some(clause) = any_of_keyword_clause {
@@ -4019,17 +3925,8 @@ fn describe_counter_constraint(constraint: CounterConstraint) -> String {
     match constraint {
         CounterConstraint::Any => "a counter".to_string(),
         CounterConstraint::Typed(counter_type) => {
-            format!("a {} counter", describe_counter_type(counter_type))
+            format!("a {} counter", counter_type.description())
         }
-    }
-}
-
-fn describe_counter_type(counter_type: CounterType) -> String {
-    match counter_type {
-        CounterType::PlusOnePlusOne => "+1/+1".to_string(),
-        CounterType::MinusOneMinusOne => "-1/-1".to_string(),
-        CounterType::Named(name) => name.to_string(),
-        other => format!("{other:?}").to_ascii_lowercase(),
     }
 }
 

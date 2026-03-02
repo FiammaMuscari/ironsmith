@@ -103,6 +103,45 @@ pub struct PendingCast {
     pub keyword_payment_contributions: Vec<KeywordPaymentContribution>,
 }
 
+impl PendingCast {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        spell_id: ObjectId,
+        from_zone: Zone,
+        caster: PlayerId,
+        stage: CastStage,
+        x_value: Option<u32>,
+        remaining_requirements: Vec<TargetRequirement>,
+        casting_method: CastingMethod,
+        optional_costs_paid: OptionalCostsPaid,
+        chosen_modes: Option<Vec<usize>>,
+        stack_id: ObjectId,
+    ) -> Self {
+        Self {
+            spell_id,
+            from_zone,
+            caster,
+            stage,
+            x_value,
+            chosen_targets: Vec::new(),
+            remaining_requirements,
+            casting_method,
+            optional_costs_paid,
+            payment_trace: Vec::new(),
+            mana_spent_to_cast: ManaPool::default(),
+            mana_cost_to_pay: None,
+            remaining_mana_pips: Vec::new(),
+            pre_chosen_card_cost_objects: Vec::new(),
+            remaining_card_choice_costs: Vec::new(),
+            chosen_modes,
+            hybrid_choices: Vec::new(),
+            pending_hybrid_pips: Vec::new(),
+            stack_id,
+            keyword_payment_contributions: Vec::new(),
+        }
+    }
+}
+
 /// Stage of the ability activation process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActivationStage {
@@ -265,6 +304,54 @@ pub struct PendingActivation {
     /// Pending hybrid/Phyrexian pips that still need announcement.
     /// Each element is (pip_index, alternatives).
     pub pending_hybrid_pips: Vec<(usize, Vec<crate::mana::ManaSymbol>)>,
+}
+
+impl PendingActivation {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        source: ObjectId,
+        ability_index: usize,
+        activator: PlayerId,
+        stage: ActivationStage,
+        effects: Vec<crate::effect::Effect>,
+        remaining_requirements: Vec<TargetRequirement>,
+        mana_cost_to_pay: Option<crate::mana::ManaCost>,
+        payment_trace: Vec<CostStep>,
+        remaining_sacrifice_costs: Vec<(ObjectFilter, String)>,
+        remaining_card_choice_costs: Vec<ActivationCardCostChoice>,
+        tagged_objects: std::collections::HashMap<crate::tag::TagKey, Vec<ObjectSnapshot>>,
+        next_sacrifice_cost_tag_index: usize,
+        is_once_per_turn: bool,
+        source_stable_id: StableId,
+        source_snapshot: ObjectSnapshot,
+        source_name: String,
+        x_value: Option<usize>,
+        pending_hybrid_pips: Vec<(usize, Vec<crate::mana::ManaSymbol>)>,
+    ) -> Self {
+        Self {
+            source,
+            ability_index,
+            activator,
+            stage,
+            effects,
+            chosen_targets: Vec::new(),
+            remaining_requirements,
+            mana_cost_to_pay,
+            payment_trace,
+            remaining_mana_pips: Vec::new(),
+            remaining_sacrifice_costs,
+            remaining_card_choice_costs,
+            tagged_objects,
+            next_sacrifice_cost_tag_index,
+            is_once_per_turn,
+            source_stable_id,
+            source_snapshot,
+            source_name,
+            x_value,
+            hybrid_choices: Vec::new(),
+            pending_hybrid_pips,
+        }
+    }
 }
 
 /// A mana ability being activated that needs mana payment first.

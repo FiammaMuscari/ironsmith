@@ -384,6 +384,163 @@ impl std::error::Error for ResponseError {}
 // Helper Functions
 // ============================================================================
 
+fn append_granted_play_from_actions_for_card(
+    game: &GameState,
+    actions: &mut Vec<LegalAction>,
+    player: PlayerId,
+    card_id: ObjectId,
+    card: &crate::object::Object,
+    source_zone: Zone,
+) {
+    let play_from_grants =
+        game.grant_registry
+            .granted_play_from_for_card(game, card_id, source_zone, player);
+    for grant in play_from_grants {
+        // PlayFrom (e.g., Yawgmoth's Will): can cast from zone as if from hand.
+        let from_zone = grant.zone;
+
+        if !card.is_land()
+            && let Some(mana_cost) = &card.mana_cost
+            && can_cast_with_cost(
+                game,
+                player,
+                card,
+                card_id,
+                Some(mana_cost),
+                &AdditionalCastRequirements::default(),
+            )
+        {
+            actions.push(LegalAction::CastSpell {
+                spell_id: card_id,
+                from_zone,
+                casting_method: CastingMethod::PlayFrom {
+                    source: grant.source_id,
+                    zone: from_zone,
+                    use_alternative: None,
+                },
+            });
+        }
+
+        for (idx, alt_cast) in card.alternative_casts.iter().enumerate() {
+            if alt_cast.cast_from_zone() == Zone::Hand
+                && can_cast_with_alternative_from_hand(game, player, card, card_id, alt_cast)
+            {
+                actions.push(LegalAction::CastSpell {
+                    spell_id: card_id,
+                    from_zone,
+                    casting_method: CastingMethod::PlayFrom {
+                        source: grant.source_id,
+                        zone: from_zone,
+                        use_alternative: Some(idx),
+                    },
+                });
+            }
+        }
+
+        let granted_alternatives = game
+            .grant_registry
+            .granted_alternative_casts_for_card(game, card_id, from_zone, player);
+        let base_alt_idx = card.alternative_casts.len();
+        for (offset, granted_alt) in granted_alternatives.iter().enumerate() {
+            if can_cast_with_alternative(game, player, card, &granted_alt.method) {
+                actions.push(LegalAction::CastSpell {
+                    spell_id: card_id,
+                    from_zone,
+                    casting_method: CastingMethod::PlayFrom {
+                        source: granted_alt.source_id,
+                        zone: from_zone,
+                        use_alternative: Some(base_alt_idx + offset),
+                    },
+                });
+            }
+        }
+    }
+}
+
+fn append_native_alternative_cast_actions_for_card_from_zone(
+    game: &GameState,
+    actions: &mut Vec<LegalAction>,
+    player: PlayerId,
+    card_id: ObjectId,
+    card: &crate::object::Object,
+    from_zone: Zone,
+) {
+    for (idx, alt_cast) in card.alternative_casts.iter().enumerate() {
+        if alt_cast.cast_from_zone() == from_zone
+            && can_cast_with_alternative(game, player, card, alt_cast)
+        {
+            actions.push(LegalAction::CastSpell {
+                spell_id: card_id,
+                from_zone,
+                casting_method: CastingMethod::Alternative(idx),
+            });
+        }
+    }
+}
+
+fn append_graveyard_granted_alternative_cast_actions_for_card(
+    game: &GameState,
+    actions: &mut Vec<LegalAction>,
+    player: PlayerId,
+    card_id: ObjectId,
+    card: &crate::object::Object,
+) {
+    let granted_casts = game.grant_registry.granted_alternative_casts_for_card(
+        game,
+        card_id,
+        Zone::Graveyard,
+        player,
+    );
+
+    for grant in granted_casts {
+        let method = &grant.method;
+        let requirements = build_requirements_for_method(method);
+        let mana_cost = get_mana_cost_for_method(method, card);
+
+        if !can_cast_with_cost(game, player, card, card_id, mana_cost, &requirements) {
+            continue;
+        }
+
+        let casting_method = match method {
+            crate::alternative_cast::AlternativeCastingMethod::Escape { exile_count, .. } => {
+                CastingMethod::GrantedEscape {
+                    source: grant.source_id,
+                    exile_count: *exile_count,
+                }
+            }
+            crate::alternative_cast::AlternativeCastingMethod::Flashback { .. } => {
+                CastingMethod::GrantedFlashback
+            }
+            _ => continue,
+        };
+
+        actions.push(LegalAction::CastSpell {
+            spell_id: card_id,
+            from_zone: Zone::Graveyard,
+            casting_method,
+        });
+    }
+}
+
+fn append_cast_actions_from_zone_for_card(
+    game: &GameState,
+    actions: &mut Vec<LegalAction>,
+    player: PlayerId,
+    card_id: ObjectId,
+    card: &crate::object::Object,
+    from_zone: Zone,
+) {
+    append_native_alternative_cast_actions_for_card_from_zone(
+        game, actions, player, card_id, card, from_zone,
+    );
+    if from_zone == Zone::Graveyard {
+        append_graveyard_granted_alternative_cast_actions_for_card(
+            game, actions, player, card_id, card,
+        );
+    }
+    append_granted_play_from_actions_for_card(game, actions, player, card_id, card, from_zone);
+}
+
 /// Compute legal actions for a player who has priority.
 ///
 /// This validates each potential action by testing it against the actual game rules.
@@ -444,206 +601,36 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
         }
     }
 
-    // Check for spells that can be cast from graveyard (flashback, escape, jump-start)
+    // Check for spells that can be cast from graveyard.
+    // Includes native alternatives, granted alternatives, and PlayFrom grants.
     if let Some(player_obj) = game.player(player) {
         for &card_id in player_obj.graveyard.clone().iter() {
             if let Some(card) = game.object(card_id) {
-                for (idx, alt_cast) in card.alternative_casts.iter().enumerate() {
-                    if alt_cast.cast_from_zone() == Zone::Graveyard
-                        && can_cast_with_alternative(game, player, card, alt_cast)
-                    {
-                        actions.push(LegalAction::CastSpell {
-                            spell_id: card_id,
-                            from_zone: Zone::Graveyard,
-                            casting_method: CastingMethod::Alternative(idx),
-                        });
-                    }
-                }
+                append_cast_actions_from_zone_for_card(
+                    game,
+                    &mut actions,
+                    player,
+                    card_id,
+                    card,
+                    Zone::Graveyard,
+                );
             }
         }
     }
 
-    // Check for granted alternative casts from the registry (escape, flashback, etc.)
-    // This handles both static ability grants (Underworld Breach) and effect grants (Snapcaster Mage)
-    if let Some(player_obj) = game.player(player) {
-        for &card_id in player_obj.graveyard.clone().iter() {
-            if let Some(card) = game.object(card_id) {
-                let granted_casts = game.grant_registry.granted_alternative_casts_for_card(
-                    game,
-                    card_id,
-                    Zone::Graveyard,
-                    player,
-                );
-
-                for grant in granted_casts {
-                    let method = &grant.method;
-                    let requirements = build_requirements_for_method(method);
-                    let mana_cost = get_mana_cost_for_method(method, card);
-
-                    if can_cast_with_cost(game, player, card, card_id, mana_cost, &requirements) {
-                        let casting_method = match method {
-                            crate::alternative_cast::AlternativeCastingMethod::Escape {
-                                exile_count,
-                                ..
-                            } => CastingMethod::GrantedEscape {
-                                source: grant.source_id,
-                                exile_count: *exile_count,
-                            },
-                            crate::alternative_cast::AlternativeCastingMethod::Flashback {
-                                ..
-                            } => CastingMethod::GrantedFlashback,
-                            _ => continue,
-                        };
-
-                        actions.push(LegalAction::CastSpell {
-                            spell_id: card_id,
-                            from_zone: Zone::Graveyard,
-                            casting_method,
-                        });
-                    }
-                }
-
-                let play_from_grants = game.grant_registry.granted_play_from_for_card(
-                    game,
-                    card_id,
-                    Zone::Graveyard,
-                    player,
-                );
-
-                for grant in play_from_grants {
-                    // PlayFrom (e.g., Yawgmoth's Will): can cast from zone as if from hand.
-                    let from_zone = grant.zone;
-
-                    if !card.is_land()
-                        && let Some(mana_cost) = &card.mana_cost
-                        && can_cast_with_cost(
-                            game,
-                            player,
-                            card,
-                            card_id,
-                            Some(mana_cost),
-                            &AdditionalCastRequirements::default(),
-                        )
-                    {
-                        actions.push(LegalAction::CastSpell {
-                            spell_id: card_id,
-                            from_zone,
-                            casting_method: CastingMethod::PlayFrom {
-                                source: grant.source_id,
-                                zone: from_zone,
-                                use_alternative: None,
-                            },
-                        });
-                    }
-
-                    for (idx, alt_cast) in card.alternative_casts.iter().enumerate() {
-                        if alt_cast.cast_from_zone() == Zone::Hand
-                            && can_cast_with_alternative_from_hand(
-                                game, player, card, card_id, alt_cast,
-                            )
-                        {
-                            actions.push(LegalAction::CastSpell {
-                                spell_id: card_id,
-                                from_zone,
-                                casting_method: CastingMethod::PlayFrom {
-                                    source: grant.source_id,
-                                    zone: from_zone,
-                                    use_alternative: Some(idx),
-                                },
-                            });
-                        }
-                    }
-
-                    let granted_alternatives = game
-                        .grant_registry
-                        .granted_alternative_casts_for_card(game, card_id, from_zone, player);
-                    let base_alt_idx = card.alternative_casts.len();
-                    for (offset, granted_alt) in granted_alternatives.iter().enumerate() {
-                        if can_cast_with_alternative(game, player, card, &granted_alt.method) {
-                            actions.push(LegalAction::CastSpell {
-                                spell_id: card_id,
-                                from_zone,
-                                casting_method: CastingMethod::PlayFrom {
-                                    source: granted_alt.source_id,
-                                    zone: from_zone,
-                                    use_alternative: Some(base_alt_idx + offset),
-                                },
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Check for cards that can be played/cast from exile via granted PlayFrom permissions.
+    // Check for cards that can be played/cast from exile.
     for &card_id in &game.exile {
         let Some(card) = game.object(card_id) else {
             continue;
         };
-
-        let play_from_grants =
-            game.grant_registry
-                .granted_play_from_for_card(game, card_id, Zone::Exile, player);
-        for grant in play_from_grants {
-            let from_zone = grant.zone;
-
-            if !card.is_land()
-                && let Some(mana_cost) = &card.mana_cost
-                && can_cast_with_cost(
-                    game,
-                    player,
-                    card,
-                    card_id,
-                    Some(mana_cost),
-                    &AdditionalCastRequirements::default(),
-                )
-            {
-                actions.push(LegalAction::CastSpell {
-                    spell_id: card_id,
-                    from_zone,
-                    casting_method: CastingMethod::PlayFrom {
-                        source: grant.source_id,
-                        zone: from_zone,
-                        use_alternative: None,
-                    },
-                });
-            }
-
-            for (idx, alt_cast) in card.alternative_casts.iter().enumerate() {
-                if alt_cast.cast_from_zone() == Zone::Hand
-                    && can_cast_with_alternative_from_hand(game, player, card, card_id, alt_cast)
-                {
-                    actions.push(LegalAction::CastSpell {
-                        spell_id: card_id,
-                        from_zone,
-                        casting_method: CastingMethod::PlayFrom {
-                            source: grant.source_id,
-                            zone: from_zone,
-                            use_alternative: Some(idx),
-                        },
-                    });
-                }
-            }
-
-            let granted_alternatives = game
-                .grant_registry
-                .granted_alternative_casts_for_card(game, card_id, from_zone, player);
-            let base_alt_idx = card.alternative_casts.len();
-            for (offset, granted_alt) in granted_alternatives.iter().enumerate() {
-                if can_cast_with_alternative(game, player, card, &granted_alt.method) {
-                    actions.push(LegalAction::CastSpell {
-                        spell_id: card_id,
-                        from_zone,
-                        casting_method: CastingMethod::PlayFrom {
-                            source: granted_alt.source_id,
-                            zone: from_zone,
-                            use_alternative: Some(base_alt_idx + offset),
-                        },
-                    });
-                }
-            }
-        }
+        append_cast_actions_from_zone_for_card(
+            game,
+            &mut actions,
+            player,
+            card_id,
+            card,
+            Zone::Exile,
+        );
     }
 
     // Check for alternative casting methods from hand (e.g., Force of Will's alternative cost)
@@ -1295,7 +1282,9 @@ fn spell_has_active_flash(
             if let Some(spec) = s.conditional_spell_keyword_spec()
                 && spec.keyword == crate::static_abilities::ConditionalSpellKeywordKind::Flash
             {
-                return crate::static_abilities::conditional_spell_keyword_active(spec, game, player);
+                return crate::static_abilities::conditional_spell_keyword_active(
+                    spec, game, player,
+                );
             }
         }
         false
@@ -1743,8 +1732,12 @@ fn can_pay_cost_with_spell_exclusion(
     use crate::costs::CostProcessingMode;
 
     let source = spell_to_exclude.or_else(|| {
-        game.player(player)
-            .and_then(|p| p.hand.first().copied().or_else(|| p.graveyard.first().copied()))
+        game.player(player).and_then(|p| {
+            p.hand
+                .first()
+                .copied()
+                .or_else(|| p.graveyard.first().copied())
+        })
     });
     let Some(source) = source else {
         return false;

@@ -5455,23 +5455,8 @@ fn describe_mana_alternatives(symbols: &[ManaSymbol]) -> String {
     }
 }
 
-fn describe_counter_type(counter_type: crate::object::CounterType) -> String {
-    match counter_type {
-        crate::object::CounterType::PlusOnePlusOne => "+1/+1".to_string(),
-        crate::object::CounterType::MinusOneMinusOne => "-1/-1".to_string(),
-        crate::object::CounterType::Named(name) => name.to_string(),
-        other => {
-            let raw = format!("{other:?}");
-            let mut out = String::with_capacity(raw.len() + 4);
-            for (idx, ch) in raw.chars().enumerate() {
-                if idx > 0 && ch.is_ascii_uppercase() {
-                    out.push(' ');
-                }
-                out.push(ch.to_ascii_lowercase());
-            }
-            out
-        }
-    }
+fn describe_counter_type(counter_type: CounterType) -> String {
+    counter_type.description().into_owned()
 }
 
 pub(crate) fn describe_value(value: &Value) -> String {
@@ -5754,11 +5739,11 @@ pub(crate) fn describe_value(value: &Value) -> String {
         Value::KickCount => "how many times this spell was kicked".to_string(),
         Value::CountersOnSource(counter_type) => format!(
             "the number of {} counter(s) on this source",
-            describe_counter_type(*counter_type)
+            counter_type.description()
         ),
         Value::CountersOn(spec, Some(counter_type)) => format!(
             "the number of {} counter(s) on {}",
-            describe_counter_type(*counter_type),
+            counter_type.description(),
             describe_choose_spec(spec)
         ),
         Value::CountersOn(spec, None) => {
@@ -5931,7 +5916,7 @@ fn owner_library_phrase_for_spec(spec: &ChooseSpec) -> &'static str {
 }
 
 fn describe_put_counter_phrase(count: &Value, counter_type: CounterType) -> String {
-    let counter_name = describe_counter_type(counter_type);
+    let counter_name = counter_type.description().into_owned();
     match count {
         Value::Fixed(1) => with_indefinite_article(&format!("{counter_name} counter")),
         Value::Fixed(n) if *n > 1 => {
@@ -6829,11 +6814,11 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::SourceIsTapped => "this source is tapped".to_string(),
         Condition::SourceHasNoCounter(counter_type) => format!(
             "there are no {} counters on this source",
-            describe_counter_type(*counter_type)
+            counter_type.description()
         ),
         Condition::SourceHasCounterAtLeast { counter_type, count } => format!(
             "there are {count} or more {} counters on this source",
-            describe_counter_type(*counter_type)
+            counter_type.description()
         ),
         Condition::TargetIsAttacking => "the target is attacking".to_string(),
         Condition::ManaSpentToCastThisSpellAtLeast { amount, symbol } => {
@@ -7026,7 +7011,7 @@ fn describe_condition(condition: &Condition) -> String {
             min_count,
         } => format!(
             "the triggering object had {min_count} or more {} counters",
-            describe_counter_type(*counter_type)
+            counter_type.description()
         ),
         Condition::ControlLandWithSubtype(subtypes) => {
             let types = subtypes
@@ -7109,7 +7094,7 @@ fn describe_condition(condition: &Condition) -> String {
             .unwrap_or_else(|| "count comparison".to_string()),
         Condition::OwnsCardExiledWithCounter(counter) => format!(
             "you own a card in exile with a {} counter on it",
-            describe_counter_type(*counter)
+            counter.description()
         ),
         Condition::SourceAttackedThisTurn => "this creature attacked this turn".to_string(),
         Condition::SourceIsUntapped => "this source is untapped".to_string(),

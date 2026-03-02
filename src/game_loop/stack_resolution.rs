@@ -177,7 +177,13 @@ fn resolve_stack_entry_full(
             if let Some((enters, enters_tapped, redirect_zone)) = etb_replacement_result {
                 if !enters {
                     // Permanent goes to redirect zone instead of battlefield
-                    game.move_object(entry.object_id, redirect_zone);
+                    let _ = crate::effects::zones::apply_zone_change(
+                        game,
+                        entry.object_id,
+                        Zone::Stack,
+                        redirect_zone,
+                        &mut *decision_maker,
+                    );
                     return Ok(());
                 }
 
@@ -348,7 +354,17 @@ fn resolve_stack_entry_full(
             };
 
             if has_rebound {
-                if let Some(exiled_id) = game.move_object(entry.object_id, Zone::Exile) {
+                if let crate::event_processor::EventOutcome::Proceed(result) =
+                    crate::effects::zones::apply_zone_change(
+                        game,
+                        entry.object_id,
+                        Zone::Stack,
+                        Zone::Exile,
+                        &mut *decision_maker,
+                    )
+                    && result.final_zone == Zone::Exile
+                    && let Some(exiled_id) = result.new_object_id
+                {
                     game.delayed_triggers.push(crate::triggers::DelayedTrigger {
                         trigger: crate::triggers::Trigger::beginning_of_upkeep(
                             crate::target::PlayerFilter::Specific(entry.controller),
@@ -369,7 +385,13 @@ fn resolve_stack_entry_full(
                     });
                 }
             } else if should_exile {
-                game.move_object(entry.object_id, Zone::Exile);
+                let _ = crate::effects::zones::apply_zone_change(
+                    game,
+                    entry.object_id,
+                    Zone::Stack,
+                    Zone::Exile,
+                    &mut *decision_maker,
+                );
             } else {
                 // Process zone change through replacement effects
                 // (e.g., Yawgmoth's Will exiles cards going to graveyard)

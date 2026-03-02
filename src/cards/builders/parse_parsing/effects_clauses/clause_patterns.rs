@@ -1369,6 +1369,13 @@ pub(crate) enum SubjectAst {
     Player(PlayerAst),
 }
 
+pub(crate) fn extract_subject_player(subject: Option<SubjectAst>) -> Option<PlayerAst> {
+    match subject {
+        Some(SubjectAst::Player(player)) => Some(player),
+        _ => None,
+    }
+}
+
 pub(crate) fn parse_subject(tokens: &[Token]) -> SubjectAst {
     let words = words(tokens);
     if words.is_empty() {

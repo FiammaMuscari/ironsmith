@@ -1,4 +1,6 @@
-use super::effect_ast_traversal::{for_each_nested_effects, for_each_nested_effects_mut};
+use super::effect_ast_traversal::{
+    assert_effect_ast_variant_coverage, for_each_nested_effects, for_each_nested_effects_mut,
+};
 use super::*;
 
 pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
@@ -186,6 +188,15 @@ pub(crate) fn compile_statement_effects_seeded(
     ctx.last_object_tag = seed_last_object_tag;
     ctx.force_auto_tag_object_targets = true;
     ctx.allow_life_event_value = false;
+    let prelude = seed_attached_source_tag_prelude(&mut ctx, effects);
+    let (compiled, _) = compile_effects(effects, &mut ctx)?;
+    Ok(prepend_effect_prelude(compiled, prelude))
+}
+
+fn seed_attached_source_tag_prelude(
+    ctx: &mut CompileContext,
+    effects: &[EffectAst],
+) -> Vec<Effect> {
     let mut prelude = Vec::new();
     for tag in ["equipped", "enchanted"] {
         if effects_reference_tag(effects, tag) {
@@ -195,13 +206,54 @@ pub(crate) fn compile_statement_effects_seeded(
             prelude.push(Effect::tag_attached_to_source(tag));
         }
     }
-    let (mut compiled, _) = compile_effects(effects, &mut ctx)?;
-    if !prelude.is_empty() {
-        prelude.append(&mut compiled);
-        Ok(prelude)
-    } else {
-        Ok(compiled)
+    prelude
+}
+
+fn maybe_seed_default_trigger_object_tag(
+    ctx: &mut CompileContext,
+    trigger: Option<&TriggerSpec>,
+    effects: &[EffectAst],
+) {
+    if ctx.last_object_tag.is_none()
+        && (effects_reference_it_tag(effects) || effects_reference_its_controller(effects))
+    {
+        let default_tag = if matches!(
+            trigger,
+            Some(
+                TriggerSpec::ThisDealsDamageTo(_)
+                    | TriggerSpec::ThisDealsCombatDamageTo(_)
+                    | TriggerSpec::DealsCombatDamageTo { .. }
+            )
+        ) {
+            "damaged"
+        } else {
+            "triggering"
+        };
+        ctx.last_object_tag = Some(default_tag.to_string());
     }
+}
+
+fn prepend_effect_prelude(mut compiled: Vec<Effect>, mut prelude: Vec<Effect>) -> Vec<Effect> {
+    if prelude.is_empty() {
+        return compiled;
+    }
+    prelude.append(&mut compiled);
+    prelude
+}
+
+fn prepend_trigger_tag_effects(
+    mut compiled: Vec<Effect>,
+    effects: &[EffectAst],
+    last_object_tag: Option<&str>,
+) -> Vec<Effect> {
+    if effects_reference_tag(effects, "triggering") || matches!(last_object_tag, Some("triggering"))
+    {
+        compiled.insert(0, Effect::tag_triggering_object("triggering"));
+    }
+    if effects_reference_tag(effects, "damaged") || matches!(last_object_tag, Some("damaged")) {
+        compiled.insert(0, Effect::tag_triggering_damage_target("damaged"));
+    }
+    compiled
 }
 
 pub(crate) fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<PlayerFilter> {
@@ -557,32 +609,8 @@ pub(crate) fn compile_trigger_effects_with_intervening_if(
     ctx.allow_life_event_value = trigger
         .map(|trigger| trigger_supports_event_value(trigger, &EventValueSpec::Amount))
         .unwrap_or(false);
-    let mut prelude = Vec::new();
-    for tag in ["equipped", "enchanted"] {
-        if effects_reference_tag(effects, tag) {
-            if ctx.last_object_tag.is_none() {
-                ctx.last_object_tag = Some(tag.to_string());
-            }
-            prelude.push(Effect::tag_attached_to_source(tag));
-        }
-    }
-    if ctx.last_object_tag.is_none()
-        && (effects_reference_it_tag(effects) || effects_reference_its_controller(effects))
-    {
-        let default_tag = if matches!(
-            trigger,
-            Some(
-                TriggerSpec::ThisDealsDamageTo(_)
-                    | TriggerSpec::ThisDealsCombatDamageTo(_)
-                    | TriggerSpec::DealsCombatDamageTo { .. }
-            )
-        ) {
-            "damaged"
-        } else {
-            "triggering"
-        };
-        ctx.last_object_tag = Some(default_tag.to_string());
-    }
+    let prelude = seed_attached_source_tag_prelude(&mut ctx, effects);
+    maybe_seed_default_trigger_object_tag(&mut ctx, trigger, effects);
     let mut intervening_if: Option<Condition> = None;
     let mut effects_to_compile = effects;
     let mut extracted_predicate: Option<&PredicateAst> = None;
@@ -608,21 +636,9 @@ pub(crate) fn compile_trigger_effects_with_intervening_if(
         )?);
     }
 
-    let (mut compiled, choices) = compile_effects(effects_to_compile, &mut ctx)?;
-    if !prelude.is_empty() {
-        prelude.append(&mut compiled);
-        compiled = prelude;
-    }
-    if effects_reference_tag(effects, "triggering")
-        || matches!(ctx.last_object_tag.as_deref(), Some("triggering"))
-    {
-        compiled.insert(0, Effect::tag_triggering_object("triggering"));
-    }
-    if effects_reference_tag(effects, "damaged")
-        || matches!(ctx.last_object_tag.as_deref(), Some("damaged"))
-    {
-        compiled.insert(0, Effect::tag_triggering_damage_target("damaged"));
-    }
+    let (compiled, choices) = compile_effects(effects_to_compile, &mut ctx)?;
+    let compiled = prepend_effect_prelude(compiled, prelude);
+    let compiled = prepend_trigger_tag_effects(compiled, effects, ctx.last_object_tag.as_deref());
     Ok((compiled, choices, intervening_if))
 }
 
@@ -637,47 +653,11 @@ pub(crate) fn compile_trigger_effects_seeded(
     ctx.allow_life_event_value = trigger
         .map(|trigger| trigger_supports_event_value(trigger, &EventValueSpec::Amount))
         .unwrap_or(false);
-    let mut prelude = Vec::new();
-    for tag in ["equipped", "enchanted"] {
-        if effects_reference_tag(effects, tag) {
-            if ctx.last_object_tag.is_none() {
-                ctx.last_object_tag = Some(tag.to_string());
-            }
-            prelude.push(Effect::tag_attached_to_source(tag));
-        }
-    }
-    if ctx.last_object_tag.is_none()
-        && (effects_reference_it_tag(effects) || effects_reference_its_controller(effects))
-    {
-        let default_tag = if matches!(
-            trigger,
-            Some(
-                TriggerSpec::ThisDealsDamageTo(_)
-                    | TriggerSpec::ThisDealsCombatDamageTo(_)
-                    | TriggerSpec::DealsCombatDamageTo { .. }
-            )
-        ) {
-            "damaged"
-        } else {
-            "triggering"
-        };
-        ctx.last_object_tag = Some(default_tag.to_string());
-    }
-    let (mut compiled, choices) = compile_effects(effects, &mut ctx)?;
-    if !prelude.is_empty() {
-        prelude.append(&mut compiled);
-        compiled = prelude;
-    }
-    if effects_reference_tag(effects, "triggering")
-        || matches!(ctx.last_object_tag.as_deref(), Some("triggering"))
-    {
-        compiled.insert(0, Effect::tag_triggering_object("triggering"));
-    }
-    if effects_reference_tag(effects, "damaged")
-        || matches!(ctx.last_object_tag.as_deref(), Some("damaged"))
-    {
-        compiled.insert(0, Effect::tag_triggering_damage_target("damaged"));
-    }
+    let prelude = seed_attached_source_tag_prelude(&mut ctx, effects);
+    maybe_seed_default_trigger_object_tag(&mut ctx, trigger, effects);
+    let (compiled, choices) = compile_effects(effects, &mut ctx)?;
+    let compiled = prepend_effect_prelude(compiled, prelude);
+    let compiled = prepend_trigger_tag_effects(compiled, effects, ctx.last_object_tag.as_deref());
     Ok((compiled, choices))
 }
 
@@ -849,6 +829,7 @@ macro_rules! direct_target_effect_variants {
 }
 
 fn with_direct_effect_targets(effect: &EffectAst, mut visit: impl FnMut(&TargetAst)) {
+    assert_effect_ast_variant_coverage(effect);
     match effect {
         EffectAst::Fight {
             creature1,
@@ -908,22 +889,15 @@ fn direct_effect_targets_reference_tag(effect: &EffectAst, tag: &str) -> bool {
     references
 }
 
-pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
-    if direct_effect_targets_reference_tag(effect, tag) {
-        return true;
-    }
+fn filter_references_tag(filter: &ObjectFilter, tag: &str) -> bool {
+    filter
+        .tagged_constraints
+        .iter()
+        .any(|constraint| constraint.tag.as_str() == tag)
+}
 
+fn effect_tagged_filter(effect: &EffectAst) -> Option<&ObjectFilter> {
     match effect {
-        EffectAst::Conditional {
-            predicate,
-            if_true,
-            if_false,
-        } => {
-            matches!(predicate, PredicateAst::TaggedMatches(t, _) if t.as_str() == tag)
-                || matches!(predicate, PredicateAst::PlayerTaggedObjectMatches { tag: t, .. } if t.as_str() == tag)
-                || effects_reference_tag(if_true, tag)
-                || effects_reference_tag(if_false, tag)
-        }
         EffectAst::DealDamageEach { filter, .. }
         | EffectAst::PutCountersAll { filter, .. }
         | EffectAst::RemoveCountersAll { filter, .. }
@@ -947,23 +921,38 @@ pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
         | EffectAst::RemoveAbilitiesAll { filter, .. }
         | EffectAst::GrantAbilitiesChoiceAll { filter, .. }
         | EffectAst::Enchant { filter }
-        | EffectAst::SearchLibrary { filter, .. } => filter
-            .tagged_constraints
-            .iter()
-            .any(|constraint| constraint.tag.as_str() == tag),
-        EffectAst::DestroyAllAttachedTo { filter, .. } => filter
-            .tagged_constraints
-            .iter()
-            .any(|constraint| constraint.tag.as_str() == tag),
+        | EffectAst::SearchLibrary { filter, .. }
+        | EffectAst::DestroyAllAttachedTo { filter, .. } => Some(filter),
+        _ => None,
+    }
+}
+
+pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
+    assert_effect_ast_variant_coverage(effect);
+    if direct_effect_targets_reference_tag(effect, tag) {
+        return true;
+    }
+    if let Some(filter) = effect_tagged_filter(effect) {
+        return filter_references_tag(filter, tag);
+    }
+
+    match effect {
+        EffectAst::Conditional {
+            predicate,
+            if_true,
+            if_false,
+        } => {
+            matches!(predicate, PredicateAst::TaggedMatches(t, _) if t.as_str() == tag)
+                || matches!(predicate, PredicateAst::PlayerTaggedObjectMatches { tag: t, .. } if t.as_str() == tag)
+                || effects_reference_tag(if_true, tag)
+                || effects_reference_tag(if_false, tag)
+        }
         EffectAst::RetargetStackObject {
             new_target_restriction,
             ..
         } => {
             if let Some(NewTargetRestrictionAst::Object(filter)) = new_target_restriction {
-                filter
-                    .tagged_constraints
-                    .iter()
-                    .any(|constraint| constraint.tag.as_str() == tag)
+                filter_references_tag(filter, tag)
             } else {
                 false
             }
@@ -1102,6 +1091,7 @@ pub(crate) fn value_references_event_derived_amount(value: &Value) -> bool {
 }
 
 pub(crate) fn effect_references_event_derived_amount(effect: &EffectAst) -> bool {
+    assert_effect_ast_variant_coverage(effect);
     match effect {
         EffectAst::DealDamage { amount, .. }
         | EffectAst::DealDamageEach { amount, .. }
@@ -1125,6 +1115,7 @@ pub(crate) fn effect_references_event_derived_amount(effect: &EffectAst) -> bool
 }
 
 pub(crate) fn effect_references_its_controller(effect: &EffectAst) -> bool {
+    assert_effect_ast_variant_coverage(effect);
     match effect {
         EffectAst::Draw { player, .. }
         | EffectAst::LoseLife { player, .. }
@@ -1211,6 +1202,7 @@ pub(crate) fn effect_references_its_controller(effect: &EffectAst) -> bool {
 }
 
 pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
+    assert_effect_ast_variant_coverage(effect);
     if direct_effect_targets_reference_tag(effect, IT_TAG) {
         return true;
     }
@@ -1218,11 +1210,7 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
     match effect {
         EffectAst::DealDamage { amount, .. } => value_references_tag(amount, IT_TAG),
         EffectAst::DealDamageEach { amount, filter } => {
-            value_references_tag(amount, IT_TAG)
-                || filter
-                    .tagged_constraints
-                    .iter()
-                    .any(|constraint| constraint.tag.as_str() == IT_TAG)
+            value_references_tag(amount, IT_TAG) || filter_references_tag(filter, IT_TAG)
         }
         EffectAst::Draw { count, .. } => value_references_tag(count, IT_TAG),
         EffectAst::LoseLife { amount, .. } | EffectAst::GainLife { amount, .. } => {
@@ -1230,19 +1218,11 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
         }
         EffectAst::PreventDamage { amount, .. } => value_references_tag(amount, IT_TAG),
         EffectAst::PreventDamageEach { amount, filter, .. } => {
-            value_references_tag(amount, IT_TAG)
-                || filter
-                    .tagged_constraints
-                    .iter()
-                    .any(|constraint| constraint.tag.as_str() == IT_TAG)
+            value_references_tag(amount, IT_TAG) || filter_references_tag(filter, IT_TAG)
         }
         EffectAst::PutCounters { count, .. } => value_references_tag(count, IT_TAG),
         EffectAst::PutCountersAll { count, filter, .. } => {
-            value_references_tag(count, IT_TAG)
-                || filter
-                    .tagged_constraints
-                    .iter()
-                    .any(|constraint| constraint.tag.as_str() == IT_TAG)
+            value_references_tag(count, IT_TAG) || filter_references_tag(filter, IT_TAG)
         }
         EffectAst::CounterUnlessPays {
             life,
@@ -1271,34 +1251,6 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
                 || effects_reference_it_tag(if_true)
                 || effects_reference_it_tag(if_false)
         }
-        EffectAst::RemoveCountersAll { filter, .. }
-        | EffectAst::DoubleCountersOnEach { filter, .. }
-        | EffectAst::TapAll { filter }
-        | EffectAst::ChooseObjects { filter, .. }
-        | EffectAst::Sacrifice { filter, .. }
-        | EffectAst::SacrificeAll { filter, .. }
-        | EffectAst::RegenerateAll { filter }
-        | EffectAst::DestroyAll { filter }
-        | EffectAst::DestroyAllOfChosenColor { filter }
-        | EffectAst::ExileAll { filter, .. }
-        | EffectAst::ReturnAllToHand { filter }
-        | EffectAst::ReturnAllToHandOfChosenColor { filter }
-        | EffectAst::ReturnAllToBattlefield { filter, .. }
-        | EffectAst::ExchangeControl { filter, .. }
-        | EffectAst::PumpAll { filter, .. }
-        | EffectAst::UntapAll { filter }
-        | EffectAst::GrantAbilitiesAll { filter, .. }
-        | EffectAst::RemoveAbilitiesAll { filter, .. }
-        | EffectAst::GrantAbilitiesChoiceAll { filter, .. }
-        | EffectAst::Enchant { filter }
-        | EffectAst::SearchLibrary { filter, .. } => filter
-            .tagged_constraints
-            .iter()
-            .any(|constraint| constraint.tag.as_str() == IT_TAG),
-        EffectAst::DestroyAllAttachedTo { filter, .. } => filter
-            .tagged_constraints
-            .iter()
-            .any(|constraint| constraint.tag.as_str() == IT_TAG),
         EffectAst::PutIntoHand { object, .. } => matches!(object, ObjectRefAst::It),
         EffectAst::PutRestOnBottomOfLibrary => true,
         EffectAst::RetargetStackObject {
@@ -1306,10 +1258,7 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
             ..
         } => {
             if let Some(NewTargetRestrictionAst::Object(filter)) = new_target_restriction {
-                filter
-                    .tagged_constraints
-                    .iter()
-                    .any(|constraint| constraint.tag.as_str() == IT_TAG)
+                filter_references_tag(filter, IT_TAG)
             } else {
                 false
             }
@@ -1330,14 +1279,13 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
         }
         EffectAst::DelayedWhenLastObjectDiesThisTurn { .. } => true,
         EffectAst::ForEachObject { filter, effects } => {
-            filter
-                .tagged_constraints
-                .iter()
-                .any(|constraint| constraint.tag.as_str() == IT_TAG)
-                || effects_reference_it_tag(effects)
+            filter_references_tag(filter, IT_TAG) || effects_reference_it_tag(effects)
         }
         EffectAst::Cant { restriction, .. } => restriction_references_tag(restriction, IT_TAG),
         _ => {
+            if let Some(filter) = effect_tagged_filter(effect) {
+                return filter_references_tag(filter, IT_TAG);
+            }
             let mut references = false;
             for_each_nested_effects(effect, true, |nested| {
                 if !references {
@@ -1701,6 +1649,7 @@ pub(crate) fn collect_tag_spans_from_effect(
     annotations: &mut ParseAnnotations,
     ctx: &NormalizedLine,
 ) {
+    assert_effect_ast_variant_coverage(effect);
     if collect_direct_effect_target_spans(effect, annotations, ctx) {
         return;
     }

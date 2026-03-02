@@ -287,10 +287,7 @@ pub(crate) fn parse_shuffle(
         )
     }
 
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     if tokens.is_empty() {
         // Support standalone "Shuffle." clauses. If the sentence includes an explicit player
@@ -1187,10 +1184,7 @@ pub(crate) fn parse_draw(
         }
         trim_commas(&rest[card_word_idx + 1..])
     };
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
     let mut effect = EffectAst::Draw {
         count: count.clone(),
         player,
@@ -1935,10 +1929,7 @@ pub(crate) fn parse_reveal(
     tokens: &[Token],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     let words = words(tokens);
     // Many effects split "reveal it/that card/those cards" into a standalone clause.
@@ -2186,10 +2177,7 @@ pub(crate) fn parse_lose_life(
     tokens: &[Token],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     let clause_words = words(tokens);
     if let Some(mut amount) = parse_life_equal_to_value(tokens)? {
@@ -2239,10 +2227,7 @@ pub(crate) fn parse_gain_life(
     tokens: &[Token],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     if let Some(amount) = parse_life_equal_to_value(tokens)? {
         return Ok(EffectAst::GainLife { amount, player });
@@ -2347,10 +2332,7 @@ pub(crate) fn parse_gain_control(
         .map(|dur_idx| &tokens[dur_idx..])
         .unwrap_or(&[]);
     let duration = parse_control_duration(duration_tokens)?;
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
     match target_ast {
         TargetAst::Player(filter, _) => Ok(EffectAst::ControlPlayer {
             player: PlayerFilter::Target(Box::new(filter)),
@@ -2477,10 +2459,7 @@ pub(crate) fn parse_put_into_hand(
         target
     }
 
-    let player = match subject {
-        Some(SubjectAst::Player(player)) => player,
-        _ => PlayerAst::Implicit,
-    };
+    let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
 
     let clause_words = words(tokens);
 

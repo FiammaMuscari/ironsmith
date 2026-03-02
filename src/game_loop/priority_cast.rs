@@ -1484,7 +1484,8 @@ fn get_legal_exile_from_graveyard_cards(
                 .copied()
                 .filter(|&card_id| {
                     if let Some(ct) = card_type {
-                        game.object(card_id).is_some_and(|obj| obj.has_card_type(ct))
+                        game.object(card_id)
+                            .is_some_and(|obj| obj.has_card_type(ct))
                     } else {
                         true
                     }
@@ -1511,7 +1512,8 @@ fn get_legal_reveal_from_hand_cards(
                         return false;
                     }
                     if let Some(ct) = card_type {
-                        game.object(card_id).is_some_and(|obj| obj.has_card_type(ct))
+                        game.object(card_id)
+                            .is_some_and(|obj| obj.has_card_type(ct))
                     } else {
                         true
                     }
@@ -1569,7 +1571,10 @@ fn card_cost_choice_description_and_candidates(
             card_type,
             description,
         } => (
-            format!("Choose a card to exile from your graveyard: {}", description),
+            format!(
+                "Choose a card to exile from your graveyard: {}",
+                description
+            ),
             get_legal_exile_from_graveyard_cards(game, player, *card_type),
         ),
         ActivationCardCostChoice::RevealFromHand {
@@ -1628,9 +1633,11 @@ fn collect_non_mana_spell_costs(
                 use_alternative: Some(idx),
                 zone,
                 ..
-            } => crate::decision::resolve_play_from_alternative_method(game, caster, obj, *zone, *idx)
-                .and_then(|method| method.total_cost().cloned())
-                .unwrap_or_else(crate::cost::TotalCost::free),
+            } => crate::decision::resolve_play_from_alternative_method(
+                game, caster, obj, *zone, *idx,
+            )
+            .and_then(|method| method.total_cost().cloned())
+            .unwrap_or_else(crate::cost::TotalCost::free),
         };
 
         extend_non_mana(&mut non_mana_costs, &alternative_additional_cost);

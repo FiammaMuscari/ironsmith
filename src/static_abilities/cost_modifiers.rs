@@ -2,33 +2,13 @@
 //!
 //! These abilities modify the costs of spells being cast.
 
-use super::{StaticAbilityId, StaticAbilityKind};
+use super::{StaticAbilityId, StaticAbilityKind, text_utils::join_with_and};
 use crate::color::{Color, ColorSet};
 use crate::effect::Value;
 use crate::filter::{AlternativeCastKind, Comparison};
 use crate::mana::ManaCost;
-use crate::object::CounterType;
 use crate::target::{ObjectFilter, PlayerFilter};
 use crate::types::CardType;
-use std::borrow::Cow;
-
-fn join_with_and(parts: &[String]) -> String {
-    match parts.len() {
-        0 => String::new(),
-        1 => parts[0].clone(),
-        2 => format!("{} and {}", parts[0], parts[1]),
-        _ => {
-            let mut out = String::new();
-            for (idx, part) in parts.iter().enumerate() {
-                if idx > 0 {
-                    out.push_str(" and ");
-                }
-                out.push_str(part);
-            }
-            out
-        }
-    }
-}
 
 fn describe_comparison(cmp: &Comparison) -> String {
     let describe_values = |values: &[i32]| -> String {
@@ -100,40 +80,6 @@ fn describe_alternative_cast_kind(kind: AlternativeCastKind) -> &'static str {
         AlternativeCastKind::Escape => "escape",
         AlternativeCastKind::Madness => "madness",
         AlternativeCastKind::Miracle => "miracle",
-    }
-}
-
-fn describe_counter_type(counter_type: CounterType) -> Cow<'static, str> {
-    match counter_type {
-        CounterType::PlusOnePlusOne => Cow::Borrowed("+1/+1"),
-        CounterType::MinusOneMinusOne => Cow::Borrowed("-1/-1"),
-        CounterType::DoubleStrike => Cow::Borrowed("double strike"),
-        CounterType::FirstStrike => Cow::Borrowed("first strike"),
-        CounterType::Deathtouch => Cow::Borrowed("deathtouch"),
-        CounterType::Flying => Cow::Borrowed("flying"),
-        CounterType::Haste => Cow::Borrowed("haste"),
-        CounterType::Hexproof => Cow::Borrowed("hexproof"),
-        CounterType::Indestructible => Cow::Borrowed("indestructible"),
-        CounterType::Lifelink => Cow::Borrowed("lifelink"),
-        CounterType::Menace => Cow::Borrowed("menace"),
-        CounterType::Reach => Cow::Borrowed("reach"),
-        CounterType::Trample => Cow::Borrowed("trample"),
-        CounterType::Vigilance => Cow::Borrowed("vigilance"),
-        CounterType::Loyalty => Cow::Borrowed("loyalty"),
-        CounterType::Charge => Cow::Borrowed("charge"),
-        CounterType::Stun => Cow::Borrowed("stun"),
-        CounterType::Depletion => Cow::Borrowed("depletion"),
-        CounterType::Storage => Cow::Borrowed("storage"),
-        CounterType::Ki => Cow::Borrowed("ki"),
-        CounterType::Energy => Cow::Borrowed("energy"),
-        CounterType::Age => Cow::Borrowed("age"),
-        CounterType::Finality => Cow::Borrowed("finality"),
-        CounterType::Time => Cow::Borrowed("time"),
-        CounterType::Brain => Cow::Borrowed("brain"),
-        CounterType::Level => Cow::Borrowed("level"),
-        CounterType::Lore => Cow::Borrowed("lore"),
-        CounterType::Named(name) => Cow::Owned((*name).to_string()),
-        _ => Cow::Borrowed("counter"),
     }
 }
 
@@ -257,7 +203,7 @@ fn describe_cost_modifier_amount(amount: &Value) -> (String, Option<String>) {
             "{1}".to_string(),
             Some(format!(
                 "for each {} counter on this permanent",
-                describe_counter_type(*counter_type)
+                counter_type.description()
             )),
         ),
         Value::CardTypesInGraveyard(player) => {

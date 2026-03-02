@@ -8,9 +8,10 @@
 //! - Trample (excess damage goes to defending player)
 
 use crate::game_state::GameState;
-use crate::ids::PlayerId;
+use crate::ids::{ObjectId, PlayerId};
 use crate::object::Object;
 use crate::static_abilities::StaticAbilityId;
+use crate::types::CardType;
 
 /// The target of damage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +51,107 @@ pub struct DamageResult {
 
     /// Whether the damage source has lifelink.
     pub has_lifelink: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct SourceDamageKeywords {
+    pub has_deathtouch: bool,
+    pub has_infect: bool,
+    pub has_wither: bool,
+    pub has_lifelink: bool,
+}
+
+pub(crate) fn source_damage_keywords(
+    game: &GameState,
+    source: ObjectId,
+    source_snapshot: Option<&crate::snapshot::ObjectSnapshot>,
+) -> SourceDamageKeywords {
+    if game.object(source).is_some() {
+        return SourceDamageKeywords {
+            has_deathtouch: game.object_has_static_ability_id(source, StaticAbilityId::Deathtouch),
+            has_infect: game.object_has_static_ability_id(source, StaticAbilityId::Infect),
+            has_wither: game.object_has_static_ability_id(source, StaticAbilityId::Wither),
+            has_lifelink: game.object_has_static_ability_id(source, StaticAbilityId::Lifelink),
+        };
+    }
+
+    let Some(snapshot) = source_snapshot else {
+        return SourceDamageKeywords::default();
+    };
+
+    SourceDamageKeywords {
+        has_deathtouch: snapshot.has_static_ability_id(StaticAbilityId::Deathtouch),
+        has_infect: snapshot.has_static_ability_id(StaticAbilityId::Infect),
+        has_wither: snapshot.has_static_ability_id(StaticAbilityId::Wither),
+        has_lifelink: snapshot.has_static_ability_id(StaticAbilityId::Lifelink),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct AppliedDamageAssignment {
+    pub applied: bool,
+    pub life_lost: u32,
+}
+
+pub(crate) fn apply_processed_damage_assignment(
+    game: &mut GameState,
+    source: ObjectId,
+    target: crate::game_event::DamageTarget,
+    amount: u32,
+    keywords: SourceDamageKeywords,
+) -> AppliedDamageAssignment {
+    match target {
+        crate::game_event::DamageTarget::Player(player_id) => {
+            let Some(player) = game.player_mut(player_id) else {
+                return AppliedDamageAssignment::default();
+            };
+            if keywords.has_infect {
+                player.poison_counters = player.poison_counters.saturating_add(amount);
+                AppliedDamageAssignment {
+                    applied: true,
+                    life_lost: 0,
+                }
+            } else {
+                // Damage is still dealt even when life total can't change; track only actual life lost.
+                let life_lost = game.lose_life(player_id, amount);
+                AppliedDamageAssignment {
+                    applied: true,
+                    life_lost,
+                }
+            }
+        }
+        crate::game_event::DamageTarget::Object(object_id) => {
+            let Some(obj) = game.object(object_id) else {
+                return AppliedDamageAssignment::default();
+            };
+
+            let is_creature = obj.has_card_type(CardType::Creature);
+            let is_planeswalker = obj.has_card_type(CardType::Planeswalker);
+            if !is_creature && !is_planeswalker {
+                return AppliedDamageAssignment::default();
+            }
+
+            if is_creature && (keywords.has_infect || keywords.has_wither) {
+                if let Some(permanent) = game.object_mut(object_id) {
+                    *permanent
+                        .counters
+                        .entry(crate::CounterType::MinusOneMinusOne)
+                        .or_insert(0) += amount;
+                }
+            } else {
+                game.mark_damage(object_id, amount);
+            }
+
+            if is_creature {
+                game.record_creature_damaged_by_this_turn(object_id, source);
+            }
+
+            AppliedDamageAssignment {
+                applied: true,
+                life_lost: 0,
+            }
+        }
+    }
 }
 
 fn build_damage_result(
@@ -221,7 +323,8 @@ pub fn calculate_trample_excess(
         return 0;
     }
 
-    let has_deathtouch = game.object_has_static_ability_id(attacker.id, StaticAbilityId::Deathtouch);
+    let has_deathtouch =
+        game.object_has_static_ability_id(attacker.id, StaticAbilityId::Deathtouch);
 
     // Calculate minimum damage needed to kill each blocker
     let mut damage_needed: u32 = 0;
@@ -262,7 +365,8 @@ pub fn distribute_trample_damage(
         return (vec![], total_damage);
     }
 
-    let has_deathtouch = game.object_has_static_ability_id(attacker.id, StaticAbilityId::Deathtouch);
+    let has_deathtouch =
+        game.object_has_static_ability_id(attacker.id, StaticAbilityId::Deathtouch);
     let has_trample = game.object_has_static_ability_id(attacker.id, StaticAbilityId::Trample);
 
     let mut distribution = Vec::with_capacity(blockers.len());

@@ -5816,7 +5816,8 @@ fn describe_effect_impl(effect: &Effect) -> String {
             describe_effect_list(&for_each_tagged_player.effects)
         );
     }
-    if let Some(_apply_replacement) = effect.downcast_ref::<crate::effects::ApplyReplacementEffect>()
+    if let Some(_apply_replacement) =
+        effect.downcast_ref::<crate::effects::ApplyReplacementEffect>()
     {
         return "Apply a replacement effect".to_string();
     }
@@ -5876,7 +5877,10 @@ fn describe_effect_impl(effect: &Effect) -> String {
         }
         return parts.join(" ");
     }
-    if effect.downcast_ref::<crate::effects::ClashEffect>().is_some() {
+    if effect
+        .downcast_ref::<crate::effects::ClashEffect>()
+        .is_some()
+    {
         return "Clash with an opponent".to_string();
     }
     if let Some(clear_damage) = effect.downcast_ref::<crate::effects::ClearDamageEffect>() {
@@ -5900,7 +5904,10 @@ fn describe_effect_impl(effect: &Effect) -> String {
             describe_choose_spec(&enter_attacking.target)
         );
     }
-    if effect.downcast_ref::<crate::effects::EvolveEffect>().is_some() {
+    if effect
+        .downcast_ref::<crate::effects::EvolveEffect>()
+        .is_some()
+    {
         return "Evolve".to_string();
     }
     if let Some(exchange_life) = effect.downcast_ref::<crate::effects::ExchangeLifeTotalsEffect>() {
@@ -5993,10 +6000,14 @@ fn describe_effect_impl(effect: &Effect) -> String {
     {
         return "Return an unblocked attacker you control to its owner's hand".to_string();
     }
-    if effect.downcast_ref::<crate::effects::NinjutsuEffect>().is_some() {
+    if effect
+        .downcast_ref::<crate::effects::NinjutsuEffect>()
+        .is_some()
+    {
         return "Put this card onto the battlefield tapped and attacking".to_string();
     }
-    if let Some(remove_from_combat) = effect.downcast_ref::<crate::effects::RemoveFromCombatEffect>()
+    if let Some(remove_from_combat) =
+        effect.downcast_ref::<crate::effects::RemoveFromCombatEffect>()
     {
         return format!(
             "Remove {} from combat",
@@ -6051,7 +6062,10 @@ fn describe_effect_impl(effect: &Effect) -> String {
     {
         return "Pair this creature with another unpaired creature you control".to_string();
     }
-    if effect.downcast_ref::<crate::effects::UnearthEffect>().is_some() {
+    if effect
+        .downcast_ref::<crate::effects::UnearthEffect>()
+        .is_some()
+    {
         return "Unearth".to_string();
     }
     if let Some(vote) = effect.downcast_ref::<crate::effects::VoteEffect>() {
@@ -6726,31 +6740,46 @@ fn rewrite_damage_phrases_for_permanent_abilities(
     out
 }
 
-fn subject_for_card(card: &crate::card::Card) -> &'static str {
-    // Preserve oracle-like self-reference for common attached permanent subtypes.
+fn card_self_reference_phrase_for_card(card: &crate::card::Card) -> &'static str {
+    if card.is_instant() || card.is_sorcery() {
+        return "this spell";
+    }
     if card.subtypes.contains(&Subtype::Aura) {
         return "this Aura";
     }
     if card.subtypes.contains(&Subtype::Equipment) {
         return "this Equipment";
     }
+    if card.subtypes.contains(&Subtype::Fortification) {
+        return "this Fortification";
+    }
+    if card.subtypes.contains(&Subtype::Saga) {
+        return "this Saga";
+    }
+    if card.subtypes.contains(&Subtype::Vehicle) {
+        return "this Vehicle";
+    }
 
     let card_types = &card.card_types;
     if card_types.contains(&CardType::Creature) {
         "this creature"
-    } else if card_types.contains(&CardType::Artifact) {
-        "this artifact"
-    } else if card_types.contains(&CardType::Land) {
-        "this land"
-    } else if card_types.contains(&CardType::Planeswalker) {
-        "this planeswalker"
     } else if card_types.contains(&CardType::Enchantment) {
         "this enchantment"
     } else if card_types.contains(&CardType::Battle) {
         "this battle"
+    } else if card_types.contains(&CardType::Land) {
+        "this land"
+    } else if card_types.contains(&CardType::Artifact) {
+        "this artifact"
+    } else if card_types.contains(&CardType::Planeswalker) {
+        "this planeswalker"
     } else {
         "this permanent"
     }
+}
+
+fn subject_for_card(card: &crate::card::Card) -> &'static str {
+    card_self_reference_phrase_for_card(card)
 }
 
 fn extract_activated_x_is_clause(text: Option<&str>) -> Option<String> {
@@ -6961,7 +6990,15 @@ fn describe_mana_activation_condition(condition: &crate::ConditionExpr) -> Strin
                 format!("Activate only {suffix}")
             }
         }
-        _ => format!("Activate only if {condition:?}"),
+        _ => {
+            let described = describe_condition(condition);
+            let described = described.trim().trim_end_matches('.');
+            if described.is_empty() {
+                "Activate only if this condition is met".to_string()
+            } else {
+                format!("Activate only if {}", lowercase_first(described))
+            }
+        }
     }
 }
 

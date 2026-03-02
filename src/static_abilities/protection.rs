@@ -2,7 +2,7 @@
 //!
 //! This includes Protection, Ward, and conditional Hexproof.
 
-use super::{StaticAbilityId, StaticAbilityKind};
+use super::{StaticAbilityId, StaticAbilityKind, text_utils::join_with_and};
 use crate::ability::ProtectionFrom;
 use crate::color::Color;
 use crate::cost::TotalCost;
@@ -39,20 +39,6 @@ impl Protection {
 
     pub fn from_card_type(card_type: crate::types::CardType) -> Self {
         Self::new(ProtectionFrom::CardType(card_type))
-    }
-}
-
-fn join_with_and(parts: &[&str]) -> String {
-    match parts.len() {
-        0 => String::new(),
-        1 => parts[0].to_string(),
-        2 => format!("{} and {}", parts[0], parts[1]),
-        _ => {
-            let mut out = parts[..parts.len() - 1].join(", ");
-            out.push_str(", and ");
-            out.push_str(parts.last().copied().unwrap_or_default());
-            out
-        }
     }
 }
 

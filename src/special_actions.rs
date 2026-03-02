@@ -7,7 +7,7 @@ use crate::cost::CostPaymentError;
 use crate::costs::{CostContext, CostPaymentResult};
 use crate::decisions::make_decision;
 use crate::decisions::specs::ChooseObjectsSpec;
-use crate::event_processor::{EventOutcome, execute_discard, process_zone_change};
+use crate::event_processor::{EventOutcome, execute_discard};
 use crate::events::cause::EventCause;
 use crate::events::permanents::SacrificeEvent;
 use crate::filter::{FilterContext, ObjectFilter};
@@ -500,12 +500,12 @@ fn cost_error_to_action_error(err: CostPaymentError) -> ActionError {
     }
 }
 
-fn can_activate_mana_ability(
+fn can_activate_mana_ability_with_cost_checks(
     game: &GameState,
     player: PlayerId,
     permanent_id: ObjectId,
     ability_index: usize,
-    decision_maker: &mut impl crate::decision::DecisionMaker,
+    mut check_costs: impl FnMut(&crate::ability::ActivatedAbility) -> Result<(), ActionError>,
 ) -> Result<(), ActionError> {
     let object = game
         .object(permanent_id)
@@ -546,25 +546,7 @@ fn can_activate_mana_ability(
         if mana_ability.has_tap_cost() && !game.can_activate_tap_abilities_of(permanent_id) {
             return Err(ActionError::CantPayCost);
         }
-        let total_cost = crate::decision::calculate_effective_activation_total_cost(
-            game,
-            player,
-            permanent_id,
-            &mana_ability.mana_cost,
-        );
-        // Check mana costs from TotalCost (for abilities like Blood Celebrant that cost {B})
-        let ctx = CostContext::new(permanent_id, player, decision_maker);
-        for cost in total_cost.costs() {
-            // For mana costs, use can_potentially_pay to show abilities that could
-            // be activated after tapping mana sources.
-            if cost.processing_mode().is_mana_payment() {
-                cost.can_potentially_pay(game, &ctx)
-                    .map_err(cost_error_to_action_error)?;
-            } else {
-                cost.can_pay(game, &ctx)
-                    .map_err(cost_error_to_action_error)?;
-            }
-        }
+        check_costs(mana_ability)?;
 
         // Check activation condition if present
         if let Some(condition) = &mana_ability.activation_condition
@@ -575,6 +557,43 @@ fn can_activate_mana_ability(
     }
 
     Ok(())
+}
+
+fn can_activate_mana_ability(
+    game: &GameState,
+    player: PlayerId,
+    permanent_id: ObjectId,
+    ability_index: usize,
+    decision_maker: &mut impl crate::decision::DecisionMaker,
+) -> Result<(), ActionError> {
+    can_activate_mana_ability_with_cost_checks(
+        game,
+        player,
+        permanent_id,
+        ability_index,
+        |mana_ability| {
+            let total_cost = crate::decision::calculate_effective_activation_total_cost(
+                game,
+                player,
+                permanent_id,
+                &mana_ability.mana_cost,
+            );
+            // Check mana costs from TotalCost (for abilities like Blood Celebrant that cost {B})
+            let ctx = CostContext::new(permanent_id, player, decision_maker);
+            for cost in total_cost.costs() {
+                // For mana costs, use can_potentially_pay to show abilities that could
+                // be activated after tapping mana sources.
+                if cost.processing_mode().is_mana_payment() {
+                    cost.can_potentially_pay(game, &ctx)
+                        .map_err(cost_error_to_action_error)?;
+                } else {
+                    cost.can_pay(game, &ctx)
+                        .map_err(cost_error_to_action_error)?;
+                }
+            }
+            Ok(())
+        },
+    )
 }
 
 /// Check if a mana ability can be activated (for query/legality checks).
@@ -590,74 +609,34 @@ fn can_activate_mana_ability_check(
         CostCheckContext, can_pay_with_check_context, can_potentially_pay_with_check_context,
     };
 
-    let object = game
-        .object(permanent_id)
-        .ok_or(ActionError::ObjectNotFound)?;
-
-    // Check the player controls the object
-    if object.controller != player {
-        return Err(ActionError::InvalidTarget);
-    }
-
-    // Rule restriction: activated abilities of this permanent can't be activated.
-    if !game.can_activate_abilities_of(permanent_id) {
-        return Err(ActionError::CantPayCost);
-    }
-
-    // Check the ability exists and is a mana ability
-    let ability = object
-        .abilities
-        .get(ability_index)
-        .ok_or(ActionError::NoSuchAbility)?;
-
-    if !ability.is_mana_ability() {
-        return Err(ActionError::NoSuchAbility);
-    }
-
-    // Check the ability functions in this zone
-    if !ability.functions_in(&object.zone) {
-        return Err(ActionError::WrongZone {
-            expected: Zone::Battlefield,
-            actual: object.zone,
-        });
-    }
-
-    // Check if the cost can be paid
-    if let crate::ability::AbilityKind::Activated(mana_ability) = &ability.kind
-        && mana_ability.is_mana_ability()
-    {
-        if mana_ability.has_tap_cost() && !game.can_activate_tap_abilities_of(permanent_id) {
-            return Err(ActionError::CantPayCost);
-        }
-        let total_cost = crate::decision::calculate_effective_activation_total_cost(
-            game,
-            player,
-            permanent_id,
-            &mana_ability.mana_cost,
-        );
-        // Check mana costs from TotalCost (for abilities like Blood Celebrant that cost {B})
-        let ctx = CostCheckContext::new(permanent_id, player);
-        for cost in total_cost.costs() {
-            // For mana costs, use can_potentially_pay to show abilities that could
-            // be activated after tapping mana sources.
-            if cost.processing_mode().is_mana_payment() {
-                can_potentially_pay_with_check_context(&*cost.0, game, &ctx)
-                    .map_err(cost_error_to_action_error)?;
-            } else {
-                can_pay_with_check_context(&*cost.0, game, &ctx)
-                    .map_err(cost_error_to_action_error)?;
+    can_activate_mana_ability_with_cost_checks(
+        game,
+        player,
+        permanent_id,
+        ability_index,
+        |mana_ability| {
+            let total_cost = crate::decision::calculate_effective_activation_total_cost(
+                game,
+                player,
+                permanent_id,
+                &mana_ability.mana_cost,
+            );
+            // Check mana costs from TotalCost (for abilities like Blood Celebrant that cost {B})
+            let ctx = CostCheckContext::new(permanent_id, player);
+            for cost in total_cost.costs() {
+                // For mana costs, use can_potentially_pay to show abilities that could
+                // be activated after tapping mana sources.
+                if cost.processing_mode().is_mana_payment() {
+                    can_potentially_pay_with_check_context(&*cost.0, game, &ctx)
+                        .map_err(cost_error_to_action_error)?;
+                } else {
+                    can_pay_with_check_context(&*cost.0, game, &ctx)
+                        .map_err(cost_error_to_action_error)?;
+                }
             }
-        }
-
-        // Check activation condition if present
-        if let Some(condition) = &mana_ability.activation_condition
-            && !check_mana_ability_condition(game, player, permanent_id, ability_index, condition)
-        {
-            return Err(ActionError::CantPayCost);
-        }
-    }
-
-    Ok(())
+            Ok(())
+        },
+    )
 }
 
 /// Check if a mana ability's activation condition is met.
@@ -807,7 +786,15 @@ fn resolve_cost_choice(
                 return Err(CostPaymentError::NoValidSacrificeTarget);
             };
 
-            match process_zone_change(
+            let snapshot = game
+                .object(target_id)
+                .map(|obj| ObjectSnapshot::from_object(obj, game));
+            let sacrificing_player = snapshot
+                .as_ref()
+                .map(|snap| snap.controller)
+                .or(Some(ctx.payer));
+
+            match crate::effects::zones::apply_zone_change(
                 game,
                 target_id,
                 Zone::Battlefield,
@@ -817,16 +804,8 @@ fn resolve_cost_choice(
                 EventOutcome::Prevented | EventOutcome::NotApplicable => {
                     Err(CostPaymentError::NoValidSacrificeTarget)
                 }
-                EventOutcome::Proceed(final_zone) => {
-                    let snapshot = game
-                        .object(target_id)
-                        .map(|obj| ObjectSnapshot::from_object(obj, game));
-                    let sacrificing_player = snapshot
-                        .as_ref()
-                        .map(|snap| snap.controller)
-                        .or(Some(ctx.payer));
-                    game.move_object(target_id, final_zone);
-                    if final_zone == Zone::Graveyard {
+                EventOutcome::Proceed(result) => {
+                    if result.final_zone == Zone::Graveyard {
                         game.queue_trigger_event(TriggerEvent::new(
                             SacrificeEvent::new(target_id, Some(ctx.source))
                                 .with_snapshot(snapshot, sacrificing_player),
@@ -1111,7 +1090,9 @@ fn legal_exile_from_graveyard_cards(
                 .copied()
                 .filter(|&card_id| {
                     if let Some(ct) = card_type {
-                        return game.object(card_id).is_some_and(|obj| obj.has_card_type(ct));
+                        return game
+                            .object(card_id)
+                            .is_some_and(|obj| obj.has_card_type(ct));
                     }
                     true
                 })
@@ -1136,7 +1117,9 @@ fn legal_reveal_cards(
                         return false;
                     }
                     if let Some(ct) = card_type {
-                        return game.object(card_id).is_some_and(|obj| obj.has_card_type(ct));
+                        return game
+                            .object(card_id)
+                            .is_some_and(|obj| obj.has_card_type(ct));
                     }
                     true
                 })

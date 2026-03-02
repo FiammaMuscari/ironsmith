@@ -263,58 +263,7 @@ pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
 }
 
 fn card_self_reference_phrase(def: &CardDefinition) -> &'static str {
-    if def.card.is_creature() {
-        "this creature"
-    } else if def
-        .card
-        .subtypes
-        .iter()
-        .any(|subtype| matches!(subtype, crate::types::Subtype::Vehicle))
-    {
-        "this Vehicle"
-    } else if def.card.is_instant() || def.card.is_sorcery() {
-        "this spell"
-    } else if def
-        .card
-        .subtypes
-        .iter()
-        .any(|subtype| matches!(subtype, crate::types::Subtype::Aura))
-    {
-        "this Aura"
-    } else if def
-        .card
-        .subtypes
-        .iter()
-        .any(|subtype| matches!(subtype, crate::types::Subtype::Equipment))
-    {
-        "this Equipment"
-    } else if def
-        .card
-        .subtypes
-        .iter()
-        .any(|subtype| matches!(subtype, crate::types::Subtype::Fortification))
-    {
-        "this Fortification"
-    } else if def
-        .card
-        .subtypes
-        .iter()
-        .any(|subtype| matches!(subtype, crate::types::Subtype::Saga))
-    {
-        "this Saga"
-    } else if def.card.is_enchantment() {
-        "this enchantment"
-    } else if def.card.has_card_type(CardType::Battle) {
-        "this battle"
-    } else if def.card.is_land() {
-        "this land"
-    } else if def.card.is_artifact() {
-        "this artifact"
-    } else if def.card.is_planeswalker() {
-        "this planeswalker"
-    } else {
-        "this permanent"
-    }
+    card_self_reference_phrase_for_card(&def.card)
 }
 
 fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String {

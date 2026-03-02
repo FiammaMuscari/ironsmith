@@ -9,7 +9,10 @@ use crate::game_state::GameState;
 use crate::target::ChooseSpec;
 use crate::zone::Zone;
 
-use super::{BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options};
+use super::{
+    BattlefieldEntryOptions, BattlefieldEntryOutcome, finalize_zone_change_move,
+    move_to_battlefield_with_options,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BattlefieldController {
@@ -156,7 +159,8 @@ impl EffectExecutor for MoveToZoneEffect {
                         continue;
                     }
 
-                    if let Some(new_id) = game.move_object(object_id, final_zone) {
+                    let result = finalize_zone_change_move(game, object_id, final_zone);
+                    if let Some(new_id) = result.new_object_id {
                         if final_zone == Zone::Exile {
                             game.add_exiled_with_source_link(ctx.source, new_id);
                         }

@@ -84,8 +84,27 @@ fn apply_processed_damage_outcome(
         return EffectOutcome::from_result(EffectResult::Prevented);
     }
 
+    let keywords = crate::rules::damage::source_damage_keywords(game, source, source_snapshot);
+    let source_controller = game
+        .object(source)
+        .map(|obj| obj.controller)
+        .or_else(|| source_snapshot.map(|snapshot| snapshot.controller));
+
     let mut outcomes = Vec::new();
+    let mut total_damage_dealt = 0u32;
     for assignment in processed.assignments {
+        let applied = crate::rules::damage::apply_processed_damage_assignment(
+            game,
+            source,
+            assignment.target,
+            assignment.amount,
+            keywords,
+        );
+        if !applied.applied {
+            continue;
+        }
+
+        total_damage_dealt = total_damage_dealt.saturating_add(assignment.amount);
         let mut outcome = EffectOutcome::count(assignment.amount as i32);
         if assignment.amount > 0 {
             outcome = outcome.with_event(TriggerEvent::new(DamageEvent::new(
@@ -96,42 +115,33 @@ fn apply_processed_damage_outcome(
             )));
         }
 
-        match assignment.target {
-            DamageTarget::Player(player_id) => {
-                let life_loss = if assignment.amount == 0 || !game.can_change_life_total(player_id)
-                {
-                    0
-                } else if let Some(player) = game.player_mut(player_id) {
-                    player.deal_damage(assignment.amount)
-                } else {
-                    0
-                };
-                if life_loss > 0 {
-                    outcome = outcome.with_event(TriggerEvent::new(LifeLossEvent::new(
-                        player_id, life_loss, true,
-                    )));
-                }
-            }
-            DamageTarget::Object(object_id) => {
-                let Some(obj) = game.object(object_id) else {
-                    continue;
-                };
-                let can_be_damaged = obj.has_card_type(CardType::Creature)
-                    || obj.has_card_type(CardType::Planeswalker);
-                if !can_be_damaged {
-                    continue;
-                }
-                let is_creature = obj.has_card_type(CardType::Creature);
-                if assignment.amount > 0 {
-                    game.mark_damage(object_id, assignment.amount);
-                    if is_creature {
-                        game.record_creature_damaged_by_this_turn(object_id, source);
-                    }
-                }
-            }
+        if let DamageTarget::Player(player_id) = assignment.target
+            && applied.life_lost > 0
+        {
+            outcome = outcome.with_event(TriggerEvent::new(LifeLossEvent::new(
+                player_id,
+                applied.life_lost,
+                true,
+            )));
         }
 
         outcomes.push(outcome);
+    }
+
+    if keywords.has_lifelink
+        && total_damage_dealt > 0
+        && let Some(controller) = source_controller
+    {
+        let life_to_gain = crate::event_processor::process_life_gain_with_event(
+            game,
+            controller,
+            total_damage_dealt,
+        );
+        if life_to_gain > 0
+            && let Some(player) = game.player_mut(controller)
+        {
+            player.gain_life(life_to_gain);
+        }
     }
 
     if outcomes.is_empty() {

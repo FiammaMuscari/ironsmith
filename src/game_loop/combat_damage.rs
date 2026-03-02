@@ -71,8 +71,12 @@ pub fn execute_combat_damage_step(
             damage_events.extend(events);
         } else if is_unblocked(combat, attacker_id) {
             // Unblocked attacker - deal damage to defender
-            let event =
-                deal_damage_to_defender(game, attacker_id, &attacker_info.target, combat_stat as u32);
+            let event = deal_damage_to_defender(
+                game,
+                attacker_id,
+                &attacker_info.target,
+                combat_stat as u32,
+            );
             if let Some(e) = event {
                 damage_events.push(e);
             }
@@ -405,16 +409,25 @@ fn deal_damage_to_defender(
 
             let mut final_damage = 0u32;
             let mut total_damage_dealt = 0u32;
+            let keywords = crate::rules::damage::SourceDamageKeywords {
+                has_deathtouch: damage_result.has_deathtouch,
+                has_infect: damage_result.has_infect,
+                has_wither: damage_result.has_wither,
+                has_lifelink: damage_result.has_lifelink,
+            };
             if !processed.replacement_prevented {
                 for assignment in processed.assignments {
-                    total_damage_dealt = total_damage_dealt.saturating_add(assignment.amount);
                     match assignment.target {
                         EventDamageTarget::Object(object_id) => {
                             if object_id == *pw_id {
                                 if let Some(pw) = game.object_mut(*pw_id) {
-                                    let current_loyalty =
-                                        pw.counters.get(&CounterType::Loyalty).copied().unwrap_or(0);
-                                    let new_loyalty = current_loyalty.saturating_sub(assignment.amount);
+                                    let current_loyalty = pw
+                                        .counters
+                                        .get(&CounterType::Loyalty)
+                                        .copied()
+                                        .unwrap_or(0);
+                                    let new_loyalty =
+                                        current_loyalty.saturating_sub(assignment.amount);
                                     if new_loyalty == 0 {
                                         pw.counters.remove(&CounterType::Loyalty);
                                     } else {
@@ -422,32 +435,33 @@ fn deal_damage_to_defender(
                                     }
                                 }
                                 final_damage = final_damage.saturating_add(assignment.amount);
+                                total_damage_dealt =
+                                    total_damage_dealt.saturating_add(assignment.amount);
                                 continue;
                             }
-                            if damage_result.has_infect || damage_result.has_wither {
-                                if let Some(permanent) = game.object_mut(object_id) {
-                                    *permanent
-                                        .counters
-                                        .entry(CounterType::MinusOneMinusOne)
-                                        .or_insert(0) += assignment.amount;
-                                }
-                            } else {
-                                game.mark_damage(object_id, assignment.amount);
-                            }
-                            if game
-                                .object(object_id)
-                                .is_some_and(|o| o.has_card_type(crate::types::CardType::Creature))
-                            {
-                                game.record_creature_damaged_by_this_turn(object_id, attacker_id);
+                            let applied = crate::rules::damage::apply_processed_damage_assignment(
+                                game,
+                                attacker_id,
+                                assignment.target,
+                                assignment.amount,
+                                keywords,
+                            );
+                            if applied.applied {
+                                total_damage_dealt =
+                                    total_damage_dealt.saturating_add(assignment.amount);
                             }
                         }
-                        EventDamageTarget::Player(player_id) => {
-                            if damage_result.has_infect {
-                                if let Some(player) = game.player_mut(player_id) {
-                                    player.poison_counters += assignment.amount;
-                                }
-                            } else {
-                                let _ = game.lose_life(player_id, assignment.amount);
+                        EventDamageTarget::Player(_) => {
+                            let applied = crate::rules::damage::apply_processed_damage_assignment(
+                                game,
+                                attacker_id,
+                                assignment.target,
+                                assignment.amount,
+                                keywords,
+                            );
+                            if applied.applied {
+                                total_damage_dealt =
+                                    total_damage_dealt.saturating_add(assignment.amount);
                             }
                         }
                     }
@@ -501,42 +515,31 @@ fn apply_damage_to_permanent(
         };
     }
 
+    let keywords = crate::rules::damage::SourceDamageKeywords {
+        has_deathtouch: result.has_deathtouch,
+        has_infect: result.has_infect,
+        has_wither: result.has_wither,
+        has_lifelink: result.has_lifelink,
+    };
     let mut damage_to_original = 0u32;
     let mut total_damage_dealt = 0u32;
 
     for assignment in processed.assignments {
+        let applied = crate::rules::damage::apply_processed_damage_assignment(
+            game,
+            source_id,
+            assignment.target,
+            assignment.amount,
+            keywords,
+        );
+        if !applied.applied {
+            continue;
+        }
         total_damage_dealt = total_damage_dealt.saturating_add(assignment.amount);
-        match assignment.target {
-            DamageTarget::Object(object_id) => {
-                if result.has_infect || result.has_wither {
-                    if let Some(permanent) = game.object_mut(object_id) {
-                        *permanent
-                            .counters
-                            .entry(CounterType::MinusOneMinusOne)
-                            .or_insert(0) += assignment.amount;
-                    }
-                } else {
-                    game.mark_damage(object_id, assignment.amount);
-                }
-                if game
-                    .object(object_id)
-                    .is_some_and(|o| o.has_card_type(crate::types::CardType::Creature))
-                {
-                    game.record_creature_damaged_by_this_turn(object_id, source_id);
-                }
-                if object_id == permanent_id {
-                    damage_to_original = damage_to_original.saturating_add(assignment.amount);
-                }
-            }
-            DamageTarget::Player(player_id) => {
-                if result.has_infect {
-                    if let Some(player) = game.player_mut(player_id) {
-                        player.poison_counters += assignment.amount;
-                    }
-                } else {
-                    let _ = game.lose_life(player_id, assignment.amount);
-                }
-            }
+        if let DamageTarget::Object(object_id) = assignment.target
+            && object_id == permanent_id
+        {
+            damage_to_original = damage_to_original.saturating_add(assignment.amount);
         }
     }
 
@@ -581,47 +584,33 @@ fn apply_damage_to_player(
         };
     }
 
+    let keywords = crate::rules::damage::SourceDamageKeywords {
+        has_deathtouch: result.has_deathtouch,
+        has_infect: result.has_infect,
+        has_wither: result.has_wither,
+        has_lifelink: result.has_lifelink,
+    };
     let mut damage_to_original = 0u32;
     let mut life_lost_to_original = 0u32;
     let mut total_damage_dealt = 0u32;
 
     for assignment in processed.assignments {
+        let applied = crate::rules::damage::apply_processed_damage_assignment(
+            game,
+            source_id,
+            assignment.target,
+            assignment.amount,
+            keywords,
+        );
+        if !applied.applied {
+            continue;
+        }
         total_damage_dealt = total_damage_dealt.saturating_add(assignment.amount);
-        match assignment.target {
-            DamageTarget::Player(target_player) => {
-                if result.has_infect {
-                    if let Some(player) = game.player_mut(target_player) {
-                        player.poison_counters += assignment.amount;
-                    }
-                } else {
-                    // Damage is still dealt even if life total cannot change; life loss tracks only actual life reduction.
-                    let life_lost = game.lose_life(target_player, assignment.amount);
-                    if target_player == player_id {
-                        life_lost_to_original = life_lost_to_original.saturating_add(life_lost);
-                    }
-                }
-                if target_player == player_id {
-                    damage_to_original = damage_to_original.saturating_add(assignment.amount);
-                }
-            }
-            DamageTarget::Object(object_id) => {
-                if result.has_infect || result.has_wither {
-                    if let Some(permanent) = game.object_mut(object_id) {
-                        *permanent
-                            .counters
-                            .entry(CounterType::MinusOneMinusOne)
-                            .or_insert(0) += assignment.amount;
-                    }
-                } else {
-                    game.mark_damage(object_id, assignment.amount);
-                }
-                if game
-                    .object(object_id)
-                    .is_some_and(|o| o.has_card_type(crate::types::CardType::Creature))
-                {
-                    game.record_creature_damaged_by_this_turn(object_id, source_id);
-                }
-            }
+        if let DamageTarget::Player(target_player) = assignment.target
+            && target_player == player_id
+        {
+            damage_to_original = damage_to_original.saturating_add(assignment.amount);
+            life_lost_to_original = life_lost_to_original.saturating_add(applied.life_lost);
         }
     }
 
