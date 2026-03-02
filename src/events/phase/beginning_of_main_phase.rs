@@ -28,10 +28,6 @@ impl GameEventType for BeginningOfPrecombatMainPhaseEvent {
         EventKind::BeginningOfPrecombatMainPhase
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, _game: &GameState) -> PlayerId {
         self.player
     }
@@ -84,10 +80,6 @@ impl BeginningOfPostcombatMainPhaseEvent {
 impl GameEventType for BeginningOfPostcombatMainPhaseEvent {
     fn event_kind(&self) -> EventKind {
         EventKind::BeginningOfPostcombatMainPhase
-    }
-
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
     }
 
     fn affected_player(&self, _game: &GameState) -> PlayerId {

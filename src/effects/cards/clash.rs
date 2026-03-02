@@ -188,8 +188,4 @@ impl EffectExecutor for ClashEffect {
 
         Ok(EffectOutcome::count(if did_win { 1 } else { 0 }))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

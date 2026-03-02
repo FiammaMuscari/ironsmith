@@ -53,10 +53,6 @@ impl CostPayer for ReturnSelfToHandCost {
         Ok(CostPaymentResult::Paid)
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "Return ~ to its owner's hand".to_string()
     }
@@ -148,10 +144,6 @@ impl CostPayer for ReturnToHandCost {
 
         // The actual choice happens in the game loop
         Ok(CostPaymentResult::NeedsChoice(self.display()))
-    }
-
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {

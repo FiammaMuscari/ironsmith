@@ -487,7 +487,9 @@ fn evaluate_value(
                         let v = match value {
                             Value::PowerOf(_) => chars.power,
                             Value::ToughnessOf(_) => chars.toughness,
-                            _ => unreachable!("Value::PowerOf/ToughnessOf arm received non-PT value"),
+                            _ => {
+                                unreachable!("Value::PowerOf/ToughnessOf arm received non-PT value")
+                            }
                         };
                         if let Some(v) = v {
                             values.push(v);
@@ -511,7 +513,9 @@ fn evaluate_value(
                         let v = match value {
                             Value::PowerOf(_) => chars.power,
                             Value::ToughnessOf(_) => chars.toughness,
-                            _ => unreachable!("Value::PowerOf/ToughnessOf arm received non-PT value"),
+                            _ => {
+                                unreachable!("Value::PowerOf/ToughnessOf arm received non-PT value")
+                            }
                         };
                         if let Some(v) = v {
                             values.push(v);

@@ -88,10 +88,6 @@ impl EffectExecutor for IfEffect {
         Ok(EffectOutcome::aggregate(outcomes))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         super::target_metadata::first_target_spec(&[&self.then, &self.else_])
     }
@@ -112,7 +108,7 @@ mod tests {
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

@@ -170,10 +170,6 @@ impl EffectExecutor for SacrificeEffect {
 
         Ok(EffectOutcome::count(sacrificed_count).with_events(sacrifice_events))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 /// Effect that sacrifices a specific target (e.g., the source permanent).
@@ -274,10 +270,6 @@ impl EffectExecutor for SacrificeTargetEffect {
         Ok(outcome)
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn is_sacrifice_source_cost(&self) -> bool {
         matches!(self.target, ChooseSpec::Source)
     }
@@ -293,7 +285,7 @@ mod tests {
     use crate::types::CardType;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn create_creature_on_battlefield(

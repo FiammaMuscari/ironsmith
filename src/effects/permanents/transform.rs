@@ -74,10 +74,6 @@ impl EffectExecutor for TransformEffect {
             .with_event(TriggerEvent::new(TransformedEvent::new(target_id))))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         Some(&self.target)
     }

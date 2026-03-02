@@ -24,10 +24,6 @@ impl TriggerMatcher for ThisDealsCombatDamageToPlayerTrigger {
     fn display(&self) -> String {
         "Whenever this creature deals combat damage to a player".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

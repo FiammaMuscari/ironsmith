@@ -28,10 +28,6 @@ impl GameEventType for PermanentUntappedEvent {
         EventKind::PermanentUntapped
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, game: &GameState) -> PlayerId {
         game.object(self.permanent)
             .map(|o| o.controller)

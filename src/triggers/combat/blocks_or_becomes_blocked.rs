@@ -50,10 +50,6 @@ impl TriggerMatcher for BlocksOrBecomesBlockedTrigger {
             self.filter.description()
         )
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

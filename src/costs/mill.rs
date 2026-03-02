@@ -50,10 +50,6 @@ impl CostPayer for MillCost {
         Ok(CostPaymentResult::Paid)
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         if self.count == 1 {
             "Mill a card".to_string()

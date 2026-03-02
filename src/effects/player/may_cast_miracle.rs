@@ -161,8 +161,4 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
             Ok(EffectOutcome::from_result(EffectResult::Impossible))
         }
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

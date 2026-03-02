@@ -87,10 +87,6 @@ impl EffectExecutor for MoveToLibrarySecondFromTopEffect {
         Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         Some(&self.target)
     }

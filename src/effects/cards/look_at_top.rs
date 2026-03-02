@@ -63,10 +63,6 @@ impl EffectExecutor for LookAtTopCardsEffect {
             snapshots.len() as i32,
         )))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]
@@ -78,7 +74,7 @@ mod tests {
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn add_cards_to_library(game: &mut GameState, owner: PlayerId, count: usize) {

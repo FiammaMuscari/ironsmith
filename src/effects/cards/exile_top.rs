@@ -54,8 +54,4 @@ impl EffectExecutor for ExileTopOfLibraryEffect {
 
         Ok(EffectOutcome::count(moved))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

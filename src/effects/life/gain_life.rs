@@ -93,10 +93,6 @@ impl EffectExecutor for GainLifeEffect {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         // Only return spec if it's a target (requires selection during casting)
         if self.player.is_target() {

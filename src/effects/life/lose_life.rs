@@ -139,10 +139,6 @@ impl EffectExecutor for LoseLifeEffect {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn pay_life_amount(&self) -> Option<u32> {
         // Only report pay_life_amount for "you" effects (used in cost checking)
         if matches!(self.player, ChooseSpec::Player(PlayerFilter::You))

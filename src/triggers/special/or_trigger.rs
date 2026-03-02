@@ -60,10 +60,6 @@ impl TriggerMatcher for OrTrigger {
         parts.join(" or ")
     }
 
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
-
     fn uses_snapshot(&self) -> bool {
         // Use snapshot if any inner trigger uses snapshot
         self.triggers.iter().any(|t| t.uses_snapshot())
@@ -82,7 +78,7 @@ mod tests {
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

@@ -118,10 +118,6 @@ impl EffectExecutor for PreventNextTimeDamageEffect {
         game.replacement_effects.add_one_shot_effect(replacement);
         Ok(EffectOutcome::resolved())
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

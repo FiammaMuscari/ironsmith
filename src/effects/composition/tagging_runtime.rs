@@ -133,7 +133,7 @@ mod tests {
     use crate::types::CardType;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn create_creature(game: &mut GameState, owner: PlayerId) -> crate::ids::ObjectId {

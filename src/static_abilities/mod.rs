@@ -103,7 +103,21 @@ pub struct ConditionalSpellKeywordSpec {
 ///
 /// Most abilities only override a few methods - the defaults handle the common case
 /// of simple keyword abilities that don't generate effects.
-pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
+pub trait StaticAbilityKindClone {
+    /// Clone this ability into a boxed trait object.
+    fn clone_boxed(&self) -> Box<dyn StaticAbilityKind>;
+}
+
+impl<T> StaticAbilityKindClone for T
+where
+    T: StaticAbilityKind + Clone + 'static,
+{
+    fn clone_boxed(&self) -> Box<dyn StaticAbilityKind> {
+        Box::new(self.clone())
+    }
+}
+
+pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync + StaticAbilityKindClone {
     /// Get the unique identifier for this ability type.
     ///
     /// Used for identity checks like `ability.id() == StaticAbilityId::Flying`.
@@ -115,9 +129,9 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync {
     fn display(&self) -> String;
 
     /// Clone this ability into a boxed trait object.
-    ///
-    /// Required because `Clone` is not object-safe.
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind>;
+    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
+        StaticAbilityKindClone::clone_boxed(self)
+    }
 
     /// Generate continuous effects for this ability.
     ///

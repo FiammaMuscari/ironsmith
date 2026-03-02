@@ -58,10 +58,6 @@ impl ReplacementMatcher for WouldPutCountersMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         match &self.counter_type {
             Some(ct) => format!("When {:?} counters would be put on a permanent", ct),
@@ -116,10 +112,6 @@ impl ReplacementMatcher for WouldRemoveCountersMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         match &self.counter_type {
             Some(ct) => format!("When {:?} counters would be removed from a permanent", ct),
@@ -135,7 +127,7 @@ mod tests {
     use crate::ids::{ObjectId, PlayerId};
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

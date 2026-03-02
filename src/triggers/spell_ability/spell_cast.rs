@@ -226,10 +226,6 @@ impl TriggerMatcher for SpellCastTrigger {
         }
         format!("Whenever {} {}{}", caster_text, spell_text, suffix)
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 fn describe_spell_filter(filter: &ObjectFilter) -> String {

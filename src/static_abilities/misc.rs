@@ -110,10 +110,6 @@ impl StaticAbilityKind for Morph {
         format!("Morph {}", self.cost.to_oracle())
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn is_keyword(&self) -> bool {
         true
     }
@@ -144,10 +140,6 @@ impl StaticAbilityKind for Megamorph {
         format!("Megamorph {}", self.cost.to_oracle())
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn is_keyword(&self) -> bool {
         true
     }
@@ -172,10 +164,6 @@ impl StaticAbilityKind for DoesntUntap {
 
     fn display(&self) -> String {
         "Doesn't untap during your untap step".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn affects_untap(&self) -> bool {
@@ -208,10 +196,6 @@ impl StaticAbilityKind for MayChooseNotToUntapDuringUntapStep {
             self.subject
         )
     }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
 }
 
 /// Enters the battlefield tapped.
@@ -225,10 +209,6 @@ impl StaticAbilityKind for EntersTapped {
 
     fn display(&self) -> String {
         "This enters tapped".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn enters_tapped(&self) -> bool {
@@ -265,10 +245,6 @@ impl StaticAbilityKind for EntersTappedUnlessControlTwoOrMoreOtherLands {
         "This enters the battlefield tapped unless you control two or more other lands".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -297,10 +273,6 @@ impl StaticAbilityKind for EntersTappedUnlessControlTwoOrFewerOtherLands {
 
     fn display(&self) -> String {
         "This enters the battlefield tapped unless you control two or fewer other lands".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn generate_replacement_effect(
@@ -333,10 +305,6 @@ impl StaticAbilityKind for EntersTappedUnlessControlTwoOrMoreBasicLands {
         "This enters the battlefield tapped unless you control two or more basic lands".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -367,10 +335,6 @@ impl StaticAbilityKind for EntersTappedUnlessAPlayerHas13OrLessLife {
         "This enters the battlefield tapped unless a player has 13 or less life".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -399,10 +363,6 @@ impl StaticAbilityKind for EntersTappedUnlessTwoOrMoreOpponents {
 
     fn display(&self) -> String {
         "This enters the battlefield tapped unless you have two or more opponents".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn generate_replacement_effect(
@@ -449,10 +409,6 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreOtherLands
         ReplacementPriority::SelfReplacement
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(*self)
-    }
-
     fn display(&self) -> String {
         "When this would enter tapped unless you control two or more other lands".to_string()
     }
@@ -483,10 +439,6 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrFewerOtherLand
 
     fn priority(&self) -> ReplacementPriority {
         ReplacementPriority::SelfReplacement
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(*self)
     }
 
     fn display(&self) -> String {
@@ -525,10 +477,6 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessControlTwoOrMoreBasicLands
         ReplacementPriority::SelfReplacement
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(*self)
-    }
-
     fn display(&self) -> String {
         "When this would enter tapped unless you control two or more basic lands".to_string()
     }
@@ -555,10 +503,6 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessAPlayerHas13OrLessLifeMatc
 
     fn priority(&self) -> ReplacementPriority {
         ReplacementPriority::SelfReplacement
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(*self)
     }
 
     fn display(&self) -> String {
@@ -592,10 +536,6 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessTwoOrMoreOpponentsMatcher 
         ReplacementPriority::SelfReplacement
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(*self)
-    }
-
     fn display(&self) -> String {
         "When this would enter tapped unless you have two or more opponents".to_string()
     }
@@ -624,10 +564,6 @@ impl StaticAbilityKind for EntersTappedUnlessCondition {
 
     fn display(&self) -> String {
         self.display.clone()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_replacement_effect(
@@ -692,10 +628,6 @@ impl ReplacementMatcher for ThisWouldEnterTappedUnlessConditionMatcher {
         ReplacementPriority::SelfReplacement
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         format!("When this would enter tapped unless {}", self.display)
     }
@@ -754,10 +686,6 @@ impl StaticAbilityKind for Bloodthirst {
         format!("Bloodthirst {}", self.amount)
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn is_keyword(&self) -> bool {
         true
     }
@@ -810,10 +738,6 @@ impl ReplacementMatcher for ThisWouldEnterWithBloodthirstMatcher {
 
     fn priority(&self) -> ReplacementPriority {
         ReplacementPriority::SelfReplacement
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(*self)
     }
 
     fn display(&self) -> String {
@@ -891,10 +815,6 @@ impl StaticAbilityKind for EntersWithCounters {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -953,10 +873,6 @@ impl StaticAbilityKind for EntersWithCountersIfCondition {
         } else {
             format!("{base} if {condition}")
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_replacement_effect(
@@ -1018,10 +934,6 @@ impl ReplacementMatcher for ThisWouldEnterWithCountersIfConditionMatcher {
         ReplacementPriority::SelfReplacement
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         let condition = self.condition_display.trim();
         if condition.is_empty() {
@@ -1043,10 +955,6 @@ impl StaticAbilityKind for ShuffleIntoLibraryFromGraveyard {
 
     fn display(&self) -> String {
         "If this would be put into a graveyard from anywhere, shuffle it into its owner's library instead".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn generate_replacement_effect(
@@ -1079,10 +987,6 @@ impl StaticAbilityKind for AllPermanentsEnterTapped {
         "Permanents enter the battlefield tapped".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -1110,10 +1014,6 @@ impl StaticAbilityKind for SpendManaAsAnyColor {
         "Players may spend mana as though it were mana of any color".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, _controller: PlayerId) {
         for player in &game.players {
             if player.is_in_game() {
@@ -1137,10 +1037,6 @@ impl StaticAbilityKind for SpendManaAsAnyColorForSourceActivation {
             .to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, _controller: PlayerId) {
         game.mana_spend_effects
             .any_color_activation_sources
@@ -1159,10 +1055,6 @@ impl StaticAbilityKind for DamageNotRemovedDuringCleanup {
 
     fn display(&self) -> String {
         "Damage isn't removed from this creature during cleanup steps.".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, _controller: PlayerId) {
@@ -1192,10 +1084,6 @@ impl StaticAbilityKind for ChooseColorAsEnters {
         self.display.clone()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn color_choice_as_enters(&self) -> Option<ChooseColorAsEntersSpec> {
         Some(ChooseColorAsEntersSpec {
             excluded: self.excluded,
@@ -1222,10 +1110,6 @@ impl StaticAbilityKind for ChooseBasicLandTypeAsEnters {
 
     fn display(&self) -> String {
         self.display.clone()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn basic_land_type_choice_as_enters(&self) -> Option<ChooseBasicLandTypeAsEntersSpec> {
@@ -1258,10 +1142,6 @@ impl StaticAbilityKind for RedirectDamageToSource {
 
     fn display(&self) -> String {
         self.display.clone()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_replacement_effect(
@@ -1297,10 +1177,6 @@ impl StaticAbilityKind for PreventAllDamageDealtByThisPermanent {
         "Prevent all damage that would be dealt by this permanent.".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -1326,10 +1202,6 @@ impl StaticAbilityKind for PreventAllDamageDealtToCreatures {
 
     fn display(&self) -> String {
         "Prevent all damage that would be dealt to creatures.".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn generate_replacement_effect(
@@ -1359,10 +1231,6 @@ impl StaticAbilityKind for PreventAllCombatDamageToSelf {
         "Prevent all combat damage that would be dealt to this creature.".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -1388,10 +1256,6 @@ impl StaticAbilityKind for PreventAllDamageToSelfByCreatures {
 
     fn display(&self) -> String {
         "Prevent all damage that would be dealt to this creature by creatures.".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn generate_replacement_effect(
@@ -1439,10 +1303,6 @@ impl StaticAbilityKind for PreventDamageToSelfRemoveCounter {
         format!(
             "If damage would be dealt to this creature, prevent that damage. Remove {amount_word} {counter} counter{suffix} from this creature."
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_replacement_effect(
@@ -1541,10 +1401,6 @@ impl StaticAbilityKind for EnterTappedForFilter {
         format!("{} enter the battlefield tapped", self.filter.description())
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -1586,10 +1442,6 @@ impl StaticAbilityKind for EnterWithCountersForFilter {
         "Permanents enter the battlefield with counters".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -1619,10 +1471,6 @@ impl StaticAbilityKind for PlayersCantCycle {
     fn display(&self) -> String {
         "Players can't cycle cards".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
 }
 
 /// Start the game with an additional amount of life.
@@ -1644,10 +1492,6 @@ impl StaticAbilityKind for StartingLifeBonus {
 
     fn display(&self) -> String {
         format!("You start the game with an additional {} life", self.amount)
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 }
 
@@ -1671,10 +1515,6 @@ impl StaticAbilityKind for BuybackCostReduction {
     fn display(&self) -> String {
         format!("Buyback costs cost {{{}}} less", self.amount)
     }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
 }
 
 /// Players skip their upkeep steps.
@@ -1688,10 +1528,6 @@ impl StaticAbilityKind for PlayersSkipUpkeep {
 
     fn display(&self) -> String {
         "Players skip their upkeep steps".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 }
 
@@ -1707,10 +1543,6 @@ impl StaticAbilityKind for LegendRuleDoesntApply {
     fn display(&self) -> String {
         "The legend rule doesn't apply".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
 }
 
 /// You may play an additional land on each of your turns.
@@ -1724,10 +1556,6 @@ impl StaticAbilityKind for AdditionalLandPlay {
 
     fn display(&self) -> String {
         "You may play an additional land on each of your turns".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 }
 
@@ -1743,10 +1571,6 @@ impl StaticAbilityKind for CreaturesEnteringDontCauseAbilitiesToTrigger {
     fn display(&self) -> String {
         "Creatures entering don't cause abilities to trigger.".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
 }
 
 /// Can be your commander.
@@ -1760,10 +1584,6 @@ impl StaticAbilityKind for CanBeCommander {
 
     fn display(&self) -> String {
         "Can be your commander".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 }
 
@@ -1806,10 +1626,6 @@ impl StaticAbilityKind for Grants {
 
     fn display(&self) -> String {
         self.spec.display()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn grant_spec(&self) -> Option<GrantSpec> {
@@ -1865,10 +1681,6 @@ impl StaticAbilityKind for LevelAbilities {
         format!("Level up abilities ({rendered_levels})")
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn level_abilities(&self) -> Option<&[LevelAbility]> {
         Some(&self.levels)
     }
@@ -1885,10 +1697,6 @@ impl StaticAbilityKind for NoMaximumHandSize {
 
     fn display(&self) -> String {
         "You have no maximum hand size".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
@@ -1935,10 +1743,6 @@ impl StaticAbilityKind for ReduceMaximumHandSize {
             }
             _ => format!("Maximum hand size is reduced by {}.", self.amount),
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
@@ -2080,10 +1884,6 @@ impl StaticAbilityKind for ConditionalSpellKeyword {
         )
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn conditional_spell_keyword_spec(&self) -> Option<ConditionalSpellKeywordSpec> {
         Some(self.spec)
     }
@@ -2121,10 +1921,6 @@ impl StaticAbilityKind for MaximumHandSizeSevenMinusYourGraveyardCardTypes {
             "As long as there are {} or more card types among cards in your graveyard, {who} maximum hand size is equal to seven minus the number of those card types.",
             self.minimum_types
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
@@ -2165,10 +1961,6 @@ impl StaticAbilityKind for LibraryOfLengDiscardReplacement {
             .to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -2201,10 +1993,6 @@ impl StaticAbilityKind for DrawReplacementExileTopFaceDown {
     fn display(&self) -> String {
         "If you would draw a card, exile the top card of your library face down instead."
             .to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn generate_replacement_effect(
@@ -2281,10 +2069,6 @@ impl StaticAbilityKind for DiscardOrRedirectReplacement {
         )
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_replacement_effect(
         &self,
         source: ObjectId,
@@ -2334,10 +2118,6 @@ impl StaticAbilityKind for PayLifeOrEnterTappedReplacement {
             "As this enters the battlefield, you may pay {} life. If you don't, it enters tapped.",
             self.life_cost
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn generate_replacement_effect(
@@ -2391,10 +2171,6 @@ impl StaticAbilityKind for KeywordMarker {
     fn display(&self) -> String {
         self.marker.clone()
     }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
 }
 
 /// Non-semantic static rule text placeholder preserved by parser/builder.
@@ -2416,10 +2192,6 @@ impl StaticAbilityKind for RuleTextPlaceholder {
 
     fn display(&self) -> String {
         self.text.clone()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 }
 
@@ -2450,10 +2222,6 @@ impl StaticAbilityKind for UnsupportedParserLine {
             self.raw_line.trim(),
             self.reason
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 }
 

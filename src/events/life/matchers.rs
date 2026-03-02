@@ -47,10 +47,6 @@ impl ReplacementMatcher for WouldGainLifeMatcher {
             .matches_player(life_gain.player, &ctx.filter_ctx)
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         match &self.player_filter {
             PlayerFilter::You => "When you would gain life".to_string(),
@@ -102,10 +98,6 @@ impl ReplacementMatcher for WouldLoseLifeMatcher {
             .matches_player(life_loss.player, &ctx.filter_ctx)
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         match &self.player_filter {
             PlayerFilter::You => "When you would lose life".to_string(),
@@ -123,7 +115,7 @@ mod tests {
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

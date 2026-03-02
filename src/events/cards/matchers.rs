@@ -48,10 +48,6 @@ impl ReplacementMatcher for WouldDrawCardMatcher {
             .matches_player(draw.player, &ctx.filter_ctx)
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         match &self.player_filter {
             PlayerFilter::You => "When you would draw a card".to_string(),
@@ -95,10 +91,6 @@ impl ReplacementMatcher for WouldDrawFirstCardMatcher {
 
         self.player_filter
             .matches_player(draw.player, &ctx.filter_ctx)
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -186,10 +178,6 @@ impl ReplacementMatcher for WouldDiscardMatcher {
         true
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         match (&self.player_filter, &self.cause_filter.cause_type) {
             (PlayerFilter::You, Some(crate::events::cause::CauseTypeFilter::EffectLike)) => {
@@ -210,7 +198,7 @@ mod tests {
     use crate::ids::{ObjectId, PlayerId};
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

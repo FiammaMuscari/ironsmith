@@ -96,10 +96,6 @@ impl EffectExecutor for VoteEffect {
         super::vote_runtime::run_vote(self, game, ctx)
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         let groups: Vec<&[Effect]> = self
             .options
@@ -137,7 +133,7 @@ mod tests {
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn setup_multiplayer_game() -> GameState {

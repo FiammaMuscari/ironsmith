@@ -141,14 +141,28 @@ impl RedirectValidTypes {
 /// All event types (DamageEvent, LifeGainEvent, etc.) implement this trait.
 /// This provides a unified interface for the event processor while allowing
 /// type-specific behavior through the trait methods.
-pub trait GameEventType: Debug + Send + Sync {
+pub trait GameEventTypeClone {
+    /// Clone this event into a boxed trait object.
+    fn clone_boxed(&self) -> Box<dyn GameEventType>;
+}
+
+impl<T> GameEventTypeClone for T
+where
+    T: GameEventType + Clone + 'static,
+{
+    fn clone_boxed(&self) -> Box<dyn GameEventType> {
+        Box::new(self.clone())
+    }
+}
+
+pub trait GameEventType: Debug + Send + Sync + GameEventTypeClone {
     /// Get the event kind for fast dispatch without downcasting.
     fn event_kind(&self) -> EventKind;
 
     /// Clone this event into a boxed trait object.
-    ///
-    /// Required because `Clone` is not object-safe.
-    fn clone_box(&self) -> Box<dyn GameEventType>;
+    fn clone_box(&self) -> Box<dyn GameEventType> {
+        GameEventTypeClone::clone_boxed(self)
+    }
 
     /// Get the player affected by this event.
     ///
@@ -259,7 +273,21 @@ pub enum ReplacementPriority {
 ///
 /// All replacement condition types implement this trait. Each matcher is responsible
 /// for determining if it applies to a given event.
-pub trait ReplacementMatcher: Debug + Send + Sync {
+pub trait ReplacementMatcherClone {
+    /// Clone this matcher into a boxed trait object.
+    fn clone_boxed(&self) -> Box<dyn ReplacementMatcher>;
+}
+
+impl<T> ReplacementMatcherClone for T
+where
+    T: ReplacementMatcher + Clone + 'static,
+{
+    fn clone_boxed(&self) -> Box<dyn ReplacementMatcher> {
+        Box::new(self.clone())
+    }
+}
+
+pub trait ReplacementMatcher: Debug + Send + Sync + ReplacementMatcherClone {
     /// Check if this matcher matches the given event.
     ///
     /// # Arguments
@@ -278,7 +306,9 @@ pub trait ReplacementMatcher: Debug + Send + Sync {
     }
 
     /// Clone this matcher into a boxed trait object.
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher>;
+    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
+        ReplacementMatcherClone::clone_boxed(self)
+    }
 
     /// Human-readable description of what this matcher matches.
     fn display(&self) -> String;

@@ -210,9 +210,7 @@ fn pay_ward_cost(
             }
             true
         }
-        WardCost::Life(amount) => {
-            game.pay_life(payer, *amount)
-        }
+        WardCost::Life(amount) => game.pay_life(payer, *amount),
         WardCost::Discard(count) => {
             let Some(player) = game.player(payer) else {
                 return false;

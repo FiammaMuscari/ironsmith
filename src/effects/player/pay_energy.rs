@@ -47,10 +47,6 @@ impl EffectExecutor for PayEnergyEffect {
         Ok(EffectOutcome::from_result(EffectResult::Impossible))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         if self.player.is_target() {
             Some(&self.player)

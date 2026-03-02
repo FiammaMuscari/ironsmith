@@ -58,8 +58,4 @@ impl EffectExecutor for EnergyCountersEffect {
 
         Ok(EffectOutcome::count(count as i32))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

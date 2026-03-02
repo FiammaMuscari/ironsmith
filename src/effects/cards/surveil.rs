@@ -130,8 +130,4 @@ impl EffectExecutor for SurveilEffect {
             )),
         )
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

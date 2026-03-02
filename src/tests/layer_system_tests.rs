@@ -27,7 +27,7 @@ use crate::zone::Zone;
 
 /// Helper to create a basic game state for testing.
 fn setup_game() -> GameState {
-    GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+    crate::tests::test_helpers::setup_two_player_game()
 }
 
 // =============================================================================

@@ -121,10 +121,6 @@ impl TriggerMatcher for ThisDealsDamageTrigger {
         }
         text
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

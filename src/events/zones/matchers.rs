@@ -65,10 +65,6 @@ impl ReplacementMatcher for WouldEnterBattlefieldMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "When a permanent would enter the battlefield".to_string()
     }
@@ -107,10 +103,6 @@ impl ReplacementMatcher for ThisWouldEnterBattlefieldMatcher {
 
     fn priority(&self) -> ReplacementPriority {
         ReplacementPriority::SelfReplacement
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -163,10 +155,6 @@ impl ReplacementMatcher for WouldDieMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "When a creature would die".to_string()
     }
@@ -198,10 +186,6 @@ impl ReplacementMatcher for ThisWouldDieMatcher {
 
     fn priority(&self) -> ReplacementPriority {
         ReplacementPriority::SelfReplacement
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -242,10 +226,6 @@ impl ReplacementMatcher for WouldGoToGraveyardMatcher {
         } else {
             false
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -290,10 +270,6 @@ impl ReplacementMatcher for WouldBeExiledMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "When an object would be exiled".to_string()
     }
@@ -330,10 +306,6 @@ impl ReplacementMatcher for ThisWouldGoToGraveyardMatcher {
 
     fn priority(&self) -> ReplacementPriority {
         ReplacementPriority::SelfReplacement
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -390,10 +362,6 @@ impl ReplacementMatcher for WouldGoToHandMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         match &self.player_filter {
             crate::target::PlayerFilter::You => {
@@ -442,10 +410,6 @@ impl ReplacementMatcher for WouldLeaveBattlefieldMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "When a permanent would leave the battlefield".to_string()
     }
@@ -458,7 +422,7 @@ mod tests {
     use crate::ids::{ObjectId, PlayerId};
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

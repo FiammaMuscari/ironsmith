@@ -41,8 +41,4 @@ impl TriggerMatcher for AttacksWhileSaddledTrigger {
             self.filter.description()
         )
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }

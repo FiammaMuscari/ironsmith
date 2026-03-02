@@ -200,17 +200,27 @@ pub fn compute_legal_targets_with_tagged_objects(
     spec: &ChooseSpec,
     caster: PlayerId,
     source_id: Option<ObjectId>,
-    tagged_objects: Option<&std::collections::HashMap<TagKey, Vec<crate::snapshot::ObjectSnapshot>>>,
+    tagged_objects: Option<
+        &std::collections::HashMap<TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
+    >,
 ) -> Vec<Target> {
     match spec {
         // Target wrapper - recursively compute targets from inner spec
-        ChooseSpec::Target(inner) => {
-            compute_legal_targets_with_tagged_objects(game, inner, caster, source_id, tagged_objects)
-        }
+        ChooseSpec::Target(inner) => compute_legal_targets_with_tagged_objects(
+            game,
+            inner,
+            caster,
+            source_id,
+            tagged_objects,
+        ),
         // WithCount wrapper - recursively compute targets from inner spec
-        ChooseSpec::WithCount(inner, _) => {
-            compute_legal_targets_with_tagged_objects(game, inner, caster, source_id, tagged_objects)
-        }
+        ChooseSpec::WithCount(inner, _) => compute_legal_targets_with_tagged_objects(
+            game,
+            inner,
+            caster,
+            source_id,
+            tagged_objects,
+        ),
         ChooseSpec::AnyTarget => compute_any_targets(game, caster, source_id),
         ChooseSpec::PlayerOrPlaneswalker(filter) => {
             compute_player_or_planeswalker_targets(game, filter, caster, source_id)
@@ -340,7 +350,9 @@ fn compute_object_targets(
     filter: &ObjectFilter,
     caster: PlayerId,
     source_id: Option<ObjectId>,
-    tagged_objects: Option<&std::collections::HashMap<TagKey, Vec<crate::snapshot::ObjectSnapshot>>>,
+    tagged_objects: Option<
+        &std::collections::HashMap<TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
+    >,
 ) -> Vec<Target> {
     let mut targets = Vec::new();
 

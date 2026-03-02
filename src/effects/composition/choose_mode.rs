@@ -110,10 +110,6 @@ impl EffectExecutor for ChooseModeEffect {
         super::choose_mode_runtime::run_choose_mode(self, game, ctx)
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_modal_spec(&self) -> Option<ModalSpec> {
         Some(ModalSpec {
             mode_descriptions: self.modes.iter().map(|m| m.description.clone()).collect(),

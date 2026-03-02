@@ -79,10 +79,6 @@ impl EffectExecutor for LookAtHandEffect {
         Ok(EffectOutcome::count(total_cards))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         if self.target.is_target() {
             Some(&self.target)
@@ -144,7 +140,7 @@ mod tests {
     }
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn make_spell_card(card_id: u32, name: &str) -> Card {

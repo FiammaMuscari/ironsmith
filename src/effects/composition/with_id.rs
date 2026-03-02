@@ -52,10 +52,6 @@ impl EffectExecutor for WithIdEffect {
         Ok(outcome)
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&crate::target::ChooseSpec> {
         // Delegate to inner effect
         self.effect.0.get_target_spec()
@@ -79,7 +75,7 @@ mod tests {
     use crate::ids::PlayerId;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

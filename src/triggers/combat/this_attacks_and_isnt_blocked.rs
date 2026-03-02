@@ -22,10 +22,6 @@ impl TriggerMatcher for ThisAttacksAndIsntBlockedTrigger {
     fn display(&self) -> String {
         "Whenever this creature attacks and isn't blocked".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

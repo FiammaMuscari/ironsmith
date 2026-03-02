@@ -142,10 +142,6 @@ impl EffectExecutor for BeholdEffect {
         Ok(EffectOutcome::from_result(EffectResult::Objects(chosen)))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn cost_description(&self) -> Option<String> {
         let subtype_name = format!("{:?}", self.subtype);
         if self.count == 1 {
@@ -164,7 +160,7 @@ mod tests {
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn simple_creature(

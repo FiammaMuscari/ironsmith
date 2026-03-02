@@ -92,8 +92,4 @@ impl EffectExecutor for MonstrosityEffect {
             },
         ))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

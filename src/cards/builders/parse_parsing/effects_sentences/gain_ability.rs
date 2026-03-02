@@ -10,10 +10,7 @@ fn grants_protection_from_everything(ability: &StaticAbility) -> bool {
 pub(crate) fn parse_simple_ability_duration(
     words_after_verb: &[&str],
 ) -> Option<(usize, usize, Until)> {
-    if let Some(idx) = words_after_verb
-        .windows(4)
-        .position(is_until_end_of_turn)
-    {
+    if let Some(idx) = words_after_verb.windows(4).position(is_until_end_of_turn) {
         return Some((idx, 4, Until::EndOfTurn));
     }
     if let Some(idx) = words_after_verb.windows(4).position(|window| {
@@ -271,10 +268,7 @@ pub(crate) fn parse_gain_ability_sentence(
         return Ok(None);
     }
 
-    let duration_phrase = if let Some(idx) = after_gain
-        .windows(4)
-        .position(is_until_end_of_turn)
-    {
+    let duration_phrase = if let Some(idx) = after_gain.windows(4).position(is_until_end_of_turn) {
         Some((idx, 4usize, Until::EndOfTurn))
     } else if let Some(idx) = after_gain.windows(4).position(|window| {
         window == ["until", "your", "next", "turn"] || window == ["until", "your", "next", "upkeep"]

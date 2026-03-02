@@ -22,10 +22,6 @@ impl TriggerMatcher for BecomesTargetedTrigger {
     fn display(&self) -> String {
         "Whenever this permanent becomes the target of a spell or ability".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

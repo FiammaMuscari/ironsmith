@@ -43,10 +43,6 @@ impl GameEventType for AbilityActivatedEvent {
         EventKind::AbilityActivated
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, _game: &GameState) -> PlayerId {
         self.activator
     }

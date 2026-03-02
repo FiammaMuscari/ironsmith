@@ -22,10 +22,6 @@ impl TriggerMatcher for ThisBlocksTrigger {
     fn display(&self) -> String {
         "Whenever this creature blocks".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

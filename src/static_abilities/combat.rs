@@ -29,10 +29,6 @@ macro_rules! define_combat_ability {
             fn display(&self) -> String {
                 $display.to_string()
             }
-
-            fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-                Box::new(*self)
-            }
         }
     };
 }
@@ -48,10 +44,6 @@ impl StaticAbilityKind for Unblockable {
 
     fn display(&self) -> String {
         "Can't be blocked".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn is_unblockable(&self) -> bool {
@@ -83,10 +75,6 @@ impl StaticAbilityKind for FlyingRestriction {
         "Can't be blocked except by creatures with flying or reach".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn grants_evasion(&self) -> bool {
         true
     }
@@ -103,10 +91,6 @@ impl StaticAbilityKind for FlyingOnlyRestriction {
 
     fn display(&self) -> String {
         "Can't be blocked except by creatures with flying".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn grants_evasion(&self) -> bool {
@@ -126,10 +110,6 @@ impl StaticAbilityKind for CanBlockFlying {
     fn display(&self) -> String {
         "Can block creatures with flying".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
 }
 
 /// Can block only creatures with flying.
@@ -143,10 +123,6 @@ impl StaticAbilityKind for CanBlockOnlyFlying {
 
     fn display(&self) -> String {
         "Can block only creatures with flying".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 }
 
@@ -176,10 +152,6 @@ impl StaticAbilityKind for CanBlockAdditionalCreatureEachCombat {
                 self.additional
             )
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn additional_blockable_attackers(&self) -> Option<usize> {
@@ -215,10 +187,6 @@ impl StaticAbilityKind for MaxCreaturesCanAttackEachCombat {
         )
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn max_creatures_can_attack_each_combat(&self) -> Option<usize> {
         Some(self.maximum)
     }
@@ -252,10 +220,6 @@ impl StaticAbilityKind for MaxCreaturesCanBlockEachCombat {
         )
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn max_creatures_can_block_each_combat(&self) -> Option<usize> {
         Some(self.maximum)
     }
@@ -280,10 +244,6 @@ impl StaticAbilityKind for Landwalk {
 
     fn display(&self) -> String {
         format!("{:?}walk", self.land_subtype)
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn is_keyword(&self) -> bool {
@@ -330,10 +290,6 @@ impl StaticAbilityKind for CantBeBlockedAsLongAsDefendingPlayerControlsCardType 
             "a"
         };
         format!("Can't be blocked as long as defending player controls {article} {type_word}")
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn grants_evasion(&self) -> bool {
@@ -383,10 +339,6 @@ impl StaticAbilityKind for CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes
         format!("Can't be blocked as long as defending player controls {article} {type_words}")
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn grants_evasion(&self) -> bool {
         true
     }
@@ -422,10 +374,6 @@ impl StaticAbilityKind for CantBeBlockedByPowerOrLess {
         )
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn grants_evasion(&self) -> bool {
         true
     }
@@ -457,10 +405,6 @@ impl StaticAbilityKind for CantBeBlockedByPowerOrGreater {
             "Can't be blocked by creatures with power {} or greater",
             self.threshold
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn grants_evasion(&self) -> bool {
@@ -501,10 +445,6 @@ impl StaticAbilityKind for CantBeBlockedByMoreThan {
         )
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn grants_evasion(&self) -> bool {
         true
     }
@@ -534,10 +474,6 @@ impl StaticAbilityKind for MustAttack {
         "Attacks each combat if able".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     // Note: Must attack checking is done in the combat rules engine
     // by checking if creatures have this ability, rather than using a tracker.
 }
@@ -564,10 +500,6 @@ impl StaticAbilityKind for CantAttackUnlessDefendingPlayerControlsLandSubtype {
             "Can't attack unless defending player controls {}",
             format!("{:?}", self.land_subtype).to_ascii_lowercase()
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn required_defending_player_land_subtype_for_attack(&self) -> Option<crate::types::Subtype> {
@@ -1194,10 +1126,6 @@ impl StaticAbilityKind for CantAttackUnlessCondition {
         self.display_text.clone()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, controller: PlayerId) {
         let Some(can_attack) = self.source_can_attack_without_defender(game, source, controller)
         else {
@@ -1290,10 +1218,6 @@ impl StaticAbilityKind for CantAttackYouUnlessControllerPaysPerAttacker {
         )
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn generic_attack_tax_per_attacker_against_you(
         &self,
         _game: &GameState,
@@ -1351,10 +1275,6 @@ impl StaticAbilityKind
         "Creatures can't attack you unless their controller pays {X} for each creature they control that's attacking you, where X is the number of basic land types among lands you control".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn generic_attack_tax_per_attacker_against_you(
         &self,
         game: &GameState,
@@ -1380,10 +1300,6 @@ impl StaticAbilityKind for MustBlock {
         "Blocks each combat if able".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     // Note: Must block checking is done in the combat rules engine
     // by checking if creatures have this ability, rather than using a tracker.
 }
@@ -1399,10 +1315,6 @@ impl StaticAbilityKind for CantAttack {
 
     fn display(&self) -> String {
         "Can't attack".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, _controller: PlayerId) {
@@ -1428,10 +1340,6 @@ impl StaticAbilityKind for CantAttackUnlessControllerCastCreatureSpellThisTurn {
 
     fn display(&self) -> String {
         "Can't attack unless you've cast a creature spell this turn".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, controller: PlayerId) {
@@ -1470,10 +1378,6 @@ impl StaticAbilityKind for CantAttackUnlessControllerCastNonCreatureSpellThisTur
         "Can't attack unless you've cast a noncreature spell this turn".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, controller: PlayerId) {
         let cast_noncreature_spell_this_turn =
             game.spells_cast_this_turn_snapshots.iter().any(|snapshot| {
@@ -1508,10 +1412,6 @@ impl StaticAbilityKind for CantBlock {
 
     fn display(&self) -> String {
         "Can't block".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, _controller: PlayerId) {

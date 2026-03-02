@@ -73,9 +73,10 @@ mod tests {
     #[test]
     fn test_bosh_iron_golem_has_activated_ability() {
         let def = bosh_iron_golem();
-        assert!(def
-            .abilities
-            .iter()
-            .any(|ability| matches!(ability.kind, AbilityKind::Activated(_))));
+        assert!(
+            def.abilities
+                .iter()
+                .any(|ability| matches!(ability.kind, AbilityKind::Activated(_)))
+        );
     }
 }

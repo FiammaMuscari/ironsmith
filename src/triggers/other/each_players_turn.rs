@@ -16,10 +16,6 @@ impl TriggerMatcher for EachPlayersTurnTrigger {
     fn display(&self) -> String {
         "At the beginning of each player's turn".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

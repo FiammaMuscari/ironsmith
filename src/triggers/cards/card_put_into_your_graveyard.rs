@@ -36,10 +36,6 @@ impl TriggerMatcher for CardPutIntoYourGraveyardTrigger {
     fn display(&self) -> String {
         "Whenever a card is put into your graveyard from anywhere".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

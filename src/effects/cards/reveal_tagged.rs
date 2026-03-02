@@ -38,8 +38,4 @@ impl EffectExecutor for RevealTaggedEffect {
             count as i32,
         )))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

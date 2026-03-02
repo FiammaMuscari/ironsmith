@@ -66,10 +66,6 @@ impl TriggerMatcher for PlayerSacrificesTrigger {
         };
         format!("Whenever {} {}", player_text, self.filter.description())
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

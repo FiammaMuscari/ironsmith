@@ -35,10 +35,6 @@ impl TriggerMatcher for BecomesBlockedTrigger {
     fn display(&self) -> String {
         format!("Whenever {} becomes blocked", self.filter.description())
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

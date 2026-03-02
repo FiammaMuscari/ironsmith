@@ -77,13 +77,23 @@ impl<'a> TriggerContext<'a> {
 ///     fn display(&self) -> String {
 ///         "When something happens".to_string()
 ///     }
-///
-///     fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-///         Box::new(self.clone())
-///     }
 /// }
 /// ```
-pub trait TriggerMatcher: std::fmt::Debug + Send + Sync {
+pub trait TriggerMatcherClone {
+    /// Clone this trigger into a boxed trait object.
+    fn clone_boxed(&self) -> Box<dyn TriggerMatcher>;
+}
+
+impl<T> TriggerMatcherClone for T
+where
+    T: TriggerMatcher + Clone + 'static,
+{
+    fn clone_boxed(&self) -> Box<dyn TriggerMatcher> {
+        Box::new(self.clone())
+    }
+}
+
+pub trait TriggerMatcher: std::fmt::Debug + Send + Sync + TriggerMatcherClone {
     /// Check if this trigger matches the given game event.
     ///
     /// # Arguments
@@ -103,9 +113,9 @@ pub trait TriggerMatcher: std::fmt::Debug + Send + Sync {
     fn display(&self) -> String;
 
     /// Clone this trigger into a boxed trait object.
-    ///
-    /// This is required because `Clone` is not object-safe.
-    fn clone_box(&self) -> Box<dyn TriggerMatcher>;
+    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
+        TriggerMatcherClone::clone_boxed(self)
+    }
 
     /// Whether this trigger uses snapshot-based matching.
     ///
@@ -163,10 +173,6 @@ mod tests {
         fn display(&self) -> String {
             "Always trigger".to_string()
         }
-
-        fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-            Box::new(self.clone())
-        }
     }
 
     /// A trigger that never matches.
@@ -180,10 +186,6 @@ mod tests {
 
         fn display(&self) -> String {
             "Never trigger".to_string()
-        }
-
-        fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-            Box::new(self.clone())
         }
     }
 

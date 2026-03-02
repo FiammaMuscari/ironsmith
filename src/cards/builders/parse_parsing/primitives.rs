@@ -134,9 +134,7 @@ pub(crate) fn ends_with_until_end_of_turn(words: &[&str]) -> bool {
 }
 
 pub(crate) fn contains_until_end_of_turn(words: &[&str]) -> bool {
-    words
-        .windows(4)
-        .any(|window| is_until_end_of_turn(window))
+    words.windows(4).any(|window| is_until_end_of_turn(window))
 }
 
 pub(crate) fn parse_zone_word(word: &str) -> Option<Zone> {

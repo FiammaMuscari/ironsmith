@@ -68,10 +68,6 @@ impl CostPayer for SacrificeSelfCost {
         Ok(CostPaymentResult::Paid)
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "Sacrifice ~".to_string()
     }
@@ -169,10 +165,6 @@ impl CostPayer for SacrificeCost {
         // This just signals that a choice is needed.
         let filter_description = self.display();
         Ok(CostPaymentResult::NeedsChoice(filter_description))
-    }
-
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {

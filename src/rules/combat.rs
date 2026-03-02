@@ -364,7 +364,9 @@ pub fn can_attack(creature: &Object, game: &crate::game_state::GameState) -> boo
     // Defender prevents attacking
     if game.object_has_static_ability_id(creature.id, StaticAbilityId::Defender) {
         // Unless it has "can attack as though it didn't have defender"
-        if !game.object_has_static_ability_id(creature.id, StaticAbilityId::CanAttackAsThoughNoDefender) {
+        if !game
+            .object_has_static_ability_id(creature.id, StaticAbilityId::CanAttackAsThoughNoDefender)
+        {
             return false;
         }
     }

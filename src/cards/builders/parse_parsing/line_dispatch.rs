@@ -641,9 +641,7 @@ pub(crate) fn parse_flashback_line(
         ));
     }
 
-    Ok(Some(AlternativeCastingMethod::Flashback {
-        total_cost,
-    }))
+    Ok(Some(AlternativeCastingMethod::Flashback { total_cost }))
 }
 
 pub(crate) fn parse_bestow_line(
@@ -708,9 +706,7 @@ pub(crate) fn parse_bestow_line(
         }
     }
 
-    Ok(Some(AlternativeCastingMethod::Bestow {
-        total_cost,
-    }))
+    Ok(Some(AlternativeCastingMethod::Bestow { total_cost }))
 }
 
 fn is_self_free_cast_clause(words: &[&str]) -> bool {

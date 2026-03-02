@@ -23,10 +23,6 @@ impl StaticAbilityKind for PlayersCantGainLife {
         "Players can't gain life".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, _controller: PlayerId) {
         let mut tracker = CantEffectTracker::default();
         Restriction::gain_life(PlayerFilter::Any).apply(game, &mut tracker, _controller, None);
@@ -45,10 +41,6 @@ impl StaticAbilityKind for PlayersCantSearch {
 
     fn display(&self) -> String {
         "Players can't search libraries".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, _controller: PlayerId) {
@@ -76,10 +68,6 @@ impl StaticAbilityKind for DamageCantBePrevented {
         "Damage can't be prevented".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, _controller: PlayerId) {
         let mut tracker = CantEffectTracker::default();
         Restriction::prevent_damage().apply(game, &mut tracker, _controller, None);
@@ -98,10 +86,6 @@ impl StaticAbilityKind for YouCantLoseGame {
 
     fn display(&self) -> String {
         "You can't lose the game".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
@@ -124,10 +108,6 @@ impl StaticAbilityKind for OpponentsCantWinGame {
         "Your opponents can't win the game".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
         let mut tracker = CantEffectTracker::default();
         Restriction::win_game(PlayerFilter::Opponent).apply(game, &mut tracker, controller, None);
@@ -146,10 +126,6 @@ impl StaticAbilityKind for YourLifeTotalCantChange {
 
     fn display(&self) -> String {
         "Your life total can't change".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
@@ -177,10 +153,6 @@ impl StaticAbilityKind for PermanentsCantBeSacrificed {
         "Permanents you control can't be sacrificed".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
         let mut tracker = CantEffectTracker::default();
         Restriction::be_sacrificed(ObjectFilter::permanent().you_control()).apply(
@@ -204,10 +176,6 @@ impl StaticAbilityKind for OpponentsCantCastSpells {
 
     fn display(&self) -> String {
         "Your opponents can't cast spells".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
@@ -236,10 +204,6 @@ impl StaticAbilityKind for SplitSecond {
 
     fn display(&self) -> String {
         "Split second".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn is_keyword(&self) -> bool {
@@ -274,10 +238,6 @@ impl StaticAbilityKind for Rebound {
         "Rebound".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn is_keyword(&self) -> bool {
         true
     }
@@ -298,10 +258,6 @@ impl StaticAbilityKind for Cascade {
         "Cascade".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn is_keyword(&self) -> bool {
         true
     }
@@ -320,10 +276,6 @@ impl StaticAbilityKind for Unleash {
 
     fn display(&self) -> String {
         "This creature can't block as long as it has a +1/+1 counter on it".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn is_keyword(&self) -> bool {
@@ -353,10 +305,6 @@ impl StaticAbilityKind for OpponentsCantDrawExtraCards {
         "Your opponents can't draw more than one card each turn".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
         let mut tracker = CantEffectTracker::default();
         Restriction::draw_extra_cards(PlayerFilter::Opponent).apply(
@@ -382,10 +330,6 @@ impl StaticAbilityKind for CantHaveCountersPlaced {
         "Counters can't be put on this permanent".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, _controller: PlayerId) {
         let mut tracker = CantEffectTracker::default();
         Restriction::have_counters_placed(ObjectFilter::specific(source)).apply(
@@ -409,10 +353,6 @@ impl StaticAbilityKind for CantBeCountered {
 
     fn display(&self) -> String {
         "This spell can't be countered".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn cant_be_countered(&self) -> bool {
@@ -443,10 +383,6 @@ impl StaticAbilityKind for RuleRestriction {
 
     fn display(&self) -> String {
         self.display.clone()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn apply_restrictions(&self, game: &mut GameState, source: ObjectId, controller: PlayerId) {

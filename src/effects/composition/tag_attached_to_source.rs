@@ -42,8 +42,4 @@ impl EffectExecutor for TagAttachedToSourceEffect {
 
         Ok(EffectOutcome::count(0))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

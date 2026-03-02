@@ -83,10 +83,6 @@ impl EffectExecutor for AttachObjectsEffect {
         Ok(EffectOutcome::count(attached_count))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         Some(&self.target)
     }

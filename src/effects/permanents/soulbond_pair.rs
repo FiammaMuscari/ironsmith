@@ -111,10 +111,6 @@ impl EffectExecutor for SoulbondPairEffect {
             },
         ))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

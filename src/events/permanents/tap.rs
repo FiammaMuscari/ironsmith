@@ -30,10 +30,6 @@ impl GameEventType for TapEvent {
         EventKind::BecomeTapped
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, game: &GameState) -> PlayerId {
         game.object(self.permanent)
             .map(|o| o.controller)
@@ -95,10 +91,6 @@ impl UntapEvent {
 impl GameEventType for UntapEvent {
     fn event_kind(&self) -> EventKind {
         EventKind::BecomeUntapped
-    }
-
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
     }
 
     fn affected_player(&self, game: &GameState) -> PlayerId {

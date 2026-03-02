@@ -22,10 +22,6 @@ impl TriggerMatcher for BecomesUntappedTrigger {
     fn display(&self) -> String {
         "Whenever this permanent becomes untapped".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

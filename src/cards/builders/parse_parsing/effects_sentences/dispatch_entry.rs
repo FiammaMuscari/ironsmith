@@ -1084,7 +1084,9 @@ pub(crate) fn is_nonsemantic_restriction_sentence(tokens: &[Token]) -> bool {
     is_activate_only_restriction_sentence(tokens) || is_trigger_only_restriction_sentence(tokens)
 }
 
-fn token_copy_followup_container_effects_mut(effect: &mut EffectAst) -> Option<&mut Vec<EffectAst>> {
+fn token_copy_followup_container_effects_mut(
+    effect: &mut EffectAst,
+) -> Option<&mut Vec<EffectAst>> {
     match effect {
         EffectAst::May { effects }
         | EffectAst::MayByPlayer { effects, .. }

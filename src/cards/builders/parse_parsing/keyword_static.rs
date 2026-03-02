@@ -84,7 +84,9 @@ pub(crate) fn parse_protection_chain(tokens: &[Token]) -> Option<Vec<KeywordActi
             _ => parse_color(value)
                 .map(KeywordAction::ProtectionFrom)
                 .or_else(|| parse_card_type(value).map(KeywordAction::ProtectionFromCardType))
-                .or_else(|| parse_subtype_flexible(value).map(KeywordAction::ProtectionFromSubtype)),
+                .or_else(|| {
+                    parse_subtype_flexible(value).map(KeywordAction::ProtectionFromSubtype)
+                }),
         }
     };
 

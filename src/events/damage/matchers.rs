@@ -55,10 +55,6 @@ impl ReplacementMatcher for DamageToPlayerMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         match &self.player_filter {
             PlayerFilter::You => "When damage would be dealt to you".to_string(),
@@ -113,10 +109,6 @@ impl ReplacementMatcher for DamageToObjectMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "When damage would be dealt to a permanent".to_string()
     }
@@ -162,10 +154,6 @@ impl ReplacementMatcher for DamageToPlayerOrObjectMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "When damage would be dealt to a player or permanent".to_string()
     }
@@ -188,10 +176,6 @@ impl ReplacementMatcher for CombatDamageMatcher {
         damage.is_combat
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "When combat damage would be dealt".to_string()
     }
@@ -212,10 +196,6 @@ impl ReplacementMatcher for NoncombatDamageMatcher {
         };
 
         !damage.is_combat
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -255,10 +235,6 @@ impl ReplacementMatcher for DamageFromSourceMatcher {
         } else {
             false
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -313,10 +289,6 @@ impl ReplacementMatcher for DamageFromSelfMatcher {
         } else {
             ReplacementPriority::Other
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -415,10 +387,6 @@ impl ReplacementMatcher for PreventableDamageConstraintMatcher {
         true
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "When damage would be dealt (preventable)".to_string()
     }
@@ -467,10 +435,6 @@ impl ReplacementMatcher for DamageToSelfMatcher {
         } else {
             ReplacementPriority::Other
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -525,10 +489,6 @@ impl ReplacementMatcher for DamageToSelfCombatMatcher {
         } else {
             ReplacementPriority::Other
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -594,10 +554,6 @@ impl ReplacementMatcher for DamageToSelfFromSourceFilterMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "When damage would be dealt to this permanent by a matching source".to_string()
     }
@@ -613,7 +569,7 @@ mod tests {
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

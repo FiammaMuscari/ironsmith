@@ -283,10 +283,6 @@ impl EffectExecutor for BecomeCreatureTypeChoiceEffect {
         apply = apply.with_additional_modification(Modification::AddSubtypes(vec![chosen_subtype]));
         apply.execute(game, ctx)
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

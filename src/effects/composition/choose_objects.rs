@@ -292,10 +292,6 @@ impl EffectExecutor for ChooseObjectsEffect {
         super::choose_objects_runtime::run_choose_objects(self, game, ctx)
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn cost_description(&self) -> Option<String> {
         use crate::color::Color;
 
@@ -412,7 +408,7 @@ mod tests {
     use crate::types::CardType;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn create_creature(game: &mut GameState, name: &str, controller: PlayerId) -> ObjectId {

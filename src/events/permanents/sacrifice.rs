@@ -68,10 +68,6 @@ impl GameEventType for SacrificeEvent {
         EventKind::Sacrifice
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, game: &GameState) -> PlayerId {
         if let Some(player) = self.sacrificing_player {
             return player;

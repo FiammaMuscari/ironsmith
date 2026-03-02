@@ -78,10 +78,6 @@ impl EffectExecutor for AddManaOfChosenColorEffect {
         Ok(EffectOutcome::count(amount as i32))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn producible_mana_symbols(
         &self,
         game: &GameState,

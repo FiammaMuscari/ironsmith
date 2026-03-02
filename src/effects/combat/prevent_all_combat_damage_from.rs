@@ -52,10 +52,6 @@ impl EffectExecutor for PreventAllCombatDamageFromEffect {
         Ok(EffectOutcome::resolved())
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         if self.source.is_target() {
             Some(&self.source)

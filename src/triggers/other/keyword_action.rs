@@ -96,10 +96,6 @@ impl TriggerMatcher for KeywordActionTrigger {
             _ => format!("Whenever a player {}", self.action.third_person()),
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

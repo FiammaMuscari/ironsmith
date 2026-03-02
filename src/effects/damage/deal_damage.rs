@@ -295,10 +295,6 @@ impl EffectExecutor for DealDamageEffect {
         Ok(EffectOutcome::from_result(EffectResult::TargetInvalid))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         // SourceController is deterministic at resolution time (no cast-time selection),
         // but exposing it here keeps downstream wrappers/tests able to inspect

@@ -35,10 +35,6 @@ impl TriggerMatcher for PermanentTurnedFaceUpTrigger {
     fn display(&self) -> String {
         format!("Whenever {} is turned face up", self.filter.description())
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

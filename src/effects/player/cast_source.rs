@@ -112,8 +112,4 @@ impl EffectExecutor for CastSourceEffect {
             new_id,
         ])))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

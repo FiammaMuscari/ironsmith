@@ -2,10 +2,10 @@
 
 use crate::continuous::{EffectSourceType, EffectTarget, Modification, PtSublayer};
 use crate::effect::{Effect, EffectOutcome, Until, Value};
+use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::effects::{
     ApplyContinuousEffect, EffectExecutor, PutCountersEffect, ScheduleDelayedTriggerEffect,
 };
-use crate::effects::helpers::resolve_single_object_from_spec;
 use crate::events::{KeywordActionEvent, KeywordActionKind};
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget, execute_effect};
 use crate::game_state::GameState;
@@ -107,10 +107,6 @@ impl EffectExecutor for EarthbendEffect {
         )));
 
         Ok(EffectOutcome::resolved().with_events(events))
-    }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

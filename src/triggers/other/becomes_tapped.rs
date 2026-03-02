@@ -22,10 +22,6 @@ impl TriggerMatcher for BecomesTappedTrigger {
     fn display(&self) -> String {
         "Whenever this permanent becomes tapped".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

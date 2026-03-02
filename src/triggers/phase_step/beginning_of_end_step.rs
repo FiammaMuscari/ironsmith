@@ -54,10 +54,6 @@ impl TriggerMatcher for BeginningOfEndStepTrigger {
             _ => format!("At the beginning of {:?}'s end step", self.player),
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 fn player_filter_matches(filter: &PlayerFilter, player: PlayerId, ctx: &TriggerContext) -> bool {
@@ -78,7 +74,7 @@ mod tests {
     use crate::ids::ObjectId;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

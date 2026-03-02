@@ -88,10 +88,6 @@ impl StaticAbilityKind for Protection {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn is_keyword(&self) -> bool {
         true
     }
@@ -127,10 +123,6 @@ impl StaticAbilityKind for HexproofFrom {
 
     fn display(&self) -> String {
         format!("Hexproof from {}", self.filter.description())
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn is_keyword(&self) -> bool {
@@ -170,10 +162,6 @@ impl StaticAbilityKind for Ward {
 
     fn display(&self) -> String {
         format!("Ward {}", self.cost.display())
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn is_keyword(&self) -> bool {

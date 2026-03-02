@@ -22,10 +22,6 @@ impl TriggerMatcher for TransformsTrigger {
     fn display(&self) -> String {
         "When this permanent transforms".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

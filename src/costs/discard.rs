@@ -146,10 +146,6 @@ impl CostPayer for DiscardCost {
         Ok(CostPaymentResult::NeedsChoice(self.display()))
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         let type_str = format_discard_card_type_phrase(&self.card_types);
 
@@ -255,10 +251,6 @@ impl CostPayer for DiscardHandCost {
         Ok(CostPaymentResult::Paid)
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "Discard your hand".to_string()
     }
@@ -326,10 +318,6 @@ impl CostPayer for DiscardSourceCost {
         }
 
         Ok(CostPaymentResult::Paid)
-    }
-
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {

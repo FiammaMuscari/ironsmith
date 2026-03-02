@@ -78,10 +78,6 @@ impl TriggerMatcher for PlayerLosesLifeTrigger {
             base
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

@@ -49,13 +49,25 @@ pub struct ModalSpec {
 ///         // Implementation here
 ///         Ok(EffectOutcome::resolved())
 ///     }
-///
-///     fn clone_box(&self) -> Box<dyn EffectExecutor> {
-///         Box::new(self.clone())
-///     }
 /// }
 /// ```
-pub trait EffectExecutor: std::fmt::Debug + Any + Send + Sync + 'static {
+pub trait EffectExecutorClone {
+    /// Clone this effect into a boxed trait object.
+    fn clone_boxed(&self) -> Box<dyn EffectExecutor>;
+}
+
+impl<T> EffectExecutorClone for T
+where
+    T: EffectExecutor + Clone + 'static,
+{
+    fn clone_boxed(&self) -> Box<dyn EffectExecutor> {
+        Box::new(self.clone())
+    }
+}
+
+pub trait EffectExecutor:
+    std::fmt::Debug + Any + Send + Sync + EffectExecutorClone + 'static
+{
     /// Execute this effect, mutating the game state and returning the outcome.
     ///
     /// # Arguments
@@ -74,9 +86,9 @@ pub trait EffectExecutor: std::fmt::Debug + Any + Send + Sync + 'static {
     ) -> Result<EffectOutcome, ExecutionError>;
 
     /// Clone this effect into a boxed trait object.
-    ///
-    /// This is required because `Clone` is not object-safe.
-    fn clone_box(&self) -> Box<dyn EffectExecutor>;
+    fn clone_box(&self) -> Box<dyn EffectExecutor> {
+        EffectExecutorClone::clone_boxed(self)
+    }
 
     /// Get the target specification for this effect, if it has one.
     ///
@@ -232,10 +244,6 @@ mod tests {
             _ctx: &mut ExecutionContext,
         ) -> Result<EffectOutcome, ExecutionError> {
             Ok(EffectOutcome::resolved())
-        }
-
-        fn clone_box(&self) -> Box<dyn EffectExecutor> {
-            Box::new(self.clone())
         }
     }
 

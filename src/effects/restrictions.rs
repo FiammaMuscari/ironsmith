@@ -26,10 +26,6 @@ impl CantEffect {
 }
 
 impl EffectExecutor for CantEffect {
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn execute(
         &self,
         game: &mut GameState,

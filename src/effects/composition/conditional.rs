@@ -77,10 +77,6 @@ impl EffectExecutor for ConditionalEffect {
         Ok(EffectOutcome::aggregate(outcomes))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         super::target_metadata::first_target_spec(&[&self.if_true, &self.if_false])
     }

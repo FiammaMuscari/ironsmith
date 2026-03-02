@@ -78,10 +78,6 @@ impl EffectExecutor for AttachToEffect {
         Ok(EffectOutcome::resolved())
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         Some(&self.target)
     }
@@ -103,7 +99,7 @@ mod tests {
     use crate::types::{CardType, Subtype};
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn make_creature_card(card_id: u32, name: &str) -> crate::card::Card {
@@ -147,10 +143,8 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let source = create_aura(&mut game, "Pacifism", alice);
         let target = create_creature(&mut game, "Bear", alice);
-        let mut ctx =
-            ExecutionContext::new_default(source, alice).with_targets(vec![ResolvedTarget::Object(
-                target,
-            )]);
+        let mut ctx = ExecutionContext::new_default(source, alice)
+            .with_targets(vec![ResolvedTarget::Object(target)]);
 
         let effect = AttachToEffect::new(ChooseSpec::target_creature());
         effect.execute(&mut game, &mut ctx).unwrap();

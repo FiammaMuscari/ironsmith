@@ -100,8 +100,4 @@ impl EffectExecutor for ReturnFromGraveyardOrExileToBattlefieldEffect {
             other => Ok(EffectOutcome::from_result(other).with_events(events)),
         }
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

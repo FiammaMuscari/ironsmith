@@ -120,10 +120,6 @@ impl GameEventType for ZoneChangeEvent {
         EventKind::ZoneChange
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, game: &GameState) -> PlayerId {
         // Use the first object's controller, or fall back to active player
         self.objects

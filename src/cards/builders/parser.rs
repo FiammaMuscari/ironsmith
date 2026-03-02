@@ -1,5 +1,5 @@
-use super::*;
 use super::effect_ast_traversal::try_for_each_nested_effects_mut;
+use super::*;
 
 #[derive(Clone)]
 struct ModalHeader {
@@ -1238,10 +1238,8 @@ fn apply_line_ast(
                 Err(err) => return Err(err),
             };
 
-            builder.additional_cost = crate::ability::merge_cost_effects(
-                builder.additional_cost,
-                compiled,
-            );
+            builder.additional_cost =
+                crate::ability::merge_cost_effects(builder.additional_cost, compiled);
         }
         LineAst::OptionalCost(cost) => {
             builder = builder.optional_cost(cost);

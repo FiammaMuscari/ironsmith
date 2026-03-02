@@ -66,10 +66,6 @@ impl GameEventType for PutCountersEvent {
         EventKind::PutCounters
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, game: &GameState) -> PlayerId {
         game.object(self.target)
             .map(|o| o.controller)

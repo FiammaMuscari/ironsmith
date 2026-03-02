@@ -63,10 +63,6 @@ impl TriggerMatcher for SpellCopiedTrigger {
             .unwrap_or_else(|| "a spell".to_string());
         format!("Whenever {copier_text} {spell_text}")
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 fn describe_spell_filter(filter: &ObjectFilter) -> String {

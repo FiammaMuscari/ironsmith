@@ -84,8 +84,4 @@ impl EffectExecutor for MillEffect {
 
         Ok(EffectOutcome::count(milled_count as i32))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

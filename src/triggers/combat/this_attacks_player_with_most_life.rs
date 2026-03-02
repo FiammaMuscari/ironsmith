@@ -40,8 +40,4 @@ impl TriggerMatcher for ThisAttacksPlayerWithMostLifeTrigger {
         "Whenever this creature attacks the player with the most life or tied for most life"
             .to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }

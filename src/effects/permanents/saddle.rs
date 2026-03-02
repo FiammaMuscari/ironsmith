@@ -143,10 +143,6 @@ impl EffectExecutor for SaddleCostEffect {
         })
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn can_execute_as_cost(
         &self,
         game: &GameState,
@@ -196,9 +192,5 @@ impl EffectExecutor for BecomeSaddledUntilEotEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         game.set_saddled_until_end_of_turn(ctx.source);
         Ok(EffectOutcome::from_result(EffectResult::Resolved))
-    }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
     }
 }

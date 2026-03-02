@@ -22,10 +22,6 @@ impl TriggerMatcher for YouCastThisSpellTrigger {
     fn display(&self) -> String {
         "When you cast this spell".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

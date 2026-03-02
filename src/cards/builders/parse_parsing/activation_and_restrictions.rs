@@ -1341,8 +1341,7 @@ pub(crate) fn parse_cycling_search_filter(
             && !filter.card_types.contains(&card_type)
         {
             filter.card_types.push(card_type);
-        } else if let Some(subtype) = parse_subtype_flexible(root)
-        {
+        } else if let Some(subtype) = parse_subtype_flexible(root) {
             if !filter.subtypes.contains(&subtype) {
                 filter.subtypes.push(subtype);
             }
@@ -7629,8 +7628,7 @@ pub(crate) fn parse_subtype_list_enters_trigger_filter(
         if matches!(*word, "and" | "or") {
             continue;
         }
-        if let Some(subtype) = parse_subtype_flexible(word)
-        {
+        if let Some(subtype) = parse_subtype_flexible(word) {
             if !subtypes.contains(&subtype) {
                 subtypes.push(subtype);
             }
@@ -8629,8 +8627,11 @@ pub(crate) fn append_token_reminder_to_effect(
             let mut applied = false;
             for_each_nested_effects_mut(effect, false, |nested| {
                 if !applied {
-                    applied =
-                        append_token_reminder_to_effect(nested.last_mut(), reminder, reminder_words);
+                    applied = append_token_reminder_to_effect(
+                        nested.last_mut(),
+                        reminder,
+                        reminder_words,
+                    );
                 }
             });
             applied

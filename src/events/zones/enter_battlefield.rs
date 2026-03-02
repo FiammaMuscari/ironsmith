@@ -98,10 +98,6 @@ impl GameEventType for EnterBattlefieldEvent {
         EventKind::EnterBattlefield
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, game: &GameState) -> PlayerId {
         game.object(self.object)
             .map(|o| o.controller)

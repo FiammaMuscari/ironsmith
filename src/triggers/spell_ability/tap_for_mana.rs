@@ -72,10 +72,6 @@ impl TriggerMatcher for TapForManaTrigger {
         };
         format!("Whenever {player} {verb} {object_phrase} for mana")
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 fn describe_player_filter_fallback(filter: &PlayerFilter) -> String {

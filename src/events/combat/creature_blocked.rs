@@ -30,10 +30,6 @@ impl GameEventType for CreatureBlockedEvent {
         EventKind::CreatureBlocked
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, game: &GameState) -> PlayerId {
         game.object(self.blocker)
             .map(|o| o.controller)

@@ -62,8 +62,4 @@ impl EffectExecutor for ExileTaggedWhenSourceLeavesEffect {
 
         Ok(EffectOutcome::count(scheduled))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

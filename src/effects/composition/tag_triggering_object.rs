@@ -47,8 +47,4 @@ impl EffectExecutor for TagTriggeringObjectEffect {
 
         Ok(EffectOutcome::count(0))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

@@ -95,10 +95,6 @@ impl EffectExecutor for AddManaOfImprintedColorsEffect {
         Ok(EffectOutcome::count(1))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn producible_mana_symbols(
         &self,
         game: &GameState,

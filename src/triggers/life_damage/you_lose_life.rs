@@ -22,10 +22,6 @@ impl TriggerMatcher for YouLoseLifeTrigger {
     fn display(&self) -> String {
         "Whenever you lose life".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

@@ -67,10 +67,6 @@ impl TriggerMatcher for SagaChapterTrigger {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
-
     fn saga_chapters(&self) -> Option<&[u32]> {
         Some(&self.chapters)
     }

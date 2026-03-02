@@ -39,10 +39,6 @@ impl TriggerMatcher for ThisBlocksObjectTrigger {
             self.blocked_filter.description()
         )
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

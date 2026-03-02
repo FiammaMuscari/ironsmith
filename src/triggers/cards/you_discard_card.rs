@@ -75,10 +75,6 @@ impl TriggerMatcher for YouDiscardCardTrigger {
             format!("Whenever {player_text} {verb} a card")
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

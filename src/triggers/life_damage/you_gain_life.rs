@@ -60,10 +60,6 @@ impl TriggerMatcher for YouGainLifeTrigger {
             "Whenever you gain life".to_string()
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

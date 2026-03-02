@@ -1879,8 +1879,7 @@ pub(crate) fn parse_object_filter(
             }
         }
 
-        if let Some(subtype) = parse_subtype_flexible(word)
-        {
+        if let Some(subtype) = parse_subtype_flexible(word) {
             if !filter.subtypes.contains(&subtype) {
                 filter.subtypes.push(subtype);
             }

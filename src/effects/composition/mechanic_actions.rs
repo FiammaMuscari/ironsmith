@@ -30,10 +30,6 @@ impl EffectExecutor for ExploreEffect {
         // parser/render semantics without oracle-text fallback.
         Ok(EffectOutcome::from_result(EffectResult::Resolved))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,10 +49,6 @@ impl EffectExecutor for OpenAttractionEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         Ok(EffectOutcome::from_result(EffectResult::Resolved))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -75,10 +67,6 @@ impl EffectExecutor for ManifestDreadEffect {
         _ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         Ok(EffectOutcome::from_result(EffectResult::Resolved))
-    }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
     }
 }
 
@@ -101,10 +89,6 @@ impl EffectExecutor for BolsterEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         Ok(EffectOutcome::from_result(EffectResult::Resolved))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,10 +109,6 @@ impl EffectExecutor for SupportEffect {
         _ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         Ok(EffectOutcome::from_result(EffectResult::Resolved))
-    }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
     }
 }
 
@@ -151,10 +131,6 @@ impl EffectExecutor for AdaptEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         Ok(EffectOutcome::from_result(EffectResult::Resolved))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,9 +149,5 @@ impl EffectExecutor for CounterAbilityEffect {
         _ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
         Ok(EffectOutcome::from_result(EffectResult::Resolved))
-    }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
     }
 }

@@ -100,10 +100,6 @@ impl EffectExecutor for ExileFromHandAsCostEffect {
         )))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn exile_from_hand_cost_info(&self) -> Option<(u32, Option<crate::color::ColorSet>)> {
         Some((self.count, self.color_filter))
     }

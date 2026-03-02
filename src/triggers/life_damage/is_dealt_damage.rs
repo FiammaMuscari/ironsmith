@@ -56,10 +56,6 @@ impl TriggerMatcher for IsDealtDamageTrigger {
             _ => "Whenever a target is dealt damage".to_string(),
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 fn target_matches_object(

@@ -27,9 +27,6 @@ macro_rules! define_keyword {
                 $display.to_string()
             }
 
-            fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-                Box::new(*self)
-            }
 
             fn is_keyword(&self) -> bool {
                 true
@@ -125,10 +122,6 @@ impl StaticAbilityKind for Defender {
         "Defender".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn is_keyword(&self) -> bool {
         true
     }
@@ -160,10 +153,6 @@ impl StaticAbilityKind for Indestructible {
 
     fn display(&self) -> String {
         "Indestructible".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn is_keyword(&self) -> bool {
@@ -199,10 +188,6 @@ impl StaticAbilityKind for Hexproof {
         "Hexproof".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn is_keyword(&self) -> bool {
         true
     }
@@ -234,10 +219,6 @@ impl StaticAbilityKind for Shroud {
 
     fn display(&self) -> String {
         "Shroud".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn is_keyword(&self) -> bool {
@@ -291,10 +272,6 @@ impl StaticAbilityKind for Changeling {
 
     fn display(&self) -> String {
         "Changeling".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn is_keyword(&self) -> bool {

@@ -48,8 +48,4 @@ impl EffectExecutor for TagTriggeringDamageTargetEffect {
         );
         Ok(EffectOutcome::from_result(EffectResult::Count(1)))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

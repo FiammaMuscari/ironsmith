@@ -873,7 +873,8 @@ pub struct StackEntry {
     /// Tagged object snapshots preserved from cost payment and targeting flows.
     ///
     /// This supports resolution-time references like `sacrifice_cost_0`.
-    pub tagged_objects: std::collections::HashMap<crate::tag::TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
+    pub tagged_objects:
+        std::collections::HashMap<crate::tag::TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
 }
 
 /// A mana ability granted to a player until end of turn.

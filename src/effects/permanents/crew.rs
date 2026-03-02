@@ -128,10 +128,6 @@ impl EffectExecutor for CrewCostEffect {
         })
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn can_execute_as_cost(
         &self,
         game: &GameState,

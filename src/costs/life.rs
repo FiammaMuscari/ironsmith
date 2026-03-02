@@ -69,10 +69,6 @@ impl CostPayer for LifePerCardInHandCost {
         Ok(CostPaymentResult::Paid)
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         // Mirror the oracle phrasing ("for each card...") even when per_card != 1.
         if self.per_card == 1 {
@@ -119,10 +115,6 @@ impl CostPayer for LifeCost {
         }
 
         Ok(CostPaymentResult::Paid)
-    }
-
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {

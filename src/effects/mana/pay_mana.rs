@@ -121,10 +121,6 @@ impl EffectExecutor for PayManaEffect {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         if self.player.is_target() {
             Some(&self.player)
@@ -233,7 +229,7 @@ mod tests {
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[derive(Default)]

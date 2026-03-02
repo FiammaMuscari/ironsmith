@@ -29,10 +29,6 @@ impl StaticAbilityKind for BelloCardEffect {
         "During your turn, each non-Equipment artifact and non-Aura enchantment you control with mana value 4 or greater is a 4/4 Elemental creature in addition to its other types and has indestructible, haste, and \"Whenever this creature deals combat damage to a player, draw a card.\"".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn is_active(&self, game: &GameState, source: ObjectId) -> bool {
         game.object(source)
             .map(|obj| game.turn.active_player == obj.controller)

@@ -156,10 +156,6 @@ impl EffectExecutor for NinjutsuCostEffect {
         Ok(EffectOutcome::from_result(EffectResult::Resolved))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn can_execute_as_cost(
         &self,
         game: &GameState,
@@ -280,10 +276,6 @@ impl EffectExecutor for NinjutsuEffect {
             }
         }
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]
@@ -297,7 +289,7 @@ mod tests {
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn make_creature_card(card_id: u32, name: &str) -> crate::card::Card {

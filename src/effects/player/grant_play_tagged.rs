@@ -105,10 +105,6 @@ impl EffectExecutor for GrantPlayTaggedEffect {
 
         Ok(EffectOutcome::count(granted as i32))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

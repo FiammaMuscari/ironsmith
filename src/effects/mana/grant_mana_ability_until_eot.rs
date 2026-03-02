@@ -35,8 +35,4 @@ impl EffectExecutor for GrantManaAbilityUntilEotEffect {
         });
         Ok(EffectOutcome::from_result(EffectResult::Resolved))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

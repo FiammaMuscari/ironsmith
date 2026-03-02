@@ -53,10 +53,6 @@ impl TriggerMatcher for DealsDamageTrigger {
             format!("Whenever {} deals damage", self.filter.description())
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

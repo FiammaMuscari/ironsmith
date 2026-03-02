@@ -22,10 +22,6 @@ impl TriggerMatcher for ThisBecomesBlockedTrigger {
     fn display(&self) -> String {
         "Whenever this creature becomes blocked".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

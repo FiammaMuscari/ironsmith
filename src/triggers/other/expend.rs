@@ -47,10 +47,6 @@ impl TriggerMatcher for ExpendTrigger {
             _ => format!("Whenever a player expends {}", self.amount),
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

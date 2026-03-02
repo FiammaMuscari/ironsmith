@@ -63,10 +63,6 @@ impl TriggerMatcher for EntersBattlefieldTappedTrigger {
             self.filter.description()
         )
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]
@@ -81,7 +77,7 @@ mod tests {
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn create_creature(game: &mut GameState, name: &str, controller: PlayerId) -> ObjectId {

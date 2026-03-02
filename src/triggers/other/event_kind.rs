@@ -28,10 +28,6 @@ impl TriggerMatcher for EventKindTrigger {
     fn display(&self) -> String {
         self.display_text.clone()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 /// Trigger that checks event kind and requires event object == source object.
@@ -57,10 +53,6 @@ impl TriggerMatcher for ThisEventObjectTrigger {
 
     fn display(&self) -> String {
         self.display_text.clone()
-    }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
     }
 }
 

@@ -516,10 +516,6 @@ impl EffectExecutor for RetargetStackObjectEffect {
         Ok(EffectOutcome::from_result(EffectResult::Count(changed)).with_events(events))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         if self.target.is_target() {
             Some(&self.target)

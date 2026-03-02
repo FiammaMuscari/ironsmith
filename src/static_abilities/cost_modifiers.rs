@@ -388,10 +388,6 @@ impl StaticAbilityKind for AffinityForArtifacts {
         "Affinity for artifacts".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn modifies_costs(&self) -> bool {
         true
     }
@@ -412,10 +408,6 @@ impl StaticAbilityKind for Delve {
 
     fn display(&self) -> String {
         "Delve".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn modifies_costs(&self) -> bool {
@@ -440,10 +432,6 @@ impl StaticAbilityKind for Convoke {
         "Convoke".to_string()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
-    }
-
     fn modifies_costs(&self) -> bool {
         true
     }
@@ -464,10 +452,6 @@ impl StaticAbilityKind for Improvise {
 
     fn display(&self) -> String {
         "Improvise".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn modifies_costs(&self) -> bool {
@@ -529,10 +513,6 @@ impl StaticAbilityKind for CostReduction {
         describe_cost_modifier_with_condition(line, &self.condition)
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn modifies_costs(&self) -> bool {
         true
     }
@@ -587,10 +567,6 @@ impl StaticAbilityKind for ActivatedAbilityCostReduction {
             line.push_str(". This effect can't reduce the mana in that cost to less than one mana");
         }
         line
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn modifies_costs(&self) -> bool {
@@ -1147,10 +1123,6 @@ impl StaticAbilityKind for ThisSpellCostReduction {
         format!("If {condition_text}, this spell costs {amount_text} less to cast")
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn modifies_costs(&self) -> bool {
         true
     }
@@ -1193,10 +1165,6 @@ impl StaticAbilityKind for ThisSpellCostReductionManaCost {
         };
 
         format!("If {condition_text}, this spell costs {amount_text} less to cast")
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn modifies_costs(&self) -> bool {
@@ -1262,10 +1230,6 @@ impl StaticAbilityKind for CostIncrease {
         describe_cost_modifier_with_condition(line, &self.condition)
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn modifies_costs(&self) -> bool {
         true
     }
@@ -1314,10 +1278,6 @@ impl StaticAbilityKind for CostReductionManaCost {
             describe_cost_modifier_mana_cost(&self.reduction)
         );
         describe_cost_modifier_with_condition(line, &self.condition)
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn modifies_costs(&self) -> bool {
@@ -1370,10 +1330,6 @@ impl StaticAbilityKind for CostIncreaseManaCost {
         describe_cost_modifier_with_condition(line, &self.condition)
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn modifies_costs(&self) -> bool {
         true
     }
@@ -1410,10 +1366,6 @@ impl StaticAbilityKind for CostIncreasePerAdditionalTarget {
             "This spell costs {{{}}} more to cast for each target beyond the first",
             self.amount
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn modifies_costs(&self) -> bool {

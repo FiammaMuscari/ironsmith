@@ -38,8 +38,4 @@ impl EffectExecutor for SacrificeSourceWhenTaggedLeavesEffect {
         .with_current_source_as_ability_source()
         .execute(game, ctx)
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

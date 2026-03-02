@@ -77,10 +77,6 @@ impl EffectExecutor for BecomeColorChoiceEffect {
 
         apply.execute(game, ctx)
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

@@ -50,8 +50,4 @@ impl EffectExecutor for GrantPlayFromGraveyardEffect {
 
         Ok(EffectOutcome::resolved())
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

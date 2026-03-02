@@ -33,8 +33,8 @@ use crate::zone::Zone;
 use std::collections::HashMap;
 
 use super::CardDefinition;
-mod parser;
 mod effect_ast_traversal;
+mod parser;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CardTextError {
@@ -8391,10 +8391,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert_eq!(def.alternative_casts.len(), 1);
         let alt = &def.alternative_casts[0];
         match alt {
-            AlternativeCastingMethod::Composed {
-                condition,
-                ..
-            } => {
+            AlternativeCastingMethod::Composed { condition, .. } => {
                 let cost_effects = alt.cost_effects();
                 assert!(
                     !cost_effects.is_empty(),

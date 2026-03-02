@@ -58,8 +58,4 @@ impl EffectExecutor for ReturnAllToBattlefieldEffect {
 
         Ok(EffectOutcome::count(returned_count))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

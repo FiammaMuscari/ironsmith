@@ -129,8 +129,4 @@ impl EffectExecutor for ScryEffect {
             )),
         )
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

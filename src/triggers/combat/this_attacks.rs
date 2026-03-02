@@ -25,10 +25,6 @@ impl TriggerMatcher for ThisAttacksTrigger {
     fn display(&self) -> String {
         "Whenever this creature attacks".to_string()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]
@@ -39,7 +35,7 @@ mod tests {
     use crate::ids::{ObjectId, PlayerId};
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

@@ -31,10 +31,6 @@ impl GameEventType for EndOfCombatEvent {
         EventKind::EndOfCombat
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, game: &GameState) -> PlayerId {
         game.turn.active_player
     }

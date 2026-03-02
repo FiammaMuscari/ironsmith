@@ -71,10 +71,6 @@ impl EffectExecutor for RemoveFromCombatEffect {
         Ok(apply_result.outcome)
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         if self.spec.is_target() {
             Some(&self.spec)

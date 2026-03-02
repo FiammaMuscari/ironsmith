@@ -87,8 +87,4 @@ impl EffectExecutor for ForEachCounterKindPutOrRemoveEffect {
 
         Ok(EffectOutcome::aggregate(outcomes))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

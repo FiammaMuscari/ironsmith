@@ -38,10 +38,6 @@ impl EffectExecutor for EmitKeywordActionEffect {
         Ok(EffectOutcome::from_result(EffectResult::Resolved).with_event(event))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn cost_description(&self) -> Option<String> {
         // Internal scaffolding effect used to emit trigger-visible events from costs.
         // This should not show up as part of the printed/visible cost.

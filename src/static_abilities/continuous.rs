@@ -725,10 +725,6 @@ impl StaticAbilityKind for Anthem {
         text
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,
@@ -837,10 +833,6 @@ impl StaticAbilityKind for GrantAbility {
             text.push_str(&describe_static_condition(condition));
         }
         text
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn grants_abilities(&self) -> bool {
@@ -975,10 +967,6 @@ impl StaticAbilityKind for SoulbondSharedBonus {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,
@@ -1066,10 +1054,6 @@ impl StaticAbilityKind for RemoveAbilityForFilter {
         )
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,
@@ -1113,10 +1097,6 @@ impl StaticAbilityKind for RemoveAllAbilitiesForFilter {
         )
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,
@@ -1158,10 +1138,6 @@ impl StaticAbilityKind for RemoveAllAbilitiesExceptManaForFilter {
             "{} lose all abilities except mana abilities",
             pluralized_subject_text(&self.filter)
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_effects(
@@ -1219,10 +1195,6 @@ impl StaticAbilityKind for SetBasePowerToughnessForFilter {
             "{subject} {verb} base power and toughness {}/{}",
             self.power, self.toughness
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_effects(
@@ -1305,10 +1277,6 @@ impl StaticAbilityKind for CopyActivatedAbilities {
 
     fn display(&self) -> String {
         self.display.clone()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_effects(
@@ -1412,10 +1380,6 @@ impl StaticAbilityKind for SetColorsForFilter {
         text
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,
@@ -1461,10 +1425,6 @@ impl StaticAbilityKind for SetNameForFilter {
         let subject = pluralized_subject_text(&self.filter);
         let (verb, _) = subject_verb_and_possessive(&subject);
         format!("{subject} {verb} named {}", self.name)
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_effects(
@@ -1514,10 +1474,6 @@ impl StaticAbilityKind for AddColorsForFilter {
         let (verb, possessive) = subject_verb_and_possessive(&subject);
         let colors = join_with_and(&color_list(self.colors));
         format!("{subject} {verb} {colors} in addition to {possessive} other colors")
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_effects(
@@ -1574,10 +1530,6 @@ impl StaticAbilityKind for AddCardTypesForFilter {
             "{subject} {verb} {} in addition to {possessive} other types",
             join_with_and(&types)
         )
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_effects(
@@ -1650,10 +1602,6 @@ impl StaticAbilityKind for RemoveCardTypesForFilter {
         text
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,
@@ -1710,10 +1658,6 @@ impl StaticAbilityKind for SetCardTypesForFilter {
             .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
             .collect::<Vec<_>>();
         format!("{subject} {verb} {}", join_with_and(&types))
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_effects(
@@ -1791,10 +1735,6 @@ impl StaticAbilityKind for AddSubtypesForFilter {
         format!("{subject} {verb} {subtype_phrase} in addition to {possessive} {other_types}",)
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,
@@ -1846,10 +1786,6 @@ impl StaticAbilityKind for SetCreatureSubtypesForFilter {
             .map(|subtype| format!("{subtype:?}").to_ascii_lowercase())
             .collect::<Vec<_>>();
         format!("{subject} {verb} {}", join_with_and(&subtypes))
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_effects(
@@ -1910,10 +1846,6 @@ impl StaticAbilityKind for MakeColorlessForFilter {
 
     fn is_devoid(&self) -> bool {
         self.filter == ObjectFilter::source()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_effects(
@@ -1985,10 +1917,6 @@ impl StaticAbilityKind for AddSupertypesForFilter {
         format!("{subject} {verb} {supertypes}")
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,
@@ -2044,10 +1972,6 @@ impl StaticAbilityKind for RemoveSupertypesForFilter {
         format!("{subject} {verb} no longer {supertypes}")
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,
@@ -2086,10 +2010,6 @@ impl StaticAbilityKind for EquipmentGrant {
     fn display(&self) -> String {
         let ability_names: Vec<String> = self.abilities.iter().map(|a| a.display()).collect();
         format!("Equipped creature has {}", ability_names.join(", "))
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn grants_abilities(&self) -> bool {
@@ -2158,10 +2078,6 @@ impl StaticAbilityKind for AttachedAbilityGrant {
         text
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn granted_inline_ability(&self) -> Option<&crate::ability::Ability> {
         Some(&self.ability)
     }
@@ -2210,10 +2126,6 @@ impl StaticAbilityKind for ControlAttachedPermanent {
         self.display.clone()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,
@@ -2251,10 +2163,6 @@ impl StaticAbilityKind for EnchantedLandIsChosenType {
 
     fn display(&self) -> String {
         self.display.clone()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
     }
 
     fn generate_effects(
@@ -2313,10 +2221,6 @@ impl StaticAbilityKind for GrantObjectAbilityForFilter {
         self.display.clone()
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn granted_inline_ability(&self) -> Option<&crate::ability::Ability> {
         Some(&self.ability)
     }
@@ -2355,10 +2259,6 @@ impl StaticAbilityKind for BloodMoon {
 
     fn display(&self) -> String {
         "Nonbasic lands are Mountains".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn generate_effects(
@@ -2406,10 +2306,6 @@ impl StaticAbilityKind for TophFirstMetalbender {
 
     fn display(&self) -> String {
         "Nontoken artifacts you control are lands in addition to their other types.".to_string()
-    }
-
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(*self)
     }
 
     fn generate_effects(

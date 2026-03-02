@@ -77,10 +77,6 @@ impl TriggerMatcher for PlayerDrawsNthCardEachTurnTrigger {
             ),
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 fn ordinal_word(n: u32) -> &'static str {

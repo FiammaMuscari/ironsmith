@@ -85,10 +85,6 @@ impl EffectExecutor for SequenceEffect {
         Ok(EffectOutcome { result, events })
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&crate::target::ChooseSpec> {
         super::target_metadata::first_target_spec(&[&self.effects])
     }

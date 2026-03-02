@@ -142,10 +142,6 @@ impl EffectExecutor for CopySpellEffect {
         )))
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         Some(&self.target)
     }
@@ -165,7 +161,7 @@ mod tests {
     use crate::types::CardType;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn create_instant_on_stack(

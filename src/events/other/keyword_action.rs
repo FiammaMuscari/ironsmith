@@ -151,10 +151,6 @@ impl GameEventType for KeywordActionEvent {
         EventKind::KeywordAction
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, _game: &GameState) -> PlayerId {
         self.player
     }

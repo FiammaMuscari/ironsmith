@@ -83,10 +83,6 @@ impl TriggerMatcher for PlayerDrawsCardTrigger {
             _ => format!("Whenever {:?} {}", self.player, action),
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

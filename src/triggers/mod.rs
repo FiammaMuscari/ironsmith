@@ -775,10 +775,6 @@ impl TriggerMatcher for Trigger {
         self.0.display()
     }
 
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
-
     fn uses_snapshot(&self) -> bool {
         self.0.uses_snapshot()
     }

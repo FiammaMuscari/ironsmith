@@ -233,9 +233,7 @@ pub(crate) fn parse_has_base_power_clause(
     if tail_words.is_empty() {
         let has_target_subject = subject_words.contains(&"target");
         let has_leading_until_eot = starts_with_until_end_of_turn(&subject_words);
-        let has_temporal_words = words_all
-            .windows(4)
-            .any(is_until_end_of_turn)
+        let has_temporal_words = words_all.windows(4).any(is_until_end_of_turn)
             || words_all
                 .windows(2)
                 .any(|window| window == ["this", "turn"] || window == ["next", "turn"]);
@@ -301,9 +299,7 @@ pub(crate) fn parse_has_base_power_toughness_clause(
     if tail.is_empty() {
         let has_target_subject = subject_words.contains(&"target");
         let has_leading_until_eot = starts_with_until_end_of_turn(&subject_words);
-        let has_temporal_words = words_all
-            .windows(4)
-            .any(is_until_end_of_turn)
+        let has_temporal_words = words_all.windows(4).any(is_until_end_of_turn)
             || words_all
                 .windows(2)
                 .any(|window| window == ["this", "turn"] || window == ["next", "turn"]);

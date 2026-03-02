@@ -140,10 +140,6 @@ impl EffectExecutor for ReturnFromGraveyardToHandEffect {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&ChooseSpec> {
         if self.random {
             None
@@ -182,7 +178,7 @@ mod tests {
     use crate::types::CardType;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     fn make_creature_card(card_id: u32, name: &str) -> crate::card::Card {

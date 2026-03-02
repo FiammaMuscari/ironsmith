@@ -49,10 +49,6 @@ impl CostPayer for EnergyCost {
         Ok(CostPaymentResult::Paid)
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         // Energy uses {E} symbol
         let symbols: String = (0..self.amount).map(|_| "{E}").collect();

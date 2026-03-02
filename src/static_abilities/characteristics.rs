@@ -53,10 +53,6 @@ impl StaticAbilityKind for CharacteristicDefiningPT {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn StaticAbilityKind> {
-        Box::new(self.clone())
-    }
-
     fn generate_effects(
         &self,
         source: ObjectId,

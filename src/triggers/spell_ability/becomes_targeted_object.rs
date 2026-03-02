@@ -37,8 +37,4 @@ impl TriggerMatcher for BecomesTargetedObjectTrigger {
             self.filter.description()
         )
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }

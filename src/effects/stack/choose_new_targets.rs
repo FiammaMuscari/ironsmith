@@ -252,8 +252,4 @@ impl EffectExecutor for ChooseNewTargetsEffect {
 
         Ok(EffectOutcome::from_result(EffectResult::Count(changed)).with_events(events))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

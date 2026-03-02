@@ -180,8 +180,4 @@ impl EffectExecutor for DiscoverEffect {
             )),
         )
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

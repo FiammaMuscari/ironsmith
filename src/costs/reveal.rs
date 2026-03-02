@@ -106,7 +106,9 @@ impl CostPayer for RevealFromHandCost {
                     return Err(CostPaymentError::InsufficientCardsToReveal);
                 }
                 if let Some(ct) = self.card_type
-                    && !game.object(card_id).is_some_and(|obj| obj.has_card_type(ct))
+                    && !game
+                        .object(card_id)
+                        .is_some_and(|obj| obj.has_card_type(ct))
                 {
                     return Err(CostPaymentError::InsufficientCardsToReveal);
                 }
@@ -118,10 +120,6 @@ impl CostPayer for RevealFromHandCost {
 
         // The actual reveal choice happens in the game loop
         Ok(CostPaymentResult::NeedsChoice(self.display()))
-    }
-
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {

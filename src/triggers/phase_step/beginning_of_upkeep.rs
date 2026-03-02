@@ -61,10 +61,6 @@ impl TriggerMatcher for BeginningOfUpkeepTrigger {
             _ => format!("At the beginning of {:?}'s upkeep", self.player),
         }
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 /// Check if a PlayerFilter matches a specific player in the trigger context.
@@ -101,7 +97,7 @@ mod tests {
     use crate::ids::ObjectId;
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

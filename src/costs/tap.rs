@@ -70,10 +70,6 @@ impl CostPayer for TapCost {
         Ok(CostPaymentResult::Paid)
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "{T}".to_string()
     }

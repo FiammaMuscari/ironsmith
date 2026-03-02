@@ -90,10 +90,6 @@ impl CostPayer for ManaPaymentCost {
         Ok(CostPaymentResult::Paid)
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         // Format the mana cost as a string
         format_mana_cost(&self.cost)

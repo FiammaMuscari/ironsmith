@@ -79,8 +79,4 @@ impl EffectExecutor for ScheduleEffectsWhenTaggedLeavesEffect {
 
         Ok(EffectOutcome::count(scheduled as i32))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

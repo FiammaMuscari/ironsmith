@@ -83,10 +83,6 @@ impl EffectExecutor for AddManaOfLandProducedTypesEffect {
 
         Ok(EffectOutcome::count(amount as i32))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }
 
 fn collect_available_mana_symbols(

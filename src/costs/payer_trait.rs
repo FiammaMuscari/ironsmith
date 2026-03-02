@@ -196,16 +196,26 @@ pub fn can_potentially_pay_with_check_context(
 ///         Ok(CostPaymentResult::Paid)
 ///     }
 ///
-///     fn clone_box(&self) -> Box<dyn CostPayer> {
-///         Box::new(self.clone())
-///     }
-///
 ///     fn display(&self) -> String {
 ///         "{T}".to_string()
 ///     }
 /// }
 /// ```
-pub trait CostPayer: std::fmt::Debug + Send + Sync {
+pub trait CostPayerClone {
+    /// Clone this cost into a boxed trait object.
+    fn clone_boxed(&self) -> Box<dyn CostPayer>;
+}
+
+impl<T> CostPayerClone for T
+where
+    T: CostPayer + Clone + 'static,
+{
+    fn clone_boxed(&self) -> Box<dyn CostPayer> {
+        Box::new(self.clone())
+    }
+}
+
+pub trait CostPayer: std::fmt::Debug + Send + Sync + CostPayerClone {
     /// Check if this cost can be paid RIGHT NOW.
     ///
     /// For mana costs, this checks if the mana is in the pool.
@@ -241,9 +251,9 @@ pub trait CostPayer: std::fmt::Debug + Send + Sync {
     ) -> Result<CostPaymentResult, CostPaymentError>;
 
     /// Clone this cost into a boxed trait object.
-    ///
-    /// This is required because `Clone` is not object-safe.
-    fn clone_box(&self) -> Box<dyn CostPayer>;
+    fn clone_box(&self) -> Box<dyn CostPayer> {
+        CostPayerClone::clone_boxed(self)
+    }
 
     /// Human-readable display text for this cost.
     ///
@@ -380,10 +390,6 @@ mod tests {
             _ctx: &mut CostContext,
         ) -> Result<CostPaymentResult, CostPaymentError> {
             Ok(CostPaymentResult::Paid)
-        }
-
-        fn clone_box(&self) -> Box<dyn CostPayer> {
-            Box::new(self.clone())
         }
 
         fn display(&self) -> String {

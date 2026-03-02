@@ -111,10 +111,6 @@ impl GameEventType for DamageEvent {
         EventKind::Damage
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, game: &GameState) -> PlayerId {
         match self.target {
             DamageTarget::Player(player) => player,

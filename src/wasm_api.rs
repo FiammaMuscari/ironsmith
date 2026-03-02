@@ -229,9 +229,9 @@ fn grouped_battlefield_for_player(
                 .map(|obj| obj.name.clone())
                 .unwrap_or_else(|| key.name.clone());
             let power_toughness = representative.and_then(|obj| {
-                let p = game.calculated_power(obj.id)
-                    .or_else(|| obj.power())?;
-                let t = game.calculated_toughness(obj.id)
+                let p = game.calculated_power(obj.id).or_else(|| obj.power())?;
+                let t = game
+                    .calculated_toughness(obj.id)
                     .or_else(|| obj.toughness())?;
                 Some(format!("{p}/{t}"))
             });
@@ -2790,9 +2790,9 @@ impl WasmGame {
                 })?;
                 if let Some(pending) = self.priority_state.pending_activation.as_ref() {
                     match pending.stage {
-                        ActivationStage::ChoosingSacrifice => {
-                            Ok(PriorityResponse::SacrificeTarget(ObjectId::from_raw(chosen)))
-                        }
+                        ActivationStage::ChoosingSacrifice => Ok(
+                            PriorityResponse::SacrificeTarget(ObjectId::from_raw(chosen)),
+                        ),
                         ActivationStage::ChoosingCardCost => {
                             Ok(PriorityResponse::CardCostChoice(ObjectId::from_raw(chosen)))
                         }

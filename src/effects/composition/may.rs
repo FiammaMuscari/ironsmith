@@ -121,10 +121,6 @@ impl EffectExecutor for MayEffect {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
-
     fn get_target_spec(&self) -> Option<&crate::target::ChooseSpec> {
         super::target_metadata::first_target_spec(&[&self.effects])
     }
@@ -177,7 +173,7 @@ mod tests {
     use crate::target::{ChooseSpec, PlayerFilter};
 
     fn setup_game() -> GameState {
-        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+        crate::tests::test_helpers::setup_two_player_game()
     }
 
     #[test]

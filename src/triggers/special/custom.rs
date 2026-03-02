@@ -25,10 +25,6 @@ impl TriggerMatcher for CustomTrigger {
     fn display(&self) -> String {
         self.description.clone()
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }
 
 #[cfg(test)]

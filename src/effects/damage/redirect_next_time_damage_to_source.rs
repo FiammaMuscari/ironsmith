@@ -45,10 +45,6 @@ impl ReplacementMatcher for DamageSourceToSpecificObjectMatcher {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ReplacementMatcher> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         "When the next chosen source would deal damage to that creature".to_string()
     }
@@ -141,10 +137,6 @@ impl EffectExecutor for RedirectNextTimeDamageToSourceEffect {
         );
         game.replacement_effects.add_one_shot_effect(replacement);
         Ok(EffectOutcome::resolved())
-    }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

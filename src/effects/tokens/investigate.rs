@@ -53,8 +53,4 @@ impl EffectExecutor for InvestigateEffect {
 
         Ok(EffectOutcome::aggregate(outcomes).with_events(action_events))
     }
-
-    fn clone_box(&self) -> Box<dyn EffectExecutor> {
-        Box::new(self.clone())
-    }
 }

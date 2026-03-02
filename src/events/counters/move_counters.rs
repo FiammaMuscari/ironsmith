@@ -57,10 +57,6 @@ impl GameEventType for MoveCountersEvent {
         EventKind::MoveCounters
     }
 
-    fn clone_box(&self) -> Box<dyn GameEventType> {
-        Box::new(self.clone())
-    }
-
     fn affected_player(&self, game: &GameState) -> PlayerId {
         // The affected player is the controller of the destination
         game.object(self.to)

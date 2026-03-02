@@ -101,10 +101,6 @@ impl TriggerMatcher for KeywordAbilityTrigger {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
-
     fn uses_snapshot(&self) -> bool {
         matches!(
             self.kind,

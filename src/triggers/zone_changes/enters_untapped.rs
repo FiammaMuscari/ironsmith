@@ -51,8 +51,4 @@ impl TriggerMatcher for EntersBattlefieldUntappedTrigger {
             self.filter.description()
         )
     }
-
-    fn clone_box(&self) -> Box<dyn TriggerMatcher> {
-        Box::new(self.clone())
-    }
 }

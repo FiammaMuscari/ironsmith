@@ -94,10 +94,6 @@ impl CostPayer for RemoveCountersCost {
         Ok(CostPaymentResult::Paid)
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         let counter_name = format_counter_type(&self.counter_type);
         if self.count == 1 {
@@ -264,10 +260,6 @@ impl CostPayer for RemoveAnyCountersFromSourceCost {
         Ok(CostPaymentResult::Paid)
     }
 
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
-    }
-
     fn display(&self) -> String {
         let amount_text = if self.display_x { "X" } else { "any number of" };
         if let Some(counter_type) = self.counter_type {
@@ -343,10 +335,6 @@ impl CostPayer for AddCountersCost {
         }
 
         Ok(CostPaymentResult::Paid)
-    }
-
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
@@ -589,10 +577,6 @@ impl CostPayer for RemoveAnyCountersAmongCost {
         }
 
         Ok(CostPaymentResult::Paid)
-    }
-
-    fn clone_box(&self) -> Box<dyn CostPayer> {
-        Box::new(self.clone())
     }
 
     fn display(&self) -> String {
