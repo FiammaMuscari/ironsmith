@@ -484,6 +484,35 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_target_specs_target_player_sacrifice_choice_has_target_requirement() {
+        use crate::cards::CardDefinitionBuilder;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Sudden Edict Variant")
+            .card_types(vec![CardType::Instant])
+            .parse_text("Target player sacrifices a creature of their choice.")
+            .expect("target-player sacrifice-choice clause should parse");
+
+        let effects = def.spell_effect.expect("expected spell effects");
+        let game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let requirements = extract_target_requirements(&game, &effects, alice, None);
+        assert_eq!(
+            requirements.len(),
+            1,
+            "expected one target requirement for target-player sacrifice clause, got {:?}",
+            requirements
+        );
+        assert_eq!(requirements[0].min_targets, 1);
+        assert_eq!(requirements[0].max_targets, Some(1));
+        assert_eq!(
+            requirements[0].legal_targets.len(),
+            2,
+            "expected both players to be legal targets in a two-player game"
+        );
+    }
+
+    #[test]
     fn test_spell_has_legal_targets_any_number_with_no_targets() {
         let game = setup_game();
         let alice = PlayerId::from_index(0);

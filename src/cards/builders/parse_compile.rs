@@ -1593,7 +1593,33 @@ pub(crate) fn compile_effects(
         idx += 1;
     }
 
+    let compiled = prepend_missing_target_choice_prelude(compiled, &choices);
     Ok((compiled, choices))
+}
+
+fn prepend_missing_target_choice_prelude(
+    mut compiled: Vec<Effect>,
+    choices: &[ChooseSpec],
+) -> Vec<Effect> {
+    let mut prelude = Vec::new();
+    for choice in choices {
+        if !choice.is_target() {
+            continue;
+        }
+        let already_exposed = compiled
+            .iter()
+            .any(|effect| effect.0.get_target_spec().is_some_and(|spec| spec == choice));
+        if !already_exposed {
+            prelude.push(Effect::new(crate::effects::TargetOnlyEffect::new(
+                choice.clone(),
+            )));
+        }
+    }
+    if prelude.is_empty() {
+        return compiled;
+    }
+    prelude.append(&mut compiled);
+    prelude
 }
 
 pub(crate) fn collect_tag_spans_from_line(
@@ -3572,8 +3598,14 @@ pub(crate) fn compile_effect(
             )
             .in_zone(choice_zone);
             let effect = Effect::new(choose_effect);
+            let mut effects: Vec<Effect> = choices
+                .iter()
+                .cloned()
+                .map(|spec| Effect::new(crate::effects::TargetOnlyEffect::new(spec)))
+                .collect();
+            effects.push(effect);
             ctx.last_object_tag = Some(tag.as_str().to_string());
-            Ok((vec![effect], choices))
+            Ok((effects, choices))
         }
         EffectAst::Sacrifice {
             filter,
@@ -3581,6 +3613,11 @@ pub(crate) fn compile_effect(
             count,
         } => {
             let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
+            let target_prelude: Vec<Effect> = choices
+                .iter()
+                .cloned()
+                .map(|spec| Effect::new(crate::effects::TargetOnlyEffect::new(spec)))
+                .collect();
             let mut resolved_filter = match resolve_it_tag(filter, ctx) {
                 Ok(resolved) => resolved,
                 Err(_)
@@ -3609,15 +3646,19 @@ pub(crate) fn compile_effect(
                         "source sacrifice requires source controller chooser".to_string(),
                     ));
                 }
-                return Ok((vec![Effect::sacrifice_source()], choices));
+                let mut effects = target_prelude;
+                effects.push(Effect::sacrifice_source());
+                return Ok((effects, choices));
             }
             if *count == 1
                 && let Some(tag) = object_filter_as_tagged_reference(&resolved_filter)
             {
+                let mut effects = target_prelude;
+                effects.push(Effect::new(crate::effects::SacrificeTargetEffect::new(
+                    ChooseSpec::tagged(tag),
+                )));
                 return Ok((
-                    vec![Effect::new(crate::effects::SacrificeTargetEffect::new(
-                        ChooseSpec::tagged(tag),
-                    ))],
+                    effects,
                     choices,
                 ));
             }
@@ -3632,7 +3673,10 @@ pub(crate) fn compile_effect(
             );
             let sacrifice =
                 Effect::sacrifice_player(ObjectFilter::tagged(tag), *count, chooser.clone());
-            Ok((vec![choose, sacrifice], choices))
+            let mut effects = target_prelude;
+            effects.push(choose);
+            effects.push(sacrifice);
+            Ok((effects, choices))
         }
         EffectAst::SacrificeAll { filter, player } => {
             let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
@@ -3642,7 +3686,13 @@ pub(crate) fn compile_effect(
             }
             let count = Value::Count(resolved_filter.clone());
             let effect = Effect::sacrifice_player(resolved_filter, count, chooser.clone());
-            Ok((vec![effect], choices))
+            let mut effects: Vec<Effect> = choices
+                .iter()
+                .cloned()
+                .map(|spec| Effect::new(crate::effects::TargetOnlyEffect::new(spec)))
+                .collect();
+            effects.push(effect);
+            Ok((effects, choices))
         }
         EffectAst::DiscardHand { player } => compile_player_effect(
             *player,
