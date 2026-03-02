@@ -6006,10 +6006,14 @@ where
         build_other(filter)
     };
     let mut effects = Vec::new();
-    for choice in &choices {
-        effects.push(Effect::new(crate::effects::TargetOnlyEffect::new(
-            choice.clone(),
-        )));
+    // Only inject explicit target-context effects when the payload effect itself
+    // does not expose target metadata via get_target_spec().
+    if effect.0.get_target_spec().is_none() {
+        for choice in &choices {
+            effects.push(Effect::new(crate::effects::TargetOnlyEffect::new(
+                choice.clone(),
+            )));
+        }
     }
     effects.push(effect);
     Ok((effects, choices))
@@ -6027,12 +6031,17 @@ where
     let (filter, choices) =
         resolve_effect_player_filter(player, ctx, allow_target, allow_target, true)?;
     let mut effects = Vec::new();
-    for choice in &choices {
-        effects.push(Effect::new(crate::effects::TargetOnlyEffect::new(
-            choice.clone(),
-        )));
+    let effect = build(filter);
+    // Only inject explicit target-context effects when the payload effect itself
+    // does not expose target metadata via get_target_spec().
+    if effect.0.get_target_spec().is_none() {
+        for choice in &choices {
+            effects.push(Effect::new(crate::effects::TargetOnlyEffect::new(
+                choice.clone(),
+            )));
+        }
     }
-    effects.push(build(filter));
+    effects.push(effect);
     Ok((effects, choices))
 }
 

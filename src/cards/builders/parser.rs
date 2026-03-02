@@ -591,9 +591,9 @@ fn normalize_chaotic_transformation_spell_effect(
         TagKey::from("revealed_0"),
         vec![put_onto_battlefield],
     ));
-    let shuffle = Effect::new(crate::effects::ShuffleLibraryEffect {
-        player: PlayerFilter::IteratedPlayer,
-    });
+    let shuffle = Effect::new(crate::effects::ShuffleLibraryEffect::new(
+        PlayerFilter::IteratedPlayer,
+    ));
 
     let per_exiled = Effect::new(crate::effects::ForEachTaggedEffect::new(
         TagKey::from("exiled_0"),
