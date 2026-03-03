@@ -22,7 +22,7 @@ export default function PhaseTrack() {
     const idx = PHASE_TRACK.indexOf(active);
     if (idx < 0) { setIndicator(null); return; }
 
-    const cell = track.children[idx];
+    const cell = track.children[idx + 1];
     if (!cell) { setIndicator(null); return; }
 
     const trackRect = track.getBoundingClientRect();

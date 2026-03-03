@@ -41,38 +41,25 @@ function fallbackCircle(label, size) {
   );
 }
 
-// For hybrid symbols (W/U, 2/B, etc.) that don't have a dedicated SVG
-function hybridFallback(a, b, size) {
-  // Fetch the background colors from the known SVGs
-  const bgColors = { W: "#F8F6D8", U: "#C1D7E9", B: "#CAC5C0", R: "#E49977", G: "#A3C095", C: "#CAC5C0" };
-  const ca = bgColors[a] || "#CAC5C0";
-  const cb = bgColors[b] || "#CAC5C0";
+// Scryfall CDN symbol URL: {W/U} → "WU", {2/W} → "2W", {W/P} → "WP"
+function scryfallSymbolUrl(code) {
+  return `https://svgs.scryfall.io/card-symbols/${code}.svg`;
+}
+
+function scryfallImg(code, size) {
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" style={{ display: "inline-block", verticalAlign: "-0.15em" }}>
-      <defs>
-        <clipPath id={`hl-${a}${b}`}><rect x="0" y="0" width="50" height="100" /></clipPath>
-        <clipPath id={`hr-${a}${b}`}><rect x="50" y="0" width="50" height="100" /></clipPath>
-      </defs>
-      <circle cx="50" cy="50" r="50" fill={ca} clipPath={`url(#hl-${a}${b})`} />
-      <circle cx="50" cy="50" r="50" fill={cb} clipPath={`url(#hr-${a}${b})`} />
-      <text x="25" y="50" dy="0.36em" textAnchor="middle" fill="#0D0F0F" fontSize="36" fontWeight="bold" fontFamily="serif">{a}</text>
-      <text x="75" y="50" dy="0.36em" textAnchor="middle" fill="#0D0F0F" fontSize="36" fontWeight="bold" fontFamily="serif">{b}</text>
-    </svg>
+    <img
+      src={scryfallSymbolUrl(code)}
+      alt={`{${code}}`}
+      width={size}
+      height={size}
+      style={{ display: "inline-block", verticalAlign: "-0.15em", borderRadius: "50%" }}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+    />
   );
 }
 
-// Phyrexian symbols (W/P, U/P, etc.)
-function phyrexianFallback(color, size) {
-  const bgColors = { W: "#F8F6D8", U: "#C1D7E9", B: "#CAC5C0", R: "#E49977", G: "#A3C095" };
-  const bg = bgColors[color] || "#CAC5C0";
-  const fg = color === "W" ? "#0D0F0F" : color === "B" ? "#0D0F0F" : "#0D0F0F";
-  return (
-    <svg width={size} height={size} viewBox="0 0 100 100" style={{ display: "inline-block", verticalAlign: "-0.15em" }}>
-      <circle cx="50" cy="50" r="50" fill={bg} />
-      <text x="50" y="50" dy="0.36em" textAnchor="middle" fill={fg} fontSize="50" fontWeight="bold" fontFamily="serif">{"\u03C6"}</text>
-    </svg>
-  );
-}
 
 export function ManaSymbol({ sym, size = 14 }) {
   if (!sym) return null;
@@ -98,13 +85,13 @@ export function ManaSymbol({ sym, size = 14 }) {
   // Y, Z variables
   if (/^[YZ]$/.test(key)) return fallbackCircle(key, size);
 
-  // Hybrid: W/U, U/B, 2/W, etc.
+  // Hybrid: W/U, U/B, 2/W, etc. → Scryfall CDN
   const hybridMatch = key.match(/^([WUBRGC2])\/([WUBRG])$/);
-  if (hybridMatch) return hybridFallback(hybridMatch[1], hybridMatch[2], size);
+  if (hybridMatch) return scryfallImg(`${hybridMatch[1]}${hybridMatch[2]}`, size);
 
-  // Phyrexian: W/P, U/P, etc.
+  // Phyrexian: W/P, U/P, etc. → Scryfall CDN
   const phyMatch = key.match(/^([WUBRG])\/P$/);
-  if (phyMatch) return phyrexianFallback(phyMatch[1], size);
+  if (phyMatch) return scryfallImg(`${phyMatch[1]}P`, size);
 
   // Fallback
   return fallbackCircle(sym, size);

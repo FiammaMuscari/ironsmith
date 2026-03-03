@@ -108,7 +108,7 @@ export function GameProvider({ children }) {
   const [status, setStatusRaw] = useState({ msg: "Loading WASM...", isError: false });
   const [autoPassEnabled, setAutoPassEnabled] = useState(true);
   const [holdRule, setHoldRule] = useState("never");
-  const [semanticThreshold, setSemanticThresholdRaw] = useState(0);
+  const [semanticThreshold, setSemanticThresholdRaw] = useState(35);
   const [cardsMeetingThreshold, setCardsMeetingThreshold] = useState(0);
   const logRef = useRef([]);
   const [logEntries, setLogEntries] = useState([]);

@@ -1604,10 +1604,6 @@ pub(crate) fn parse_attack_or_block_this_turn_if_able_clause(
     else {
         return Ok(None);
     };
-    if attack_idx == 0 {
-        return Ok(None);
-    }
-
     let tail_words = words(&tokens[attack_idx..]);
     let has_supported_tail = tail_words == ["attack", "or", "block", "this", "turn", "if", "able"]
         || tail_words == ["attacks", "or", "blocks", "this", "turn", "if", "able"]
@@ -1618,13 +1614,14 @@ pub(crate) fn parse_attack_or_block_this_turn_if_able_clause(
     }
 
     let subject_tokens = trim_commas(&tokens[..attack_idx]);
-    if subject_tokens.is_empty() {
-        return Ok(None);
-    }
-    let target = parse_target_phrase(&subject_tokens)?;
+    let target = if subject_tokens.is_empty() {
+        TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(tokens))
+    } else {
+        parse_target_phrase(&subject_tokens)?
+    };
     let abilities = vec![StaticAbility::must_attack(), StaticAbility::must_block()];
 
-    if starts_with_target_indicator(&subject_tokens) {
+    if subject_tokens.is_empty() || starts_with_target_indicator(&subject_tokens) {
         return Ok(Some(EffectAst::GrantAbilitiesToTarget {
             target,
             abilities,
@@ -1658,10 +1655,6 @@ pub(crate) fn parse_attack_this_turn_if_able_clause(
     else {
         return Ok(None);
     };
-    if attack_idx == 0 {
-        return Ok(None);
-    }
-
     let tail_words = words(&tokens[attack_idx..]);
     if tail_words != ["attack", "this", "turn", "if", "able"]
         && tail_words != ["attacks", "this", "turn", "if", "able"]
@@ -1670,13 +1663,14 @@ pub(crate) fn parse_attack_this_turn_if_able_clause(
     }
 
     let subject_tokens = trim_commas(&tokens[..attack_idx]);
-    if subject_tokens.is_empty() {
-        return Ok(None);
-    }
-    let target = parse_target_phrase(&subject_tokens)?;
+    let target = if subject_tokens.is_empty() {
+        TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(tokens))
+    } else {
+        parse_target_phrase(&subject_tokens)?
+    };
     let ability = StaticAbility::must_attack();
 
-    if starts_with_target_indicator(&subject_tokens) {
+    if subject_tokens.is_empty() || starts_with_target_indicator(&subject_tokens) {
         return Ok(Some(EffectAst::GrantAbilitiesToTarget {
             target,
             abilities: vec![ability],

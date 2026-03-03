@@ -296,6 +296,7 @@ struct HandCardSnapshot {
     name: String,
     mana_cost: Option<String>,
     power_toughness: Option<String>,
+    card_types: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -308,6 +309,7 @@ struct ZoneCardSnapshot {
 struct StackObjectSnapshot {
     id: u64,
     name: String,
+    mana_cost: Option<String>,
     effect_text: Option<String>,
     /// "Triggered", "Activated", or null for spells.
     ability_kind: Option<String>,
@@ -398,6 +400,11 @@ impl GameSnapshot {
                                     name: o.name.clone(),
                                     mana_cost,
                                     power_toughness,
+                                    card_types: o
+                                        .card_types
+                                        .iter()
+                                        .map(|ct| ct.name().to_string())
+                                        .collect(),
                                 }
                             })
                             .collect()
@@ -489,6 +496,7 @@ impl GameSnapshot {
                     StackObjectSnapshot {
                         id: entry.object_id.0,
                         name,
+                        mana_cost: None,
                         effect_text: None,
                         ability_kind: Some(ability_kind.to_string()),
                         ability_text,
@@ -507,6 +515,7 @@ impl GameSnapshot {
                     StackObjectSnapshot {
                         id: entry.object_id.0,
                         name,
+                        mana_cost: obj.and_then(|o| o.mana_cost.as_ref().map(|mc| mc.to_oracle())),
                         effect_text,
                         ability_kind: None,
                         ability_text: None,
@@ -536,6 +545,7 @@ impl GameSnapshot {
                 StackObjectSnapshot {
                     id: stack_id.0,
                     name: obj.name.clone(),
+                    mana_cost: obj.mana_cost.as_ref().map(|mc| mc.to_oracle()),
                     effect_text: pending_effect_text,
                     ability_kind: None,
                     ability_text: None,
@@ -1879,6 +1889,13 @@ impl WasmGame {
         }
 
         self.reset_runtime_state();
+
+        // Draw opening hands (7 cards each)
+        let player_ids: Vec<PlayerId> = self.game.players.iter().map(|p| p.id).collect();
+        for player_id in player_ids {
+            let _ = self.game.draw_cards(player_id, 7);
+        }
+
         self.recompute_ui_decision()?;
         Ok(())
     }
@@ -1930,6 +1947,12 @@ impl WasmGame {
         }
 
         self.reset_runtime_state();
+
+        // Draw opening hands (7 cards each)
+        for &pid in &player_ids {
+            let _ = self.game.draw_cards(pid, 7);
+        }
+
         self.recompute_ui_decision()?;
 
         // Return { loaded, failed } to JS

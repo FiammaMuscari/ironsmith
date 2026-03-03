@@ -96,11 +96,11 @@ export default function AddCardBar({ zoneView, setZoneView }) {
         min={0}
         max={100}
         step={1}
-        value={[Math.round(semanticThreshold * 100)]}
-        onValueChange={([v]) => setSemanticThreshold(v / 100)}
+        value={[Math.round(semanticThreshold)]}
+        onValueChange={([v]) => setSemanticThreshold(v)}
       />
       <span className="text-muted-foreground text-[13px] tabular-nums whitespace-nowrap">
-        {semanticThreshold > 0 ? `${Math.round(semanticThreshold * 100)}%` : "Off"}
+        {semanticThreshold > 0 ? `${Math.round(semanticThreshold)}%` : "Off"}
         {" "}({cardsMeetingThreshold})
       </span>
 

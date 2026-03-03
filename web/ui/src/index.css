@@ -292,7 +292,195 @@
   }
 }
 
+/* Card-type glows for hand cards */
+/* Instant — cyan */
+.game-card.glow-instant {
+  box-shadow:
+    0 0 8px 2px rgba(80, 220, 240, 0.45),
+    0 0 18px 5px rgba(80, 220, 240, 0.2),
+    inset 0 0 6px 2px rgba(80, 220, 240, 0.22);
+  cursor: grab;
+  animation: glow-pulse-instant 2s ease-in-out infinite;
+}
+
+/* Sorcery — violet */
+.game-card.glow-sorcery {
+  box-shadow:
+    0 0 8px 2px rgba(180, 100, 255, 0.45),
+    0 0 18px 5px rgba(180, 100, 255, 0.2),
+    inset 0 0 6px 2px rgba(180, 100, 255, 0.22);
+  cursor: grab;
+  animation: glow-pulse-sorcery 2s ease-in-out infinite;
+}
+
+/* Creature — amber */
+.game-card.glow-creature {
+  box-shadow:
+    0 0 8px 2px rgba(240, 190, 80, 0.45),
+    0 0 18px 5px rgba(240, 190, 80, 0.2),
+    inset 0 0 6px 2px rgba(240, 190, 80, 0.22);
+  cursor: grab;
+  animation: glow-pulse-creature 2s ease-in-out infinite;
+}
+
+/* Enchantment — magenta/pink */
+.game-card.glow-enchantment {
+  box-shadow:
+    0 0 8px 2px rgba(240, 100, 180, 0.45),
+    0 0 18px 5px rgba(240, 100, 180, 0.2),
+    inset 0 0 6px 2px rgba(240, 100, 180, 0.22);
+  cursor: grab;
+  animation: glow-pulse-enchantment 2s ease-in-out infinite;
+}
+
+/* Battle — red-orange */
+.game-card.glow-battle {
+  box-shadow:
+    0 0 8px 2px rgba(240, 80, 60, 0.45),
+    0 0 18px 5px rgba(240, 80, 60, 0.2),
+    inset 0 0 6px 2px rgba(240, 80, 60, 0.22);
+  cursor: grab;
+  animation: glow-pulse-battle 2s ease-in-out infinite;
+}
+
+/* Artifact — silver/ice blue */
+.game-card.glow-artifact {
+  box-shadow:
+    0 0 8px 2px rgba(190, 210, 230, 0.45),
+    0 0 18px 5px rgba(190, 210, 230, 0.2),
+    inset 0 0 6px 2px rgba(190, 210, 230, 0.22);
+  cursor: grab;
+  animation: glow-pulse-artifact 2s ease-in-out infinite;
+}
+
+/* Planeswalker — warm orange-gold */
+.game-card.glow-planeswalker {
+  box-shadow:
+    0 0 8px 2px rgba(247, 160, 64, 0.45),
+    0 0 18px 5px rgba(247, 160, 64, 0.2),
+    inset 0 0 6px 2px rgba(247, 160, 64, 0.22);
+  cursor: grab;
+  animation: glow-pulse-ability 2s ease-in-out infinite;
+}
+
+@keyframes glow-pulse-instant {
+  0%, 100% {
+    box-shadow: 0 0 8px 2px rgba(80, 220, 240, 0.45), 0 0 18px 5px rgba(80, 220, 240, 0.2), inset 0 0 6px 2px rgba(80, 220, 240, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 14px 4px rgba(80, 220, 240, 0.6), 0 0 28px 8px rgba(80, 220, 240, 0.3), inset 0 0 8px 3px rgba(80, 220, 240, 0.32);
+  }
+}
+
+@keyframes glow-pulse-sorcery {
+  0%, 100% {
+    box-shadow: 0 0 8px 2px rgba(180, 100, 255, 0.45), 0 0 18px 5px rgba(180, 100, 255, 0.2), inset 0 0 6px 2px rgba(180, 100, 255, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 14px 4px rgba(180, 100, 255, 0.6), 0 0 28px 8px rgba(180, 100, 255, 0.3), inset 0 0 8px 3px rgba(180, 100, 255, 0.32);
+  }
+}
+
+@keyframes glow-pulse-creature {
+  0%, 100% {
+    box-shadow: 0 0 8px 2px rgba(240, 190, 80, 0.45), 0 0 18px 5px rgba(240, 190, 80, 0.2), inset 0 0 6px 2px rgba(240, 190, 80, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 14px 4px rgba(240, 190, 80, 0.6), 0 0 28px 8px rgba(240, 190, 80, 0.3), inset 0 0 8px 3px rgba(240, 190, 80, 0.32);
+  }
+}
+
+@keyframes glow-pulse-enchantment {
+  0%, 100% {
+    box-shadow: 0 0 8px 2px rgba(240, 100, 180, 0.45), 0 0 18px 5px rgba(240, 100, 180, 0.2), inset 0 0 6px 2px rgba(240, 100, 180, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 14px 4px rgba(240, 100, 180, 0.6), 0 0 28px 8px rgba(240, 100, 180, 0.3), inset 0 0 8px 3px rgba(240, 100, 180, 0.32);
+  }
+}
+
+@keyframes glow-pulse-battle {
+  0%, 100% {
+    box-shadow: 0 0 8px 2px rgba(240, 80, 60, 0.45), 0 0 18px 5px rgba(240, 80, 60, 0.2), inset 0 0 6px 2px rgba(240, 80, 60, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 14px 4px rgba(240, 80, 60, 0.6), 0 0 28px 8px rgba(240, 80, 60, 0.3), inset 0 0 8px 3px rgba(240, 80, 60, 0.32);
+  }
+}
+
+@keyframes glow-pulse-artifact {
+  0%, 100% {
+    box-shadow: 0 0 8px 2px rgba(190, 210, 230, 0.45), 0 0 18px 5px rgba(190, 210, 230, 0.2), inset 0 0 6px 2px rgba(190, 210, 230, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 14px 4px rgba(190, 210, 230, 0.6), 0 0 28px 8px rgba(190, 210, 230, 0.3), inset 0 0 8px 3px rgba(190, 210, 230, 0.32);
+  }
+}
+
 /* Hover / hovered amplification — intensify the card's own glow color */
+.game-card.glow-instant:hover,
+.game-card.glow-instant.hovered {
+  animation: none !important;
+  box-shadow:
+    0 0 18px 6px rgba(80, 220, 240, 0.7),
+    0 0 36px 12px rgba(80, 220, 240, 0.35),
+    inset 0 0 10px 4px rgba(80, 220, 240, 0.4) !important;
+}
+
+.game-card.glow-sorcery:hover,
+.game-card.glow-sorcery.hovered {
+  animation: none !important;
+  box-shadow:
+    0 0 18px 6px rgba(180, 100, 255, 0.7),
+    0 0 36px 12px rgba(180, 100, 255, 0.35),
+    inset 0 0 10px 4px rgba(180, 100, 255, 0.4) !important;
+}
+
+.game-card.glow-creature:hover,
+.game-card.glow-creature.hovered {
+  animation: none !important;
+  box-shadow:
+    0 0 18px 6px rgba(240, 190, 80, 0.7),
+    0 0 36px 12px rgba(240, 190, 80, 0.35),
+    inset 0 0 10px 4px rgba(240, 190, 80, 0.4) !important;
+}
+
+.game-card.glow-enchantment:hover,
+.game-card.glow-enchantment.hovered {
+  animation: none !important;
+  box-shadow:
+    0 0 18px 6px rgba(240, 100, 180, 0.7),
+    0 0 36px 12px rgba(240, 100, 180, 0.35),
+    inset 0 0 10px 4px rgba(240, 100, 180, 0.4) !important;
+}
+
+.game-card.glow-battle:hover,
+.game-card.glow-battle.hovered {
+  animation: none !important;
+  box-shadow:
+    0 0 18px 6px rgba(240, 80, 60, 0.7),
+    0 0 36px 12px rgba(240, 80, 60, 0.35),
+    inset 0 0 10px 4px rgba(240, 80, 60, 0.4) !important;
+}
+
+.game-card.glow-artifact:hover,
+.game-card.glow-artifact.hovered {
+  animation: none !important;
+  box-shadow:
+    0 0 18px 6px rgba(190, 210, 230, 0.7),
+    0 0 36px 12px rgba(190, 210, 230, 0.35),
+    inset 0 0 10px 4px rgba(190, 210, 230, 0.4) !important;
+}
+
+.game-card.glow-planeswalker:hover,
+.game-card.glow-planeswalker.hovered {
+  animation: none !important;
+  box-shadow:
+    0 0 18px 6px rgba(247, 160, 64, 0.7),
+    0 0 36px 12px rgba(247, 160, 64, 0.35),
+    inset 0 0 10px 4px rgba(247, 160, 64, 0.4) !important;
+}
+
 .game-card.glow-land:hover,
 .game-card.glow-land.hovered {
   animation: none !important;

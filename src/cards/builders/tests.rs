@@ -7124,6 +7124,31 @@ fn parse_target_creature_attacks_or_blocks_if_able() {
 }
 
 #[test]
+fn parse_target_creature_becomes_red_and_attacks_if_able() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Incite Variant")
+        .parse_text("Target creature becomes red until end of turn and attacks this turn if able.")
+        .expect("incite-style color-change plus attacks-if-able clause should parse");
+
+    let debug = format!("{:#?}", def.spell_effect);
+    assert!(
+        debug.contains("SetColors"),
+        "expected explicit color-set effect, got {debug}"
+    );
+    assert!(
+        debug.contains("MustAttack"),
+        "expected attacks-if-able grant on the same target, got {debug}"
+    );
+    assert!(
+        debug.contains("Tagged("),
+        "expected follow-up must-attack effect to reference prior target by tag, got {debug}"
+    );
+    assert!(
+        !debug.contains("colors: Some("),
+        "should not reinterpret subject as an already-red filter, got {debug}"
+    );
+}
+
+#[test]
 fn parse_target_creature_can_block_any_number_fails_strictly() {
     let err = CardDefinitionBuilder::new(CardId::new(), "Valor Variant")
         .parse_text("Target creature can block any number of creatures this turn.")

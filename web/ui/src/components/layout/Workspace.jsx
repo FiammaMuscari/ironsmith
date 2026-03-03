@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useGame } from "@/context/GameContext";
 import { useHover } from "@/context/HoverContext";
 import { useDrag } from "@/context/DragContext";
@@ -51,8 +51,22 @@ export default function Workspace({ zoneView, deckLoadingMode, onLoadDecks, onCa
       }
     };
 
+    const onPointerCancel = () => {
+      endDrag();
+    };
+
+    const onWindowBlur = () => {
+      endDrag();
+    };
+
     document.addEventListener("pointerup", onPointerUp);
-    return () => document.removeEventListener("pointerup", onPointerUp);
+    document.addEventListener("pointercancel", onPointerCancel);
+    window.addEventListener("blur", onWindowBlur);
+    return () => {
+      document.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("pointercancel", onPointerCancel);
+      window.removeEventListener("blur", onWindowBlur);
+    };
   }, [dragState, endDrag, dispatch]);
 
   return (

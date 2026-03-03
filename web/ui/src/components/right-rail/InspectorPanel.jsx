@@ -46,10 +46,7 @@ function CardView({ details }) {
 
       {details.compiled_text && (
         <CollapsibleSection title="Compiled Text">
-          <SymbolText
-            text={details.compiled_text}
-            className="text-[13px] text-[#a8c8e4] bg-[#0a1118] p-1.5 mt-0.5 rounded font-[inherit] block"
-          />
+          <pre className="text-[11px] text-[#a8c8e4] bg-[#0a1118] p-1.5 mt-0.5 rounded font-mono whitespace-pre-wrap break-words m-0">{details.compiled_text}</pre>
         </CollapsibleSection>
       )}
     </div>
@@ -224,7 +221,7 @@ export default function InspectorPanel({ selectedObjectId, pinnedObjectId }) {
                 ))}
               </div>
             ) : view === "raw" && hasRaw ? (
-              <SymbolText text={details.raw_compilation} className="text-[12px] text-[#8a9eb8] font-[inherit] block" />
+              <pre className="text-[11px] text-[#8a9eb8] font-mono whitespace-pre-wrap break-words m-0">{details.raw_compilation}</pre>
             ) : (
               <CardView details={details} />
             )

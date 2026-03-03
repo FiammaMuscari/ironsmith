@@ -5,7 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { scryfallImageUrl } from "@/lib/scryfall";
-import { SymbolText } from "@/lib/mana-symbols";
+import { SymbolText, ManaCostIcons } from "@/lib/mana-symbols";
 
 export default function DecisionPanel() {
   const { state, cancelDecision, holdRule, setHoldRule } = useGame();
@@ -84,20 +84,24 @@ export default function DecisionPanel() {
             />
           )}
           <div className="relative z-[1] px-1.5 py-1 flex flex-col gap-0.5" style={{ background: "linear-gradient(to right, rgba(10,15,22,0.88) 0%, rgba(10,15,22,0.6) 100%)" }}>
-            <span className="text-[13px] font-bold text-[#d8e8ff] leading-tight text-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-              {topOfStack.name}
+            <span className="text-[13px] font-bold text-[#d8e8ff] leading-tight text-shadow-[0_1px_2px_rgba(0,0,0,0.9)] flex items-center gap-1">
+              <span>
+                {topOfStack.ability_kind
+                  ? `${topOfStack.ability_kind.charAt(0).toUpperCase() + topOfStack.ability_kind.slice(1)} ability`
+                  : topOfStack.name}
+              </span>
+              {!topOfStack.ability_kind && topOfStack.mana_cost && (
+                <ManaCostIcons cost={topOfStack.mana_cost} size={14} />
+              )}
             </span>
-            {topOfStack.effect_text && (
-              <span className="text-[11px] text-[#8ab4e0] leading-tight overflow-hidden text-ellipsis" style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                <SymbolText text={topOfStack.effect_text} />
-              </span>
-            )}
-            {topOfStack.ability_kind && !topOfStack.effect_text && (
-              <span className="text-[11px] italic text-[#c0a060] leading-tight">
-                {topOfStack.ability_kind} ability
-              </span>
-            )}
           </div>
+        </div>
+      )}
+
+      {/* Effect text between image and decision buttons */}
+      {topOfStack?.effect_text && (
+        <div className="text-[12px] text-[#8ab4e0] leading-snug px-1.5 shrink-0">
+          <SymbolText text={topOfStack.effect_text} />
         </div>
       )}
 

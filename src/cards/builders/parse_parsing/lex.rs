@@ -1044,6 +1044,18 @@ pub(crate) fn has_effect_head_without_verb(tokens: &[Token]) -> bool {
             .ok()
             .flatten()
             .is_some()
+        || parse_attack_or_block_this_turn_if_able_clause(tokens)
+            .ok()
+            .flatten()
+            .is_some()
+        || parse_attack_this_turn_if_able_clause(tokens)
+            .ok()
+            .flatten()
+            .is_some()
+        || parse_must_block_if_able_clause(tokens)
+            .ok()
+            .flatten()
+            .is_some()
 }
 
 pub(crate) fn segment_has_effect_head(tokens: &[Token]) -> bool {

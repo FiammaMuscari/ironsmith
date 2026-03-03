@@ -5,6 +5,14 @@ const GLOW_COLORS = {
   land: { border: "rgba(88, 214, 166, 0.6)", shadow: "rgba(88, 214, 166, VAL)" },
   spell: { border: "rgba(100, 169, 255, 0.6)", shadow: "rgba(100, 169, 255, VAL)" },
   ability: { border: "rgba(224, 232, 240, 0.5)", shadow: "rgba(224, 232, 240, VAL)" },
+  instant: { border: "rgba(80, 220, 240, 0.6)", shadow: "rgba(80, 220, 240, VAL)" },
+  sorcery: { border: "rgba(180, 100, 255, 0.6)", shadow: "rgba(180, 100, 255, VAL)" },
+  creature: { border: "rgba(240, 190, 80, 0.6)", shadow: "rgba(240, 190, 80, VAL)" },
+  enchantment: { border: "rgba(240, 100, 180, 0.6)", shadow: "rgba(240, 100, 180, VAL)" },
+  battle: { border: "rgba(240, 80, 60, 0.6)", shadow: "rgba(240, 80, 60, VAL)" },
+  artifact: { border: "rgba(190, 210, 230, 0.6)", shadow: "rgba(190, 210, 230, VAL)" },
+  planeswalker: { border: "rgba(247, 160, 64, 0.6)", shadow: "rgba(247, 160, 64, VAL)" },
+  extra: { border: "rgba(174, 118, 255, 0.6)", shadow: "rgba(174, 118, 255, VAL)" },
 };
 
 function computeProximity(x, y) {

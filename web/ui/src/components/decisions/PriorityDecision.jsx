@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { useGame } from "@/context/GameContext";
 import { useHover } from "@/context/HoverContext";
 import { Button } from "@/components/ui/button";
@@ -83,6 +83,9 @@ const CATEGORIES = [
   { key: "activate", label: "Activate", kinds: ["activate_ability"] },
 ];
 
+// Neon blue highlight style for hovered actions
+const HIGHLIGHT_STYLE = "text-foreground bg-[rgba(100,169,255,0.12)] shadow-[0_0_12px_rgba(100,169,255,0.35)]";
+
 function ActionButton({ action, canAct, dispatch, label, isHighlighted, onMouseEnter, onMouseLeave }) {
   return (
     <Button
@@ -90,7 +93,7 @@ function ActionButton({ action, canAct, dispatch, label, isHighlighted, onMouseE
       size="sm"
       className={
         "h-auto min-h-7 py-1 text-[13px] justify-start px-2 whitespace-normal text-left text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.1)] hover:shadow-[0_0_8px_rgba(100,169,255,0.15)]" +
-        (isHighlighted ? " text-foreground bg-[rgba(240,206,97,0.08)] shadow-[0_0_10px_rgba(240,206,97,0.25)]" : "")
+        (isHighlighted ? ` ${HIGHLIGHT_STYLE}` : "")
       }
       disabled={!canAct}
       onClick={() =>
@@ -149,7 +152,7 @@ function ManaActionButton({ action, canAct, dispatch, isHighlighted, onMouseEnte
       size="sm"
       className={
         "h-auto min-h-7 py-1 text-[13px] justify-start px-2 whitespace-normal text-left text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(180,220,80,0.1)] hover:shadow-[0_0_8px_rgba(180,220,80,0.15)]" +
-        (isHighlighted ? " text-foreground bg-[rgba(180,220,80,0.08)] shadow-[0_0_10px_rgba(180,220,80,0.25)]" : "")
+        (isHighlighted ? ` ${HIGHLIGHT_STYLE}` : "")
       }
       disabled={!canAct}
       onClick={() =>
@@ -169,74 +172,51 @@ function ManaActionButton({ action, canAct, dispatch, isHighlighted, onMouseEnte
   );
 }
 
-function CollapsibleSection({ catKey, label, actions, canAct, dispatch, isActivate, hoveredObjectId, hoverCard, clearHover, isOpen, onToggle, actionRefs }) {
+function CategorySection({ catKey, label, actions, canAct, dispatch, isActivate, hoveredObjectId, hoverCard, clearHover, actionRefs }) {
   const isMana = catKey === "mana";
 
   return (
-    <div className="flex flex-col">
-      {/* Section header */}
-      <button
-        className="flex items-center gap-1 px-1 py-1 text-[12px] uppercase tracking-wider text-muted-foreground font-bold hover:text-foreground transition-colors cursor-pointer select-none border-none bg-transparent text-left"
-        onClick={onToggle}
-        type="button"
-      >
-        <span
-          className="text-[10px] transition-transform duration-200 inline-block"
-          style={{ transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)" }}
-        >
-          ▼
-        </span>
-        <span>{label}</span>
-        <span className="text-[11px] text-muted-foreground/60">({actions.length})</span>
-      </button>
+    <div className="flex flex-col gap-0.5 min-w-0">
+      <h4 className="text-[12px] uppercase tracking-wider text-muted-foreground font-bold px-1 pb-0.5">
+        {label} ({actions.length})
+      </h4>
+      {actions.map((action) => {
+        const objId = action.object_id != null ? String(action.object_id) : null;
+        const isHighlighted = objId != null && hoveredObjectId === objId;
 
-      {/* Collapsible body — CSS grid row trick for smooth height animation */}
-      <div
-        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-        style={{ gridTemplateRows: isOpen ? "1fr" : "0fr" }}
-      >
-        <div className="overflow-hidden">
-          <div className="flex flex-col gap-0.5 pb-1">
-            {actions.map((action) => {
-              const objId = action.object_id != null ? String(action.object_id) : null;
-              const isHighlighted = objId != null && hoveredObjectId === objId;
+        const setRef = (el) => {
+          if (el) actionRefs.current.set(action.index, el);
+          else actionRefs.current.delete(action.index);
+        };
 
-              const setRef = (el) => {
-                if (el) actionRefs.current.set(action.index, el);
-                else actionRefs.current.delete(action.index);
-              };
-
-              if (isMana) {
-                return (
-                  <div key={action.index} ref={setRef}>
-                    <ManaActionButton
-                      action={action}
-                      canAct={canAct}
-                      dispatch={dispatch}
-                      isHighlighted={isHighlighted}
-                      onMouseEnter={() => objId && hoverCard(objId)}
-                      onMouseLeave={clearHover}
-                    />
-                  </div>
-                );
-              }
-              return (
-                <div key={action.index} ref={setRef}>
-                  <ActionButton
-                    action={action}
-                    canAct={canAct}
-                    dispatch={dispatch}
-                    label={actionLabel(action, label, isActivate)}
-                    isHighlighted={isHighlighted}
-                    onMouseEnter={() => objId && hoverCard(objId)}
-                    onMouseLeave={clearHover}
-                  />
-                </div>
-              );
-            })}
+        if (isMana) {
+          return (
+            <div key={action.index} ref={setRef}>
+              <ManaActionButton
+                action={action}
+                canAct={canAct}
+                dispatch={dispatch}
+                isHighlighted={isHighlighted}
+                onMouseEnter={() => objId && hoverCard(objId)}
+                onMouseLeave={clearHover}
+              />
+            </div>
+          );
+        }
+        return (
+          <div key={action.index} ref={setRef}>
+            <ActionButton
+              action={action}
+              canAct={canAct}
+              dispatch={dispatch}
+              label={actionLabel(action, label, isActivate)}
+              isHighlighted={isHighlighted}
+              onMouseEnter={() => objId && hoverCard(objId)}
+              onMouseLeave={clearHover}
+            />
           </div>
-        </div>
-      </div>
+        );
+      })}
     </div>
   );
 }
@@ -276,66 +256,24 @@ export default function PriorityDecision({ decision, canAct }) {
 
   const activeCategories = CATEGORIES.filter((cat) => catMap.has(cat.key));
 
-  // Build object_id → catKey lookup for auto-expand
-  const objectToCat = useMemo(() => {
-    const lookup = new Map();
-    for (const [catKey, catActions] of catMap) {
-      for (const action of catActions) {
-        if (action.object_id != null) {
-          const objId = String(action.object_id);
-          if (!lookup.has(objId)) lookup.set(objId, catKey);
-        }
-      }
-    }
-    return lookup;
-  }, [catMap]);
-
-  // Track manually collapsed categories
-  const [manualClosed, setManualClosed] = useState(new Set());
-
-  // Which category is auto-focused by hover?
-  const focusedCatKey = hoveredObjectId ? objectToCat.get(hoveredObjectId) : null;
-
-  // A category is open if:
-  // - Hover focus active → only the focused category is open
-  // - No hover focus → all open unless manually collapsed
-  const isCatOpen = useCallback(
-    (catKey) => {
-      if (focusedCatKey) return catKey === focusedCatKey;
-      return !manualClosed.has(catKey);
-    },
-    [focusedCatKey, manualClosed]
-  );
-
-  const toggleCategory = useCallback((catKey) => {
-    setManualClosed((prev) => {
-      const next = new Set(prev);
-      if (next.has(catKey)) next.delete(catKey);
-      else next.add(catKey);
-      return next;
-    });
-  }, []);
-
   // Auto-scroll to highlighted action when hover changes
   useEffect(() => {
-    if (!hoveredObjectId || !focusedCatKey) return;
+    if (!hoveredObjectId) return;
 
-    const catActions = catMap.get(focusedCatKey) || [];
-    const matchingAction = catActions.find(
-      (a) => a.object_id != null && String(a.object_id) === hoveredObjectId
-    );
-    if (!matchingAction) return;
-
-    // Small delay so the expand animation starts before we scroll
-    const timer = setTimeout(() => {
-      const el = actionRefs.current.get(matchingAction.index);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    // Find the matching action across all categories
+    for (const [, catActions] of catMap) {
+      const match = catActions.find(
+        (a) => a.object_id != null && String(a.object_id) === hoveredObjectId
+      );
+      if (match) {
+        const el = actionRefs.current.get(match.index);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+        break;
       }
-    }, 80);
-
-    return () => clearTimeout(timer);
-  }, [hoveredObjectId, focusedCatKey, catMap]);
+    }
+  }, [hoveredObjectId, catMap]);
 
   return (
     <div className="flex flex-col gap-1 h-full min-h-0">
@@ -367,12 +305,12 @@ export default function PriorityDecision({ decision, canAct }) {
         </Button>
       )}
 
-      {/* Collapsible category sections — scrollable */}
+      {/* Category sections — always expanded, scrollable */}
       {activeCategories.length > 0 && (
         <ScrollArea className="flex-1 min-h-0">
-          <div className="flex flex-col gap-0.5 pr-1">
+          <div className="flex flex-col gap-2 pr-1">
             {activeCategories.map((cat) => (
-              <CollapsibleSection
+              <CategorySection
                 key={cat.key}
                 catKey={cat.key}
                 label={cat.label}
@@ -383,8 +321,6 @@ export default function PriorityDecision({ decision, canAct }) {
                 hoveredObjectId={hoveredObjectId}
                 hoverCard={hoverCard}
                 clearHover={clearHover}
-                isOpen={isCatOpen(cat.key)}
-                onToggle={() => toggleCategory(cat.key)}
                 actionRefs={actionRefs}
               />
             ))}

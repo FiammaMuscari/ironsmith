@@ -1,10 +1,25 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useGame } from "@/context/GameContext";
 import { useHover } from "@/context/HoverContext";
 import { useDrag } from "@/context/DragContext";
 import useNewCards from "@/hooks/useNewCards";
 import GameCard from "@/components/cards/GameCard";
 import ActionPopover from "@/components/overlays/ActionPopover";
+
+/** Map card_types array to a glow kind for hand display. */
+function handGlowFromTypes(cardTypes) {
+  if (!cardTypes || cardTypes.length === 0) return "spell";
+  // Priority order: more specific types win
+  if (cardTypes.includes("instant")) return "instant";
+  if (cardTypes.includes("sorcery")) return "sorcery";
+  if (cardTypes.includes("creature")) return "creature";
+  if (cardTypes.includes("enchantment")) return "enchantment";
+  if (cardTypes.includes("battle")) return "battle";
+  if (cardTypes.includes("planeswalker")) return "planeswalker";
+  if (cardTypes.includes("artifact")) return "artifact";
+  if (cardTypes.includes("land")) return "land";
+  return "spell";
+}
 
 /**
  * Build a map of objectId → actions for all castable/playable cards.
@@ -14,7 +29,7 @@ function buildPlayableMaps(state, player) {
   const handPlayable = new Map();   // objectId → actions[] (from hand)
   const extraPlayable = new Map();  // objectId → { name, actions[], fromZone }
 
-  if (!state?.decision?.kind === "priority" || !state.decision?.actions) {
+  if (state?.decision?.kind !== "priority" || !state?.decision?.actions) {
     return { handPlayable, extraPlayable };
   }
 
@@ -60,13 +75,13 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
   const { dragState, startDrag, updateDrag, endDrag } = useDrag();
   const [popover, setPopover] = useState(null);
   const dragThresholdRef = useRef(null);
+  const activePointerIdRef = useRef(null);
+  const dragHandlersRef = useRef(null);
   const handCards = (player?.can_view_hand && player?.hand_cards) || [];
   const handCardIds = useMemo(() => handCards.map((c) => c.id), [handCards]);
   const { newIds, bumpedIds } = useNewCards(handCardIds);
 
-  if (!player) return null;
-
-  const isMe = player.id === state?.perspective;
+  const isMe = player?.id === state?.perspective;
 
   const { handPlayable, extraPlayable } = useMemo(
     () => isMe ? buildPlayableMaps(state, player) : { handPlayable: new Map(), extraPlayable: new Map() },
@@ -104,15 +119,42 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
     );
   };
 
+  const clearPendingDragListeners = () => {
+    const handlers = dragHandlersRef.current;
+    if (!handlers) return;
+    document.removeEventListener("pointermove", handlers.onMove);
+    document.removeEventListener("pointerup", handlers.onUp);
+    document.removeEventListener("pointercancel", handlers.onCancel);
+    dragHandlersRef.current = null;
+    activePointerIdRef.current = null;
+  };
+
+  useEffect(() => {
+    return () => {
+      const handlers = dragHandlersRef.current;
+      if (!handlers) return;
+      document.removeEventListener("pointermove", handlers.onMove);
+      document.removeEventListener("pointerup", handlers.onUp);
+      document.removeEventListener("pointercancel", handlers.onCancel);
+      dragHandlersRef.current = null;
+      activePointerIdRef.current = null;
+    };
+  }, []);
+
   const handlePointerDown = (e, card, plays, glowKind) => {
     if (plays.length === 0) return;
     if (e.button !== 0) return;
     e.preventDefault();
+    clearPendingDragListeners();
+    activePointerIdRef.current = e.pointerId;
     const sx = e.clientX;
     const sy = e.clientY;
     dragThresholdRef.current = { sx, sy, card, plays, glowKind, dragging: false };
 
     const onMove = (me) => {
+      if (activePointerIdRef.current != null && me.pointerId !== activePointerIdRef.current) {
+        return;
+      }
       const dt = dragThresholdRef.current;
       if (!dt) return;
       const dx = me.clientX - dt.sx;
@@ -127,8 +169,10 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
     };
 
     const onUp = (ue) => {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
+      if (activePointerIdRef.current != null && ue.pointerId !== activePointerIdRef.current) {
+        return;
+      }
+      clearPendingDragListeners();
       const dt = dragThresholdRef.current;
       dragThresholdRef.current = null;
       if (dt && !dt.dragging) {
@@ -136,9 +180,22 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
       }
     };
 
+    const onCancel = (ce) => {
+      if (activePointerIdRef.current != null && ce.pointerId !== activePointerIdRef.current) {
+        return;
+      }
+      clearPendingDragListeners();
+      dragThresholdRef.current = null;
+      endDrag();
+    };
+
+    dragHandlersRef.current = { onMove, onUp, onCancel };
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onCancel);
   };
+
+  if (!player) return null;
 
   if (player.can_view_hand) {
     const hasExtra = extraCards.length > 0;
@@ -153,9 +210,7 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
           {handCards.map((card, i) => {
             const plays = handPlayable.get(Number(card.id)) || [];
             const isPlayable = plays.length > 0;
-            const glowKind = isPlayable
-              ? plays.some((a) => a.kind === "play_land") ? "land" : "spell"
-              : null;
+            const glowKind = handGlowFromTypes(card.card_types);
             const cardId = String(card.id);
             const isDragging = dragState?.objectId === card.id;
             const isNew = newIds.has(card.id);

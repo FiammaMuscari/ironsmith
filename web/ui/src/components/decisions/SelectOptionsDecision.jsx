@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { useHover } from "@/context/HoverContext";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,8 @@ import { ChevronUp, ChevronDown } from "lucide-react";
 import { SymbolText } from "@/lib/mana-symbols";
 
 function OptionButton({ opt, canAct, onClick, isHighlighted, onMouseEnter, onMouseLeave }) {
+  const disabled = !canAct || opt.legal === false;
+
   return (
     <Button
       variant="ghost"
@@ -16,8 +18,20 @@ function OptionButton({ opt, canAct, onClick, isHighlighted, onMouseEnter, onMou
         "h-auto min-h-7 py-1 text-[13px] justify-start px-2 whitespace-normal text-left text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.1)] hover:shadow-[0_0_8px_rgba(100,169,255,0.15)]" +
         (isHighlighted ? " text-foreground bg-[rgba(240,206,97,0.08)] shadow-[0_0_10px_rgba(240,206,97,0.25)]" : "")
       }
-      disabled={!canAct || !opt.legal}
-      onClick={onClick}
+      disabled={disabled}
+      onPointerDown={(e) => {
+        if (disabled || e.button !== 0) return;
+        // Trigger as early as possible so option picks are not lost to
+        // document-level pointerup handlers used by hand-drag interactions.
+        e.preventDefault();
+        onClick?.();
+      }}
+      onClick={(e) => {
+        // Keep keyboard activation working while avoiding double-dispatch
+        // after pointerdown-triggered selection.
+        if (disabled || e.detail !== 0) return;
+        onClick?.();
+      }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
@@ -155,7 +169,7 @@ function MultiSelectDecision({ decision, canAct }) {
             <label
               key={opt.index}
               className={`flex items-center gap-2 text-[13px] py-1 px-2 rounded-sm cursor-pointer transition-all ${
-                opt.legal ? "text-muted-foreground hover:text-foreground hover:bg-[rgba(100,169,255,0.1)] hover:shadow-[0_0_8px_rgba(100,169,255,0.15)]" : "opacity-50"
+                opt.legal !== false ? "text-muted-foreground hover:text-foreground hover:bg-[rgba(100,169,255,0.1)] hover:shadow-[0_0_8px_rgba(100,169,255,0.15)]" : "opacity-50"
               } ${isSelected ? "text-foreground bg-[rgba(100,169,255,0.08)] shadow-[0_0_6px_rgba(100,169,255,0.2)]" : ""}${
                 isHighlighted ? " text-foreground bg-[rgba(240,206,97,0.08)] shadow-[0_0_10px_rgba(240,206,97,0.25)]" : ""
               }`}
@@ -164,8 +178,8 @@ function MultiSelectDecision({ decision, canAct }) {
             >
               <Checkbox
                 checked={isSelected}
-                onCheckedChange={() => opt.legal && toggle(opt.index)}
-                disabled={!canAct || !opt.legal}
+                onCheckedChange={() => opt.legal !== false && toggle(opt.index)}
+                disabled={!canAct || opt.legal === false}
                 className="h-3.5 w-3.5"
               />
               <SymbolText text={opt.description} />
@@ -289,7 +303,7 @@ function DistributeDecision({ decision, canAct }) {
               onChange={(e) =>
                 setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
               }
-              disabled={!canAct || !opt.legal}
+              disabled={!canAct || opt.legal === false}
             />
           </label>
         ))}
@@ -351,7 +365,7 @@ function CountersDecision({ decision, canAct }) {
               onChange={(e) =>
                 setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
               }
-              disabled={!canAct || !opt.legal}
+              disabled={!canAct || opt.legal === false}
             />
           </label>
         ))}
@@ -409,7 +423,7 @@ function RepeatableDecision({ decision, canAct }) {
               onChange={(e) =>
                 setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
               }
-              disabled={!canAct || !opt.legal}
+              disabled={!canAct || opt.legal === false}
             />
           </label>
         ))}
