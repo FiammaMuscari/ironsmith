@@ -419,7 +419,7 @@ impl EffectExecutor for CreateTokenCopyEffect {
                 .object(resolved_target_id)
                 .ok_or(ExecutionError::ObjectNotFound(resolved_target_id))?;
             let mut token = Object::token_copy_of(target, id, controller_id);
-            token.zone = Zone::Battlefield;
+            token.zone = Zone::Command;
 
             if let Some(CopyPtAdjustment::HalfRoundUp) = self.pt_adjustment {
                 token.base_power = Some(PtValue::Fixed(half_power));
@@ -456,33 +456,54 @@ impl EffectExecutor for CreateTokenCopyEffect {
             let token_is_creature = token.is_creature();
 
             game.add_object(token);
-            created_ids.push(id);
-            apply_token_battlefield_entry(
-                game,
-                ctx,
+            let Some(entry_result) = game.move_object_with_etb_processing_with_dm(
                 id,
-                controller_id,
-                token_is_creature,
-                entry_options,
-                &mut events,
-            )?;
+                Zone::Battlefield,
+                &mut ctx.decision_maker,
+            ) else {
+                game.remove_object(id);
+                continue;
+            };
+            let entered_id = entry_result.new_id;
+            created_ids.push(entered_id);
+            let entered_battlefield = game
+                .object(entered_id)
+                .is_some_and(|obj| obj.zone == Zone::Battlefield);
 
-            if let Some(attack_player) = configured_attack_player {
-                let targets = Self::attack_targets_for_player(game, attack_player);
-                if !targets.is_empty() {
-                    let chosen_target =
-                        Self::choose_attack_target(game, ctx, attack_player, &targets);
-                    if let Some(combat) = game.combat.as_mut() {
-                        combat.attackers.push(AttackerInfo {
-                            creature: id,
-                            target: chosen_target,
-                        });
+            if entered_battlefield {
+                let effective_tapped = entry_result.enters_tapped || self.enters_tapped;
+                let entered_is_creature =
+                    game.object(entered_id).is_some_and(|obj| obj.is_creature());
+                let tracks_creature_etb = entered_is_creature || token_is_creature;
+                apply_token_battlefield_entry(
+                    game,
+                    ctx,
+                    entered_id,
+                    controller_id,
+                    tracks_creature_etb,
+                    entry_options,
+                    Zone::Command,
+                    effective_tapped,
+                    &mut events,
+                )?;
+
+                if let Some(attack_player) = configured_attack_player {
+                    let targets = Self::attack_targets_for_player(game, attack_player);
+                    if !targets.is_empty() {
+                        let chosen_target =
+                            Self::choose_attack_target(game, ctx, attack_player, &targets);
+                        if let Some(combat) = game.combat.as_mut() {
+                            combat.attackers.push(AttackerInfo {
+                                creature: entered_id,
+                                target: chosen_target,
+                            });
+                        }
                     }
                 }
-            }
 
-            schedule_token_cleanup(game, ctx, id, controller_id, cleanup_options)?;
-            grant_token_static_abilities(game, ctx, id, &static_abilities_to_grant)?;
+                schedule_token_cleanup(game, ctx, entered_id, controller_id, cleanup_options)?;
+                grant_token_static_abilities(game, ctx, entered_id, &static_abilities_to_grant)?;
+            }
         }
 
         Ok(EffectOutcome::from_result(EffectResult::Objects(created_ids)).with_events(events))

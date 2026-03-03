@@ -4,7 +4,6 @@ use crate::ability::Ability;
 use crate::effect::Effect;
 use crate::effects::{EnterAttackingEffect, SacrificeTargetEffect, ScheduleDelayedTriggerEffect};
 use crate::events::EnterBattlefieldEvent;
-use crate::events::zones::ZoneChangeEvent;
 use crate::executor::{ExecutionContext, ExecutionError, ResolvedTarget, execute_effect};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
@@ -29,7 +28,7 @@ impl TokenEntryOptions {
     }
 }
 
-/// Apply common post-create entry processing for a token now on the battlefield.
+/// Apply common post-create entry processing for a token that entered the battlefield.
 pub(crate) fn apply_token_battlefield_entry(
     game: &mut GameState,
     ctx: &mut ExecutionContext,
@@ -37,6 +36,8 @@ pub(crate) fn apply_token_battlefield_entry(
     controller_id: PlayerId,
     token_is_creature: bool,
     options: TokenEntryOptions,
+    from_zone: Zone,
+    enters_tapped: bool,
     events: &mut Vec<TriggerEvent>,
 ) -> Result<(), ExecutionError> {
     if token_is_creature {
@@ -46,27 +47,24 @@ pub(crate) fn apply_token_battlefield_entry(
             .or_insert(0) += 1;
     }
 
-    if options.enters_tapped {
+    if enters_tapped && !game.is_tapped(token_id) {
         game.tap(token_id);
     }
     // Tokens always have summoning sickness.
     game.set_summoning_sick(token_id);
-    if let Some(obj) = game.object(token_id) {
+    if let Some(obj) = game.object(token_id)
+        && obj.zone == Zone::Battlefield
+    {
         game.objects_entered_battlefield_this_turn
             .insert(obj.stable_id, controller_id);
     }
 
-    // Emit primitive zone-change ETB event plus ETB-tapped event.
-    events.push(TriggerEvent::new(ZoneChangeEvent::new(
-        token_id,
-        Zone::Stack,
-        Zone::Battlefield,
-        None,
-    )));
-    let etb_event = if options.enters_tapped {
-        TriggerEvent::new(EnterBattlefieldEvent::tapped(token_id, Zone::Stack))
+    // Zone-change events are queued by `move_object_with_etb_processing_with_dm`.
+    // Emit the explicit ETB event here so enters-tapped/untapped triggers can match.
+    let etb_event = if enters_tapped {
+        TriggerEvent::new(EnterBattlefieldEvent::tapped(token_id, from_zone))
     } else {
-        TriggerEvent::new(EnterBattlefieldEvent::new(token_id, Zone::Stack))
+        TriggerEvent::new(EnterBattlefieldEvent::new(token_id, from_zone))
     };
     events.push(etb_event);
 
@@ -323,6 +321,8 @@ mod tests {
             alice,
             true,
             TokenEntryOptions::new(true, false),
+            Zone::Command,
+            true,
             &mut events,
         )
         .unwrap();
@@ -330,10 +330,9 @@ mod tests {
         assert_eq!(game.creatures_entered_this_turn.get(&alice), Some(&1));
         assert!(game.is_tapped(token_id));
         assert!(game.is_summoning_sick(token_id));
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].kind(), EventKind::ZoneChange);
-        assert_eq!(events[1].kind(), EventKind::EnterBattlefield);
-        let etb = events[1]
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind(), EventKind::EnterBattlefield);
+        let etb = events[0]
             .downcast::<EnterBattlefieldEvent>()
             .expect("expected EnterBattlefieldEvent");
         assert!(etb.enters_tapped);
@@ -364,6 +363,8 @@ mod tests {
             alice,
             true,
             TokenEntryOptions::new(false, true),
+            Zone::Command,
+            false,
             &mut events,
         )
         .unwrap();

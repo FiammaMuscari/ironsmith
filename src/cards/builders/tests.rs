@@ -3371,6 +3371,69 @@ fn test_render_enters_with_single_counter_uses_singular_wording() {
 }
 
 #[test]
+fn parse_tayam_oracle_text_regression() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Tayam, Luminous Enigma")
+        .card_types(vec![CardType::Creature])
+        .parse_text(
+            "Each other creature you control enters with an additional vigilance counter on it.\n\
+             {3}, Remove three counters from among creatures you control: Mill three cards, then return a permanent card with mana value 3 or less from your graveyard to the battlefield.",
+        )
+        .expect("tayam oracle text should parse");
+
+    let static_ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        static_ids.contains(&StaticAbilityId::EnterWithCountersForFilter),
+        "expected ETB counter replacement static ability, got {static_ids:?}"
+    );
+    assert!(
+        !static_ids.contains(&StaticAbilityId::RuleTextPlaceholder),
+        "tayam oracle text should not fall back to placeholder static ability: {static_ids:?}"
+    );
+
+    let activated = def
+        .abilities
+        .iter()
+        .find_map(|ability| match &ability.kind {
+            AbilityKind::Activated(activated) => Some(activated),
+            _ => None,
+        })
+        .expect("expected activated ability");
+
+    let cost_debug = format!("{:?}", activated.mana_cost);
+    assert!(
+        cost_debug.contains("RemoveAnyCountersAmongCost") && cost_debug.contains("count: 3"),
+        "expected remove-three-counters-among cost primitive, got {cost_debug}"
+    );
+
+    let effects_debug = format!("{:?}", activated.effects);
+    assert!(
+        effects_debug.contains("MillEffect"),
+        "expected mill effect in tayam activated ability, got {effects_debug}"
+    );
+    assert!(
+        effects_debug.contains("ReturnFromGraveyardToBattlefieldEffect"),
+        "expected return-from-graveyard effect in tayam activated ability, got {effects_debug}"
+    );
+    assert!(
+        effects_debug.contains("mana_value: Some(")
+            && effects_debug.contains("LessThanOrEqual")
+            && effects_debug.contains("Artifact")
+            && effects_debug.contains("Creature")
+            && effects_debug.contains("Enchantment")
+            && effects_debug.contains("Land")
+            && effects_debug.contains("Planeswalker"),
+        "expected permanent-card mana-value<=3 filter in return effect, got {effects_debug}"
+    );
+}
+
+#[test]
 fn parse_enters_with_counter_if_you_attacked_this_turn_line() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Goblin Boarders Variant")
         .card_types(vec![CardType::Creature])

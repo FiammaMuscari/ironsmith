@@ -8150,8 +8150,8 @@ pub(crate) fn parse_conditional_enters_tapped_unless_line(
 pub(crate) fn parse_enters_with_additional_counter_for_filter_line(
     tokens: &[Token],
 ) -> Result<Option<StaticAbility>, CardTextError> {
-    let words = words(tokens);
-    let enter_word_idx = words
+    let clause_words = words(tokens);
+    let enter_word_idx = clause_words
         .iter()
         .position(|word| *word == "enter" || *word == "enters");
     let Some(enter_word_idx) = enter_word_idx else {
@@ -8169,20 +8169,33 @@ pub(crate) fn parse_enters_with_additional_counter_for_filter_line(
         return Ok(None);
     }
 
-    if words.first().copied() == Some("this") {
+    let subject_tokens = trim_commas(&tokens[..enter_token_idx]);
+    if subject_tokens.is_empty() {
         return Ok(None);
     }
-    if !words.contains(&"battlefield")
-        || !words.contains(&"with")
-        || !words.contains(&"additional")
-        || !words
+    let subject_words = words(&subject_tokens);
+    if is_source_reference_words(&subject_words) {
+        return Ok(None);
+    }
+    if matches!(
+        subject_words.first().copied(),
+        Some("if" | "when" | "whenever" | "as" | "at")
+    ) {
+        return Ok(None);
+    }
+
+    if !clause_words.contains(&"with")
+        || !clause_words.contains(&"additional")
+        || !clause_words
             .iter()
             .any(|word| *word == "counter" || *word == "counters")
     {
         return Ok(None);
     }
 
-    let filter = parse_object_filter(&tokens[..enter_token_idx], false)?;
+    let Ok(filter) = parse_object_filter(&subject_tokens, false) else {
+        return Ok(None);
+    };
 
     let additional_idx = tokens
         .iter()
@@ -8202,7 +8215,7 @@ pub(crate) fn parse_enters_with_additional_counter_for_filter_line(
     let counter_type = parse_counter_type_from_tokens(tokens).ok_or_else(|| {
         CardTextError::ParseError(format!(
             "unsupported counter type for ETB replacement (clause: '{}')",
-            words.join(" ")
+            clause_words.join(" ")
         ))
     })?;
 

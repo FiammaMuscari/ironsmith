@@ -4,6 +4,7 @@ use crate::events::context::EventContext;
 use crate::events::traits::{
     EventKind, GameEventType, ReplacementMatcher, ReplacementPriority, downcast_event,
 };
+use crate::ids::ObjectId;
 use crate::target::ObjectFilter;
 use crate::zone::Zone;
 
@@ -29,6 +30,20 @@ impl WouldEnterBattlefieldMatcher {
     pub fn any() -> Self {
         Self::new(ObjectFilter::permanent())
     }
+
+    fn matches_would_enter_object(&self, object_id: ObjectId, ctx: &EventContext) -> bool {
+        let Some(obj) = ctx.game.object(object_id) else {
+            return false;
+        };
+
+        // Evaluate against the object's prospective battlefield characteristics.
+        // Replacement effects trigger before zone change is finalized, so the
+        // object may still be in hand/stack/graveyard when this matcher runs.
+        let mut prospective = obj.clone();
+        prospective.zone = Zone::Battlefield;
+
+        self.filter.matches(&prospective, &ctx.filter_ctx, ctx.game)
+    }
 }
 
 impl ReplacementMatcher for WouldEnterBattlefieldMatcher {
@@ -41,25 +56,16 @@ impl ReplacementMatcher for WouldEnterBattlefieldMatcher {
                 if zone_change.to != Zone::Battlefield {
                     return false;
                 }
-                if let Some(obj) = zone_change
+                zone_change
                     .objects
                     .first()
-                    .and_then(|&id| ctx.game.object(id))
-                {
-                    self.filter.matches(obj, &ctx.filter_ctx, ctx.game)
-                } else {
-                    false
-                }
+                    .is_some_and(|&id| self.matches_would_enter_object(id, ctx))
             }
             EventKind::EnterBattlefield => {
                 let Some(etb) = downcast_event::<EnterBattlefieldEvent>(event) else {
                     return false;
                 };
-                if let Some(obj) = ctx.game.object(etb.object) {
-                    self.filter.matches(obj, &ctx.filter_ctx, ctx.game)
-                } else {
-                    false
-                }
+                self.matches_would_enter_object(etb.object, ctx)
             }
             _ => false,
         }
@@ -418,11 +424,22 @@ impl ReplacementMatcher for WouldLeaveBattlefieldMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::card::{CardBuilder, PowerToughness};
     use crate::game_state::GameState;
+    use crate::ids::CardId;
     use crate::ids::{ObjectId, PlayerId};
+    use crate::types::CardType;
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    fn create_creature_in_zone(game: &mut GameState, owner: PlayerId, zone: Zone) -> ObjectId {
+        let card = CardBuilder::new(CardId::new(), "Matcher Test Creature")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        game.create_object_from_card(&card, owner, zone)
     }
 
     #[test]
@@ -443,6 +460,33 @@ mod tests {
         // Zone change to graveyard should not match
         let event = ZoneChangeEvent::new(ObjectId::from_raw(1), Zone::Hand, Zone::Graveyard, None);
         assert!(!matcher.matches_event(&event, &ctx));
+    }
+
+    #[test]
+    fn test_would_enter_battlefield_matcher_uses_prospective_battlefield_zone_for_filter() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let creature_id = create_creature_in_zone(&mut game, alice, Zone::Hand);
+        let source_id = ObjectId::from_raw(9999);
+
+        let filter = ObjectFilter::creature()
+            .you_control()
+            .in_zone(Zone::Battlefield);
+        let matcher = WouldEnterBattlefieldMatcher::new(filter);
+        let ctx = EventContext::for_replacement_effect(alice, source_id, &game);
+
+        let zone_change = ZoneChangeEvent::new(creature_id, Zone::Hand, Zone::Battlefield, None);
+        assert!(
+            matcher.matches_event(&zone_change, &ctx),
+            "zone-change ETB matcher should evaluate the object as entering battlefield"
+        );
+
+        let etb = EnterBattlefieldEvent::new(creature_id, Zone::Hand);
+        assert!(
+            matcher.matches_event(&etb, &ctx),
+            "ETB matcher should evaluate the object as entering battlefield"
+        );
     }
 
     #[test]

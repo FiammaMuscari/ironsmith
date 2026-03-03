@@ -8,6 +8,7 @@ use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::object::Object;
 use crate::target::PlayerFilter;
+use crate::zone::Zone;
 
 use super::lifecycle::{
     TokenCleanupOptions, TokenEntryOptions, apply_token_battlefield_entry, schedule_token_cleanup,
@@ -178,22 +179,44 @@ impl EffectExecutor for CreateTokenEffect {
 
         for _ in 0..count {
             let id = game.new_object_id();
-            let token_obj = Object::from_token_definition(id, &self.token, controller_id);
+            let mut token_obj = Object::from_token_definition(id, &self.token, controller_id);
+            token_obj.zone = Zone::Command;
             let token_is_creature = token_obj.is_creature();
 
             game.add_object(token_obj);
-            created_ids.push(id);
-            apply_token_battlefield_entry(
-                game,
-                ctx,
+            let Some(entry_result) = game.move_object_with_etb_processing_with_dm(
                 id,
-                controller_id,
-                token_is_creature,
-                entry_options,
-                &mut events,
-            )?;
+                Zone::Battlefield,
+                &mut ctx.decision_maker,
+            ) else {
+                game.remove_object(id);
+                continue;
+            };
+            let entered_id = entry_result.new_id;
+            created_ids.push(entered_id);
+            let entered_battlefield = game
+                .object(entered_id)
+                .is_some_and(|obj| obj.zone == Zone::Battlefield);
 
-            schedule_token_cleanup(game, ctx, id, controller_id, cleanup_options)?;
+            if entered_battlefield {
+                let effective_tapped = entry_result.enters_tapped || self.enters_tapped;
+                let entered_is_creature =
+                    game.object(entered_id).is_some_and(|obj| obj.is_creature());
+                let tracks_creature_etb = entered_is_creature || token_is_creature;
+                apply_token_battlefield_entry(
+                    game,
+                    ctx,
+                    entered_id,
+                    controller_id,
+                    tracks_creature_etb,
+                    entry_options,
+                    Zone::Command,
+                    effective_tapped,
+                    &mut events,
+                )?;
+
+                schedule_token_cleanup(game, ctx, entered_id, controller_id, cleanup_options)?;
+            }
         }
 
         Ok(EffectOutcome::from_result(EffectResult::Objects(created_ids)).with_events(events))
@@ -205,10 +228,12 @@ mod tests {
     use super::*;
     use crate::card::PowerToughness;
     use crate::cards::CardDefinitionBuilder;
+    use crate::cards::definitions::tayam_luminous_enigma;
     use crate::color::{Color, ColorSet};
     use crate::ids::{CardId, PlayerId};
-    use crate::object::ObjectKind;
+    use crate::object::{CounterType, ObjectKind};
     use crate::types::{CardType, Subtype};
+    use crate::zone::Zone;
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()
@@ -362,5 +387,32 @@ mod tests {
         let effect = CreateTokenEffect::one(soldier_token());
         let cloned = effect.clone_box();
         assert!(format!("{:?}", cloned).contains("CreateTokenEffect"));
+    }
+
+    #[test]
+    fn test_created_creature_token_gets_etb_replacement_counter() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+
+        let _tayam =
+            game.create_object_from_definition(&tayam_luminous_enigma(), alice, Zone::Battlefield);
+        game.refresh_continuous_state();
+
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        let effect = CreateTokenEffect::one(soldier_token());
+        let result = effect.execute(&mut game, &mut ctx).unwrap();
+
+        let created_id = match result.result {
+            EffectResult::Objects(ids) => *ids.first().expect("expected created token"),
+            other => panic!("expected created token object ids, got {other:?}"),
+        };
+
+        let token = game.object(created_id).expect("created token should exist");
+        assert_eq!(
+            token.counters.get(&CounterType::Vigilance).copied(),
+            Some(1),
+            "token creature should get Tayam's additional vigilance counter on entry"
+        );
     }
 }
