@@ -94,6 +94,58 @@ pub struct ConditionalSpellKeywordSpec {
     pub threshold: u32,
 }
 
+/// Cast-time restriction for "Cast this spell only ..." lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThisSpellCastRestrictionKind {
+    /// "Cast this spell only during the declare attackers step."
+    DuringDeclareAttackersStep,
+    /// "Cast this spell only during the declare attackers step and only if you've been attacked this step."
+    DuringDeclareAttackersStepIfYouWereAttackedThisStep,
+    /// "Cast this spell only during combat."
+    DuringCombat,
+    /// "Cast this spell only during combat before blockers are declared."
+    DuringCombatBeforeBlockersAreDeclared,
+    /// "Cast this spell only during combat after blockers are declared."
+    DuringCombatAfterBlockersAreDeclared,
+    /// "Cast this spell only during combat on your turn before blockers are declared."
+    DuringCombatOnYourTurnBeforeBlockersAreDeclared,
+    /// "Cast this spell only during combat on an opponent's turn."
+    DuringCombatOnOpponentsTurn,
+    /// "Cast this spell only before attackers are declared."
+    BeforeAttackersAreDeclared,
+    /// "Cast this spell only before the combat damage step."
+    BeforeCombatDamageStep,
+    /// "Cast this spell only during an opponent's upkeep."
+    DuringOpponentsUpkeep,
+    /// "Cast this spell only during an opponent's turn after their upkeep step."
+    DuringOpponentsTurnAfterUpkeep,
+    /// "Cast this spell only during your end step."
+    DuringYourEndStep,
+    /// "Cast this spell only if you've cast another spell this turn."
+    IfYouCastAnotherSpellThisTurn,
+    /// "Cast this spell only if you've cast another green spell this turn."
+    IfYouCastAnotherGreenSpellThisTurn,
+    /// "Cast this spell only if an opponent cast a creature spell this turn."
+    IfOpponentCastCreatureSpellThisTurn,
+    /// "Cast this spell only if a creature is attacking you."
+    IfCreatureIsAttackingYou,
+    /// "Cast this spell only after combat."
+    AfterCombat,
+    /// "Cast this spell only if no permanents named <name> are on the battlefield."
+    IfNoPermanentsNamedOnBattlefield(&'static str),
+    /// "Cast this spell only if you control a snow land."
+    IfYouControlSnowLand,
+    /// "Cast this spell only if you control fewer creatures than each opponent."
+    IfYouControlFewerCreaturesThanEachOpponent,
+    /// "Cast this spell only if you control N or more permanents with a subtype."
+    IfYouControlSubtypeOrMore {
+        subtype: crate::types::Subtype,
+        count: u32,
+    },
+    /// "Cast this spell only if you control N or more permanents whose names contain a word."
+    IfYouControlNameWordOrMore { word: &'static str, count: u32 },
+}
+
 /// Trait for static ability behavior.
 ///
 /// All static abilities implement this trait. Each ability is responsible for:
@@ -592,6 +644,11 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync + StaticAbilityKindCl
     fn conditional_spell_keyword_spec(&self) -> Option<ConditionalSpellKeywordSpec> {
         None
     }
+
+    /// Return a "Cast this spell only ..." restriction descriptor, if any.
+    fn this_spell_cast_restriction_kind(&self) -> Option<ThisSpellCastRestrictionKind> {
+        None
+    }
 }
 
 /// Spec for "as this enters, choose a color" abilities.
@@ -650,6 +707,10 @@ impl StaticAbility {
 
     pub fn conditional_spell_keyword_spec(&self) -> Option<ConditionalSpellKeywordSpec> {
         self.0.conditional_spell_keyword_spec()
+    }
+
+    pub fn this_spell_cast_restriction_kind(&self) -> Option<ThisSpellCastRestrictionKind> {
+        self.0.this_spell_cast_restriction_kind()
     }
 
     /// Get the display text for this ability.
@@ -1578,6 +1639,13 @@ impl StaticAbility {
         Self::new(ConditionalSpellKeyword::new(spec))
     }
 
+    pub fn this_spell_cast_restriction(
+        kind: ThisSpellCastRestrictionKind,
+        display: impl Into<String>,
+    ) -> Self {
+        Self::new(ThisSpellCastRestriction::new(kind, display))
+    }
+
     pub fn damage_not_removed_during_cleanup() -> Self {
         Self::new(DamageNotRemovedDuringCleanup)
     }
@@ -1719,12 +1787,20 @@ impl StaticAbility {
         Self::new(PayLifeOrEnterTappedReplacement::new(life_cost))
     }
 
+    pub fn keyword_fallback_text(text: impl Into<String>) -> Self {
+        Self::new(KeywordFallbackText::new(text))
+    }
+
+    pub fn rule_fallback_text(text: impl Into<String>) -> Self {
+        Self::new(RuleFallbackText::new(text))
+    }
+
     pub fn keyword_marker(marker: impl Into<String>) -> Self {
-        Self::new(KeywordMarker::new(marker))
+        Self::keyword_fallback_text(marker)
     }
 
     pub fn rule_text_placeholder(text: impl Into<String>) -> Self {
-        Self::new(RuleTextPlaceholder::new(text))
+        Self::rule_fallback_text(text)
     }
 
     pub fn unsupported_parser_line(raw_line: impl Into<String>, reason: impl Into<String>) -> Self {

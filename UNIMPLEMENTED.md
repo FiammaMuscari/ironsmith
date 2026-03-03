@@ -6,6 +6,8 @@ Generated: Tue Feb 17 22:34:12 -03 2026
 
 Scope: parse-success cards whose abilities are represented as placeholder markers (`StaticAbilityId::KeywordMarker`, `StaticAbilityId::RuleTextPlaceholder`, or `StaticAbilityId::UnsupportedParserLine`) (i.e., mechanics not backed by dedicated runtime/static implementation).
 
+Execution workflow for eliminating these placeholders lives in [`PLACEHOLDER_WORKFLOW.md`](PLACEHOLDER_WORKFLOW.md).
+
 ## Summary
 
 Total parse-success cards with unimplemented markers: 1176

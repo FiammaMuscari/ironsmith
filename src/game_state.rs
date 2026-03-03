@@ -2951,6 +2951,18 @@ impl GameState {
         self.monarch == Some(player)
     }
 
+    /// Returns true if the given player has the city's blessing designation.
+    pub fn has_citys_blessing(&self, player: PlayerId) -> bool {
+        self.command_zone.iter().any(|&obj_id| {
+            self.object(obj_id).is_some_and(|obj| {
+                obj.controller == player
+                    && obj
+                        .name
+                        .eq_ignore_ascii_case("City's Blessing")
+            })
+        })
+    }
+
     /// Returns all object IDs in a given zone.
     pub fn objects_in_zone(&self, zone: Zone) -> Vec<ObjectId> {
         self.objects

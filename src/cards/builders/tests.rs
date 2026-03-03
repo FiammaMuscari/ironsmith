@@ -9256,8 +9256,8 @@ fn parse_token_with_banding_keyword_modifier() {
     let effects = def.spell_effect.as_ref().expect("spell effects");
     let debug = format!("{effects:?}");
     assert!(
-        debug.contains("KeywordMarker"),
-        "expected created token to keep banding marker ability, got {debug}"
+        debug.contains("KeywordFallbackText"),
+        "expected created token to keep banding fallback ability text, got {debug}"
     );
 
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();

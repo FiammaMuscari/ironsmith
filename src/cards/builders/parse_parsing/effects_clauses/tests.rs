@@ -183,7 +183,7 @@ fn parse_line_look_top_card_any_time_is_rule_text_placeholder() {
         LineAst::StaticAbility(ability) => ability,
         other => panic!("expected static ability line, got {other:?}"),
     };
-    assert_eq!(ability.id(), StaticAbilityId::RuleTextPlaceholder);
+    assert_eq!(ability.id(), StaticAbilityId::RuleFallbackText);
     let display = ability.display();
     assert!(
         display.eq_ignore_ascii_case("You may look at the top card of your library any time."),

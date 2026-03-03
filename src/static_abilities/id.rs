@@ -51,6 +51,7 @@ pub enum StaticAbilityId {
     Cascade,
     Unleash,
     ConditionalSpellKeyword,
+    ThisSpellCastRestriction,
 
     // === Combat modifiers ===
     Unblockable,
@@ -200,6 +201,12 @@ pub enum StaticAbilityId {
     /// Unimplemented static rule text preserved from parser/builder.
     RuleTextPlaceholder,
 
+    /// Typed fallback keyword text preserved from parser/builder.
+    KeywordFallbackText,
+
+    /// Typed fallback static rule text preserved from parser/builder.
+    RuleFallbackText,
+
     /// Parser fallback marker for unsupported lines in allow-unsupported mode.
     UnsupportedParserLine,
 
@@ -253,6 +260,7 @@ impl StaticAbilityId {
             | Cascade
             | Unleash
             | ConditionalSpellKeyword
+            | ThisSpellCastRestriction
             | Unblockable
             | FlyingRestriction
             | FlyingOnlyRestriction
@@ -379,6 +387,8 @@ impl StaticAbilityId {
             | PayLifeOrEnterTappedReplacement
             | KeywordMarker
             | RuleTextPlaceholder
+            | KeywordFallbackText
+            | RuleFallbackText
             | UnsupportedParserLine
             | Grants => {}
         }
@@ -428,6 +438,7 @@ impl StaticAbilityId {
                 | Rebound
                 | Cascade
                 | Unleash
+                | KeywordFallbackText
         )
     }
 

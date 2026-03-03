@@ -6726,6 +6726,9 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::PlayerHasLessLifeThanYou { player } => {
             format!("{} has less life than you", describe_player_filter(player))
         }
+        Condition::PlayerHasCitysBlessing { player } => {
+            format!("{} has the city's blessing", describe_player_filter(player))
+        }
         Condition::LifeTotalOrLess(n) => format!("your life total is {n} or less"),
         Condition::LifeTotalOrGreater(n) => format!("your life total is {n} or greater"),
         Condition::CardsInHandOrMore(n) => format!("you have {n} or more cards in hand"),
@@ -6778,6 +6781,12 @@ fn describe_condition(condition: &Condition) -> String {
             )
         }
         Condition::NoSpellsWereCastLastTurn => "no spells were cast last turn".to_string(),
+        Condition::SpellsWereCastLastTurnOrMore(count) => {
+            let count_text = small_number_word(*count)
+                .map(str::to_string)
+                .unwrap_or_else(|| count.to_string());
+            format!("{count_text} or more spells were cast last turn")
+        }
         Condition::TargetIsTapped => "the target is tapped".to_string(),
         Condition::TargetIsBlocked => "the target is blocked".to_string(),
         Condition::TargetWasKicked => "the target spell was kicked".to_string(),
@@ -6812,6 +6821,7 @@ fn describe_condition(condition: &Condition) -> String {
             "the target's mana value is less than or equal to the number of colors of mana spent to cast this spell".to_string()
         }
         Condition::SourceIsTapped => "this source is tapped".to_string(),
+        Condition::SourceIsFaceDown => "this source is transformed".to_string(),
         Condition::SourceHasNoCounter(counter_type) => format!(
             "there are no {} counters on this source",
             counter_type.description()

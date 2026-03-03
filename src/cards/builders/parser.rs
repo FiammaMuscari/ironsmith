@@ -873,6 +873,7 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         KeywordAction::Unearth(cost) => format!("Unearth {}", cost.to_oracle()),
         KeywordAction::Ninjutsu(cost) => format!("Ninjutsu {}", cost.to_oracle()),
         KeywordAction::Echo { text, .. } => text.clone(),
+        KeywordAction::CumulativeUpkeep { text, .. } => text.clone(),
         KeywordAction::Extort => "Extort".to_string(),
         KeywordAction::Partner => "Partner".to_string(),
         KeywordAction::Assist => "Assist".to_string(),
@@ -924,6 +925,8 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         KeywordAction::Devour(multiplier) => format!("Devour {multiplier}"),
         KeywordAction::Ravenous => "Ravenous".to_string(),
         KeywordAction::Ascend => "Ascend".to_string(),
+        KeywordAction::Daybound => "Daybound".to_string(),
+        KeywordAction::Nightbound => "Nightbound".to_string(),
         KeywordAction::Haunt => "Haunt".to_string(),
         KeywordAction::Provoke => "Provoke".to_string(),
         KeywordAction::Undaunted => "Undaunted".to_string(),
@@ -1067,10 +1070,20 @@ fn apply_line_ast(
         LineAst::StaticAbility(ability) => {
             let mut compiled = Ability::static_ability(ability).with_text(info.raw_line.as_str());
             if let AbilityKind::Static(static_ability) = &compiled.kind
-                && static_ability.id()
-                    == crate::static_abilities::StaticAbilityId::ConditionalSpellKeyword
+                && matches!(
+                    static_ability.id(),
+                    crate::static_abilities::StaticAbilityId::ConditionalSpellKeyword
+                        | crate::static_abilities::StaticAbilityId::ThisSpellCastRestriction
+                )
             {
-                compiled = compiled.in_zones(vec![Zone::Hand, Zone::Stack]);
+                compiled = compiled.in_zones(vec![
+                    Zone::Hand,
+                    Zone::Stack,
+                    Zone::Graveyard,
+                    Zone::Exile,
+                    Zone::Library,
+                    Zone::Command,
+                ]);
             }
             builder = builder.with_ability(compiled);
         }
@@ -1079,10 +1092,20 @@ fn apply_line_ast(
                 let mut compiled =
                     Ability::static_ability(ability).with_text(info.raw_line.as_str());
                 if let AbilityKind::Static(static_ability) = &compiled.kind
-                    && static_ability.id()
-                        == crate::static_abilities::StaticAbilityId::ConditionalSpellKeyword
+                    && matches!(
+                        static_ability.id(),
+                        crate::static_abilities::StaticAbilityId::ConditionalSpellKeyword
+                            | crate::static_abilities::StaticAbilityId::ThisSpellCastRestriction
+                    )
                 {
-                    compiled = compiled.in_zones(vec![Zone::Hand, Zone::Stack]);
+                    compiled = compiled.in_zones(vec![
+                        Zone::Hand,
+                        Zone::Stack,
+                        Zone::Graveyard,
+                        Zone::Exile,
+                        Zone::Library,
+                        Zone::Command,
+                    ]);
                 }
                 builder = builder.with_ability(compiled);
             }

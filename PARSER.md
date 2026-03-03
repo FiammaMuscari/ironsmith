@@ -195,6 +195,8 @@ Add a new primitive only if all are true:
 
 ## 5. Unimplemented Mechanics Loop
 
+For the placeholder-elimination execution playbook (including `KeywordMarker`, `RuleTextPlaceholder`, and `UnsupportedParserLine` migration steps), use [`PLACEHOLDER_WORKFLOW.md`](PLACEHOLDER_WORKFLOW.md).
+
 After semantic clusters are exhausted, audit mechanic coverage:
 
 ```bash

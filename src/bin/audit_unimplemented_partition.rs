@@ -237,6 +237,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         static_ability.id(),
                         StaticAbilityId::KeywordMarker
                             | StaticAbilityId::RuleTextPlaceholder
+                            | StaticAbilityId::KeywordFallbackText
+                            | StaticAbilityId::RuleFallbackText
                             | StaticAbilityId::UnsupportedParserLine
                     ) {
                         has_placeholder_static = true;

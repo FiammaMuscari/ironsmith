@@ -6482,6 +6482,8 @@ fn describe_ability(
                 static_ability.id(),
                 crate::static_abilities::StaticAbilityId::KeywordMarker
                     | crate::static_abilities::StaticAbilityId::RuleTextPlaceholder
+                    | crate::static_abilities::StaticAbilityId::KeywordFallbackText
+                    | crate::static_abilities::StaticAbilityId::RuleFallbackText
                     | crate::static_abilities::StaticAbilityId::UnsupportedParserLine
             ) && let Some(text) = ability.text.as_deref()
             {
@@ -6502,6 +6504,9 @@ fn describe_ability(
                     || normalized
                         .trim_end_matches('.')
                         .eq_ignore_ascii_case("haunt")
+                    || normalized
+                        .to_ascii_lowercase()
+                        .starts_with("cumulative upkeep")
                 {
                     return vec![format!("Keyword ability {index}: {normalized}")];
                 }
@@ -7083,6 +7088,8 @@ fn ability_can_render_as_keyword_group(ability: &Ability) -> bool {
         AbilityKind::Static(static_ability) => {
             static_ability.is_keyword()
                 || static_ability.id() == crate::static_abilities::StaticAbilityId::KeywordMarker
+                || static_ability.id()
+                    == crate::static_abilities::StaticAbilityId::KeywordFallbackText
         }
         _ => false,
     }

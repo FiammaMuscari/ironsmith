@@ -5,6 +5,7 @@
 use super::{
     ChooseBasicLandTypeAsEntersSpec, ChooseColorAsEntersSpec, ConditionalSpellKeywordKind,
     ConditionalSpellKeywordSpec, GraveyardCountMetric, StaticAbilityId, StaticAbilityKind,
+    ThisSpellCastRestrictionKind,
     text_utils::{capitalize_first, join_with_and, number_word_u32},
 };
 use crate::ability::LevelAbility;
@@ -1889,6 +1890,36 @@ impl StaticAbilityKind for ConditionalSpellKeyword {
     }
 }
 
+/// "Cast this spell only ..." cast-time restriction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThisSpellCastRestriction {
+    pub kind: ThisSpellCastRestrictionKind,
+    pub display: String,
+}
+
+impl ThisSpellCastRestriction {
+    pub fn new(kind: ThisSpellCastRestrictionKind, display: impl Into<String>) -> Self {
+        Self {
+            kind,
+            display: display.into(),
+        }
+    }
+}
+
+impl StaticAbilityKind for ThisSpellCastRestriction {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::ThisSpellCastRestriction
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn this_spell_cast_restriction_kind(&self) -> Option<ThisSpellCastRestrictionKind> {
+        Some(self.kind)
+    }
+}
+
 /// "Each opponent's maximum hand size is equal to seven minus the number of card types in your graveyard."
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaximumHandSizeSevenMinusYourGraveyardCardTypes {
@@ -2195,6 +2226,50 @@ impl StaticAbilityKind for RuleTextPlaceholder {
     }
 }
 
+/// Typed fallback keyword text preserved from parser/builder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeywordFallbackText {
+    pub text: String,
+}
+
+impl KeywordFallbackText {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self { text: text.into() }
+    }
+}
+
+impl StaticAbilityKind for KeywordFallbackText {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::KeywordFallbackText
+    }
+
+    fn display(&self) -> String {
+        self.text.clone()
+    }
+}
+
+/// Typed fallback static rule text preserved from parser/builder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleFallbackText {
+    pub text: String,
+}
+
+impl RuleFallbackText {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self { text: text.into() }
+    }
+}
+
+impl StaticAbilityKind for RuleFallbackText {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::RuleFallbackText
+    }
+
+    fn display(&self) -> String {
+        self.text.clone()
+    }
+}
+
 /// Parser fallback marker used in allow-unsupported mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnsupportedParserLine {
@@ -2327,6 +2402,19 @@ mod tests {
         assert!(
             conditional_spell_keyword_active(spec, &game, alice),
             "expected mana-value threshold to be active"
+        );
+    }
+
+    #[test]
+    fn test_this_spell_cast_restriction_kind_roundtrip() {
+        let ability = ThisSpellCastRestriction::new(
+            ThisSpellCastRestrictionKind::DuringDeclareAttackersStepIfYouWereAttackedThisStep,
+            "Cast this spell only during the declare attackers step and only if you've been attacked this step.",
+        );
+        assert_eq!(ability.id(), StaticAbilityId::ThisSpellCastRestriction);
+        assert_eq!(
+            ability.this_spell_cast_restriction_kind(),
+            Some(ThisSpellCastRestrictionKind::DuringDeclareAttackersStepIfYouWereAttackedThisStep)
         );
     }
 

@@ -127,11 +127,31 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         ));
     }
     if normalized.starts_with("cast this spell only") {
+        let tokens = tokenize_line(line, line_index);
+        if let Ok(Some(ability)) = parse_cast_this_spell_only_line(&tokens) {
+            parser_trace("parse_line:branch=this-spell-cast-only-static", &tokens);
+            return Ok(LineAst::StaticAbility(ability));
+        }
         return Ok(LineAst::StaticAbility(
             StaticAbility::rule_text_placeholder(line.trim().to_string()),
         ));
     }
     if normalized.starts_with("foretelling cards from your hand costs") {
+        return Ok(LineAst::StaticAbility(
+            StaticAbility::rule_text_placeholder(line.trim().to_string()),
+        ));
+    }
+    if normalized.starts_with("creatures with power less than this creatures power cant block it") {
+        let tokens = tokenize_line(line, line_index);
+        if let Ok(Some(abilities)) = parse_static_ability_line(&tokens) {
+            parser_trace("parse_line:branch=skulk-rules-text-static", &tokens);
+            if abilities.len() == 1 {
+                return Ok(LineAst::StaticAbility(
+                    abilities.into_iter().next().expect("single static ability"),
+                ));
+            }
+            return Ok(LineAst::StaticAbilities(abilities));
+        }
         return Ok(LineAst::StaticAbility(
             StaticAbility::rule_text_placeholder(line.trim().to_string()),
         ));
@@ -159,15 +179,11 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         || normalized == "this creature attacks or blocks each combat if able"
         || normalized
             .starts_with("players cant untap more than one artifact during their untap steps")
-        || normalized.starts_with("as long as")
-            && normalized.contains("can attack as though it didnt have defender")
         || normalized.starts_with("as long as equipped creature is a human")
         || normalized
             .starts_with("while an opponent is choosing targets as part of casting a spell")
         || normalized.starts_with("it enters with") && normalized.contains("+1/+1 counter")
         || normalized.starts_with("enchanted creature gets -x/-x")
-        || normalized
-            .starts_with("creatures with power less than this creatures power cant block it")
         || normalized.starts_with("if one or more +1/+1 counters would be put on")
         || normalized.starts_with("if an effect would create one or more tokens under your control")
     {

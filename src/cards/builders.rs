@@ -11,8 +11,8 @@ use crate::card::{CardBuilder, PowerToughness, PtValue};
 use crate::color::ColorSet;
 use crate::cost::{OptionalCost, TotalCost};
 use crate::effect::{
-    ChoiceCount, Condition, Effect, EffectId, EffectMode, EffectPredicate, EventValueSpec, Until,
-    Value,
+    ChoiceCount, Condition, Effect, EffectId, EffectMode, EffectPredicate, EmblemDescription,
+    EventValueSpec, Until, Value,
 };
 use crate::effects::VoteOption;
 use crate::filter::AlternativeCastKind;
@@ -99,11 +99,18 @@ pub(crate) enum KeywordAction {
         cost_effects: Vec<Effect>,
         text: String,
     },
+    CumulativeUpkeep {
+        mana_symbols_per_counter: Vec<ManaSymbol>,
+        life_per_counter: u32,
+        text: String,
+    },
     Casualty(u32),
     Conspire,
     Devour(u32),
     Ravenous,
     Ascend,
+    Daybound,
+    Nightbound,
     Haunt,
     Provoke,
     Undaunted,
@@ -474,6 +481,9 @@ pub(crate) enum PredicateAst {
         filter: ObjectFilter,
     },
     PlayerHasLessLifeThanYou {
+        player: PlayerAst,
+    },
+    PlayerHasCitysBlessing {
         player: PlayerAst,
     },
     PlayerTappedLandForManaThisTurn {
@@ -1632,11 +1642,18 @@ impl CardDefinitionBuilder {
                 cost_effects,
                 text,
             } => self.echo(mana_cost, cost_effects, text),
+            KeywordAction::CumulativeUpkeep {
+                mana_symbols_per_counter,
+                life_per_counter,
+                text,
+            } => self.cumulative_upkeep(mana_symbols_per_counter, life_per_counter, text),
             KeywordAction::Casualty(power) => self.casualty(power),
             KeywordAction::Conspire => self.conspire(),
             KeywordAction::Devour(multiplier) => self.devour(multiplier),
             KeywordAction::Ravenous => self.ravenous(),
             KeywordAction::Ascend => self.ascend(),
+            KeywordAction::Daybound => self.daybound(),
+            KeywordAction::Nightbound => self.nightbound(),
             KeywordAction::Haunt => self.haunt(),
             KeywordAction::Provoke => self.provoke(),
             KeywordAction::Undaunted => self.undaunted(),
@@ -2507,6 +2524,47 @@ impl CardDefinitionBuilder {
         })
     }
 
+    /// Add cumulative upkeep with generic and/or life payment per age counter.
+    ///
+    /// Runtime model:
+    /// - At the beginning of your upkeep, put an age counter on this permanent.
+    /// - Then sacrifice it unless you pay the cumulative payment for each age counter.
+    pub fn cumulative_upkeep(
+        self,
+        mana_symbols_per_counter: Vec<ManaSymbol>,
+        life_per_counter: u32,
+        text: String,
+    ) -> Self {
+        let age_count = Value::CountersOnSource(CounterType::Age);
+        let life = scale_value(age_count, life_per_counter);
+        let mana_multiplier = if mana_symbols_per_counter.is_empty() {
+            None
+        } else {
+            Some(Value::CountersOnSource(CounterType::Age))
+        };
+
+        self.with_ability(Ability {
+            kind: AbilityKind::Triggered(TriggeredAbility {
+                trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
+                effects: vec![
+                    Effect::put_counters_on_source(CounterType::Age, 1),
+                    Effect::unless_pays_with_life_additional_and_multiplier(
+                        vec![Effect::sacrifice_source()],
+                        PlayerFilter::You,
+                        mana_symbols_per_counter,
+                        life,
+                        None,
+                        mana_multiplier,
+                    ),
+                ],
+                choices: vec![],
+                intervening_if: None,
+            }),
+            functional_zones: vec![Zone::Battlefield],
+            text: Some(text),
+        })
+    }
+
     /// Add haunt.
     ///
     /// Creature haunt reminder: "When this creature dies, exile it haunting target creature."
@@ -2680,13 +2738,101 @@ impl CardDefinitionBuilder {
     /// Ascend means "If you control ten or more permanents, you get the city's blessing
     /// for the rest of the game."
     pub fn ascend(self) -> Self {
-        // The city's blessing is a designation, not an object. We model ascend
-        // as a static ability that checks permanent count. Full runtime support
-        // for the designation would require a player flag; for now this preserves
-        // the keyword text and structure.
-        self.with_ability(Ability::static_ability(StaticAbility::keyword_marker(
-            "Ascend",
-        )))
+        let controls_ten = Condition::PlayerControlsAtLeast {
+            player: PlayerFilter::You,
+            filter: ObjectFilter::permanent().you_control(),
+            count: 10,
+        };
+        let not_blessed = Condition::Not(Box::new(Condition::PlayerHasCitysBlessing {
+            player: PlayerFilter::You,
+        }));
+        let bless_condition = Condition::And(Box::new(controls_ten), Box::new(not_blessed));
+        let get_blessing = Effect::create_emblem(EmblemDescription::new(
+            "City's Blessing",
+            "You have the city's blessing for the rest of the game.",
+        ));
+
+        let is_nonpermanent_spell = self
+            .card_builder
+            .card_types_ref()
+            .iter()
+            .any(|card_type| matches!(card_type, CardType::Instant | CardType::Sorcery));
+        if is_nonpermanent_spell {
+            let mut out = self;
+            let mut effects = out.spell_effect.take().unwrap_or_default();
+            effects.insert(
+                0,
+                Effect::conditional_only(bless_condition, vec![get_blessing]),
+            );
+            out.spell_effect = Some(effects);
+            return out;
+        }
+
+        self.with_ability(Ability {
+            kind: AbilityKind::Triggered(TriggeredAbility {
+                trigger: Trigger::enters_battlefield(ObjectFilter::permanent().you_control()),
+                effects: vec![get_blessing],
+                choices: vec![],
+                intervening_if: Some(bless_condition),
+            }),
+            functional_zones: vec![Zone::Battlefield],
+            text: Some("Ascend".to_string()),
+        })
+    }
+
+    /// Add daybound.
+    ///
+    /// In this engine, daybound/nightbound use a single upkeep trigger keyed off the
+    /// permanent's current face:
+    /// - face up (day): transform if no spells were cast last turn
+    /// - face down (night): transform if two or more spells were cast last turn
+    pub fn daybound(self) -> Self {
+        self.with_ability(Ability {
+            kind: AbilityKind::Triggered(TriggeredAbility {
+                trigger: Trigger::beginning_of_upkeep(PlayerFilter::Any),
+                effects: vec![Effect::conditional(
+                    Condition::SourceIsFaceDown,
+                    vec![Effect::conditional_only(
+                        Condition::SpellsWereCastLastTurnOrMore(2),
+                        vec![Effect::transform(ChooseSpec::Source)],
+                    )],
+                    vec![Effect::conditional_only(
+                        Condition::NoSpellsWereCastLastTurn,
+                        vec![Effect::transform(ChooseSpec::Source)],
+                    )],
+                )],
+                choices: vec![],
+                intervening_if: None,
+            }),
+            functional_zones: vec![Zone::Battlefield],
+            text: Some("Daybound".to_string()),
+        })
+    }
+
+    /// Add nightbound.
+    ///
+    /// Uses the same day/night transition trigger implementation as `daybound`.
+    pub fn nightbound(self) -> Self {
+        self.with_ability(Ability {
+            kind: AbilityKind::Triggered(TriggeredAbility {
+                trigger: Trigger::beginning_of_upkeep(PlayerFilter::Any),
+                effects: vec![Effect::conditional(
+                    Condition::SourceIsFaceDown,
+                    vec![Effect::conditional_only(
+                        Condition::SpellsWereCastLastTurnOrMore(2),
+                        vec![Effect::transform(ChooseSpec::Source)],
+                    )],
+                    vec![Effect::conditional_only(
+                        Condition::NoSpellsWereCastLastTurn,
+                        vec![Effect::transform(ChooseSpec::Source)],
+                    )],
+                )],
+                choices: vec![],
+                intervening_if: None,
+            }),
+            functional_zones: vec![Zone::Battlefield],
+            text: Some("Nightbound".to_string()),
+        })
     }
 
     /// Add enlist.
@@ -5127,6 +5273,114 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_daybound_keyword_line_builds_typed_trigger() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Daybound Probe")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .parse_text("Daybound")
+            .expect("daybound keyword line should parse");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("BeginningOfUpkeepTrigger")
+                && debug.contains("NoSpellsWereCastLastTurn")
+                && debug.contains("SpellsWereCastLastTurnOrMore(2)")
+                && debug.contains("SourceIsFaceDown")
+                && debug.contains("TransformEffect"),
+            "expected daybound to lower into upkeep transform trigger, got {debug}"
+        );
+        assert!(
+            !debug.contains("StaticAbilityId::KeywordMarker")
+                && !debug.contains("StaticAbilityId::RuleTextPlaceholder")
+                && !debug.contains("StaticAbilityId::KeywordFallbackText")
+                && !debug.contains("StaticAbilityId::RuleFallbackText"),
+            "daybound should not compile via placeholder/marker ability ids: {debug}"
+        );
+    }
+
+    #[test]
+    fn daybound_runtime_transforms_source_for_day_and_night_spell_count_windows() {
+        use crate::executor::{ExecutionContext, execute_effect};
+        use crate::ids::PlayerId;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Daybound Runtime Probe")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .parse_text("Daybound")
+            .expect("daybound keyword line should parse");
+
+        let ability = def
+            .abilities
+            .iter()
+            .find(|ability| ability.text.as_deref() == Some("Daybound"))
+            .expect("expected daybound triggered ability");
+        let AbilityKind::Triggered(triggered) = &ability.kind else {
+            panic!("expected daybound to compile as triggered ability");
+        };
+
+        let mut game =
+            crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let source_card = crate::card::CardBuilder::new(CardId::from_raw(70140), "Werewolf")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let source = game.create_object_from_card(&source_card, alice, Zone::Battlefield);
+
+        // Day side: no spells last turn transforms to night side.
+        let mut exec_ctx = ExecutionContext::new_default(source, alice);
+        for effect in &triggered.effects {
+            execute_effect(&mut game, effect, &mut exec_ctx)
+                .expect("daybound transform effect should execute");
+        }
+        assert!(
+            game.is_face_down(source),
+            "daybound runtime should transform the source permanent"
+        );
+
+        // Night side: one spell does not transform back.
+        game.spells_cast_last_turn_total = 1;
+        let mut exec_ctx = ExecutionContext::new_default(source, alice);
+        for effect in &triggered.effects {
+            execute_effect(&mut game, effect, &mut exec_ctx)
+                .expect("daybound/nightbound transform effect should execute");
+        }
+        assert!(
+            game.is_face_down(source),
+            "night side should stay transformed when fewer than two spells were cast last turn"
+        );
+
+        // Night side: two spells last turn transforms back to day side.
+        game.spells_cast_last_turn_total = 2;
+        let mut exec_ctx = ExecutionContext::new_default(source, alice);
+        for effect in &triggered.effects {
+            execute_effect(&mut game, effect, &mut exec_ctx)
+                .expect("daybound/nightbound transform effect should execute");
+        }
+        assert!(
+            !game.is_face_down(source),
+            "night side should transform back when two or more spells were cast last turn"
+        );
+    }
+
+    #[test]
+    fn parse_nightbound_keyword_line_builds_typed_trigger() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Nightbound Probe")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .parse_text("Nightbound")
+            .expect("nightbound keyword line should parse");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("SpellsWereCastLastTurnOrMore(2)")
+                && debug.contains("NoSpellsWereCastLastTurn")
+                && !debug.contains("StaticAbilityId::KeywordMarker"),
+            "expected nightbound to lower into typed upkeep transform behavior, got {debug}"
+        );
+    }
+
+    #[test]
     fn create_token_render_preserves_cant_attack_or_block_alone_text() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Toby Token Variant")
             .parse_text(
@@ -7017,19 +7271,383 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
-    fn parse_cumulative_upkeep_line_as_keyword_marker() {
+    fn parse_cast_this_spell_only_declare_attackers_step_builds_typed_restriction() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Declare Attackers Restriction Probe")
+            .card_types(vec![CardType::Instant])
+            .parse_text(
+                "Cast this spell only during the declare attackers step and only if you've been attacked this step.\nDraw a card.",
+            )
+            .expect("declare attackers cast restriction should parse as typed static ability");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("ThisSpellCastRestriction"),
+            "expected typed this-spell cast restriction ability, got {debug}"
+        );
+        assert!(
+            !debug.contains("StaticAbilityId::KeywordMarker")
+                && !debug.contains("StaticAbilityId::RuleTextPlaceholder")
+                && !debug.contains("StaticAbilityId::KeywordFallbackText")
+                && !debug.contains("StaticAbilityId::RuleFallbackText")
+                && !debug.contains("StaticAbilityId::UnsupportedParserLine"),
+            "cast restriction should not compile through placeholder/marker ids: {debug}"
+        );
+    }
+
+    #[test]
+    fn this_spell_cast_restriction_runtime_requires_attacked_declare_attackers_step() {
+        use crate::card::{CardBuilder, PowerToughness};
+        use crate::combat_state::{AttackTarget, AttackerInfo, CombatState};
+        use crate::alternative_cast::CastingMethod;
+        use crate::decision::can_cast_spell;
+        use crate::game_state::{Phase, Step};
+        use crate::ids::PlayerId;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Assassin's Blade Probe")
+            .card_types(vec![CardType::Instant])
+            .parse_text(
+                "Cast this spell only during the declare attackers step and only if you've been attacked this step.\nDraw a card.",
+            )
+            .expect("declare attackers cast restriction should parse");
+
+        let mut game =
+            crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let spell_id = game.create_object_from_definition(&def, alice, Zone::Hand);
+        let attacker_card = CardBuilder::new(CardId::from_raw(70130), "Attacker")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let attacker_id = game.create_object_from_card(&attacker_card, bob, Zone::Battlefield);
+
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            !can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should fail outside declare attackers step"
+        );
+
+        game.turn.active_player = bob;
+        game.turn.phase = Phase::Combat;
+        game.turn.step = Some(Step::DeclareAttackers);
+        game.combat = Some(CombatState {
+            attackers: vec![AttackerInfo {
+                creature: attacker_id,
+                target: AttackTarget::Player(bob),
+            }],
+            ..CombatState::default()
+        });
+
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            !can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should fail when you were not attacked this step"
+        );
+
+        if let Some(combat) = game.combat.as_mut() {
+            combat.attackers[0].target = AttackTarget::Player(alice);
+        }
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should pass when cast during declare attackers after being attacked"
+        );
+    }
+
+    #[test]
+    fn this_spell_cast_restriction_runtime_before_blockers_window() {
+        use crate::alternative_cast::CastingMethod;
+        use crate::decision::can_cast_spell;
+        use crate::game_state::{Phase, Step};
+        use crate::ids::PlayerId;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Panic Probe")
+            .card_types(vec![CardType::Instant])
+            .parse_text("Cast this spell only during combat before blockers are declared.\nDraw a card.")
+            .expect("combat-before-blockers cast restriction should parse");
+
+        let mut game =
+            crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let spell_id = game.create_object_from_definition(&def, alice, Zone::Hand);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            !can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should fail outside combat"
+        );
+
+        game.turn.phase = Phase::Combat;
+        game.turn.step = Some(Step::BeginCombat);
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should allow casting in begin combat step"
+        );
+
+        game.turn.step = Some(Step::DeclareAttackers);
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should allow casting in declare attackers step"
+        );
+
+        game.turn.step = Some(Step::DeclareBlockers);
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            !can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should fail once blockers are being declared"
+        );
+    }
+
+    #[test]
+    fn this_spell_cast_restriction_runtime_requires_another_spell_cast_this_turn() {
+        use crate::alternative_cast::CastingMethod;
+        use crate::card::CardBuilder;
+        use crate::decision::can_cast_spell;
+        use crate::ids::PlayerId;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Illusory Angel Probe")
+            .card_types(vec![CardType::Instant])
+            .parse_text("Cast this spell only if you've cast another spell this turn.\nDraw a card.")
+            .expect("cast-another-spell restriction should parse");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            !debug.contains("StaticAbilityId::RuleTextPlaceholder")
+                && !debug.contains("StaticAbilityId::KeywordMarker"),
+            "cast-another-spell restriction should be typed, got {debug}"
+        );
+
+        let mut game =
+            crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let spell_id = game.create_object_from_definition(&def, alice, Zone::Hand);
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            !can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should fail before any prior spell is cast"
+        );
+
+        let prior_spell = CardBuilder::new(CardId::from_raw(70131), "Prior Spell")
+            .card_types(vec![CardType::Instant])
+            .build();
+        let prior_id = game.create_object_from_card(&prior_spell, alice, Zone::Graveyard);
+        let prior_snapshot = crate::snapshot::ObjectSnapshot::from_object(
+            game.object(prior_id).expect("prior spell should exist"),
+            &game,
+        );
+        game.spells_cast_this_turn.insert(alice, 1);
+        game.spells_cast_this_turn_snapshots.push(prior_snapshot);
+
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should pass after another spell was cast this turn"
+        );
+    }
+
+    #[test]
+    fn this_spell_cast_restriction_runtime_uses_doctor_subtype() {
+        use crate::alternative_cast::CastingMethod;
+        use crate::card::{CardBuilder, PowerToughness};
+        use crate::decision::can_cast_spell;
+        use crate::ids::PlayerId;
+        use crate::types::Subtype;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Doctor Restriction Probe")
+            .card_types(vec![CardType::Instant])
+            .parse_text("Cast this spell only if you control two or more Doctors.\nDraw a card.")
+            .expect("doctor subtype cast restriction should parse");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("IfYouControlSubtypeOrMore { subtype: Doctor, count: 2 }"),
+            "expected typed Doctor subtype restriction, got {debug}"
+        );
+
+        let mut game =
+            crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let spell_id = game.create_object_from_definition(&def, alice, Zone::Hand);
+
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            !can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should fail with no Doctors"
+        );
+
+        for index in 0..2u32 {
+            let doctor = CardBuilder::new(CardId::from_raw(74000 + index), "Doctor")
+                .card_types(vec![CardType::Creature])
+                .subtypes(vec![Subtype::Doctor])
+                .power_toughness(PowerToughness::fixed(2, 2))
+                .build();
+            let _ = game.create_object_from_card(&doctor, alice, Zone::Battlefield);
+        }
+
+        let spell = game.object(spell_id).expect("spell should exist");
+        assert!(
+            can_cast_spell(&game, alice, spell, &CastingMethod::Normal),
+            "restriction should pass with two Doctor creatures"
+        );
+    }
+
+    #[test]
+    fn parse_cumulative_upkeep_generic_line_builds_typed_trigger() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Cumulative Upkeep Variant")
-            .parse_text("Cumulative upkeep—Sacrifice a creature.")
+            .parse_text("Cumulative upkeep {1}")
             .expect("parse cumulative upkeep keyword line");
 
         assert!(
             def.spell_effect.is_none(),
             "cumulative upkeep line should compile as an ability, not a spell effect"
         );
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("BeginningOfUpkeepTrigger")
+                && debug.contains("PutCountersEffect")
+                && debug.contains("UnlessPaysEffect"),
+            "expected cumulative upkeep to compile into upkeep trigger primitives, got {debug}"
+        );
+        assert!(
+            !debug.contains("StaticAbilityId::KeywordMarker")
+                && !debug.contains("StaticAbilityId::RuleTextPlaceholder")
+                && !debug.contains("StaticAbilityId::KeywordFallbackText")
+                && !debug.contains("StaticAbilityId::RuleFallbackText"),
+            "cumulative upkeep {{1}} should not compile as fallback marker ability: {debug}"
+        );
         let joined = compiled_lines(&def).join(" ");
         assert!(
             joined.to_ascii_lowercase().contains("cumulative upkeep"),
             "expected cumulative upkeep text in compiled abilities, got {joined}"
+        );
+    }
+
+    #[test]
+    fn cumulative_upkeep_generic_runtime_pays_then_sacrifices_when_unpaid() {
+        use crate::executor::{ExecutionContext, execute_effect};
+        use crate::ids::PlayerId;
+        use crate::mana::ManaSymbol;
+        use crate::zone::Zone;
+
+        let def = CardDefinitionBuilder::new(CardId::new(), "Cumulative Upkeep Runtime Probe")
+            .card_types(vec![CardType::Creature])
+            .parse_text("Cumulative upkeep {1}")
+            .expect("parse cumulative upkeep keyword line");
+
+        let ability = def
+            .abilities
+            .iter()
+            .find(|ability| {
+                ability
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| text.starts_with("Cumulative upkeep"))
+            })
+            .expect("expected cumulative upkeep triggered ability");
+        let AbilityKind::Triggered(triggered) = &ability.kind else {
+            panic!("expected cumulative upkeep to compile as triggered ability");
+        };
+
+        let mut game =
+            crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let source_card = crate::card::CardBuilder::new(CardId::from_raw(70110), "Upkeep Source")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(crate::card::PowerToughness::fixed(2, 2))
+            .build();
+        let source = game.create_object_from_card(&source_card, alice, Zone::Battlefield);
+        game.player_mut(alice)
+            .expect("alice should exist")
+            .mana_pool
+            .add(ManaSymbol::Colorless, 1);
+
+        let run_upkeep = |game: &mut crate::game_state::GameState| {
+            let mut ctx = ExecutionContext::new_default(source, alice);
+            for effect in &triggered.effects {
+                execute_effect(game, effect, &mut ctx)
+                    .expect("cumulative upkeep trigger effect execution should succeed");
+            }
+        };
+
+        run_upkeep(&mut game);
+        let source_obj = game.object(source).expect("source should remain after first upkeep");
+        assert_eq!(
+            source_obj
+                .counters
+                .get(&CounterType::Age)
+                .copied()
+                .unwrap_or(0),
+            1,
+            "first cumulative upkeep should add one age counter"
+        );
+        assert_eq!(
+            game.player(alice)
+                .expect("alice should exist")
+                .mana_pool
+                .total(),
+            0,
+            "first cumulative upkeep should spend available mana payment"
+        );
+
+        run_upkeep(&mut game);
+        let source_obj = game.object(source);
+        assert!(
+            source_obj.is_none()
+                || source_obj.is_some_and(|object| object.zone == Zone::Graveyard),
+            "second cumulative upkeep without mana should sacrifice source, got {source_obj:?}"
+        );
+    }
+
+    #[test]
+    fn parse_filter_granted_cumulative_upkeep_compiles_as_granted_triggered_ability() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Breath of Dreams Variant")
+            .card_types(vec![CardType::Enchantment])
+            .parse_text("Green creatures have \"Cumulative upkeep {1}.\"")
+            .expect("filter granted cumulative upkeep should parse");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("GrantObjectAbilityForFilter")
+                && debug.contains("BeginningOfUpkeepTrigger")
+                && debug.contains("PutCountersEffect")
+                && debug.contains("UnlessPaysEffect"),
+            "expected granted cumulative upkeep to compile as granted triggered ability, got {debug}"
+        );
+        assert!(
+            !debug.contains("StaticAbilityId::KeywordMarker")
+                && !debug.contains("StaticAbilityId::KeywordFallbackText")
+                && !debug.contains("StaticAbilityId::RuleFallbackText"),
+            "filter granted cumulative upkeep should not fallback to marker/static placeholder: {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_attached_granted_cumulative_upkeep_compiles_as_attached_triggered_ability() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Mana Chains Variant")
+            .card_types(vec![CardType::Enchantment])
+            .subtypes(vec![Subtype::Aura])
+            .parse_text("Enchant creature\nEnchanted creature has \"Cumulative upkeep {1}.\"")
+            .expect("attached granted cumulative upkeep should parse");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("AttachedAbilityGrant")
+                && debug.contains("BeginningOfUpkeepTrigger")
+                && debug.contains("PutCountersEffect")
+                && debug.contains("UnlessPaysEffect"),
+            "expected attached granted cumulative upkeep to compile as attached triggered ability, got {debug}"
+        );
+        assert!(
+            !debug.contains("StaticAbilityId::KeywordMarker")
+                && !debug.contains("StaticAbilityId::KeywordFallbackText")
+                && !debug.contains("StaticAbilityId::RuleFallbackText"),
+            "attached granted cumulative upkeep should not fallback to marker/static placeholder: {debug}"
         );
     }
 
@@ -7048,6 +7666,81 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             !debug.contains("StaticAbilityId::KeywordMarker")
                 && !debug.contains("StaticAbilityId::RuleTextPlaceholder"),
             "skulk should not compile as placeholder marker ability: {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_skulk_rules_text_line_builds_skulk_static_ability() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Skulk Rules Text Probe")
+            .parse_text("Creatures with power less than this creature's power can't block it.")
+            .expect("parse skulk rules text line");
+
+        let debug = format!("{:?}", def.abilities);
+        assert!(
+            debug.contains("Skulk"),
+            "expected skulk ability in debug output, got {debug}"
+        );
+        assert!(
+            !debug.contains("StaticAbilityId::KeywordMarker")
+                && !debug.contains("StaticAbilityId::RuleTextPlaceholder")
+                && !debug.contains("StaticAbilityId::UnsupportedParserLine"),
+            "skulk rules text should not compile as placeholder ability: {debug}"
+        );
+    }
+
+    #[test]
+    fn skulk_rules_text_runtime_restricts_greater_power_blocks() {
+        use crate::card::PowerToughness;
+        use crate::ids::PlayerId;
+        use crate::zone::Zone;
+
+        let attacker_def = CardDefinitionBuilder::new(CardId::from_raw(70101), "Skulk Rules Text")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .parse_text("Creatures with power less than this creature's power can't block it.")
+            .expect("parse skulk rules text line");
+
+        let equal_blocker_def = CardDefinitionBuilder::new(CardId::from_raw(70102), "Equal Blocker")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let larger_blocker_def =
+            CardDefinitionBuilder::new(CardId::from_raw(70103), "Larger Blocker")
+                .card_types(vec![CardType::Creature])
+                .power_toughness(PowerToughness::fixed(3, 3))
+                .build();
+
+        let mut game =
+            crate::game_state::GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let attacker_id = game.create_object_from_definition(&attacker_def, alice, Zone::Battlefield);
+        let equal_blocker_id =
+            game.create_object_from_definition(&equal_blocker_def, bob, Zone::Battlefield);
+        let larger_blocker_id =
+            game.create_object_from_definition(&larger_blocker_def, bob, Zone::Battlefield);
+
+        let attacker = game
+            .object(attacker_id)
+            .expect("attacker should exist")
+            .clone();
+        let equal_blocker = game
+            .object(equal_blocker_id)
+            .expect("equal blocker should exist")
+            .clone();
+        let larger_blocker = game
+            .object(larger_blocker_id)
+            .expect("larger blocker should exist")
+            .clone();
+
+        assert!(
+            crate::rules::combat::can_block(&attacker, &equal_blocker, &game),
+            "equal-power creature should be allowed to block skulk rules-text attacker"
+        );
+        assert!(
+            !crate::rules::combat::can_block(&attacker, &larger_blocker, &game),
+            "greater-power creature should not block skulk rules-text attacker"
         );
     }
 
@@ -9499,6 +10192,17 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             "expected static RuleRestriction with transform prohibition, got {abilities_debug}"
         );
     }
+}
+
+fn scale_value(base: Value, factor: u32) -> Option<Value> {
+    if factor == 0 {
+        return None;
+    }
+    let mut value = base.clone();
+    for _ in 1..factor {
+        value = Value::Add(Box::new(value), Box::new(base.clone()));
+    }
+    Some(value)
 }
 
 #[cfg(test)]

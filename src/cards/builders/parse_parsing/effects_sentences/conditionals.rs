@@ -161,6 +161,7 @@ pub(crate) fn parse_subtype_word(word: &str) -> Option<Subtype> {
         "dalek" => Some(Subtype::Dalek),
         "dauthi" => Some(Subtype::Dauthi),
         "detective" => Some(Subtype::Detective),
+        "doctor" | "doctors" => Some(Subtype::Doctor),
         "demon" => Some(Subtype::Demon),
         "devil" => Some(Subtype::Devil),
         "dinosaur" => Some(Subtype::Dinosaur),
@@ -1691,10 +1692,8 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         || filtered.starts_with(&["you", "have", "citys", "blessing", "for", "each"])
         || filtered.starts_with(&["you", "have", "city", "blessing", "for", "each"])
     {
-        return Ok(PredicateAst::PlayerControlsAtLeast {
+        return Ok(PredicateAst::PlayerHasCitysBlessing {
             player: PlayerAst::You,
-            filter: ObjectFilter::permanent().you_control(),
-            count: 10,
         });
     }
 

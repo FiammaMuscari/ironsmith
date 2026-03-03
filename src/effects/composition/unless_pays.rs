@@ -40,12 +40,14 @@ pub struct UnlessPaysEffect {
     pub life: Option<Value>,
     /// Optional dynamic additional generic mana payment.
     pub additional_generic: Option<Value>,
+    /// Optional multiplier for the mana symbol sequence.
+    pub mana_multiplier: Option<Value>,
 }
 
 impl UnlessPaysEffect {
     /// Create a new "unless pays" effect.
     pub fn new(effects: Vec<Effect>, player: PlayerFilter, mana: Vec<ManaSymbol>) -> Self {
-        Self::new_with_life_and_additional(effects, player, mana, None, None)
+        Self::new_with_life_and_additional_and_multiplier(effects, player, mana, None, None, None)
     }
 
     /// Create a new "unless pays" effect with optional life payment.
@@ -55,7 +57,7 @@ impl UnlessPaysEffect {
         mana: Vec<ManaSymbol>,
         life: Option<Value>,
     ) -> Self {
-        Self::new_with_life_and_additional(effects, player, mana, life, None)
+        Self::new_with_life_and_additional_and_multiplier(effects, player, mana, life, None, None)
     }
 
     /// Create a new "unless pays" effect with optional life and dynamic generic payment.
@@ -66,12 +68,33 @@ impl UnlessPaysEffect {
         life: Option<Value>,
         additional_generic: Option<Value>,
     ) -> Self {
+        Self::new_with_life_and_additional_and_multiplier(
+            effects,
+            player,
+            mana,
+            life,
+            additional_generic,
+            None,
+        )
+    }
+
+    /// Create a new "unless pays" effect with optional life, dynamic generic payment,
+    /// and dynamic mana multiplier.
+    pub fn new_with_life_and_additional_and_multiplier(
+        effects: Vec<Effect>,
+        player: PlayerFilter,
+        mana: Vec<ManaSymbol>,
+        life: Option<Value>,
+        additional_generic: Option<Value>,
+        mana_multiplier: Option<Value>,
+    ) -> Self {
         Self {
             effects,
             player,
             mana,
             life,
             additional_generic,
+            mana_multiplier,
         }
     }
 }
@@ -124,8 +147,17 @@ impl EffectExecutor for UnlessPaysEffect {
             .map(|value| resolve_value(game, value, ctx).map(|n| n.max(0) as u32))
             .transpose()?
             .unwrap_or(0);
+        let mana_multiplier = self
+            .mana_multiplier
+            .as_ref()
+            .map(|value| resolve_value(game, value, ctx).map(|n| n.max(0) as u32))
+            .transpose()?
+            .unwrap_or(1);
 
-        let mut mana_symbols = self.mana.clone();
+        let mut mana_symbols = Vec::new();
+        for _ in 0..mana_multiplier {
+            mana_symbols.extend(self.mana.iter().copied());
+        }
         if additional_generic > 0 {
             let capped = additional_generic.min(u8::MAX as u32) as u8;
             mana_symbols.push(ManaSymbol::Generic(capped));
@@ -138,27 +170,32 @@ impl EffectExecutor for UnlessPaysEffect {
             .map(|s| format!("{:?}", s))
             .collect::<Vec<_>>()
             .join(", ");
+        let multiplied_mana_display = if mana_multiplier > 1 && !mana_display.is_empty() {
+            format!("({mana_display}) x {mana_multiplier}")
+        } else {
+            mana_display.clone()
+        };
         let additional_display = if additional_generic > 0 {
             format!(" plus {additional_generic} generic mana")
         } else {
             String::new()
         };
-        let payment_display = if mana_display.is_empty() && additional_generic == 0 {
+        let payment_display = if multiplied_mana_display.is_empty() && additional_generic == 0 {
             if life_to_pay > 0 {
                 format!("{life_to_pay} life")
             } else {
                 "no cost".to_string()
             }
-        } else if mana_display.is_empty() {
+        } else if multiplied_mana_display.is_empty() {
             if life_to_pay > 0 {
                 format!("{additional_generic} generic mana and {life_to_pay} life")
             } else {
                 format!("{additional_generic} generic mana")
             }
         } else if life_to_pay > 0 {
-            format!("{mana_display}{additional_display} and {life_to_pay} life")
+            format!("{multiplied_mana_display}{additional_display} and {life_to_pay} life")
         } else {
-            format!("{mana_display}{additional_display}")
+            format!("{multiplied_mana_display}{additional_display}")
         };
 
         for paying_player in paying_players {

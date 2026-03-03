@@ -2,6 +2,8 @@
 
 This document defines how we implement mechanics in code so behavior stays general, testable, and reusable.
 
+For placeholder-class migration flow and slice gating (`KeywordMarker`, `RuleTextPlaceholder`, `UnsupportedParserLine`), follow [`PLACEHOLDER_WORKFLOW.md`](PLACEHOLDER_WORKFLOW.md).
+
 ## 1. Ground Rules
 
 1. A mechanic must be represented in engine primitives, not in card-specific glue.

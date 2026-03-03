@@ -502,6 +502,10 @@ pub(crate) fn compile_condition_from_predicate_ast(
             let player = resolve_non_target_player_filter(*player, ctx)?;
             Condition::PlayerHasLessLifeThanYou { player }
         }
+        PredicateAst::PlayerHasCitysBlessing { player } => {
+            let player = resolve_non_target_player_filter(*player, ctx)?;
+            Condition::PlayerHasCitysBlessing { player }
+        }
         PredicateAst::PlayerTappedLandForManaThisTurn { player } => {
             let player = resolve_non_target_player_filter(*player, ctx)?;
             Condition::PlayerTappedLandForManaThisTurn { player }
@@ -5048,6 +5052,10 @@ fn compile_effect_inner(
                     PredicateAst::PlayerHasLessLifeThanYou { player } => {
                         let player = resolve_non_target_player_filter(*player, ctx)?;
                         Condition::PlayerHasLessLifeThanYou { player }
+                    }
+                    PredicateAst::PlayerHasCitysBlessing { player } => {
+                        let player = resolve_non_target_player_filter(*player, ctx)?;
+                        Condition::PlayerHasCitysBlessing { player }
                     }
                     PredicateAst::PlayerTappedLandForManaThisTurn { player } => {
                         let player = resolve_non_target_player_filter(*player, ctx)?;

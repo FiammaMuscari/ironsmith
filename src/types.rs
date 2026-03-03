@@ -132,6 +132,7 @@ pub enum Subtype {
     Dalek,
     Dauthi,
     Detective,
+    Doctor,
     Demon,
     Devil,
     Dinosaur,
@@ -415,6 +416,7 @@ impl Subtype {
                 | Subtype::Crab
                 | Subtype::Crocodile
                 | Subtype::Detective
+                | Subtype::Doctor
                 | Subtype::Demon
                 | Subtype::Devil
                 | Subtype::Dinosaur

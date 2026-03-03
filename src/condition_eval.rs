@@ -60,6 +60,7 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::PermanentLeftBattlefieldUnderYourControlThisTurn => {}
         Condition::SourceWasCast => {}
         Condition::NoSpellsWereCastLastTurn => {}
+        Condition::SpellsWereCastLastTurnOrMore(..) => {}
         Condition::TargetIsTapped => {}
         Condition::TargetIsAttacking => {}
         Condition::TargetIsBlocked => {}
@@ -72,6 +73,7 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::TargetHasGreatestPowerAmongCreatures => {}
         Condition::TargetManaValueLteColorsSpentToCastThisSpell => {}
         Condition::SourceIsTapped => {}
+        Condition::SourceIsFaceDown => {}
         Condition::SourceHasNoCounter(..) => {}
         Condition::SourceHasCounterAtLeast { .. } => {}
         Condition::ManaSpentToCastThisSpellAtLeast { .. } => {}
@@ -121,6 +123,7 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::PlayerControlsBasicLandTypesAmongLandsOrMore { .. } => {}
         Condition::PlayerHasCardTypesInGraveyardOrMore { .. } => {}
         Condition::PlayerHasLessLifeThanYou { .. } => {}
+        Condition::PlayerHasCitysBlessing { .. } => {}
         Condition::PlayerGraveyardHasCardsAtLeast { .. } => {}
     }
 }
@@ -266,6 +269,9 @@ pub fn evaluate_condition_external(
             player_had_land_enter_battlefield_this_turn(game, player_id)
         }
         Condition::NoSpellsWereCastLastTurn => game.spells_cast_last_turn_total == 0,
+        Condition::SpellsWereCastLastTurnOrMore(count) => {
+            game.spells_cast_last_turn_total >= *count
+        }
         Condition::CardsInHandOrMore(threshold) => game
             .player(ctx.controller)
             .map(|p| p.hand.len() as i32 >= *threshold)
@@ -299,6 +305,13 @@ pub fn evaluate_condition_external(
             let you_life = game.player(ctx.controller).map(|p| p.life).unwrap_or(0);
             let other_life = game.player(player_id).map(|p| p.life).unwrap_or(0);
             other_life < you_life
+        }
+        Condition::PlayerHasCitysBlessing { player } => {
+            let Some(player_id) = resolve_condition_player_simple(game, ctx.controller, player)
+            else {
+                return false;
+            };
+            game.has_citys_blessing(player_id)
         }
 
         Condition::FirstTimeThisTurn => ctx
@@ -526,6 +539,7 @@ pub fn evaluate_condition_external(
 
         Condition::SourceAttackedThisTurn => game.creature_attacked_this_turn(ctx.source),
         Condition::SourceIsTapped => game.is_tapped(ctx.source),
+        Condition::SourceIsFaceDown => game.is_face_down(ctx.source),
         Condition::SourceIsUntapped => !game.is_tapped(ctx.source),
         Condition::SourceHasNoCounter(counter_type) => game
             .object(ctx.source)
@@ -1005,6 +1019,12 @@ fn evaluate_condition_simple(
             };
             other_life < you_life
         }
+        Condition::PlayerHasCitysBlessing { player } => {
+            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
+                return false;
+            };
+            game.has_citys_blessing(player_id)
+        }
         Condition::LifeTotalOrLess(threshold) => {
             let life = game.player(controller).map(|p| p.life).unwrap_or(0);
             life <= *threshold
@@ -1083,6 +1103,9 @@ fn evaluate_condition_simple(
             player_had_land_enter_battlefield_this_turn(game, player_id)
         }
         Condition::NoSpellsWereCastLastTurn => game.spells_cast_last_turn_total == 0,
+        Condition::SpellsWereCastLastTurnOrMore(count) => {
+            game.spells_cast_last_turn_total >= *count
+        }
         Condition::YouControlCommander => {
             // Check if the player controls a commander on the battlefield
             if let Some(player) = game.player(controller) {
@@ -1201,7 +1224,8 @@ fn evaluate_condition_simple(
         | Condition::YouControlMoreCreaturesThanTargetSpellController
         | Condition::TargetHasGreatestPowerAmongCreatures
         | Condition::TargetManaValueLteColorsSpentToCastThisSpell
-        | Condition::SourceIsTapped => false,
+        | Condition::SourceIsTapped
+        | Condition::SourceIsFaceDown => false,
     }
 }
 
@@ -1414,6 +1438,10 @@ fn evaluate_condition(
             let other_life = game.player(player_id).map(|p| p.life).unwrap_or(0);
             Ok(other_life < you_life)
         }
+        Condition::PlayerHasCitysBlessing { player } => {
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            Ok(game.has_citys_blessing(player_id))
+        }
         Condition::LifeTotalOrLess(threshold) => {
             let life = game.player(ctx.controller).map(|p| p.life).unwrap_or(0);
             Ok(life <= *threshold)
@@ -1506,6 +1534,9 @@ fn evaluate_condition(
             Ok(player_had_land_enter_battlefield_this_turn(game, player_id))
         }
         Condition::NoSpellsWereCastLastTurn => Ok(game.spells_cast_last_turn_total == 0),
+        Condition::SpellsWereCastLastTurnOrMore(count) => {
+            Ok(game.spells_cast_last_turn_total >= *count)
+        }
         Condition::TargetIsTapped => {
             // Check if the target is tapped
             if let Some(crate::executor::ResolvedTarget::Object(id)) = ctx.targets.first() {
@@ -1657,6 +1688,7 @@ fn evaluate_condition(
             Ok(target_mana_value <= colors_spent)
         }
         Condition::SourceIsTapped => Ok(game.is_tapped(ctx.source)),
+        Condition::SourceIsFaceDown => Ok(game.is_face_down(ctx.source)),
         Condition::SourceHasNoCounter(counter_type) => Ok(game
             .object(ctx.source)
             .map(|obj| obj.counters.get(counter_type).copied().unwrap_or(0) == 0)

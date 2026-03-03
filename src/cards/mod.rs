@@ -533,6 +533,8 @@ pub fn generated_definition_has_unimplemented_content(definition: &CardDefinitio
                     static_ability.id(),
                     StaticAbilityId::KeywordMarker
                         | StaticAbilityId::RuleTextPlaceholder
+                        | StaticAbilityId::KeywordFallbackText
+                        | StaticAbilityId::RuleFallbackText
                         | StaticAbilityId::UnsupportedParserLine
                 )
         )

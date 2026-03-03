@@ -1298,6 +1298,194 @@ fn spell_has_active_flash(
     )
 }
 
+fn player_was_attacked_this_step(game: &GameState, player: PlayerId) -> bool {
+    use crate::combat_state::AttackTarget;
+    use crate::game_state::{Phase, Step};
+
+    if !matches!(game.turn.phase, Phase::Combat)
+        || game.turn.step != Some(Step::DeclareAttackers)
+    {
+        return false;
+    }
+
+    let Some(combat) = game.combat.as_ref() else {
+        return false;
+    };
+
+    combat.attackers.iter().any(|attacker| match attacker.target {
+        AttackTarget::Player(defender) => defender == player,
+        AttackTarget::Planeswalker(planeswalker_id) => game
+            .object(planeswalker_id)
+            .is_some_and(|planeswalker| planeswalker.controller == player),
+    })
+}
+
+fn this_spell_cast_restriction_allows(
+    game: &GameState,
+    player: PlayerId,
+    kind: crate::static_abilities::ThisSpellCastRestrictionKind,
+) -> bool {
+    use crate::game_state::{Phase, Step};
+    match kind {
+        crate::static_abilities::ThisSpellCastRestrictionKind::DuringDeclareAttackersStep => {
+            matches!(game.turn.phase, Phase::Combat)
+                && game.turn.step == Some(Step::DeclareAttackers)
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::DuringDeclareAttackersStepIfYouWereAttackedThisStep => {
+            player_was_attacked_this_step(game, player)
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombat => {
+            matches!(game.turn.phase, Phase::Combat)
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatBeforeBlockersAreDeclared => {
+            matches!(game.turn.phase, Phase::Combat)
+                && matches!(
+                    game.turn.step,
+                    Some(Step::BeginCombat | Step::DeclareAttackers)
+                )
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatAfterBlockersAreDeclared => {
+            matches!(game.turn.phase, Phase::Combat)
+                && matches!(
+                    game.turn.step,
+                    Some(Step::DeclareBlockers | Step::CombatDamage | Step::EndCombat)
+                )
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatOnYourTurnBeforeBlockersAreDeclared => {
+            game.turn.active_player == player
+                && matches!(game.turn.phase, Phase::Combat)
+                && matches!(
+                    game.turn.step,
+                    Some(Step::BeginCombat | Step::DeclareAttackers)
+                )
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatOnOpponentsTurn => {
+            game.turn.active_player != player && matches!(game.turn.phase, Phase::Combat)
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::BeforeAttackersAreDeclared => {
+            matches!(game.turn.phase, Phase::Combat) && game.turn.step == Some(Step::BeginCombat)
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::BeforeCombatDamageStep => {
+            matches!(game.turn.phase, Phase::Combat)
+                && matches!(
+                    game.turn.step,
+                    Some(Step::BeginCombat | Step::DeclareAttackers | Step::DeclareBlockers)
+                )
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::DuringOpponentsUpkeep => {
+            game.turn.active_player != player
+                && matches!(game.turn.phase, Phase::Beginning)
+                && game.turn.step == Some(Step::Upkeep)
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::DuringOpponentsTurnAfterUpkeep => {
+            if game.turn.active_player == player {
+                return false;
+            }
+            !matches!(
+                (game.turn.phase, game.turn.step),
+                (Phase::Beginning, Some(Step::Untap | Step::Upkeep))
+            )
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::DuringYourEndStep => {
+            game.turn.active_player == player
+                && matches!(game.turn.phase, Phase::Ending)
+                && game.turn.step == Some(Step::End)
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::IfYouCastAnotherSpellThisTurn => {
+            game.spells_cast_this_turn
+                .get(&player)
+                .copied()
+                .unwrap_or(0)
+                >= 1
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::IfYouCastAnotherGreenSpellThisTurn => {
+            game.spells_cast_this_turn_snapshots.iter().any(|snapshot| {
+                snapshot.controller == player
+                    && snapshot.colors.contains(crate::color::Color::Green)
+            })
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::IfOpponentCastCreatureSpellThisTurn => {
+            game.spells_cast_this_turn_snapshots.iter().any(|snapshot| {
+                snapshot.controller != player
+                    && snapshot.card_types.contains(&crate::types::CardType::Creature)
+            })
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::IfCreatureIsAttackingYou => {
+            player_was_attacked_this_step(game, player)
+                || game.combat.as_ref().is_some_and(|combat| {
+                    combat.attackers.iter().any(|attacker| match attacker.target {
+                        crate::combat_state::AttackTarget::Player(defender) => defender == player,
+                        crate::combat_state::AttackTarget::Planeswalker(planeswalker_id) => game
+                            .object(planeswalker_id)
+                            .is_some_and(|planeswalker| planeswalker.controller == player),
+                    })
+                })
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::AfterCombat => {
+            matches!(game.turn.phase, Phase::NextMain | Phase::Ending)
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::IfNoPermanentsNamedOnBattlefield(name) => {
+            !game.battlefield.iter().any(|&id| {
+                game.object(id)
+                    .is_some_and(|object| object.name.eq_ignore_ascii_case(name))
+            })
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlSnowLand => game
+            .battlefield
+            .iter()
+            .filter_map(|&id| game.object(id))
+            .any(|object| {
+                object.controller == player
+                    && object.is_land()
+                    && object.has_supertype(crate::types::Supertype::Snow)
+            }),
+        crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlFewerCreaturesThanEachOpponent => {
+            let your_creatures = game.creatures_controlled_by(player).len();
+            game.players
+                .iter()
+                .filter(|opponent| opponent.is_in_game() && opponent.id != player)
+                .all(|opponent| your_creatures < game.creatures_controlled_by(opponent.id).len())
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlSubtypeOrMore { subtype, count } => {
+            game.permanents_controlled_by(player)
+                .iter()
+                .filter(|id| game.object(**id).is_some_and(|object| object.has_subtype(subtype)))
+                .count()
+                >= count as usize
+        }
+        crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlNameWordOrMore { word, count } => {
+            game.permanents_controlled_by(player)
+                .iter()
+                .filter(|id| {
+                    game.object(**id).is_some_and(|object| {
+                        object
+                            .name
+                            .to_ascii_lowercase()
+                            .contains(&word.to_ascii_lowercase())
+                    })
+                })
+                .count()
+                >= count as usize
+        }
+    }
+}
+
+fn spell_cast_restrictions_allow(
+    game: &GameState,
+    player: PlayerId,
+    spell: &crate::object::Object,
+) -> bool {
+    spell.abilities.iter().all(|ability| {
+        let crate::ability::AbilityKind::Static(static_ability) = &ability.kind else {
+            return true;
+        };
+        let Some(kind) = static_ability.this_spell_cast_restriction_kind() else {
+            return true;
+        };
+        this_spell_cast_restriction_allows(game, player, kind)
+    })
+}
+
 fn has_valid_spell_timing(
     game: &GameState,
     player: PlayerId,
@@ -1350,6 +1538,10 @@ pub fn can_cast_spell(
     }
 
     if !has_valid_spell_timing(game, player, spell, spell.id) {
+        return false;
+    }
+
+    if !spell_cast_restrictions_allow(game, player, spell) {
         return false;
     }
 
@@ -1447,6 +1639,10 @@ fn can_cast_with_cost(
     }
 
     if !has_valid_spell_timing(game, player, spell, spell_id) {
+        return false;
+    }
+
+    if !spell_cast_restrictions_allow(game, player, spell) {
         return false;
     }
 

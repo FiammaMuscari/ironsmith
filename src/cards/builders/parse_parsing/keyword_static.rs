@@ -192,6 +192,7 @@ pub(crate) fn keyword_action_to_static_ability(action: KeywordAction) -> Option<
             cost.to_oracle()
         ))),
         KeywordAction::Echo { .. } => None,
+        KeywordAction::CumulativeUpkeep { .. } => None,
         KeywordAction::Extort => Some(StaticAbility::keyword_marker("extort".to_string())),
         KeywordAction::Partner => Some(StaticAbility::partner()),
         KeywordAction::Assist => Some(StaticAbility::assist()),
@@ -252,6 +253,8 @@ pub(crate) fn keyword_action_to_static_ability(action: KeywordAction) -> Option<
         KeywordAction::Devour(_) => None,
         KeywordAction::Ravenous => None,
         KeywordAction::Ascend => None,
+        KeywordAction::Daybound => None,
+        KeywordAction::Nightbound => None,
         KeywordAction::Haunt => None,
         KeywordAction::Provoke => None,
         KeywordAction::Undaunted => None,
@@ -263,6 +266,9 @@ pub(crate) fn parse_static_ability_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
     if let Some(ability) = parse_ward_static_ability_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
+    if let Some(ability) = parse_skulk_rules_text_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
     if let Some(ability) = parse_filter_dont_untap_during_controllers_untap_steps_line(tokens)? {
@@ -504,6 +510,10 @@ pub(crate) fn parse_static_ability_line(
     if let Some(ability) = parse_conditional_all_creatures_able_to_block_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) = parse_as_long_as_condition_can_attack_as_though_no_defender_line(tokens)?
+    {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_source_can_attack_as_though_no_defender_as_long_as_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -709,6 +719,46 @@ pub(crate) fn parse_can_block_additional_creature_each_combat_line(
         ));
     }
     Ok(None)
+}
+
+pub(crate) fn parse_skulk_rules_text_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let clause_words = words(tokens);
+    let is_skulk_rules_text = clause_words.as_slice()
+        == [
+            "creatures",
+            "with",
+            "power",
+            "less",
+            "than",
+            "this",
+            "creatures",
+            "power",
+            "cant",
+            "block",
+            "it",
+        ]
+        || clause_words.as_slice()
+            == [
+                "creatures",
+                "with",
+                "power",
+                "less",
+                "than",
+                "this",
+                "creatures",
+                "power",
+                "cant",
+                "block",
+                "this",
+                "creature",
+            ];
+    if !is_skulk_rules_text {
+        return Ok(None);
+    }
+
+    Ok(Some(StaticAbility::skulk()))
 }
 
 pub(crate) fn parse_ward_static_ability_line(
@@ -4974,10 +5024,8 @@ pub(crate) fn parse_static_condition_clause(
         || clause_words.as_slice() == ["you", "have", "the", "citys", "blessing"]
         || clause_words.as_slice() == ["you", "have", "the", "city", "blessing"]
     {
-        return Ok(crate::ConditionExpr::CountComparison {
-            count: AnthemCountExpression::MatchingFilter(ObjectFilter::permanent().you_control()),
-            comparison: crate::effect::Comparison::GreaterThanOrEqual(10),
-            display: Some(clause_words.join(" ")),
+        return Ok(crate::ConditionExpr::PlayerHasCitysBlessing {
+            player: PlayerFilter::You,
         });
     }
 
@@ -6355,6 +6403,57 @@ pub(crate) fn parse_source_can_attack_as_though_no_defender_as_long_as_line(
                 .with_condition(condition)
         }
     };
+    Ok(Some(StaticAbility::new(granted)))
+}
+
+pub(crate) fn parse_as_long_as_condition_can_attack_as_though_no_defender_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let normalized = words(tokens)
+        .into_iter()
+        .map(|word| if word == "didn't" { "didnt" } else { word })
+        .collect::<Vec<_>>();
+    if !normalized.starts_with(&["as", "long", "as"]) {
+        return Ok(None);
+    }
+
+    let Some(can_idx) = normalized.windows(8).position(|window| {
+        window == ["can", "attack", "as", "though", "it", "didnt", "have", "defender"]
+    }) else {
+        return Ok(None);
+    };
+    let Some(comma_idx) = tokens.iter().position(|token| matches!(token, Token::Comma(_))) else {
+        return Ok(None);
+    };
+    let Some(can_token_idx) = token_index_for_word_index(tokens, can_idx) else {
+        return Ok(None);
+    };
+    if comma_idx >= can_token_idx {
+        return Ok(None);
+    }
+
+    let condition_tokens = trim_commas(&tokens[3..comma_idx]);
+    if condition_tokens.is_empty() {
+        return Ok(None);
+    }
+    let subject_tokens = trim_commas(&tokens[comma_idx + 1..can_token_idx]);
+    if subject_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let condition = parse_static_condition_clause(&condition_tokens)?;
+    let subject = parse_anthem_subject(&subject_tokens)?;
+    let granted = match subject {
+        AnthemSubjectAst::Source => {
+            GrantAbility::source(StaticAbility::can_attack_as_though_no_defender())
+                .with_condition(condition)
+        }
+        AnthemSubjectAst::Filter(filter) => {
+            GrantAbility::new(filter, StaticAbility::can_attack_as_though_no_defender())
+                .with_condition(condition)
+        }
+    };
+
     Ok(Some(StaticAbility::new(granted)))
 }
 
@@ -8238,6 +8337,53 @@ pub(crate) fn annihilator_granted_ability(amount: u32) -> Ability {
     }
 }
 
+fn scale_value_by_factor(base: Value, factor: u32) -> Option<Value> {
+    if factor == 0 {
+        return None;
+    }
+
+    let mut value = base.clone();
+    for _ in 1..factor {
+        value = Value::Add(Box::new(value), Box::new(base.clone()));
+    }
+    Some(value)
+}
+
+pub(crate) fn cumulative_upkeep_granted_ability(
+    mana_symbols_per_counter: Vec<ManaSymbol>,
+    life_per_counter: u32,
+    text: String,
+) -> Ability {
+    let age_count = Value::CountersOnSource(CounterType::Age);
+    let life = scale_value_by_factor(age_count.clone(), life_per_counter);
+    let mana_multiplier = if mana_symbols_per_counter.is_empty() {
+        None
+    } else {
+        Some(age_count)
+    };
+
+    Ability {
+        kind: AbilityKind::Triggered(TriggeredAbility {
+            trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
+            effects: vec![
+                Effect::put_counters_on_source(CounterType::Age, 1),
+                Effect::unless_pays_with_life_additional_and_multiplier(
+                    vec![Effect::sacrifice_source()],
+                    PlayerFilter::You,
+                    mana_symbols_per_counter,
+                    life,
+                    None,
+                    mana_multiplier,
+                ),
+            ],
+            choices: vec![],
+            intervening_if: None,
+        }),
+        functional_zones: vec![Zone::Battlefield],
+        text: Some(text),
+    }
+}
+
 pub(crate) fn parse_equipped_creature_has_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
@@ -8263,6 +8409,22 @@ pub(crate) fn parse_equipped_creature_has_line(
             extra_grants.push(StaticAbility::attached_ability_grant(
                 annihilator_granted_ability(amount),
                 format!("equipped creature has annihilator {amount}"),
+            ));
+            continue;
+        }
+        if let KeywordAction::CumulativeUpkeep {
+            mana_symbols_per_counter,
+            life_per_counter,
+            text,
+        } = action
+        {
+            extra_grants.push(StaticAbility::attached_ability_grant(
+                cumulative_upkeep_granted_ability(
+                    mana_symbols_per_counter,
+                    life_per_counter,
+                    text.clone(),
+                ),
+                format!("equipped creature has {}", text.to_ascii_lowercase()),
             ));
             continue;
         }
@@ -8341,6 +8503,27 @@ pub(crate) fn parse_enchanted_creature_has_line(
             let mut grant = crate::static_abilities::AttachedAbilityGrant::new(
                 annihilator_granted_ability(amount),
                 format!("{subject} has annihilator {amount}"),
+            );
+            if let Some(condition) = &condition {
+                grant = grant.with_condition(condition.clone());
+            }
+            out.push(StaticAbility::new(grant));
+            continue;
+        }
+        if let KeywordAction::CumulativeUpkeep {
+            mana_symbols_per_counter,
+            life_per_counter,
+            text,
+        } = action
+        {
+            let ability_text = format!("{subject} has {}", text.to_ascii_lowercase());
+            let mut grant = crate::static_abilities::AttachedAbilityGrant::new(
+                cumulative_upkeep_granted_ability(
+                    mana_symbols_per_counter,
+                    life_per_counter,
+                    text,
+                ),
+                ability_text,
             );
             if let Some(condition) = &condition {
                 grant = grant.with_condition(condition.clone());
@@ -10301,16 +10484,17 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                     .is_some_and(|next| next.is_word("the")))
     });
     let mut granted_static: Vec<StaticAbility> = Vec::new();
-    let mut granted_ability: Option<Ability> = if has_colon {
+    let mut granted_object_abilities: Vec<Ability> = Vec::new();
+    if has_colon {
         let Some(parsed) = parse_activated_line(ability_tokens)? else {
             return Err(CardTextError::ParseError(format!(
                 "unsupported granted activated/triggered ability clause (clause: '{}')",
                 clause_words.join(" ")
             )));
         };
-        Some(parsed.ability)
+        granted_object_abilities.push(parsed.ability);
     } else if let Some(parsed) = parse_cycling_line(ability_tokens)? {
-        Some(parsed.ability)
+        granted_object_abilities.push(parsed.ability);
     } else if looks_like_trigger {
         match parse_triggered_line(ability_tokens)? {
             LineAst::Triggered {
@@ -10320,7 +10504,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
             } => {
                 let (compiled_effects, choices) =
                     compile_trigger_effects(Some(&trigger), &effects)?;
-                Some(Ability {
+                granted_object_abilities.push(Ability {
                     kind: AbilityKind::Triggered(TriggeredAbility {
                         trigger: compile_trigger_spec(trigger),
                         effects: compiled_effects,
@@ -10330,7 +10514,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                     }),
                     functional_zones: vec![Zone::Battlefield],
                     text: None,
-                })
+                });
             }
             _ => {
                 return Err(CardTextError::ParseError(format!(
@@ -10339,18 +10523,31 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                 )));
             }
         }
+    } else if let Some(actions) = parse_ability_line(ability_tokens) {
+        let [KeywordAction::CumulativeUpkeep {
+            mana_symbols_per_counter,
+            life_per_counter,
+            text,
+        }] = actions.as_slice()
+        else {
+            return Ok(None);
+        };
+        granted_object_abilities.push(cumulative_upkeep_granted_ability(
+            mana_symbols_per_counter.clone(),
+            *life_per_counter,
+            text.clone(),
+        ));
     } else if let Some(abilities) = parse_static_ability_line(ability_tokens)? {
         granted_static = abilities;
-        None
     } else {
         return Ok(None);
-    };
+    }
     let subject = match parse_anthem_subject(&subject_tokens) {
         Ok(subject) => subject,
         Err(_) => return Ok(None),
     };
+    let mut granted = Vec::new();
     if !granted_static.is_empty() {
-        let mut granted = Vec::new();
         for ability in granted_static {
             let granted_ability = match &subject {
                 AnthemSubjectAst::Source => GrantAbility::source(ability),
@@ -10363,38 +10560,40 @@ pub(crate) fn parse_filter_has_granted_ability_line(
             };
             granted.push(StaticAbility::new(granted_ability));
         }
-        return Ok(Some(granted));
-    }
-    let mut ability = granted_ability
-        .take()
-        .ok_or_else(|| CardTextError::ParseError("missing granted ability".to_string()))?;
-    if ability.text.is_none() {
-        ability.text = Some(words(ability_tokens).join(" "));
     }
 
     let attached_subject = subject_words
         .first()
         .is_some_and(|word| *word == "enchanted" || *word == "equipped");
-    if attached_subject {
-        let mut granted =
-            crate::static_abilities::AttachedAbilityGrant::new(ability, clause_words.join(" "));
-        if let Some(condition) = &condition {
-            granted = granted.with_condition(condition.clone());
-        }
-        return Ok(Some(vec![StaticAbility::new(granted)]));
-    }
-
     let filter = match &subject {
         AnthemSubjectAst::Filter(filter) => filter.clone(),
         AnthemSubjectAst::Source => ObjectFilter::source(),
     };
-    let mut granted = crate::static_abilities::GrantObjectAbilityForFilter::new(
-        filter,
-        ability,
-        clause_words.join(" "),
-    );
-    if let Some(condition) = &condition {
-        granted = granted.with_condition(condition.clone());
+    for mut ability in granted_object_abilities {
+        if ability.text.is_none() {
+            ability.text = Some(words(ability_tokens).join(" "));
+        }
+        if attached_subject {
+            let mut attached =
+                crate::static_abilities::AttachedAbilityGrant::new(ability, clause_words.join(" "));
+            if let Some(condition) = &condition {
+                attached = attached.with_condition(condition.clone());
+            }
+            granted.push(StaticAbility::new(attached));
+            continue;
+        }
+        let mut grant = crate::static_abilities::GrantObjectAbilityForFilter::new(
+            filter.clone(),
+            ability,
+            clause_words.join(" "),
+        );
+        if let Some(condition) = &condition {
+            grant = grant.with_condition(condition.clone());
+        }
+        granted.push(StaticAbility::new(grant));
     }
-    Ok(Some(vec![StaticAbility::new(granted)]))
+    if granted.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(granted))
 }

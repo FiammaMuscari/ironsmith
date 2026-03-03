@@ -976,7 +976,7 @@ pub(crate) fn parse_cycling_keyword_group_text(tokens: &[Token]) -> Option<Strin
         if keyword.is_empty() {
             continue;
         }
-        let cost_words = words(&cost_tokens);
+        let cost_words = super::words(&cost_tokens);
         let cost = if cost_words.len() >= 3 && cost_words[0] == "pay" && cost_words[2] == "life" {
             format!("pay {} life", cost_words[1])
         } else {
@@ -2583,6 +2583,319 @@ pub(crate) fn parse_enters_tapped_line(
         }
         return Ok(Some(StaticAbility::enters_tapped_ability()));
     }
+    Ok(None)
+}
+
+pub(crate) fn parse_cast_this_spell_only_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let line_words = words(tokens);
+    if !line_words.starts_with(&["cast", "this", "spell", "only"]) {
+        return Ok(None);
+    }
+
+    let tail = &line_words[4..];
+    let declare_attackers_tails: &[&[&str]] = &[
+        &["during", "the", "declare", "attackers", "step"],
+        &["during", "declare", "attackers", "step"],
+    ];
+    let declare_attackers_if_attacked_tails: &[&[&str]] = &[
+        &[
+            "during",
+            "the",
+            "declare",
+            "attackers",
+            "step",
+            "and",
+            "only",
+            "if",
+            "youve",
+            "been",
+            "attacked",
+            "this",
+            "step",
+        ],
+        &[
+            "during",
+            "declare",
+            "attackers",
+            "step",
+            "and",
+            "only",
+            "if",
+            "youve",
+            "been",
+            "attacked",
+            "this",
+            "step",
+        ],
+    ];
+
+    if declare_attackers_tails.contains(&tail) {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::DuringDeclareAttackersStep,
+            "Cast this spell only during the declare attackers step.",
+        )));
+    }
+
+    if declare_attackers_if_attacked_tails.contains(&tail) {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::DuringDeclareAttackersStepIfYouWereAttackedThisStep,
+            "Cast this spell only during the declare attackers step and only if you've been attacked this step.",
+        )));
+    }
+
+    if tail == ["during", "combat"] {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombat,
+            "Cast this spell only during combat.",
+        )));
+    }
+
+    if tail == ["during", "combat", "before", "blockers", "are", "declared"] {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatBeforeBlockersAreDeclared,
+            "Cast this spell only during combat before blockers are declared.",
+        )));
+    }
+
+    if tail == ["during", "combat", "after", "blockers", "are", "declared"] {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatAfterBlockersAreDeclared,
+            "Cast this spell only during combat after blockers are declared.",
+        )));
+    }
+
+    if tail
+        == [
+            "during",
+            "combat",
+            "on",
+            "your",
+            "turn",
+            "before",
+            "blockers",
+            "are",
+            "declared",
+        ]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatOnYourTurnBeforeBlockersAreDeclared,
+            "Cast this spell only during combat on your turn before blockers are declared.",
+        )));
+    }
+
+    if tail
+        == [
+            "during",
+            "combat",
+            "on",
+            "an",
+            "opponents",
+            "turn",
+        ]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatOnOpponentsTurn,
+            "Cast this spell only during combat on an opponent's turn.",
+        )));
+    }
+
+    if tail == ["before", "attackers", "are", "declared"] {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::BeforeAttackersAreDeclared,
+            "Cast this spell only before attackers are declared.",
+        )));
+    }
+
+    if tail == ["before", "the", "combat", "damage", "step"]
+        || tail == ["before", "combat", "damage", "step"]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::BeforeCombatDamageStep,
+            "Cast this spell only before the combat damage step.",
+        )));
+    }
+
+    if tail == ["during", "an", "opponents", "upkeep"]
+        || tail == ["during", "opponents", "upkeep"]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::DuringOpponentsUpkeep,
+            "Cast this spell only during an opponent's upkeep.",
+        )));
+    }
+
+    if tail
+        == [
+            "during",
+            "an",
+            "opponents",
+            "turn",
+            "after",
+            "their",
+            "upkeep",
+            "step",
+        ]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::DuringOpponentsTurnAfterUpkeep,
+            "Cast this spell only during an opponent's turn after their upkeep step.",
+        )));
+    }
+
+    if tail == ["during", "your", "end", "step"] {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::DuringYourEndStep,
+            "Cast this spell only during your end step.",
+        )));
+    }
+
+    if tail == ["if", "youve", "cast", "another", "spell", "this", "turn"] {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouCastAnotherSpellThisTurn,
+            "Cast this spell only if you've cast another spell this turn.",
+        )));
+    }
+
+    if tail
+        == [
+            "if",
+            "youve",
+            "cast",
+            "another",
+            "green",
+            "spell",
+            "this",
+            "turn",
+        ]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouCastAnotherGreenSpellThisTurn,
+            "Cast this spell only if you've cast another green spell this turn.",
+        )));
+    }
+
+    if tail
+        == [
+            "if",
+            "an",
+            "opponent",
+            "cast",
+            "a",
+            "creature",
+            "spell",
+            "this",
+            "turn",
+        ]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::IfOpponentCastCreatureSpellThisTurn,
+            "Cast this spell only if an opponent cast a creature spell this turn.",
+        )));
+    }
+
+    if tail == ["if", "a", "creature", "is", "attacking", "you"] {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::IfCreatureIsAttackingYou,
+            "Cast this spell only if a creature is attacking you.",
+        )));
+    }
+
+    if tail == ["after", "combat"] {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::AfterCombat,
+            "Cast this spell only after combat.",
+        )));
+    }
+
+    if tail
+        == [
+            "if",
+            "no",
+            "permanents",
+            "named",
+            "tidal",
+            "influence",
+            "are",
+            "on",
+            "the",
+            "battlefield",
+        ]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::IfNoPermanentsNamedOnBattlefield(
+                "Tidal Influence",
+            ),
+            "Cast this spell only if no permanents named Tidal Influence are on the battlefield.",
+        )));
+    }
+
+    if tail == ["if", "you", "control", "a", "snow", "land"] {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlSnowLand,
+            "Cast this spell only if you control a snow land.",
+        )));
+    }
+
+    if tail
+        == [
+            "if",
+            "you",
+            "control",
+            "fewer",
+            "creatures",
+            "than",
+            "each",
+            "opponent",
+        ]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlFewerCreaturesThanEachOpponent,
+            "Cast this spell only if you control fewer creatures than each opponent.",
+        )));
+    }
+
+    if tail
+        == [
+            "if",
+            "you",
+            "control",
+            "two",
+            "or",
+            "more",
+            "doctors",
+        ]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlSubtypeOrMore {
+                subtype: Subtype::Doctor,
+                count: 2,
+            },
+            "Cast this spell only if you control two or more Doctors.",
+        )));
+    }
+
+    if tail
+        == [
+            "if",
+            "you",
+            "control",
+            "two",
+            "or",
+            "more",
+            "vampires",
+        ]
+    {
+        return Ok(Some(StaticAbility::this_spell_cast_restriction(
+            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlSubtypeOrMore {
+                subtype: Subtype::Vampire,
+                count: 2,
+            },
+            "Cast this spell only if you control two or more Vampires.",
+        )));
+    }
+
     Ok(None)
 }
 
@@ -4952,8 +5265,8 @@ pub(crate) fn parse_single_word_keyword_action(word: &str) -> Option<KeywordActi
         "storm" => Some(KeywordAction::Storm),
         "rebound" => Some(KeywordAction::Rebound),
         "ascend" => Some(KeywordAction::Ascend),
-        "daybound" => Some(KeywordAction::Marker("daybound")),
-        "nightbound" => Some(KeywordAction::Marker("nightbound")),
+        "daybound" => Some(KeywordAction::Daybound),
+        "nightbound" => Some(KeywordAction::Nightbound),
         "islandwalk" => Some(KeywordAction::Landwalk(Subtype::Island)),
         "swampwalk" => Some(KeywordAction::Landwalk(Subtype::Swamp)),
         "mountainwalk" => Some(KeywordAction::Landwalk(Subtype::Mountain)),
@@ -4980,6 +5293,47 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
     }
 
     if words.starts_with(&["cumulative", "upkeep"]) {
+        let reminder_start = tokens
+            .iter()
+            .position(|token| matches!(token, Token::Period(_)))
+            .unwrap_or(tokens.len());
+        let cost_tokens = trim_commas(&tokens[2..reminder_start]).to_vec();
+        let cost_words = super::words(&cost_tokens);
+
+        if cost_words.len() == 3
+            && cost_words[0] == "pay"
+            && cost_words[2] == "life"
+            && let Ok(life_per_counter) = cost_words[1].parse::<u32>()
+            && life_per_counter > 0
+        {
+            return Some(KeywordAction::CumulativeUpkeep {
+                mana_symbols_per_counter: Vec::new(),
+                life_per_counter,
+                text: format!("Cumulative upkeep—Pay {life_per_counter} life"),
+            });
+        }
+
+        if let Some((cost, consumed)) = leading_mana_symbols_to_oracle(&cost_words)
+            && consumed == cost_words.len()
+        {
+            let mut mana_symbols_per_counter = Vec::new();
+            let mut parsed_all = true;
+            for word in &cost_words {
+                let Ok(symbol) = parse_mana_symbol(word) else {
+                    parsed_all = false;
+                    break;
+                };
+                mana_symbols_per_counter.push(symbol);
+            }
+            if parsed_all && !mana_symbols_per_counter.is_empty() {
+                return Some(KeywordAction::CumulativeUpkeep {
+                    mana_symbols_per_counter,
+                    life_per_counter: 0,
+                    text: format!("Cumulative upkeep {cost}"),
+                });
+            }
+        }
+
         let mut text = "Cumulative upkeep".to_string();
         let tail = &words[2..];
         if !tail.is_empty() {

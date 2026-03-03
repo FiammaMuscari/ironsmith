@@ -1576,6 +1576,9 @@ pub enum Condition {
     /// A specific player has less life than you.
     PlayerHasLessLifeThanYou { player: PlayerFilter },
 
+    /// A specific player has the city's blessing designation.
+    PlayerHasCitysBlessing { player: PlayerFilter },
+
     /// Your life total is N or less
     LifeTotalOrLess(i32),
 
@@ -1629,6 +1632,8 @@ pub enum Condition {
 
     /// No spells were cast last turn
     NoSpellsWereCastLastTurn,
+    /// N or more spells were cast last turn
+    SpellsWereCastLastTurnOrMore(u32),
 
     /// A specific player's graveyard contains cards with at least N distinct card types.
     PlayerHasCardTypesInGraveyardOrMore { player: PlayerFilter, count: u32 },
@@ -1674,6 +1679,8 @@ pub enum Condition {
 
     /// Source object is tapped
     SourceIsTapped,
+    /// Source object is currently on its back face (face down in engine state)
+    SourceIsFaceDown,
 
     /// Source object has no counters of a specific type.
     SourceHasNoCounter(CounterType),
@@ -2898,13 +2905,34 @@ impl Effect {
         life: Option<Value>,
         additional_generic: Option<Value>,
     ) -> Self {
-        use crate::effects::UnlessPaysEffect;
-        Self::new(UnlessPaysEffect::new_with_life_and_additional(
+        Self::unless_pays_with_life_additional_and_multiplier(
             effects,
             player,
             mana,
             life,
             additional_generic,
+            None,
+        )
+    }
+
+    /// "X unless you/they pay [mana] and optional life/additional/multiplier" -
+    /// execute effects unless paid.
+    pub fn unless_pays_with_life_additional_and_multiplier(
+        effects: Vec<Effect>,
+        player: PlayerFilter,
+        mana: Vec<ManaSymbol>,
+        life: Option<Value>,
+        additional_generic: Option<Value>,
+        mana_multiplier: Option<Value>,
+    ) -> Self {
+        use crate::effects::UnlessPaysEffect;
+        Self::new(UnlessPaysEffect::new_with_life_and_additional_and_multiplier(
+            effects,
+            player,
+            mana,
+            life,
+            additional_generic,
+            mana_multiplier,
         ))
     }
 
