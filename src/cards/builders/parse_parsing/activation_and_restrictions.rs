@@ -2668,15 +2668,7 @@ pub(crate) fn parse_cast_this_spell_only_line(
 
     if tail
         == [
-            "during",
-            "combat",
-            "on",
-            "your",
-            "turn",
-            "before",
-            "blockers",
-            "are",
-            "declared",
+            "during", "combat", "on", "your", "turn", "before", "blockers", "are", "declared",
         ]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
@@ -2685,16 +2677,7 @@ pub(crate) fn parse_cast_this_spell_only_line(
         )));
     }
 
-    if tail
-        == [
-            "during",
-            "combat",
-            "on",
-            "an",
-            "opponents",
-            "turn",
-        ]
-    {
+    if tail == ["during", "combat", "on", "an", "opponents", "turn"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
             crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatOnOpponentsTurn,
             "Cast this spell only during combat on an opponent's turn.",
@@ -2717,8 +2700,7 @@ pub(crate) fn parse_cast_this_spell_only_line(
         )));
     }
 
-    if tail == ["during", "an", "opponents", "upkeep"]
-        || tail == ["during", "opponents", "upkeep"]
+    if tail == ["during", "an", "opponents", "upkeep"] || tail == ["during", "opponents", "upkeep"]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
             crate::static_abilities::ThisSpellCastRestrictionKind::DuringOpponentsUpkeep,
@@ -2760,14 +2742,7 @@ pub(crate) fn parse_cast_this_spell_only_line(
 
     if tail
         == [
-            "if",
-            "youve",
-            "cast",
-            "another",
-            "green",
-            "spell",
-            "this",
-            "turn",
+            "if", "youve", "cast", "another", "green", "spell", "this", "turn",
         ]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
@@ -2778,15 +2753,7 @@ pub(crate) fn parse_cast_this_spell_only_line(
 
     if tail
         == [
-            "if",
-            "an",
-            "opponent",
-            "cast",
-            "a",
-            "creature",
-            "spell",
-            "this",
-            "turn",
+            "if", "an", "opponent", "cast", "a", "creature", "spell", "this", "turn",
         ]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
@@ -2856,17 +2823,7 @@ pub(crate) fn parse_cast_this_spell_only_line(
         )));
     }
 
-    if tail
-        == [
-            "if",
-            "you",
-            "control",
-            "two",
-            "or",
-            "more",
-            "doctors",
-        ]
-    {
+    if tail == ["if", "you", "control", "two", "or", "more", "doctors"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
             crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlSubtypeOrMore {
                 subtype: Subtype::Doctor,
@@ -2876,17 +2833,7 @@ pub(crate) fn parse_cast_this_spell_only_line(
         )));
     }
 
-    if tail
-        == [
-            "if",
-            "you",
-            "control",
-            "two",
-            "or",
-            "more",
-            "vampires",
-        ]
-    {
+    if tail == ["if", "you", "control", "two", "or", "more", "vampires"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
             crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlSubtypeOrMore {
                 subtype: Subtype::Vampire,
@@ -3971,30 +3918,57 @@ pub(crate) fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility
         }
     }
 
+    if let Some(parsed) = parse_cant_restriction_clause(tokens)?
+        && parsed.target.is_none()
+        && matches!(
+            parsed.restriction,
+            crate::effect::Restriction::GainLife(_)
+                | crate::effect::Restriction::SearchLibraries(_)
+                | crate::effect::Restriction::CastSpells(_)
+                | crate::effect::Restriction::CastMoreThanOneSpellEachTurn(_, _)
+                | crate::effect::Restriction::DrawCards(_)
+                | crate::effect::Restriction::DrawExtraCards(_)
+                | crate::effect::Restriction::ChangeLifeTotal(_)
+                | crate::effect::Restriction::LoseGame(_)
+                | crate::effect::Restriction::WinGame(_)
+                | crate::effect::Restriction::PreventDamage
+        )
+    {
+        let ability = match normalized.as_slice() {
+            ["players", "cant", "gain", "life"] => StaticAbility::players_cant_gain_life(),
+            ["players", "cant", "search", "libraries"] => StaticAbility::players_cant_search(),
+            ["damage", "cant", "be", "prevented"] => StaticAbility::damage_cant_be_prevented(),
+            ["you", "cant", "lose", "the", "game"] => StaticAbility::you_cant_lose_game(),
+            ["your", "opponents", "cant", "win", "the", "game"] => {
+                StaticAbility::opponents_cant_win_game()
+            }
+            ["your", "life", "total", "cant", "change"] => {
+                StaticAbility::your_life_total_cant_change()
+            }
+            ["your", "opponents", "cant", "cast", "spells"] => {
+                StaticAbility::opponents_cant_cast_spells()
+            }
+            [
+                "your",
+                "opponents",
+                "cant",
+                "draw",
+                "more",
+                "than",
+                "one",
+                "card",
+                "each",
+                "turn",
+            ] => StaticAbility::opponents_cant_draw_extra_cards(),
+            _ => StaticAbility::restriction(
+                parsed.restriction,
+                format_negated_restriction_display(tokens),
+            ),
+        };
+        return Ok(Some(ability));
+    }
+
     let ability = match normalized.as_slice() {
-        ["players", "cant", "gain", "life"] => StaticAbility::players_cant_gain_life(),
-        ["players", "cant", "search", "libraries"] => StaticAbility::players_cant_search(),
-        ["damage", "cant", "be", "prevented"] => StaticAbility::damage_cant_be_prevented(),
-        ["you", "cant", "lose", "the", "game"] => StaticAbility::you_cant_lose_game(),
-        ["your", "opponents", "cant", "win", "the", "game"] => {
-            StaticAbility::opponents_cant_win_game()
-        }
-        ["your", "life", "total", "cant", "change"] => StaticAbility::your_life_total_cant_change(),
-        ["your", "opponents", "cant", "cast", "spells"] => {
-            StaticAbility::opponents_cant_cast_spells()
-        }
-        [
-            "your",
-            "opponents",
-            "cant",
-            "draw",
-            "more",
-            "than",
-            "one",
-            "card",
-            "each",
-            "turn",
-        ] => StaticAbility::opponents_cant_draw_extra_cards(),
         ["counters", "cant", "be", "put", "on", "this", "permanent"] => {
             StaticAbility::cant_have_counters_placed()
         }
@@ -4253,6 +4227,10 @@ pub(crate) fn format_negated_restriction_display(tokens: &[Token]) -> String {
             }
             ("do", Some("not")) => {
                 out.push("don't".to_string());
+                idx += 2;
+            }
+            ("non", Some("phyrexian")) => {
+                out.push("non-phyrexian".to_string());
                 idx += 2;
             }
             _ => {

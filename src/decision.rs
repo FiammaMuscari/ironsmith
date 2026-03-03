@@ -913,6 +913,24 @@ fn activation_only_restriction_holds(
         options: Default::default(),
     };
 
+    let tokens = crate::cards::builders::tokenize_line(&lower, 0);
+    if let Some(timing) = crate::cards::builders::parse_activate_only_timing(&tokens)
+        && !matches!(timing, crate::ability::ActivationTiming::OncePerTurn)
+        && !crate::condition_eval::evaluate_condition_external(
+            game,
+            &crate::effect::Condition::ActivationTiming(timing),
+            &eval_ctx,
+        )
+    {
+        return false;
+    }
+    if let Some(condition) = crate::cards::builders::parse_activation_condition(&tokens)
+        && !matches!(condition, crate::effect::Condition::MaxActivationsPerTurn(_))
+        && !crate::condition_eval::evaluate_condition_external(game, &condition, &eval_ctx)
+    {
+        return false;
+    }
+
     for condition in conditions.split(" and ") {
         let condition = condition.trim();
         if condition.is_empty() {

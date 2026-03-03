@@ -557,68 +557,102 @@ impl CantAttackUnlessCondition {
         }
     }
 
+    fn source_condition_without_defender(&self) -> Option<crate::ConditionExpr> {
+        use crate::effect::Condition;
+        use crate::filter::Comparison;
+        use crate::target::PlayerFilter;
+        use crate::types::Subtype;
+
+        match self.condition {
+            CantAttackUnlessConditionSpec::YouControlAnotherCreatureWithPowerAtLeast(threshold) => {
+                Some(Condition::YouControl(
+                    ObjectFilter::creature()
+                        .you_control()
+                        .other()
+                        .with_power(Comparison::GreaterThanOrEqual(threshold as i32)),
+                ))
+            }
+            CantAttackUnlessConditionSpec::YouControlAnotherArtifact => Some(
+                Condition::YouControl(ObjectFilter::artifact().you_control().other()),
+            ),
+            CantAttackUnlessConditionSpec::YouControlArtifact => Some(Condition::YouControl(
+                ObjectFilter::artifact().you_control(),
+            )),
+            CantAttackUnlessConditionSpec::YouControlKnightOrSoldier => Some(Condition::Or(
+                Box::new(Condition::YouControl(
+                    ObjectFilter::creature()
+                        .you_control()
+                        .with_subtype(Subtype::Knight),
+                )),
+                Box::new(Condition::YouControl(
+                    ObjectFilter::creature()
+                        .you_control()
+                        .with_subtype(Subtype::Soldier),
+                )),
+            )),
+            CantAttackUnlessConditionSpec::YouControlCreatureWithPowerAtLeast(threshold) => {
+                Some(Condition::YouControl(
+                    ObjectFilter::creature()
+                        .you_control()
+                        .with_power(Comparison::GreaterThanOrEqual(threshold as i32)),
+                ))
+            }
+            CantAttackUnlessConditionSpec::YouControlCreatureWithPowerAndToughness(
+                required_power,
+                required_toughness,
+            ) => Some(Condition::YouControl(
+                ObjectFilter::creature()
+                    .you_control()
+                    .with_power(Comparison::Equal(required_power as i32))
+                    .with_toughness(Comparison::Equal(required_toughness as i32)),
+            )),
+            CantAttackUnlessConditionSpec::YouControlArtifactsOrMore(required_count) => {
+                let mut filter = ObjectFilter::artifact();
+                filter.zone = Some(crate::zone::Zone::Battlefield);
+                Some(Condition::PlayerControlsAtLeast {
+                    player: PlayerFilter::You,
+                    filter,
+                    count: required_count,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn evaluate_source_condition_without_defender(
+        &self,
+        game: &GameState,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<bool> {
+        let condition = self.source_condition_without_defender()?;
+        let eval_ctx = crate::condition_eval::ExternalEvaluationContext {
+            controller,
+            source,
+            filter_source: Some(source),
+            triggering_event: None,
+            trigger_identity: None,
+            ability_index: None,
+            options: Default::default(),
+        };
+        Some(crate::condition_eval::evaluate_condition_external(
+            game, &condition, &eval_ctx,
+        ))
+    }
+
     fn source_can_attack_without_defender(
         &self,
         game: &GameState,
         source: ObjectId,
         controller: PlayerId,
     ) -> Option<bool> {
+        if let Some(result) =
+            self.evaluate_source_condition_without_defender(game, source, controller)
+        {
+            return Some(result);
+        }
+
         use crate::types::{CardType, Subtype};
-
-        let count_controlled = |card_type: CardType| -> u32 {
-            game.battlefield
-                .iter()
-                .filter_map(|&id| game.object(id))
-                .filter(|obj| {
-                    obj.controller == controller && game.object_has_card_type(obj.id, card_type)
-                })
-                .count() as u32
-        };
-
-        let controller_has_other_creature_with_power_at_least = |threshold: u32| -> bool {
-            game.battlefield.iter().any(|&id| {
-                game.object(id).is_some_and(|obj| {
-                    obj.id != source
-                        && obj.controller == controller
-                        && game.object_has_card_type(obj.id, CardType::Creature)
-                        && game
-                            .calculated_power(obj.id)
-                            .or_else(|| obj.power())
-                            .is_some_and(|power| power >= threshold as i32)
-                })
-            })
-        };
-
-        let controller_has_creature_with_power_at_least = |threshold: u32| -> bool {
-            game.battlefield.iter().any(|&id| {
-                game.object(id).is_some_and(|obj| {
-                    obj.controller == controller
-                        && game.object_has_card_type(obj.id, CardType::Creature)
-                        && game
-                            .calculated_power(obj.id)
-                            .or_else(|| obj.power())
-                            .is_some_and(|power| power >= threshold as i32)
-                })
-            })
-        };
-
-        let controller_has_creature_with_exact_power_toughness =
-            |required_power: u32, required_toughness: u32| -> bool {
-                game.battlefield.iter().any(|&id| {
-                    game.object(id).is_some_and(|obj| {
-                        obj.controller == controller
-                            && game.object_has_card_type(obj.id, CardType::Creature)
-                            && game
-                                .calculated_power(obj.id)
-                                .or_else(|| obj.power())
-                                .is_some_and(|power| power == required_power as i32)
-                            && game
-                                .calculated_toughness(obj.id)
-                                .or_else(|| obj.toughness())
-                                .is_some_and(|toughness| toughness == required_toughness as i32)
-                    })
-                })
-            };
 
         let count_lands_with_subtype = |subtype: Subtype| -> u32 {
             game.battlefield
@@ -632,49 +666,6 @@ impl CantAttackUnlessCondition {
         };
 
         match self.condition {
-            CantAttackUnlessConditionSpec::YouControlAnotherCreatureWithPowerAtLeast(threshold) => {
-                Some(controller_has_other_creature_with_power_at_least(threshold))
-            }
-            CantAttackUnlessConditionSpec::YouControlAnotherArtifact => Some(
-                game.battlefield.iter().any(|&id| {
-                    game.object(id).is_some_and(|obj| {
-                        obj.id != source
-                            && obj.controller == controller
-                            && game.object_has_card_type(obj.id, CardType::Artifact)
-                    })
-                }),
-            ),
-            CantAttackUnlessConditionSpec::YouControlArtifact => Some(
-                game.battlefield.iter().any(|&id| {
-                    game.object(id).is_some_and(|obj| {
-                        obj.controller == controller
-                            && game.object_has_card_type(obj.id, CardType::Artifact)
-                    })
-                }),
-            ),
-            CantAttackUnlessConditionSpec::YouControlKnightOrSoldier => Some(
-                game.battlefield.iter().any(|&id| {
-                    game.object(id).is_some_and(|obj| {
-                        obj.controller == controller
-                            && game.object_has_card_type(obj.id, CardType::Creature)
-                            && {
-                                let subtypes = game.calculated_subtypes(obj.id);
-                                subtypes.contains(&Subtype::Knight)
-                                    || subtypes.contains(&Subtype::Soldier)
-                            }
-                    })
-                }),
-            ),
-            CantAttackUnlessConditionSpec::YouControlCreatureWithPowerAtLeast(threshold) => {
-                Some(controller_has_creature_with_power_at_least(threshold))
-            }
-            CantAttackUnlessConditionSpec::YouControlCreatureWithPowerAndToughness(
-                required_power,
-                required_toughness,
-            ) => Some(controller_has_creature_with_exact_power_toughness(
-                required_power,
-                required_toughness,
-            )),
             CantAttackUnlessConditionSpec::ThereIsALandWithSubtypeOnBattlefield(subtype) => {
                 Some(count_lands_with_subtype(subtype) >= 1)
             }
@@ -698,11 +689,14 @@ impl CantAttackUnlessCondition {
                             > 0
                 }),
             ),
-            CantAttackUnlessConditionSpec::YouControlArtifactsOrMore(required_count) => {
-                Some(count_controlled(CardType::Artifact) >= required_count)
-            }
             CantAttackUnlessConditionSpec::YouControlMoreCreaturesThanDefendingPlayer
             | CantAttackUnlessConditionSpec::YouControlMoreLandsThanDefendingPlayer
+            | CantAttackUnlessConditionSpec::YouControlAnotherCreatureWithPowerAtLeast(_)
+            | CantAttackUnlessConditionSpec::YouControlAnotherArtifact
+            | CantAttackUnlessConditionSpec::YouControlArtifact
+            | CantAttackUnlessConditionSpec::YouControlKnightOrSoldier
+            | CantAttackUnlessConditionSpec::YouControlCreatureWithPowerAtLeast(_)
+            | CantAttackUnlessConditionSpec::YouControlCreatureWithPowerAndToughness(_, _)
             | CantAttackUnlessConditionSpec::DefendingPlayerIsPoisoned
             | CantAttackUnlessConditionSpec::DefendingPlayerHasCardsInGraveyardOrMore(_)
             | CantAttackUnlessConditionSpec::DefendingPlayerControlsEnchantmentOrEnchantedPermanent
@@ -712,6 +706,7 @@ impl CantAttackUnlessCondition {
             | CantAttackUnlessConditionSpec::AtLeastNOtherCreaturesAttack(_)
             | CantAttackUnlessConditionSpec::CreatureWithGreaterPowerAlsoAttacks
             | CantAttackUnlessConditionSpec::BlackOrGreenCreatureAlsoAttacks
+            | CantAttackUnlessConditionSpec::YouControlArtifactsOrMore(_)
             | CantAttackUnlessConditionSpec::SacrificeLands { .. }
             | CantAttackUnlessConditionSpec::ReturnEnchantmentYouControlToOwnersHand
             | CantAttackUnlessConditionSpec::PayOneForEachPlusOnePlusOneCounterOnIt

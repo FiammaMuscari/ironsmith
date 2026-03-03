@@ -6,7 +6,7 @@ mod tests {
     use crate::card::{CardBuilder, PowerToughness};
     use crate::combat_state::AttackTarget;
     use crate::decision::AutoPassDecisionMaker;
-    use crate::effect::{Effect, Value};
+    use crate::effect::{Effect, EventValueSpec, Until, Value};
     use crate::events::EventKind;
     use crate::game_state::Phase;
     use crate::ids::CardId;
@@ -717,8 +717,12 @@ mod tests {
             requirements
         );
         assert!(
-            requirements[0].legal_targets.contains(&Target::Object(creature_a))
-                && requirements[0].legal_targets.contains(&Target::Object(creature_b)),
+            requirements[0]
+                .legal_targets
+                .contains(&Target::Object(creature_a))
+                && requirements[0]
+                    .legal_targets
+                    .contains(&Target::Object(creature_b)),
             "expected both creatures to be legal targets, got {:?}",
             requirements
         );
@@ -826,19 +830,21 @@ mod tests {
     fn test_spell_has_legal_targets_with_choose_mode_requires_enough_legal_modes() {
         let game = setup_game();
         let alice = PlayerId::from_index(0);
-        let effects = vec![Effect::new(crate::effects::ChooseModeEffect::choose_exactly(
-            2,
-            vec![
-                crate::effect::EffectMode {
-                    description: "Counter target spell".to_string(),
-                    effects: vec![Effect::counter(ChooseSpec::spell())],
-                },
-                crate::effect::EffectMode {
-                    description: "Gain 3 life".to_string(),
-                    effects: vec![Effect::gain_life(3)],
-                },
-            ],
-        ))];
+        let effects = vec![Effect::new(
+            crate::effects::ChooseModeEffect::choose_exactly(
+                2,
+                vec![
+                    crate::effect::EffectMode {
+                        description: "Counter target spell".to_string(),
+                        effects: vec![Effect::counter(ChooseSpec::spell())],
+                    },
+                    crate::effect::EffectMode {
+                        description: "Gain 3 life".to_string(),
+                        effects: vec![Effect::gain_life(3)],
+                    },
+                ],
+            ),
+        )];
 
         let has_targets = spell_has_legal_targets(&game, &effects, alice, None);
         assert!(
@@ -984,6 +990,88 @@ mod tests {
         assert!(
             msg.contains("InvalidBlockers"),
             "expected invalid blockers error, got {msg}"
+        );
+    }
+
+    #[test]
+    fn test_marhault_elsdragon_rampage_buffs_for_blockers_beyond_first() {
+        let mut game = setup_game();
+        let mut trigger_queue = TriggerQueue::new();
+        let mut combat = CombatState::default();
+
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let marhault_card = CardBuilder::new(CardId::from_raw(2001), "Marhault Elsdragon")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(4, 6))
+            .build();
+        let marhault_id = game.create_object_from_card(&marhault_card, alice, Zone::Battlefield);
+        game.object_mut(marhault_id)
+            .expect("Marhault should exist")
+            .abilities
+            .push(
+                Ability::triggered(
+                    Trigger::this_becomes_blocked(),
+                    vec![Effect::pump(
+                        Value::EventValue(EventValueSpec::BlockersBeyondFirst { multiplier: 1 }),
+                        Value::EventValue(EventValueSpec::BlockersBeyondFirst { multiplier: 1 }),
+                        crate::target::ChooseSpec::Source,
+                        Until::EndOfTurn,
+                    )],
+                )
+                .with_text("Rampage 1"),
+            );
+
+        let blocker_1 = create_creature(&mut game, "Blocker 1", bob, 1, 1);
+        let blocker_2 = create_creature(&mut game, "Blocker 2", bob, 1, 1);
+        let blocker_3 = create_creature(&mut game, "Blocker 3", bob, 1, 1);
+
+        combat.attackers.push(crate::combat_state::AttackerInfo {
+            creature: marhault_id,
+            target: AttackTarget::Player(bob),
+        });
+
+        let declarations = vec![
+            BlockerDeclaration {
+                blocker: blocker_1,
+                blocking: marhault_id,
+            },
+            BlockerDeclaration {
+                blocker: blocker_2,
+                blocking: marhault_id,
+            },
+            BlockerDeclaration {
+                blocker: blocker_3,
+                blocking: marhault_id,
+            },
+        ];
+
+        apply_blocker_declarations(
+            &mut game,
+            &mut combat,
+            &mut trigger_queue,
+            &declarations,
+            bob,
+        )
+        .expect("should apply blocker declarations");
+        put_triggers_on_stack(&mut game, &mut trigger_queue)
+            .expect("should put combat triggers on stack");
+
+        while !game.stack_is_empty() {
+            resolve_stack_entry(&mut game).expect("trigger should resolve");
+        }
+
+        game.refresh_continuous_state();
+        assert_eq!(
+            game.calculated_power(marhault_id),
+            Some(6),
+            "Rampage 1 with three blockers should grant +2/+2"
+        );
+        assert_eq!(
+            game.calculated_toughness(marhault_id),
+            Some(8),
+            "Rampage 1 with three blockers should grant +2/+2"
         );
     }
 
@@ -2514,15 +2602,24 @@ mod tests {
         };
 
         assert!(can_activate_ability_with_restrictions(
-            &game, creature_id, 0, &ability
+            &game,
+            creature_id,
+            0,
+            &ability
         ));
         game.record_ability_activation(creature_id, 0);
         assert!(can_activate_ability_with_restrictions(
-            &game, creature_id, 0, &ability
+            &game,
+            creature_id,
+            0,
+            &ability
         ));
         game.record_ability_activation(creature_id, 0);
         assert!(!can_activate_ability_with_restrictions(
-            &game, creature_id, 0, &ability
+            &game,
+            creature_id,
+            0,
+            &ability
         ));
     }
 
@@ -3052,7 +3149,8 @@ mod tests {
         game.turn.active_player = alice;
         game.turn.priority_player = Some(alice);
 
-        let registry = crate::cards::CardRegistry::with_builtin_cards_for_names(["Bosh, Iron Golem"]);
+        let registry =
+            crate::cards::CardRegistry::with_builtin_cards_for_names(["Bosh, Iron Golem"]);
         let bosh_def = registry
             .get("Bosh, Iron Golem")
             .expect("Bosh, Iron Golem should be present in registry");
@@ -3062,7 +3160,8 @@ mod tests {
             .card_types(vec![CardType::Artifact])
             .mana_cost(ManaCost::from_pips(vec![vec![ManaSymbol::Generic(2)]]))
             .build();
-        let relic_id = game.create_object_from_card(&sacrificial_artifact, alice, Zone::Battlefield);
+        let relic_id =
+            game.create_object_from_card(&sacrificial_artifact, alice, Zone::Battlefield);
 
         if let Some(player) = game.player_mut(alice) {
             player.mana_pool.add(ManaSymbol::Red, 4);
@@ -3084,8 +3183,14 @@ mod tests {
             source: bosh_id,
             ability_index,
         });
-        apply_priority_response_with_dm(&mut game, &mut trigger_queue, &mut state, &activate, &mut dm)
-            .expect("activation should start");
+        apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &activate,
+            &mut dm,
+        )
+        .expect("activation should start");
 
         let choose_sacrifice = PriorityResponse::SacrificeTarget(relic_id);
         apply_priority_response_with_dm(
@@ -3136,7 +3241,8 @@ mod tests {
         let yawgmoth_def = registry
             .get("Yawgmoth, Thran Physician")
             .expect("Yawgmoth, Thran Physician should be present in registry");
-        let yawgmoth_id = game.create_object_from_definition(yawgmoth_def, alice, Zone::Battlefield);
+        let yawgmoth_id =
+            game.create_object_from_definition(yawgmoth_def, alice, Zone::Battlefield);
 
         let discard_one = CardBuilder::new(CardId::new(), "Discard One")
             .card_types(vec![CardType::Instant])
@@ -3159,7 +3265,11 @@ mod tests {
             .position(|ability| {
                 if let AbilityKind::Activated(activated) = &ability.kind {
                     activated.mana_cost.mana_cost().is_some()
-                        && activated.mana_cost.costs().iter().any(|cost| cost.is_discard())
+                        && activated
+                            .mana_cost
+                            .costs()
+                            .iter()
+                            .any(|cost| cost.is_discard())
                 } else {
                     false
                 }
@@ -3174,14 +3284,19 @@ mod tests {
             source: yawgmoth_id,
             ability_index: proliferate_ability_index,
         });
-        let progress =
-            apply_priority_response_with_dm(&mut game, &mut trigger_queue, &mut state, &activate, &mut dm)
-                .expect("activation should start");
+        let progress = apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &activate,
+            &mut dm,
+        )
+        .expect("activation should start");
 
         let objects_ctx = match progress {
-            GameProgress::NeedsDecisionCtx(crate::decisions::context::DecisionContext::SelectObjects(
-                ctx,
-            )) => ctx,
+            GameProgress::NeedsDecisionCtx(
+                crate::decisions::context::DecisionContext::SelectObjects(ctx),
+            ) => ctx,
             other => panic!(
                 "expected SelectObjects discard decision for proliferate activation, got {:?}",
                 other
