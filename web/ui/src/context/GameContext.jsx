@@ -299,12 +299,37 @@ export function GameProvider({ children }) {
         if (parts.length) setStatus(parts.join(" \u2022 "));
       } catch (err) {
         try {
-          const st = await game.uiState();
+          // Roll back to the replay checkpoint so the game returns to a
+          // consistent state (e.g. before a multi-step decision chain).
+          let st = await game.cancelDecision();
+          const autoResult = await settleOpponentPriority(game, st);
+          st = autoResult.state;
+          const autoResolved = await autoResolveTrivialDecisions(game, st, settleOpponentPriority);
+          st = autoResolved.state;
           setState(st);
         } catch (_) {
           // keep original error
         }
         setStatus(`Action failed: ${err}`, true);
+        console.error(err);
+      }
+    },
+    [game, settleOpponentPriority, autoResolveTrivialDecisions, setStatus]
+  );
+
+  const cancelDecision = useCallback(
+    async () => {
+      if (!game) return;
+      try {
+        let st = await game.cancelDecision();
+        const autoResult = await settleOpponentPriority(game, st);
+        st = autoResult.state;
+        const autoResolved = await autoResolveTrivialDecisions(game, st, settleOpponentPriority);
+        st = autoResolved.state;
+        setState(st);
+        setStatus("Decision cancelled");
+      } catch (err) {
+        setStatus(`Cancel failed: ${err}`, true);
         console.error(err);
       }
     },
@@ -325,6 +350,7 @@ export function GameProvider({ children }) {
       status,
       setStatus,
       dispatch,
+      cancelDecision,
       refresh,
       autoPassEnabled,
       setAutoPassEnabled,
@@ -347,7 +373,7 @@ export function GameProvider({ children }) {
       wasmRegistryTotal,
       status,
       setStatus,
-      dispatch, refresh, autoPassEnabled, holdRule,
+      dispatch, cancelDecision, refresh, autoPassEnabled, holdRule,
       semanticThreshold, setSemanticThreshold, cardsMeetingThreshold,
       logEntries, pushLog,
     ]

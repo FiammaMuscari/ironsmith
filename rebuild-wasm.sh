@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="$ROOT_DIR/pkg"
 DEMO_PKG_DIR="$ROOT_DIR/web/wasm_demo/pkg"
+FALSE_POSITIVES_FILE="$ROOT_DIR/scripts/semantic_false_positives.txt"
+
+THRESHOLD="${IRONSMITH_WASM_SEMANTIC_THRESHOLD:-}"
+DIMS="${IRONSMITH_WASM_SEMANTIC_DIMS:-384}"
 FEATURES="wasm,generated-registry"
 
 require_cmd() {
@@ -15,19 +19,34 @@ require_cmd() {
 
 usage() {
   cat <<'USAGE'
-Usage: ./rebuild-wasm.sh [--features <csv>]
+Usage: ./rebuild-wasm.sh [--threshold <float>] [--dims <int>] [--features <csv>]
 
 Examples:
   ./rebuild-wasm.sh
-  ./rebuild-wasm.sh --features wasm
+  ./rebuild-wasm.sh --threshold 0.90
+  IRONSMITH_WASM_SEMANTIC_THRESHOLD=0.85 ./rebuild-wasm.sh
 
 Notes:
+  - --threshold enables semantic gating for generated-registry builds.
+    Cards with similarity score below the threshold are excluded from
+    the generated registry at build time.
+  - When omitted, all parseable cards are included (no filtering).
   - Default features are "wasm,generated-registry".
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --threshold)
+      [[ $# -ge 2 ]] || { echo "missing value for --threshold" >&2; exit 1; }
+      THRESHOLD="$2"
+      shift 2
+      ;;
+    --dims)
+      [[ $# -ge 2 ]] || { echo "missing value for --dims" >&2; exit 1; }
+      DIMS="$2"
+      shift 2
+      ;;
     --features)
       [[ $# -ge 2 ]] || { echo "missing value for --features" >&2; exit 1; }
       FEATURES="$2"
@@ -48,6 +67,37 @@ done
 cd "$ROOT_DIR"
 require_cmd cargo
 require_cmd wasm-pack
+
+if [[ -n "$THRESHOLD" ]]; then
+  SAFE_THRESHOLD="${THRESHOLD//./_}"
+  MISMATCH_NAMES_FILE="${TMPDIR:-/tmp}/ironsmith_wasm_mismatch_names_${SAFE_THRESHOLD}_${DIMS}.txt"
+  FAILURES_REPORT="${TMPDIR:-/tmp}/ironsmith_wasm_threshold_failures_${SAFE_THRESHOLD}_${DIMS}.json"
+
+  echo "[INFO] computing semantic threshold failures (threshold=${THRESHOLD}, dims=${DIMS})..."
+  AUDIT_CMD=(
+    cargo run --quiet --bin audit_oracle_clusters --
+    --cards "$ROOT_DIR/cards.json"
+    --use-embeddings
+    --embedding-dims "$DIMS"
+    --embedding-threshold "$THRESHOLD"
+    --min-cluster-size 2
+    --top-clusters 0
+    --examples 1
+    --mismatch-names-out "$MISMATCH_NAMES_FILE"
+    --failures-out "$FAILURES_REPORT"
+  )
+  if [[ -f "$FALSE_POSITIVES_FILE" ]]; then
+    AUDIT_CMD+=(--false-positive-names "$FALSE_POSITIVES_FILE")
+  fi
+  "${AUDIT_CMD[@]}"
+
+  EXCLUDED_COUNT="$(rg -cve '^\s*$' "$MISMATCH_NAMES_FILE" 2>/dev/null || true)"
+  export IRONSMITH_GENERATED_REGISTRY_SKIP_NAMES_FILE="$MISMATCH_NAMES_FILE"
+  echo "[INFO] semantic gating active: excluding ${EXCLUDED_COUNT} below-threshold card(s)"
+  echo "[INFO] failure report: $FAILURES_REPORT"
+else
+  unset IRONSMITH_GENERATED_REGISTRY_SKIP_NAMES_FILE 2>/dev/null || true
+fi
 
 wasm-pack build --release --target web --features "$FEATURES"
 

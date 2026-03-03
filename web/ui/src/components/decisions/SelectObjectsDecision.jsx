@@ -26,6 +26,20 @@ export default function SelectObjectsDecision({ decision, canAct }) {
 
   return (
     <div className="flex flex-col gap-2">
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-auto min-h-7 py-1.5 text-[14px] px-3 border-[#69c769]/50 text-[#69c769] hover:bg-[#69c769]/10 hover:text-[#69c769]"
+        disabled={!canAct || !canSubmit}
+        onClick={() =>
+          dispatch(
+            { type: "select_objects", object_ids: Array.from(selected) },
+            `Selected ${selected.size} object(s)`
+          )
+        }
+      >
+        Submit ({selected.size}/{min === max ? min : `${min}-${max}`})
+      </Button>
       {decision.description && (
         <div className="text-[16px] text-muted-foreground">{decision.description}</div>
       )}
@@ -54,20 +68,6 @@ export default function SelectObjectsDecision({ decision, canAct }) {
           </label>
         ))}
       </div>
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 text-[14px]"
-        disabled={!canAct || !canSubmit}
-        onClick={() =>
-          dispatch(
-            { type: "select_objects", object_ids: Array.from(selected) },
-            `Selected ${selected.size} object(s)`
-          )
-        }
-      >
-        Submit ({selected.size}/{min === max ? min : `${min}-${max}`})
-      </Button>
     </div>
   );
 }

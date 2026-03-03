@@ -7,6 +7,7 @@ const WORKER_METHODS = [
   "addCardToZone",
   "addLifeDelta",
   "advancePhase",
+  "cancelDecision",
   "cardsMeetingThreshold",
   "dispatch",
   "drawCard",

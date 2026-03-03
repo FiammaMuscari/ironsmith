@@ -356,6 +356,9 @@ struct GameSnapshot {
     players: Vec<PlayerSnapshot>,
     decision: Option<DecisionView>,
     game_over: Option<GameOverView>,
+    /// True when the current decision chain can be cancelled (user-initiated
+    /// action like casting a spell, NOT triggered ability resolution).
+    cancelable: bool,
 }
 
 impl GameSnapshot {
@@ -365,6 +368,7 @@ impl GameSnapshot {
         decision: Option<&DecisionContext>,
         game_over: Option<&GameResult>,
         pending_cast_stack_id: Option<ObjectId>,
+        cancelable: bool,
     ) -> Self {
         let protected_ids = protected_object_ids_for_decision(decision);
         let players = game
@@ -543,6 +547,7 @@ impl GameSnapshot {
             players,
             decision: decision.map(|ctx| DecisionView::from_context(game, ctx)),
             game_over: game_over.map(|r| GameOverView::from_result(game, r)),
+            cancelable,
         }
     }
 }
@@ -1473,6 +1478,10 @@ pub struct WasmGame {
     runner_pending_decision: bool,
     /// When true, cleanup discard decisions are auto-resolved with random cards.
     auto_cleanup_discard: bool,
+    /// Snapshot of game state when the player first got priority in the current
+    /// priority round.  `cancelDecision` rolls back to this point so that
+    /// mana-ability activations, partial casts, etc. are all undone.
+    priority_epoch_checkpoint: Option<ReplayCheckpoint>,
     /// Semantic similarity scores for each registered card (card name → score 0.0–1.0).
     semantic_scores: HashMap<String, f32>,
     /// User-configured minimum semantic threshold for card addition (0.0 = no filter).
@@ -1514,6 +1523,7 @@ impl WasmGame {
             runner_awaiting_priority: false,
             runner_pending_decision: false,
             auto_cleanup_discard: true,
+            priority_epoch_checkpoint: None,
             semantic_scores: HashMap::new(),
             semantic_threshold: 0.0,
         }
@@ -1549,12 +1559,14 @@ impl WasmGame {
             .pending_cast
             .as_ref()
             .map(|p| p.stack_id);
+        let cancelable = self.is_cancelable();
         let snap = GameSnapshot::from_game(
             &self.game,
             self.perspective,
             self.pending_decision.as_ref(),
             self.game_over.as_ref(),
             pending_cast_stack_id,
+            cancelable,
         );
         serde_wasm_bindgen::to_value(&snap)
             .map_err(|e| JsValue::from_str(&format!("snapshot encode failed: {e}")))
@@ -1626,12 +1638,14 @@ impl WasmGame {
             .pending_cast
             .as_ref()
             .map(|p| p.stack_id);
+        let cancelable = self.is_cancelable();
         let snap = GameSnapshot::from_game(
             &self.game,
             self.perspective,
             self.pending_decision.as_ref(),
             self.game_over.as_ref(),
             pending_cast_stack_id,
+            cancelable,
         );
         serde_json::to_string_pretty(&snap)
             .map_err(|e| JsValue::from_str(&format!("json encode failed: {e}")))
@@ -1970,6 +1984,31 @@ impl WasmGame {
         Ok(())
     }
 
+    /// Cancel the current pending decision chain.
+    ///
+    /// Rollback preference:
+    /// 1. The active replay-action checkpoint (start of this user action chain).
+    /// 2. The priority-epoch checkpoint (start of this priority round).
+    ///
+    /// This mirrors "take back this action chain" behavior first, while still
+    /// preserving the broader epoch rollback as a fallback.
+    #[wasm_bindgen(js_name = cancelDecision)]
+    pub fn cancel_decision(&mut self) -> Result<JsValue, JsValue> {
+        if let Some(checkpoint) = self
+            .pending_replay_action
+            .as_ref()
+            .map(|replay| replay.checkpoint.clone())
+        {
+            self.restore_replay_checkpoint(&checkpoint);
+        } else if let Some(epoch) = self.priority_epoch_checkpoint.as_ref().cloned() {
+            self.restore_replay_checkpoint(&epoch);
+        }
+        self.pending_decision = None;
+        self.pending_replay_action = None;
+        self.recompute_ui_decision()?;
+        self.snapshot()
+    }
+
     /// Apply a player command for the currently pending decision.
     #[wasm_bindgen]
     pub fn dispatch(&mut self, command: JsValue) -> Result<JsValue, JsValue> {
@@ -2063,6 +2102,105 @@ impl WasmGame {
 }
 
 impl WasmGame {
+    /// Whether the current decision can be cancelled.
+    ///
+    /// Cancel is intentionally conservative:
+    /// - only user-initiated replay chains are cancelable;
+    /// - priority pass commits the action chain and disables cancel;
+    /// - hidden-information/library changes that cannot be safely reversed
+    ///   (shuffle/reorder, draw/mill/exile-from-library, etc.) disable cancel.
+    fn is_cancelable(&self) -> bool {
+        self.pending_replay_action
+            .as_ref()
+            .is_some_and(|replay| self.is_replay_chain_cancelable(replay))
+    }
+
+    fn is_replay_chain_cancelable(&self, replay: &PendingReplayAction) -> bool {
+        let ReplayRoot::Response(response) = &replay.root else {
+            return false;
+        };
+
+        if matches!(
+            response,
+            PriorityResponse::PriorityAction(LegalAction::PassPriority)
+        ) {
+            return false;
+        }
+
+        if replay.nested_answers.iter().any(|answer| {
+            matches!(
+                answer,
+                ReplayDecisionAnswer::Priority(LegalAction::PassPriority)
+            )
+        }) {
+            return false;
+        }
+
+        !self.has_irreversible_library_change_since(&replay.checkpoint)
+    }
+
+    /// Returns true when the current game diverged from `checkpoint` in a way
+    /// that should not be silently rewound (hidden-information/library changes).
+    ///
+    /// Allowed library delta:
+    /// - removing cards from library only when those cards are currently on stack
+    /// - preserving relative order of remaining library cards
+    ///
+    /// Everything else is treated as irreversible for cancel purposes.
+    fn has_irreversible_library_change_since(&self, checkpoint: &ReplayCheckpoint) -> bool {
+        for before_player in &checkpoint.game.players {
+            let Some(after_player) = self.game.player(before_player.id) else {
+                return true;
+            };
+
+            let before_library = &before_player.library;
+            let after_library = &after_player.library;
+
+            if before_library == after_library {
+                continue;
+            }
+
+            // Cards moving into library are not safely reversible (includes
+            // "put into library" effects and many reorder/shuffle outcomes).
+            if after_library.len() > before_library.len() {
+                return true;
+            }
+
+            let after_set: HashSet<ObjectId> = after_library.iter().copied().collect();
+            let removed: HashSet<ObjectId> = before_library
+                .iter()
+                .copied()
+                .filter(|id| !after_set.contains(id))
+                .collect();
+
+            // Pure reorder/shuffle with no net removals.
+            if removed.is_empty() {
+                return true;
+            }
+
+            // Moving a card from library is only reversible when that card is
+            // currently on stack.
+            if removed
+                .iter()
+                .any(|id| !self.game.stack.iter().any(|entry| entry.object_id == *id))
+            {
+                return true;
+            }
+
+            let expected_after: Vec<ObjectId> = before_library
+                .iter()
+                .copied()
+                .filter(|id| !removed.contains(id))
+                .collect();
+
+            if expected_after != *after_library {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Compute the semantic similarity score for a card definition.
     fn compute_card_score(def: &CardDefinition) -> f32 {
         let oracle = &def.card.oracle_text;
@@ -2340,6 +2478,7 @@ impl WasmGame {
             .set_auto_choose_single_pip_payment(false);
         self.pending_decision = None;
         self.pending_replay_action = None;
+        self.priority_epoch_checkpoint = None;
         self.game_over = None;
         self.runner = None;
         self.runner_awaiting_priority = false;
@@ -2448,6 +2587,9 @@ impl WasmGame {
             }
 
             // We're inside a priority loop - use existing priority mechanism
+            if self.priority_epoch_checkpoint.is_none() {
+                self.priority_epoch_checkpoint = Some(self.capture_replay_checkpoint());
+            }
             let checkpoint = self.capture_replay_checkpoint();
             let outcome = self.execute_with_replay(&checkpoint, &ReplayRoot::Advance, &[])?;
 
@@ -2472,10 +2614,13 @@ impl WasmGame {
                         // Priority loop ended - notify runner
                         self.runner.as_mut().unwrap().priority_done();
                         self.runner_awaiting_priority = false;
+                        self.priority_epoch_checkpoint = None;
                         self.pending_decision = None;
                         continue;
                     }
                     GameProgress::StackResolved => {
+                        // New priority round after resolution — fresh epoch.
+                        self.priority_epoch_checkpoint = None;
                         continue;
                     }
                     GameProgress::GameOver(result) => {
@@ -2504,6 +2649,7 @@ impl WasmGame {
                     self.runner.as_mut().unwrap().priority_done();
                     self.runner_awaiting_priority = false;
                 }
+                self.priority_epoch_checkpoint = None;
                 self.pending_decision = None;
                 self.advance_until_decision()
             }
@@ -2513,6 +2659,7 @@ impl WasmGame {
                 Ok(())
             }
             GameProgress::StackResolved => {
+                self.priority_epoch_checkpoint = None;
                 self.pending_decision = None;
                 self.advance_until_decision()
             }
