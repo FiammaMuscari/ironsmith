@@ -85,11 +85,6 @@ export default function AttackersDecision({ decision, canAct }) {
     setChoosingTarget(null);
   };
 
-  const changeTarget = (opt) => {
-    const validTargets = opt.valid_targets || [];
-    if (validTargets.length <= 1) return;
-    setChoosingTarget(Number(opt.creature));
-  };
 
   return (
     <div className="flex flex-col gap-2">
@@ -148,18 +143,7 @@ export default function AttackersDecision({ decision, canAct }) {
                 </div>
               )}
 
-              {/* Change target button for already-attacking creatures with multiple targets */}
-              {attacking && !isChoosingTarget && validTargets.length > 1 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-4 text-[12px] ml-4 text-muted-foreground"
-                  disabled={!canAct}
-                  onClick={() => changeTarget(opt)}
-                >
-                  Change target
-                </Button>
-              )}
+
             </div>
           );
         })}
