@@ -69,10 +69,15 @@ function ObjectView({ details }) {
     ? details.counters.map((c) => `${c.amount} ${c.kind}`).join(" \u2022 ")
     : null;
 
+  const powerToughness =
+    details.power != null && details.toughness != null
+      ? `${details.power}/${details.toughness}`
+      : null;
+
   // Text metadata (mana cost excluded — rendered as icons at the end)
   const meta = [
     details.type_line,
-    details.power_toughness && `${details.power_toughness}`,
+    powerToughness,
     details.zone,
     details.controller != null && `P${details.controller}`,
     details.tapped && "Tapped",

@@ -178,9 +178,12 @@ pub struct CantEffectTracker {
     /// Example: Sigarda, Host of Herons (for creatures you control)
     pub cant_be_sacrificed: HashSet<ObjectId>,
 
-    /// Players who can't cast spells.
-    /// Example: Possibility Storm (can't cast from hand normally)
-    pub cant_cast_spells: HashSet<PlayerId>,
+    /// Per-player spell filters that cannot be cast.
+    ///
+    /// Examples:
+    /// - default filter => "can't cast spells"
+    /// - creature filter => "can't cast creature spells"
+    pub cant_cast_filters: HashMap<PlayerId, Vec<crate::target::ObjectFilter>>,
 
     /// Players who can't activate non-mana abilities.
     /// Example: Split second while a split-second spell is on the stack.
@@ -197,17 +200,15 @@ pub struct CantEffectTracker {
     /// Example: Damping Matrix ("... can't be activated unless they're mana abilities.")
     pub cant_activate_non_mana_abilities_of: HashSet<ObjectId>,
 
-    /// Players who can't cast creature spells.
-    pub cant_cast_creature_spells: HashSet<PlayerId>,
-
-    /// Players who can't cast more than one spell each turn.
-    pub cant_cast_more_than_one_spell_each_turn: HashSet<PlayerId>,
-    /// Players who can't cast more than one noncreature spell each turn.
-    pub cant_cast_more_than_one_noncreature_spell_each_turn: HashSet<PlayerId>,
-    /// Players who can't cast more than one nonartifact spell each turn.
-    pub cant_cast_more_than_one_nonartifact_spell_each_turn: HashSet<PlayerId>,
-    /// Players who can't cast more than one non-Phyrexian spell each turn.
-    pub cant_cast_more_than_one_nonphyrexian_spell_each_turn: HashSet<PlayerId>,
+    /// Per-player "can't cast more than one matching spell each turn" restrictions.
+    ///
+    /// Each filter applies to both:
+    /// - the spell being cast now, and
+    /// - spells this player has already cast this turn.
+    ///
+    /// This keeps cast-limit restrictions generic (nonartifact, non-Phyrexian, etc.)
+    /// without hard-coding one tracker set per variant.
+    pub cant_cast_limit_filters: HashMap<PlayerId, Vec<crate::target::ObjectFilter>>,
 
     /// Players who can't draw cards.
     /// Example: Notion Thief redirecting draws
@@ -376,7 +377,11 @@ impl CantEffectTracker {
         self.cant_be_destroyed.extend(other.cant_be_destroyed);
         self.cant_be_regenerated.extend(other.cant_be_regenerated);
         self.cant_be_sacrificed.extend(other.cant_be_sacrificed);
-        self.cant_cast_spells.extend(other.cant_cast_spells);
+        for (player, filters) in other.cant_cast_filters {
+            for filter in filters {
+                self.add_cant_cast_filter(player, filter);
+            }
+        }
         self.cant_activate_non_mana_abilities
             .extend(other.cant_activate_non_mana_abilities);
         self.cant_activate_abilities_of
@@ -385,16 +390,11 @@ impl CantEffectTracker {
             .extend(other.cant_activate_tap_abilities_of);
         self.cant_activate_non_mana_abilities_of
             .extend(other.cant_activate_non_mana_abilities_of);
-        self.cant_cast_creature_spells
-            .extend(other.cant_cast_creature_spells);
-        self.cant_cast_more_than_one_spell_each_turn
-            .extend(other.cant_cast_more_than_one_spell_each_turn);
-        self.cant_cast_more_than_one_noncreature_spell_each_turn
-            .extend(other.cant_cast_more_than_one_noncreature_spell_each_turn);
-        self.cant_cast_more_than_one_nonartifact_spell_each_turn
-            .extend(other.cant_cast_more_than_one_nonartifact_spell_each_turn);
-        self.cant_cast_more_than_one_nonphyrexian_spell_each_turn
-            .extend(other.cant_cast_more_than_one_nonphyrexian_spell_each_turn);
+        for (player, filters) in other.cant_cast_limit_filters {
+            for filter in filters {
+                self.add_cast_limit_filter(player, filter);
+            }
+        }
         self.cant_draw.extend(other.cant_draw);
         self.cant_draw_extra_cards
             .extend(other.cant_draw_extra_cards);
@@ -427,19 +427,12 @@ impl CantEffectTracker {
         self.cant_be_destroyed.clear();
         self.cant_be_regenerated.clear();
         self.cant_be_sacrificed.clear();
-        self.cant_cast_spells.clear();
+        self.cant_cast_filters.clear();
         self.cant_activate_non_mana_abilities.clear();
         self.cant_activate_abilities_of.clear();
         self.cant_activate_tap_abilities_of.clear();
         self.cant_activate_non_mana_abilities_of.clear();
-        self.cant_cast_creature_spells.clear();
-        self.cant_cast_more_than_one_spell_each_turn.clear();
-        self.cant_cast_more_than_one_noncreature_spell_each_turn
-            .clear();
-        self.cant_cast_more_than_one_nonartifact_spell_each_turn
-            .clear();
-        self.cant_cast_more_than_one_nonphyrexian_spell_each_turn
-            .clear();
+        self.cant_cast_limit_filters.clear();
         self.cant_draw.clear();
         self.cant_draw_extra_cards.clear();
         self.cant_be_blocked.clear();
@@ -567,7 +560,11 @@ impl CantEffectTracker {
 
     /// Check if a player can cast spells.
     pub fn can_cast_spells(&self, player: PlayerId) -> bool {
-        !self.cant_cast_spells.contains(&player)
+        self.cast_filters_for_player(player).is_none_or(|filters| {
+            !filters
+                .iter()
+                .any(|filter| filter == &crate::target::ObjectFilter::default())
+        })
     }
 
     /// Check if a player can activate non-mana abilities.
@@ -592,35 +589,96 @@ impl CantEffectTracker {
 
     /// Check if a player can cast creature spells.
     pub fn can_cast_creature_spells(&self, player: PlayerId) -> bool {
-        !self.cant_cast_creature_spells.contains(&player)
+        self.cast_filters_for_player(player).is_none_or(|filters| {
+            !filters.iter().any(|filter| {
+                filter
+                    == &crate::target::ObjectFilter::default()
+                        .with_type(crate::types::CardType::Creature)
+            })
+        })
+    }
+
+    /// Add a cast-prohibition filter for a player ("can't cast [matching] spells").
+    pub fn add_cant_cast_filter(
+        &mut self,
+        player: PlayerId,
+        spell_filter: crate::target::ObjectFilter,
+    ) {
+        let filters = self.cant_cast_filters.entry(player).or_default();
+        if !filters.iter().any(|existing| existing == &spell_filter) {
+            filters.push(spell_filter);
+        }
+    }
+
+    /// Get active cast-prohibition filters for a player, if any.
+    pub fn cast_filters_for_player(
+        &self,
+        player: PlayerId,
+    ) -> Option<&[crate::target::ObjectFilter]> {
+        self.cant_cast_filters.get(&player).map(Vec::as_slice)
+    }
+
+    /// Add a cast-limit filter for a player ("can't cast more than one matching spell each turn").
+    pub fn add_cast_limit_filter(
+        &mut self,
+        player: PlayerId,
+        spell_filter: crate::target::ObjectFilter,
+    ) {
+        let filters = self.cant_cast_limit_filters.entry(player).or_default();
+        if !filters.iter().any(|existing| existing == &spell_filter) {
+            filters.push(spell_filter);
+        }
+    }
+
+    /// Get active cast-limit filters for a player, if any.
+    pub fn cast_limit_filters_for_player(
+        &self,
+        player: PlayerId,
+    ) -> Option<&[crate::target::ObjectFilter]> {
+        self.cant_cast_limit_filters.get(&player).map(Vec::as_slice)
+    }
+
+    /// Check if a player can cast an additional spell matching a specific filter this turn.
+    pub fn can_cast_additional_spell_matching_this_turn(
+        &self,
+        player: PlayerId,
+        spell_filter: &crate::target::ObjectFilter,
+    ) -> bool {
+        !self
+            .cast_limit_filters_for_player(player)
+            .is_some_and(|filters| filters.iter().any(|filter| filter == spell_filter))
     }
 
     /// Check if a player can cast an additional spell this turn.
     pub fn can_cast_additional_spell_this_turn(&self, player: PlayerId) -> bool {
-        !self
-            .cant_cast_more_than_one_spell_each_turn
-            .contains(&player)
+        self.can_cast_additional_spell_matching_this_turn(
+            player,
+            &crate::target::ObjectFilter::default(),
+        )
     }
 
     /// Check if a player can cast an additional noncreature spell this turn.
     pub fn can_cast_additional_noncreature_spell_this_turn(&self, player: PlayerId) -> bool {
-        !self
-            .cant_cast_more_than_one_noncreature_spell_each_turn
-            .contains(&player)
+        self.can_cast_additional_spell_matching_this_turn(
+            player,
+            &crate::target::ObjectFilter::default().without_type(crate::types::CardType::Creature),
+        )
     }
 
     /// Check if a player can cast an additional nonartifact spell this turn.
     pub fn can_cast_additional_nonartifact_spell_this_turn(&self, player: PlayerId) -> bool {
-        !self
-            .cant_cast_more_than_one_nonartifact_spell_each_turn
-            .contains(&player)
+        self.can_cast_additional_spell_matching_this_turn(
+            player,
+            &crate::target::ObjectFilter::default().without_type(crate::types::CardType::Artifact),
+        )
     }
 
     /// Check if a player can cast an additional non-Phyrexian spell this turn.
     pub fn can_cast_additional_nonphyrexian_spell_this_turn(&self, player: PlayerId) -> bool {
-        !self
-            .cant_cast_more_than_one_nonphyrexian_spell_each_turn
-            .contains(&player)
+        self.can_cast_additional_spell_matching_this_turn(
+            player,
+            &crate::target::ObjectFilter::default().without_subtype(crate::types::Subtype::Phyrexian),
+        )
     }
 
     /// Check if a permanent can have counters placed on it.

@@ -48,6 +48,7 @@ pub fn junk_token_definition() -> CardDefinition {
             choices: vec![],
             timing: ActivationTiming::SorcerySpeed,
             additional_restrictions: vec![],
+            activation_restrictions: vec![],
             mana_output: None,
             activation_condition: None,
         }),

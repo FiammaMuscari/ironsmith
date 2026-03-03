@@ -73,6 +73,46 @@ fn describe_player_set_filter(filter: &PlayerFilter) -> String {
     }
 }
 
+fn describe_cast_limit_spell_filter(filter: &ObjectFilter) -> String {
+    if filter == &ObjectFilter::default() {
+        return "spell".to_string();
+    }
+    if filter == &ObjectFilter::default().without_type(CardType::Creature) {
+        return "noncreature spell".to_string();
+    }
+    if filter == &ObjectFilter::default().without_type(CardType::Artifact) {
+        return "nonartifact spell".to_string();
+    }
+    if filter == &ObjectFilter::default().without_subtype(Subtype::Phyrexian) {
+        return "non-Phyrexian spell".to_string();
+    }
+
+    let fallback = filter.description();
+    if fallback.ends_with("spell") || fallback.ends_with("spells") {
+        fallback
+    } else {
+        format!("spell matching {}", strip_leading_article(&fallback))
+    }
+}
+
+fn describe_cast_ban_spell_filter(filter: &ObjectFilter) -> String {
+    if filter == &ObjectFilter::default() {
+        return "spells".to_string();
+    }
+    if filter == &ObjectFilter::default().with_type(CardType::Creature) {
+        return "creature spells".to_string();
+    }
+
+    let singular = describe_cast_limit_spell_filter(filter);
+    if singular.ends_with("spells") {
+        singular
+    } else if singular.ends_with("spell") {
+        format!("{singular}s")
+    } else {
+        format!("{singular} spells")
+    }
+}
+
 fn strip_leading_article(text: &str) -> &str {
     text.strip_prefix("a ")
         .or_else(|| text.strip_prefix("an "))
@@ -6311,9 +6351,11 @@ fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
                 describe_player_set_filter(filter)
             )
         }
-        crate::effect::Restriction::CastSpells(filter) => {
-            format!("{} can't cast spells", describe_player_set_filter(filter))
-        }
+        crate::effect::Restriction::CastSpellsMatching(filter, spell_filter) => format!(
+            "{} can't cast {}",
+            describe_player_set_filter(filter),
+            describe_cast_ban_spell_filter(spell_filter)
+        ),
         crate::effect::Restriction::ActivateNonManaAbilities(filter) => {
             format!(
                 "{} can't activate non-mana abilities",
@@ -6338,30 +6380,11 @@ fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
                 filter.description()
             )
         }
-        crate::effect::Restriction::CastCreatureSpells(filter) => {
-            format!(
-                "{} can't cast creature spells",
-                describe_player_set_filter(filter)
-            )
-        }
-        crate::effect::Restriction::CastMoreThanOneSpellEachTurn(filter, scope) => match scope {
-            crate::effect::CastSpellLimitScope::AnySpell => format!(
-                "{} can't cast more than one spell each turn",
-                describe_player_set_filter(filter)
-            ),
-            crate::effect::CastSpellLimitScope::NonCreatureSpell => format!(
-                "{} can't cast more than one noncreature spell each turn",
-                describe_player_set_filter(filter)
-            ),
-            crate::effect::CastSpellLimitScope::NonArtifactSpell => format!(
-                "{} can't cast more than one nonartifact spell each turn",
-                describe_player_set_filter(filter)
-            ),
-            crate::effect::CastSpellLimitScope::NonPhyrexianSpell => format!(
-                "{} can't cast more than one non-Phyrexian spell each turn",
-                describe_player_set_filter(filter)
-            ),
-        },
+        crate::effect::Restriction::CastMoreThanOneSpellEachTurn(filter, spell_filter) => format!(
+            "{} can't cast more than one {} each turn",
+            describe_player_set_filter(filter),
+            describe_cast_limit_spell_filter(spell_filter)
+        ),
         crate::effect::Restriction::DrawCards(filter) => {
             format!("{} can't draw cards", describe_player_set_filter(filter))
         }

@@ -1745,6 +1745,7 @@ impl CardDefinitionBuilder {
                         choices: Vec::new(),
                         timing,
                         additional_restrictions,
+                        activation_restrictions: vec![],
                         mana_output: None,
                         activation_condition: None,
                     }),
@@ -1768,6 +1769,7 @@ impl CardDefinitionBuilder {
                         choices: Vec::new(),
                         timing,
                         additional_restrictions,
+                        activation_restrictions: vec![],
                         mana_output: None,
                         activation_condition: None,
                     }),
@@ -2415,6 +2417,7 @@ impl CardDefinitionBuilder {
                 choices: vec![],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: Vec::new(),
+                activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -2439,6 +2442,7 @@ impl CardDefinitionBuilder {
                 choices: vec![],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: Vec::new(),
+                activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -2465,6 +2469,7 @@ impl CardDefinitionBuilder {
                 choices: vec![],
                 timing: ActivationTiming::DuringCombat,
                 additional_restrictions: Vec::new(),
+                activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -3822,6 +3827,7 @@ impl CardDefinitionBuilder {
                 choices: vec![],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: vec![],
+                activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -7466,7 +7472,9 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
 
         let debug = format!("{:?}", def.abilities);
         assert!(
-            debug.contains("IfYouControlSubtypeOrMore { subtype: Doctor, count: 2 }"),
+            debug.contains("YouControlAtLeast")
+                && debug.contains("subtypes: [Doctor]")
+                && debug.contains("count: 2"),
             "expected typed Doctor subtype restriction, got {debug}"
         );
 

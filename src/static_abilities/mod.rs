@@ -94,56 +94,195 @@ pub struct ConditionalSpellKeywordSpec {
     pub threshold: u32,
 }
 
-/// Cast-time restriction for "Cast this spell only ..." lines.
+/// Timing window for "Cast this spell only ..." restrictions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThisSpellCastRestrictionKind {
-    /// "Cast this spell only during the declare attackers step."
+pub enum ThisSpellCastTiming {
     DuringDeclareAttackersStep,
-    /// "Cast this spell only during the declare attackers step and only if you've been attacked this step."
-    DuringDeclareAttackersStepIfYouWereAttackedThisStep,
-    /// "Cast this spell only during combat."
     DuringCombat,
-    /// "Cast this spell only during combat before blockers are declared."
     DuringCombatBeforeBlockersAreDeclared,
-    /// "Cast this spell only during combat after blockers are declared."
     DuringCombatAfterBlockersAreDeclared,
-    /// "Cast this spell only during combat on your turn before blockers are declared."
     DuringCombatOnYourTurnBeforeBlockersAreDeclared,
-    /// "Cast this spell only during combat on an opponent's turn."
     DuringCombatOnOpponentsTurn,
-    /// "Cast this spell only before attackers are declared."
     BeforeAttackersAreDeclared,
-    /// "Cast this spell only before the combat damage step."
     BeforeCombatDamageStep,
-    /// "Cast this spell only during an opponent's upkeep."
     DuringOpponentsUpkeep,
-    /// "Cast this spell only during an opponent's turn after their upkeep step."
     DuringOpponentsTurnAfterUpkeep,
-    /// "Cast this spell only during your end step."
     DuringYourEndStep,
-    /// "Cast this spell only if you've cast another spell this turn."
-    IfYouCastAnotherSpellThisTurn,
-    /// "Cast this spell only if you've cast another green spell this turn."
-    IfYouCastAnotherGreenSpellThisTurn,
-    /// "Cast this spell only if an opponent cast a creature spell this turn."
-    IfOpponentCastCreatureSpellThisTurn,
-    /// "Cast this spell only if a creature is attacking you."
-    IfCreatureIsAttackingYou,
-    /// "Cast this spell only after combat."
     AfterCombat,
-    /// "Cast this spell only if no permanents named <name> are on the battlefield."
-    IfNoPermanentsNamedOnBattlefield(&'static str),
-    /// "Cast this spell only if you control a snow land."
-    IfYouControlSnowLand,
-    /// "Cast this spell only if you control fewer creatures than each opponent."
-    IfYouControlFewerCreaturesThanEachOpponent,
-    /// "Cast this spell only if you control N or more permanents with a subtype."
-    IfYouControlSubtypeOrMore {
-        subtype: crate::types::Subtype,
+}
+
+/// Extra condition for "Cast this spell only ..." restrictions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ThisSpellCastCondition {
+    /// "only if you've been attacked this step"
+    YouWereAttackedThisStep,
+    /// "only if [player] cast N or more [matching] spells this turn"
+    PlayerCastSpellThisTurnOrMore {
+        player: crate::target::PlayerFilter,
+        spell_filter: crate::target::ObjectFilter,
         count: u32,
     },
-    /// "Cast this spell only if you control N or more permanents whose names contain a word."
-    IfYouControlNameWordOrMore { word: &'static str, count: u32 },
+    /// "only if a creature is attacking you"
+    CreatureIsAttackingYou,
+    /// "only if no permanents named <name> are on the battlefield"
+    NoPermanentsNamedOnBattlefield(&'static str),
+    /// "only if you control N or more matching permanents"
+    YouControlAtLeast {
+        filter: crate::target::ObjectFilter,
+        count: u32,
+    },
+    /// "only if you control fewer creatures than each opponent"
+    YouControlFewerCreaturesThanEachOpponent,
+    /// "only if you control N or more permanents whose names contain <word>"
+    YouControlNameWordOrMore { word: &'static str, count: u32 },
+}
+
+/// Cast-time restriction for "Cast this spell only ..." lines.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThisSpellCastRestrictionKind {
+    pub timing: Option<ThisSpellCastTiming>,
+    pub condition: Option<ThisSpellCastCondition>,
+}
+
+impl ThisSpellCastRestrictionKind {
+    pub fn timing(timing: ThisSpellCastTiming) -> Self {
+        Self {
+            timing: Some(timing),
+            condition: None,
+        }
+    }
+
+    pub fn timing_and_condition(
+        timing: ThisSpellCastTiming,
+        condition: ThisSpellCastCondition,
+    ) -> Self {
+        Self {
+            timing: Some(timing),
+            condition: Some(condition),
+        }
+    }
+
+    pub fn condition(condition: ThisSpellCastCondition) -> Self {
+        Self {
+            timing: None,
+            condition: Some(condition),
+        }
+    }
+
+    pub fn during_declare_attackers_step() -> Self {
+        Self::timing(ThisSpellCastTiming::DuringDeclareAttackersStep)
+    }
+
+    pub fn during_declare_attackers_step_if_you_were_attacked_this_step() -> Self {
+        Self::timing_and_condition(
+            ThisSpellCastTiming::DuringDeclareAttackersStep,
+            ThisSpellCastCondition::YouWereAttackedThisStep,
+        )
+    }
+
+    pub fn during_combat() -> Self {
+        Self::timing(ThisSpellCastTiming::DuringCombat)
+    }
+
+    pub fn during_combat_before_blockers_are_declared() -> Self {
+        Self::timing(ThisSpellCastTiming::DuringCombatBeforeBlockersAreDeclared)
+    }
+
+    pub fn during_combat_after_blockers_are_declared() -> Self {
+        Self::timing(ThisSpellCastTiming::DuringCombatAfterBlockersAreDeclared)
+    }
+
+    pub fn during_combat_on_your_turn_before_blockers_are_declared() -> Self {
+        Self::timing(ThisSpellCastTiming::DuringCombatOnYourTurnBeforeBlockersAreDeclared)
+    }
+
+    pub fn during_combat_on_opponents_turn() -> Self {
+        Self::timing(ThisSpellCastTiming::DuringCombatOnOpponentsTurn)
+    }
+
+    pub fn before_attackers_are_declared() -> Self {
+        Self::timing(ThisSpellCastTiming::BeforeAttackersAreDeclared)
+    }
+
+    pub fn before_combat_damage_step() -> Self {
+        Self::timing(ThisSpellCastTiming::BeforeCombatDamageStep)
+    }
+
+    pub fn during_opponents_upkeep() -> Self {
+        Self::timing(ThisSpellCastTiming::DuringOpponentsUpkeep)
+    }
+
+    pub fn during_opponents_turn_after_upkeep() -> Self {
+        Self::timing(ThisSpellCastTiming::DuringOpponentsTurnAfterUpkeep)
+    }
+
+    pub fn during_your_end_step() -> Self {
+        Self::timing(ThisSpellCastTiming::DuringYourEndStep)
+    }
+
+    pub fn if_you_cast_another_spell_this_turn() -> Self {
+        Self::condition(ThisSpellCastCondition::PlayerCastSpellThisTurnOrMore {
+            player: crate::target::PlayerFilter::You,
+            spell_filter: crate::target::ObjectFilter::default(),
+            count: 1,
+        })
+    }
+
+    pub fn if_you_cast_another_green_spell_this_turn() -> Self {
+        Self::condition(ThisSpellCastCondition::PlayerCastSpellThisTurnOrMore {
+            player: crate::target::PlayerFilter::You,
+            spell_filter: crate::target::ObjectFilter::default()
+                .with_colors(crate::color::ColorSet::from_color(crate::color::Color::Green)),
+            count: 1,
+        })
+    }
+
+    pub fn if_opponent_cast_creature_spell_this_turn() -> Self {
+        Self::condition(ThisSpellCastCondition::PlayerCastSpellThisTurnOrMore {
+            player: crate::target::PlayerFilter::Opponent,
+            spell_filter: crate::target::ObjectFilter::default()
+                .with_type(crate::types::CardType::Creature),
+            count: 1,
+        })
+    }
+
+    pub fn if_creature_is_attacking_you() -> Self {
+        Self::condition(ThisSpellCastCondition::CreatureIsAttackingYou)
+    }
+
+    pub fn after_combat() -> Self {
+        Self::timing(ThisSpellCastTiming::AfterCombat)
+    }
+
+    pub fn if_no_permanents_named_on_battlefield(name: &'static str) -> Self {
+        Self::condition(ThisSpellCastCondition::NoPermanentsNamedOnBattlefield(
+            name,
+        ))
+    }
+
+    pub fn if_you_control_snow_land() -> Self {
+        Self::condition(ThisSpellCastCondition::YouControlAtLeast {
+            filter: crate::target::ObjectFilter::default()
+                .with_type(crate::types::CardType::Land)
+                .with_supertype(crate::types::Supertype::Snow),
+            count: 1,
+        })
+    }
+
+    pub fn if_you_control_fewer_creatures_than_each_opponent() -> Self {
+        Self::condition(ThisSpellCastCondition::YouControlFewerCreaturesThanEachOpponent)
+    }
+
+    pub fn if_you_control_subtype_or_more(subtype: crate::types::Subtype, count: u32) -> Self {
+        Self::condition(ThisSpellCastCondition::YouControlAtLeast {
+            filter: crate::target::ObjectFilter::default().with_subtype(subtype),
+            count,
+        })
+    }
+
+    pub fn if_you_control_name_word_or_more(word: &'static str, count: u32) -> Self {
+        Self::condition(ThisSpellCastCondition::YouControlNameWordOrMore { word, count })
+    }
 }
 
 /// Trait for static ability behavior.

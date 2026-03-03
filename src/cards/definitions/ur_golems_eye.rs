@@ -28,6 +28,7 @@ pub fn ur_golems_eye() -> CardDefinition {
                 choices: vec![],
                 timing: crate::ability::ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
+                activation_restrictions: vec![],
                 mana_output: Some(vec![ManaSymbol::Colorless, ManaSymbol::Colorless]),
                 activation_condition: None,
             }),

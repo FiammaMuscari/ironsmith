@@ -23,6 +23,7 @@ pub fn gold_token_definition() -> CardDefinition {
             choices: vec![],
             timing: crate::ability::ActivationTiming::AnyTime,
             additional_restrictions: vec![],
+            activation_restrictions: vec![],
             mana_output: Some(vec![]),
             activation_condition: None,
         }),

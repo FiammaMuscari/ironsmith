@@ -1891,7 +1891,7 @@ impl StaticAbilityKind for ConditionalSpellKeyword {
 }
 
 /// "Cast this spell only ..." cast-time restriction.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ThisSpellCastRestriction {
     pub kind: ThisSpellCastRestrictionKind,
     pub display: String,
@@ -1916,7 +1916,7 @@ impl StaticAbilityKind for ThisSpellCastRestriction {
     }
 
     fn this_spell_cast_restriction_kind(&self) -> Option<ThisSpellCastRestrictionKind> {
-        Some(self.kind)
+        Some(self.kind.clone())
     }
 }
 
@@ -2408,13 +2408,13 @@ mod tests {
     #[test]
     fn test_this_spell_cast_restriction_kind_roundtrip() {
         let ability = ThisSpellCastRestriction::new(
-            ThisSpellCastRestrictionKind::DuringDeclareAttackersStepIfYouWereAttackedThisStep,
+            ThisSpellCastRestrictionKind::during_declare_attackers_step_if_you_were_attacked_this_step(),
             "Cast this spell only during the declare attackers step and only if you've been attacked this step.",
         );
         assert_eq!(ability.id(), StaticAbilityId::ThisSpellCastRestriction);
         assert_eq!(
             ability.this_spell_cast_restriction_kind(),
-            Some(ThisSpellCastRestrictionKind::DuringDeclareAttackersStepIfYouWereAttackedThisStep)
+            Some(ThisSpellCastRestrictionKind::during_declare_attackers_step_if_you_were_attacked_this_step())
         );
     }
 

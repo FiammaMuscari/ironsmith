@@ -175,6 +175,52 @@ fn evaluate_condition_shared_core(
     }
 }
 
+fn lower_legacy_activation_condition(condition: &Condition) -> Option<Condition> {
+    match condition {
+        Condition::ControlLandWithSubtype(required_subtypes) => {
+            let mut lowered: Option<Condition> = None;
+            for subtype in required_subtypes {
+                let next = Condition::YouControl(
+                    crate::target::ObjectFilter::default()
+                        .with_type(crate::types::CardType::Land)
+                        .with_subtype(*subtype),
+                );
+                lowered = Some(match lowered {
+                    Some(existing) => Condition::Or(Box::new(existing), Box::new(next)),
+                    None => next,
+                });
+            }
+            lowered
+        }
+        Condition::ControlAtLeastArtifacts(required_count) => {
+            let mut filter = crate::target::ObjectFilter::artifact();
+            filter.zone = Some(Zone::Battlefield);
+            Some(Condition::PlayerControlsAtLeast {
+                player: PlayerFilter::You,
+                filter,
+                count: *required_count,
+            })
+        }
+        Condition::ControlAtLeastLands(required_count) => {
+            let mut filter =
+                crate::target::ObjectFilter::default().with_type(crate::types::CardType::Land);
+            filter.zone = Some(Zone::Battlefield);
+            Some(Condition::PlayerControlsAtLeast {
+                player: PlayerFilter::You,
+                filter,
+                count: *required_count,
+            })
+        }
+        Condition::ControlCreatureWithPowerAtLeast(required_power) => Some(Condition::YouControl(
+            crate::target::ObjectFilter::creature()
+                .with_power(crate::filter::Comparison::GreaterThanOrEqual(
+                    *required_power as i32,
+                )),
+        )),
+        _ => None,
+    }
+}
+
 fn assert_condition_variant_coverage(condition: &Condition) {
     match condition {
         Condition::YouControl(..) => {}
@@ -331,6 +377,10 @@ pub fn evaluate_condition_external(
         },
     ) {
         return result;
+    }
+
+    if let Some(lowered) = lower_legacy_activation_condition(condition) {
+        return evaluate_condition_external(game, &lowered, ctx);
     }
 
     match condition {
@@ -874,6 +924,10 @@ fn evaluate_condition_simple(
         return result;
     }
 
+    if let Some(lowered) = lower_legacy_activation_condition(condition) {
+        return evaluate_condition_simple(game, &lowered, controller, source);
+    }
+
     match condition {
         Condition::ThisSpellWasKicked => game
             .object(source)
@@ -1310,6 +1364,10 @@ fn evaluate_condition(
         },
     ) {
         return Ok(result);
+    }
+
+    if let Some(lowered) = lower_legacy_activation_condition(condition) {
+        return evaluate_condition(game, &lowered, ctx);
     }
 
     match condition {

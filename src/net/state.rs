@@ -301,6 +301,7 @@ struct TrackerDigest {
     cant_be_regenerated: Vec<GameObjectId>,
     cant_be_sacrificed: Vec<GameObjectId>,
     cant_cast_spells: Vec<GamePlayerId>,
+    cant_cast_filters: Vec<(GamePlayerId, String)>,
     cant_draw: Vec<GamePlayerId>,
     cant_draw_extra_cards: Vec<GamePlayerId>,
     cant_be_blocked: Vec<GameObjectId>,
@@ -349,6 +350,7 @@ impl CanonicalEncode for TrackerDigest {
         self.cant_be_regenerated.encode(out);
         self.cant_be_sacrificed.encode(out);
         self.cant_cast_spells.encode(out);
+        self.cant_cast_filters.encode(out);
         self.cant_draw.encode(out);
         self.cant_draw_extra_cards.encode(out);
         self.cant_be_blocked.encode(out);
@@ -679,6 +681,18 @@ fn hash_trackers_state(game: &GameState) -> Hash32 {
     let restriction_effects = debug_list(game.restriction_effects.iter());
     let grant_registry = debug_list(game.grant_registry.grants.iter());
     let player_control_effects = debug_list(game.player_control_effects.iter());
+    let mut cant_cast_filters: Vec<(GamePlayerId, String)> = game
+        .cant_effects
+        .cant_cast_filters
+        .iter()
+        .flat_map(|(player, filters)| {
+            filters
+                .iter()
+                .map(|filter| ((*player).into(), format!("{:?}", filter)))
+        })
+        .collect();
+    cant_cast_filters.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
     let digest = TrackerDigest {
         cant_gain_life: sort_players(game.cant_effects.cant_gain_life.iter().copied()),
         cant_search: sort_players(game.cant_effects.cant_search.iter().copied()),
@@ -688,7 +702,18 @@ fn hash_trackers_state(game: &GameState) -> Hash32 {
         cant_be_destroyed: sort_objects(game.cant_effects.cant_be_destroyed.iter().copied()),
         cant_be_regenerated: sort_objects(game.cant_effects.cant_be_regenerated.iter().copied()),
         cant_be_sacrificed: sort_objects(game.cant_effects.cant_be_sacrificed.iter().copied()),
-        cant_cast_spells: sort_players(game.cant_effects.cant_cast_spells.iter().copied()),
+        cant_cast_spells: sort_players(
+            game.cant_effects
+                .cant_cast_filters
+                .iter()
+                .filter_map(|(player, filters)| {
+                    filters
+                        .iter()
+                        .any(|filter| filter == &crate::target::ObjectFilter::default())
+                        .then_some(*player)
+                }),
+        ),
+        cant_cast_filters,
         cant_draw: sort_players(game.cant_effects.cant_draw.iter().copied()),
         cant_draw_extra_cards: sort_players(
             game.cant_effects.cant_draw_extra_cards.iter().copied(),

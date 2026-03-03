@@ -102,6 +102,7 @@ impl Ability {
                 choices: vec![],
                 timing,
                 additional_restrictions: vec![],
+                activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -123,6 +124,7 @@ impl Ability {
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
+                activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -145,6 +147,7 @@ impl Ability {
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
+                activation_restrictions: vec![],
                 mana_output: Some(mana),
                 activation_condition: None,
             }),
@@ -164,6 +167,7 @@ impl Ability {
                 choices: vec![],
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
+                activation_restrictions: vec![],
                 mana_output: Some(vec![]),
                 activation_condition: None,
             }),
@@ -346,6 +350,10 @@ pub struct ActivatedAbility {
     /// Additional textual activation restrictions not modeled by `timing`.
     pub additional_restrictions: Vec<String>,
 
+    /// Typed activation restrictions derived from parsed "activate only ..."
+    /// clauses that are not represented directly by `timing`.
+    pub activation_restrictions: Vec<crate::ConditionExpr>,
+
     /// When `Some`, this is a mana ability. The vec contains fixed mana symbols
     /// to add to pool. An empty vec means variable mana produced via `effects`.
     pub mana_output: Option<Vec<ManaSymbol>>,
@@ -461,13 +469,34 @@ impl ActivatedAbility {
     /// Returns a per-turn activation cap from `timing` and textual restrictions,
     /// if one is present.
     pub fn max_activations_per_turn(&self) -> Option<u32> {
-        if self.timing == ActivationTiming::OncePerTurn {
-            return Some(1);
+        fn min_cap(current: Option<u32>, next: u32) -> Option<u32> {
+            Some(current.map_or(next, |existing| existing.min(next)))
         }
 
-        self.additional_restrictions
-            .iter()
-            .find_map(|restriction| parse_activation_max_times_per_turn(restriction))
+        let mut cap = None;
+        if self.timing == ActivationTiming::OncePerTurn {
+            cap = min_cap(cap, 1);
+        }
+
+        if let Some(crate::ConditionExpr::MaxActivationsPerTurn(limit)) =
+            self.activation_condition.as_ref()
+        {
+            cap = min_cap(cap, *limit);
+        }
+
+        for restriction in &self.activation_restrictions {
+            if let crate::ConditionExpr::MaxActivationsPerTurn(limit) = restriction {
+                cap = min_cap(cap, *limit);
+            }
+        }
+
+        if cap.is_some() {
+            return cap;
+        }
+
+        self.additional_restrictions.iter().find_map(|restriction| {
+            parse_activation_max_times_per_turn(restriction)
+        })
     }
 }
 
@@ -569,6 +598,7 @@ impl ActivatedAbility {
             choices: vec![],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: vec![],
+            activation_restrictions: vec![],
             mana_output: Some(vec![mana]),
             activation_condition: None,
         }
@@ -586,6 +616,7 @@ impl ActivatedAbility {
             choices: vec![],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: vec![],
+            activation_restrictions: vec![],
             mana_output: Some(mana),
             activation_condition: None,
         }
@@ -602,6 +633,7 @@ impl ActivatedAbility {
             choices: vec![],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: vec![],
+            activation_restrictions: vec![],
             mana_output: Some(vec![mana]),
             activation_condition: Some(crate::ConditionExpr::ControlLandWithSubtype(
                 required_subtypes,
@@ -935,6 +967,7 @@ mod tests {
             choices: vec![],
             timing: ActivationTiming::AnyTime,
             additional_restrictions: vec!["Activate no more than twice each turn.".to_string()],
+            activation_restrictions: vec![],
             mana_output: None,
             activation_condition: None,
         };

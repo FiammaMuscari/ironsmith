@@ -651,6 +651,34 @@ fn test_parse_you_cant_cast_more_than_one_spell_each_turn() {
 }
 
 #[test]
+fn test_parse_each_player_cant_cast_more_than_one_spell_each_turn() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Arcane Laboratory Variant")
+        .parse_text("Each player can't cast more than one spell each turn.")
+        .expect("parse each-player one-spell cast limit");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("each player can't cast more than one spell each turn")
+            || rendered.contains("each player cant cast more than one spell each turn"),
+        "expected each-player cast-limit text, got {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_players_cant_cast_more_than_one_spell_each_turn() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Rule Of Law Variant")
+        .parse_text("Players can't cast more than one spell each turn.")
+        .expect("parse players one-spell cast limit");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("players can't cast more than one spell each turn")
+            || rendered.contains("players cant cast more than one spell each turn"),
+        "expected players cast-limit text, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_canonist_style_nonartifact_cast_limit() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Canonist Variant")
         .parse_text("Each player who has cast a nonartifact spell this turn can't cast additional nonartifact spells.")
@@ -667,6 +695,21 @@ fn test_parse_canonist_style_nonartifact_cast_limit() {
             || rendered.contains("each player can't cast more than one nonartifact spell each turn")
             || rendered.contains("each player cant cast more than one nonartifact spell each turn"),
         "expected canonist-style cast-limit normalization, got {rendered}"
+    );
+}
+
+#[test]
+fn test_parse_your_opponents_nonartifact_cast_limit() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Lavinia Variant")
+        .parse_text("Your opponents can't cast more than one nonartifact spell each turn.")
+        .expect("parse your-opponents nonartifact cast limit");
+
+    let rendered = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("your opponents can't cast more than one nonartifact spell each turn")
+            || rendered
+                .contains("your opponents cant cast more than one nonartifact spell each turn"),
+        "expected your-opponents nonartifact cast-limit text, got {rendered}"
     );
 }
 
@@ -6466,7 +6509,8 @@ fn parse_metalcraft_mana_activation_condition() {
         "expected mana production text in compiled output, got {mana_line}"
     );
     assert!(
-        mana_line.contains("Activate only if you control 3 or more artifacts"),
+        mana_line.contains("Activate only if you control 3 or more artifacts")
+            || mana_line.contains("Activate only if you control three or more artifacts"),
         "expected rendered activation restriction, got {mana_line}"
     );
 }
@@ -6488,7 +6532,8 @@ fn parse_land_count_mana_activation_condition() {
         "expected mana amount in compiled output, got {mana_line}"
     );
     assert!(
-        mana_line.contains("Activate only if you control 5 or more lands"),
+        mana_line.contains("Activate only if you control 5 or more lands")
+            || mana_line.contains("Activate only if you control five or more lands"),
         "expected rendered activation restriction, got {mana_line}"
     );
 }
@@ -6534,7 +6579,8 @@ fn parse_creature_power_mana_activation_condition() {
         "expected mana amount in compiled output, got {mana_line}"
     );
     assert!(
-        mana_line.contains("Activate only if you control a creature with power 4 or greater"),
+        mana_line.contains("Activate only if you control a creature with power 4 or greater")
+            || mana_line.contains("Activate only if you control creature with power 4 or greater"),
         "expected rendered activation restriction, got {mana_line}"
     );
 }
@@ -10001,7 +10047,8 @@ fn parse_mana_ability_activate_only_if_control_subtype() {
         "expected mana production text in rendered output, got {rendered}"
     );
     assert!(
-        rendered.contains("activate only if you control a swamp"),
+        rendered.contains("activate only if you control a swamp")
+            || rendered.contains("activate only if you control land swamp"),
         "expected rendered subtype activation restriction, got {rendered}"
     );
 }

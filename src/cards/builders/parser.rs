@@ -24,6 +24,7 @@ struct ModalActivatedHeader {
     functional_zones: Vec<Zone>,
     timing: ActivationTiming,
     additional_restrictions: Vec<String>,
+    activation_restrictions: Vec<crate::ConditionExpr>,
 }
 
 struct PendingModal {
@@ -489,6 +490,7 @@ fn normalize_channel_spell_effect(mut builder: CardDefinitionBuilder) -> CardDef
         choices: vec![],
         timing: ActivationTiming::AnyTime,
         additional_restrictions: vec![],
+        activation_restrictions: vec![],
         mana_output: Some(vec![ManaSymbol::Colorless]),
         activation_condition: Some(crate::effect::Condition::ActivationTiming(
             ActivationTiming::AnyTime,
@@ -1519,6 +1521,7 @@ fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextEr
                     functional_zones,
                     timing: ActivationTiming::AnyTime,
                     additional_restrictions: Vec::new(),
+                    activation_restrictions: Vec::new(),
                 });
                 effect_start_idx = colon_idx + 1;
             }
@@ -1961,6 +1964,7 @@ fn finalize_pending_modal(
                 choices: prefix_choices,
                 timing: activated.timing,
                 additional_restrictions: activated.additional_restrictions,
+                activation_restrictions: activated.activation_restrictions,
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -2306,12 +2310,54 @@ fn apply_pending_activation_restriction(
     ability: &mut crate::ability::ActivatedAbility,
     restriction: &str,
 ) {
+    fn push_restriction_condition(
+        ability: &mut crate::ability::ActivatedAbility,
+        condition: crate::ConditionExpr,
+    ) {
+        if !ability
+            .activation_restrictions
+            .iter()
+            .any(|existing| existing == &condition)
+        {
+            ability.activation_restrictions.push(condition);
+        }
+    }
+
+    fn parse_text_only_activation_restriction_condition(
+        restriction: &str,
+    ) -> Option<crate::ConditionExpr> {
+        let lower = restriction
+            .trim()
+            .to_ascii_lowercase()
+            .trim_end_matches('.')
+            .to_string();
+
+        if lower.contains("didn't attack this turn")
+            || lower.contains("did not attack this turn")
+            || lower.contains("has not attacked this turn")
+        {
+            return Some(crate::ConditionExpr::Not(Box::new(
+                crate::ConditionExpr::SourceAttackedThisTurn,
+            )));
+        }
+
+        if lower.contains("this creature attacked this turn")
+            || lower.contains("it attacked this turn")
+            || lower.contains("that creature attacked this turn")
+        {
+            return Some(crate::ConditionExpr::SourceAttackedThisTurn);
+        }
+
+        None
+    }
+
     let tokens = tokenize_line(restriction, 0);
     let parsed_timing = parse_activate_only_timing(&tokens);
     let parsed_condition = parse_activation_condition(&tokens);
     if parsed_condition.is_some() {
         let existing = ability.activation_condition.take();
-        ability.activation_condition = merge_mana_activation_conditions(existing, parsed_condition);
+        ability.activation_condition =
+            merge_mana_activation_conditions(existing, parsed_condition.clone());
     }
 
     let mut timing_applied = false;
@@ -2319,7 +2365,22 @@ fn apply_pending_activation_restriction(
         let merged_timing = merge_activation_timing(&ability.timing, parsed_timing.clone());
         timing_applied = &merged_timing == parsed_timing;
         ability.timing = merged_timing;
+        if !timing_applied {
+            push_restriction_condition(
+                ability,
+                crate::ConditionExpr::ActivationTiming(parsed_timing.clone()),
+            );
+        }
     }
+
+    if let Some(crate::ConditionExpr::MaxActivationsPerTurn(limit)) = parsed_condition {
+        push_restriction_condition(ability, crate::ConditionExpr::MaxActivationsPerTurn(limit));
+    }
+
+    if let Some(text_condition) = parse_text_only_activation_restriction_condition(restriction) {
+        push_restriction_condition(ability, text_condition);
+    }
+
     // If timing cannot encode the new restriction (e.g. Equip's built-in sorcery timing
     // combined with "once each turn"), preserve the clause text as an extra restriction.
     let restriction = if parsed_timing.is_some() && !timing_applied {

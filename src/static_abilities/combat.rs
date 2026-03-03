@@ -640,6 +640,39 @@ impl CantAttackUnlessCondition {
         ))
     }
 
+    fn battlefield_count_matching(
+        game: &GameState,
+        filter: &ObjectFilter,
+        controller: Option<PlayerId>,
+    ) -> usize {
+        let mut battlefield_filter = filter.clone();
+        battlefield_filter.zone = Some(Zone::Battlefield);
+        let filter_ctx = crate::target::FilterContext::default();
+
+        game.battlefield
+            .iter()
+            .filter_map(|&id| game.object(id))
+            .filter(|obj| {
+                controller.is_none_or(|player| obj.controller == player)
+                    && battlefield_filter.matches(obj, &filter_ctx, game)
+            })
+            .count()
+    }
+
+    fn player_controls_matching(game: &GameState, player: PlayerId, filter: &ObjectFilter) -> bool {
+        Self::battlefield_count_matching(game, filter, Some(player)) > 0
+    }
+
+    fn player_controls_more_matching(
+        game: &GameState,
+        player: PlayerId,
+        other: PlayerId,
+        filter: &ObjectFilter,
+    ) -> bool {
+        Self::battlefield_count_matching(game, filter, Some(player))
+            > Self::battlefield_count_matching(game, filter, Some(other))
+    }
+
     fn source_can_attack_without_defender(
         &self,
         game: &GameState,
@@ -652,17 +685,16 @@ impl CantAttackUnlessCondition {
             return Some(result);
         }
 
-        use crate::types::{CardType, Subtype};
+        use crate::types::Subtype;
 
         let count_lands_with_subtype = |subtype: Subtype| -> u32 {
-            game.battlefield
-                .iter()
-                .filter_map(|&id| game.object(id))
-                .filter(|obj| {
-                    game.object_has_card_type(obj.id, CardType::Land)
-                        && game.calculated_subtypes(obj.id).contains(&subtype)
-                })
-                .count() as u32
+            Self::battlefield_count_matching(
+                game,
+                &ObjectFilter::default()
+                    .with_type(crate::types::CardType::Land)
+                    .with_subtype(subtype),
+                None,
+            ) as u32
         };
 
         match self.condition {
@@ -720,50 +752,26 @@ impl CantAttackUnlessCondition {
         controller: PlayerId,
         defending_player: PlayerId,
     ) -> Option<bool> {
-        use crate::types::{CardType, Subtype, Supertype};
+        use crate::types::{CardType, Subtype};
 
         match self.condition {
             CantAttackUnlessConditionSpec::YouControlMoreCreaturesThanDefendingPlayer => {
-                let controller_creatures = game
-                    .battlefield
-                    .iter()
-                    .filter_map(|&id| game.object(id))
-                    .filter(|obj| {
-                        obj.controller == controller
-                            && game.object_has_card_type(obj.id, CardType::Creature)
-                    })
-                    .count();
-                let defending_creatures = game
-                    .battlefield
-                    .iter()
-                    .filter_map(|&id| game.object(id))
-                    .filter(|obj| {
-                        obj.controller == defending_player
-                            && game.object_has_card_type(obj.id, CardType::Creature)
-                    })
-                    .count();
-                Some(controller_creatures > defending_creatures)
+                let creature_filter = ObjectFilter::default().with_type(CardType::Creature);
+                Some(Self::player_controls_more_matching(
+                    game,
+                    controller,
+                    defending_player,
+                    &creature_filter,
+                ))
             }
             CantAttackUnlessConditionSpec::YouControlMoreLandsThanDefendingPlayer => {
-                let controller_lands = game
-                    .battlefield
-                    .iter()
-                    .filter_map(|&id| game.object(id))
-                    .filter(|obj| {
-                        obj.controller == controller
-                            && game.object_has_card_type(obj.id, CardType::Land)
-                    })
-                    .count();
-                let defending_lands = game
-                    .battlefield
-                    .iter()
-                    .filter_map(|&id| game.object(id))
-                    .filter(|obj| {
-                        obj.controller == defending_player
-                            && game.object_has_card_type(obj.id, CardType::Land)
-                    })
-                    .count();
-                Some(controller_lands > defending_lands)
+                let land_filter = ObjectFilter::default().with_type(CardType::Land);
+                Some(Self::player_controls_more_matching(
+                    game,
+                    controller,
+                    defending_player,
+                    &land_filter,
+                ))
             }
             CantAttackUnlessConditionSpec::DefendingPlayerIsPoisoned => Some(
                 game.player(defending_player)
@@ -787,38 +795,33 @@ impl CantAttackUnlessCondition {
                 }))
             }
             CantAttackUnlessConditionSpec::DefendingPlayerControlsSnowLand => {
-                Some(game.battlefield.iter().any(|&id| {
-                    game.object(id).is_some_and(|obj| {
-                        obj.controller == defending_player
-                            && game.object_has_card_type(obj.id, CardType::Land)
-                            && game
-                                .calculated_characteristics(obj.id)
-                                .map(|chars| chars.supertypes.contains(&Supertype::Snow))
-                                .unwrap_or_else(|| obj.supertypes.contains(&Supertype::Snow))
-                    })
-                }))
+                let snow_land_filter = ObjectFilter::default()
+                    .with_type(CardType::Land)
+                    .with_supertype(crate::types::Supertype::Snow);
+                Some(Self::player_controls_matching(
+                    game,
+                    defending_player,
+                    &snow_land_filter,
+                ))
             }
             CantAttackUnlessConditionSpec::DefendingPlayerControlsCreatureWithFlying => {
-                Some(game.battlefield.iter().any(|&id| {
-                    game.object(id).is_some_and(|obj| {
-                        obj.controller == defending_player
-                            && game.object_has_card_type(obj.id, CardType::Creature)
-                            && game.object_has_ability(obj.id, &crate::static_abilities::StaticAbility::flying())
-                    })
-                }))
+                let flying_creature_filter = ObjectFilter::default()
+                    .with_type(CardType::Creature)
+                    .with_static_ability(crate::static_abilities::StaticAbilityId::Flying);
+                Some(Self::player_controls_matching(
+                    game,
+                    defending_player,
+                    &flying_creature_filter,
+                ))
             }
             CantAttackUnlessConditionSpec::DefendingPlayerControlsBluePermanent => {
-                Some(game.battlefield.iter().any(|&id| {
-                    game.object(id).is_some_and(|obj| {
-                        obj.controller == defending_player
-                            && game
-                                .calculated_characteristics(obj.id)
-                                .map(|chars| chars.colors.contains(crate::color::Color::Blue))
-                                .unwrap_or_else(|| {
-                                    obj.colors().contains(crate::color::Color::Blue)
-                                })
-                    })
-                }))
+                let blue_filter = ObjectFilter::default()
+                    .with_colors(crate::color::ColorSet::from_color(crate::color::Color::Blue));
+                Some(Self::player_controls_matching(
+                    game,
+                    defending_player,
+                    &blue_filter,
+                ))
             }
             CantAttackUnlessConditionSpec::DefendingPlayerIsMonarch => {
                 Some(game.monarch == Some(defending_player))

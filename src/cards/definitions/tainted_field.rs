@@ -157,16 +157,22 @@ mod tests {
                 "White ability should have activation condition"
             );
 
-            if let Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes)) =
-                &mana_ability.activation_condition
-            {
-                assert!(subtypes.contains(&Subtype::Swamp));
-                assert!(
-                    !subtypes.contains(&Subtype::Plains),
-                    "Should only require Swamp, not Plains"
-                );
-            } else {
-                panic!("Expected ControlLandWithSubtype condition");
+            match &mana_ability.activation_condition {
+                Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes)) => {
+                    assert!(subtypes.contains(&Subtype::Swamp));
+                    assert!(
+                        !subtypes.contains(&Subtype::Plains),
+                        "Should only require Swamp, not Plains"
+                    );
+                }
+                Some(crate::ConditionExpr::YouControl(filter)) => {
+                    assert!(filter.subtypes.contains(&Subtype::Swamp));
+                    assert!(
+                        !filter.subtypes.contains(&Subtype::Plains),
+                        "Should only require Swamp, not Plains"
+                    );
+                }
+                other => panic!("Expected subtype activation condition, got {other:?}"),
             }
         } else {
             panic!("Expected mana ability");
@@ -204,12 +210,14 @@ mod tests {
                 "Black ability should have activation condition"
             );
 
-            if let Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes)) =
-                &mana_ability.activation_condition
-            {
-                assert!(subtypes.contains(&Subtype::Swamp));
-            } else {
-                panic!("Expected ControlLandWithSubtype condition");
+            match &mana_ability.activation_condition {
+                Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes)) => {
+                    assert!(subtypes.contains(&Subtype::Swamp));
+                }
+                Some(crate::ConditionExpr::YouControl(filter)) => {
+                    assert!(filter.subtypes.contains(&Subtype::Swamp));
+                }
+                other => panic!("Expected subtype activation condition, got {other:?}"),
             }
         } else {
             panic!("Expected mana ability");

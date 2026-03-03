@@ -156,13 +156,24 @@ mod tests {
                 "Second ability should have activation condition"
             );
 
-            if let Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes)) =
-                &mana_ability.activation_condition
-            {
-                assert!(subtypes.contains(&Subtype::Plains));
-                assert!(subtypes.contains(&Subtype::Swamp));
-            } else {
-                panic!("Expected ControlLandWithSubtype condition");
+            match &mana_ability.activation_condition {
+                Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes)) => {
+                    assert!(subtypes.contains(&Subtype::Plains));
+                    assert!(subtypes.contains(&Subtype::Swamp));
+                }
+                Some(crate::ConditionExpr::Or(left, right)) => {
+                    let mut saw_plains = false;
+                    let mut saw_swamp = false;
+                    for branch in [left.as_ref(), right.as_ref()] {
+                        if let crate::ConditionExpr::YouControl(filter) = branch {
+                            saw_plains |= filter.subtypes.contains(&Subtype::Plains);
+                            saw_swamp |= filter.subtypes.contains(&Subtype::Swamp);
+                        }
+                    }
+                    assert!(saw_plains, "expected Plains requirement in condition");
+                    assert!(saw_swamp, "expected Swamp requirement in condition");
+                }
+                other => panic!("Expected subtype activation condition, got {other:?}"),
             }
         } else {
             panic!("Expected mana ability");

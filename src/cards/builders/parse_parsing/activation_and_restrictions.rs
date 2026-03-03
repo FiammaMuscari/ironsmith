@@ -168,6 +168,7 @@ pub(crate) fn parse_activated_line(
                         choices: vec![],
                         timing: ActivationTiming::AnyTime,
                         additional_restrictions: vec![],
+                        activation_restrictions: vec![],
                         mana_output: Some(vec![]),
                         activation_condition: mana_activation_condition.clone(),
                     }),
@@ -200,6 +201,7 @@ pub(crate) fn parse_activated_line(
                         choices: vec![],
                         timing: ActivationTiming::AnyTime,
                         additional_restrictions: vec![],
+                        activation_restrictions: vec![],
                         mana_output: Some(vec![]),
                         activation_condition: mana_activation_condition.clone(),
                     }),
@@ -245,6 +247,7 @@ pub(crate) fn parse_activated_line(
                             choices: vec![],
                             timing: ActivationTiming::AnyTime,
                             additional_restrictions: vec![],
+                            activation_restrictions: vec![],
                             mana_output: Some(vec![]),
                             activation_condition: mana_activation_condition.clone(),
                         }),
@@ -270,6 +273,7 @@ pub(crate) fn parse_activated_line(
                             choices: vec![],
                             timing: ActivationTiming::AnyTime,
                             additional_restrictions: vec![],
+                            activation_restrictions: vec![],
                             mana_output: Some(mana),
                             activation_condition: mana_activation_condition.clone(),
                         }),
@@ -296,6 +300,7 @@ pub(crate) fn parse_activated_line(
                         choices: vec![],
                         timing: ActivationTiming::AnyTime,
                         additional_restrictions: vec![],
+                        activation_restrictions: vec![],
                         mana_output: Some(vec![]),
                         activation_condition: mana_activation_condition,
                     }),
@@ -338,6 +343,7 @@ pub(crate) fn parse_activated_line(
                     choices,
                     timing,
                     additional_restrictions: additional_activation_restrictions,
+                    activation_restrictions: vec![],
                     mana_output: None,
                     activation_condition: None,
                 }),
@@ -647,6 +653,7 @@ pub(crate) fn parse_level_up_line(
                 choices: vec![],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: vec![],
+                activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -753,6 +760,7 @@ pub(crate) fn parse_cycling_line(tokens: &[Token]) -> Result<Option<ParsedAbilit
                 choices: Vec::new(),
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
+                activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -844,6 +852,7 @@ pub(crate) fn parse_reinforce_line(
                 choices: Vec::new(),
                 timing: ActivationTiming::AnyTime,
                 additional_restrictions: vec![],
+                activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -1430,6 +1439,7 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
                     choices: vec![target.clone()],
                     timing: ActivationTiming::SorcerySpeed,
                     additional_restrictions: vec![],
+                    activation_restrictions: vec![],
                     mana_output: None,
                     activation_condition: None,
                 }),
@@ -1474,6 +1484,7 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
                 choices: vec![target.clone()],
                 timing: ActivationTiming::SorcerySpeed,
                 additional_restrictions: vec![],
+                activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
             }),
@@ -2476,8 +2487,11 @@ pub(crate) fn parse_activation_condition(tokens: &[Token]) -> Option<crate::Cond
         let threshold = parse_cardinal_u32(control_tail.get(power_idx + 1)?)?;
         let tail = &control_tail[power_idx + 2..];
         if tail == ["or", "greater"] {
-            return Some(crate::ConditionExpr::ControlCreatureWithPowerAtLeast(
-                threshold,
+            return Some(crate::ConditionExpr::YouControl(
+                ObjectFilter::creature()
+                    .with_power(crate::filter::Comparison::GreaterThanOrEqual(
+                        threshold as i32,
+                    )),
             ));
         }
         return None;
@@ -2485,10 +2499,22 @@ pub(crate) fn parse_activation_condition(tokens: &[Token]) -> Option<crate::Cond
     if let Some((count, used)) = parse_number(after_control) {
         let tail = words(&after_control[used..]);
         if tail == ["or", "more", "artifact"] || tail == ["or", "more", "artifacts"] {
-            return Some(crate::ConditionExpr::ControlAtLeastArtifacts(count));
+            let mut filter = ObjectFilter::artifact();
+            filter.zone = Some(Zone::Battlefield);
+            return Some(crate::ConditionExpr::PlayerControlsAtLeast {
+                player: PlayerFilter::You,
+                filter,
+                count,
+            });
         }
         if tail == ["or", "more", "land"] || tail == ["or", "more", "lands"] {
-            return Some(crate::ConditionExpr::ControlAtLeastLands(count));
+            let mut filter = ObjectFilter::default().with_type(crate::types::CardType::Land);
+            filter.zone = Some(Zone::Battlefield);
+            return Some(crate::ConditionExpr::PlayerControlsAtLeast {
+                player: PlayerFilter::You,
+                filter,
+                count,
+            });
         }
     }
     if control_tail == ["an", "artifact"]
@@ -2496,7 +2522,13 @@ pub(crate) fn parse_activation_condition(tokens: &[Token]) -> Option<crate::Cond
         || control_tail == ["artifact"]
         || control_tail == ["artifacts"]
     {
-        return Some(crate::ConditionExpr::ControlAtLeastArtifacts(1));
+        let mut filter = ObjectFilter::artifact();
+        filter.zone = Some(Zone::Battlefield);
+        return Some(crate::ConditionExpr::PlayerControlsAtLeast {
+            player: PlayerFilter::You,
+            filter,
+            count: 1,
+        });
     }
 
     let mut subtypes = Vec::new();
@@ -2512,7 +2544,20 @@ pub(crate) fn parse_activation_condition(tokens: &[Token]) -> Option<crate::Cond
         return None;
     }
 
-    Some(crate::ConditionExpr::ControlLandWithSubtype(subtypes))
+    let mut combined: Option<crate::ConditionExpr> = None;
+    for subtype in subtypes {
+        let next = crate::ConditionExpr::YouControl(
+            ObjectFilter::default()
+                .with_type(crate::types::CardType::Land)
+                .with_subtype(subtype),
+        );
+        combined = Some(match combined {
+            Some(existing) => crate::ConditionExpr::Or(Box::new(existing), Box::new(next)),
+            None => next,
+        });
+    }
+
+    combined
 }
 
 pub(crate) fn parse_cardinal_u32(word: &str) -> Option<u32> {
@@ -2633,35 +2678,35 @@ pub(crate) fn parse_cast_this_spell_only_line(
 
     if declare_attackers_tails.contains(&tail) {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::DuringDeclareAttackersStep,
+            crate::static_abilities::ThisSpellCastRestrictionKind::during_declare_attackers_step(),
             "Cast this spell only during the declare attackers step.",
         )));
     }
 
     if declare_attackers_if_attacked_tails.contains(&tail) {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::DuringDeclareAttackersStepIfYouWereAttackedThisStep,
+            crate::static_abilities::ThisSpellCastRestrictionKind::during_declare_attackers_step_if_you_were_attacked_this_step(),
             "Cast this spell only during the declare attackers step and only if you've been attacked this step.",
         )));
     }
 
     if tail == ["during", "combat"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombat,
+            crate::static_abilities::ThisSpellCastRestrictionKind::during_combat(),
             "Cast this spell only during combat.",
         )));
     }
 
     if tail == ["during", "combat", "before", "blockers", "are", "declared"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatBeforeBlockersAreDeclared,
+            crate::static_abilities::ThisSpellCastRestrictionKind::during_combat_before_blockers_are_declared(),
             "Cast this spell only during combat before blockers are declared.",
         )));
     }
 
     if tail == ["during", "combat", "after", "blockers", "are", "declared"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatAfterBlockersAreDeclared,
+            crate::static_abilities::ThisSpellCastRestrictionKind::during_combat_after_blockers_are_declared(),
             "Cast this spell only during combat after blockers are declared.",
         )));
     }
@@ -2672,21 +2717,21 @@ pub(crate) fn parse_cast_this_spell_only_line(
         ]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatOnYourTurnBeforeBlockersAreDeclared,
+            crate::static_abilities::ThisSpellCastRestrictionKind::during_combat_on_your_turn_before_blockers_are_declared(),
             "Cast this spell only during combat on your turn before blockers are declared.",
         )));
     }
 
     if tail == ["during", "combat", "on", "an", "opponents", "turn"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::DuringCombatOnOpponentsTurn,
+            crate::static_abilities::ThisSpellCastRestrictionKind::during_combat_on_opponents_turn(),
             "Cast this spell only during combat on an opponent's turn.",
         )));
     }
 
     if tail == ["before", "attackers", "are", "declared"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::BeforeAttackersAreDeclared,
+            crate::static_abilities::ThisSpellCastRestrictionKind::before_attackers_are_declared(),
             "Cast this spell only before attackers are declared.",
         )));
     }
@@ -2695,7 +2740,7 @@ pub(crate) fn parse_cast_this_spell_only_line(
         || tail == ["before", "combat", "damage", "step"]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::BeforeCombatDamageStep,
+            crate::static_abilities::ThisSpellCastRestrictionKind::before_combat_damage_step(),
             "Cast this spell only before the combat damage step.",
         )));
     }
@@ -2703,7 +2748,7 @@ pub(crate) fn parse_cast_this_spell_only_line(
     if tail == ["during", "an", "opponents", "upkeep"] || tail == ["during", "opponents", "upkeep"]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::DuringOpponentsUpkeep,
+            crate::static_abilities::ThisSpellCastRestrictionKind::during_opponents_upkeep(),
             "Cast this spell only during an opponent's upkeep.",
         )));
     }
@@ -2721,21 +2766,21 @@ pub(crate) fn parse_cast_this_spell_only_line(
         ]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::DuringOpponentsTurnAfterUpkeep,
+            crate::static_abilities::ThisSpellCastRestrictionKind::during_opponents_turn_after_upkeep(),
             "Cast this spell only during an opponent's turn after their upkeep step.",
         )));
     }
 
     if tail == ["during", "your", "end", "step"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::DuringYourEndStep,
+            crate::static_abilities::ThisSpellCastRestrictionKind::during_your_end_step(),
             "Cast this spell only during your end step.",
         )));
     }
 
     if tail == ["if", "youve", "cast", "another", "spell", "this", "turn"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouCastAnotherSpellThisTurn,
+            crate::static_abilities::ThisSpellCastRestrictionKind::if_you_cast_another_spell_this_turn(),
             "Cast this spell only if you've cast another spell this turn.",
         )));
     }
@@ -2746,7 +2791,7 @@ pub(crate) fn parse_cast_this_spell_only_line(
         ]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouCastAnotherGreenSpellThisTurn,
+            crate::static_abilities::ThisSpellCastRestrictionKind::if_you_cast_another_green_spell_this_turn(),
             "Cast this spell only if you've cast another green spell this turn.",
         )));
     }
@@ -2757,21 +2802,21 @@ pub(crate) fn parse_cast_this_spell_only_line(
         ]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::IfOpponentCastCreatureSpellThisTurn,
+            crate::static_abilities::ThisSpellCastRestrictionKind::if_opponent_cast_creature_spell_this_turn(),
             "Cast this spell only if an opponent cast a creature spell this turn.",
         )));
     }
 
     if tail == ["if", "a", "creature", "is", "attacking", "you"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::IfCreatureIsAttackingYou,
+            crate::static_abilities::ThisSpellCastRestrictionKind::if_creature_is_attacking_you(),
             "Cast this spell only if a creature is attacking you.",
         )));
     }
 
     if tail == ["after", "combat"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::AfterCombat,
+            crate::static_abilities::ThisSpellCastRestrictionKind::after_combat(),
             "Cast this spell only after combat.",
         )));
     }
@@ -2791,16 +2836,14 @@ pub(crate) fn parse_cast_this_spell_only_line(
         ]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::IfNoPermanentsNamedOnBattlefield(
-                "Tidal Influence",
-            ),
+            crate::static_abilities::ThisSpellCastRestrictionKind::if_no_permanents_named_on_battlefield("Tidal Influence"),
             "Cast this spell only if no permanents named Tidal Influence are on the battlefield.",
         )));
     }
 
     if tail == ["if", "you", "control", "a", "snow", "land"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlSnowLand,
+            crate::static_abilities::ThisSpellCastRestrictionKind::if_you_control_snow_land(),
             "Cast this spell only if you control a snow land.",
         )));
     }
@@ -2818,27 +2861,27 @@ pub(crate) fn parse_cast_this_spell_only_line(
         ]
     {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlFewerCreaturesThanEachOpponent,
+            crate::static_abilities::ThisSpellCastRestrictionKind::if_you_control_fewer_creatures_than_each_opponent(),
             "Cast this spell only if you control fewer creatures than each opponent.",
         )));
     }
 
     if tail == ["if", "you", "control", "two", "or", "more", "doctors"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlSubtypeOrMore {
-                subtype: Subtype::Doctor,
-                count: 2,
-            },
+            crate::static_abilities::ThisSpellCastRestrictionKind::if_you_control_subtype_or_more(
+                Subtype::Doctor,
+                2,
+            ),
             "Cast this spell only if you control two or more Doctors.",
         )));
     }
 
     if tail == ["if", "you", "control", "two", "or", "more", "vampires"] {
         return Ok(Some(StaticAbility::this_spell_cast_restriction(
-            crate::static_abilities::ThisSpellCastRestrictionKind::IfYouControlSubtypeOrMore {
-                subtype: Subtype::Vampire,
-                count: 2,
-            },
+            crate::static_abilities::ThisSpellCastRestrictionKind::if_you_control_subtype_or_more(
+                Subtype::Vampire,
+                2,
+            ),
             "Cast this spell only if you control two or more Vampires.",
         )));
     }
@@ -3924,7 +3967,7 @@ pub(crate) fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility
             parsed.restriction,
             crate::effect::Restriction::GainLife(_)
                 | crate::effect::Restriction::SearchLibraries(_)
-                | crate::effect::Restriction::CastSpells(_)
+                | crate::effect::Restriction::CastSpellsMatching(_, _)
                 | crate::effect::Restriction::CastMoreThanOneSpellEachTurn(_, _)
                 | crate::effect::Restriction::DrawCards(_)
                 | crate::effect::Restriction::DrawExtraCards(_)
@@ -4016,169 +4059,6 @@ pub(crate) fn parse_cant_clause(tokens: &[Token]) -> Result<Option<StaticAbility
         ["this", "cant", "attack", "or", "block", "alone"] => StaticAbility::restriction(
             crate::effect::Restriction::attack_or_block_alone(ObjectFilter::source()),
             "this can't attack or block alone".to_string(),
-        ),
-        ["you", "cant", "cast", "creature", "spells"] => StaticAbility::restriction(
-            crate::effect::Restriction::cast_creature_spells(PlayerFilter::You),
-            "you can't cast creature spells".to_string(),
-        ),
-        [
-            "each",
-            "player",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "spell",
-            "each",
-            "turn",
-        ] => StaticAbility::restriction(
-            crate::effect::Restriction::cast_more_than_one_spell_each_turn(PlayerFilter::Any),
-            "each player can't cast more than one spell each turn".to_string(),
-        ),
-        [
-            "each",
-            "player",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "noncreature",
-            "spell",
-            "each",
-            "turn",
-        ] => StaticAbility::restriction(
-            crate::effect::Restriction::cast_more_than_one_noncreature_spell_each_turn(
-                PlayerFilter::Any,
-            ),
-            "each player can't cast more than one noncreature spell each turn".to_string(),
-        ),
-        [
-            "each",
-            "player",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "nonartifact",
-            "spell",
-            "each",
-            "turn",
-        ] => StaticAbility::restriction(
-            crate::effect::Restriction::cast_more_than_one_nonartifact_spell_each_turn(
-                PlayerFilter::Any,
-            ),
-            "each player who has cast a nonartifact spell this turn can't cast additional nonartifact spells"
-                .to_string(),
-        ),
-        [
-            "each",
-            "player",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non-phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => StaticAbility::restriction(
-            crate::effect::Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(
-                PlayerFilter::Any,
-            ),
-            "each player can't cast more than one non-Phyrexian spell each turn".to_string(),
-        ),
-        [
-            "each",
-            "player",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non",
-            "phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => StaticAbility::restriction(
-            crate::effect::Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(
-                PlayerFilter::Any,
-            ),
-            "each player can't cast more than one non-Phyrexian spell each turn".to_string(),
-        ),
-        [
-            "each",
-            "player",
-            "who",
-            "has",
-            "cast",
-            "a",
-            "nonartifact",
-            "spell",
-            "this",
-            "turn",
-            "cant",
-            "cast",
-            "additional",
-            "nonartifact",
-            "spells",
-        ] => StaticAbility::restriction(
-            crate::effect::Restriction::cast_more_than_one_nonartifact_spell_each_turn(
-                PlayerFilter::Any,
-            ),
-            "each player who has cast a nonartifact spell this turn can't cast additional nonartifact spells"
-                .to_string(),
-        ),
-        [
-            "cast",
-            "a",
-            "nonartifact",
-            "spell",
-            "this",
-            "turn",
-            "cant",
-            "cast",
-            "additional",
-            "nonartifact",
-            "spells",
-        ] => StaticAbility::restriction(
-            crate::effect::Restriction::cast_more_than_one_nonartifact_spell_each_turn(
-                PlayerFilter::Any,
-            ),
-            "each player can't cast more than one nonartifact spell each turn".to_string(),
-        ),
-        [
-            "you",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "spell",
-            "each",
-            "turn",
-        ] => StaticAbility::restriction(
-            crate::effect::Restriction::cast_more_than_one_spell_each_turn(PlayerFilter::You),
-            "you can't cast more than one spell each turn".to_string(),
-        ),
-        [
-            "your",
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "spell",
-            "each",
-            "turn",
-        ] => StaticAbility::restriction(
-            crate::effect::Restriction::cast_more_than_one_spell_each_turn(PlayerFilter::Opponent),
-            "your opponents can't cast more than one spell each turn".to_string(),
         ),
         ["permanents", "you", "control", "cant", "be", "sacrificed"] => {
             StaticAbility::permanents_you_control_cant_be_sacrificed()
@@ -4307,376 +4187,236 @@ pub(crate) fn parse_cant_restriction_clause(
         .map(|word| if word == "cannot" { "cant" } else { word })
         .collect::<Vec<_>>();
 
-    let restriction = match normalized.as_slice() {
-        ["players", "cant", "gain", "life"] => Restriction::gain_life(PlayerFilter::Any),
-        ["players", "cant", "search", "libraries"] => {
-            Restriction::search_libraries(PlayerFilter::Any)
+    let restriction = if let Some(parsed) = parse_cant_cast_restriction_words(&normalized) {
+        parsed
+    } else {
+        match normalized.as_slice() {
+            ["players", "cant", "gain", "life"] => Restriction::gain_life(PlayerFilter::Any),
+            ["players", "cant", "search", "libraries"] => {
+                Restriction::search_libraries(PlayerFilter::Any)
+            }
+            ["players", "cant", "draw", "cards"] => Restriction::draw_cards(PlayerFilter::Any),
+            [
+                "players",
+                "cant",
+                "draw",
+                "more",
+                "than",
+                "one",
+                "card",
+                "each",
+                "turn",
+            ] => Restriction::draw_extra_cards(PlayerFilter::Any),
+            ["damage", "cant", "be", "prevented"] => Restriction::prevent_damage(),
+            ["you", "cant", "lose", "the", "game"] => Restriction::lose_game(PlayerFilter::You),
+            ["your", "opponents", "cant", "win", "the", "game"] => {
+                Restriction::win_game(PlayerFilter::Opponent)
+            }
+            ["your", "life", "total", "cant", "change"] => {
+                Restriction::change_life_total(PlayerFilter::You)
+            }
+            [
+                "your",
+                "opponents",
+                "cant",
+                "draw",
+                "more",
+                "than",
+                "one",
+                "card",
+                "each",
+                "turn",
+            ] => Restriction::draw_extra_cards(PlayerFilter::Opponent),
+            ["you", "cant", "gain", "life"] => Restriction::gain_life(PlayerFilter::You),
+            ["you", "cant", "search", "libraries"] => {
+                Restriction::search_libraries(PlayerFilter::You)
+            }
+            ["you", "cant", "draw", "cards"] => Restriction::draw_cards(PlayerFilter::You),
+            ["opponents", "cant", "gain", "life"] => Restriction::gain_life(PlayerFilter::Opponent),
+            _ => return parse_negated_object_restriction_clause(tokens),
         }
-        ["players", "cant", "draw", "cards"] => Restriction::draw_cards(PlayerFilter::Any),
-        ["players", "cant", "cast", "spells"] => Restriction::cast_spells(PlayerFilter::Any),
-        [
-            "players",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "noncreature",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_noncreature_spell_each_turn(PlayerFilter::Any),
-        [
-            "players",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "nonartifact",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonartifact_spell_each_turn(PlayerFilter::Any),
-        [
-            "players",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non-phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(PlayerFilter::Any),
-        [
-            "players",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non",
-            "phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(PlayerFilter::Any),
-        [
-            "each",
-            "player",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "noncreature",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_noncreature_spell_each_turn(PlayerFilter::Any),
-        [
-            "each",
-            "player",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "nonartifact",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonartifact_spell_each_turn(PlayerFilter::Any),
-        [
-            "each",
-            "player",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non-phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(PlayerFilter::Any),
-        [
-            "each",
-            "player",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non",
-            "phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(PlayerFilter::Any),
-        [
-            "each",
-            "player",
-            "who",
-            "has",
-            "cast",
-            "a",
-            "nonartifact",
-            "spell",
-            "this",
-            "turn",
-            "cant",
-            "cast",
-            "additional",
-            "nonartifact",
-            "spells",
-        ] => Restriction::cast_more_than_one_nonartifact_spell_each_turn(PlayerFilter::Any),
-        [
-            "cast",
-            "a",
-            "nonartifact",
-            "spell",
-            "this",
-            "turn",
-            "cant",
-            "cast",
-            "additional",
-            "nonartifact",
-            "spells",
-        ] => Restriction::cast_more_than_one_nonartifact_spell_each_turn(PlayerFilter::Any),
-        [
-            "players",
-            "cant",
-            "draw",
-            "more",
-            "than",
-            "one",
-            "card",
-            "each",
-            "turn",
-        ] => Restriction::draw_extra_cards(PlayerFilter::Any),
-        ["damage", "cant", "be", "prevented"] => Restriction::prevent_damage(),
-        ["you", "cant", "lose", "the", "game"] => Restriction::lose_game(PlayerFilter::You),
-        ["your", "opponents", "cant", "win", "the", "game"] => {
-            Restriction::win_game(PlayerFilter::Opponent)
-        }
-        ["your", "life", "total", "cant", "change"] => {
-            Restriction::change_life_total(PlayerFilter::You)
-        }
-        ["your", "opponents", "cant", "cast", "spells"] => {
-            Restriction::cast_spells(PlayerFilter::Opponent)
-        }
-        [
-            "your",
-            "opponents",
-            "cant",
-            "draw",
-            "more",
-            "than",
-            "one",
-            "card",
-            "each",
-            "turn",
-        ] => Restriction::draw_extra_cards(PlayerFilter::Opponent),
-        ["you", "cant", "gain", "life"] => Restriction::gain_life(PlayerFilter::You),
-        ["you", "cant", "search", "libraries"] => Restriction::search_libraries(PlayerFilter::You),
-        ["you", "cant", "draw", "cards"] => Restriction::draw_cards(PlayerFilter::You),
-        [
-            "you",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_spell_each_turn(PlayerFilter::You),
-        [
-            "you",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "noncreature",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_noncreature_spell_each_turn(PlayerFilter::You),
-        [
-            "you",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "nonartifact",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonartifact_spell_each_turn(PlayerFilter::You),
-        [
-            "you",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non-phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(PlayerFilter::You),
-        [
-            "you",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non",
-            "phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(PlayerFilter::You),
-        ["opponents", "cant", "gain", "life"] => Restriction::gain_life(PlayerFilter::Opponent),
-        ["opponents", "cant", "cast", "spells"] => Restriction::cast_spells(PlayerFilter::Opponent),
-        [
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_spell_each_turn(PlayerFilter::Opponent),
-        [
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "noncreature",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_noncreature_spell_each_turn(PlayerFilter::Opponent),
-        [
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "nonartifact",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonartifact_spell_each_turn(PlayerFilter::Opponent),
-        [
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non-phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(PlayerFilter::Opponent),
-        [
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non",
-            "phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(PlayerFilter::Opponent),
-        [
-            "your",
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_spell_each_turn(PlayerFilter::Opponent),
-        [
-            "your",
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "noncreature",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_noncreature_spell_each_turn(PlayerFilter::Opponent),
-        [
-            "your",
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "nonartifact",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonartifact_spell_each_turn(PlayerFilter::Opponent),
-        [
-            "your",
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non-phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(PlayerFilter::Opponent),
-        [
-            "your",
-            "opponents",
-            "cant",
-            "cast",
-            "more",
-            "than",
-            "one",
-            "non",
-            "phyrexian",
-            "spell",
-            "each",
-            "turn",
-        ] => Restriction::cast_more_than_one_nonphyrexian_spell_each_turn(PlayerFilter::Opponent),
-        _ => return parse_negated_object_restriction_clause(tokens),
     };
 
     Ok(Some(ParsedCantRestriction {
         restriction,
         target: None,
     }))
+}
+
+fn parse_cant_cast_restriction_words(words: &[&str]) -> Option<crate::effect::Restriction> {
+    use crate::effect::Restriction;
+
+    if let Some((player, used)) = parse_cant_cast_subject(words) {
+        let tail = &words[used..];
+
+        if let Some(spell_filter) = parse_cast_additional_limit_filter(tail) {
+            return Some(restriction_from_cast_limit_filter(player, spell_filter));
+        }
+
+        if tail.first() != Some(&"cant") {
+            return None;
+        }
+        let cant_tail = &tail[1..];
+
+        if cant_tail == ["cast", "spells"] {
+            return Some(Restriction::cast_spells(player));
+        }
+        if cant_tail == ["cast", "creature", "spells"] {
+            return Some(Restriction::cast_creature_spells(player));
+        }
+        if let Some(spell_filter) = parse_cast_more_than_one_limit_filter(cant_tail) {
+            return Some(restriction_from_cast_limit_filter(player, spell_filter));
+        }
+        return None;
+    }
+
+    if let Some(spell_filter) = parse_cast_additional_limit_filter(words) {
+        return Some(restriction_from_cast_limit_filter(
+            PlayerFilter::Any,
+            spell_filter,
+        ));
+    }
+
+    None
+}
+
+fn parse_cant_cast_subject(words: &[&str]) -> Option<(PlayerFilter, usize)> {
+    if words.starts_with(&["your", "opponents"]) {
+        return Some((PlayerFilter::Opponent, 2));
+    }
+    if words.starts_with(&["each", "player"]) {
+        return Some((PlayerFilter::Any, 2));
+    }
+    if words.starts_with(&["each", "opponent"]) {
+        return Some((PlayerFilter::Opponent, 2));
+    }
+    match words.first().copied() {
+        Some("players") => Some((PlayerFilter::Any, 1)),
+        Some("opponents") => Some((PlayerFilter::Opponent, 1)),
+        Some("you") => Some((PlayerFilter::You, 1)),
+        _ => None,
+    }
+}
+
+fn parse_cast_more_than_one_limit_filter(words: &[&str]) -> Option<ObjectFilter> {
+    if !words.starts_with(&["cast", "more", "than", "one"]) {
+        return None;
+    }
+    let mut idx = 4usize;
+    let (spell_filter, consumed) = if words.get(idx) == Some(&"spell") {
+        (ObjectFilter::default(), 0usize)
+    } else {
+        parse_cast_limit_qualifier(&words[idx..])?
+    };
+    idx += consumed;
+
+    if words.get(idx) != Some(&"spell")
+        || words.get(idx + 1) != Some(&"each")
+        || words.get(idx + 2) != Some(&"turn")
+        || idx + 3 != words.len()
+    {
+        return None;
+    }
+
+    Some(spell_filter)
+}
+
+fn parse_cast_additional_limit_filter(words: &[&str]) -> Option<ObjectFilter> {
+    let mut idx = 0usize;
+    if words.starts_with(&["who", "has"]) {
+        idx += 2;
+    }
+
+    if words.get(idx) != Some(&"cast") {
+        return None;
+    }
+    idx += 1;
+    if words
+        .get(idx)
+        .is_some_and(|word| *word == "a" || *word == "an")
+    {
+        idx += 1;
+    }
+
+    let (first_filter, first_used) = parse_cast_limit_qualifier(&words[idx..])?;
+    idx += first_used;
+
+    if words.get(idx) != Some(&"spell")
+        || words.get(idx + 1) != Some(&"this")
+        || words.get(idx + 2) != Some(&"turn")
+        || words.get(idx + 3) != Some(&"cant")
+        || words.get(idx + 4) != Some(&"cast")
+        || words.get(idx + 5) != Some(&"additional")
+    {
+        return None;
+    }
+    idx += 6;
+
+    let (second_filter, second_used) = parse_cast_limit_qualifier(&words[idx..])?;
+    if second_filter != first_filter {
+        return None;
+    }
+    idx += second_used;
+
+    if words.get(idx) != Some(&"spells") || idx + 1 != words.len() {
+        return None;
+    }
+
+    Some(first_filter)
+}
+
+fn parse_cast_limit_qualifier(words: &[&str]) -> Option<(ObjectFilter, usize)> {
+    let parse_non_term = |term: &str| -> Option<ObjectFilter> {
+        let normalized = term.trim_end_matches('s');
+        if let Some(card_type) = parse_card_type(normalized) {
+            return Some(ObjectFilter::default().without_type(card_type));
+        }
+        if let Some(subtype) = parse_subtype_word(normalized) {
+            return Some(ObjectFilter::default().without_subtype(subtype));
+        }
+        None
+    };
+    let parse_positive_term = |term: &str| -> Option<ObjectFilter> {
+        let normalized = term.trim_end_matches('s');
+        if let Some(card_type) = parse_card_type(normalized) {
+            return Some(ObjectFilter::default().with_type(card_type));
+        }
+        if let Some(subtype) = parse_subtype_word(normalized) {
+            return Some(ObjectFilter::default().with_subtype(subtype));
+        }
+        None
+    };
+
+    if let Some(first) = words.first().copied() {
+        if let Some(term) = first.strip_prefix("non-").or_else(|| first.strip_prefix("non"))
+            && !term.is_empty()
+            && let Some(filter) = parse_non_term(term)
+        {
+            return Some((filter, 1));
+        }
+    }
+
+    if words.len() >= 2
+        && words[0] == "non"
+        && let Some(filter) = parse_non_term(words[1])
+    {
+        return Some((filter, 2));
+    }
+
+    if let Some(first) = words.first().copied()
+        && let Some(filter) = parse_positive_term(first)
+    {
+        return Some((filter, 1));
+    }
+
+    None
+}
+
+fn restriction_from_cast_limit_filter(
+    player: PlayerFilter,
+    spell_filter: ObjectFilter,
+) -> crate::effect::Restriction {
+    crate::effect::Restriction::cast_more_than_one_spell_each_turn_matching(player, spell_filter)
 }
 
 pub(crate) fn parse_negated_object_restriction_clause(

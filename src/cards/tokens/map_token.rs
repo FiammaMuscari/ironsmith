@@ -28,6 +28,7 @@ pub fn map_token_definition() -> CardDefinition {
             choices: vec![target],
             timing: ActivationTiming::SorcerySpeed,
             additional_restrictions: vec![],
+            activation_restrictions: vec![],
             mana_output: None,
             activation_condition: None,
         }),
