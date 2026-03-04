@@ -1861,7 +1861,13 @@ impl GameState {
         zone: Zone,
     ) -> ObjectId {
         let id = self.new_object_id();
-        let object = Object::from_card(id, card, owner, zone);
+        let mut object = Object::from_card(id, card, owner, zone);
+        if zone == Zone::Battlefield
+            && let Some(loyalty) = object.base_loyalty
+            && loyalty > 0
+        {
+            object.add_counters(crate::object::CounterType::Loyalty, loyalty);
+        }
         self.add_object(object);
         if zone == Zone::Battlefield {
             // Seed battlefield objects with an entry timestamp so layer timestamp
@@ -1879,7 +1885,13 @@ impl GameState {
         zone: Zone,
     ) -> ObjectId {
         let id = self.new_object_id();
-        let object = Object::from_card_definition(id, def, owner, zone);
+        let mut object = Object::from_card_definition(id, def, owner, zone);
+        if zone == Zone::Battlefield
+            && let Some(loyalty) = object.base_loyalty
+            && loyalty > 0
+        {
+            object.add_counters(crate::object::CounterType::Loyalty, loyalty);
+        }
         self.add_object(object);
         if zone == Zone::Battlefield {
             // Seed battlefield objects with an entry timestamp so static ability

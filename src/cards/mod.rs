@@ -535,6 +535,140 @@ pub fn builtin_registry() -> &'static CardRegistry {
 }
 
 const UNSUPPORTED_PARSER_LINE_FALLBACK_PREFIX: &str = "Unsupported parser line fallback:";
+#[allow(dead_code)]
+const GENERATED_SUPPORT_ISSUE_MAX_LEN: usize = 180;
+
+#[allow(dead_code)]
+fn truncate_generated_support_issue(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.chars().count() <= GENERATED_SUPPORT_ISSUE_MAX_LEN {
+        return trimmed.to_string();
+    }
+    let mut out = String::with_capacity(GENERATED_SUPPORT_ISSUE_MAX_LEN + 3);
+    for (idx, ch) in trimmed.chars().enumerate() {
+        if idx >= GENERATED_SUPPORT_ISSUE_MAX_LEN {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push_str("...");
+    out
+}
+
+#[allow(dead_code)]
+fn compact_generated_support_text(raw: &str) -> String {
+    let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_generated_support_issue(&compact)
+}
+
+#[allow(dead_code)]
+fn extract_fallback_reason(display: &str) -> String {
+    let body = display
+        .strip_prefix(UNSUPPORTED_PARSER_LINE_FALLBACK_PREFIX)
+        .map(str::trim)
+        .unwrap_or_else(|| display.trim());
+
+    if let Some(start) = body.find("ParseError(\"") {
+        let remainder = &body[start + "ParseError(\"".len()..];
+        if let Some(end) = remainder.rfind("\")") {
+            return compact_generated_support_text(&remainder[..end]);
+        }
+        if let Some(end) = remainder.rfind('"') {
+            return compact_generated_support_text(&remainder[..end]);
+        }
+    }
+
+    if let Some(start) = body.find("ParseError(") {
+        let remainder = &body[start + "ParseError(".len()..];
+        let reason = remainder.strip_suffix(')').unwrap_or(remainder);
+        return compact_generated_support_text(reason);
+    }
+
+    if let Some((_, reason_part)) = body.rsplit_once(" (") {
+        let reason = reason_part.strip_suffix(')').unwrap_or(reason_part).trim();
+        if let Some(inner) = reason
+            .strip_prefix("ParseError(\"")
+            .and_then(|value| value.strip_suffix("\")"))
+        {
+            return compact_generated_support_text(inner);
+        }
+        return compact_generated_support_text(reason);
+    }
+
+    compact_generated_support_text(body)
+}
+
+#[allow(dead_code)]
+pub(crate) fn generated_definition_support_issues(definition: &CardDefinition) -> Vec<String> {
+    let mut issues: Vec<String> = Vec::new();
+
+    let mut push_issue = |label: &str, detail: String| {
+        let detail = compact_generated_support_text(&detail);
+        if detail.is_empty() {
+            return;
+        }
+        let message = format!("{label}: {detail}");
+        if !issues.iter().any(|existing| existing == &message) {
+            issues.push(message);
+        }
+    };
+
+    for ability in &definition.abilities {
+        let AbilityKind::Static(static_ability) = &ability.kind else {
+            continue;
+        };
+        let display = static_ability.display();
+        match static_ability.id() {
+            StaticAbilityId::UnsupportedParserLine => {
+                let reason = extract_fallback_reason(&display);
+                if reason.is_empty() {
+                    push_issue("unsupported parser fallback", display);
+                } else {
+                    push_issue("unsupported parser fallback", reason);
+                }
+            }
+            StaticAbilityId::KeywordMarker => {
+                push_issue("unsupported keyword marker", display);
+            }
+            StaticAbilityId::RuleTextPlaceholder => {
+                push_issue("unsupported rules text", display);
+            }
+            StaticAbilityId::KeywordFallbackText => {
+                push_issue("unsupported keyword fallback", display);
+            }
+            StaticAbilityId::RuleFallbackText => {
+                push_issue("unsupported rules fallback", display);
+            }
+            _ => {}
+        }
+    }
+
+    if issues.is_empty() && generated_definition_has_unimplemented_content(definition) {
+        issues.push("contains unimplemented runtime markers".to_string());
+    }
+
+    issues
+}
+
+#[allow(dead_code)]
+pub(crate) fn generated_definition_unsupported_mechanics_message(
+    definition: &CardDefinition,
+) -> Option<String> {
+    let issues = generated_definition_support_issues(definition);
+    if issues.is_empty() {
+        return None;
+    }
+
+    const MAX_ISSUES_IN_MESSAGE: usize = 3;
+    let shown = issues.iter().take(MAX_ISSUES_IN_MESSAGE).cloned().collect::<Vec<_>>();
+    let mut details = shown.join(" | ");
+    if issues.len() > MAX_ISSUES_IN_MESSAGE {
+        details.push_str(&format!(" | (+{} more)", issues.len() - MAX_ISSUES_IN_MESSAGE));
+    }
+    Some(format!(
+        "Card compiled but contains unsupported mechanics: {details}"
+    ))
+}
 
 /// Returns true if a parsed definition still contains unimplemented mechanics/effects.
 ///
@@ -1074,6 +1208,27 @@ mod tests {
         definition.abilities.push(fallback);
 
         assert!(!generated_definition_is_supported(&definition));
+    }
+
+    #[test]
+    fn generated_definition_support_reports_parser_fallback_reason() {
+        let card = CardBuilder::new(CardId::new(), "Fallback Probe")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let fallback = Ability::static_ability(StaticAbility::unsupported_parser_line(
+            "probe text",
+            "ParseError(\"unsupported ring clause (clause: 'Ring tempts')\")",
+        ))
+        .with_text("probe text");
+        let mut definition = CardDefinition::new(card);
+        definition.abilities.push(fallback);
+
+        let message = generated_definition_unsupported_mechanics_message(&definition)
+            .expect("expected unsupported message");
+        assert!(
+            message.contains("unsupported ring clause"),
+            "expected unsupported reason in message, got {message}"
+        );
     }
 
     #[test]

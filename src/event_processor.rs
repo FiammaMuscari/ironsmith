@@ -2338,13 +2338,21 @@ pub fn process_etb_with_event_and_dm(
     // Check the object's own abilities for self-ETB effects
     // Per Rule 616.1a, self-replacement effects apply first
     let mut enters_tapped = false;
-    let enters_with_counters: Vec<(CounterType, u32)> = Vec::new();
+    let mut enters_with_counters: Vec<(CounterType, u32)> = Vec::new();
 
     // Gather self-replacement effects from the object's abilities
     // These are effects like shock lands' "pay 2 life or enter tapped"
     let mut self_replacement_effects: Vec<ReplacementEffect> = Vec::new();
 
     if let Some(obj) = game.object(object) {
+        if let Some(loyalty) = obj.base_loyalty
+            && loyalty > 0
+        {
+            // Planeswalkers intrinsically enter with loyalty counters equal to
+            // their printed loyalty. Model this as ETB counters so replacement
+            // effects can modify it (e.g., Doubling Season).
+            enters_with_counters.push((CounterType::Loyalty, loyalty));
+        }
         let controller = obj.controller;
         for ability in &obj.abilities {
             if let AbilityKind::Static(s) = &ability.kind {

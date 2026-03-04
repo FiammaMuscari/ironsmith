@@ -891,12 +891,12 @@ impl Object {
     /// Returns the current loyalty of this planeswalker.
     pub fn loyalty(&self) -> Option<u32> {
         let base = self.base_loyalty?;
-        let loyalty_counters = self
-            .counters
-            .get(&CounterType::Loyalty)
-            .copied()
-            .unwrap_or(0);
-        Some(base + loyalty_counters)
+        Some(
+            self.counters
+                .get(&CounterType::Loyalty)
+                .copied()
+                .unwrap_or(base),
+        )
     }
 
     /// Adds counters of the specified type.
@@ -1238,6 +1238,33 @@ mod tests {
         assert_eq!(removed, 2);
         assert_eq!(obj.power(), Some(3));
         assert_eq!(obj.toughness(), Some(3));
+    }
+
+    #[test]
+    fn test_loyalty_uses_loyalty_counters_when_present() {
+        let card = CardBuilder::new(CardId::from_raw(7), "Test Walker")
+            .card_types(vec![CardType::Planeswalker])
+            .loyalty(6)
+            .build();
+        let mut obj = Object::from_card(
+            ObjectId::from_raw(7),
+            &card,
+            PlayerId::from_index(0),
+            Zone::Battlefield,
+        );
+
+        assert_eq!(
+            obj.loyalty(),
+            Some(6),
+            "without counters, loyalty should fall back to printed value"
+        );
+
+        obj.add_counters(CounterType::Loyalty, 4);
+        assert_eq!(
+            obj.loyalty(),
+            Some(4),
+            "with counters present, loyalty should reflect counters, not base+counter"
+        );
     }
 
     #[test]

@@ -8486,6 +8486,62 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_planeswalker_etb_processing_seeds_starting_loyalty_counters() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let chandra = CardBuilder::new(CardId::from_raw(997), "Chandra Nalaar")
+            .card_types(vec![CardType::Planeswalker])
+            .loyalty(6)
+            .build();
+        let hand_id = game.create_object_from_card(&chandra, alice, Zone::Hand);
+        let result = game
+            .move_object_with_etb_processing(hand_id, Zone::Battlefield)
+            .expect("planeswalker should enter battlefield");
+
+        let loyalty = game
+            .object(result.new_id)
+            .and_then(|obj| obj.counters.get(&CounterType::Loyalty).copied())
+            .unwrap_or(0);
+        assert_eq!(loyalty, 6, "planeswalker should enter with printed loyalty");
+
+        crate::rules::state_based::apply_state_based_actions(&mut game);
+        assert!(
+            game.object(result.new_id)
+                .is_some_and(|obj| obj.zone == Zone::Battlefield),
+            "planeswalker should survive state-based actions after entering"
+        );
+    }
+
+    #[test]
+    fn test_create_object_on_battlefield_seeds_starting_loyalty_counters() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+
+        let gideon = CardBuilder::new(CardId::from_raw(996), "Test Gideon")
+            .card_types(vec![CardType::Planeswalker])
+            .loyalty(4)
+            .build();
+        let pw_id = game.create_object_from_card(&gideon, alice, Zone::Battlefield);
+
+        let loyalty = game
+            .object(pw_id)
+            .and_then(|obj| obj.counters.get(&CounterType::Loyalty).copied())
+            .unwrap_or(0);
+        assert_eq!(
+            loyalty, 4,
+            "direct battlefield creation should seed loyalty"
+        );
+
+        crate::rules::state_based::apply_state_based_actions(&mut game);
+        assert!(
+            game.object(pw_id)
+                .is_some_and(|obj| obj.zone == Zone::Battlefield),
+            "directly created planeswalker should survive state-based actions"
+        );
+    }
+
     // ========================================================================
     // Valley Floodcaller Tests
     // ========================================================================
