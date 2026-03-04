@@ -122,7 +122,7 @@ def collect_unique_blocks(
 ) -> Tuple[Dict[str, SingleEntry], List[FlipPair]]:
     unique: Dict[str, SingleEntry] = {}
     flips: List[FlipPair] = []
-    missing_scores: List[str] = []
+    skipped_missing_scores: List[str] = []
 
     def resolve_score(*candidates: str) -> float | None:
         for name in candidates:
@@ -194,10 +194,14 @@ def collect_unique_blocks(
             front_score = resolve_score(front_name, combined_name)
             back_score = resolve_score(back_name, combined_name)
             if front_score is None:
-                missing_scores.append(front_name)
+                if strict_scores:
+                    skipped_missing_scores.append(front_name)
+                    continue
                 front_score = 1.0
             if back_score is None:
-                missing_scores.append(back_name)
+                if strict_scores:
+                    skipped_missing_scores.append(back_name)
+                    continue
                 back_score = 1.0
 
             flips.append(
@@ -229,17 +233,20 @@ def collect_unique_blocks(
         key = name.casefold()
         score = resolve_score(name)
         if score is None:
-            missing_scores.append(name)
+            if strict_scores:
+                skipped_missing_scores.append(name)
+                continue
             score = 1.0
         if key not in unique:
             unique[key] = (name, parse_block, score)
 
-    if strict_scores and missing_scores:
-        unique_missing = sorted(set(missing_scores))
+    if strict_scores and skipped_missing_scores:
+        unique_missing = sorted(set(skipped_missing_scores))
         preview = ", ".join(unique_missing[:12])
         suffix = "" if len(unique_missing) <= 12 else f", ... (+{len(unique_missing) - 12} more)"
-        raise RuntimeError(
-            f"[generate_baked_registry] semantic scores missing for {len(unique_missing)} card(s): {preview}{suffix}"
+        print(
+            f"[generate_baked_registry] skipped {len(unique_missing)} card(s) without semantic scores: "
+            f"{preview}{suffix}"
         )
 
     return unique, flips
