@@ -253,6 +253,10 @@ pub(crate) enum TriggerSpec {
     AttacksAndIsntBlocked(ObjectFilter),
     AttacksWhileSaddled(ObjectFilter),
     AttacksOneOrMore(ObjectFilter),
+    AttacksOneOrMoreWithMinTotal {
+        filter: ObjectFilter,
+        min_total_attackers: u32,
+    },
     AttacksAlone(ObjectFilter),
     AttacksYouOrPlaneswalkerYouControl(ObjectFilter),
     AttacksYouOrPlaneswalkerYouControlOneOrMore(ObjectFilter),
@@ -4619,13 +4623,43 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .iter()
             .find_map(|effect| effect.downcast_ref::<CantEffect>())
             .expect("expected untap restriction effect");
-        assert_eq!(cant.duration, crate::effect::Until::YourNextTurn);
+        assert_eq!(
+            cant.duration,
+            crate::effect::Until::ControllersNextUntapStep
+        );
         match &cant.restriction {
             crate::effect::Restriction::Untap(filter) => {
                 assert!(
                     filter.source,
                     "expected source-bound untap restriction filter, got {filter:?}"
                 );
+            }
+            other => panic!("expected untap restriction, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_kefnets_last_word_uses_next_untap_step_duration() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Kefnet's Last Word Variant")
+            .card_types(vec![CardType::Sorcery])
+            .parse_text(
+                "Gain control of target artifact, creature, or enchantment. Lands you control don't untap during your next untap step.",
+            )
+            .expect("kefnet untap-skip clause should parse");
+
+        let effects = def.spell_effect.as_ref().expect("spell effect");
+        let cant = effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<CantEffect>())
+            .expect("expected untap restriction");
+        assert_eq!(
+            cant.duration,
+            crate::effect::Until::ControllersNextUntapStep
+        );
+        match &cant.restriction {
+            crate::effect::Restriction::Untap(filter) => {
+                assert_eq!(filter.controller, Some(crate::target::PlayerFilter::You));
+                assert!(filter.card_types.contains(&CardType::Land));
             }
             other => panic!("expected untap restriction, got {other:?}"),
         }

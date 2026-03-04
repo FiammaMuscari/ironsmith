@@ -2054,6 +2054,23 @@ fn test_parse_player_subject_attack_trigger_uses_one_or_more_creature_filter() {
 }
 
 #[test]
+fn test_parse_player_subject_attack_with_three_or_more_uses_thresholded_mode() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Three Or More Attack Subject Probe")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text("Whenever you attack with three or more creatures, draw a card.")
+        .expect("player-subject attack-with threshold trigger should parse");
+
+    let debug = format!("{:?}", def.abilities);
+    assert!(
+        debug.contains("AttacksTrigger")
+            && debug.contains("one_or_more: true")
+            && debug.contains("min_total_attackers: 3")
+            && debug.contains("controller: Some(You)"),
+        "expected thresholded one-or-more attacks trigger for creatures you control, got {debug}"
+    );
+}
+
+#[test]
 fn test_parse_opponent_attacks_you_trigger_uses_one_or_more_mode() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Opponent Attacks You Probe")
         .card_types(vec![CardType::Enchantment])

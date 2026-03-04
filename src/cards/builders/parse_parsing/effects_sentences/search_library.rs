@@ -1530,7 +1530,7 @@ pub(crate) fn parse_restriction_duration(
             .unwrap_or(tokens.len());
         let remainder = trim_commas(&tokens[..during_idx]);
         if !remainder.is_empty() {
-            return Ok(Some((Until::YourNextTurn, remainder)));
+            return Ok(Some((Until::ControllersNextUntapStep, remainder)));
         }
     }
 

@@ -6265,6 +6265,17 @@ pub(crate) fn strip_leading_one_or_more(tokens: &[Token]) -> &[Token] {
     }
 }
 
+fn parse_leading_or_more_quantifier(tokens: &[Token]) -> Option<(u32, &[Token])> {
+    let (count, used) = parse_number(tokens)?;
+    if tokens.get(used).is_some_and(|token| token.is_word("or"))
+        && tokens.get(used + 1).is_some_and(|token| token.is_word("more"))
+    {
+        Some((count, &tokens[used + 2..]))
+    } else {
+        None
+    }
+}
+
 pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, CardTextError> {
     let words = words(tokens);
 
@@ -7453,8 +7464,15 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
                     ))
                 })?;
             let mut object_tokens = &tokens[with_object_token_start..];
-            let one_or_more = has_leading_one_or_more(object_tokens);
-            object_tokens = strip_leading_one_or_more(object_tokens);
+            let mut min_total_attackers = None;
+            let mut one_or_more = false;
+            if let Some((count, stripped)) = parse_leading_or_more_quantifier(object_tokens) {
+                one_or_more = true;
+                object_tokens = stripped;
+                if count > 1 {
+                    min_total_attackers = Some(count);
+                }
+            }
             if object_tokens.is_empty() {
                 return Err(CardTextError::ParseError(format!(
                     "missing attacking-object filter in trigger clause (clause: '{}')",
@@ -7474,7 +7492,12 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
                     filter.controller = Some(PlayerFilter::Opponent);
                 }
             }
-            return Ok(if one_or_more {
+            return Ok(if let Some(min_total_attackers) = min_total_attackers {
+                TriggerSpec::AttacksOneOrMoreWithMinTotal {
+                    filter,
+                    min_total_attackers,
+                }
+            } else if one_or_more {
                 TriggerSpec::AttacksOneOrMore(filter)
             } else {
                 TriggerSpec::Attacks(filter)

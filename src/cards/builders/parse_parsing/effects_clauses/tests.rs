@@ -1692,6 +1692,23 @@ fn parse_trigger_clause_player_subject_attack_uses_one_or_more() {
 }
 
 #[test]
+fn parse_trigger_clause_player_subject_attack_with_three_or_more_uses_thresholded_one_or_more() {
+    let tokens = tokenize_line("you attack with three or more creatures", 0);
+    let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
+    match trigger {
+        TriggerSpec::AttacksOneOrMoreWithMinTotal {
+            filter,
+            min_total_attackers,
+        } => {
+            assert_eq!(min_total_attackers, 3);
+            assert_eq!(filter.controller, Some(PlayerFilter::You));
+            assert!(filter.card_types.contains(&CardType::Creature));
+        }
+        other => panic!("expected AttacksOneOrMoreWithMinTotal trigger, got {other:?}"),
+    }
+}
+
+#[test]
 fn parse_trigger_clause_opponent_attacks_you_uses_one_or_more() {
     let tokens = tokenize_line("an opponent attacks you or a planeswalker you control", 0);
     let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");

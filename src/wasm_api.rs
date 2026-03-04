@@ -250,6 +250,43 @@ fn grouped_battlefield_for_player(
     (snapshots, total)
 }
 
+fn should_surface_zone_card_in_pseudo_hand(
+    game: &GameState,
+    perspective: PlayerId,
+    object: &crate::object::Object,
+    zone: Zone,
+) -> bool {
+    if object.zone != zone
+        || matches!(
+            zone,
+            Zone::Hand | Zone::Library | Zone::Battlefield | Zone::Stack
+        )
+    {
+        return false;
+    }
+
+    if !game
+        .grant_registry
+        .granted_play_from_for_card(game, object.id, zone, perspective)
+        .is_empty()
+    {
+        return true;
+    }
+
+    if !game
+        .grant_registry
+        .granted_alternative_casts_for_card(game, object.id, zone, perspective)
+        .is_empty()
+    {
+        return true;
+    }
+
+    object
+        .alternative_casts
+        .iter()
+        .any(|method| method.cast_from_zone() == zone)
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct PermanentSnapshot {
     id: u64,
@@ -303,6 +340,7 @@ struct HandCardSnapshot {
 struct ZoneCardSnapshot {
     id: u64,
     name: String,
+    show_in_pseudo_hand: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -383,9 +421,10 @@ impl GameSnapshot {
             .map(|p| {
                 let (battlefield, battlefield_total) =
                     grouped_battlefield_for_player(game, p.id, &protected_ids);
+                let is_perspective_player = p.id == perspective;
                 PlayerSnapshot {
-                    can_view_hand: p.id == perspective,
-                    hand_cards: if p.id == perspective {
+                    can_view_hand: is_perspective_player,
+                    hand_cards: if is_perspective_player {
                         p.hand
                             .iter()
                             .rev()
@@ -421,6 +460,13 @@ impl GameSnapshot {
                         .map(|o| ZoneCardSnapshot {
                             id: o.id.0,
                             name: o.name.clone(),
+                            show_in_pseudo_hand: is_perspective_player
+                                && should_surface_zone_card_in_pseudo_hand(
+                                    game,
+                                    perspective,
+                                    o,
+                                    Zone::Graveyard,
+                                ),
                         })
                         .collect(),
                     exile_cards: game
@@ -432,6 +478,13 @@ impl GameSnapshot {
                         .map(|o| ZoneCardSnapshot {
                             id: o.id.0,
                             name: o.name.clone(),
+                            show_in_pseudo_hand: is_perspective_player
+                                && should_surface_zone_card_in_pseudo_hand(
+                                    game,
+                                    perspective,
+                                    o,
+                                    Zone::Exile,
+                                ),
                         })
                         .collect(),
                     library_top: p

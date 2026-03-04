@@ -343,6 +343,17 @@ impl Trigger {
         Self::new(AttacksTrigger::one_or_more(filter))
     }
 
+    /// Create a "when N or more [filter] attack" trigger that fires once per declaration.
+    pub fn attacks_one_or_more_with_min_total(
+        filter: ObjectFilter,
+        min_total_attackers: usize,
+    ) -> Self {
+        Self::new(AttacksTrigger::one_or_more_with_min_total_attackers(
+            filter,
+            min_total_attackers,
+        ))
+    }
+
     /// Create a "when [filter] attacks alone" trigger.
     pub fn attacks_alone(filter: ObjectFilter) -> Self {
         Self::new(AttacksAloneTrigger::new(filter))

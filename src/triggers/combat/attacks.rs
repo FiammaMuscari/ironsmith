@@ -16,6 +16,8 @@ pub struct AttacksTrigger {
     pub filter: ObjectFilter,
     /// If true, this trigger fires only once when one or more matching creatures attack.
     pub one_or_more: bool,
+    /// Minimum number of total attackers required for this trigger to fire.
+    pub min_total_attackers: usize,
 }
 
 impl AttacksTrigger {
@@ -24,6 +26,7 @@ impl AttacksTrigger {
         Self {
             filter,
             one_or_more: false,
+            min_total_attackers: 1,
         }
     }
 
@@ -32,6 +35,20 @@ impl AttacksTrigger {
         Self {
             filter,
             one_or_more: true,
+            min_total_attackers: 1,
+        }
+    }
+
+    /// Create an attacks trigger that fires once for one-or-more attackers and
+    /// only if at least `min_total_attackers` attackers were declared.
+    pub fn one_or_more_with_min_total_attackers(
+        filter: ObjectFilter,
+        min_total_attackers: usize,
+    ) -> Self {
+        Self {
+            filter,
+            one_or_more: true,
+            min_total_attackers: min_total_attackers.max(1),
         }
     }
 
@@ -74,6 +91,9 @@ impl TriggerMatcher for AttacksTrigger {
         if !self.filter.matches(obj, &ctx.filter_ctx, ctx.game) {
             return false;
         }
+        if e.total_attackers < self.min_total_attackers {
+            return false;
+        }
         if self.one_or_more {
             return self.is_first_matching_attacker_this_combat(e.attacker, ctx);
         }
@@ -81,14 +101,27 @@ impl TriggerMatcher for AttacksTrigger {
     }
 
     fn display(&self) -> String {
+        let mut subject = self.filter.description();
+        if let Some(stripped) = subject.strip_prefix("a ") {
+            subject = stripped.to_string();
+        } else if let Some(stripped) = subject.strip_prefix("an ") {
+            subject = stripped.to_string();
+        }
+
         if self.one_or_more {
-            let mut subject = self.filter.description();
-            if let Some(stripped) = subject.strip_prefix("a ") {
-                subject = stripped.to_string();
-            } else if let Some(stripped) = subject.strip_prefix("an ") {
-                subject = stripped.to_string();
+            if self.min_total_attackers > 1 {
+                return format!(
+                    "Whenever {} or more {subject} attack",
+                    self.min_total_attackers
+                );
             }
             return format!("Whenever one or more {subject} attack");
+        }
+        if self.min_total_attackers > 1 {
+            return format!(
+                "Whenever {} or more {subject} attack",
+                self.min_total_attackers
+            );
         }
         format!("Whenever {} attacks", self.filter.description())
     }
@@ -177,6 +210,57 @@ mod tests {
             attacker_two,
             AttackEventTarget::Player(bob),
             2,
+        ));
+        assert!(!trigger.matches(&second_event, &ctx));
+    }
+
+    #[test]
+    fn test_one_or_more_with_min_total_attackers_requires_threshold() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let source_id = ObjectId::from_raw(100);
+        let attacker_one = create_creature(&mut game, "A", alice);
+        let attacker_two = create_creature(&mut game, "B", alice);
+        let attacker_three = create_creature(&mut game, "C", alice);
+
+        let mut combat = CombatState::default();
+        combat.attackers.push(AttackerInfo {
+            creature: attacker_one,
+            target: AttackTarget::Player(bob),
+        });
+        combat.attackers.push(AttackerInfo {
+            creature: attacker_two,
+            target: AttackTarget::Player(bob),
+        });
+        combat.attackers.push(AttackerInfo {
+            creature: attacker_three,
+            target: AttackTarget::Player(bob),
+        });
+        game.combat = Some(combat);
+
+        let trigger =
+            AttacksTrigger::one_or_more_with_min_total_attackers(ObjectFilter::creature(), 3);
+        let ctx = TriggerContext::for_source(source_id, alice, &game);
+
+        let below_threshold = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
+            attacker_one,
+            AttackEventTarget::Player(bob),
+            2,
+        ));
+        assert!(!trigger.matches(&below_threshold, &ctx));
+
+        let first_event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
+            attacker_one,
+            AttackEventTarget::Player(bob),
+            3,
+        ));
+        assert!(trigger.matches(&first_event, &ctx));
+
+        let second_event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
+            attacker_two,
+            AttackEventTarget::Player(bob),
+            3,
         ));
         assert!(!trigger.matches(&second_event, &ctx));
     }
