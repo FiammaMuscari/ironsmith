@@ -17,7 +17,7 @@ use crate::target::ChooseSpec;
 use crate::zone::Zone;
 use crate::{CounterType, ManaSymbol, Step};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -937,7 +937,177 @@ fn can_pay_ability_cost(
     cost: &crate::cost::TotalCost,
 ) -> bool {
     let effective_cost = calculate_effective_activation_total_cost(game, player, source_id, cost);
-    can_pay_cost(game, source_id, player, &effective_cost).is_ok()
+    if can_pay_cost(game, source_id, player, &effective_cost).is_ok() {
+        return true;
+    }
+
+    // Some activated abilities only become payable while paying costs, because
+    // mana abilities can add non-mana resources (e.g. Wall of Roots counters).
+    // If strict "pay now" fails, run a bounded dry-run that explores mana-ability
+    // sequences and rechecks whether the frozen total cost is payable.
+    can_pay_ability_cost_via_mana_sequence(game, source_id, player, &effective_cost)
+}
+
+fn can_pay_ability_cost_via_mana_sequence(
+    game: &GameState,
+    source_id: ObjectId,
+    player: PlayerId,
+    effective_cost: &crate::cost::TotalCost,
+) -> bool {
+    use crate::costs::{
+        CostCheckContext, can_pay_with_check_context, can_potentially_pay_with_check_context,
+    };
+
+    // This search only models "activate mana abilities while paying". If the
+    // cost has no mana component, this fallback should not unlock it.
+    if !effective_cost
+        .costs()
+        .iter()
+        .any(|component| component.processing_mode().is_mana_payment())
+    {
+        return false;
+    }
+
+    fn can_pay_frozen_cost_in_state(
+        game: &GameState,
+        source_id: ObjectId,
+        player: PlayerId,
+        effective_cost: &crate::cost::TotalCost,
+    ) -> bool {
+        let check_ctx = CostCheckContext::new(source_id, player);
+        effective_cost.costs().iter().all(|component| {
+            if component.processing_mode().is_mana_payment() {
+                can_potentially_pay_with_check_context(&*component.0, game, &check_ctx).is_ok()
+            } else {
+                can_pay_with_check_context(&*component.0, game, &check_ctx).is_ok()
+            }
+        })
+    }
+
+    if can_pay_frozen_cost_in_state(game, source_id, player, effective_cost) {
+        return true;
+    }
+
+    const MAX_SEARCH_DEPTH: usize = 8;
+    const MAX_SEARCH_STATES: usize = 192;
+
+    let mut queue: VecDeque<(GameState, usize)> = VecDeque::new();
+    queue.push_back((game.clone(), 0));
+
+    let mut seen = HashSet::new();
+    let mut explored = 0usize;
+
+    while let Some((state, depth)) = queue.pop_front() {
+        if explored >= MAX_SEARCH_STATES {
+            break;
+        }
+        explored += 1;
+
+        // Conservative dedupe to keep search bounded. This is fallback-only and
+        // runs when strict checks fail, so debug-key cost is acceptable.
+        if !seen.insert(format!("{state:?}")) {
+            continue;
+        }
+
+        if can_pay_frozen_cost_in_state(&state, source_id, player, effective_cost) {
+            return true;
+        }
+
+        if depth >= MAX_SEARCH_DEPTH {
+            continue;
+        }
+
+        for (mana_source, mana_ability_index) in legal_mana_ability_actions(&state, player) {
+            let mut next = state.clone();
+            let mut dm = SelectFirstDecisionMaker;
+            if crate::special_actions::perform_activate_mana_ability(
+                &mut next,
+                player,
+                mana_source,
+                mana_ability_index,
+                &mut dm,
+            )
+            .is_ok()
+            {
+                queue.push_back((next, depth + 1));
+            }
+        }
+    }
+
+    false
+}
+
+fn legal_mana_ability_actions(game: &GameState, player: PlayerId) -> Vec<(ObjectId, usize)> {
+    use crate::special_actions::{SpecialAction, can_perform_check};
+
+    let mut actions = Vec::new();
+
+    // Battlefield mana abilities controlled by this player.
+    for perm_id in game.battlefield.clone() {
+        let Some(perm) = game.object(perm_id) else {
+            continue;
+        };
+        if perm.controller != player {
+            continue;
+        }
+        for (ability_index, ability) in perm.abilities.iter().enumerate() {
+            if !ability.is_mana_ability() {
+                continue;
+            }
+            let action = SpecialAction::ActivateManaAbility {
+                permanent_id: perm_id,
+                ability_index,
+            };
+            if can_perform_check(&action, game, player).is_ok() {
+                actions.push((perm_id, ability_index));
+            }
+        }
+    }
+
+    // Non-battlefield mana abilities that function from their current zone.
+    if let Some(player_obj) = game.player(player) {
+        let mut non_battlefield_ids = Vec::new();
+        non_battlefield_ids.extend(player_obj.hand.iter().copied());
+        non_battlefield_ids.extend(player_obj.graveyard.iter().copied());
+        non_battlefield_ids.extend(
+            game.exile
+                .iter()
+                .copied()
+                .filter(|id| game.object(*id).is_some_and(|obj| obj.owner == player)),
+        );
+        non_battlefield_ids.extend(
+            game.command_zone
+                .iter()
+                .copied()
+                .filter(|id| game.object(*id).is_some_and(|obj| obj.owner == player)),
+        );
+        non_battlefield_ids.sort_by_key(|id| id.0);
+        non_battlefield_ids.dedup();
+
+        for source_id in non_battlefield_ids {
+            let Some(obj) = game.object(source_id) else {
+                continue;
+            };
+            if obj.zone == Zone::Battlefield || obj.controller != player {
+                continue;
+            }
+
+            for (ability_index, ability) in obj.abilities.iter().enumerate() {
+                if !ability.functions_in(&obj.zone) || !ability.is_mana_ability() {
+                    continue;
+                }
+                let action = SpecialAction::ActivateManaAbility {
+                    permanent_id: source_id,
+                    ability_index,
+                };
+                if can_perform_check(&action, game, player).is_ok() {
+                    actions.push((source_id, ability_index));
+                }
+            }
+        }
+    }
+
+    actions
 }
 
 /// Check if a player could potentially pay a TotalCost.
@@ -8376,6 +8546,109 @@ mod tests {
                 .iter()
                 .any(|a| matches!(a, LegalAction::ActivateAbility { source, .. } if *source == creature_id)),
             "Should be able to activate with sufficient mana"
+        );
+    }
+
+    #[test]
+    fn test_tayam_wall_of_roots_activation_uses_mana_sequence_solver() {
+        use crate::ability::AbilityKind;
+        use crate::cards::definitions::{tayam_luminous_enigma, wall_of_roots};
+        use crate::object::CounterType;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let tayam_id =
+            game.create_object_from_definition(&tayam_luminous_enigma(), alice, Zone::Battlefield);
+        let wall_id =
+            game.create_object_from_definition(&wall_of_roots(), alice, Zone::Battlefield);
+
+        if let Some(wall) = game.object_mut(wall_id) {
+            wall.counters.insert(CounterType::MinusOneMinusOne, 2);
+        }
+
+        // Start with only 2 mana and 2 counters; activation should still be legal
+        // because Wall of Roots can be activated during cost payment.
+        if let Some(player) = game.player_mut(alice) {
+            player.mana_pool.add(ManaSymbol::Colorless, 2);
+        }
+
+        let tayam_ability_index = game
+            .object(tayam_id)
+            .expect("Tayam should exist")
+            .abilities
+            .iter()
+            .position(|ability| matches!(ability.kind, AbilityKind::Activated(_)))
+            .expect("Tayam should have an activated ability");
+
+        let actions = compute_legal_actions(&game, alice);
+        assert!(
+            actions.iter().any(|action| matches!(
+                action,
+                LegalAction::ActivateAbility { source, ability_index }
+                    if *source == tayam_id && *ability_index == tayam_ability_index
+            )),
+            "Tayam activation should be legal when Wall of Roots can provide the 3rd mana and 3rd counter during payment"
+        );
+    }
+
+    #[test]
+    fn test_tayam_wall_of_roots_activation_blocked_when_wall_already_used() {
+        use crate::ability::AbilityKind;
+        use crate::cards::definitions::{tayam_luminous_enigma, wall_of_roots};
+        use crate::object::CounterType;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let tayam_id =
+            game.create_object_from_definition(&tayam_luminous_enigma(), alice, Zone::Battlefield);
+        let wall_id =
+            game.create_object_from_definition(&wall_of_roots(), alice, Zone::Battlefield);
+
+        if let Some(wall) = game.object_mut(wall_id) {
+            wall.counters.insert(CounterType::MinusOneMinusOne, 2);
+        }
+
+        if let Some(player) = game.player_mut(alice) {
+            player.mana_pool.add(ManaSymbol::Colorless, 2);
+        }
+
+        let wall_mana_ability_index = game
+            .object(wall_id)
+            .expect("Wall of Roots should exist")
+            .abilities
+            .iter()
+            .position(|ability| ability.is_mana_ability())
+            .expect("Wall of Roots should have a mana ability");
+        game.record_ability_activation(wall_id, wall_mana_ability_index);
+
+        let tayam_ability_index = game
+            .object(tayam_id)
+            .expect("Tayam should exist")
+            .abilities
+            .iter()
+            .position(|ability| matches!(ability.kind, AbilityKind::Activated(_)))
+            .expect("Tayam should have an activated ability");
+
+        let actions = compute_legal_actions(&game, alice);
+        assert!(
+            !actions.iter().any(|action| matches!(
+                action,
+                LegalAction::ActivateAbility { source, ability_index }
+                    if *source == tayam_id && *ability_index == tayam_ability_index
+            )),
+            "Tayam activation should not be legal when Wall of Roots cannot be activated again this turn"
         );
     }
 

@@ -4,7 +4,7 @@ cards.json
 .idea
 parse_report*
 /docs
-scripts/
+scripts/__pycache__*
 /reports
 *.txt
 *.json
