@@ -1,5 +1,5 @@
 import { useRef, useLayoutEffect, useEffect, useCallback, useMemo } from "react";
-import { useHoverActions } from "@/context/HoverContext";
+import { useHoverActions, useHoveredObjectId } from "@/context/HoverContext";
 import { useCombatArrows } from "@/context/CombatArrowContext";
 import useNewCards from "@/hooks/useNewCards";
 import GameCard from "@/components/cards/GameCard";
@@ -7,7 +7,8 @@ import GameCard from "@/components/cards/GameCard";
 export default function BattlefieldRow({ cards = [], compact = false, selectedObjectId, onInspect, onCardClick, activatableMap }) {
   const rowRef = useRef(null);
   const { hoverCard, clearHover } = useHoverActions();
-  const { combatMode, combatModeRef, startDragArrow, updateDragArrow, endDragArrow } = useCombatArrows();
+  const hoveredObjectId = useHoveredObjectId();
+  const { combatMode, combatModeRef, dragArrow, startDragArrow, updateDragArrow, endDragArrow } = useCombatArrows();
   const cardIds = useMemo(() => cards.map((c) => c.id), [cards]);
   const { newIds, bumpedIds } = useNewCards(cardIds);
   const dragRef = useRef(null);
@@ -92,6 +93,18 @@ export default function BattlefieldRow({ cards = [], compact = false, selectedOb
       }
       if (dt.dragging) {
         updateDragArrow(me.clientX, me.clientY);
+        if (cm.mode === "attackers") {
+          const hoverEl = document
+            .elementFromPoint(me.clientX, me.clientY)
+            ?.closest?.(".game-card[data-object-id]");
+          if (hoverEl) {
+            const hoverId = Number(hoverEl.dataset.objectId);
+            if (Number.isFinite(hoverId)) hoverCard(hoverId);
+            else clearHover();
+          } else {
+            clearHover();
+          }
+        }
       }
     };
 
@@ -107,6 +120,7 @@ export default function BattlefieldRow({ cards = [], compact = false, selectedOb
 
       if (dt.dragging && curMode?.onDrop) {
         curMode.onDrop(dt.cardId, ue.clientX, ue.clientY);
+        clearHover();
       } else if (!dt.dragging) {
         // Click (no drag) — toggle via onClick or fall through to onCardClick
         if (curMode?.onClick) {
@@ -139,14 +153,23 @@ export default function BattlefieldRow({ cards = [], compact = false, selectedOb
         }
 
         const isCombatCandidate = combatMode?.candidates?.has(Number(card.id));
-        const isInteractable = isActivatable || isCombatCandidate;
-        const isSelectedAttacker = combatMode?.selectedAttacker === Number(card.id);
-        const combatGlowKind = isSelectedAttacker
-          ? "attack-selected"
-          : isCombatCandidate
-            ? (combatMode.mode === "attackers" ? "attack-candidate" : "blocker-candidate")
-            : null;
-
+        const activeAttackerId = (
+          combatMode?.mode === "attackers"
+            ? Number(combatMode?.selectedAttacker ?? dragArrow?.fromId ?? NaN)
+            : NaN
+        );
+        const activeTargetObjects = (
+          Number.isFinite(activeAttackerId)
+            ? combatMode?.validTargetObjectsByAttacker?.[activeAttackerId]
+            : combatMode?.validTargetObjects
+        );
+        const isAttackHoverTarget = (
+          combatMode?.mode === "attackers" &&
+          Number.isFinite(activeAttackerId) &&
+          !!activeTargetObjects?.has?.(Number(card.id)) &&
+          hoveredObjectId != null &&
+          String(card.id) === String(hoveredObjectId)
+        );
         // Determine ability glow kind: mana vs non-mana
         let abilityGlow = null;
         if (isActivatable) {
@@ -155,6 +178,18 @@ export default function BattlefieldRow({ cards = [], compact = false, selectedOb
           const hasNonMana = actions.some((a) => a.kind === "activate_ability");
           abilityGlow = hasMana && !hasNonMana ? "mana" : hasNonMana ? "ability" : "mana";
         }
+        const isInteractable = isActivatable || isCombatCandidate;
+        const isSelectedAttacker = combatMode?.selectedAttacker === Number(card.id);
+        const combatGlowKind = isSelectedAttacker
+          ? "attack-selected"
+          : isAttackHoverTarget
+            ? "attack-selected"
+          : isCombatCandidate
+            ? (combatMode.mode === "attackers" ? "attack-candidate" : "blocker-candidate")
+            : null;
+        const appliedGlowKind = isAttackHoverTarget
+          ? "attack-selected"
+          : (isCombatCandidate ? combatGlowKind : abilityGlow);
 
         return (
           <GameCard
@@ -163,7 +198,8 @@ export default function BattlefieldRow({ cards = [], compact = false, selectedOb
             compact={compact}
             isInspected={isInteractable && selectedObjectId === card.id}
             isPlayable={isInteractable}
-            glowKind={isCombatCandidate ? combatGlowKind : abilityGlow}
+            glowKind={appliedGlowKind}
+            isHovered={isAttackHoverTarget}
             isNew={isNew}
             isBumped={isBumped}
             bumpDirection={bumpDir}

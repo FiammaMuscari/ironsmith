@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import BattlefieldRow from "./BattlefieldRow";
 import ManaPool from "@/components/left-rail/ManaPool";
 import { useCombatArrows } from "@/context/CombatArrowContext";
+import { cn } from "@/lib/utils";
 
 function getZoneCards(player, zoneView) {
   switch (zoneView) {
@@ -64,10 +65,24 @@ export default function OpponentZone({ opponents, selectedObjectId, onInspect, z
 
 function OpponentSlot({ player, selectedObjectId, onInspect, zoneView }) {
   const [zoneCounts, setZoneCounts] = useState(false);
-  const { combatModeRef } = useCombatArrows();
+  const { combatModeRef, combatMode, dragArrow } = useCombatArrows();
   const cards = getZoneCards(player, zoneView);
   const zoneName = zoneView === "battlefield" ? "" : ` — ${zoneView.charAt(0).toUpperCase() + zoneView.slice(1)}`;
   const playerIdx = player.index ?? player.id;
+  const activeAttackerId = (
+    combatMode?.mode === "attackers"
+      ? Number(combatMode?.selectedAttacker ?? dragArrow?.fromId ?? NaN)
+      : NaN
+  );
+  const zoneIsAttackHoverTarget = (
+    combatMode?.mode === "attackers" &&
+    Number.isFinite(activeAttackerId) &&
+    !!combatMode?.validTargetPlayersByAttacker?.[activeAttackerId]?.has?.(Number(playerIdx))
+  );
+  const attackerArrowActive = (
+    combatMode?.mode === "attackers" &&
+    (combatMode?.selectedAttacker != null || dragArrow?.fromId != null)
+  );
 
   // Capture-phase click handler: when a selected attacker is awaiting a target,
   // clicking anywhere on this opponent's zone assigns the target.
@@ -89,8 +104,11 @@ function OpponentSlot({ player, selectedObjectId, onInspect, zoneView }) {
 
   return (
     <div
-      className="bg-gradient-to-b from-[#101826] to-[#0a121d] rounded p-1.5 grid gap-1.5 min-h-0 h-full"
-      style={{ gridTemplateRows: "auto minmax(0,1fr)", alignContent: "stretch", cursor: combatModeRef.current?.selectedAttacker != null ? "crosshair" : undefined }}
+      className={cn(
+        "bg-gradient-to-b from-[#101826] to-[#0a121d] rounded p-1.5 grid gap-1.5 min-h-0 h-full",
+        zoneIsAttackHoverTarget && "attack-target-zone"
+      )}
+      style={{ gridTemplateRows: "auto minmax(0,1fr)", alignContent: "stretch", cursor: attackerArrowActive ? "crosshair" : undefined }}
       data-opponent-zone={playerIdx}
       onClickCapture={handleClickCapture}
     >
@@ -105,6 +123,7 @@ function OpponentSlot({ player, selectedObjectId, onInspect, zoneView }) {
           <span
             className="text-[16px] text-[#a4bdd7] uppercase tracking-wider font-bold"
             data-player-target={player.index ?? player.id}
+            data-player-target-name={player.index ?? player.id}
           >
             {player.name}
             {zoneName && <span className="text-muted-foreground">{zoneName}</span>}

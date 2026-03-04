@@ -40,17 +40,7 @@ export default function AddCardBar({ zoneView, setZoneView }) {
 
   return (
     <div className="panel-gradient flex items-center gap-1.5 rounded px-2.5 py-1">
-      <select
-        className={selectPill}
-        value={playerIndex || perspective}
-        onChange={(e) => setPlayerIndex(Number(e.target.value))}
-      >
-        {players.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
+      <Badge variant="secondary" className={pill} onClick={handleAdd}>Add</Badge>
 
       <input
         className={`${inputPill} w-36`}
@@ -64,6 +54,18 @@ export default function AddCardBar({ zoneView, setZoneView }) {
           }
         }}
       />
+
+      <select
+        className={selectPill}
+        value={playerIndex || perspective}
+        onChange={(e) => setPlayerIndex(Number(e.target.value))}
+      >
+        {players.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
 
       <select
         className={selectPill}
@@ -85,8 +87,6 @@ export default function AddCardBar({ zoneView, setZoneView }) {
         />
         Skip triggers
       </label>
-
-      <Badge variant="secondary" className={pill} onClick={handleAdd}>Add</Badge>
 
       <span className="mx-1 text-muted-foreground/40">|</span>
 

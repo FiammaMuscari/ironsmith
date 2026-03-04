@@ -15,6 +15,58 @@ function curvedArrowPath(x1, y1, x2, y2) {
   return `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
 }
 
+function segmentEntryOnRect(from, to, rect) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const left = rect.left;
+  const right = rect.right;
+  const top = rect.top;
+  const bottom = rect.bottom;
+  let u1 = 0;
+  let u2 = 1;
+
+  const clip = (p, q) => {
+    if (p === 0) return q >= 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > u2) return false;
+      if (r > u1) u1 = r;
+      return true;
+    }
+    if (r < u1) return false;
+    if (r < u2) u2 = r;
+    return true;
+  };
+
+  if (
+    !clip(-dx, from.x - left) ||
+    !clip(dx, right - from.x) ||
+    !clip(-dy, from.y - top) ||
+    !clip(dy, bottom - from.y)
+  ) {
+    return null;
+  }
+
+  return {
+    x: from.x + dx * u1,
+    y: from.y + dy * u1,
+  };
+}
+
+function pointBeforeRect(from, rect, gap = 10) {
+  const targetCenter = centerOf(rect);
+  const entry = segmentEntryOnRect(from, targetCenter, rect);
+  if (!entry) return targetCenter;
+  const vx = entry.x - from.x;
+  const vy = entry.y - from.y;
+  const len = Math.hypot(vx, vy);
+  if (len < 1e-3) return entry;
+  return {
+    x: entry.x - (vx / len) * gap,
+    y: entry.y - (vy / len) * gap,
+  };
+}
+
 export default function ArrowOverlay() {
   const { arrows, dragArrow } = useCombatArrows();
   const [paths, setPaths] = useState([]);
@@ -33,7 +85,9 @@ export default function ArrowOverlay() {
       if (!fromRect || !toRect) continue;
 
       const from = centerOf(fromRect);
-      const to = centerOf(toRect);
+      const to = arrow.toPlayerId != null
+        ? pointBeforeRect(from, toRect, 9)
+        : centerOf(toRect);
       const d = curvedArrowPath(from.x, from.y, to.x, to.y);
       const len = Math.sqrt((to.x - from.x) ** 2 + (to.y - from.y) ** 2) * 1.15;
       result.push({ d, color: arrow.color || "#ff3b30", key: arrow.key, len });
@@ -114,7 +168,7 @@ export default function ArrowOverlay() {
           refY="3.5"
           orient="auto"
         >
-          <polygon points="0 0, 10 3.5, 0 7" fill="currentColor" opacity="0.8" />
+          <polygon points="0 0, 10 3.5, 0 7" fill="context-stroke" opacity="0.85" />
         </marker>
       </defs>
 
@@ -148,7 +202,6 @@ export default function ArrowOverlay() {
           strokeDasharray="8 4"
           filter="url(#arrow-glow)"
           opacity={0.85}
-          style={{ color: dragPath.color }}
           markerEnd="url(#arrowhead-drag)"
         />
       )}

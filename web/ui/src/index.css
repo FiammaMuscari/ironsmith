@@ -1032,6 +1032,16 @@
     inset 0 0 8px 3px rgba(255, 59, 48, 0.35) !important;
 }
 
+.game-card.attack-selected:hover,
+.game-card.attack-selected.hovered {
+  transform: translateY(-2px) scale(1.055);
+  z-index: 9;
+  box-shadow:
+    0 0 20px 7px rgba(255, 59, 48, 0.76),
+    0 0 40px 14px rgba(255, 59, 48, 0.38),
+    inset 0 0 12px 4px rgba(255, 59, 48, 0.45) !important;
+}
+
 .game-card.blocker-selected {
   box-shadow:
     0 0 14px 4px rgba(59, 130, 246, 0.65),
@@ -1155,6 +1165,35 @@
 
 .board-zone-bg {
   background: linear-gradient(180deg, rgba(18, 28, 40, 0.88), rgba(14, 20, 30, 0.72));
+}
+
+.add-card-error-toast {
+  animation: add-card-error-slide-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes add-card-error-slide-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(16px, -18px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.attack-target-zone {
+  transition: transform 140ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.attack-target-zone:hover {
+  transform: translateY(-1px) scale(1.008);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 59, 48, 0.4),
+    0 0 18px rgba(255, 59, 48, 0.28),
+    0 0 36px rgba(255, 59, 48, 0.16);
+  background:
+    linear-gradient(180deg, rgba(53, 21, 24, 0.58), rgba(20, 12, 16, 0.5));
 }
 
 /* ---- Card Enter / Bump ---- */

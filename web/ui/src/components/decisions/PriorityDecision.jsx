@@ -288,7 +288,7 @@ export default function PriorityDecision({ decision, canAct }) {
         <Button
           variant="ghost"
           size="sm"
-          className="group mb-1.5 h-auto min-h-7 py-1.5 text-[15px] font-bold justify-start px-3 whitespace-normal text-left transition-all duration-200 shrink-0 pass-priority-btn"
+          className="group h-auto min-h-7 py-1.5 text-[15px] font-bold justify-start px-3 whitespace-normal text-left transition-all duration-200 shrink-0 pass-priority-btn"
           style={{
             color: pc.text,
             border: `1px solid ${pc.border}`,
@@ -309,6 +309,10 @@ export default function PriorityDecision({ decision, canAct }) {
         >
           <span className="inline-block transition-transform duration-200 group-hover:translate-x-0.5">{passLabel}</span>
         </Button>
+      )}
+
+      {passAction && !isResolvingStack && (
+        <div className="shrink-0 border-t border-game-line-2/70 my-1" aria-hidden="true" />
       )}
 
       {resolvingAbilityText && (

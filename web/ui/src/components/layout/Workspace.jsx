@@ -38,6 +38,11 @@ export default function Workspace({ zoneView, deckLoadingMode, onLoadDecks, onCa
   const addCardError = status?.isError && typeof status?.msg === "string" && status.msg.startsWith("Add card failed:")
     ? status.msg
     : null;
+  const [dismissedAddCardError, setDismissedAddCardError] = useState(false);
+
+  useEffect(() => {
+    if (addCardError) setDismissedAddCardError(false);
+  }, [status, addCardError]);
 
   useEffect(() => {
     if (!hasStackContent && stackExpanded) {
@@ -132,6 +137,16 @@ export default function Workspace({ zoneView, deckLoadingMode, onLoadDecks, onCa
       <DragOverlay />
       <CastParticles />
       <ArrowOverlay />
+      {addCardError && !dismissedAddCardError && (
+        <button
+          type="button"
+          className="add-card-error-toast absolute top-2 right-2 z-[120] max-w-[min(420px,48vw)] rounded border border-[#9f2b2b] bg-[rgba(24,8,8,0.96)] px-3 py-2 text-left text-[13px] font-semibold leading-tight text-[#ff7f7f] shadow-[0_10px_26px_rgba(0,0,0,0.45)] hover:border-[#c04040] hover:text-[#ff9f9f] transition-colors"
+          onClick={() => setDismissedAddCardError(true)}
+          title="Click to dismiss"
+        >
+          {addCardError}
+        </button>
+      )}
       <RightRail pinnedObjectId={selectedObjectId} />
       <TableCore
         selectedObjectId={selectedObjectId}
@@ -157,7 +172,6 @@ export default function Workspace({ zoneView, deckLoadingMode, onLoadDecks, onCa
             onInspect={setSelectedObjectId}
             expanded={stackExpanded}
             onToggleExpanded={() => setStackExpanded((v) => !v)}
-            addCardError={addCardError}
           />
         </div>
       </div>

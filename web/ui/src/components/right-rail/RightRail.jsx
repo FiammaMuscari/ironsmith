@@ -18,6 +18,7 @@ export default function RightRail({ pinnedObjectId }) {
         <div className="basis-[44%] max-h-[44%] min-h-0 shrink overflow-hidden">
           <DecisionPanel />
         </div>
+        <div className="shrink-0 border-t border-game-line-2/70 mx-1" aria-hidden="true" />
         <div className="flex-1 min-h-0 overflow-hidden">
           <InspectorPanel selectedObjectId={selectedObjectId} pinnedObjectId={pinnedObjectId} />
         </div>

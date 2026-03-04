@@ -72,6 +72,8 @@ export default function AttackersDecision({ decision, canAct }) {
   const { updateArrows, clearArrows, startDragArrow, updateDragArrow, endDragArrow, setCombatMode } = useCombatArrows();
   const options = decision.attacker_options || [];
   const players = state?.players || [];
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const [declarations, setDeclarations] = useState(() => {
     const initial = [];
@@ -93,6 +95,8 @@ export default function AttackersDecision({ decision, canAct }) {
   const [selectedAttackerId, setSelectedAttackerId] = useState(null);
   const selectedAttackerRef = useRef(null);
   selectedAttackerRef.current = selectedAttackerId;
+  const declarationsRef = useRef(declarations);
+  declarationsRef.current = declarations;
 
   const getDeclaration = (creatureId) =>
     declarations.find((d) => d.creature === Number(creatureId));
@@ -102,9 +106,9 @@ export default function AttackersDecision({ decision, canAct }) {
 
   const toggleAttacker = useCallback((opt) => {
     const creatureId = Number(opt.creature);
-    const validTargets = opt.valid_targets || [];
+    const currentDeclarations = declarationsRef.current || [];
 
-    if (isAttacking(creatureId)) {
+    if (currentDeclarations.some((d) => d.creature === creatureId)) {
       if (opt.must_attack) return;
       setDeclarations((prev) => prev.filter((d) => d.creature !== creatureId));
       setSelectedAttackerId(null);
@@ -115,7 +119,7 @@ export default function AttackersDecision({ decision, canAct }) {
       // Select this creature — arrow will follow mouse via useEffect below
       setSelectedAttackerId(creatureId);
     }
-  }, [isAttacking]);
+  }, []);
 
   const selectTarget = useCallback((creatureId, target) => {
     creatureId = Number(creatureId);
@@ -154,7 +158,7 @@ export default function AttackersDecision({ decision, canAct }) {
   const handleTargetAreaClick = useCallback((playerIdx, planeswalkerObjId) => {
     const selId = selectedAttackerRef.current;
     if (selId == null) return;
-    const opt = options.find((o) => Number(o.creature) === selId);
+    const opt = (optionsRef.current || []).find((o) => Number(o.creature) === selId);
     if (!opt) return;
     const validTargets = opt.valid_targets || [];
 
@@ -177,11 +181,11 @@ export default function AttackersDecision({ decision, canAct }) {
         return;
       }
     }
-  }, [options, selectTarget]);
+  }, [selectTarget]);
 
   // Handle drop from battlefield drag
   const handleDrop = useCallback((fromId, x, y) => {
-    const opt = options.find((o) => Number(o.creature) === Number(fromId));
+    const opt = (optionsRef.current || []).find((o) => Number(o.creature) === Number(fromId));
     if (!opt) return;
 
     const validTargets = opt.valid_targets || [];
@@ -190,12 +194,11 @@ export default function AttackersDecision({ decision, canAct }) {
     // If only one target, declare immediately on any drag release
     if (validTargets.length === 1) {
       const creatureId = Number(fromId);
-      if (!declarations.some((d) => d.creature === creatureId)) {
-        setDeclarations((prev) => [
-          ...prev,
-          { creature: creatureId, target: decodeAttackTargetChoice(validTargets[0]) },
-        ]);
-      }
+      setDeclarations((prev) => (
+        prev.some((d) => d.creature === creatureId)
+          ? prev
+          : [...prev, { creature: creatureId, target: decodeAttackTargetChoice(validTargets[0]) }]
+      ));
       return;
     }
 
@@ -209,7 +212,16 @@ export default function AttackersDecision({ decision, canAct }) {
       ]);
       setSelectedAttackerId(null);
     }
-  }, [options, declarations]);
+  }, []);
+
+  const combatOptionsKey = options
+    .map((o) => {
+      const targets = (o.valid_targets || [])
+        .map((t) => JSON.stringify(t))
+        .join(",");
+      return `${Number(o.creature)}:${o.must_attack ? 1 : 0}:${targets}`;
+    })
+    .join("|");
 
   // Register combat mode for battlefield interaction
   useEffect(() => {
@@ -217,21 +229,54 @@ export default function AttackersDecision({ decision, canAct }) {
       setCombatMode(null);
       return;
     }
-    const candidateIds = new Set(options.map((o) => Number(o.creature)));
+    const currentOptions = optionsRef.current || [];
+    const candidateIds = new Set(currentOptions.map((o) => Number(o.creature)));
+    const validTargetObjectsByAttacker = {};
+    const validTargetPlayersByAttacker = {};
+    for (const opt of currentOptions) {
+      const creatureId = Number(opt.creature);
+      const objectTargets = new Set();
+      const playerTargets = new Set();
+      for (const target of opt.valid_targets || []) {
+        const decoded = decodeAttackTargetChoice(target);
+        if (decoded.kind === "planeswalker" && Number.isFinite(decoded.object)) {
+          objectTargets.add(Number(decoded.object));
+        } else if (decoded.kind === "player" && Number.isFinite(decoded.player)) {
+          playerTargets.add(Number(decoded.player));
+        }
+      }
+      validTargetObjectsByAttacker[creatureId] = objectTargets;
+      validTargetPlayersByAttacker[creatureId] = playerTargets;
+    }
+    const activeAttackerId = selectedAttackerId != null ? Number(selectedAttackerId) : null;
+    const validTargetObjects = (
+      activeAttackerId != null
+        ? (validTargetObjectsByAttacker[activeAttackerId] || new Set())
+        : new Set()
+    );
+    const validTargetPlayers = (
+      activeAttackerId != null
+        ? (validTargetPlayersByAttacker[activeAttackerId] || new Set())
+        : new Set()
+    );
     setCombatMode({
       mode: "attackers",
       candidates: candidateIds,
+      validTargetObjectsByAttacker,
+      validTargetPlayersByAttacker,
+      validTargetObjects,
+      validTargetPlayers,
       color: ATTACKER_COLOR,
       selectedAttacker: selectedAttackerId,
       onDrop: handleDrop,
       onClick: (creatureId) => {
-        const opt = options.find((o) => Number(o.creature) === Number(creatureId));
+        const opt = (optionsRef.current || []).find((o) => Number(o.creature) === Number(creatureId));
         if (opt) toggleAttacker(opt);
       },
       onTargetAreaClick: handleTargetAreaClick,
     });
     return () => setCombatMode(null);
-  }, [canAct, options, handleDrop, selectedAttackerId, handleTargetAreaClick, setCombatMode, toggleAttacker]);
+  }, [canAct, combatOptionsKey, handleDrop, selectedAttackerId, handleTargetAreaClick, setCombatMode, toggleAttacker]);
 
   // Update combat arrows when declarations change
   useEffect(() => {

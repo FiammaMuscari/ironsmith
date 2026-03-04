@@ -4,7 +4,9 @@ export function getCardRect(objectId) {
 }
 
 export function getPlayerTargetRect(playerIndex) {
-  const el = document.querySelector(`[data-player-target="${playerIndex}"]`);
+  const el =
+    document.querySelector(`[data-player-target-name="${playerIndex}"]`) ||
+    document.querySelector(`[data-player-target="${playerIndex}"]`);
   return el ? el.getBoundingClientRect() : null;
 }
 

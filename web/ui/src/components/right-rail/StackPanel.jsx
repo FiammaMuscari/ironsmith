@@ -9,7 +9,6 @@ export default function StackPanel({
   onInspect,
   expanded = false,
   onToggleExpanded,
-  addCardError = null,
 }) {
   const { state } = useGame();
   const objects = state?.stack_objects || [];
@@ -79,11 +78,6 @@ export default function StackPanel({
           Stack{hasContent ? ` (${itemCount})` : ""}
         </h4>
       </div>
-      {addCardError ? (
-        <div className="shrink-0 rounded border border-red-600 bg-black px-2 py-1 text-[12px] leading-tight text-red-500">
-          {addCardError}
-        </div>
-      ) : null}
       {hasContent && (
         <ScrollArea className="flex-1 min-h-0">
           <div className="grid gap-1.5 pr-0.5">
