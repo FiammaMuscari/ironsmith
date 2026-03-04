@@ -89,8 +89,16 @@ fn queue_triggers_from_event(
     if let Some(sacrifice_event) = event.downcast::<SacrificeEvent>() {
         let sacrificing_player = sacrifice_event
             .sacrificing_player
-            .or_else(|| sacrifice_event.snapshot.as_ref().map(|snapshot| snapshot.controller))
-            .or_else(|| game.object(sacrifice_event.permanent).map(|obj| obj.controller));
+            .or_else(|| {
+                sacrifice_event
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.controller)
+            })
+            .or_else(|| {
+                game.object(sacrifice_event.permanent)
+                    .map(|obj| obj.controller)
+            });
         let sacrificed_artifact = sacrifice_event
             .snapshot
             .as_ref()
@@ -99,7 +107,10 @@ fn queue_triggers_from_event(
                 .object(sacrifice_event.permanent)
                 .is_some_and(|obj| obj.card_types.contains(&CardType::Artifact));
         if sacrificed_artifact && let Some(player) = sacrificing_player {
-            *game.artifacts_sacrificed_this_turn.entry(player).or_insert(0) += 1;
+            *game
+                .artifacts_sacrificed_this_turn
+                .entry(player)
+                .or_insert(0) += 1;
         }
     }
 
@@ -545,7 +556,8 @@ fn extract_target_requirements_from_effect_internal(
         let legal_targets = compute_legal_targets(game, extracted.spec, caster, source_id);
         // For "any number" effects (min_targets == 0), we can cast even with no legal targets.
         // For required targets (min_targets > 0), we need at least min_targets legal targets.
-        let has_enough_targets = extracted.min_targets == 0 || legal_targets.len() >= extracted.min_targets;
+        let has_enough_targets =
+            extracted.min_targets == 0 || legal_targets.len() >= extracted.min_targets;
         if has_enough_targets {
             requirements.push(TargetRequirement {
                 spec: extracted.spec.clone(),
@@ -717,6 +729,66 @@ pub fn player_matches_filter_with_combat(
 /// - If SOME targets are still legal, the spell/ability resolves and does as much as possible
 ///
 /// Returns (valid_targets, all_targets_invalid)
+fn collect_validation_target_specs_from_effect(
+    effect: &Effect,
+    chosen_modes: Option<&[usize]>,
+    consumed_modal_selection: &mut bool,
+    specs: &mut Vec<ChooseSpec>,
+) {
+    if let Some(choose_mode) = effect.downcast_ref::<crate::effects::ChooseModeEffect>() {
+        let modes_for_this_choose_mode = if !*consumed_modal_selection {
+            *consumed_modal_selection = true;
+            chosen_modes
+        } else {
+            None
+        };
+
+        if let Some(chosen_modes) = modes_for_this_choose_mode {
+            for mode_idx in chosen_modes {
+                if let Some(mode) = choose_mode.modes.get(*mode_idx) {
+                    for inner in &mode.effects {
+                        collect_validation_target_specs_from_effect(
+                            inner,
+                            None,
+                            consumed_modal_selection,
+                            specs,
+                        );
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    if let Some(extracted) = extract_target_spec(effect)
+        && requires_target_selection(extracted.spec)
+    {
+        specs.push(extracted.spec.clone());
+    }
+}
+
+fn stack_entry_validation_target_specs(game: &GameState, entry: &StackEntry) -> Vec<ChooseSpec> {
+    let effects = if let Some(effects) = &entry.ability_effects {
+        effects.clone()
+    } else if let Some(obj) = game.object(entry.object_id) {
+        get_effects_for_stack_entry(game, entry, obj)
+    } else {
+        Vec::new()
+    };
+
+    let mut specs = Vec::new();
+    let mut consumed_modal_selection = false;
+    for effect in &effects {
+        collect_validation_target_specs_from_effect(
+            effect,
+            entry.chosen_modes.as_deref(),
+            &mut consumed_modal_selection,
+            &mut specs,
+        );
+    }
+    specs
+}
+
 fn validate_stack_entry_targets(
     game: &GameState,
     entry: &StackEntry,
@@ -725,66 +797,29 @@ fn validate_stack_entry_targets(
         return (Vec::new(), false);
     }
 
-    let aura_target_spec = if let Some(obj) = game.object(entry.object_id)
-        && obj.has_card_type(CardType::Enchantment)
-        && obj.subtypes.contains(&crate::types::Subtype::Aura)
-    {
-        let effects = get_effects_for_stack_entry(game, entry, obj);
-        effects
-            .iter()
-            .filter_map(extract_target_spec)
-            .map(|extracted| extracted.spec.clone())
-            .next()
-    } else {
-        None
-    };
-
-    let aura_ctx =
-        crate::executor::ExecutionContext::new_default(entry.object_id, entry.controller);
+    let validation_specs = stack_entry_validation_target_specs(game, entry);
+    let legal_target_sets: Vec<Vec<Target>> = validation_specs
+        .iter()
+        .map(|spec| compute_legal_targets(game, spec, entry.controller, Some(entry.object_id)))
+        .collect();
 
     let mut valid_targets = Vec::new();
     let mut invalid_count = 0;
 
     for target in &entry.targets {
-        let is_valid = match target {
-            Target::Object(obj_id) => {
-                // Check if object still exists
-                if let Some(obj) = game.object(*obj_id) {
-                    // Check if object is still on battlefield or stack (as appropriate)
-                    let in_valid_zone = obj.zone == Zone::Battlefield || obj.zone == Zone::Stack;
-
-                    // Check if object now has protection from the source
-                    let has_protection =
-                        crate::targeting::has_protection_from_source(game, *obj_id, entry.object_id);
-
-                    // Check hexproof/shroud
-                    let is_untargetable = game.is_untargetable(*obj_id);
-                    let source_controller = game.object(entry.object_id).map(|s| s.controller);
-                    let target_controller = obj.controller;
-                    // Hexproof only prevents opponents from targeting
-                    let blocked_by_hexproof = is_untargetable
-                        && source_controller.is_some_and(|sc| sc != target_controller);
-
-                    let mut valid = in_valid_zone && !has_protection && !blocked_by_hexproof;
-
-                    if valid && let Some(ref spec) = aura_target_spec {
-                        let resolved = crate::executor::ResolvedTarget::Object(*obj_id);
-                        valid = crate::effects::helpers::validate_target(
-                            game, &resolved, spec, &aura_ctx,
-                        );
-                    }
-
-                    valid
-                } else {
-                    // Object no longer exists
-                    false
-                }
-            }
-            Target::Player(player_id) => {
-                // Check if player is still in the game
-                game.player(*player_id)
+        let is_valid = if !legal_target_sets.is_empty() {
+            legal_target_sets
+                .iter()
+                .any(|legal_targets| legal_targets.contains(target))
+        } else {
+            match target {
+                Target::Object(obj_id) => game
+                    .object(*obj_id)
+                    .is_some_and(|obj| obj.zone == Zone::Battlefield || obj.zone == Zone::Stack),
+                Target::Player(player_id) => game
+                    .player(*player_id)
                     .map(|p| p.is_in_game())
-                    .unwrap_or(false)
+                    .unwrap_or(false),
             }
         };
 

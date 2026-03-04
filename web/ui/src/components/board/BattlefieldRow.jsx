@@ -1,12 +1,12 @@
 import { useRef, useLayoutEffect, useEffect, useCallback, useMemo } from "react";
-import { useHover } from "@/context/HoverContext";
+import { useHoverActions } from "@/context/HoverContext";
 import { useCombatArrows } from "@/context/CombatArrowContext";
 import useNewCards from "@/hooks/useNewCards";
 import GameCard from "@/components/cards/GameCard";
 
 export default function BattlefieldRow({ cards = [], compact = false, selectedObjectId, onInspect, onCardClick, activatableMap }) {
   const rowRef = useRef(null);
-  const { hoveredObjectId, hoverCard, clearHover } = useHover();
+  const { hoverCard, clearHover } = useHoverActions();
   const { combatMode, combatModeRef, startDragArrow, updateDragArrow, endDragArrow } = useCombatArrows();
   const cardIds = useMemo(() => cards.map((c) => c.id), [cards]);
   const { newIds, bumpedIds } = useNewCards(cardIds);
@@ -130,7 +130,6 @@ export default function BattlefieldRow({ cards = [], compact = false, selectedOb
     >
       {cards.map((card, i) => {
         const isActivatable = activatableMap?.has(Number(card.id));
-        const cardId = String(card.id);
         const isNew = newIds.has(card.id);
         const isBumped = bumpedIds.has(card.id);
         let bumpDir = 0;
@@ -140,9 +139,12 @@ export default function BattlefieldRow({ cards = [], compact = false, selectedOb
         }
 
         const isCombatCandidate = combatMode?.candidates?.has(Number(card.id));
-        const combatGlowKind = isCombatCandidate
-          ? (combatMode.mode === "attackers" ? "attack-candidate" : "blocker-candidate")
-          : null;
+        const isSelectedAttacker = combatMode?.selectedAttacker === Number(card.id);
+        const combatGlowKind = isSelectedAttacker
+          ? "attack-selected"
+          : isCombatCandidate
+            ? (combatMode.mode === "attackers" ? "attack-candidate" : "blocker-candidate")
+            : null;
 
         // Determine ability glow kind: mana vs non-mana
         let abilityGlow = null;
@@ -161,7 +163,6 @@ export default function BattlefieldRow({ cards = [], compact = false, selectedOb
             isInspected={selectedObjectId === card.id}
             isPlayable={isActivatable || isCombatCandidate}
             glowKind={isCombatCandidate ? combatGlowKind : abilityGlow}
-            isHovered={hoveredObjectId === cardId}
             isNew={isNew}
             isBumped={isBumped}
             bumpDirection={bumpDir}
@@ -174,7 +175,7 @@ export default function BattlefieldRow({ cards = [], compact = false, selectedOb
               minWidth: "var(--bf-card-width, 124px)",
               height: "var(--bf-card-height, 96px)",
               minHeight: "var(--bf-card-height, 96px)",
-              cursor: isCombatCandidate ? "grab" : undefined,
+              cursor: isCombatCandidate ? "pointer" : undefined,
             }}
           />
         );

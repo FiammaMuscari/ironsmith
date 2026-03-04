@@ -1388,6 +1388,12 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
     let has_card = filtered.contains(&"card");
 
     if is_it {
+        if filtered
+            .get(1)
+            .is_some_and(|word| *word == "has" || *word == "have")
+        {
+            filtered.remove(1);
+        }
         if filtered.len() >= 3 && filtered[1] == "mana" && filtered[2] == "value" {
             let mana_value_tail = &filtered[3..];
             let compares_to_colors_spent = mana_value_tail
@@ -1701,10 +1707,30 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         || filtered.as_slice() == ["opponent", "lost", "life", "this", "turn"]
         || filtered.as_slice() == ["opponents", "lost", "life", "this", "turn"]
         || filtered.as_slice() == ["an", "opponent", "lost", "life", "this", "turn"]
+        || filtered.as_slice() == ["this", "card", "in", "your", "graveyard"]
+        || filtered.as_slice() == ["this", "artifact", "untapped"]
+        || filtered.as_slice() == ["this", "has", "luck", "counter", "on", "it"]
+        || filtered.as_slice() == ["it", "had", "revival", "counter", "on", "it"]
         || filtered.as_slice() == ["that", "creature", "would", "die", "this", "turn"]
         || filtered.as_slice()
             == [
                 "this", "second", "time", "this", "ability", "has", "resolved", "this", "turn",
+            ]
+        || filtered.as_slice()
+            == [
+                "this", "fourth", "time", "this", "ability", "has", "resolved", "this", "turn",
+            ]
+        || filtered.as_slice()
+            == [
+                "this",
+                "fourth",
+                "time",
+                "this",
+                "ability",
+                "has",
+                "triggered",
+                "this",
+                "turn",
             ]
         || filtered.as_slice()
             == [

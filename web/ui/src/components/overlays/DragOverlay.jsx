@@ -1,4 +1,4 @@
-import { useDrag } from "@/context/DragContext";
+import { useDragState } from "@/context/DragContext";
 import { scryfallImageUrl } from "@/lib/scryfall";
 
 const GLOW_COLORS = {
@@ -36,7 +36,7 @@ function computeProximity(x, y) {
 }
 
 export default function DragOverlay() {
-  const { dragState } = useDrag();
+  const dragState = useDragState();
   if (!dragState) return null;
 
   const { cardName, glowKind, currentX, currentY, startX, startY } = dragState;

@@ -360,16 +360,145 @@ pub(crate) fn parse_number(tokens: &[Token]) -> Option<(u32, usize)> {
     Some((value, 1))
 }
 
-pub(crate) fn parse_value(tokens: &[Token]) -> Option<(Value, usize)> {
-    let token = tokens.first()?;
-    let word = token.as_word()?;
+fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usize)> {
+    if words.is_empty() {
+        return None;
+    }
 
-    if word == "x" {
+    if words[0] == "x" {
         return Some((Value::X, 1));
     }
 
-    let (number, used) = parse_number(tokens)?;
-    Some((Value::Fixed(number as i32), used))
+    if let Some(value) = parse_number_word_i32(words[0]) {
+        return Some((Value::Fixed(value), 1));
+    }
+
+    let mut idx = 0usize;
+    if words[idx] == "the" {
+        idx += 1;
+    }
+    if words.get(idx).copied() != Some("number") || words.get(idx + 1).copied() != Some("of") {
+        return None;
+    }
+    idx += 2;
+
+    let mut counter_idx = idx;
+    if words
+        .get(counter_idx)
+        .is_some_and(|word| is_article(word) || *word == "one")
+    {
+        counter_idx += 1;
+    }
+
+    let mut parsed_counter_type = None;
+    if let Some(word) = words.get(counter_idx).copied()
+        && let Some(counter_type) = parse_counter_type_word(word)
+    {
+        parsed_counter_type = Some(counter_type);
+        counter_idx += 1;
+    }
+
+    if matches!(
+        words.get(counter_idx).copied(),
+        Some("counter" | "counters")
+    ) && words.get(counter_idx + 1).copied() == Some("on")
+    {
+        let reference_start = counter_idx + 2;
+        let mut reference_end = reference_start;
+        while reference_end < words.len() && !matches!(words[reference_end], "plus" | "minus") {
+            reference_end += 1;
+        }
+        let reference = &words[reference_start..reference_end];
+        if matches!(
+            reference,
+            ["it"]
+                | ["this"]
+                | ["this", "card"]
+                | ["this", "creature"]
+                | ["this", "permanent"]
+                | ["this", "source"]
+                | ["this", "artifact"]
+                | ["this", "land"]
+                | ["this", "enchantment"]
+        ) {
+            let value = match parsed_counter_type {
+                Some(counter_type) => Value::CountersOnSource(counter_type),
+                None => Value::CountersOn(Box::new(ChooseSpec::Source), None),
+            };
+            return Some((value, reference_end));
+        }
+        if matches!(
+            reference,
+            ["that"]
+                | ["that", "card"]
+                | ["that", "creature"]
+                | ["that", "permanent"]
+                | ["that", "object"]
+                | ["those"]
+                | ["those", "cards"]
+                | ["those", "creatures"]
+                | ["those", "permanents"]
+        ) {
+            let value = Value::CountersOn(
+                Box::new(ChooseSpec::Tagged(TagKey::from(IT_TAG))),
+                parsed_counter_type,
+            );
+            return Some((value, reference_end));
+        }
+    }
+
+    let filter_start = idx;
+    let mut filter_end = filter_start;
+    while filter_end < words.len() && !matches!(words[filter_end], "plus" | "minus") {
+        filter_end += 1;
+    }
+    if filter_end <= filter_start {
+        return None;
+    }
+    let filter_tokens = words[filter_start..filter_end]
+        .iter()
+        .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+        .collect::<Vec<_>>();
+    let filter = parse_object_filter(&filter_tokens, false).ok()?;
+    Some((Value::Count(filter), filter_end))
+}
+
+pub(crate) fn parse_value_expr_words(words: &[&str]) -> Option<(Value, usize)> {
+    let (mut value, mut used) = parse_value_expr_term_words(words)?;
+
+    while used < words.len() {
+        let operator = words[used];
+        if !matches!(operator, "plus" | "minus") {
+            break;
+        }
+
+        let (rhs, rhs_used) = parse_value_expr_term_words(&words[used + 1..])?;
+        used += 1 + rhs_used;
+
+        let rhs = if operator == "minus" {
+            match rhs {
+                Value::Fixed(fixed) => Value::Fixed(-fixed),
+                _ => return None,
+            }
+        } else {
+            rhs
+        };
+
+        value = Value::Add(Box::new(value), Box::new(rhs));
+    }
+
+    Some((value, used))
+}
+
+pub(crate) fn parse_value_expr(tokens: &[Token]) -> Option<(Value, usize)> {
+    let words = tokens.iter().filter_map(Token::as_word).collect::<Vec<_>>();
+    let (value, used_words) = parse_value_expr_words(&words)?;
+    let used = token_index_for_word_index(tokens, used_words).unwrap_or(tokens.len());
+    Some((value, used))
+}
+
+pub(crate) fn parse_value(tokens: &[Token]) -> Option<(Value, usize)> {
+    parse_value_expr(tokens)
 }
 
 #[derive(Debug, Clone)]

@@ -5513,6 +5513,38 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
         return Some(KeywordAction::Marker("vanishing"));
     }
 
+    if words.first().copied() == Some("dredge") {
+        if let Some(amount_word) = words.get(1)
+            && let Ok(amount) = amount_word.parse::<u32>()
+        {
+            return Some(KeywordAction::MarkerText(format!("Dredge {amount}")));
+        }
+        return Some(KeywordAction::MarkerText("Dredge".to_string()));
+    }
+
+    if words.first().copied() == Some("warp") {
+        if let Some((cost, _)) = leading_mana_symbols_to_oracle(&words[1..]) {
+            return Some(KeywordAction::MarkerText(format!("Warp {cost}")));
+        }
+        if words.len() > 1 {
+            return Some(KeywordAction::MarkerText(format!(
+                "Warp {}",
+                words[1..].join(" ")
+            )));
+        }
+        return Some(KeywordAction::MarkerText("Warp".to_string()));
+    }
+
+    if words.first().copied() == Some("harness") {
+        if words.len() > 1 {
+            return Some(KeywordAction::MarkerText(format!(
+                "Harness {}",
+                words[1..].join(" ")
+            )));
+        }
+        return Some(KeywordAction::MarkerText("Harness".to_string()));
+    }
+
     if words.first().copied() == Some("sunburst") {
         return Some(KeywordAction::Sunburst);
     }
@@ -8528,7 +8560,15 @@ pub(crate) fn effect_creates_eldrazi_spawn_or_scion(effect: &EffectAst) -> bool 
         EffectAst::CreateToken { name, .. } | EffectAst::CreateTokenWithMods { name, .. } => {
             token_name_mentions_eldrazi_spawn_or_scion(name)
         }
-        _ => false,
+        _ => {
+            let mut found = false;
+            for_each_nested_effects(effect, false, |nested| {
+                if !found && nested.iter().any(effect_creates_eldrazi_spawn_or_scion) {
+                    found = true;
+                }
+            });
+            found
+        }
     }
 }
 

@@ -1193,6 +1193,50 @@ mod tests {
         assert_eq!(player.graveyard.len(), 1);
     }
 
+    #[test]
+    fn test_resolve_stack_entry_with_graveyard_object_target() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let source_card = CardBuilder::new(CardId::from_raw(9001), "Reanimation Source")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(1, 1))
+            .build();
+        let source_id = game.create_object_from_card(&source_card, alice, Zone::Battlefield);
+
+        let target_card = CardBuilder::new(CardId::from_raw(9002), "Graveyard Target")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let target_id = game.create_object_from_card(&target_card, alice, Zone::Graveyard);
+
+        let target_spec = ChooseSpec::target(ChooseSpec::Object(
+            ObjectFilter::permanent().in_zone(Zone::Graveyard),
+        ));
+        let effects = vec![Effect::return_from_graveyard_to_battlefield(
+            target_spec,
+            false,
+        )];
+
+        let entry = StackEntry::ability(source_id, alice, effects)
+            .with_targets(vec![Target::Object(target_id)]);
+        game.push_to_stack(entry);
+
+        resolve_stack_entry(&mut game).expect("stack entry should resolve");
+
+        assert!(
+            game.players[0].graveyard.is_empty(),
+            "target card should leave graveyard"
+        );
+        assert!(
+            game.battlefield.iter().any(|id| {
+                game.object(*id)
+                    .is_some_and(|obj| obj.name == "Graveyard Target")
+            }),
+            "target card should be returned to battlefield"
+        );
+    }
+
     // === Combat Damage Tests ===
 
     #[test]
@@ -3137,6 +3181,75 @@ mod tests {
             !can_activate2,
             "OncePerTurn ability should NOT be available after activation"
         );
+    }
+
+    #[test]
+    fn test_wall_of_roots_once_per_turn_mana_ability_fast_path() {
+        use crate::decision::compute_legal_actions;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let wall_def = crate::cards::definitions::wall_of_roots();
+        let wall_id = game.create_object_from_definition(&wall_def, alice, Zone::Battlefield);
+
+        let ability_index = game
+            .object(wall_id)
+            .expect("wall of roots exists")
+            .abilities
+            .iter()
+            .position(|ability| ability.is_mana_ability())
+            .expect("wall of roots should have a mana ability");
+
+        let actions_before = compute_legal_actions(&game, alice);
+        assert!(actions_before.iter().any(|a| {
+            matches!(
+                a,
+                LegalAction::ActivateManaAbility {
+                    source,
+                    ability_index: idx
+                } if *source == wall_id && *idx == ability_index
+            )
+        }));
+
+        let mut trigger_queue = TriggerQueue::new();
+        let mut state = PriorityLoopState::new(game.players_in_game());
+        let mut decision_maker = crate::decision::SelectFirstDecisionMaker;
+        let response = PriorityResponse::PriorityAction(LegalAction::ActivateManaAbility {
+            source: wall_id,
+            ability_index,
+        });
+
+        apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &response,
+            &mut decision_maker,
+        )
+        .expect("wall of roots mana ability should activate");
+
+        assert_eq!(
+            game.ability_activation_count_this_turn(wall_id, ability_index),
+            1,
+            "wall of roots activation should be recorded for this turn"
+        );
+
+        let actions_after = compute_legal_actions(&game, alice);
+        assert!(!actions_after.iter().any(|a| {
+            matches!(
+                a,
+                LegalAction::ActivateManaAbility {
+                    source,
+                    ability_index: idx
+                } if *source == wall_id && *idx == ability_index
+            )
+        }));
     }
 
     #[test]

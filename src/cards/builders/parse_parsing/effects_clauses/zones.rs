@@ -1325,6 +1325,32 @@ pub(crate) fn parse_add_mana(
     let player = extract_subject_player(subject).unwrap_or(PlayerAst::Implicit);
     parser_trace_stack("parse_add_mana:entry", tokens);
     let clause_words = words(tokens);
+    let wrap_instead_if_tail = |base_effect: EffectAst,
+                                tail_tokens: &[Token]|
+     -> Result<Option<EffectAst>, CardTextError> {
+        let tail_words = words(tail_tokens);
+        if !tail_words.starts_with(&["instead", "if"]) {
+            return Ok(None);
+        }
+        let predicate_tokens = trim_commas(&tail_tokens[2..]);
+        if predicate_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported trailing mana clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let predicate = parse_predicate(&predicate_tokens).map_err(|_| {
+            CardTextError::ParseError(format!(
+                "unsupported trailing mana clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+        Ok(Some(EffectAst::Conditional {
+            predicate,
+            if_true: vec![base_effect],
+            if_false: Vec::new(),
+        }))
+    };
 
     let has_card_word = clause_words
         .iter()
@@ -1403,6 +1429,13 @@ pub(crate) fn parse_add_mana(
             }
         }
     }
+    if clause_words.starts_with(&["an", "amount", "of", "mana", "of", "that", "color"]) {
+        return Ok(EffectAst::AddManaChosenColor {
+            amount: Value::Fixed(1),
+            player,
+            fixed_option: None,
+        });
+    }
 
     let any_one = clause_words
         .windows(3)
@@ -1478,6 +1511,37 @@ pub(crate) fn parse_add_mana(
                 player,
                 available_colors: None,
             });
+        }
+
+        let tail_words = words(tail_tokens);
+        if tail_words.first().copied() == Some("among") {
+            if any_type {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported any-type mana clause without producer filter (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+            if any_one {
+                return Ok(EffectAst::AddManaAnyOneColor { amount, player });
+            }
+            return Ok(EffectAst::AddManaAnyColor {
+                amount,
+                player,
+                available_colors: None,
+            });
+        }
+
+        let base_effect = if any_one {
+            EffectAst::AddManaAnyOneColor { amount, player }
+        } else {
+            EffectAst::AddManaAnyColor {
+                amount,
+                player,
+                available_colors: None,
+            }
+        };
+        if let Some(conditional) = wrap_instead_if_tail(base_effect, tail_tokens)? {
+            return Ok(conditional);
         }
 
         return Err(CardTextError::ParseError(format!(
@@ -1589,6 +1653,17 @@ pub(crate) fn parse_add_mana(
                 .iter()
                 .all(|word| matches!(*word, "to" | "your" | "mana" | "pool"));
         if !trailing_words.is_empty() && !has_only_pool_tail {
+            if let Some(last_idx) = last_mana_idx
+                && let Some(conditional) = wrap_instead_if_tail(
+                    EffectAst::AddMana {
+                        mana: mana.clone(),
+                        player,
+                    },
+                    trim_leading_commas(&tokens[last_idx + 1..]),
+                )?
+            {
+                return Ok(conditional);
+            }
             return Err(CardTextError::ParseError(format!(
                 "unsupported trailing mana clause (clause: '{}')",
                 clause_words.join(" ")
@@ -2169,11 +2244,53 @@ pub(crate) fn parse_destroy(tokens: &[Token]) -> Result<EffectAst, CardTextError
         )));
     }
 
-    if clause_words.contains(&"if") {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported conditional destroy clause (clause: '{}')",
-            clause_words.join(" ")
-        )));
+    if let Some(if_idx) = core_tokens.iter().position(|token| token.is_word("if")) {
+        let mut target_tokens = trim_commas(&core_tokens[..if_idx]).to_vec();
+        while target_tokens
+            .last()
+            .is_some_and(|token| token.is_word("instead"))
+        {
+            target_tokens.pop();
+        }
+        let target_tokens = trim_commas(&target_tokens);
+        if target_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported conditional destroy clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+
+        let mut predicate_tokens = trim_commas(&core_tokens[if_idx + 1..]).to_vec();
+        while predicate_tokens
+            .last()
+            .is_some_and(|token| token.is_word("instead"))
+        {
+            predicate_tokens.pop();
+        }
+        let predicate_tokens = trim_commas(&predicate_tokens);
+        if predicate_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported conditional destroy clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+
+        let target = parse_target_phrase(&target_tokens)?;
+        let predicate = parse_predicate(&predicate_tokens).map_err(|_| {
+            CardTextError::ParseError(format!(
+                "unsupported conditional destroy clause (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+
+        return Ok(wrap_destroy_with_delayed_timing(
+            EffectAst::Conditional {
+                predicate,
+                if_true: vec![EffectAst::Destroy { target }],
+                if_false: Vec::new(),
+            },
+            delayed_timing,
+        ));
     }
     if let Some(and_idx) = core_tokens.iter().position(|token| token.is_word("and")) {
         let tail_words = words(&core_tokens[and_idx + 1..]);
@@ -2846,38 +2963,58 @@ pub(crate) fn parse_filter_comparison_tokens(
         return Ok(None);
     }
 
-    let parse_operand = |operand: &str, extra_words: &[&str]| -> Result<i32, CardTextError> {
-        let value = match operand.parse::<i32>() {
-            Ok(value) => value,
-            Err(_) => {
-                return Err(CardTextError::ParseError(format!(
-                    "unsupported dynamic {axis} comparison operand '{operand}' (clause: '{}')",
-                    clause_words.join(" ")
-                )));
-            }
-        };
-        if extra_words
-            .first()
-            .is_some_and(|word| matches!(*word, "plus" | "minus"))
-        {
+    let to_comparison = |kind: &str, operand: Value| -> crate::filter::Comparison {
+        use crate::filter::Comparison;
+
+        match (kind, operand) {
+            ("eq", Value::Fixed(value)) => Comparison::Equal(value),
+            ("neq", Value::Fixed(value)) => Comparison::NotEqual(value),
+            ("lt", Value::Fixed(value)) => Comparison::LessThan(value),
+            ("lte", Value::Fixed(value)) => Comparison::LessThanOrEqual(value),
+            ("gt", Value::Fixed(value)) => Comparison::GreaterThan(value),
+            ("gte", Value::Fixed(value)) => Comparison::GreaterThanOrEqual(value),
+            ("eq", operand) => Comparison::EqualExpr(Box::new(operand)),
+            ("neq", operand) => Comparison::NotEqualExpr(Box::new(operand)),
+            ("lt", operand) => Comparison::LessThanExpr(Box::new(operand)),
+            ("lte", operand) => Comparison::LessThanOrEqualExpr(Box::new(operand)),
+            ("gt", operand) => Comparison::GreaterThanExpr(Box::new(operand)),
+            ("gte", operand) => Comparison::GreaterThanOrEqualExpr(Box::new(operand)),
+            _ => unreachable!("unsupported comparison kind"),
+        }
+    };
+
+    let parse_operand = |operand_tokens: &[&str],
+                         comparison_kind: &str|
+     -> Result<(crate::filter::Comparison, usize), CardTextError> {
+        let Some((operand, used)) = parse_value_expr_words(operand_tokens) else {
+            let quoted = operand_tokens
+                .first()
+                .copied()
+                .unwrap_or_default()
+                .to_string();
             return Err(CardTextError::ParseError(format!(
-                "unsupported arithmetic {axis} comparison (clause: '{}')",
+                "unsupported dynamic {axis} comparison operand '{quoted}' (clause: '{}')",
                 clause_words.join(" ")
             )));
+        };
+        Ok((to_comparison(comparison_kind, operand), used))
+    };
+
+    let parse_numeric_token = |word: &str| -> Option<i32> {
+        if let Ok(value) = word.parse::<i32>() {
+            return Some(value);
         }
-        Ok(value)
+        parse_number_word_i32(word)
     };
 
     let first = tokens[0];
-    if let Ok(value) = first.parse::<i32>() {
+    if let Some(value) = parse_numeric_token(first) {
         if tokens
             .get(1)
             .is_some_and(|word| matches!(*word, "plus" | "minus"))
         {
-            return Err(CardTextError::ParseError(format!(
-                "unsupported arithmetic {axis} comparison (clause: '{}')",
-                clause_words.join(" ")
-            )));
+            let (cmp, used) = parse_operand(tokens, "eq")?;
+            return Ok(Some((cmp, used)));
         }
         if tokens.get(1) == Some(&"or")
             && tokens
@@ -2904,7 +3041,7 @@ pub(crate) fn parse_filter_comparison_tokens(
                 consumed += 1;
                 continue;
             }
-            if let Ok(next_value) = token.parse::<i32>() {
+            if let Some(next_value) = parse_numeric_token(token) {
                 values.push(next_value);
                 consumed += 1;
                 continue;
@@ -2924,8 +3061,9 @@ pub(crate) fn parse_filter_comparison_tokens(
                 clause_words.join(" ")
             )));
         };
-        let value = parse_operand(operand, &tokens[3..])?;
-        return Ok(Some((crate::filter::Comparison::Equal(value), 3)));
+        let _ = operand;
+        let (cmp, used) = parse_operand(&tokens[2..], "eq")?;
+        return Ok(Some((cmp, 2 + used)));
     }
 
     if matches!(first, "less" | "greater") && tokens.get(1) == Some(&"than") {
@@ -2944,15 +3082,54 @@ pub(crate) fn parse_filter_comparison_tokens(
                 clause_words.join(" ")
             )));
         };
-        let value = parse_operand(operand, &tokens[operand_idx + 1..])?;
-        let cmp = match (first, inclusive) {
-            ("less", true) => crate::filter::Comparison::LessThanOrEqual(value),
-            ("less", false) => crate::filter::Comparison::LessThan(value),
-            ("greater", true) => crate::filter::Comparison::GreaterThanOrEqual(value),
-            ("greater", false) => crate::filter::Comparison::GreaterThan(value),
-            _ => unreachable!("first is constrained above"),
+        let _ = operand;
+        let (cmp, used) = parse_operand(
+            &tokens[operand_idx..],
+            match (first, inclusive) {
+                ("less", true) => "lte",
+                ("less", false) => "lt",
+                ("greater", true) => "gte",
+                ("greater", false) => "gt",
+                _ => unreachable!("first is constrained above"),
+            },
+        )?;
+        let parsed = match (first, inclusive, cmp) {
+            ("less", true, crate::filter::Comparison::Equal(v)) => {
+                crate::filter::Comparison::LessThanOrEqual(v)
+            }
+            ("less", false, crate::filter::Comparison::Equal(v)) => {
+                crate::filter::Comparison::LessThan(v)
+            }
+            ("greater", true, crate::filter::Comparison::Equal(v)) => {
+                crate::filter::Comparison::GreaterThanOrEqual(v)
+            }
+            ("greater", false, crate::filter::Comparison::Equal(v)) => {
+                crate::filter::Comparison::GreaterThan(v)
+            }
+            (_, _, other) => other,
         };
-        return Ok(Some((cmp, operand_idx + 1)));
+        return Ok(Some((parsed, operand_idx + used)));
+    }
+
+    if first == "not" && tokens.get(1) == Some(&"equal") && tokens.get(2) == Some(&"to") {
+        let (cmp, used) = parse_operand(&tokens[3..], "neq")?;
+        return Ok(Some((cmp, 3 + used)));
+    }
+
+    if first == "equal" && tokens.get(1) == Some(&"to") && tokens.get(2) == Some(&"x") {
+        return Ok(Some((crate::filter::Comparison::GreaterThanOrEqual(0), 3)));
+    }
+
+    if let Some((value, used)) = parse_value_expr_words(tokens) {
+        if let Value::Fixed(fixed) = value
+            && used == 1
+        {
+            return Ok(Some((crate::filter::Comparison::Equal(fixed), used)));
+        }
+        return Ok(Some((
+            crate::filter::Comparison::EqualExpr(Box::new(value)),
+            used,
+        )));
     }
 
     if first == "x" {

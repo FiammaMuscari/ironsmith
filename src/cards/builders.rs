@@ -4842,15 +4842,17 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
 
     #[test]
     fn parse_counter_spell_with_graveyard_reference_from_text() {
-        let err = CardDefinitionBuilder::new(CardId::new(), "Drown in the Loch Variant")
+        let def = CardDefinitionBuilder::new(CardId::new(), "Drown in the Loch Variant")
             .parse_text(
                 "Counter target spell with mana value less than or equal to the number of cards in its controller's graveyard.",
             )
-            .expect_err("dynamic graveyard comparison in counter target should fail until supported");
-        let message = format!("{err:?}");
+            .expect("dynamic graveyard comparison in counter target should parse");
+        let message = format!("{:#?}", def.spell_effect);
         assert!(
-            message.contains("unsupported dynamic mana value comparison operand"),
-            "expected unsupported dynamic-comparison parse error, got {message}"
+            message.contains("LessThanOrEqualExpr")
+                && message.contains("Count")
+                && message.contains("Graveyard"),
+            "expected dynamic graveyard count comparison in counter target, got {message}"
         );
     }
 
@@ -10120,17 +10122,17 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
-    fn parse_amass_clause_is_rejected_until_supported() {
-        let err = CardDefinitionBuilder::new(CardId::new(), "Widespread Brutality Variant")
+    fn parse_amass_clause_parses_structurally() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Widespread Brutality Variant")
             .parse_text(
                 "Amass Zombies 2, then the Army you amassed deals damage equal to its power to each non-Army creature.",
             )
-            .expect_err("amass should fail until mechanic support is implemented");
+            .expect("amass clause should parse structurally");
 
-        let message = format!("{err:?}");
+        let spell_debug = format!("{:#?}", def.spell_effect).to_ascii_lowercase();
         assert!(
-            message.contains("unsupported amass mechanic"),
-            "expected unsupported amass parse error, got {message}"
+            spell_debug.contains("dealdamageeffect"),
+            "expected downstream damage effect to remain parsed, got {spell_debug}"
         );
     }
 

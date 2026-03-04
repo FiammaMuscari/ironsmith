@@ -36,7 +36,7 @@ export default function ArrowOverlay() {
       const to = centerOf(toRect);
       const d = curvedArrowPath(from.x, from.y, to.x, to.y);
       const len = Math.sqrt((to.x - from.x) ** 2 + (to.y - from.y) ** 2) * 1.15;
-      result.push({ d, color: arrow.color || "#f0ce61", key: arrow.key, len });
+      result.push({ d, color: arrow.color || "#ff3b30", key: arrow.key, len });
     }
     setPaths(result);
   }, [arrows]);
@@ -66,7 +66,7 @@ export default function ArrowOverlay() {
       const from = centerOf(fromRect);
       dragPath = {
         d: curvedArrowPath(from.x, from.y, dragArrow.x, dragArrow.y),
-        color: dragArrow.color || "#f0ce61",
+        color: dragArrow.color || "#ff3b30",
       };
     }
   }
@@ -87,24 +87,24 @@ export default function ArrowOverlay() {
           </feMerge>
         </filter>
         <marker
-          id="arrowhead-yellow"
+          id="arrowhead-red"
           markerWidth="8"
           markerHeight="6"
           refX="7"
           refY="3"
           orient="auto"
         >
-          <polygon points="0 0, 8 3, 0 6" fill="#f0ce61" />
+          <polygon points="0 0, 8 3, 0 6" fill="#ff3b30" />
         </marker>
         <marker
-          id="arrowhead-purple"
+          id="arrowhead-blue"
           markerWidth="8"
           markerHeight="6"
           refX="7"
           refY="3"
           orient="auto"
         >
-          <polygon points="0 0, 8 3, 0 6" fill="#ae76ff" />
+          <polygon points="0 0, 8 3, 0 6" fill="#3b82f6" />
         </marker>
         <marker
           id="arrowhead-drag"
@@ -128,7 +128,7 @@ export default function ArrowOverlay() {
           strokeWidth={2.5}
           strokeLinecap="round"
           filter="url(#arrow-glow)"
-          markerEnd={p.color.includes("ae76ff") ? "url(#arrowhead-purple)" : "url(#arrowhead-yellow)"}
+          markerEnd={p.color.includes("3b82f6") ? "url(#arrowhead-blue)" : "url(#arrowhead-red)"}
           style={{
             strokeDasharray: p.len,
             strokeDashoffset: p.len,

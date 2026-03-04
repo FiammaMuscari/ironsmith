@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useGame } from "@/context/GameContext";
 import { useCombatArrows } from "@/context/CombatArrowContext";
+import { getCardRect, centerOf } from "@/hooks/useCardPositions";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Swords, ArrowRight } from "lucide-react";
+
+const ATTACKER_COLOR = "#ff3b30";
 
 function decodeAttackTargetChoice(choice) {
   if (choice && typeof choice === "object") {
@@ -25,30 +27,39 @@ function attackTargetLabel(target, players) {
 
 /**
  * Given a drop point, try to resolve it to a valid attack target.
- * Checks for data-player-target (player) or data-object-id (planeswalker).
+ * Checks planeswalker (exact card hit) first, then opponent zone (anywhere), then player target.
  */
 function resolveDropTarget(x, y, validTargets) {
   const el = document.elementFromPoint(x, y);
   if (!el) return null;
 
-  // Check player target
-  const playerEl = el.closest("[data-player-target]");
-  if (playerEl) {
-    const playerIdx = Number(playerEl.dataset.playerTarget);
-    // Verify it's a valid target
+  // Check planeswalker target (exact card hit only)
+  const cardEl = el.closest(".game-card[data-object-id]");
+  if (cardEl) {
+    const objId = Number(cardEl.dataset.objectId);
+    for (const t of validTargets) {
+      const decoded = decodeAttackTargetChoice(t);
+      if (decoded.kind === "planeswalker" && decoded.object === objId) return decoded;
+    }
+  }
+
+  // Check opponent zone (anywhere on their area)
+  const opponentZone = el.closest("[data-opponent-zone]");
+  if (opponentZone) {
+    const playerIdx = Number(opponentZone.dataset.opponentZone);
     for (const t of validTargets) {
       const decoded = decodeAttackTargetChoice(t);
       if (decoded.kind === "player" && decoded.player === playerIdx) return decoded;
     }
   }
 
-  // Check planeswalker target
-  const cardEl = el.closest("[data-object-id]");
-  if (cardEl) {
-    const objId = Number(cardEl.dataset.objectId);
+  // Legacy: Check player target (life total / name)
+  const playerEl = el.closest("[data-player-target]");
+  if (playerEl) {
+    const playerIdx = Number(playerEl.dataset.playerTarget);
     for (const t of validTargets) {
       const decoded = decodeAttackTargetChoice(t);
-      if (decoded.kind === "planeswalker" && decoded.object === objId) return decoded;
+      if (decoded.kind === "player" && decoded.player === playerIdx) return decoded;
     }
   }
 
@@ -77,7 +88,10 @@ export default function AttackersDecision({ decision, canAct }) {
     return initial;
   });
 
-  const [choosingTarget, setChoosingTarget] = useState(null);
+  // Selected attacker awaiting target click (for multi-target creatures)
+  const [selectedAttackerId, setSelectedAttackerId] = useState(null);
+  const selectedAttackerRef = useRef(null);
+  selectedAttackerRef.current = selectedAttackerId;
 
   const getDeclaration = (creatureId) =>
     declarations.find((d) => d.creature === Number(creatureId));
@@ -85,35 +99,84 @@ export default function AttackersDecision({ decision, canAct }) {
   const isAttacking = (creatureId) =>
     declarations.some((d) => d.creature === Number(creatureId));
 
-  const toggleAttacker = (opt) => {
+  const toggleAttacker = useCallback((opt) => {
     const creatureId = Number(opt.creature);
     const validTargets = opt.valid_targets || [];
 
     if (isAttacking(creatureId)) {
       if (opt.must_attack) return;
       setDeclarations((prev) => prev.filter((d) => d.creature !== creatureId));
-      setChoosingTarget(null);
-    } else if (validTargets.length <= 1) {
-      const target = validTargets[0];
-      if (!target) return;
-      setDeclarations((prev) => [
-        ...prev,
-        { creature: creatureId, target: decodeAttackTargetChoice(target) },
-      ]);
+      setSelectedAttackerId(null);
+    } else if (selectedAttackerRef.current === creatureId) {
+      // Already selected for targeting — deselect
+      setSelectedAttackerId(null);
     } else {
-      setChoosingTarget(creatureId);
+      // Select this creature — arrow will follow mouse via useEffect below
+      setSelectedAttackerId(creatureId);
     }
-  };
+  }, [isAttacking]);
 
-  const selectTarget = (creatureId, target) => {
+  const selectTarget = useCallback((creatureId, target) => {
     creatureId = Number(creatureId);
     const decoded = decodeAttackTargetChoice(target);
     setDeclarations((prev) => [
       ...prev.filter((d) => d.creature !== creatureId),
       { creature: creatureId, target: decoded },
     ]);
-    setChoosingTarget(null);
-  };
+    setSelectedAttackerId(null);
+  }, []);
+
+  // When selectedAttackerId is set, start a drag arrow from the creature
+  // and track mouse movement so the arrow follows the cursor
+  useEffect(() => {
+    if (selectedAttackerId == null) {
+      endDragArrow();
+      return;
+    }
+
+    const rect = getCardRect(selectedAttackerId);
+    if (rect) {
+      const center = centerOf(rect);
+      startDragArrow(selectedAttackerId, center.x, center.y, ATTACKER_COLOR);
+    }
+
+    const onMouseMove = (e) => {
+      updateDragArrow(e.clientX, e.clientY);
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+    };
+  }, [selectedAttackerId, startDragArrow, updateDragArrow, endDragArrow]);
+
+  // Handle target area click from opponent zone
+  const handleTargetAreaClick = useCallback((playerIdx, planeswalkerObjId) => {
+    const selId = selectedAttackerRef.current;
+    if (selId == null) return;
+    const opt = options.find((o) => Number(o.creature) === selId);
+    if (!opt) return;
+    const validTargets = opt.valid_targets || [];
+
+    // Check planeswalker target first (only if click was exactly on a planeswalker)
+    if (planeswalkerObjId != null) {
+      for (const t of validTargets) {
+        const decoded = decodeAttackTargetChoice(t);
+        if (decoded.kind === "planeswalker" && decoded.object === planeswalkerObjId) {
+          selectTarget(selId, t);
+          return;
+        }
+      }
+    }
+
+    // Fall back to player target
+    for (const t of validTargets) {
+      const decoded = decodeAttackTargetChoice(t);
+      if (decoded.kind === "player" && decoded.player === playerIdx) {
+        selectTarget(selId, t);
+        return;
+      }
+    }
+  }, [options, selectTarget]);
 
   // Handle drop from battlefield drag
   const handleDrop = useCallback((fromId, x, y) => {
@@ -143,6 +206,7 @@ export default function AttackersDecision({ decision, canAct }) {
         ...prev.filter((d) => d.creature !== creatureId),
         { creature: creatureId, target },
       ]);
+      setSelectedAttackerId(null);
     }
   }, [options, declarations]);
 
@@ -156,15 +220,17 @@ export default function AttackersDecision({ decision, canAct }) {
     setCombatMode({
       mode: "attackers",
       candidates: candidateIds,
-      color: "#f0ce61",
+      color: ATTACKER_COLOR,
+      selectedAttacker: selectedAttackerId,
       onDrop: handleDrop,
       onClick: (creatureId) => {
         const opt = options.find((o) => Number(o.creature) === Number(creatureId));
         if (opt) toggleAttacker(opt);
       },
+      onTargetAreaClick: handleTargetAreaClick,
     });
     return () => setCombatMode(null);
-  }, [canAct, options, handleDrop, setCombatMode]);
+  }, [canAct, options, handleDrop, selectedAttackerId, handleTargetAreaClick, setCombatMode, toggleAttacker]);
 
   // Update combat arrows when declarations change
   useEffect(() => {
@@ -172,7 +238,7 @@ export default function AttackersDecision({ decision, canAct }) {
       fromId: d.creature,
       toId: d.target.kind === "planeswalker" ? d.target.object : null,
       toPlayerId: d.target.kind === "player" ? d.target.player : null,
-      color: "#f0ce61",
+      color: ATTACKER_COLOR,
       key: `atk-${d.creature}`,
     }));
     updateArrows(arrowData);
@@ -181,70 +247,48 @@ export default function AttackersDecision({ decision, canAct }) {
   useEffect(() => clearArrows, [clearArrows]);
 
   return (
-    <div className="flex flex-col gap-2 overflow-visible">
-      <div className="text-[13px] text-muted-foreground">
-        Declare attackers — drag creatures to targets
-      </div>
-      <div className="flex flex-wrap gap-2 overflow-visible py-1 -mx-1 px-1">
+    <div className="flex flex-col gap-2">
+      <div className="text-[12px] text-muted-foreground">Declare attackers</div>
+      <div className="flex flex-col gap-1">
         {options.map((opt) => {
           const creatureId = Number(opt.creature);
           const attacking = isAttacking(creatureId);
           const name = opt.creature_name || opt.name || `Creature ${creatureId}`;
           const decl = getDeclaration(creatureId);
           const validTargets = opt.valid_targets || [];
-          const isChoosingTarget = choosingTarget === creatureId;
+          const isSelected = selectedAttackerId === creatureId;
 
           return (
-            <div key={creatureId} className="flex flex-col gap-1 min-w-0 overflow-visible">
+            <div key={creatureId} className="flex flex-col gap-0.5">
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 className={cn(
-                  "combat-btn h-7 text-[14px] justify-start px-3 text-muted-foreground",
-                  attacking && "combat-active text-[rgba(174,118,255,0.95)]",
+                  "h-7 text-[11px] justify-start px-2",
+                  attacking && "border-[rgba(174,118,255,0.95)] bg-[rgba(174,118,255,0.08)]",
+                  isSelected && "border-[rgba(255,59,48,0.8)] bg-[rgba(255,59,48,0.08)]",
                   opt.must_attack && "italic"
                 )}
                 disabled={!canAct}
                 onClick={() => toggleAttacker(opt)}
               >
-                {attacking ? <Swords className="size-3.5 inline mr-1" /> : ""}{name}
-                {opt.must_attack && " (must)"}
+                {attacking ? "\u2694 " : ""}{name}
+                {opt.must_attack && " (must attack)"}
+                {isSelected && " (select target)"}
                 {attacking && decl && validTargets.length > 1 && (
-                  <span className="ml-1 text-[13px] text-muted-foreground inline-flex items-center gap-0.5">
-                    <ArrowRight className="size-3" /> {attackTargetLabel(decl.target, players)}
+                  <span className="ml-1 text-[10px] text-muted-foreground">
+                    → {attackTargetLabel(decl.target, players)}
                   </span>
                 )}
               </Button>
-
-              {isChoosingTarget && (
-                <div className="ml-2 flex flex-wrap gap-1 items-center overflow-visible">
-                  <div className="text-[12px] text-muted-foreground">Target:</div>
-                  {validTargets.map((target, tIdx) => {
-                    const decoded = decodeAttackTargetChoice(target);
-                    const label = attackTargetLabel(decoded, players);
-                    return (
-                      <Button
-                        key={tIdx}
-                        variant="ghost"
-                        size="sm"
-                        className="combat-btn h-5 text-[12px] justify-start px-2 text-muted-foreground"
-                        disabled={!canAct}
-                        onClick={() => selectTarget(creatureId, target)}
-                      >
-                        {label}
-                      </Button>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           );
         })}
       </div>
       <Button
-        variant="ghost"
+        variant="outline"
         size="sm"
-        className="combat-btn combat-active h-7 text-[14px] px-4 text-[rgba(174,118,255,0.95)] self-start"
+        className="h-7 text-[11px]"
         disabled={!canAct}
         onClick={() =>
           dispatch(

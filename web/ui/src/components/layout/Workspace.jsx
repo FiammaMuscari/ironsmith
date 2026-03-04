@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useGame } from "@/context/GameContext";
-import { useHover } from "@/context/HoverContext";
-import { useDrag } from "@/context/DragContext";
+import { useDragActions } from "@/context/DragContext";
 import TableCore from "@/components/board/TableCore";
 import RightRail from "@/components/right-rail/RightRail";
 import HandZone from "@/components/board/HandZone";
@@ -13,11 +12,7 @@ import ArrowOverlay from "@/components/overlays/ArrowOverlay";
 export default function Workspace({ zoneView, deckLoadingMode, onLoadDecks, onCancelDeckLoading }) {
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const { state, dispatch } = useGame();
-  const { hoveredObjectId } = useHover();
-  const { dragState, endDrag } = useDrag();
-
-  // Inspector shows hovered card when hovering, falls back to clicked selection
-  const effectiveInspectId = hoveredObjectId || selectedObjectId;
+  const { endDrag } = useDragActions();
 
   const players = state?.players || [];
   const perspective = state?.perspective;
@@ -25,8 +20,6 @@ export default function Workspace({ zoneView, deckLoadingMode, onLoadDecks, onCa
 
   // Handle drag drop — if user drops on the battlefield area, dispatch the action
   useEffect(() => {
-    if (!dragState) return;
-
     const onPointerUp = (e) => {
       const ds = endDrag();
       if (!ds || !ds.actions || ds.actions.length === 0) return;
@@ -67,7 +60,7 @@ export default function Workspace({ zoneView, deckLoadingMode, onLoadDecks, onCa
       document.removeEventListener("pointercancel", onPointerCancel);
       window.removeEventListener("blur", onWindowBlur);
     };
-  }, [dragState, endDrag, dispatch]);
+  }, [endDrag, dispatch]);
 
   return (
     <section
@@ -80,10 +73,7 @@ export default function Workspace({ zoneView, deckLoadingMode, onLoadDecks, onCa
       <DragOverlay />
       <CastParticles />
       <ArrowOverlay />
-      <RightRail
-        selectedObjectId={effectiveInspectId}
-        pinnedObjectId={selectedObjectId}
-      />
+      <RightRail pinnedObjectId={selectedObjectId} />
       <TableCore
         selectedObjectId={selectedObjectId}
         onInspect={setSelectedObjectId}

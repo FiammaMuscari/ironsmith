@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useHover } from "@/context/HoverContext";
+import { useHoverActions } from "@/context/HoverContext";
 import { SymbolText } from "@/lib/mana-symbols";
 
 /** Strip "Activate CardName: " or "Cast CardName" prefix for compact display. */
@@ -11,7 +11,7 @@ function stripActionPrefix(label) {
 
 export default function ActionPopover({ anchorRect, actions, onAction, onClose }) {
   const ref = useRef(null);
-  const { hoverCard, clearHover } = useHover();
+  const { hoverCard, clearHover } = useHoverActions();
   const [phase, setPhase] = useState("entering");
   const [hoveredIdx, setHoveredIdx] = useState(-1);
 

@@ -1481,7 +1481,6 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 pub struct WasmGame {
     game: GameState,
     registry: CardRegistry,
-    registry_preload_cursor: usize,
     trigger_queue: TriggerQueue,
     priority_state: PriorityLoopState,
     pending_decision: Option<DecisionContext>,
@@ -1503,8 +1502,6 @@ pub struct WasmGame {
     /// priority round.  `cancelDecision` rolls back to this point so that
     /// mana-ability activations, partial casts, etc. are all undone.
     priority_epoch_checkpoint: Option<ReplayCheckpoint>,
-    /// Semantic similarity scores for each registered card (card name → score 0.0–1.0).
-    semantic_scores: HashMap<String, f32>,
     /// User-configured minimum semantic threshold for card addition (0.0 = no filter).
     semantic_threshold: f32,
 }
@@ -1532,7 +1529,6 @@ impl WasmGame {
         Self {
             game: GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20),
             registry: CardRegistry::new(),
-            registry_preload_cursor: 0,
             trigger_queue: TriggerQueue::new(),
             priority_state,
             pending_decision: None,
@@ -1545,7 +1541,6 @@ impl WasmGame {
             runner_pending_decision: false,
             auto_cleanup_discard: true,
             priority_epoch_checkpoint: None,
-            semantic_scores: HashMap::new(),
             semantic_threshold: 0.0,
         }
     }
@@ -1608,13 +1603,14 @@ impl WasmGame {
     /// Incremental generated-registry preload status.
     #[wasm_bindgen(js_name = preloadRegistryStatus)]
     pub fn preload_registry_status(&self) -> Result<JsValue, JsValue> {
-        let total = CardRegistry::generated_parser_entry_count();
-        let cursor = self.registry_preload_cursor.min(total);
+        // Fidelity coverage is precomputed during the build pipeline, so this is
+        // effectively complete immediately.
+        let total = CardRegistry::generated_parser_semantic_scored_count();
         let status = RegistryPreloadStatus {
-            loaded: self.registry.len(),
-            cursor,
+            loaded: total,
+            cursor: total,
             total,
-            done: cursor >= total,
+            done: true,
         };
         serde_wasm_bindgen::to_value(&status)
             .map_err(|e| JsValue::from_str(&format!("preloadRegistryStatus encode failed: {e}")))
@@ -1622,23 +1618,7 @@ impl WasmGame {
 
     /// Parse/register the next batch of generated cards for startup warmup.
     #[wasm_bindgen(js_name = preloadRegistryChunk)]
-    pub fn preload_registry_chunk(&mut self, chunk_size: usize) -> Result<JsValue, JsValue> {
-        let total = CardRegistry::generated_parser_entry_count();
-        if self.registry_preload_cursor < total {
-            self.registry_preload_cursor = self
-                .registry
-                .preload_generated_cards_chunk(self.registry_preload_cursor, chunk_size);
-
-            // Score any newly registered cards.
-            for def in self.registry.all() {
-                let name = def.name();
-                if self.semantic_scores.contains_key(name) {
-                    continue;
-                }
-                let score = Self::compute_card_score(def);
-                self.semantic_scores.insert(name.to_string(), score);
-            }
-        }
+    pub fn preload_registry_chunk(&mut self, _chunk_size: usize) -> Result<JsValue, JsValue> {
         self.preload_registry_status()
     }
 
@@ -1784,20 +1764,16 @@ impl WasmGame {
             }
         })?;
 
-        if self.semantic_threshold > 0.0 {
-            let score = self
-                .semantic_scores
-                .get(definition.name())
-                .copied()
-                .unwrap_or_else(|| Self::compute_card_score(&definition));
-            if score < self.semantic_threshold {
+        if self.semantic_threshold > 0.0
+            && let Some(score) = Self::semantic_score_for_name(definition.name())
+            && score < self.semantic_threshold
+        {
                 return Err(JsValue::from_str(&format!(
                     "Card '{}' has fidelity {:.0}%, below threshold {:.0}%",
                     definition.name(),
                     score * 100.0,
                     self.semantic_threshold * 100.0,
                 )));
-            }
         }
 
         if skip_triggers {

@@ -3,7 +3,6 @@ import { useGame } from "@/context/GameContext";
 import { useCombatArrows } from "@/context/CombatArrowContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Swords } from "lucide-react";
 
 /**
  * The engine emits attacker-centric blocker options:
@@ -98,7 +97,7 @@ export default function BlockersDecision({ decision, canAct }) {
     setCombatMode({
       mode: "blockers",
       candidates: candidateIds,
-      color: "#ae76ff",
+      color: "#3b82f6",
       onDrop: handleDrop,
       onClick: null, // clicks handled via buttons
     });
@@ -111,7 +110,7 @@ export default function BlockersDecision({ decision, canAct }) {
       fromId: d.blocker,
       toId: d.blocking,
       toPlayerId: null,
-      color: "#ae76ff",
+      color: "#3b82f6",
       key: `blk-${d.blocker}-${d.blocking}`,
     }));
     updateArrows(arrowData);
@@ -120,11 +119,9 @@ export default function BlockersDecision({ decision, canAct }) {
   useEffect(() => clearArrows, [clearArrows]);
 
   return (
-    <div className="flex flex-col gap-2 overflow-visible">
-      <div className="text-[13px] text-muted-foreground">
-        Declare blockers — drag creatures to attackers
-      </div>
-      <div className="flex flex-wrap gap-2 overflow-visible py-1 -mx-1 px-1">
+    <div className="flex flex-col gap-2">
+      <div className="text-[12px] text-muted-foreground">Declare blockers</div>
+      <div className="flex flex-col gap-1.5">
         {blockerOptions.map((opt) => {
           const blockerId = opt.blocker;
           const name = opt.name;
@@ -132,14 +129,14 @@ export default function BlockersDecision({ decision, canAct }) {
           const validAttackers = opt.valid_attackers || [];
 
           return (
-            <div key={blockerId} className="flex flex-col gap-1 overflow-visible">
+            <div key={blockerId} className="border border-game-line-2 p-1 rounded-sm">
               <div className={cn(
-                "text-[14px] font-bold mb-0.5 px-1",
-                currentDecls.length > 0 ? "text-[rgba(174,118,255,0.95)]" : "text-muted-foreground"
+                "text-[11px] font-bold mb-0.5",
+                currentDecls.length > 0 && "text-[rgba(174,118,255,0.95)]"
               )}>
                 {name}
               </div>
-              <div className="flex flex-wrap gap-1 overflow-visible">
+              <div className="flex flex-wrap gap-0.5">
                 {validAttackers.map((attacker) => {
                   const attackerId = Number(attacker.attacker);
                   const attackerName = attacker.name;
@@ -147,16 +144,16 @@ export default function BlockersDecision({ decision, canAct }) {
                   return (
                     <Button
                       key={attackerId}
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       className={cn(
-                        "combat-btn h-5 text-[12px] px-2 text-muted-foreground",
-                        blocking && "combat-active text-[rgba(174,118,255,0.95)]"
+                        "h-5 text-[10px] px-1.5",
+                        blocking && "border-[rgba(174,118,255,0.95)] bg-[rgba(174,118,255,0.08)]"
                       )}
                       disabled={!canAct}
                       onClick={() => toggleBlocker(blockerId, attackerId)}
                     >
-                      {blocking ? <Swords className="size-3.5 inline mr-1" /> : ""}{attackerName}
+                      {blocking ? "\u2694 " : ""}Block {attackerName}
                     </Button>
                   );
                 })}
@@ -166,9 +163,9 @@ export default function BlockersDecision({ decision, canAct }) {
         })}
       </div>
       <Button
-        variant="ghost"
+        variant="outline"
         size="sm"
-        className="combat-btn combat-active h-7 text-[14px] px-4 text-[rgba(174,118,255,0.95)] self-start"
+        className="h-7 text-[11px]"
         disabled={!canAct}
         onClick={() =>
           dispatch(

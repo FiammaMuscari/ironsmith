@@ -133,6 +133,20 @@
 /* ---- Game Card ---- */
 .game-card {
   @apply relative font-bold select-none overflow-hidden cursor-default;
+  isolation: isolate;
+  --glow-rgb: 100, 169, 255;
+  --aura-opacity-1-min: 0;
+  --aura-opacity-1-max: 0;
+  --aura-opacity-2-min: 0;
+  --aura-opacity-2-max: 0;
+  --aura-scale-1-min: 0.94;
+  --aura-scale-1-max: 1.06;
+  --aura-scale-2-min: 0.88;
+  --aura-scale-2-max: 1.12;
+  --aura-duration-1: 2.4s;
+  --aura-duration-2: 3.9s;
+  --aura-delay-1: 0s;
+  --aura-delay-2: 0s;
   border: none;
   border-radius: 6px;
   font-size: 16px;
@@ -149,8 +163,37 @@
   transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
+.game-card::before,
 .game-card::after {
   content: "";
+  @apply absolute inset-0 pointer-events-none;
+  z-index: 0;
+  opacity: 0;
+  transform-origin: 50% 50%;
+  border-radius: 8px;
+}
+
+.game-card::before {
+  inset: -12%;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(var(--glow-rgb), 0.36) 0%,
+    rgba(var(--glow-rgb), 0.18) 36%,
+    rgba(var(--glow-rgb), 0) 74%
+  );
+}
+
+.game-card::after {
+  inset: -20%;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(var(--glow-rgb), 0.22) 0%,
+    rgba(var(--glow-rgb), 0.11) 42%,
+    rgba(var(--glow-rgb), 0) 84%
+  );
+}
+
+.game-card-shade {
   @apply absolute inset-0 pointer-events-none;
   z-index: 1;
   background: linear-gradient(180deg, rgba(4, 8, 14, 0.08), rgba(4, 8, 14, 0.45));
@@ -173,39 +216,55 @@
 
 /* Card states — diffused neon glows (animated pulse, no solid border) */
 .game-card.glow-land {
+  --glow-rgb: 88, 214, 166;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(88, 214, 166, 0.45),
     0 0 18px 5px rgba(88, 214, 166, 0.2),
     inset 0 0 6px 2px rgba(88, 214, 166, 0.22);
   cursor: grab;
-  animation: glow-pulse-land 2s ease-in-out infinite;
 }
 
 .game-card.glow-spell {
+  --glow-rgb: 100, 169, 255;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(100, 169, 255, 0.45),
     0 0 18px 5px rgba(100, 169, 255, 0.2),
     inset 0 0 6px 2px rgba(100, 169, 255, 0.22);
   cursor: grab;
-  animation: glow-pulse-spell 2s ease-in-out infinite;
 }
 
 .game-card.glow-mana {
+  --glow-rgb: 180, 220, 80;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(180, 220, 80, 0.45),
     0 0 18px 5px rgba(180, 220, 80, 0.2),
     inset 0 0 6px 2px rgba(180, 220, 80, 0.22);
   cursor: pointer;
-  animation: glow-pulse-mana 2s ease-in-out infinite;
 }
 
 .game-card.glow-ability {
+  --glow-rgb: 247, 160, 64;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(247, 160, 64, 0.45),
     0 0 18px 5px rgba(247, 160, 64, 0.2),
     inset 0 0 6px 2px rgba(247, 160, 64, 0.22);
   cursor: pointer;
-  animation: glow-pulse-ability 2s ease-in-out infinite;
 }
 
 @keyframes glow-pulse-land {
@@ -269,12 +328,16 @@
 }
 
 .game-card.glow-extra {
+  --glow-rgb: 174, 118, 255;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(174, 118, 255, 0.45),
     0 0 18px 5px rgba(174, 118, 255, 0.2),
     inset 0 0 6px 2px rgba(174, 118, 255, 0.22);
   cursor: grab;
-  animation: glow-pulse-extra 2s ease-in-out infinite;
 }
 
 @keyframes glow-pulse-extra {
@@ -295,72 +358,166 @@
 /* Card-type glows for hand cards */
 /* Instant — cyan */
 .game-card.glow-instant {
+  --glow-rgb: 80, 220, 240;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(80, 220, 240, 0.45),
     0 0 18px 5px rgba(80, 220, 240, 0.2),
     inset 0 0 6px 2px rgba(80, 220, 240, 0.22);
   cursor: grab;
-  animation: glow-pulse-instant 2s ease-in-out infinite;
 }
 
 /* Sorcery — violet */
 .game-card.glow-sorcery {
+  --glow-rgb: 180, 100, 255;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(180, 100, 255, 0.45),
     0 0 18px 5px rgba(180, 100, 255, 0.2),
     inset 0 0 6px 2px rgba(180, 100, 255, 0.22);
   cursor: grab;
-  animation: glow-pulse-sorcery 2s ease-in-out infinite;
 }
 
 /* Creature — amber */
 .game-card.glow-creature {
+  --glow-rgb: 240, 190, 80;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(240, 190, 80, 0.45),
     0 0 18px 5px rgba(240, 190, 80, 0.2),
     inset 0 0 6px 2px rgba(240, 190, 80, 0.22);
   cursor: grab;
-  animation: glow-pulse-creature 2s ease-in-out infinite;
 }
 
 /* Enchantment — magenta/pink */
 .game-card.glow-enchantment {
+  --glow-rgb: 240, 100, 180;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(240, 100, 180, 0.45),
     0 0 18px 5px rgba(240, 100, 180, 0.2),
     inset 0 0 6px 2px rgba(240, 100, 180, 0.22);
   cursor: grab;
-  animation: glow-pulse-enchantment 2s ease-in-out infinite;
 }
 
 /* Battle — red-orange */
 .game-card.glow-battle {
+  --glow-rgb: 240, 80, 60;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(240, 80, 60, 0.45),
     0 0 18px 5px rgba(240, 80, 60, 0.2),
     inset 0 0 6px 2px rgba(240, 80, 60, 0.22);
   cursor: grab;
-  animation: glow-pulse-battle 2s ease-in-out infinite;
 }
 
 /* Artifact — silver/ice blue */
 .game-card.glow-artifact {
+  --glow-rgb: 190, 210, 230;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(190, 210, 230, 0.45),
     0 0 18px 5px rgba(190, 210, 230, 0.2),
     inset 0 0 6px 2px rgba(190, 210, 230, 0.22);
   cursor: grab;
-  animation: glow-pulse-artifact 2s ease-in-out infinite;
 }
 
 /* Planeswalker — warm orange-gold */
 .game-card.glow-planeswalker {
+  --glow-rgb: 247, 160, 64;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(247, 160, 64, 0.45),
     0 0 18px 5px rgba(247, 160, 64, 0.2),
     inset 0 0 6px 2px rgba(247, 160, 64, 0.22);
   cursor: grab;
-  animation: glow-pulse-ability 2s ease-in-out infinite;
+}
+
+.game-card.glow-land::before,
+.game-card.glow-spell::before,
+.game-card.glow-mana::before,
+.game-card.glow-ability::before,
+.game-card.glow-extra::before,
+.game-card.glow-instant::before,
+.game-card.glow-sorcery::before,
+.game-card.glow-creature::before,
+.game-card.glow-enchantment::before,
+.game-card.glow-battle::before,
+.game-card.glow-artifact::before,
+.game-card.glow-planeswalker::before,
+.game-card.playable::before,
+.game-card.target-legal::before,
+.game-card.attack-candidate::before,
+.game-card.blocker-candidate::before,
+.game-card.attack-selected::before,
+.game-card.inspected::before {
+  animation: glow-aura-primary var(--aura-duration-1) ease-in-out infinite;
+  animation-delay: var(--aura-delay-1);
+}
+
+.game-card.glow-land::after,
+.game-card.glow-spell::after,
+.game-card.glow-mana::after,
+.game-card.glow-ability::after,
+.game-card.glow-extra::after,
+.game-card.glow-instant::after,
+.game-card.glow-sorcery::after,
+.game-card.glow-creature::after,
+.game-card.glow-enchantment::after,
+.game-card.glow-battle::after,
+.game-card.glow-artifact::after,
+.game-card.glow-planeswalker::after,
+.game-card.playable::after,
+.game-card.target-legal::after,
+.game-card.attack-candidate::after,
+.game-card.blocker-candidate::after,
+.game-card.attack-selected::after,
+.game-card.inspected::after {
+  animation: glow-aura-secondary var(--aura-duration-2) ease-in-out infinite;
+  animation-delay: var(--aura-delay-2);
+}
+
+@keyframes glow-aura-primary {
+  0%, 100% {
+    opacity: var(--aura-opacity-1-min);
+    transform: scale(var(--aura-scale-1-min));
+  }
+  50% {
+    opacity: var(--aura-opacity-1-max);
+    transform: scale(var(--aura-scale-1-max));
+  }
+}
+
+@keyframes glow-aura-secondary {
+  0%, 100% {
+    opacity: var(--aura-opacity-2-min);
+    transform: scale(var(--aura-scale-2-min));
+  }
+  50% {
+    opacity: var(--aura-opacity-2-max);
+    transform: scale(var(--aura-scale-2-max));
+  }
 }
 
 @keyframes glow-pulse-instant {
@@ -553,14 +710,29 @@
 }
 
 .game-card.attack-candidate:hover,
-.game-card.attack-candidate.hovered,
+.game-card.attack-candidate.hovered {
+  animation: none !important;
+  box-shadow:
+    0 0 18px 6px rgba(255, 59, 48, 0.7),
+    0 0 36px 12px rgba(255, 59, 48, 0.35),
+    inset 0 0 10px 4px rgba(255, 59, 48, 0.4) !important;
+}
+
 .game-card.blocker-candidate:hover,
 .game-card.blocker-candidate.hovered {
   animation: none !important;
   box-shadow:
-    0 0 18px 6px rgba(174, 118, 255, 0.7),
-    0 0 36px 12px rgba(174, 118, 255, 0.35),
-    inset 0 0 10px 4px rgba(174, 118, 255, 0.4) !important;
+    0 0 18px 6px rgba(59, 130, 246, 0.7),
+    0 0 36px 12px rgba(59, 130, 246, 0.35),
+    inset 0 0 10px 4px rgba(59, 130, 246, 0.4) !important;
+}
+
+.game-card:hover::before,
+.game-card:hover::after,
+.game-card.hovered::before,
+.game-card.hovered::after {
+  animation-play-state: paused !important;
+  opacity: 0 !important;
 }
 
 /* Fallback for cards with no specific glow class */
@@ -572,12 +744,16 @@
 }
 
 .game-card.playable {
+  --glow-rgb: 88, 214, 166;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.5;
+  --aura-opacity-2-min: 0.09;
+  --aura-opacity-2-max: 0.28;
   box-shadow:
     0 0 8px 2px rgba(88, 214, 166, 0.45),
     0 0 18px 5px rgba(88, 214, 166, 0.2),
     inset 0 0 6px 2px rgba(88, 214, 166, 0.22);
   cursor: grab;
-  animation: glow-pulse-land 2s ease-in-out infinite;
 }
 
 .game-card.actionable {
@@ -588,36 +764,72 @@
 }
 
 .game-card.target-legal {
+  --glow-rgb: 240, 206, 97;
+  --aura-opacity-1-min: 0.24;
+  --aura-opacity-1-max: 0.56;
+  --aura-opacity-2-min: 0.12;
+  --aura-opacity-2-max: 0.32;
   box-shadow:
     0 0 10px 3px rgba(240, 206, 97, 0.5),
     0 0 22px 6px rgba(240, 206, 97, 0.22),
     inset 0 0 6px 2px rgba(240, 206, 97, 0.25) !important;
-  animation: glow-pulse-target 2s ease-in-out infinite;
 }
 
-.game-card.attack-candidate,
-.game-card.blocker-candidate {
+.game-card.attack-candidate {
+  --glow-rgb: 255, 59, 48;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.52;
+  --aura-opacity-2-min: 0.1;
+  --aura-opacity-2-max: 0.3;
+  --aura-duration-1: 1.9s;
+  --aura-duration-2: 3.2s;
   box-shadow:
-    0 0 8px 2px rgba(174, 118, 255, 0.45),
-    0 0 18px 5px rgba(174, 118, 255, 0.2),
-    inset 0 0 6px 2px rgba(174, 118, 255, 0.22) !important;
-  animation: glow-pulse-combat 2s ease-in-out infinite;
+    0 0 8px 2px rgba(255, 59, 48, 0.45),
+    0 0 18px 5px rgba(255, 59, 48, 0.2),
+    inset 0 0 6px 2px rgba(255, 59, 48, 0.22) !important;
 }
 
-.game-card.attack-selected,
+.game-card.blocker-candidate {
+  --glow-rgb: 59, 130, 246;
+  --aura-opacity-1-min: 0.2;
+  --aura-opacity-1-max: 0.52;
+  --aura-opacity-2-min: 0.1;
+  --aura-opacity-2-max: 0.3;
+  --aura-duration-1: 1.9s;
+  --aura-duration-2: 3.2s;
+  box-shadow:
+    0 0 8px 2px rgba(59, 130, 246, 0.45),
+    0 0 18px 5px rgba(59, 130, 246, 0.2),
+    inset 0 0 6px 2px rgba(59, 130, 246, 0.22) !important;
+}
+
+.game-card.attack-selected {
+  --glow-rgb: 255, 59, 48;
+  --aura-opacity-1-min: 0.3;
+  --aura-opacity-1-max: 0.66;
+  --aura-opacity-2-min: 0.16;
+  --aura-opacity-2-max: 0.38;
+  --aura-duration-1: 1.15s;
+  --aura-duration-2: 2.2s;
+  box-shadow:
+    0 0 14px 4px rgba(255, 59, 48, 0.65),
+    0 0 28px 8px rgba(255, 59, 48, 0.3),
+    inset 0 0 8px 3px rgba(255, 59, 48, 0.35) !important;
+}
+
 .game-card.blocker-selected {
   box-shadow:
-    0 0 12px 3px rgba(218, 164, 255, 0.55),
-    0 0 24px 7px rgba(218, 164, 255, 0.25),
-    inset 0 0 7px 2px rgba(218, 164, 255, 0.28) !important;
+    0 0 14px 4px rgba(59, 130, 246, 0.65),
+    0 0 28px 8px rgba(59, 130, 246, 0.3),
+    inset 0 0 8px 3px rgba(59, 130, 246, 0.35) !important;
 }
 
 .game-card.attack-active,
 .game-card.blocker-attacker-active {
   transform: translateY(-3px);
   box-shadow:
-    0 0 10px 3px rgba(174, 118, 255, 0.55),
-    0 0 24px 7px rgba(174, 118, 255, 0.25);
+    0 0 10px 3px rgba(255, 59, 48, 0.55),
+    0 0 24px 7px rgba(255, 59, 48, 0.25);
 }
 
 .game-card.tapped {
@@ -633,11 +845,17 @@
 }
 
 .game-card.inspected {
+  --glow-rgb: 240, 206, 97;
+  --aura-opacity-1-min: 0.24;
+  --aura-opacity-1-max: 0.58;
+  --aura-opacity-2-min: 0.12;
+  --aura-opacity-2-max: 0.34;
+  --aura-duration-1: 1.8s;
+  --aura-duration-2: 3s;
   box-shadow:
     0 0 8px 2px rgba(240, 206, 97, 0.5),
     0 0 18px 5px rgba(240, 206, 97, 0.22),
     inset 0 0 6px 2px rgba(240, 206, 97, 0.2);
-  animation: glow-pulse-inspected 2s ease-in-out infinite;
 }
 
 @keyframes glow-pulse-inspected {
@@ -795,58 +1013,6 @@
   }
 }
 
-/* ---- Combat Buttons ---- */
-.combat-btn {
-  border-radius: 9999px !important;
-  box-shadow:
-    0 0 8px 2px rgba(174, 118, 255, 0.35),
-    0 0 16px 4px rgba(174, 118, 255, 0.15),
-    inset 0 0 6px 2px rgba(174, 118, 255, 0.12);
-  animation: glow-pulse-combat-btn 2.5s ease-in-out infinite;
-  transition: box-shadow 150ms ease, transform 150ms ease, background 150ms ease;
-}
-
-.combat-btn:hover {
-  animation: none !important;
-  box-shadow:
-    0 0 16px 5px rgba(174, 118, 255, 0.65),
-    0 0 32px 10px rgba(174, 118, 255, 0.3),
-    inset 0 0 8px 3px rgba(174, 118, 255, 0.25) !important;
-  background: rgba(174, 118, 255, 0.1) !important;
-  transform: scale(1.04);
-}
-
-.combat-btn.combat-active {
-  box-shadow:
-    0 0 12px 4px rgba(174, 118, 255, 0.6),
-    0 0 24px 8px rgba(174, 118, 255, 0.3),
-    inset 0 0 8px 3px rgba(174, 118, 255, 0.25);
-  background: rgba(174, 118, 255, 0.1);
-}
-
-.combat-btn.combat-active:hover {
-  box-shadow:
-    0 0 20px 7px rgba(174, 118, 255, 0.75),
-    0 0 40px 14px rgba(174, 118, 255, 0.35),
-    inset 0 0 10px 4px rgba(174, 118, 255, 0.3) !important;
-  background: rgba(174, 118, 255, 0.15) !important;
-}
-
-@keyframes glow-pulse-combat-btn {
-  0%, 100% {
-    box-shadow:
-      0 0 8px 2px rgba(174, 118, 255, 0.35),
-      0 0 16px 4px rgba(174, 118, 255, 0.15),
-      inset 0 0 6px 2px rgba(174, 118, 255, 0.12);
-  }
-  50% {
-    box-shadow:
-      0 0 12px 3px rgba(174, 118, 255, 0.5),
-      0 0 22px 6px rgba(174, 118, 255, 0.22),
-      inset 0 0 7px 2px rgba(174, 118, 255, 0.18);
-  }
-}
-
 /* ---- Decision Cancel ---- */
 @keyframes cancel-flash {
   0% {
@@ -896,18 +1062,33 @@
   }
 }
 
-@keyframes glow-pulse-combat {
+@keyframes glow-pulse-combat-red {
   0%, 100% {
     box-shadow:
-      0 0 6px 1px rgba(174, 118, 255, 0.35),
-      0 0 14px 3px rgba(174, 118, 255, 0.15),
-      inset 0 0 4px 1px rgba(174, 118, 255, 0.18) !important;
+      0 0 6px 1px rgba(255, 59, 48, 0.35),
+      0 0 14px 3px rgba(255, 59, 48, 0.15),
+      inset 0 0 4px 1px rgba(255, 59, 48, 0.18) !important;
   }
   50% {
     box-shadow:
-      0 0 10px 3px rgba(174, 118, 255, 0.5),
-      0 0 22px 6px rgba(174, 118, 255, 0.25),
-      inset 0 0 6px 2px rgba(174, 118, 255, 0.28) !important;
+      0 0 10px 3px rgba(255, 59, 48, 0.5),
+      0 0 22px 6px rgba(255, 59, 48, 0.25),
+      inset 0 0 6px 2px rgba(255, 59, 48, 0.28) !important;
+  }
+}
+
+@keyframes glow-pulse-combat-blue {
+  0%, 100% {
+    box-shadow:
+      0 0 6px 1px rgba(59, 130, 246, 0.35),
+      0 0 14px 3px rgba(59, 130, 246, 0.15),
+      inset 0 0 4px 1px rgba(59, 130, 246, 0.18) !important;
+  }
+  50% {
+    box-shadow:
+      0 0 10px 3px rgba(59, 130, 246, 0.5),
+      0 0 22px 6px rgba(59, 130, 246, 0.25),
+      inset 0 0 6px 2px rgba(59, 130, 246, 0.28) !important;
   }
 }
 

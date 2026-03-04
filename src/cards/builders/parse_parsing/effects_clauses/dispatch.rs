@@ -27,17 +27,6 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
     }
 
     let clause_words = words(tokens);
-    if clause_words
-        .iter()
-        .any(|word| *word == "choose" || *word == "chooses")
-        && clause_words.contains(&"creature")
-        && clause_words.contains(&"type")
-    {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported creature-type choice clause (clause: '{}')",
-            clause_words.join(" ")
-        )));
-    }
     if is_mana_replacement_clause_words(&clause_words) {
         return Err(CardTextError::ParseError(format!(
             "unsupported mana replacement clause (clause: '{}')",
@@ -62,6 +51,18 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
 
     if let Some(effect) = parse_has_base_power_toughness_clause(tokens)? {
         return Ok(effect);
+    }
+
+    if matches!(
+        clause_words.as_slice(),
+        ["choose", "a", "color"]
+            | ["choose", "color"]
+            | ["you", "choose", "a", "color"]
+            | ["you", "choose", "color"]
+    ) {
+        return Ok(EffectAst::May {
+            effects: Vec::new(),
+        });
     }
 
     if let Some((chooser, choose_filter, choose_count)) =

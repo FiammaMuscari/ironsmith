@@ -3666,8 +3666,6 @@ pub(crate) fn parse_sentence_fallback_mechanic_marker(
         || clause_words.as_slice() == ["it", "still", "a", "land"]
         || clause_words.starts_with(&["manifest", "the", "top", "card", "of", "your", "library"])
         || clause_words.starts_with(&["you", "choose", "one", "of", "them"])
-        || clause_words.starts_with(&["you", "choose", "a", "nonland", "card", "from", "it"])
-        || clause_words.starts_with(&["you", "choose", "a", "card", "from", "it"])
         || clause_words.starts_with(&[
             "you", "may", "put", "a", "land", "card", "from", "among", "them", "into", "your",
             "hand",

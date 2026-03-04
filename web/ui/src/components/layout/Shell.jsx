@@ -95,7 +95,11 @@ export default function Shell() {
             }
           }
         }
-        await refresh("Demo: 3 Black Lotuses on battlefield, main phase");
+        // Add Anger to graveyard and Mountain to battlefield
+        await game.addCardToZone(playerIndex, "Anger", "graveyard", true);
+        await game.addCardToZone(playerIndex, "Mountain", "battlefield", true);
+
+        await refresh("Demo: 3 Black Lotuses + Mountain on battlefield, Anger in graveyard");
       } catch (err) {
         console.error("setupDemoBoard failed:", err);
       }

@@ -2121,6 +2121,8 @@ pub(crate) fn parse_object_filter(
 
     let has_constraints = !filter.card_types.is_empty()
         || !filter.all_card_types.is_empty()
+        || !filter.supertypes.is_empty()
+        || !filter.excluded_supertypes.is_empty()
         || !filter.excluded_card_types.is_empty()
         || !filter.excluded_subtypes.is_empty()
         || !filter.subtypes.is_empty()
@@ -2176,6 +2178,8 @@ pub(crate) fn parse_object_filter(
 
     let has_object_identity = !filter.card_types.is_empty()
         || !filter.all_card_types.is_empty()
+        || !filter.supertypes.is_empty()
+        || !filter.excluded_supertypes.is_empty()
         || !filter.excluded_card_types.is_empty()
         || !filter.excluded_subtypes.is_empty()
         || !filter.subtypes.is_empty()

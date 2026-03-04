@@ -307,7 +307,7 @@ pub(crate) fn parse_effect_clause_with_trailing_if(
 fn trailing_if_predicate_supported(predicate: &PredicateAst) -> bool {
     matches!(
         predicate,
-        PredicateAst::ManaSpentToCastThisSpellAtLeast { .. }
+        PredicateAst::ManaSpentToCastThisSpellAtLeast { .. } | PredicateAst::ItMatches(_)
     ) || matches!(predicate, PredicateAst::TaggedMatches(tag, _) if tag.as_str() == "enchanted")
 }
 

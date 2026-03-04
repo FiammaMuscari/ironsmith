@@ -101,6 +101,30 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
             StaticAbility::rule_text_placeholder(line.trim().to_string()),
         ));
     }
+    if normalized.starts_with("you may cast this card from your graveyard as long as you control")
+        || normalized.starts_with("you may cast this from your graveyard as long as you control")
+    {
+        return Ok(LineAst::StaticAbility(
+            StaticAbility::rule_text_placeholder(line.trim().to_string()),
+        ));
+    }
+    if normalized.starts_with("if this card is in your opening hand")
+        || normalized.contains("you may begin the game with")
+        || (normalized.starts_with("if this land would enter")
+            && normalized.contains("if you do")
+            && normalized.contains("put this"))
+    {
+        return Ok(LineAst::StaticAbility(
+            StaticAbility::rule_text_placeholder(line.trim().to_string()),
+        ));
+    }
+    if normalized.contains("gets +x/+x")
+        && normalized.contains("where x is the number of counters on this")
+    {
+        return Ok(LineAst::StaticAbility(
+            StaticAbility::rule_text_placeholder(line.trim().to_string()),
+        ));
+    }
     let is_collective_restraint_domain_attack_tax = normalized_without_braces.starts_with(
         "creatures cant attack you unless their controller pays x for each creature they control thats attacking you",
     ) && normalized_without_braces.contains("where x is the number of basic land type");

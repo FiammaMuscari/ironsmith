@@ -463,6 +463,12 @@ pub enum Comparison {
     LessThanOrEqual(i32),
     GreaterThan(i32),
     GreaterThanOrEqual(i32),
+    EqualExpr(Box<crate::effect::Value>),
+    NotEqualExpr(Box<crate::effect::Value>),
+    LessThanExpr(Box<crate::effect::Value>),
+    LessThanOrEqualExpr(Box<crate::effect::Value>),
+    GreaterThanExpr(Box<crate::effect::Value>),
+    GreaterThanOrEqualExpr(Box<crate::effect::Value>),
 }
 
 impl Comparison {
@@ -476,7 +482,116 @@ impl Comparison {
             Comparison::LessThanOrEqual(n) => value <= *n,
             Comparison::GreaterThan(n) => value > *n,
             Comparison::GreaterThanOrEqual(n) => value >= *n,
+            Comparison::EqualExpr(_)
+            | Comparison::NotEqualExpr(_)
+            | Comparison::LessThanExpr(_)
+            | Comparison::LessThanOrEqualExpr(_)
+            | Comparison::GreaterThanExpr(_)
+            | Comparison::GreaterThanOrEqualExpr(_) => false,
         }
+    }
+
+    pub fn satisfies_with_context(
+        &self,
+        value: i32,
+        game: &crate::game_state::GameState,
+        ctx: &FilterContext,
+        stack_entry: Option<&crate::game_state::StackEntry>,
+    ) -> bool {
+        match self {
+            Comparison::EqualExpr(rhs) => {
+                resolve_filter_comparison_rhs_value(rhs, game, ctx, stack_entry)
+                    .is_some_and(|rhs| value == rhs)
+            }
+            Comparison::NotEqualExpr(rhs) => {
+                resolve_filter_comparison_rhs_value(rhs, game, ctx, stack_entry)
+                    .is_some_and(|rhs| value != rhs)
+            }
+            Comparison::LessThanExpr(rhs) => {
+                resolve_filter_comparison_rhs_value(rhs, game, ctx, stack_entry)
+                    .is_some_and(|rhs| value < rhs)
+            }
+            Comparison::LessThanOrEqualExpr(rhs) => {
+                resolve_filter_comparison_rhs_value(rhs, game, ctx, stack_entry)
+                    .is_some_and(|rhs| value <= rhs)
+            }
+            Comparison::GreaterThanExpr(rhs) => {
+                resolve_filter_comparison_rhs_value(rhs, game, ctx, stack_entry)
+                    .is_some_and(|rhs| value > rhs)
+            }
+            Comparison::GreaterThanOrEqualExpr(rhs) => {
+                resolve_filter_comparison_rhs_value(rhs, game, ctx, stack_entry)
+                    .is_some_and(|rhs| value >= rhs)
+            }
+            _ => self.satisfies(value),
+        }
+    }
+}
+
+fn resolve_filter_comparison_rhs_value(
+    rhs: &crate::effect::Value,
+    game: &crate::game_state::GameState,
+    ctx: &FilterContext,
+    stack_entry: Option<&crate::game_state::StackEntry>,
+) -> Option<i32> {
+    use crate::effect::Value;
+    use crate::target::ChooseSpec;
+
+    fn total_counters(counters: &std::collections::HashMap<CounterType, u32>) -> i32 {
+        counters.values().copied().sum::<u32>() as i32
+    }
+
+    match rhs {
+        Value::Fixed(value) => Some(*value),
+        Value::Add(left, right) => Some(
+            resolve_filter_comparison_rhs_value(left, game, ctx, stack_entry)?
+                + resolve_filter_comparison_rhs_value(right, game, ctx, stack_entry)?,
+        ),
+        Value::Count(filter) => {
+            let mut count = 0i32;
+            for object in game.objects_iter() {
+                if filter.matches(object, ctx, game) {
+                    count += 1;
+                }
+            }
+            Some(count)
+        }
+        Value::CountScaled(filter, factor) => {
+            let mut count = 0i32;
+            for object in game.objects_iter() {
+                if filter.matches(object, ctx, game) {
+                    count += 1;
+                }
+            }
+            Some(count * *factor)
+        }
+        Value::CountersOnSource(counter_type) => {
+            let source = game.object(ctx.source?)?;
+            Some(source.counters.get(counter_type).copied().unwrap_or(0) as i32)
+        }
+        Value::CountersOn(spec, counter_type) => match spec.as_ref() {
+            ChooseSpec::Source => {
+                let source = game.object(ctx.source?)?;
+                Some(match counter_type {
+                    Some(counter_type) => {
+                        source.counters.get(counter_type).copied().unwrap_or(0) as i32
+                    }
+                    None => total_counters(&source.counters),
+                })
+            }
+            ChooseSpec::Tagged(tag) => {
+                let snapshots = ctx.tagged_objects.get(tag)?;
+                let snapshot = snapshots.first()?;
+                Some(match counter_type {
+                    Some(counter_type) => {
+                        snapshot.counters.get(counter_type).copied().unwrap_or(0) as i32
+                    }
+                    None => total_counters(&snapshot.counters),
+                })
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -2227,7 +2342,7 @@ impl ObjectFilter {
                 self.power_reference,
                 allow_calculated_pt,
             ) {
-                if !power_cmp.satisfies(power) {
+                if !power_cmp.satisfies_with_context(power, game, ctx, stack_entry) {
                     return false;
                 }
             } else {
@@ -2275,7 +2390,7 @@ impl ObjectFilter {
                 self.toughness_reference,
                 allow_calculated_pt,
             ) {
-                if !toughness_cmp.satisfies(toughness) {
+                if !toughness_cmp.satisfies_with_context(toughness, game, ctx, stack_entry) {
                     return false;
                 }
             } else {
@@ -2290,7 +2405,7 @@ impl ObjectFilter {
                 .as_ref()
                 .map(|mc| mc.mana_value() as i32)
                 .unwrap_or(0);
-            if !mv_cmp.satisfies(mv) {
+            if !mv_cmp.satisfies_with_context(mv, game, ctx, stack_entry) {
                 return false;
             }
         }
@@ -2577,7 +2692,7 @@ impl ObjectFilter {
         // Power check
         if let Some(power_cmp) = &self.power {
             if let Some(power) = resolve_snapshot_power_for_filter(snapshot, self.power_reference) {
-                if !power_cmp.satisfies(power) {
+                if !power_cmp.satisfies_with_context(power, game, ctx, None) {
                     return false;
                 }
             } else {
@@ -2617,7 +2732,7 @@ impl ObjectFilter {
             if let Some(toughness) =
                 resolve_snapshot_toughness_for_filter(snapshot, self.toughness_reference)
             {
-                if !toughness_cmp.satisfies(toughness) {
+                if !toughness_cmp.satisfies_with_context(toughness, game, ctx, None) {
                     return false;
                 }
             } else {
@@ -2632,7 +2747,7 @@ impl ObjectFilter {
                 .as_ref()
                 .map(|mc| mc.mana_value() as i32)
                 .unwrap_or(0);
-            if !mv_cmp.satisfies(mv) {
+            if !mv_cmp.satisfies_with_context(mv, game, ctx, None) {
                 return false;
             }
         }
@@ -3989,6 +4104,36 @@ fn describe_filter_static_ability(ability_id: StaticAbilityId) -> Option<&'stati
 }
 
 fn describe_comparison(cmp: &Comparison) -> String {
+    fn describe_value_expr(value: &crate::effect::Value) -> String {
+        use crate::effect::Value;
+        match value {
+            Value::Fixed(v) => v.to_string(),
+            Value::X => "X".to_string(),
+            Value::Count(filter) => format!("the number of {}", filter.description()),
+            Value::CountScaled(filter, factor) => {
+                format!("{factor} times the number of {}", filter.description())
+            }
+            Value::CountersOnSource(counter_type) => {
+                format!(
+                    "the number of {} counters on this",
+                    counter_type.description()
+                )
+            }
+            Value::CountersOn(_, Some(counter_type)) => {
+                format!("the number of {} counters", counter_type.description())
+            }
+            Value::CountersOn(_, None) => "the number of counters".to_string(),
+            Value::Add(left, right) => {
+                format!(
+                    "{} plus {}",
+                    describe_value_expr(left),
+                    describe_value_expr(right)
+                )
+            }
+            _ => "a dynamic value".to_string(),
+        }
+    }
+
     let describe_values = |values: &[i32]| -> String {
         match values.len() {
             0 => String::new(),
@@ -4012,6 +4157,20 @@ fn describe_comparison(cmp: &Comparison) -> String {
         Comparison::LessThanOrEqual(v) => format!("{v} or less"),
         Comparison::GreaterThan(v) => format!("greater than {v}"),
         Comparison::GreaterThanOrEqual(v) => format!("{v} or greater"),
+        Comparison::EqualExpr(value) => format!("equal to {}", describe_value_expr(value)),
+        Comparison::NotEqualExpr(value) => {
+            format!("not equal to {}", describe_value_expr(value))
+        }
+        Comparison::LessThanExpr(value) => format!("less than {}", describe_value_expr(value)),
+        Comparison::LessThanOrEqualExpr(value) => {
+            format!("{} or less", describe_value_expr(value))
+        }
+        Comparison::GreaterThanExpr(value) => {
+            format!("greater than {}", describe_value_expr(value))
+        }
+        Comparison::GreaterThanOrEqualExpr(value) => {
+            format!("{} or greater", describe_value_expr(value))
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { useGame } from "@/context/GameContext";
-import { useHover } from "@/context/HoverContext";
-import { useDrag } from "@/context/DragContext";
+import { useHoverActions } from "@/context/HoverContext";
+import { useDragActions } from "@/context/DragContext";
 import useNewCards from "@/hooks/useNewCards";
 import GameCard from "@/components/cards/GameCard";
 import ActionPopover from "@/components/overlays/ActionPopover";
@@ -71,8 +71,8 @@ function buildPlayableMaps(state, player) {
 
 export default function HandZone({ player, selectedObjectId, onInspect }) {
   const { state, dispatch } = useGame();
-  const { hoveredObjectId, hoverCard, clearHover } = useHover();
-  const { dragState, startDrag, updateDrag, endDrag } = useDrag();
+  const { hoverCard, clearHover } = useHoverActions();
+  const { startDrag, updateDrag, endDrag } = useDragActions();
   const [popover, setPopover] = useState(null);
   const dragThresholdRef = useRef(null);
   const activePointerIdRef = useRef(null);
@@ -211,8 +211,6 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
             const plays = handPlayable.get(Number(card.id)) || [];
             const isPlayable = plays.length > 0;
             const glowKind = handGlowFromTypes(card.card_types);
-            const cardId = String(card.id);
-            const isDragging = dragState?.objectId === card.id;
             const isNew = newIds.has(card.id);
             const isBumped = bumpedIds.has(card.id);
             let bumpDir = 0;
@@ -227,12 +225,10 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
                 variant="hand"
                 isPlayable={isPlayable}
                 glowKind={glowKind}
-                isHovered={hoveredObjectId === cardId}
-                isDragging={isDragging}
                 isNew={isNew}
                 isBumped={isBumped}
                 bumpDirection={bumpDir}
-                isInspected={selectedObjectId != null && cardId === String(selectedObjectId)}
+                isInspected={selectedObjectId != null && String(card.id) === String(selectedObjectId)}
                 onClick={isPlayable ? undefined : (e) => handleCardClick(e, card)}
                 onPointerDown={isPlayable ? (e) => handlePointerDown(e, card, plays, glowKind) : undefined}
                 onMouseEnter={() => hoverCard(card.id)}
@@ -248,10 +244,8 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
 
           {/* Extra playable cards from other zones */}
           {extraCards.map((extra) => {
-            const cardId = String(extra.id);
             const card = { id: extra.id, name: extra.name };
             const plays = extra.actions;
-            const isDragging = dragState?.objectId === extra.id;
             return (
               <GameCard
                 key={`extra-${extra.id}`}
@@ -259,10 +253,8 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
                 variant="hand"
                 isPlayable
                 glowKind="extra"
-                isHovered={hoveredObjectId === cardId}
-                isDragging={isDragging}
                 isNew
-                isInspected={selectedObjectId != null && cardId === String(selectedObjectId)}
+                isInspected={selectedObjectId != null && String(extra.id) === String(selectedObjectId)}
                 onClick={plays.length <= 1 ? undefined : (e) => handleCardClick(e, card, plays)}
                 onPointerDown={(e) => handlePointerDown(e, card, plays, "extra")}
                 onMouseEnter={() => hoverCard(extra.id)}

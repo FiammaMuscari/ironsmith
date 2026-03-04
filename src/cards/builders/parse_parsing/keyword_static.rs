@@ -280,6 +280,9 @@ pub(crate) fn parse_static_ability_line(
     if let Some(ability) = parse_choose_basic_land_type_as_enters_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
+    if let Some(ability) = parse_choose_creature_type_as_enters_line(tokens)? {
+        return Ok(Some(vec![ability]));
+    }
     if let Some(ability) = parse_enchanted_land_is_chosen_type_line(tokens)? {
         return Ok(Some(vec![ability]));
     }
@@ -1567,6 +1570,60 @@ pub(crate) fn parse_enchanted_land_is_chosen_type_line(
 
     Ok(Some(StaticAbility::enchanted_land_is_chosen_type(
         "Enchanted land is the chosen type.".to_string(),
+    )))
+}
+
+pub(crate) fn parse_choose_creature_type_as_enters_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let words = words(tokens);
+    if words.len() < 7 || words[0] != "as" {
+        return Ok(None);
+    }
+
+    let mut idx = 1usize;
+    if words.get(idx).copied() == Some("this") {
+        idx += 1;
+        if words.get(idx).is_some_and(|word| {
+            matches!(
+                *word,
+                "land" | "creature" | "artifact" | "enchantment" | "permanent"
+            )
+        }) {
+            idx += 1;
+        }
+    } else if words.get(idx).copied() == Some("it") {
+        idx += 1;
+    } else {
+        return Ok(None);
+    }
+
+    if words.get(idx).copied() != Some("enters") {
+        return Ok(None);
+    }
+    idx += 1;
+    if words.get(idx).copied() == Some("the") && words.get(idx + 1).copied() == Some("battlefield")
+    {
+        idx += 2;
+    }
+    if words.get(idx).copied() != Some("choose") {
+        return Ok(None);
+    }
+    idx += 1;
+    if words.get(idx).is_some_and(|word| is_article(word)) {
+        idx += 1;
+    }
+    if words.get(idx).copied() != Some("creature") || words.get(idx + 1).copied() != Some("type") {
+        return Ok(None);
+    }
+    idx += 2;
+
+    if idx != words.len() {
+        return Ok(None);
+    }
+
+    Ok(Some(StaticAbility::rule_text_placeholder(
+        "As this enters, choose a creature type.".to_string(),
     )))
 }
 
@@ -6864,13 +6921,9 @@ pub(crate) fn parse_enters_with_counters_line(
     {
         let condition_tokens = trim_commas(&clause_tokens[1..comma_idx]);
         if !condition_tokens.is_empty() {
-            let parsed =
-                parse_enters_with_counter_condition_clause(&condition_tokens).ok_or_else(|| {
-                    CardTextError::ParseError(format!(
-                        "unsupported leading enters-with-counter condition (clause: '{}')",
-                        full_words.join(" ")
-                    ))
-                })?;
+            let Some(parsed) = parse_enters_with_counter_condition_clause(&condition_tokens) else {
+                return Ok(None);
+            };
             let display = words(&condition_tokens).join(" ");
             condition = Some((parsed, display));
             clause_tokens = trim_commas(&clause_tokens[comma_idx + 1..]);
@@ -7194,6 +7247,12 @@ fn parse_enters_with_counter_condition_clause(tokens: &[Token]) -> Option<crate:
         || condition_words == ["youve", "attacked", "this", "turn"]
     {
         return Some(crate::ConditionExpr::AttackedThisTurn);
+    }
+    if condition_words == ["you", "cast", "it"]
+        || condition_words == ["you", "cast", "this"]
+        || condition_words == ["you", "cast", "this", "spell"]
+    {
+        return Some(crate::ConditionExpr::SourceWasCast);
     }
     if condition_words == ["a", "creature", "died", "this", "turn"]
         || condition_words == ["one", "or", "more", "creatures", "died", "this", "turn"]

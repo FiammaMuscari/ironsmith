@@ -399,6 +399,14 @@ impl EffectExecutor for ChooseObjectsEffect {
                     .join(", ");
                 format!(" with mana value {}", joined)
             }
+            Some(Comparison::EqualExpr(_))
+            | Some(Comparison::NotEqualExpr(_))
+            | Some(Comparison::LessThanExpr(_))
+            | Some(Comparison::LessThanOrEqualExpr(_))
+            | Some(Comparison::GreaterThanExpr(_))
+            | Some(Comparison::GreaterThanOrEqualExpr(_)) => {
+                " with a constrained mana value".to_string()
+            }
             None => String::new(),
         };
 

@@ -2,6 +2,15 @@ import { cn } from "@/lib/utils";
 import { scryfallImageUrl } from "@/lib/scryfall";
 import { ManaCostIcons } from "@/lib/mana-symbols";
 
+function glowPhaseFromSeed(seed) {
+  let hash = 0;
+  const text = String(seed || "");
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash * 31) + text.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
 export default function GameCard({
   card,
   compact = false,
@@ -26,6 +35,9 @@ export default function GameCard({
   const scryfallUrl = scryfallImageUrl(name);
   const count = Number(card.count);
   const groupSize = Number.isFinite(count) && count > 1 ? count : 1;
+  const glowPhase = glowPhaseFromSeed(`${card.id}:${name}`);
+  const auraDelay1 = `-${((glowPhase % 2600) / 1000).toFixed(3)}s`;
+  const auraDelay2 = `-${(((glowPhase * 13) % 3200) / 1000).toFixed(3)}s`;
 
   return (
     <div
@@ -49,6 +61,7 @@ export default function GameCard({
         glowKind === "artifact" && "glow-artifact",
         glowKind === "planeswalker" && "glow-planeswalker",
         glowKind === "attack-candidate" && "attack-candidate",
+        glowKind === "attack-selected" && "attack-selected",
         glowKind === "blocker-candidate" && "blocker-candidate",
         isHovered && "hovered",
         isDragging && "dragging",
@@ -65,6 +78,8 @@ export default function GameCard({
       onMouseLeave={onMouseLeave}
       style={{
         ...style,
+        "--aura-delay-1": auraDelay1,
+        "--aura-delay-2": auraDelay2,
         ...(isBumped ? { "--bump-x": `${bumpDirection * 4}px` } : undefined),
       }}
     >
@@ -77,6 +92,7 @@ export default function GameCard({
           referrerPolicy="no-referrer"
         />
       )}
+      <span className="game-card-shade" aria-hidden="true" />
 
       {/* Label pinned to top for battlefield cards */}
       <span className="absolute top-0 left-0 right-0 mt-0 bg-[rgba(16,24,35,0.85)] px-1.5 py-0.5 z-2 whitespace-nowrap overflow-hidden text-ellipsis text-shadow-[0_1px_1px_rgba(0,0,0,0.85)]">

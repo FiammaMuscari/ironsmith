@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import BattlefieldRow from "./BattlefieldRow";
 import ManaPool from "@/components/left-rail/ManaPool";
+import { useCombatArrows } from "@/context/CombatArrowContext";
 
 function getZoneCards(player, zoneView) {
   switch (zoneView) {
@@ -63,11 +64,36 @@ export default function OpponentZone({ opponents, selectedObjectId, onInspect, z
 
 function OpponentSlot({ player, selectedObjectId, onInspect, zoneView }) {
   const [zoneCounts, setZoneCounts] = useState(false);
+  const { combatModeRef } = useCombatArrows();
   const cards = getZoneCards(player, zoneView);
   const zoneName = zoneView === "battlefield" ? "" : ` — ${zoneView.charAt(0).toUpperCase() + zoneView.slice(1)}`;
+  const playerIdx = player.index ?? player.id;
+
+  // Capture-phase click handler: when a selected attacker is awaiting a target,
+  // clicking anywhere on this opponent's zone assigns the target.
+  // Planeswalker is targeted only if the click is exactly on a planeswalker card.
+  const handleClickCapture = useCallback((e) => {
+    const cm = combatModeRef.current;
+    if (!cm?.onTargetAreaClick || cm.selectedAttacker == null) return;
+
+    e.stopPropagation();
+    e.preventDefault();
+
+    // Check if click was exactly on a card (could be a planeswalker)
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const cardEl = el?.closest(".game-card[data-object-id]");
+    const planeswalkerObjId = cardEl ? Number(cardEl.dataset.objectId) : null;
+
+    cm.onTargetAreaClick(playerIdx, planeswalkerObjId);
+  }, [combatModeRef, playerIdx]);
 
   return (
-    <div className="bg-gradient-to-b from-[#101826] to-[#0a121d] rounded p-1.5 grid gap-1.5 min-h-0 h-full" style={{ gridTemplateRows: "auto minmax(0,1fr)", alignContent: "stretch" }}>
+    <div
+      className="bg-gradient-to-b from-[#101826] to-[#0a121d] rounded p-1.5 grid gap-1.5 min-h-0 h-full"
+      style={{ gridTemplateRows: "auto minmax(0,1fr)", alignContent: "stretch", cursor: combatModeRef.current?.selectedAttacker != null ? "crosshair" : undefined }}
+      data-opponent-zone={playerIdx}
+      onClickCapture={handleClickCapture}
+    >
       <div>
         <div className="flex items-center gap-2">
           <span

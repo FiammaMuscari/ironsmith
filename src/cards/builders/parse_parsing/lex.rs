@@ -344,6 +344,21 @@ pub(crate) fn replace_names_with_map(
         token_word_appears_before_sentence_end(bytes, idx + name_len)
     }
 
+    fn should_preserve_single_word_keyword_verb_usage(
+        original: &str,
+        idx: usize,
+        len: usize,
+        keyword: &str,
+    ) -> bool {
+        if !is_single_word_keyword_verb(keyword) {
+            return false;
+        }
+        let Some(slice) = original.as_bytes().get(idx..idx + len) else {
+            return false;
+        };
+        !slice.iter().any(|byte| byte.is_ascii_uppercase())
+    }
+
     let lower = line.to_ascii_lowercase();
     let bytes = lower.as_bytes();
     let full_bytes = full_name.as_bytes();
@@ -361,6 +376,12 @@ pub(crate) fn replace_names_with_map(
             && !(is_keyword_ability_name(full_name) && preceded_by_ability_grant_word(bytes, idx))
             && !preceded_by_named_keyword(bytes, idx)
             && !appears_to_be_created_token_name(bytes, idx, full_bytes.len())
+            && !should_preserve_single_word_keyword_verb_usage(
+                line,
+                idx,
+                full_bytes.len(),
+                full_name,
+            )
         {
             let name_len = full_bytes.len().max(1);
             for j in 0..4 {
@@ -378,6 +399,12 @@ pub(crate) fn replace_names_with_map(
             && !(is_keyword_ability_name(short_name) && preceded_by_ability_grant_word(bytes, idx))
             && !preceded_by_named_keyword(bytes, idx)
             && !appears_to_be_created_token_name(bytes, idx, short_bytes.len())
+            && !should_preserve_single_word_keyword_verb_usage(
+                line,
+                idx,
+                short_bytes.len(),
+                short_name,
+            )
         {
             let name_len = short_bytes.len().max(1);
             for j in 0..4 {

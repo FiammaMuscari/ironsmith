@@ -61,6 +61,12 @@ fn describe_comparison(cmp: &Comparison) -> String {
         Comparison::LessThanOrEqual(v) => format!("{v} or less"),
         Comparison::GreaterThan(v) => format!("greater than {v}"),
         Comparison::GreaterThanOrEqual(v) => format!("{v} or greater"),
+        Comparison::EqualExpr(_)
+        | Comparison::NotEqualExpr(_)
+        | Comparison::LessThanExpr(_)
+        | Comparison::LessThanOrEqualExpr(_)
+        | Comparison::GreaterThanExpr(_)
+        | Comparison::GreaterThanOrEqualExpr(_) => "a constrained amount".to_string(),
     }
 }
 

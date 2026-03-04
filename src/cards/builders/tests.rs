@@ -8,6 +8,8 @@ use crate::effects::{
 use crate::static_abilities::StaticAbilityId;
 use crate::target::{ChooseSpec, PlayerFilter};
 use crate::{ObjectId, PlayerId};
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 #[test]
 fn test_creature_with_keywords() {
@@ -8239,15 +8241,17 @@ fn parse_trigger_it_connives_clause() {
 
 #[test]
 fn parse_reveal_hand_choose_card_from_it_clause() {
-    let err = CardDefinitionBuilder::new(CardId::new(), "Reveal Hand From It Variant")
+    let def = CardDefinitionBuilder::new(CardId::new(), "Reveal Hand From It Variant")
         .parse_text(
             "Target opponent reveals their hand. You choose a nonland card from it and exile that card.",
         )
-        .expect_err("reveal-hand choose-from-it is currently unsupported");
-    let joined = format!("{err:?}").to_lowercase();
+        .expect("reveal-hand choose-from-it chain should parse");
+    let joined = format!("{:#?}", def.spell_effect).to_lowercase();
     assert!(
-        joined.contains("unsupported mechanic marker clause"),
-        "expected explicit unsupported reveal-hand choose-from-it error, got {joined}"
+        joined.contains("lookathandeffect")
+            && joined.contains("chooseobjectseffect")
+            && joined.contains("exileeffect"),
+        "expected reveal-hand choose-then-exile effect chain, got {joined}"
     );
 }
 
@@ -13822,5 +13826,176 @@ fn parse_lose_half_your_life_rounded_up_clause() {
     assert!(
         spell_debug.contains("halflifetotalroundedup"),
         "expected half-life rounded-up value in lose-life effect, got {spell_debug}"
+    );
+}
+
+#[derive(serde::Deserialize)]
+struct RegressionCardFaceJson {
+    name: String,
+    oracle_text: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct RegressionCardJson {
+    name: String,
+    oracle_text: Option<String>,
+    card_faces: Option<Vec<RegressionCardFaceJson>>,
+    lang: Option<String>,
+}
+
+fn oracle_text_by_name() -> &'static HashMap<String, String> {
+    static ORACLE_BY_NAME: OnceLock<HashMap<String, String>> = OnceLock::new();
+    ORACLE_BY_NAME.get_or_init(|| {
+        let raw =
+            std::fs::read_to_string("cards.json").expect("read cards.json for regression tests");
+        let cards: Vec<RegressionCardJson> =
+            serde_json::from_str(&raw).expect("parse cards.json for regression tests");
+        let mut out = HashMap::new();
+        for card in cards {
+            if card.lang.as_deref().unwrap_or("en") != "en" {
+                continue;
+            }
+
+            let full_name = card.name;
+            let root_text = card.oracle_text.and_then(|text| {
+                let trimmed = text.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            });
+
+            let mut face_entries = Vec::new();
+            if let Some(faces) = card.card_faces {
+                for face in faces {
+                    let Some(text) = face.oracle_text.and_then(|text| {
+                        let trimmed = text.trim();
+                        (!trimmed.is_empty()).then(|| trimmed.to_string())
+                    }) else {
+                        continue;
+                    };
+                    face_entries.push((face.name, text));
+                }
+            }
+
+            let Some(primary_text) = root_text
+                .clone()
+                .or_else(|| face_entries.first().map(|(_, text)| text.clone()))
+            else {
+                continue;
+            };
+
+            out.entry(full_name.clone()).or_insert(primary_text.clone());
+            if full_name.contains(" // ") {
+                for part in full_name.split(" // ") {
+                    out.entry(part.to_string()).or_insert(primary_text.clone());
+                }
+            }
+            for (face_name, face_text) in face_entries {
+                out.entry(face_name).or_insert(face_text);
+            }
+        }
+        out
+    })
+}
+
+fn assert_oracle_card_parses_strict(name: &str) {
+    let oracle = oracle_text_by_name()
+        .get(name)
+        .unwrap_or_else(|| panic!("missing oracle text for regression card '{name}'"))
+        .clone();
+    let result = CardDefinitionBuilder::new(CardId::new(), name).parse_text(oracle.clone());
+    assert!(
+        result.is_ok(),
+        "strict parser regression failed for '{name}': {:?}\nOracle text:\n{}",
+        result.err(),
+        oracle
+    );
+}
+
+const STRICT_PARSE_REGRESSION_CARDS: &[&str] = &[
+    "Blast Zone",
+    "Bridge from Below",
+    "Cabal Ritual",
+    "Cavern of Souls",
+    "Clown Car",
+    "Fatal Push",
+    "Gemstone Caverns",
+    "Golgari Thug",
+    "Gravecrawler",
+    "Grief",
+    "Hancock, Ghoulish Mayor",
+    "Lake of the Dead",
+    "Mox Amber",
+    "Nine-Lives Familiar",
+    "Nykthos, Shrine to Nyx",
+    "Orcish Bowmasters",
+    "Pawn of Ulamog",
+    "Genesis Chamber",
+    "Sacrifice",
+    "Sephiroth, Fabled SOLDIER",
+    "Susurian Voidborn",
+    "Talon Gates of Madara",
+    "The Soul Stone",
+    "Unmarked Grave",
+];
+
+macro_rules! strict_parse_card_test {
+    ($test_name:ident, $card_name:expr) => {
+        #[test]
+        fn $test_name() {
+            assert_oracle_card_parses_strict($card_name);
+        }
+    };
+}
+
+strict_parse_card_test!(strict_parse_blast_zone, "Blast Zone");
+strict_parse_card_test!(strict_parse_bridge_from_below, "Bridge from Below");
+strict_parse_card_test!(strict_parse_cabal_ritual, "Cabal Ritual");
+strict_parse_card_test!(strict_parse_cavern_of_souls, "Cavern of Souls");
+strict_parse_card_test!(strict_parse_clown_car, "Clown Car");
+strict_parse_card_test!(strict_parse_fatal_push, "Fatal Push");
+strict_parse_card_test!(strict_parse_gemstone_caverns, "Gemstone Caverns");
+strict_parse_card_test!(strict_parse_golgari_thug, "Golgari Thug");
+strict_parse_card_test!(strict_parse_gravecrawler, "Gravecrawler");
+strict_parse_card_test!(strict_parse_grief, "Grief");
+strict_parse_card_test!(
+    strict_parse_hancock_ghoulish_mayor,
+    "Hancock, Ghoulish Mayor"
+);
+strict_parse_card_test!(strict_parse_lake_of_the_dead, "Lake of the Dead");
+strict_parse_card_test!(strict_parse_mox_amber, "Mox Amber");
+strict_parse_card_test!(strict_parse_nine_lives_familiar, "Nine-Lives Familiar");
+strict_parse_card_test!(strict_parse_nykthos_shrine_to_nyx, "Nykthos, Shrine to Nyx");
+strict_parse_card_test!(strict_parse_orcish_bowmasters, "Orcish Bowmasters");
+strict_parse_card_test!(strict_parse_pawn_of_ulamog, "Pawn of Ulamog");
+strict_parse_card_test!(strict_parse_genesis_chamber, "Genesis Chamber");
+strict_parse_card_test!(strict_parse_sacrifice, "Sacrifice");
+strict_parse_card_test!(
+    strict_parse_sephiroth_fabled_soldier,
+    "Sephiroth, Fabled SOLDIER"
+);
+strict_parse_card_test!(strict_parse_susurian_voidborn, "Susurian Voidborn");
+strict_parse_card_test!(strict_parse_talon_gates_of_madara, "Talon Gates of Madara");
+strict_parse_card_test!(strict_parse_the_soul_stone, "The Soul Stone");
+strict_parse_card_test!(strict_parse_unmarked_grave, "Unmarked Grave");
+
+#[test]
+fn strict_parse_regression_batch_target_cards() {
+    let mut failures = Vec::new();
+    for &name in STRICT_PARSE_REGRESSION_CARDS {
+        let oracle = match oracle_text_by_name().get(name) {
+            Some(text) => text.clone(),
+            None => {
+                failures.push(format!("{name}: missing oracle text in cards.json"));
+                continue;
+            }
+        };
+        if let Err(err) = CardDefinitionBuilder::new(CardId::new(), name).parse_text(oracle.clone())
+        {
+            failures.push(format!("{name}: {err:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "strict parse regression batch failures:\n{}",
+        failures.join("\n")
     );
 }

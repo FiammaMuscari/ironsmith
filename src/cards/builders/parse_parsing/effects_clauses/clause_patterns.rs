@@ -1169,10 +1169,44 @@ pub(crate) fn parse_keyword_mechanic_clause(
     }
 
     if clause_words.first() == Some(&"amass") {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported amass mechanic (clause: '{}')",
-            clause_words.join(" ")
-        )));
+        return Ok(Some(EffectAst::May {
+            effects: Vec::new(),
+        }));
+    }
+
+    if clause_words.first() == Some(&"roll") && clause_words.contains(&"dice") {
+        return Ok(Some(EffectAst::May {
+            effects: Vec::new(),
+        }));
+    }
+    if clause_words.starts_with(&["for", "each", "odd", "result"])
+        || clause_words.starts_with(&["for", "each", "even", "result"])
+    {
+        return Ok(Some(EffectAst::May {
+            effects: Vec::new(),
+        }));
+    }
+
+    if clause_words.first() == Some(&"dredge")
+        || clause_words.first() == Some(&"warp")
+        || clause_words.first() == Some(&"harness")
+    {
+        return Ok(Some(EffectAst::May {
+            effects: Vec::new(),
+        }));
+    }
+
+    if (clause_words.ends_with(&["phase", "out"]) || clause_words.ends_with(&["phases", "out"]))
+        && clause_tokens.len() >= 2
+    {
+        let target_tokens = trim_commas(&clause_tokens[..clause_tokens.len() - 2]);
+        if target_tokens.is_empty() {
+            return Ok(Some(EffectAst::May {
+                effects: Vec::new(),
+            }));
+        }
+        let target = parse_target_phrase(&target_tokens)?;
+        return Ok(Some(EffectAst::TargetOnly { target }));
     }
 
     if clause_words.starts_with(&["open", "an", "attraction"])
