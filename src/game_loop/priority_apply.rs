@@ -837,6 +837,8 @@ pub fn apply_priority_response_with_dm(
                         drain_pending_trigger_events(game, trigger_queue);
                     }
 
+                    game.record_ability_activation(*source, *ability_index);
+
                     queue_ability_activated_event(
                         game,
                         trigger_queue,

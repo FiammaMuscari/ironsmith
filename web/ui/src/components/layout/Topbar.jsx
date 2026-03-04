@@ -2,6 +2,7 @@ import { useGame } from "@/context/GameContext";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Github } from "lucide-react";
 
 const pill = "text-[13px] uppercase cursor-pointer hover:brightness-125 transition-all select-none";
 const inputPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[13px] font-medium border-0 outline-none focus:ring-1 focus:ring-primary/50";
@@ -113,6 +114,15 @@ export default function Topbar({
         View {me?.name || "-"}
       </Badge>
       <Badge variant="secondary" className={pill} onClick={onToggleLog}>Log</Badge>
+      <a
+        href="https://github.com/Chiplis/ironsmith"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Open Ironsmith GitHub repository"
+        className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-secondary text-muted-foreground transition-all hover:brightness-125 hover:text-foreground"
+      >
+        <Github className="size-3.5" />
+      </a>
     </header>
   );
 }
