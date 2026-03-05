@@ -190,13 +190,20 @@ fn pay_ward_cost(
     cost: &WardCost,
     decision_maker: &mut impl DecisionMaker,
 ) -> bool {
+    let ward_provenance =
+        game.provenance_graph
+            .alloc_root(crate::provenance::ProvenanceNodeKind::EffectExecution {
+                source,
+                controller: payer,
+            });
     match cost {
         WardCost::Mana(total_cost) => {
             if can_pay_cost(game, source, payer, total_cost).is_err() {
                 return false;
             }
 
-            let mut cost_ctx = CostContext::new(source, payer, decision_maker);
+            let mut cost_ctx =
+                CostContext::new(source, payer, decision_maker).with_provenance(ward_provenance);
             for component in total_cost.costs() {
                 if let Some(mana_cost) = component.mana_cost_ref() {
                     if !game.try_pay_mana_cost(payer, None, mana_cost, 0) {
@@ -240,8 +247,15 @@ fn pay_ward_cost(
 
             let cause = EventCause::from_cost(source, payer);
             for card_id in to_discard {
-                let outcome =
-                    execute_discard(game, card_id, payer, cause.clone(), false, decision_maker);
+                let outcome = execute_discard(
+                    game,
+                    card_id,
+                    payer,
+                    cause.clone(),
+                    false,
+                    ward_provenance,
+                    decision_maker,
+                );
                 if outcome.prevented {
                     return false;
                 }
@@ -297,10 +311,18 @@ fn pay_ward_cost(
                         .or(Some(payer));
                     game.move_object(target_id, final_zone);
                     if final_zone == crate::zone::Zone::Graveyard {
-                        game.queue_trigger_event(TriggerEvent::new(
-                            SacrificeEvent::new(target_id, Some(source))
-                                .with_snapshot(snapshot, sacrificing_player),
-                        ));
+                        let event_provenance = game.alloc_child_event_provenance(
+                            ward_provenance,
+                            crate::events::EventKind::Sacrifice,
+                        );
+                        game.queue_trigger_event(
+                            ward_provenance,
+                            TriggerEvent::new_with_provenance(
+                                SacrificeEvent::new(target_id, Some(source))
+                                    .with_snapshot(snapshot, sacrificing_player),
+                                event_provenance,
+                            ),
+                        );
                     }
                     true
                 }

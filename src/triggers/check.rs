@@ -17,8 +17,8 @@ use crate::types::CardType;
 use crate::zone::Zone;
 
 use super::Trigger;
+use super::TriggerEvent;
 use super::matcher_trait::TriggerContext;
-use super::trigger_event::TriggerEvent;
 
 /// Stable, structural identity for a trigger definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -675,25 +675,34 @@ pub fn generate_step_trigger_events(game: &GameState) -> Option<TriggerEvent> {
     let active = game.turn.active_player;
 
     match (game.turn.phase, game.turn.step) {
-        (Phase::Beginning, Some(Step::Upkeep)) => {
-            Some(TriggerEvent::new(BeginningOfUpkeepEvent::new(active)))
-        }
-        (Phase::Beginning, Some(Step::Draw)) => {
-            Some(TriggerEvent::new(BeginningOfDrawStepEvent::new(active)))
-        }
-        (Phase::FirstMain, None) => Some(TriggerEvent::new(
+        (Phase::Beginning, Some(Step::Upkeep)) => Some(TriggerEvent::new_with_provenance(
+            BeginningOfUpkeepEvent::new(active),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        )),
+        (Phase::Beginning, Some(Step::Draw)) => Some(TriggerEvent::new_with_provenance(
+            BeginningOfDrawStepEvent::new(active),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        )),
+        (Phase::FirstMain, None) => Some(TriggerEvent::new_with_provenance(
             BeginningOfPrecombatMainPhaseEvent::new(active),
+            crate::provenance::ProvNodeId::UNKNOWN,
         )),
-        (Phase::Combat, Some(Step::BeginCombat)) => {
-            Some(TriggerEvent::new(BeginningOfCombatEvent::new(active)))
-        }
-        (Phase::Combat, Some(Step::EndCombat)) => Some(TriggerEvent::new(EndOfCombatEvent::new())),
-        (Phase::NextMain, None) => Some(TriggerEvent::new(
+        (Phase::Combat, Some(Step::BeginCombat)) => Some(TriggerEvent::new_with_provenance(
+            BeginningOfCombatEvent::new(active),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        )),
+        (Phase::Combat, Some(Step::EndCombat)) => Some(TriggerEvent::new_with_provenance(
+            EndOfCombatEvent::new(),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        )),
+        (Phase::NextMain, None) => Some(TriggerEvent::new_with_provenance(
             BeginningOfPostcombatMainPhaseEvent::new(active),
+            crate::provenance::ProvNodeId::UNKNOWN,
         )),
-        (Phase::Ending, Some(Step::End)) => {
-            Some(TriggerEvent::new(BeginningOfEndStepEvent::new(active)))
-        }
+        (Phase::Ending, Some(Step::End)) => Some(TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(active),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        )),
         _ => None,
     }
 }

@@ -42,12 +42,15 @@ mod tests {
         let trigger = ThisDealsCombatDamageToPlayerTrigger;
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(DamageEvent::new(
-            source_id,
-            DamageTarget::Player(bob),
-            3,
-            true, // is_combat
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(
+                source_id,
+                DamageTarget::Player(bob),
+                3,
+                true, // is_combat
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -62,12 +65,15 @@ mod tests {
         let trigger = ThisDealsCombatDamageToPlayerTrigger;
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(DamageEvent::new(
-            source_id,
-            DamageTarget::Player(bob),
-            3,
-            false, // is_combat = false
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(
+                source_id,
+                DamageTarget::Player(bob),
+                3,
+                false, // is_combat = false
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }

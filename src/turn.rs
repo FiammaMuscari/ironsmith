@@ -360,8 +360,14 @@ pub fn execute_draw_step(game: &mut GameState) -> Vec<crate::triggers::TriggerEv
 
         // Create a single CardsDrawnEvent if any cards were drawn
         if !drawn.is_empty() {
+            let draw_event_provenance = game
+                .provenance_graph
+                .alloc_root_event(crate::events::EventKind::CardsDrawn);
             let event = CardsDrawnEvent::new(active_player, drawn, is_first_draw);
-            draw_events.push(TriggerEvent::new(event));
+            draw_events.push(TriggerEvent::new_with_provenance(
+                event,
+                draw_event_provenance,
+            ));
         }
     }
 
@@ -416,12 +422,16 @@ pub fn apply_cleanup_discard(
     let cause = EventCause::from_game_rule();
 
     for &card_id in cards_to_discard {
+        let discard_provenance = game
+            .provenance_graph
+            .alloc_root_event(crate::events::EventKind::Discard);
         let result = execute_discard(
             game,
             card_id,
             active_player,
             cause.clone(),
             false,
+            discard_provenance,
             decision_maker,
         );
 

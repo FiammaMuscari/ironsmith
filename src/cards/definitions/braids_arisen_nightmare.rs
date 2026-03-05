@@ -227,7 +227,10 @@ mod tests {
         let _braids_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
 
         // Simulate Alice's end step
-        let event = TriggerEvent::new(BeginningOfEndStepEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -251,7 +254,10 @@ mod tests {
         let _braids_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
 
         // Simulate Bob's end step
-        let event = TriggerEvent::new(BeginningOfEndStepEvent::new(bob));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(bob),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -279,7 +285,10 @@ mod tests {
         let _new_id = game.move_object(braids_id, Zone::Graveyard).unwrap();
 
         // Simulate Alice's end step
-        let event = TriggerEvent::new(BeginningOfEndStepEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(triggered.len(), 0, "Braids in graveyard should not trigger");
@@ -299,7 +308,10 @@ mod tests {
         let _braids2_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
 
         // Simulate Alice's end step
-        let event = TriggerEvent::new(BeginningOfEndStepEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -323,7 +335,10 @@ mod tests {
         let _braids_id = game.create_object_from_definition(&def, bob, Zone::Battlefield);
 
         // Simulate Alice's end step
-        let event = TriggerEvent::new(BeginningOfEndStepEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -333,7 +348,10 @@ mod tests {
         );
 
         // Bob's end step should trigger
-        let event = TriggerEvent::new(BeginningOfEndStepEvent::new(bob));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(bob),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         let triggered = check_triggers(&game, &event);
         assert_eq!(
             triggered.len(),

@@ -294,11 +294,17 @@ pub fn apply_attacker_declarations(
             AttackTarget::Planeswalker(oid) => AttackEventTarget::Planeswalker(*oid),
         };
 
-        let event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            decl.creature,
-            event_target,
-            declarations.len(),
-        ));
+        let event_provenance =
+            game.provenance_graph.alloc_root_event(crate::events::EventKind::CreatureAttacked);
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                decl.creature,
+                event_target,
+                declarations.len(),
+            ),
+            event_provenance,
+        );
+        let event = game.ensure_trigger_event_provenance(event);
         let triggers = check_triggers(game, &event);
         for trigger in triggers {
             trigger_queue.add(trigger);
@@ -394,7 +400,13 @@ pub fn apply_blocker_declarations(
 
     // Emit block triggers (per declaration).
     for (blocker, attacker) in &pairs {
-        let event = TriggerEvent::new(CreatureBlockedEvent::new(*blocker, *attacker));
+        let event_provenance =
+            game.provenance_graph.alloc_root_event(crate::events::EventKind::CreatureBlocked);
+        let event = TriggerEvent::new_with_provenance(
+            CreatureBlockedEvent::new(*blocker, *attacker),
+            event_provenance,
+        );
+        let event = game.ensure_trigger_event_provenance(event);
         let triggers = check_triggers(game, &event);
         for trigger in triggers {
             trigger_queue.add(trigger);
@@ -419,14 +431,21 @@ pub fn apply_blocker_declarations(
                         crate::triggers::AttackEventTarget::Planeswalker(*planeswalker_id)
                     }
                 });
-            let event = TriggerEvent::new(match attack_target {
-                Some(target) => CreatureBecameBlockedEvent::with_target(
-                    *attacker_id,
-                    blockers.len() as u32,
-                    target,
-                ),
-                None => CreatureBecameBlockedEvent::new(*attacker_id, blockers.len() as u32),
-            });
+            let event_provenance = game
+                .provenance_graph
+                .alloc_root_event(crate::events::EventKind::CreatureBecameBlocked);
+            let event = TriggerEvent::new_with_provenance(
+                match attack_target {
+                    Some(target) => CreatureBecameBlockedEvent::with_target(
+                        *attacker_id,
+                        blockers.len() as u32,
+                        target,
+                    ),
+                    None => CreatureBecameBlockedEvent::new(*attacker_id, blockers.len() as u32),
+                },
+                event_provenance,
+            );
+            let event = game.ensure_trigger_event_provenance(event);
             let triggers = check_triggers(game, &event);
             for trigger in triggers {
                 trigger_queue.add(trigger);
@@ -449,10 +468,14 @@ pub fn apply_blocker_declarations(
             }
         };
 
-        let event = TriggerEvent::new(CreatureAttackedAndUnblockedEvent::new(
-            info.creature,
-            attack_target,
-        ));
+        let event_provenance = game
+            .provenance_graph
+            .alloc_root_event(crate::events::EventKind::CreatureAttackedAndUnblocked);
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedAndUnblockedEvent::new(info.creature, attack_target),
+            event_provenance,
+        );
+        let event = game.ensure_trigger_event_provenance(event);
         let triggers = check_triggers(game, &event);
         for trigger in triggers {
             trigger_queue.add(trigger);

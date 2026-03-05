@@ -83,6 +83,7 @@ impl EffectExecutor for TapEffect {
         } else {
             ObjectApplyResultPolicy::CountApplied
         };
+        let provenance = ctx.provenance;
 
         let apply_result = apply_to_selected_objects(
             game,
@@ -92,7 +93,10 @@ impl EffectExecutor for TapEffect {
             |game, _ctx, object_id| {
                 if game.object(object_id).is_some() && !game.is_tapped(object_id) {
                     game.tap(object_id);
-                    events.push(TriggerEvent::new(PermanentTappedEvent::new(object_id)));
+                    events.push(TriggerEvent::new_with_provenance(
+                        PermanentTappedEvent::new(object_id),
+                        provenance,
+                    ));
                     Ok(true)
                 } else {
                     Ok(false)

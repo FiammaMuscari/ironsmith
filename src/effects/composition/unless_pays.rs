@@ -239,8 +239,9 @@ impl EffectExecutor for UnlessPaysEffect {
                         if let Some(player) = game.player_mut(paying_player) {
                             player.lose_life(life_to_pay);
                         }
-                        outcome = outcome.with_event(TriggerEvent::new(
+                        outcome = outcome.with_event(TriggerEvent::new_with_provenance(
                             LifeLossEvent::from_effect(paying_player, life_to_pay),
+                            ctx.provenance,
                         ));
                     }
                     return Ok(outcome);

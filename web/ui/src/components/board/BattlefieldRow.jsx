@@ -21,6 +21,15 @@ export default function BattlefieldRow({
   const cardIds = useMemo(() => cards.map((c) => c.id), [cards]);
   const { newIds, bumpedIds } = useNewCards(cardIds);
   const dragRef = useRef(null);
+  const fitRafRef = useRef(null);
+  const pendingForceFitRef = useRef(false);
+  const lastLayoutRef = useRef({
+    width: -1,
+    height: -1,
+    cardsLength: -1,
+    compact: null,
+    allowVerticalScroll: null,
+  });
   const syncOverflowMode = useCallback((layout) => {
     const row = rowRef.current;
     if (!row) return;
@@ -95,22 +104,67 @@ export default function BattlefieldRow({
     });
   }, [cards.length, compact, syncOverflowMode]);
 
-  useLayoutEffect(fitCards, [fitCards]);
+  const scheduleFitCards = useCallback((force = false) => {
+    pendingForceFitRef.current = pendingForceFitRef.current || force;
+    if (fitRafRef.current != null) return;
+    fitRafRef.current = window.requestAnimationFrame(() => {
+      fitRafRef.current = null;
+      const row = rowRef.current;
+      if (!row) return;
+
+      const width = row.clientWidth;
+      const height = row.clientHeight;
+      const prev = lastLayoutRef.current;
+      const layoutChanged = (
+        Math.abs(width - prev.width) >= 2
+        || Math.abs(height - prev.height) >= 2
+        || prev.cardsLength !== cards.length
+        || prev.compact !== compact
+        || prev.allowVerticalScroll !== allowVerticalScroll
+      );
+      const forceNow = pendingForceFitRef.current;
+      pendingForceFitRef.current = false;
+      if (!forceNow && !layoutChanged) return;
+
+      lastLayoutRef.current = {
+        width,
+        height,
+        cardsLength: cards.length,
+        compact,
+        allowVerticalScroll,
+      };
+      fitCards();
+    });
+  }, [allowVerticalScroll, cards.length, compact, fitCards]);
+
+  useLayoutEffect(() => {
+    scheduleFitCards(true);
+  }, [scheduleFitCards]);
 
   useEffect(() => {
     const row = rowRef.current;
     if (!row) return;
     const observer = new ResizeObserver(() => {
-      fitCards();
+      scheduleFitCards();
     });
     observer.observe(row);
-    return () => observer.disconnect();
-  }, [fitCards]);
+    return () => {
+      observer.disconnect();
+    };
+  }, [scheduleFitCards]);
 
   useEffect(() => {
-    window.addEventListener("resize", fitCards);
-    return () => window.removeEventListener("resize", fitCards);
-  }, [fitCards]);
+    const onResize = () => scheduleFitCards();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [scheduleFitCards]);
+
+  useEffect(() => () => {
+    if (fitRafRef.current != null) {
+      window.cancelAnimationFrame(fitRafRef.current);
+      fitRafRef.current = null;
+    }
+  }, []);
 
   // Combat drag handlers
   const handleCombatPointerDown = useCallback((e, card) => {

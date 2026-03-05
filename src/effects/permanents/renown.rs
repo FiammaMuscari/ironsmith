@@ -44,12 +44,15 @@ impl EffectExecutor for RenownEffect {
         {
             outcome = outcome.with_event(counter_event);
         }
-        outcome = outcome.with_event(TriggerEvent::new(KeywordActionEvent::new(
-            KeywordActionKind::Renown,
-            ctx.controller,
-            ctx.source,
-            self.amount,
-        )));
+        outcome = outcome.with_event(TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(
+                KeywordActionKind::Renown,
+                ctx.controller,
+                ctx.source,
+                self.amount,
+            ),
+            ctx.provenance,
+        ));
         Ok(outcome)
     }
 }

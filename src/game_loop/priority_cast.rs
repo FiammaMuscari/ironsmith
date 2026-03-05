@@ -1069,14 +1069,18 @@ fn continue_spell_cast_mana_payment(
             &mut pending.payment_trace,
             true, // mana_already_paid via pip-by-pip
             pending.stack_id,
+            pending.provenance,
             &mut *decision_maker,
         )?;
 
         // Generate SpellCast event and check for triggers
-        let event = TriggerEvent::new(SpellCastEvent::new(
+        let event = TriggerEvent::new_with_provenance(SpellCastEvent::new(
             result.new_id,
             result.caster,
             result.from_zone,
+        ), game.alloc_child_event_provenance(
+            pending.provenance,
+            crate::events::EventKind::SpellCast,
         ));
         let triggers = check_triggers(game, &event);
         for trigger in triggers {
@@ -2118,6 +2122,7 @@ fn continue_activation(
                 pending.source,
                 pending.activator,
                 true,
+                pending.provenance,
             );
             queue_ability_activated_event(
                 game,

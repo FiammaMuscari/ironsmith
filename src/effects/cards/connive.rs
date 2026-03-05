@@ -52,12 +52,10 @@ impl EffectExecutor for ConniveEffect {
 
             let controller = target_obj.controller;
             let mut events = Vec::new();
-            events.push(TriggerEvent::new(KeywordActionEvent::new(
-                KeywordActionKind::Connive,
-                controller,
-                ctx.source,
-                1,
-            )));
+            events.push(TriggerEvent::new_with_provenance(
+                KeywordActionEvent::new(KeywordActionKind::Connive, controller, ctx.source, 1),
+                ctx.provenance,
+            ));
 
             // Draw one card first.
             let draw_outcome =
@@ -96,6 +94,7 @@ impl EffectExecutor for ConniveEffect {
                         controller,
                         EventCause::from_effect(ctx.source, ctx.controller),
                         false,
+                        ctx.provenance,
                         &mut *ctx.decision_maker,
                     );
 

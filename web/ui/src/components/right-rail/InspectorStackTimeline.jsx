@@ -2,8 +2,6 @@ import { useMemo } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import useNewCards from "@/hooks/useNewCards";
 import StackCard from "@/components/cards/StackCard";
-import { normalizeDecisionText } from "@/components/decisions/decisionText";
-import { SymbolText } from "@/lib/mana-symbols";
 
 function isFocusedDecision(decision) {
   return (
@@ -12,22 +10,6 @@ function isFocusedDecision(decision) {
     && decision.kind !== "attackers"
     && decision.kind !== "blockers"
   );
-}
-
-function decisionTitle(decision) {
-  if (!decision) return "Decision";
-  switch (decision.kind) {
-    case "targets":
-      return "Choose targets";
-    case "select_objects":
-      return "Choose objects";
-    case "select_options":
-      return "Choose option";
-    case "number":
-      return "Choose number";
-    default:
-      return "Resolve decision";
-  }
 }
 
 export default function InspectorStackTimeline({
@@ -43,9 +25,6 @@ export default function InspectorStackTimeline({
   const hasStackEntries = stackObjects.length > 0 || stackPreview.length > 0;
   const stackIds = useMemo(() => stackObjects.map((entry) => entry.id), [stackObjects]);
   const { newIds } = useNewCards(stackIds);
-  const decisionSubtitle = focusedDecision
-    ? (decision?.description || decision?.source_name || null)
-    : null;
   const itemCount = stackObjects.length || stackPreview.length;
 
   if (!forceVisible && !focusedDecision && !hasStackEntries) return null;
@@ -65,29 +44,13 @@ export default function InspectorStackTimeline({
       </header>
       <ScrollArea className="h-[calc(100%-38px)]">
         <div className="grid gap-1.5 p-1.5">
-          {focusedDecision && (
-            <article className="rounded border border-[#48668b] bg-[rgba(9,20,33,0.88)] px-2 py-1.5 shadow-[0_10px_20px_rgba(0,0,0,0.35)]">
-              <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9dccff]">
-                Current Decision
-              </div>
-              <SymbolText
-                text={normalizeDecisionText(decisionTitle(decision))}
-                className="mt-0.5 block text-[16px] font-extrabold leading-[1.14] text-[#f2f8ff]"
-              />
-              {decisionSubtitle && (
-                <SymbolText
-                  text={normalizeDecisionText(decisionSubtitle)}
-                  className="mt-0.5 block text-[13px] leading-snug text-[#d2e5fb]"
-                />
-              )}
-            </article>
-          )}
-
           {stackObjects.length > 0
             ? stackObjects.map((entry, index) => (
                 <div key={entry.id} className="relative">
                   <span className="pointer-events-none absolute left-1.5 top-1.5 z-10 rounded bg-[rgba(8,18,30,0.86)] px-1 py-[2px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#8ec4ff]">
-                    {index === 0 ? "Top" : `#${stackObjects.length - index}`}
+                    {index === 0
+                      ? (focusedDecision ? "Resolving" : "Top")
+                      : `#${stackObjects.length - index}`}
                   </span>
                   <StackCard
                     entry={entry}

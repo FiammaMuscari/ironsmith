@@ -74,13 +74,16 @@ mod tests {
             "Whenever players finish voting",
         );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
-        let event = TriggerEvent::new(PlayersFinishedVotingEvent::new(
-            source_id,
-            alice,
-            vec![],
-            HashMap::new(),
-            vec!["a".to_string(), "b".to_string()],
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            PlayersFinishedVotingEvent::new(
+                source_id,
+                alice,
+                vec![],
+                HashMap::new(),
+                vec!["a".to_string(), "b".to_string()],
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 
@@ -95,8 +98,14 @@ mod tests {
             "When this creature becomes monstrous",
         );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
-        let own_event = TriggerEvent::new(BecameMonstrousEvent::new(source_id, alice, 3));
-        let other_event = TriggerEvent::new(BecameMonstrousEvent::new(other_id, alice, 3));
+        let own_event = TriggerEvent::new_with_provenance(
+            BecameMonstrousEvent::new(source_id, alice, 3),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
+        let other_event = TriggerEvent::new_with_provenance(
+            BecameMonstrousEvent::new(other_id, alice, 3),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&own_event, &ctx));
         assert!(!trigger.matches(&other_event, &ctx));
     }

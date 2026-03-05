@@ -119,15 +119,16 @@ impl EffectExecutor for SurveilEffect {
             p.library.extend(cards_to_top);
         }
 
-        Ok(
-            EffectOutcome::count(surveil_count as i32).with_event(TriggerEvent::new(
+        Ok(EffectOutcome::count(surveil_count as i32).with_event(
+            TriggerEvent::new_with_provenance(
                 KeywordActionEvent::new(
                     KeywordActionKind::Surveil,
                     player_id,
                     ctx.source,
                     surveil_count as u32,
                 ),
-            )),
-        )
+                ctx.provenance,
+            ),
+        ))
     }
 }

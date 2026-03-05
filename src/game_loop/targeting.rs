@@ -23,10 +23,11 @@ pub fn requires_target_selection(spec: &ChooseSpec) -> bool {
 
 /// Queue trigger matches for all triggered abilities that see this event.
 fn queue_triggers_for_event(
-    game: &GameState,
+    game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     event: TriggerEvent,
 ) {
+    let event = game.ensure_trigger_event_provenance(event);
     let triggers = check_triggers(game, &event);
     for trigger in triggers {
         trigger_queue.add(trigger);
@@ -141,6 +142,7 @@ fn target_events_from_targets(
     source: ObjectId,
     source_controller: PlayerId,
     by_ability: bool,
+    provenance: ProvNodeId,
 ) -> Vec<TriggerEvent> {
     targets
         .iter()
@@ -148,12 +150,12 @@ fn target_events_from_targets(
             let Target::Object(target_id) = target else {
                 return None;
             };
-            Some(TriggerEvent::new(BecomesTargetedEvent::new(
+            Some(TriggerEvent::new_with_provenance(BecomesTargetedEvent::new(
                 *target_id,
                 source,
                 source_controller,
                 by_ability,
-            )))
+            ), provenance))
         })
         .collect()
 }
@@ -187,21 +189,28 @@ fn queue_becomes_targeted_events(
     source: ObjectId,
     source_controller: PlayerId,
     by_ability: bool,
+    provenance: ProvNodeId,
 ) {
-    for event in target_events_from_targets(targets, source, source_controller, by_ability) {
+    for mut event in
+        target_events_from_targets(targets, source, source_controller, by_ability, provenance)
+    {
+        let event_provenance = game.alloc_child_event_provenance(provenance, event.kind());
+        event.set_provenance(event_provenance);
         queue_triggers_from_event(game, trigger_queue, event, true);
     }
 
     if !targets.is_empty() && targets_commit_crime(game, source_controller, targets) {
+        let crime_event_provenance =
+            game.alloc_child_event_provenance(provenance, crate::events::EventKind::KeywordAction);
         queue_triggers_from_event(
             game,
             trigger_queue,
-            TriggerEvent::new(KeywordActionEvent::new(
+            TriggerEvent::new_with_provenance(KeywordActionEvent::new(
                 KeywordActionKind::CommitCrime,
                 source_controller,
                 source,
                 1,
-            )),
+            ), crime_event_provenance),
             true,
         );
     }
@@ -236,8 +245,10 @@ fn queue_ability_activated_event(
                 .insert(activator);
         }
     }
-    let event = TriggerEvent::new(
+    let event_provenance = game.provenance_graph.alloc_root_event(crate::events::EventKind::AbilityActivated);
+    let event = TriggerEvent::new_with_provenance(
         AbilityActivatedEvent::new(source, activator, is_mana_ability).with_snapshot(snapshot),
+        event_provenance,
     );
     queue_triggers_from_event(game, trigger_queue, event, true);
     if is_mana_ability {
@@ -272,10 +283,14 @@ fn tap_permanent_with_trigger(
 ) {
     if game.object(permanent).is_some() && !game.is_tapped(permanent) {
         game.tap(permanent);
+        let event_provenance = game.provenance_graph.alloc_root_event(crate::events::EventKind::PermanentTapped);
         queue_triggers_from_event(
             game,
             trigger_queue,
-            TriggerEvent::new(crate::events::PermanentTappedEvent::new(permanent)),
+            TriggerEvent::new_with_provenance(
+                crate::events::PermanentTappedEvent::new(permanent),
+                event_provenance,
+            ),
             true,
         );
     }

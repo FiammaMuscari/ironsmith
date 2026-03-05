@@ -98,12 +98,10 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // ETB event should match
-        let etb_event = TriggerEvent::new(ZoneChangeEvent::new(
-            source_id,
-            Zone::Hand,
-            Zone::Battlefield,
-            None,
-        ));
+        let etb_event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(source_id, Zone::Hand, Zone::Battlefield, None),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&etb_event, &ctx));
     }
 
@@ -121,12 +119,15 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // Combat damage event should match
-        let damage_event = TriggerEvent::new(DamageEvent::new(
-            source_id,
-            DamageTarget::Player(bob),
-            3,
-            true, // is_combat
-        ));
+        let damage_event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(
+                source_id,
+                DamageTarget::Player(bob),
+                3,
+                true, // is_combat
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&damage_event, &ctx));
     }
 
@@ -145,21 +146,22 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // Non-combat damage from source shouldn't match
-        let damage_event = TriggerEvent::new(DamageEvent::new(
-            source_id,
-            DamageTarget::Player(bob),
-            3,
-            false, // not combat
-        ));
+        let damage_event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(
+                source_id,
+                DamageTarget::Player(bob),
+                3,
+                false, // not combat
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&damage_event, &ctx));
 
         // ETB of different object shouldn't match
-        let etb_event = TriggerEvent::new(ZoneChangeEvent::new(
-            other_id,
-            Zone::Hand,
-            Zone::Battlefield,
-            None,
-        ));
+        let etb_event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(other_id, Zone::Hand, Zone::Battlefield, None),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&etb_event, &ctx));
     }
 
@@ -185,12 +187,10 @@ mod tests {
         let alice = PlayerId::from_index(0);
         let source_id = ObjectId::from_raw(1);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
-        let event = TriggerEvent::new(ZoneChangeEvent::new(
-            source_id,
-            Zone::Hand,
-            Zone::Battlefield,
-            None,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(source_id, Zone::Hand, Zone::Battlefield, None),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 

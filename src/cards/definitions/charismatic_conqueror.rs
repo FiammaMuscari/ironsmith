@@ -183,7 +183,10 @@ mod tests {
         let creature_id = create_test_creature(&mut game, bob, "Bob's Bear");
 
         // Check triggers for the ETB event
-        let event = TriggerEvent::new(EnterBattlefieldEvent::new(creature_id, Zone::Hand));
+        let event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::new(creature_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggers = check_triggers(&game, &event);
         assert_eq!(triggers.len(), 1, "Should trigger once for Bob's creature");
@@ -209,7 +212,10 @@ mod tests {
         let creature_id = create_test_creature(&mut game, alice, "Alice's Bear");
 
         // Check triggers for the ETB event
-        let event = TriggerEvent::new(EnterBattlefieldEvent::new(creature_id, Zone::Hand));
+        let event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::new(creature_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggers = check_triggers(&game, &event);
         assert_eq!(

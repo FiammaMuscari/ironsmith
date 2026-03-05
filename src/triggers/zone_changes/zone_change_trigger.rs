@@ -572,23 +572,29 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // Creature dying should match
-        let event = TriggerEvent::new(ZoneChangeEvent::with_cause(
-            creature_id,
-            Zone::Battlefield,
-            Zone::Graveyard,
-            EventCause::from_sba(),
-            Some(make_creature_snapshot(creature_id, alice, "Bear")),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::with_cause(
+                creature_id,
+                Zone::Battlefield,
+                Zone::Graveyard,
+                EventCause::from_sba(),
+                Some(make_creature_snapshot(creature_id, alice, "Bear")),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
 
         // Creature being exiled should not match
-        let exile_event = TriggerEvent::new(ZoneChangeEvent::with_cause(
-            creature_id,
-            Zone::Battlefield,
-            Zone::Exile,
-            EventCause::from_sba(),
-            Some(make_creature_snapshot(creature_id, alice, "Bear")),
-        ));
+        let exile_event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::with_cause(
+                creature_id,
+                Zone::Battlefield,
+                Zone::Exile,
+                EventCause::from_sba(),
+                Some(make_creature_snapshot(creature_id, alice, "Bear")),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&exile_event, &ctx));
     }
 
@@ -603,23 +609,29 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // Source dying should match
-        let event = TriggerEvent::new(ZoneChangeEvent::with_cause(
-            source_id,
-            Zone::Battlefield,
-            Zone::Graveyard,
-            EventCause::from_sba(),
-            Some(make_creature_snapshot(source_id, alice, "Self")),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::with_cause(
+                source_id,
+                Zone::Battlefield,
+                Zone::Graveyard,
+                EventCause::from_sba(),
+                Some(make_creature_snapshot(source_id, alice, "Self")),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
 
         // Other creature dying should not match
-        let other_event = TriggerEvent::new(ZoneChangeEvent::with_cause(
-            other_id,
-            Zone::Battlefield,
-            Zone::Graveyard,
-            EventCause::from_sba(),
-            Some(make_creature_snapshot(other_id, alice, "Other")),
-        ));
+        let other_event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::with_cause(
+                other_id,
+                Zone::Battlefield,
+                Zone::Graveyard,
+                EventCause::from_sba(),
+                Some(make_creature_snapshot(other_id, alice, "Other")),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&other_event, &ctx));
     }
 
@@ -634,21 +646,27 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // ETB from hand
-        let from_hand = TriggerEvent::new(ZoneChangeEvent::new(
-            creature_id,
-            Zone::Hand,
-            Zone::Battlefield,
-            Some(make_creature_snapshot(creature_id, alice, "Bear")),
-        ));
+        let from_hand = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(
+                creature_id,
+                Zone::Hand,
+                Zone::Battlefield,
+                Some(make_creature_snapshot(creature_id, alice, "Bear")),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&from_hand, &ctx));
 
         // ETB from graveyard (reanimate)
-        let from_graveyard = TriggerEvent::new(ZoneChangeEvent::new(
-            creature_id,
-            Zone::Graveyard,
-            Zone::Battlefield,
-            Some(make_creature_snapshot(creature_id, alice, "Bear")),
-        ));
+        let from_graveyard = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(
+                creature_id,
+                Zone::Graveyard,
+                Zone::Battlefield,
+                Some(make_creature_snapshot(creature_id, alice, "Bear")),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&from_graveyard, &ctx));
     }
 
@@ -669,12 +687,10 @@ mod tests {
 
         let mut snapshot = make_creature_snapshot(old_id, alice, "Soul Warden Probe");
         snapshot.stable_id = StableId::from(old_id);
-        let event = TriggerEvent::new(ZoneChangeEvent::new(
-            new_id,
-            Zone::Stack,
-            Zone::Battlefield,
-            Some(snapshot),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(new_id, Zone::Stack, Zone::Battlefield, Some(snapshot)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let trigger = ZoneChangeTrigger::enters_battlefield(ObjectFilter::creature().other());
         let ctx = TriggerContext::for_source(new_id, alice, &game);
@@ -697,23 +713,29 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // Alice discarding should match
-        let alice_discard = TriggerEvent::new(ZoneChangeEvent::with_cause(
-            card_id,
-            Zone::Hand,
-            Zone::Graveyard,
-            EventCause::from_effect(source_id, alice),
-            Some(ObjectSnapshot::for_testing(card_id, alice, "Card")),
-        ));
+        let alice_discard = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::with_cause(
+                card_id,
+                Zone::Hand,
+                Zone::Graveyard,
+                EventCause::from_effect(source_id, alice),
+                Some(ObjectSnapshot::for_testing(card_id, alice, "Card")),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&alice_discard, &ctx));
 
         // Bob discarding should not match
-        let bob_discard = TriggerEvent::new(ZoneChangeEvent::with_cause(
-            card_id,
-            Zone::Hand,
-            Zone::Graveyard,
-            EventCause::from_effect(source_id, bob),
-            Some(ObjectSnapshot::for_testing(card_id, bob, "Card")),
-        ));
+        let bob_discard = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::with_cause(
+                card_id,
+                Zone::Hand,
+                Zone::Graveyard,
+                EventCause::from_effect(source_id, bob),
+                Some(ObjectSnapshot::for_testing(card_id, bob, "Card")),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&bob_discard, &ctx));
     }
 
@@ -724,12 +746,15 @@ mod tests {
             ObjectId::from_raw(2),
             ObjectId::from_raw(3),
         ];
-        let event = TriggerEvent::new(ZoneChangeEvent::batch(
-            objects,
-            Zone::Battlefield,
-            Zone::Graveyard,
-            EventCause::from_sba(),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::batch(
+                objects,
+                Zone::Battlefield,
+                Zone::Graveyard,
+                EventCause::from_sba(),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         // "Whenever a creature dies" fires 3 times
         let each_trigger = ZoneChangeTrigger::dies(ObjectFilter::creature());

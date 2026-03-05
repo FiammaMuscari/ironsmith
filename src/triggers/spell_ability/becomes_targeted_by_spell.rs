@@ -100,7 +100,10 @@ mod tests {
             aura_spell_filter().matches(source, &ctx.filter_ctx, &game),
             "aura spell filter should match source object: {source:#?}"
         );
-        let event = TriggerEvent::new(BecomesTargetedEvent::new(target, aura_spell, bob, false));
+        let event = TriggerEvent::new_with_provenance(
+            BecomesTargetedEvent::new(target, aura_spell, bob, false),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -115,7 +118,10 @@ mod tests {
 
         let trigger = BecomesTargetedBySpellTrigger::new(aura_spell_filter());
         let ctx = TriggerContext::for_source(target, alice, &game);
-        let event = TriggerEvent::new(BecomesTargetedEvent::new(target, aura_source, bob, true));
+        let event = TriggerEvent::new_with_provenance(
+            BecomesTargetedEvent::new(target, aura_source, bob, true),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }

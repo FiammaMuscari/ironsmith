@@ -178,12 +178,15 @@ mod tests {
         let mut snapshot = ObjectSnapshot::for_testing(ObjectId::from_raw(10), alice, "Card");
         snapshot.zone = Zone::Graveyard;
 
-        let event = TriggerEvent::new(ZoneChangeEvent::new(
-            ObjectId::from_raw(20),
-            Zone::Graveyard,
-            Zone::Exile,
-            Some(snapshot),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(
+                ObjectId::from_raw(20),
+                Zone::Graveyard,
+                Zone::Exile,
+                Some(snapshot),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -202,12 +205,15 @@ mod tests {
         snapshot.zone = Zone::Graveyard;
         snapshot.owner = bob;
 
-        let event = TriggerEvent::new(ZoneChangeEvent::new(
-            ObjectId::from_raw(20),
-            Zone::Graveyard,
-            Zone::Exile,
-            Some(snapshot),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(
+                ObjectId::from_raw(20),
+                Zone::Graveyard,
+                Zone::Exile,
+                Some(snapshot),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }
@@ -228,12 +234,15 @@ mod tests {
         let mut snapshot = ObjectSnapshot::for_testing(ObjectId::from_raw(10), alice, "Card");
         snapshot.zone = Zone::Graveyard;
 
-        let event = TriggerEvent::new(ZoneChangeEvent::new(
-            ObjectId::from_raw(20),
-            Zone::Graveyard,
-            Zone::Exile,
-            Some(snapshot),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(
+                ObjectId::from_raw(20),
+                Zone::Graveyard,
+                Zone::Exile,
+                Some(snapshot),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }

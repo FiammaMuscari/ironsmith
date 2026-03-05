@@ -71,6 +71,7 @@ impl EffectExecutor for DiscardHandEffect {
                 player_id,
                 cause.clone(),
                 false,
+                ctx.provenance,
                 &mut *ctx.decision_maker,
             );
         }

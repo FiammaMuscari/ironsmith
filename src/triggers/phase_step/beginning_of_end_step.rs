@@ -86,7 +86,10 @@ mod tests {
         let trigger = BeginningOfEndStepTrigger::your_end_step();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfEndStepEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 
@@ -100,7 +103,10 @@ mod tests {
         let trigger = BeginningOfEndStepTrigger::your_end_step();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfEndStepEvent::new(bob));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(bob),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 
@@ -114,8 +120,14 @@ mod tests {
         let trigger = BeginningOfEndStepTrigger::each_end_step();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event1 = TriggerEvent::new(BeginningOfEndStepEvent::new(alice));
-        let event2 = TriggerEvent::new(BeginningOfEndStepEvent::new(bob));
+        let event1 = TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
+        let event2 = TriggerEvent::new_with_provenance(
+            BeginningOfEndStepEvent::new(bob),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event1, &ctx));
         assert!(trigger.matches(&event2, &ctx));
     }

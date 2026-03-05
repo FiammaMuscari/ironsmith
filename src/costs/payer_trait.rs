@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use crate::cost::CostPaymentError;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
+use crate::provenance::ProvNodeId;
 use crate::snapshot::ObjectSnapshot;
 use crate::tag::TagKey;
 
@@ -44,6 +45,8 @@ pub struct CostContext<'dm> {
     /// when both are cost effects. The first effect tags the chosen creature,
     /// and the second effect can reference it via the tag.
     pub tagged_objects: HashMap<TagKey, Vec<ObjectSnapshot>>,
+    /// Provenance parent node for events emitted while paying this cost.
+    pub provenance: ProvNodeId,
 }
 
 impl std::fmt::Debug for CostContext<'_> {
@@ -57,6 +60,7 @@ impl std::fmt::Debug for CostContext<'_> {
                 "tagged_objects",
                 &self.tagged_objects.keys().collect::<Vec<_>>(),
             )
+            .field("provenance", &self.provenance)
             .finish()
     }
 }
@@ -75,6 +79,7 @@ impl<'dm> CostContext<'dm> {
             decision_maker,
             pre_chosen_cards: Vec::new(),
             tagged_objects: HashMap::new(),
+            provenance: ProvNodeId::UNKNOWN,
         }
     }
 
@@ -87,6 +92,12 @@ impl<'dm> CostContext<'dm> {
     /// Set pre-chosen cards for costs that require card selection.
     pub fn with_pre_chosen_cards(mut self, cards: Vec<ObjectId>) -> Self {
         self.pre_chosen_cards = cards;
+        self
+    }
+
+    /// Set provenance parent for emitted events.
+    pub fn with_provenance(mut self, provenance: ProvNodeId) -> Self {
+        self.provenance = provenance;
         self
     }
 }
@@ -141,6 +152,7 @@ impl CostCheckContext {
             decision_maker: dm,
             pre_chosen_cards: self.pre_chosen_cards.clone(),
             tagged_objects: HashMap::new(),
+            provenance: ProvNodeId::UNKNOWN,
         }
     }
 }

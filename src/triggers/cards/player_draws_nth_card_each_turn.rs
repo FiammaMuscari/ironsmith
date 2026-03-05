@@ -114,7 +114,10 @@ mod tests {
         let source_id = ObjectId::from_raw(1);
 
         game.cards_drawn_this_turn.insert(alice, 2);
-        let event = TriggerEvent::new(CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false));
+        let event = TriggerEvent::new_with_provenance(
+            CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let trigger = PlayerDrawsNthCardEachTurnTrigger::new(PlayerFilter::You, 2);
@@ -128,11 +131,14 @@ mod tests {
         let source_id = ObjectId::from_raw(1);
 
         game.cards_drawn_this_turn.insert(alice, 2);
-        let event = TriggerEvent::new(CardsDrawnEvent::new(
-            alice,
-            vec![ObjectId::from_raw(2), ObjectId::from_raw(3)],
-            true,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CardsDrawnEvent::new(
+                alice,
+                vec![ObjectId::from_raw(2), ObjectId::from_raw(3)],
+                true,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let trigger = PlayerDrawsNthCardEachTurnTrigger::new(PlayerFilter::You, 2);
@@ -146,7 +152,10 @@ mod tests {
         let source_id = ObjectId::from_raw(1);
 
         game.cards_drawn_this_turn.insert(alice, 3);
-        let event = TriggerEvent::new(CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false));
+        let event = TriggerEvent::new_with_provenance(
+            CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         let trigger = PlayerDrawsNthCardEachTurnTrigger::new(PlayerFilter::You, 2);

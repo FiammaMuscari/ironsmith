@@ -70,8 +70,12 @@ impl EffectExecutor for TransformEffect {
             game.set_face_down(target_id);
         }
 
-        Ok(EffectOutcome::resolved()
-            .with_event(TriggerEvent::new(TransformedEvent::new(target_id))))
+        Ok(
+            EffectOutcome::resolved().with_event(TriggerEvent::new_with_provenance(
+                TransformedEvent::new(target_id),
+                ctx.provenance,
+            )),
+        )
     }
 
     fn get_target_spec(&self) -> Option<&ChooseSpec> {

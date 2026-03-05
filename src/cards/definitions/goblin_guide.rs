@@ -144,10 +144,10 @@ mod tests {
         let guide_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
 
         // Simulate the attack event
-        let event = TriggerEvent::new(CreatureAttackedEvent::new(
-            guide_id,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::new(guide_id, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         // Check if triggers fire
         let triggers = check_triggers(&game, &event);
@@ -184,10 +184,10 @@ mod tests {
         let bear_id = game.create_object_from_card(&bear, alice, Zone::Battlefield);
 
         // Simulate the attack event for the OTHER creature
-        let event = TriggerEvent::new(CreatureAttackedEvent::new(
-            bear_id,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::new(bear_id, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         // Check if triggers fire - should NOT trigger Goblin Guide
         let triggers = check_triggers(&game, &event);
@@ -237,10 +237,10 @@ mod tests {
         let guide_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
 
         // Simulate the attack event targeting Bob
-        let event = TriggerEvent::new(CreatureAttackedEvent::new(
-            guide_id,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::new(guide_id, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         // Check the trigger
         let triggers = check_triggers(&game, &event);

@@ -262,347 +262,150 @@ pub(crate) fn keyword_action_to_static_ability(action: KeywordAction) -> Option<
     }
 }
 
+#[derive(Clone, Copy)]
+enum StaticAbilityLineRule {
+    Single(fn(&[Token]) -> Result<Option<StaticAbility>, CardTextError>),
+    SingleInfallible(fn(&[Token]) -> Option<StaticAbility>),
+    Multi(fn(&[Token]) -> Result<Option<Vec<StaticAbility>>, CardTextError>),
+}
+
+fn run_static_ability_line_rule(
+    rule: StaticAbilityLineRule,
+    tokens: &[Token],
+) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+    match rule {
+        StaticAbilityLineRule::Single(parse) => Ok(parse(tokens)?.map(|ability| vec![ability])),
+        StaticAbilityLineRule::SingleInfallible(parse) => {
+            Ok(parse(tokens).map(|ability| vec![ability]))
+        }
+        StaticAbilityLineRule::Multi(parse) => parse(tokens),
+    }
+}
+
+fn static_ability_line_rules() -> &'static [StaticAbilityLineRule] {
+    use StaticAbilityLineRule::{Multi, Single, SingleInfallible};
+
+    &[
+        Single(parse_ward_static_ability_line),
+        Single(parse_skulk_rules_text_line),
+        Single(parse_filter_dont_untap_during_controllers_untap_steps_line),
+        Single(parse_conditional_source_spell_keyword_line),
+        Single(parse_choose_basic_land_type_as_enters_line),
+        Single(parse_choose_creature_type_as_enters_line),
+        Single(parse_enchanted_land_is_chosen_type_line),
+        SingleInfallible(parse_static_text_marker_line),
+        Multi(parse_enters_tapped_with_choose_color_line),
+        Single(parse_damage_not_removed_cleanup_line),
+        Single(parse_prevent_damage_to_source_remove_counter_line),
+        Single(parse_choose_color_as_enters_line),
+        Single(parse_damage_redirect_to_source_line),
+        Single(parse_no_more_than_creatures_can_attack_or_block_each_combat_line),
+        Single(parse_characteristic_defining_pt_line),
+        Single(parse_no_maximum_hand_size_line),
+        Single(parse_reduced_maximum_hand_size_line),
+        Single(parse_library_of_leng_discard_replacement_line),
+        Single(parse_draw_replace_exile_top_face_down_line),
+        Single(parse_toph_first_metalbender_line),
+        Single(parse_discard_or_redirect_replacement_line),
+        Single(parse_pay_life_or_enter_tapped_line),
+        Single(parse_copy_activated_abilities_line),
+        Single(parse_players_spend_mana_as_any_color_line),
+        Single(parse_source_activation_spend_mana_as_any_color_line),
+        Single(parse_enchanted_has_activated_ability_line),
+        Multi(parse_has_base_power_toughness_and_granted_keywords_static_line),
+        Multi(parse_filter_has_granted_ability_line),
+        Multi(parse_equipped_gets_and_has_activated_ability_line),
+        Single(parse_shuffle_into_library_from_graveyard_line),
+        Single(parse_permanents_enter_tapped_line),
+        Single(parse_creatures_entering_dont_cause_abilities_to_trigger_line),
+        Single(parse_creatures_assign_combat_damage_using_toughness_line),
+        Single(parse_players_cant_cycle_line),
+        Single(parse_starting_life_bonus_line),
+        Single(parse_buyback_cost_reduction_line),
+        Single(parse_spell_cost_increase_per_target_beyond_first_line),
+        Single(parse_flashback_cost_modifier_line),
+        Single(parse_spells_cost_modifier_line),
+        Single(parse_foretelling_cards_cost_modifier_line),
+        Single(parse_players_skip_upkeep_line),
+        Single(parse_legend_rule_doesnt_apply_line),
+        Single(parse_all_permanents_are_artifacts_line),
+        Single(parse_all_permanents_colorless_line),
+        Single(parse_all_cards_spells_permanents_colorless_line),
+        Multi(parse_all_are_color_and_type_addition_line),
+        Single(parse_all_creatures_are_color_line),
+        Single(parse_blood_moon_line),
+        Single(parse_land_type_addition_line),
+        Multi(parse_lands_are_pt_creatures_still_lands_line),
+        Single(parse_remove_snow_line),
+        Multi(parse_attached_is_legendary_gets_and_has_keywords_line),
+        Multi(parse_soulbond_shared_line),
+        Multi(parse_granted_keyword_static_line),
+        Multi(parse_lose_all_abilities_and_transform_base_pt_line),
+        Multi(parse_lose_all_abilities_and_base_pt_line),
+        Single(parse_all_creatures_lose_flying_line),
+        Single(parse_each_creature_cant_be_blocked_by_more_than_line),
+        Single(parse_each_creature_can_block_additional_creature_each_combat_line),
+        Multi(parse_anthem_and_type_color_addition_line),
+        Multi(parse_anthem_and_keyword_line),
+        Multi(parse_anthem_and_granted_ability_line),
+        Single(parse_all_have_indestructible_line),
+        Single(parse_subject_cant_be_blocked_as_long_as_defending_player_controls_card_type_line),
+        Single(parse_subject_cant_be_blocked_as_long_as_condition_line),
+        Single(parse_subject_cant_be_blocked_line),
+        Single(parse_may_choose_not_to_untap_during_untap_step_line),
+        Single(parse_untap_during_each_other_players_untap_step_line),
+        Single(parse_doesnt_untap_during_untap_step_line),
+        Multi(parse_equipped_creature_has_line),
+        Multi(parse_enchanted_creature_has_line),
+        Single(parse_you_control_attached_creature_line),
+        Single(parse_attached_cant_attack_or_block_line),
+        Single(parse_attached_prevent_all_damage_dealt_by_attached_line),
+        Multi(parse_attached_gets_and_cant_block_line),
+        Multi(parse_attached_has_keywords_and_triggered_ability_line),
+        Multi(parse_attached_gets_and_has_ability_line),
+        Multi(parse_anthem_with_trailing_segments_line),
+        Multi(parse_gets_and_attacks_each_combat_if_able_line),
+        Single(parse_conditional_all_creatures_able_to_block_line),
+        Single(parse_as_long_as_condition_can_attack_as_though_no_defender_line),
+        Single(parse_source_can_attack_as_though_no_defender_as_long_as_line),
+        Single(parse_attacks_each_combat_if_able_line),
+        Single(parse_source_must_be_blocked_if_able_line),
+        Multi(parse_composed_anthem_effects_line),
+        Single(parse_has_base_power_toughness_static_line),
+        Single(parse_isnt_creature_line),
+        Single(parse_anthem_line),
+        Single(parse_flying_restriction_line),
+        Single(parse_can_block_only_flying_line),
+        Single(parse_assign_damage_as_unblocked_line),
+        Single(parse_grant_flash_to_noncreature_spells_line),
+        Single(parse_prevent_all_combat_damage_to_source_line),
+        Single(parse_prevent_all_damage_to_source_by_creatures_line),
+        Single(parse_prevent_all_damage_dealt_to_creatures_line),
+        Single(parse_creatures_cant_block_line),
+        Multi(parse_enters_tapped_with_counters_line),
+        Single(parse_enters_with_counters_line),
+        Single(parse_enters_with_additional_counter_for_filter_line),
+        Single(parse_reveal_from_hand_or_enters_tapped_line),
+        Single(parse_conditional_enters_tapped_unless_line),
+        Single(parse_enters_tapped_for_filter_line),
+        Single(parse_enters_tapped_line),
+        Multi(parse_additional_land_play_line),
+        Single(parse_play_lands_from_graveyard_line),
+        Single(parse_cost_reduction_line),
+        Single(parse_can_block_additional_creature_each_combat_line),
+        Single(parse_all_creatures_able_to_block_source_line),
+        Single(parse_activated_abilities_cant_be_activated_line),
+        Multi(parse_cant_clauses),
+    ]
+}
+
 pub(crate) fn parse_static_ability_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
-    if let Some(ability) = parse_ward_static_ability_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_skulk_rules_text_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_filter_dont_untap_during_controllers_untap_steps_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_conditional_source_spell_keyword_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_choose_basic_land_type_as_enters_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_choose_creature_type_as_enters_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_enchanted_land_is_chosen_type_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_static_text_marker_line(tokens) {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) = parse_enters_tapped_with_choose_color_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(ability) = parse_damage_not_removed_cleanup_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_prevent_damage_to_source_remove_counter_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_choose_color_as_enters_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_damage_redirect_to_source_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) =
-        parse_no_more_than_creatures_can_attack_or_block_each_combat_line(tokens)?
-    {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_characteristic_defining_pt_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_no_maximum_hand_size_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_reduced_maximum_hand_size_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_library_of_leng_discard_replacement_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_draw_replace_exile_top_face_down_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_toph_first_metalbender_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_discard_or_redirect_replacement_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_pay_life_or_enter_tapped_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_copy_activated_abilities_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_players_spend_mana_as_any_color_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_source_activation_spend_mana_as_any_color_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_enchanted_has_activated_ability_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) =
-        parse_has_base_power_toughness_and_granted_keywords_static_line(tokens)?
-    {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_filter_has_granted_ability_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_equipped_gets_and_has_activated_ability_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(ability) = parse_shuffle_into_library_from_graveyard_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_permanents_enter_tapped_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_creatures_entering_dont_cause_abilities_to_trigger_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_creatures_assign_combat_damage_using_toughness_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_players_cant_cycle_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_starting_life_bonus_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_buyback_cost_reduction_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_spell_cost_increase_per_target_beyond_first_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_flashback_cost_modifier_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_spells_cost_modifier_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_foretelling_cards_cost_modifier_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_players_skip_upkeep_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_legend_rule_doesnt_apply_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_all_permanents_are_artifacts_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_all_permanents_colorless_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_all_cards_spells_permanents_colorless_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) = parse_all_are_color_and_type_addition_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(ability) = parse_all_creatures_are_color_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_blood_moon_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_land_type_addition_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) = parse_lands_are_pt_creatures_still_lands_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(ability) = parse_remove_snow_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) = parse_attached_is_legendary_gets_and_has_keywords_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_soulbond_shared_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_granted_keyword_static_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_lose_all_abilities_and_transform_base_pt_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_lose_all_abilities_and_base_pt_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(ability) = parse_all_creatures_lose_flying_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_each_creature_cant_be_blocked_by_more_than_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) =
-        parse_each_creature_can_block_additional_creature_each_combat_line(tokens)?
-    {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) = parse_anthem_and_type_color_addition_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_anthem_and_keyword_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_anthem_and_granted_ability_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(ability) = parse_all_have_indestructible_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) =
-        parse_subject_cant_be_blocked_as_long_as_defending_player_controls_card_type_line(tokens)?
-    {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_subject_cant_be_blocked_as_long_as_condition_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_subject_cant_be_blocked_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_may_choose_not_to_untap_during_untap_step_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_untap_during_each_other_players_untap_step_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_doesnt_untap_during_untap_step_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_equipped_creature_has_line(tokens)? {
-        return Ok(Some(ability));
-    }
-    if let Some(ability) = parse_enchanted_creature_has_line(tokens)? {
-        return Ok(Some(ability));
-    }
-    if let Some(ability) = parse_you_control_attached_creature_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_attached_cant_attack_or_block_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_attached_prevent_all_damage_dealt_by_attached_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) = parse_attached_gets_and_cant_block_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_attached_has_keywords_and_triggered_ability_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_attached_gets_and_has_ability_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_anthem_with_trailing_segments_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(abilities) = parse_gets_and_attacks_each_combat_if_able_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(ability) = parse_conditional_all_creatures_able_to_block_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_as_long_as_condition_can_attack_as_though_no_defender_line(tokens)?
-    {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_source_can_attack_as_though_no_defender_as_long_as_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_attacks_each_combat_if_able_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_source_must_be_blocked_if_able_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) = parse_composed_anthem_effects_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(ability) = parse_has_base_power_toughness_static_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_isnt_creature_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_anthem_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_flying_restriction_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_can_block_only_flying_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_assign_damage_as_unblocked_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_grant_flash_to_noncreature_spells_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_prevent_all_combat_damage_to_source_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_prevent_all_damage_to_source_by_creatures_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_prevent_all_damage_dealt_to_creatures_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_creatures_cant_block_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) = parse_enters_tapped_with_counters_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(ability) = parse_enters_with_counters_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_enters_with_additional_counter_for_filter_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_reveal_from_hand_or_enters_tapped_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_conditional_enters_tapped_unless_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_enters_tapped_for_filter_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_enters_tapped_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) = parse_additional_land_play_line(tokens)? {
-        return Ok(Some(abilities));
-    }
-    if let Some(ability) = parse_play_lands_from_graveyard_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_cost_reduction_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_can_block_additional_creature_each_combat_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_all_creatures_able_to_block_source_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(ability) = parse_activated_abilities_cant_be_activated_line(tokens)? {
-        return Ok(Some(vec![ability]));
-    }
-    if let Some(abilities) = parse_cant_clauses(tokens)? {
-        return Ok(Some(abilities));
+    for rule in static_ability_line_rules() {
+        if let Some(abilities) = run_static_ability_line_rule(*rule, tokens)? {
+            return Ok(Some(abilities));
+        }
     }
     Ok(None)
 }

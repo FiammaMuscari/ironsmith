@@ -45,6 +45,7 @@ pub enum ReplacementPriority {
 /// This is the main entry point for event processing. It finds and applies
 /// applicable replacement effects using trait-based matchers.
 pub fn process_trait_event(game: &mut GameState, event: Event) -> TraitEventResult {
+    let event = game.ensure_event_provenance(event);
     let mut state = TraitEventProcessingState::default();
     process_event_direct(game, event, &mut state, &[])
 }
@@ -59,6 +60,7 @@ pub fn process_trait_event_with_self_effects(
     event: Event,
     self_effects: &[ReplacementEffect],
 ) -> TraitEventResult {
+    let event = game.ensure_event_provenance(event);
     let mut state = TraitEventProcessingState::default();
     process_event_direct(game, event, &mut state, self_effects)
 }
@@ -132,7 +134,7 @@ fn process_event_direct(
 
     // Per Rule 616.1e: If multiple effects at "Other" priority, player chooses
     if at_highest.len() > 1 && highest_priority == ReplacementPriority::Other {
-        let affected_player = event.0.affected_player(game);
+        let affected_player = event.inner().affected_player(game);
         let effect_ids: Vec<_> = at_highest.iter().map(|e| e.id).collect();
 
         return TraitEventResult::NeedsChoice {
@@ -270,6 +272,7 @@ fn continue_interactive_replacement(
     filter: Option<&crate::target::ObjectFilter>,
     redirect_zone: Zone,
     life_cost: Option<u32>,
+    provenance: crate::provenance::ProvNodeId,
     decision_maker: &mut impl DecisionMaker,
 ) -> InteractiveReplacementResult {
     // Handle discard-or-redirect (Mox Diamond pattern)
@@ -281,6 +284,7 @@ fn continue_interactive_replacement(
             controller,
             filter,
             redirect_zone,
+            provenance,
             decision_maker,
         );
     }
@@ -302,6 +306,7 @@ fn handle_discard_or_redirect(
     controller: crate::ids::PlayerId,
     filter: &crate::target::ObjectFilter,
     redirect_zone: Zone,
+    provenance: crate::provenance::ProvNodeId,
     decision_maker: &mut impl DecisionMaker,
 ) -> InteractiveReplacementResult {
     match response {
@@ -317,6 +322,7 @@ fn handle_discard_or_redirect(
                         controller,
                         crate::events::cause::EventCause::default(),
                         true,
+                        provenance,
                         decision_maker,
                     );
                     if result.type_verifiable {
@@ -475,6 +481,7 @@ pub fn execute_discard(
     player: crate::ids::PlayerId,
     cause: crate::events::cause::EventCause,
     _requires_type_verification: bool,
+    provenance: crate::provenance::ProvNodeId,
     decision_maker: &mut (impl DecisionMaker + ?Sized),
 ) -> DiscardResult {
     use crate::events::cards::DiscardEvent;
@@ -484,7 +491,7 @@ pub fn execute_discard(
 
     // Create a discard event with the cause
     let discard_event = DiscardEvent::with_cause(card_id, player, cause);
-    let event = Event::new(discard_event);
+    let event = Event::new_with_provenance(discard_event, provenance);
 
     // Process through the trait-based replacement effect system
     let result = process_with_dm(game, event, decision_maker);
@@ -829,7 +836,7 @@ fn apply_trait_replacement(
                 modified =
                     modified.with_remainder(damage.target, damage.amount - redirected_amount);
             }
-            TraitApplyResult::Modified(Event::new(modified))
+            TraitApplyResult::Modified(event.rewrap(modified))
         }
 
         ReplacementAction::Additionally(_effects) => {
@@ -1079,7 +1086,7 @@ fn apply_trait_modification(event: &Event, modification: &EventModification) -> 
                 EventModification::SetTo(value) => damage.with_amount(*value),
                 EventModification::ReduceToZero => damage.prevented(),
             };
-            Some(Event::new(modified))
+            Some(event.rewrap(modified))
         }
         EventKind::LifeGain => {
             let life_gain = downcast_event::<LifeGainEvent>(event.inner())?;
@@ -1096,7 +1103,7 @@ fn apply_trait_modification(event: &Event, modification: &EventModification) -> 
                 EventModification::SetTo(value) => life_gain.with_amount(*value),
                 EventModification::ReduceToZero => life_gain.with_amount(0),
             };
-            Some(Event::new(modified))
+            Some(event.rewrap(modified))
         }
         EventKind::PutCounters => {
             let put_counters = downcast_event::<PutCountersEvent>(event.inner())?;
@@ -1113,7 +1120,7 @@ fn apply_trait_modification(event: &Event, modification: &EventModification) -> 
                 EventModification::SetTo(value) => put_counters.with_count(*value),
                 EventModification::ReduceToZero => put_counters.with_count(0),
             };
-            Some(Event::new(modified))
+            Some(event.rewrap(modified))
         }
         EventKind::Draw => {
             let draw = downcast_event::<DrawEvent>(event.inner())?;
@@ -1130,7 +1137,7 @@ fn apply_trait_modification(event: &Event, modification: &EventModification) -> 
                 EventModification::SetTo(value) => draw.with_count(*value),
                 EventModification::ReduceToZero => draw.with_count(0),
             };
-            Some(Event::new(modified))
+            Some(event.rewrap(modified))
         }
         _ => None,
     }
@@ -1143,19 +1150,19 @@ fn apply_trait_double(event: &Event) -> Option<Event> {
     match event.kind() {
         EventKind::Damage => {
             let damage = downcast_event::<DamageEvent>(event.inner())?;
-            Some(Event::new(damage.doubled()))
+            Some(event.rewrap(damage.doubled()))
         }
         EventKind::LifeGain => {
             let life_gain = downcast_event::<LifeGainEvent>(event.inner())?;
-            Some(Event::new(life_gain.doubled()))
+            Some(event.rewrap(life_gain.doubled()))
         }
         EventKind::PutCounters => {
             let put_counters = downcast_event::<PutCountersEvent>(event.inner())?;
-            Some(Event::new(put_counters.doubled()))
+            Some(event.rewrap(put_counters.doubled()))
         }
         EventKind::Draw => {
             let draw = downcast_event::<DrawEvent>(event.inner())?;
-            Some(Event::new(draw.doubled()))
+            Some(event.rewrap(draw.doubled()))
         }
         _ => None,
     }
@@ -1168,14 +1175,14 @@ fn apply_trait_change_destination(event: &Event, new_zone: Zone) -> Option<Event
     match event.kind() {
         EventKind::ZoneChange => {
             let zone_change = downcast_event::<ZoneChangeEvent>(event.inner())?;
-            Some(Event::new(zone_change.with_destination(new_zone)))
+            Some(event.rewrap(zone_change.with_destination(new_zone)))
         }
         EventKind::EnterBattlefield => {
             // Convert EnterBattlefield event to a ZoneChange event with the new destination
             // This happens when a replacement effect redirects the destination (e.g., Mox Diamond
             // going to graveyard instead of battlefield when no lands are discarded)
             let etb = downcast_event::<EnterBattlefieldEvent>(event.inner())?;
-            Some(Event::zone_change(etb.object, etb.from, new_zone, None))
+            Some(event.rewrap(ZoneChangeEvent::new(etb.object, etb.from, new_zone, None)))
         }
         _ => None,
     }
@@ -1188,18 +1195,16 @@ fn apply_trait_enter_tapped(event: &Event) -> Option<Event> {
     match event.kind() {
         EventKind::EnterBattlefield => {
             let etb = downcast_event::<EnterBattlefieldEvent>(event.inner())?;
-            Some(Event::new(etb.with_tapped()))
+            Some(event.rewrap(etb.with_tapped()))
         }
         EventKind::ZoneChange => {
             let zone_change = downcast_event::<ZoneChangeEvent>(event.inner())?;
             if zone_change.to == Zone::Battlefield {
                 // Convert to EnterBattlefieldEvent with tapped
-                Some(Event::enter_battlefield(
+                Some(event.rewrap(EnterBattlefieldEvent::tapped(
                     *zone_change.objects.first()?,
                     zone_change.from,
-                    true,
-                    vec![],
-                ))
+                )))
             } else {
                 None
             }
@@ -1219,17 +1224,17 @@ fn apply_trait_enter_with_counters(
     match event.kind() {
         EventKind::EnterBattlefield => {
             let etb = downcast_event::<EnterBattlefieldEvent>(event.inner())?;
-            Some(Event::new(etb.with_counters(counter_type, count)))
+            Some(event.rewrap(etb.with_counters(counter_type, count)))
         }
         EventKind::ZoneChange => {
             let zone_change = downcast_event::<ZoneChangeEvent>(event.inner())?;
             if zone_change.to == Zone::Battlefield {
-                Some(Event::enter_battlefield(
-                    *zone_change.objects.first()?,
-                    zone_change.from,
-                    false,
-                    vec![(counter_type, count)],
-                ))
+                Some(
+                    event.rewrap(
+                        EnterBattlefieldEvent::new(*zone_change.objects.first()?, zone_change.from)
+                            .with_counters(counter_type, count),
+                    ),
+                )
             } else {
                 None
             }
@@ -1245,7 +1250,7 @@ fn apply_trait_enter_as_copy(event: &Event, source_id: crate::ids::ObjectId) -> 
     match event.kind() {
         EventKind::EnterBattlefield => {
             let etb = downcast_event::<EnterBattlefieldEvent>(event.inner())?;
-            Some(Event::new(etb.with_copy_of(source_id)))
+            Some(event.rewrap(etb.with_copy_of(source_id)))
         }
         EventKind::ZoneChange => {
             let zone_change = downcast_event::<ZoneChangeEvent>(event.inner())?;
@@ -1253,7 +1258,7 @@ fn apply_trait_enter_as_copy(event: &Event, source_id: crate::ids::ObjectId) -> 
                 let mut etb =
                     EnterBattlefieldEvent::new(*zone_change.objects.first()?, zone_change.from);
                 etb = etb.with_copy_of(source_id);
-                Some(Event::new(etb))
+                Some(event.rewrap(etb))
             } else {
                 None
             }
@@ -1271,8 +1276,8 @@ fn apply_trait_redirect(
     _effect_source: crate::ids::ObjectId,
 ) -> Option<Event> {
     let new_target =
-        resolve_trait_redirect_target(event.0.as_ref(), redirect_target, which, effect_controller)?;
-    let redirectable = event.0.redirectable_targets();
+        resolve_trait_redirect_target(event.inner(), redirect_target, which, effect_controller)?;
+    let redirectable = event.inner().redirectable_targets();
     let selected = match which {
         crate::replacement::RedirectWhich::First => redirectable.first(),
         crate::replacement::RedirectWhich::Index(idx) => redirectable.get(*idx),
@@ -1281,9 +1286,9 @@ fn apply_trait_redirect(
         }
     }?;
     let new_event_box = event
-        .0
+        .inner()
         .with_target_replaced(&selected.target, &new_target)?;
-    Some(Event(new_event_box))
+    Some(event.rewrap_boxed(new_event_box))
 }
 
 fn resolve_trait_redirect_target(
@@ -1781,7 +1786,7 @@ fn process_with_dm(
         specs::{ReplacementOption, ReplacementSpec},
     };
 
-    let mut current_event = event;
+    let mut current_event = game.ensure_event_provenance(event);
     let mut state = TraitEventProcessingState::default();
 
     loop {
@@ -2011,8 +2016,12 @@ pub fn process_damage_assignments_with_event_with_source_snapshot(
         Event::unpreventable_damage(source, target, amount, is_combat)
     };
 
-    // Process through the trait-based system
-    let result = process_trait_event(game, event);
+    // Process through the trait-based system, retaining event provenance for
+    // replacement-generated effect execution.
+    let event = game.ensure_event_provenance(event);
+    let event_provenance = event.provenance();
+    let mut state = TraitEventProcessingState::default();
+    let result = process_event_direct(game, event, &mut state, &[]);
 
     let replaced = match result {
         TraitEventResult::Prevented => {
@@ -2043,14 +2052,15 @@ pub fn process_damage_assignments_with_event_with_source_snapshot(
             .with_cause(crate::events::cause::EventCause::from_effect(
                 replacement_source,
                 replacement_controller,
-            ));
+            ))
+            .with_provenance(event_provenance);
             exec_ctx
                 .targets
                 .push(crate::executor::ResolvedTarget::Object(replacement_source));
             for effect in effects {
                 if let Ok(outcome) = crate::executor::execute_effect(game, &effect, &mut exec_ctx) {
                     for trigger_event in outcome.events {
-                        game.queue_trigger_event(trigger_event);
+                        game.queue_trigger_event(trigger_event.provenance(), trigger_event);
                     }
                 }
             }
@@ -2368,13 +2378,19 @@ pub fn process_etb_with_event_and_dm(
     }
     assign_ephemeral_effect_ids(&mut self_replacement_effects);
 
-    let mut current_event = Event::new(EnterBattlefieldEvent {
-        object,
-        from,
-        enters_tapped,
-        enters_with_counters,
-        enters_as_copy_of: None,
-    });
+    let etb_event_provenance = game
+        .provenance_graph
+        .alloc_root_event(crate::events::EventKind::EnterBattlefield);
+    let mut current_event = Event::new_with_provenance(
+        EnterBattlefieldEvent {
+            object,
+            from,
+            enters_tapped,
+            enters_with_counters,
+            enters_as_copy_of: None,
+        },
+        etb_event_provenance,
+    );
     let mut state = TraitEventProcessingState::default();
 
     loop {
@@ -2536,6 +2552,7 @@ pub fn process_etb_with_event_and_dm(
                             filter.as_ref(),
                             redirect_zone,
                             life_cost,
+                            current_event.provenance(),
                             dm,
                         );
                         if !interactive_result.enters {
@@ -2588,6 +2605,7 @@ pub fn process_etb_with_event_and_dm(
                     filter.as_ref(),
                     redirect_zone,
                     life_cost,
+                    event.provenance(),
                     dm,
                 );
                 if !interactive_result.enters {
@@ -2747,6 +2765,7 @@ pub fn process_event_with_chosen_replacement_trait(
     event: Event,
     chosen_effect_id: ReplacementEffectId,
 ) -> TraitEventResult {
+    let event = game.ensure_event_provenance(event);
     // Get the chosen effect
     let Some(effect) = game
         .replacement_effects

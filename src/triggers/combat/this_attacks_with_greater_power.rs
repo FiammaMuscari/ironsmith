@@ -109,10 +109,10 @@ mod tests {
 
         let trigger = ThisAttacksWithGreaterPowerTrigger;
         let ctx = TriggerContext::for_source(source, alice, &game);
-        let event = TriggerEvent::new(CreatureAttackedEvent::new(
-            source,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::new(source, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -139,10 +139,10 @@ mod tests {
 
         let trigger = ThisAttacksWithGreaterPowerTrigger;
         let ctx = TriggerContext::for_source(source, alice, &game);
-        let event = TriggerEvent::new(CreatureAttackedEvent::new(
-            source,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::new(source, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }
@@ -156,10 +156,10 @@ mod tests {
         let other = ObjectId::from_raw(11);
         let trigger = ThisAttacksWithGreaterPowerTrigger;
         let ctx = TriggerContext::for_source(source, alice, &game);
-        let event = TriggerEvent::new(CreatureAttackedEvent::new(
-            other,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::new(other, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 }

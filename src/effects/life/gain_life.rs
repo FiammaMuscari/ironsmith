@@ -86,7 +86,10 @@ impl EffectExecutor for GainLifeEffect {
         // Create the trigger event only if life was actually gained
         let outcome = EffectOutcome::count(final_amount as i32);
         if final_amount > 0 {
-            let event = TriggerEvent::new(LifeGainEvent::new(player_id, final_amount));
+            let event = TriggerEvent::new_with_provenance(
+                LifeGainEvent::new(player_id, final_amount),
+                ctx.provenance,
+            );
             Ok(outcome.with_event(event))
         } else {
             Ok(outcome)

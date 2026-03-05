@@ -47,7 +47,6 @@ export default function Workspace({
   onCancelDeckLoading,
 }) {
   const [selectedObjectId, setSelectedObjectId] = useState(null);
-  const [inspectorVisible, setInspectorVisible] = useState(false);
   const { state, dispatch, status } = useGame();
   const { endDrag } = useDragActions();
   const { clearHover } = useHoverActions();
@@ -63,7 +62,15 @@ export default function Workspace({
     : null;
   const [dismissedAddCardError, setDismissedAddCardError] = useState(false);
   const selectedObjectIsValid = objectExistsInState(state, selectedObjectId);
-  const reserveInspectorSpace = inspectorVisible;
+  const decision = state?.decision || null;
+  const hasFocusedDecision = Boolean(
+    decision
+    && decision.kind !== "priority"
+    && decision.kind !== "attackers"
+    && decision.kind !== "blockers"
+  );
+  const hasStackEntries = (state?.stack_objects?.length || 0) > 0 || (state?.stack_preview?.length || 0) > 0;
+  const reserveInspectorSpace = selectedObjectIsValid || hasFocusedDecision || hasStackEntries;
 
   useEffect(() => {
     if (addCardError) setDismissedAddCardError(false);
@@ -166,7 +173,6 @@ export default function Workspace({
       <ArrowOverlay />
       <RightRail
         pinnedObjectId={selectedObjectId}
-        onVisibilityChange={setInspectorVisible}
         onInspectObject={setSelectedObjectId}
       />
       {addCardError && !dismissedAddCardError && (
@@ -180,7 +186,7 @@ export default function Workspace({
         </button>
       )}
       <div
-        className="min-h-0 h-full overflow-hidden transition-[padding-right] duration-250 ease-out"
+        className="min-h-0 h-full overflow-hidden"
         style={{ paddingRight: reserveInspectorSpace ? inspectorReservedWidth : "0px" }}
       >
         <TableCore

@@ -62,12 +62,15 @@ mod tests {
     }
 
     fn dies_event(object_id: ObjectId, snapshot: ObjectSnapshot) -> TriggerEvent {
-        TriggerEvent::new(ZoneChangeEvent::new(
-            object_id,
-            Zone::Battlefield,
-            Zone::Graveyard,
-            Some(snapshot),
-        ))
+        TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(
+                object_id,
+                Zone::Battlefield,
+                Zone::Graveyard,
+                Some(snapshot),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        )
     }
 
     // ========================================

@@ -142,22 +142,18 @@ mod tests {
             PlayerFilter::Any,
         );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
-        let first_event = TriggerEvent::new(DamageEvent::new(
-            attacker_one,
-            DamageTarget::Player(bob),
-            2,
-            true,
-        ));
+        let first_event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(attacker_one, DamageTarget::Player(bob), 2, true),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&first_event, &ctx));
 
         game.record_combat_damage_player_batch_hit(attacker_one, bob);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
-        let second_event = TriggerEvent::new(DamageEvent::new(
-            attacker_two,
-            DamageTarget::Player(bob),
-            2,
-            true,
-        ));
+        let second_event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(attacker_two, DamageTarget::Player(bob), 2, true),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&second_event, &ctx));
     }
 
@@ -180,20 +176,16 @@ mod tests {
             DealsCombatDamageToPlayerTrigger::new(ObjectFilter::creature(), PlayerFilter::You);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let hits_charlie = TriggerEvent::new(DamageEvent::new(
-            attacker,
-            DamageTarget::Player(charlie),
-            2,
-            true,
-        ));
+        let hits_charlie = TriggerEvent::new_with_provenance(
+            DamageEvent::new(attacker, DamageTarget::Player(charlie), 2, true),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&hits_charlie, &ctx));
 
-        let hits_alice = TriggerEvent::new(DamageEvent::new(
-            attacker,
-            DamageTarget::Player(alice),
-            2,
-            true,
-        ));
+        let hits_alice = TriggerEvent::new_with_provenance(
+            DamageEvent::new(attacker, DamageTarget::Player(alice), 2, true),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&hits_alice, &ctx));
     }
 }

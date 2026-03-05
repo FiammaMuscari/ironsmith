@@ -107,7 +107,10 @@ impl EffectExecutor for DrawCardsEffect {
                 }
 
                 // Create a single CardsDrawnEvent with all drawn cards
-                let event = TriggerEvent::new(CardsDrawnEvent::new(player_id, drawn, is_first));
+                let event = TriggerEvent::new_with_provenance(
+                    CardsDrawnEvent::new(player_id, drawn, is_first),
+                    ctx.provenance,
+                );
 
                 Ok(EffectOutcome::count(count).with_event(event))
             }

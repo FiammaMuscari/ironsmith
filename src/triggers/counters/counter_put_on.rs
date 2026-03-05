@@ -180,25 +180,31 @@ mod tests {
             .count(CountMode::OneOrMore);
         let ctx = TriggerContext::for_source(creature_id, alice, &game);
 
-        let your_event = TriggerEvent::new(MarkersChangedEvent::added(
-            CounterType::MinusOneMinusOne,
-            creature_id,
-            2,
-            Some(creature_id),
-            Some(alice),
-        ));
+        let your_event = TriggerEvent::new_with_provenance(
+            MarkersChangedEvent::added(
+                CounterType::MinusOneMinusOne,
+                creature_id,
+                2,
+                Some(creature_id),
+                Some(alice),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(
             trigger.matches(&your_event, &ctx),
             "expected trigger to match your -1/-1 counter placement"
         );
 
-        let opponent_event = TriggerEvent::new(MarkersChangedEvent::added(
-            CounterType::MinusOneMinusOne,
-            creature_id,
-            2,
-            Some(creature_id),
-            Some(bob),
-        ));
+        let opponent_event = TriggerEvent::new_with_provenance(
+            MarkersChangedEvent::added(
+                CounterType::MinusOneMinusOne,
+                creature_id,
+                2,
+                Some(creature_id),
+                Some(bob),
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(
             !trigger.matches(&opponent_event, &ctx),
             "expected trigger to reject opponent counter placement"
@@ -208,13 +214,16 @@ mod tests {
     #[test]
     fn test_trigger_count_uses_markers_changed_amount_for_each_mode() {
         let trigger = CounterPutOnTrigger::new(ObjectFilter::creature()).count(CountMode::Each);
-        let event = TriggerEvent::new(MarkersChangedEvent::added(
-            CounterType::MinusOneMinusOne,
-            crate::ids::ObjectId::from_raw(1),
-            4,
-            None,
-            None,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            MarkersChangedEvent::added(
+                CounterType::MinusOneMinusOne,
+                crate::ids::ObjectId::from_raw(1),
+                4,
+                None,
+                None,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert_eq!(trigger.trigger_count(&event), 4);
     }
 }

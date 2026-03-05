@@ -82,7 +82,10 @@ mod tests {
         let trigger = BeginningOfCombatTrigger::your_combat();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfCombatEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfCombatEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 

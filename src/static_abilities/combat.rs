@@ -1075,10 +1075,14 @@ impl CantAttackUnlessCondition {
                 EventOutcome::Proceed(final_zone) => {
                     game.move_object(target_id, final_zone);
                     if final_zone == Zone::Graveyard {
-                        game.queue_trigger_event(TriggerEvent::new(
-                            SacrificeEvent::new(target_id, Some(source))
-                                .with_snapshot(snapshot, sacrificing_player),
-                        ));
+                        game.queue_trigger_event(
+                            crate::provenance::ProvNodeId::UNKNOWN,
+                            TriggerEvent::new_with_provenance(
+                                SacrificeEvent::new(target_id, Some(source))
+                                    .with_snapshot(snapshot, sacrificing_player),
+                                crate::provenance::ProvNodeId::UNKNOWN,
+                            ),
+                        );
                     }
                 }
                 EventOutcome::Replaced => {}

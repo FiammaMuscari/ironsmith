@@ -76,11 +76,14 @@ mod tests {
 
         let trigger = AttacksAloneTrigger::new(ObjectFilter::creature().you_control());
         let ctx = TriggerContext::for_source(source_id, alice, &game);
-        let event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            creature_id,
-            AttackEventTarget::Player(bob),
-            1,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                creature_id,
+                AttackEventTarget::Player(bob),
+                1,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -95,11 +98,14 @@ mod tests {
 
         let trigger = AttacksAloneTrigger::new(ObjectFilter::creature().you_control());
         let ctx = TriggerContext::for_source(source_id, alice, &game);
-        let event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            creature_id,
-            AttackEventTarget::Player(bob),
-            2,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                creature_id,
+                AttackEventTarget::Player(bob),
+                2,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }

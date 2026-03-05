@@ -1633,8 +1633,7 @@ fn test_parse_copy_this_spell_for_each_creature_sacrificed_this_way() {
         .expect_err("unsupported when-you-do copy clause should fail loudly");
     let rendered = format!("{err:?}").to_ascii_lowercase();
     assert!(
-        rendered.contains("unsupported triggered line")
-            || rendered.contains("when you do"),
+        rendered.contains("unsupported triggered line") || rendered.contains("when you do"),
         "expected explicit unsupported when-you-do rejection, got {rendered}"
     );
 }
@@ -11547,12 +11546,15 @@ fn arcbond_delayed_trigger_deals_damage_to_each_other_creature_and_each_player()
         "expected delayed trigger watcher to be the chosen creature"
     );
 
-    let damage_event = crate::triggers::TriggerEvent::new(crate::events::DamageEvent::new(
-        other_creature_one,
-        crate::game_event::DamageTarget::Object(chosen_creature),
-        3,
-        false,
-    ));
+    let damage_event = crate::triggers::TriggerEvent::new_with_provenance(
+        crate::events::DamageEvent::new(
+            other_creature_one,
+            crate::game_event::DamageTarget::Object(chosen_creature),
+            3,
+            false,
+        ),
+        crate::provenance::ProvNodeId::UNKNOWN,
+    );
     let delayed_entries = crate::triggers::check_delayed_triggers(&mut game, &damage_event);
     assert_eq!(
         delayed_entries.len(),
@@ -14118,7 +14120,9 @@ fn strict_parse_regression_batch_target_cards() {
             .parse_text(oracle.clone())
             .is_ok()
         {
-            failures.push(format!("{name}: expected strict parse failure, but parse succeeded"));
+            failures.push(format!(
+                "{name}: expected strict parse failure, but parse succeeded"
+            ));
         }
     }
     assert!(

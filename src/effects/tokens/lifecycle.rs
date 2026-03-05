@@ -62,9 +62,15 @@ pub(crate) fn apply_token_battlefield_entry(
     // Zone-change events are queued by `move_object_with_etb_processing_with_dm`.
     // Emit the explicit ETB event here so enters-tapped/untapped triggers can match.
     let etb_event = if enters_tapped {
-        TriggerEvent::new(EnterBattlefieldEvent::tapped(token_id, from_zone))
+        TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::tapped(token_id, from_zone),
+            ctx.provenance,
+        )
     } else {
-        TriggerEvent::new(EnterBattlefieldEvent::new(token_id, from_zone))
+        TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::new(token_id, from_zone),
+            ctx.provenance,
+        )
     };
     events.push(etb_event);
 

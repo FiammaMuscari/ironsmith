@@ -33,12 +33,10 @@ impl EffectExecutor for EmitKeywordActionEffect {
         _game: &mut GameState,
         ctx: &mut ExecutionContext,
     ) -> Result<EffectOutcome, ExecutionError> {
-        let event = TriggerEvent::new(KeywordActionEvent::new(
-            self.action,
-            ctx.controller,
-            ctx.source,
-            self.amount,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(self.action, ctx.controller, ctx.source, self.amount),
+            ctx.provenance,
+        );
         Ok(EffectOutcome::from_result(EffectResult::Resolved).with_event(event))
     }
 

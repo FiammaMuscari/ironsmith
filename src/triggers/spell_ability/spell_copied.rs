@@ -101,7 +101,10 @@ mod tests {
         let trigger = SpellCopiedTrigger::new(None, PlayerFilter::You);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(SpellCopiedEvent::new(spell_id, alice));
+        let event = TriggerEvent::new_with_provenance(
+            SpellCopiedEvent::new(spell_id, alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 

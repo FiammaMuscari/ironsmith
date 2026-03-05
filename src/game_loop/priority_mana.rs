@@ -746,12 +746,17 @@ fn execute_pip_payment_action(
         } => {
             tap_permanent_with_trigger(game, trigger_queue, *permanent_id);
             if let Some(source_id) = source {
-                let event = TriggerEvent::new(KeywordActionEvent::new(
-                    keyword_action_from_alternative_effect(*effect),
-                    player,
-                    source_id,
-                    1,
-                ));
+                let event_provenance =
+                    game.provenance_graph.alloc_root_event(crate::events::EventKind::KeywordAction);
+                let event = TriggerEvent::new_with_provenance(
+                    KeywordActionEvent::new(
+                        keyword_action_from_alternative_effect(*effect),
+                        player,
+                        source_id,
+                        1,
+                    ),
+                    event_provenance,
+                );
                 queue_triggers_from_event(game, trigger_queue, event, true);
             }
             record_pip_payment_action(payment_trace, action);
@@ -1197,7 +1202,8 @@ fn execute_pending_mana_ability(
     }
 
     // Pay other costs from TotalCost (not cost_effects)
-    let mut cost_ctx = CostContext::new(pending.source, pending.activator, decision_maker);
+    let mut cost_ctx = CostContext::new(pending.source, pending.activator, decision_maker)
+        .with_provenance(pending.provenance);
     for c in &pending.other_costs {
         crate::special_actions::pay_cost_component_with_choice(game, c, &mut cost_ctx)
             .map_err(|e| GameLoopError::InvalidState(format!("Failed to pay cost: {:?}", e)))?;
@@ -1215,7 +1221,8 @@ fn execute_pending_mana_ability(
 
     // Execute additional effects (for complex mana abilities)
     if !pending.effects.is_empty() {
-        let mut ctx = ExecutionContext::new(pending.source, pending.activator, decision_maker);
+        let mut ctx = ExecutionContext::new(pending.source, pending.activator, decision_maker)
+            .with_provenance(pending.provenance);
         let mut emitted_events = Vec::new();
 
         for effect in &pending.effects {
@@ -1548,10 +1555,14 @@ fn apply_sacrifice_target_response(
                     .map(|snap| snap.controller)
                     .or(Some(pending.activator));
                 game.move_object(target_id, Zone::Graveyard);
-                game.queue_trigger_event(TriggerEvent::new(
-                    SacrificeEvent::new(target_id, Some(pending.source))
-                        .with_snapshot(snapshot, sacrificing_player),
-                ));
+                game.queue_trigger_event(
+                    pending.provenance,
+                    TriggerEvent::new_with_provenance(
+                        SacrificeEvent::new(target_id, Some(pending.source))
+                            .with_snapshot(snapshot, sacrificing_player),
+                        pending.provenance,
+                    ),
+                );
 
                 #[cfg(feature = "net")]
                 {
@@ -1602,6 +1613,7 @@ fn apply_sacrifice_target_response(
                         pending.activator,
                         cause,
                         false,
+                        pending.provenance,
                         decision_maker,
                     );
                     if result.prevented {
@@ -1807,6 +1819,10 @@ fn apply_casting_method_choice_response(
 
     // Move spell to stack immediately per MTG rule 601.2a
     let stack_id = propose_spell_cast(game, spell_id, from_zone, player, &casting_method)?;
+    let cast_provenance = game.provenance_graph.alloc_root(ProvenanceNodeKind::EffectExecution {
+        source: stack_id,
+        controller: player,
+    });
 
     // Get the spell's mana cost and effects, considering casting method
     // Note: We use stack_id now since the spell has been moved to stack
@@ -1876,6 +1892,7 @@ fn apply_casting_method_choice_response(
             stack_id,
             from_zone,
             player,
+            cast_provenance,
             CastStage::ChoosingX,
             None,
             requirements,
@@ -1906,6 +1923,7 @@ fn apply_casting_method_choice_response(
             stack_id,
             from_zone,
             player,
+            cast_provenance,
             CastStage::ChoosingModes, // Will be updated by helper
             None,
             requirements,
@@ -2000,6 +2018,7 @@ fn finalize_spell_cast(
     payment_trace: &mut Vec<CostStep>,
     mana_already_paid: bool,
     stack_id: ObjectId,
+    provenance: ProvNodeId,
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<SpellCastResult, GameLoopError> {
     use crate::decision::calculate_effective_mana_cost_with_chosen_targets;
@@ -2212,7 +2231,8 @@ fn finalize_spell_cast(
 
     if !non_mana_costs.is_empty() {
         let mut cost_ctx = crate::costs::CostContext::new(spell_id, caster, decision_maker)
-            .with_pre_chosen_cards(pre_chosen_card_cost_objects);
+            .with_pre_chosen_cards(pre_chosen_card_cost_objects)
+            .with_provenance(provenance);
         if let Some(x) = x_value {
             cost_ctx.x_value = Some(x);
         }
@@ -2256,7 +2276,15 @@ fn finalize_spell_cast(
         entry = entry.with_x(x);
     }
     game.push_to_stack(entry);
-    queue_becomes_targeted_events(game, trigger_queue, &targets, new_id, caster, false);
+    queue_becomes_targeted_events(
+        game,
+        trigger_queue,
+        &targets,
+        new_id,
+        caster,
+        false,
+        provenance,
+    );
 
     // Track that a spell was cast this turn (per-caster)
     *game.spells_cast_this_turn.entry(caster).or_insert(0) += 1;
@@ -2280,15 +2308,17 @@ fn finalize_spell_cast(
             .insert(caster, new_mana_spent_total);
 
         for threshold in (prev_mana_spent.saturating_add(1))..=new_mana_spent_total {
+            let expend_event_provenance =
+                game.alloc_child_event_provenance(provenance, crate::events::EventKind::KeywordAction);
             queue_triggers_from_event(
                 game,
                 trigger_queue,
-                TriggerEvent::new(KeywordActionEvent::new(
+                TriggerEvent::new_with_provenance(KeywordActionEvent::new(
                     KeywordActionKind::Expend,
                     caster,
                     new_id,
                     threshold,
-                )),
+                ), expend_event_provenance),
                 true,
             );
         }

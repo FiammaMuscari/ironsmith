@@ -33,6 +33,7 @@ pub mod object;
 pub(crate) mod object_query;
 pub mod player;
 pub mod prevention;
+pub mod provenance;
 pub mod replacement;
 pub mod replacement_ability_processor;
 pub mod rules;
@@ -100,6 +101,7 @@ pub use player::{ManaPool, Player};
 pub use prevention::{
     DamageFilter, PreventionEffectManager, PreventionShield, PreventionShieldId, PreventionTarget,
 };
+pub use provenance::{ProvNodeId, ProvenanceGraph, ProvenanceNode, ProvenanceNodeKind};
 pub use replacement::{
     ReplacementAction, ReplacementEffect, ReplacementEffectId, ReplacementEffectManager,
 };

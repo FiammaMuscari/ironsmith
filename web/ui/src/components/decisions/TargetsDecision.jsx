@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useGame } from "@/context/GameContext";
 import { useHoveredObjectId } from "@/context/HoverContext";
 import { Button } from "@/components/ui/button";
@@ -277,6 +277,8 @@ export default function TargetsDecision({
   decision,
   canAct,
   inspectorOracleTextHeight = 0,
+  inlineSubmit = true,
+  onSubmitActionChange = null,
 }) {
   const { dispatch, state } = useGame();
   const hoveredObjectId = useHoveredObjectId();
@@ -443,12 +445,22 @@ export default function TargetsDecision({
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = useCallback(() => {
     dispatch(
       { type: "select_targets", targets: allSelections.map(toDispatchTarget) },
       "Targets selected"
     );
-  };
+  }, [dispatch, allSelections]);
+
+  useEffect(() => {
+    if (!onSubmitActionChange) return undefined;
+    onSubmitActionChange({
+      label: `Submit Targets (${allSelections.length})`,
+      disabled: !canAct || !canSubmit,
+      onSubmit: handleSubmit,
+    });
+    return () => onSubmitActionChange(null);
+  }, [onSubmitActionChange, allSelections.length, canAct, canSubmit, handleSubmit]);
 
   if (requirements.length === 0) return null;
 
@@ -541,17 +553,19 @@ export default function TargetsDecision({
         </div>
       </div>
 
-      <div className="w-full shrink-0 pt-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
-          disabled={!canAct || !canSubmit}
-          onClick={handleSubmit}
-        >
-          Submit Targets ({allSelections.length})
-        </Button>
-      </div>
+      {inlineSubmit && (
+        <div className="w-full shrink-0 pt-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
+            disabled={!canAct || !canSubmit}
+            onClick={handleSubmit}
+          >
+            Submit Targets ({allSelections.length})
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

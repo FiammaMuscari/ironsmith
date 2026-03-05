@@ -100,10 +100,16 @@ mod tests {
         let trigger = YouDiscardCardTrigger::new(PlayerFilter::You, None);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(CardDiscardedEvent::new(alice, card_id));
+        let event = TriggerEvent::new_with_provenance(
+            CardDiscardedEvent::new(alice, card_id),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
 
-        let opponent_event = TriggerEvent::new(CardDiscardedEvent::new(bob, card_id));
+        let opponent_event = TriggerEvent::new_with_provenance(
+            CardDiscardedEvent::new(bob, card_id),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&opponent_event, &ctx));
     }
 
@@ -127,11 +133,17 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         assert!(trigger.matches(
-            &TriggerEvent::new(CardDiscardedEvent::new(alice, creature)),
+            &TriggerEvent::new_with_provenance(
+                CardDiscardedEvent::new(alice, creature),
+                crate::provenance::ProvNodeId::UNKNOWN
+            ),
             &ctx
         ));
         assert!(!trigger.matches(
-            &TriggerEvent::new(CardDiscardedEvent::new(alice, land)),
+            &TriggerEvent::new_with_provenance(
+                CardDiscardedEvent::new(alice, land),
+                crate::provenance::ProvNodeId::UNKNOWN
+            ),
             &ctx
         ));
     }

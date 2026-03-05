@@ -4,6 +4,7 @@ import { scryfallImageUrl } from "@/lib/scryfall";
 import { ManaCostIcons, SymbolText } from "@/lib/mana-symbols";
 import DecisionRouter from "@/components/decisions/DecisionRouter";
 import { normalizeDecisionText } from "@/components/decisions/decisionText";
+import { Button } from "@/components/ui/button";
 import { Check, Copy } from "lucide-react";
 
 const ORACLE_TEXT_STYLE = {
@@ -138,10 +139,12 @@ function actionTargetsObjectName(action, lowerName) {
 export default function HoverArtOverlay({
   objectId,
   suppressStableId = null,
+  submitAction = null,
   onProtectedTopChange = null,
   onOracleTextHeightChange = null,
+  onInspectorSubmitChange = null,
 }) {
-  const { state, game, inspectorDebug, dispatch } = useGame();
+  const { state, game, inspectorDebug, dispatch, cancelDecision } = useGame();
   const objectNameById = useMemo(() => buildObjectNameMap(state), [state]);
   const objectIdNum = objectId != null ? Number(objectId) : null;
   const objectIdKey = Number.isFinite(objectIdNum) ? String(objectIdNum) : null;
@@ -233,6 +236,7 @@ export default function HoverArtOverlay({
   const inspectorDecision = isInspectorDecision(decision) && canAct
     ? decision
     : null;
+  const topStackObject = (state?.stack_objects || [])[0] || null;
   const decisionSourceName = decision && decision.kind !== "priority" && decision.kind !== "attackers" && decision.kind !== "blockers"
     ? decision.source_name || null
     : null;
@@ -285,6 +289,12 @@ export default function HoverArtOverlay({
   const compiledText = Array.isArray(details?.abilities) && details.abilities.length > 0
     ? details.abilities.join("\n")
     : (oracleText || "");
+  const displayRulesText = (
+    String(compiledText || "").trim()
+    || String(hoveredStackObject?.ability_text || "").trim()
+    || String(hoveredStackObject?.effect_text || "").trim()
+    || String(oracleText || "").trim()
+  );
   const rawDefinition = details?.raw_compilation || "";
   const canCopyDebug = compiledText.trim().length > 0 || rawDefinition.trim().length > 0;
   const debugClipboardText = [
@@ -404,16 +414,43 @@ export default function HoverArtOverlay({
       window.removeEventListener("resize", publishOracleHeight);
       onOracleTextHeightChange(0);
     };
-  }, [onOracleTextHeightChange, oracleText, metadataText, statsText, hideOracleText]);
+  }, [onOracleTextHeightChange, displayRulesText, metadataText, statsText, hideOracleText]);
 
+  const resolvingEffectText = useMemo(() => {
+    if (!inspectorDecision) return null;
+    const kind = String(topStackObject?.ability_kind || "").trim().toLowerCase();
+    if (kind.includes("trigger")) return "Triggered ability";
+    if (kind.includes("activat")) return "Activated ability";
+    if (kind.includes("mana")) return "Mana ability";
+    return "Spell";
+  }, [inspectorDecision, topStackObject?.ability_kind]);
   const inspectorDecisionSubtitle = inspectorDecision
-    ? (inspectorDecision.description || inspectorDecision.source_name || null)
+    ? [inspectorDecision.source_name || topStackObject?.name || objectName, resolvingEffectText]
+      .filter(Boolean)
+      .join(" · ")
     : null;
   const oracleTopPaddingClass = inspectorDecision
     ? "pt-[382px]"
     : inspectorActions.length > 0
       ? "pt-[246px]"
       : "pt-[164px]";
+  const submitLabel = submitAction?.label || "Submit";
+  const canSubmit = canAct
+    && !!submitAction
+    && !submitAction.disabled
+    && typeof submitAction.onSubmit === "function";
+
+  useEffect(() => {
+    if (!onInspectorSubmitChange || inspectorDecision) return;
+    onInspectorSubmitChange(null);
+  }, [onInspectorSubmitChange, inspectorDecision]);
+
+  useEffect(
+    () => () => {
+      if (onInspectorSubmitChange) onInspectorSubmitChange(null);
+    },
+    [onInspectorSubmitChange]
+  );
 
   if (!imageUrl || imageErrored || suppressObject) return null;
 
@@ -478,7 +515,7 @@ export default function HoverArtOverlay({
           </div>
         )}
         {inspectorDecision && (
-          <div className="absolute inset-x-2 top-[88px] bottom-[88px] z-[12] overflow-hidden rounded border border-[#5d7ea0] bg-[linear-gradient(180deg,rgba(6,14,22,0.76),rgba(6,14,22,0.9))] shadow-[0_16px_34px_rgba(0,0,0,0.55)] pointer-events-auto backdrop-blur-[2.2px]">
+          <div className="absolute inset-x-2 top-[88px] z-[12] max-h-[calc(100%-176px)] overflow-hidden rounded border border-[#5d7ea0] bg-[linear-gradient(180deg,rgba(6,14,22,0.76),rgba(6,14,22,0.9))] shadow-[0_16px_34px_rgba(0,0,0,0.55)] pointer-events-auto backdrop-blur-[2.2px]">
             <div className="border-b border-[#3c5876] bg-[rgba(8,19,31,0.9)] px-2.5 py-1.5">
               <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#8cc4ff]">
                 {inspectorDecisionTitle(inspectorDecision)}
@@ -490,13 +527,48 @@ export default function HoverArtOverlay({
                 />
               )}
             </div>
-            <div className="h-full min-h-0 px-1.5 py-1">
+            <div className="max-h-[320px] overflow-y-auto px-1.5 py-1">
               <DecisionRouter
                 decision={inspectorDecision}
                 canAct={canAct}
                 inspectorOracleTextHeight={0}
+                inlineSubmit={false}
+                onSubmitActionChange={onInspectorSubmitChange}
+                hideDescription
               />
             </div>
+            <article className="border-t border-[#3c5876] bg-[rgba(8,18,30,0.88)] px-2 py-1.5">
+              <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9dccff]">
+                Current Decision
+              </div>
+              <div className="mt-1 grid grid-cols-2 gap-1.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 rounded-sm border border-[#3d6ea5] bg-[rgba(40,84,136,0.78)] px-2 text-[12px] font-bold tracking-wide text-[#d9ecff] transition-colors hover:bg-[rgba(58,114,182,0.9)]"
+                  disabled={!canSubmit}
+                  onClick={() => {
+                    if (!canSubmit) return;
+                    submitAction.onSubmit();
+                  }}
+                >
+                  {submitLabel}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 rounded-sm border border-[#8b3f4a] bg-[rgba(120,35,46,0.76)] px-2 text-[12px] font-bold uppercase tracking-wide text-[#ffd8df] transition-colors hover:bg-[rgba(163,50,64,0.9)]"
+                  disabled={!canAct}
+                  onClick={() => {
+                    cancelDecision();
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </article>
           </div>
         )}
         {inspectorDebug && (
@@ -533,35 +605,37 @@ export default function HoverArtOverlay({
           </div>
         )}
 
-        <div className="absolute inset-0 overflow-y-auto">
-          <div className={`relative z-10 min-h-full flex flex-col justify-end px-2.5 ${oracleTopPaddingClass} pb-2.5`}>
-            <div ref={oracleBodyRef} className="space-y-1">
-              {statsText && (
-                <div
-                  className="text-[20px] font-extrabold leading-none text-[#f8d98e] tracking-wide text-right"
-                  style={METADATA_TEXT_STYLE}
-                >
-                  {statsText}
-                </div>
-              )}
-              {metadataText && (
-                <div
-                  className="text-[15px] leading-snug text-[#d1e2f6]"
-                  style={METADATA_TEXT_STYLE}
-                >
-                  {metadataText}
-                </div>
-              )}
-              {oracleText && (
-                <SymbolText
-                  text={hideOracleText ? "" : oracleText}
-                  className="text-[18px] leading-[1.32] text-[#ecf4ff] block"
-                  style={ORACLE_TEXT_STYLE}
-                />
-              )}
+        {!inspectorDecision && (
+          <div className="absolute inset-x-0 top-0 bottom-[172px] overflow-y-auto">
+            <div className={`relative z-10 min-h-full flex flex-col justify-end px-2.5 ${oracleTopPaddingClass} pb-2.5`}>
+              <div ref={oracleBodyRef} className="space-y-1">
+                {statsText && (
+                  <div
+                    className="text-[20px] font-extrabold leading-none text-[#f8d98e] tracking-wide text-right"
+                    style={METADATA_TEXT_STYLE}
+                  >
+                    {statsText}
+                  </div>
+                )}
+                {metadataText && (
+                  <div
+                    className="text-[15px] leading-snug text-[#d1e2f6]"
+                    style={METADATA_TEXT_STYLE}
+                  >
+                    {metadataText}
+                  </div>
+                )}
+                {displayRulesText && (
+                  <SymbolText
+                    text={hideOracleText ? "" : displayRulesText}
+                    className="text-[18px] leading-[1.32] text-[#ecf4ff] block"
+                    style={ORACLE_TEXT_STYLE}
+                  />
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

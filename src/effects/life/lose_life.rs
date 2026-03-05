@@ -132,7 +132,10 @@ impl EffectExecutor for LoseLifeEffect {
         // Create the trigger event only if life was actually lost
         let outcome = EffectOutcome::count(amount as i32);
         if amount > 0 {
-            let event = TriggerEvent::new(LifeLossEvent::from_effect(player_id, amount));
+            let event = TriggerEvent::new_with_provenance(
+                LifeLossEvent::from_effect(player_id, amount),
+                ctx.provenance,
+            );
             Ok(outcome.with_event(event))
         } else {
             Ok(outcome)

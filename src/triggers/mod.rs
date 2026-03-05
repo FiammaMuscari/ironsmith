@@ -44,7 +44,6 @@
 pub mod check;
 pub mod event;
 pub mod matcher_trait;
-pub mod trigger_event;
 
 // Trigger category submodules
 pub mod cards;
@@ -65,7 +64,7 @@ pub use check::{
 };
 pub use event::{AttackEventTarget, DamageEventTarget};
 pub use matcher_trait::{TriggerContext, TriggerMatcher};
-pub use trigger_event::TriggerEvent;
+pub type TriggerEvent = crate::events::RawEvent;
 
 // Re-export trigger implementations from submodules
 pub use cards::*;

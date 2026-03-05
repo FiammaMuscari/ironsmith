@@ -77,7 +77,10 @@ mod tests {
         let trigger = YouGainLifeTrigger::new();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(LifeGainEvent::new(alice, 3));
+        let event = TriggerEvent::new_with_provenance(
+            LifeGainEvent::new(alice, 3),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 
@@ -91,7 +94,10 @@ mod tests {
         let trigger = YouGainLifeTrigger::new();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(LifeGainEvent::new(bob, 3));
+        let event = TriggerEvent::new_with_provenance(
+            LifeGainEvent::new(bob, 3),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 }

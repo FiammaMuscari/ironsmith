@@ -171,7 +171,11 @@ pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
         }
         TriggerSpec::Expend { player, amount } => Trigger::expend(amount, player),
         TriggerSpec::Custom(description) => {
-            panic!("unsupported custom trigger spec compiled: {description}");
+            debug_assert!(
+                false,
+                "unsupported custom trigger spec compiled: {description}"
+            );
+            Trigger::custom("unsupported_custom_trigger", description)
         }
         TriggerSpec::SagaChapter(chapters) => Trigger::saga_chapter(chapters),
         TriggerSpec::HauntedCreatureDies => Trigger::custom(
@@ -2615,117 +2619,11 @@ fn compile_effect_inner(
     effect: &EffectAst,
     ctx: &mut CompileContext,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
+    if let Some(compiled) = try_compile_combat_and_damage_effect(effect, ctx)? {
+        return Ok(compiled);
+    }
+
     match effect {
-        EffectAst::DealDamage { amount, target } => {
-            let resolved_amount = resolve_value_it_tag(amount, ctx)?;
-            let (effects, choices) =
-                compile_tagged_effect_for_target(target, ctx, "damaged", |spec| {
-                    Effect::deal_damage(resolved_amount.clone(), spec)
-                })?;
-            if let TargetAst::Player(filter, _) | TargetAst::PlayerOrPlaneswalker(filter, _) =
-                target
-            {
-                ctx.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
-            }
-            Ok((effects, choices))
-        }
-        EffectAst::DealDamageEqualToPower { source, target } => {
-            let (source_spec, mut choices) = resolve_target_spec_with_choices(source, ctx)?;
-            let mut damage_target_spec = if source == target {
-                source_spec.clone()
-            } else {
-                let (target_spec, target_choices) = resolve_target_spec_with_choices(target, ctx)?;
-                for choice in target_choices {
-                    push_choice(&mut choices, choice);
-                }
-                target_spec
-            };
-
-            let mut effects = Vec::new();
-            let mut amount_source_spec = source_spec.clone();
-
-            if source_spec.is_target() {
-                let source_tag = ctx.next_tag("damage_source");
-                effects.push(
-                    Effect::new(crate::effects::TargetOnlyEffect::new(source_spec.clone()))
-                        .tag(source_tag.clone()),
-                );
-                amount_source_spec = ChooseSpec::Tagged(source_tag.as_str().into());
-                if source == target {
-                    damage_target_spec = ChooseSpec::Tagged(source_tag.as_str().into());
-                }
-            }
-
-            let damage_effect = tag_object_target_effect(
-                Effect::deal_damage(
-                    Value::PowerOf(Box::new(amount_source_spec)),
-                    damage_target_spec.clone(),
-                ),
-                &damage_target_spec,
-                ctx,
-                "damaged",
-            );
-            effects.push(damage_effect);
-
-            if let TargetAst::Player(filter, _) | TargetAst::PlayerOrPlaneswalker(filter, _) =
-                target
-            {
-                ctx.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
-            }
-
-            Ok((effects, choices))
-        }
-        EffectAst::Fight {
-            creature1,
-            creature2,
-        } => {
-            let (spec1, mut choices) = resolve_target_spec_with_choices(creature1, ctx)?;
-            let (spec2, other_choices) = resolve_target_spec_with_choices(creature2, ctx)?;
-            for choice in other_choices {
-                push_choice(&mut choices, choice);
-            }
-            let effect = Effect::fight(spec1.clone(), spec2.clone());
-            Ok((vec![effect], choices))
-        }
-        EffectAst::FightIterated { creature2 } => {
-            let (spec2, choices) = resolve_target_spec_with_choices(creature2, ctx)?;
-            let effect = Effect::fight(ChooseSpec::Iterated, spec2);
-            Ok((vec![effect], choices))
-        }
-        EffectAst::Clash { opponent } => match opponent {
-            ClashOpponentAst::Opponent => Ok((
-                vec![Effect::new(
-                    crate::effects::ClashEffect::against_any_opponent(),
-                )],
-                Vec::new(),
-            )),
-            ClashOpponentAst::TargetOpponent => {
-                let choice = ChooseSpec::target(ChooseSpec::Player(PlayerFilter::Opponent));
-                Ok((
-                    vec![Effect::new(
-                        crate::effects::ClashEffect::against_target_opponent(),
-                    )],
-                    vec![choice],
-                ))
-            }
-            ClashOpponentAst::DefendingPlayer => Ok((
-                vec![Effect::new(
-                    crate::effects::ClashEffect::against_defending_player(),
-                )],
-                Vec::new(),
-            )),
-        },
-        EffectAst::DealDamageEach { amount, filter } => {
-            let resolved_amount = resolve_value_it_tag(amount, ctx)?;
-            let resolved_filter = resolve_it_tag(filter, ctx)?;
-            let tag = ctx.next_tag("damaged");
-            ctx.last_object_tag = Some(tag.clone());
-            let effect = Effect::for_each(
-                resolved_filter,
-                vec![Effect::deal_damage(resolved_amount, ChooseSpec::Iterated).tag(tag)],
-            );
-            Ok((vec![effect], Vec::new()))
-        }
         EffectAst::PutCounters {
             counter_type,
             count,
@@ -6046,6 +5944,127 @@ pub(crate) fn resolve_non_target_player_filter(
             }
         }
     }
+}
+
+fn try_compile_combat_and_damage_effect(
+    effect: &EffectAst,
+    ctx: &mut CompileContext,
+) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
+    let compiled = match effect {
+        EffectAst::DealDamage { amount, target } => {
+            let resolved_amount = resolve_value_it_tag(amount, ctx)?;
+            let (effects, choices) =
+                compile_tagged_effect_for_target(target, ctx, "damaged", |spec| {
+                    Effect::deal_damage(resolved_amount.clone(), spec)
+                })?;
+            if let TargetAst::Player(filter, _) | TargetAst::PlayerOrPlaneswalker(filter, _) =
+                target
+            {
+                ctx.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
+            }
+            (effects, choices)
+        }
+        EffectAst::DealDamageEqualToPower { source, target } => {
+            let (source_spec, mut choices) = resolve_target_spec_with_choices(source, ctx)?;
+            let mut damage_target_spec = if source == target {
+                source_spec.clone()
+            } else {
+                let (target_spec, target_choices) = resolve_target_spec_with_choices(target, ctx)?;
+                for choice in target_choices {
+                    push_choice(&mut choices, choice);
+                }
+                target_spec
+            };
+
+            let mut effects = Vec::new();
+            let mut amount_source_spec = source_spec.clone();
+
+            if source_spec.is_target() {
+                let source_tag = ctx.next_tag("damage_source");
+                effects.push(
+                    Effect::new(crate::effects::TargetOnlyEffect::new(source_spec.clone()))
+                        .tag(source_tag.clone()),
+                );
+                amount_source_spec = ChooseSpec::Tagged(source_tag.as_str().into());
+                if source == target {
+                    damage_target_spec = ChooseSpec::Tagged(source_tag.as_str().into());
+                }
+            }
+
+            let damage_effect = tag_object_target_effect(
+                Effect::deal_damage(
+                    Value::PowerOf(Box::new(amount_source_spec)),
+                    damage_target_spec.clone(),
+                ),
+                &damage_target_spec,
+                ctx,
+                "damaged",
+            );
+            effects.push(damage_effect);
+
+            if let TargetAst::Player(filter, _) | TargetAst::PlayerOrPlaneswalker(filter, _) =
+                target
+            {
+                ctx.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
+            }
+
+            (effects, choices)
+        }
+        EffectAst::Fight {
+            creature1,
+            creature2,
+        } => {
+            let (spec1, mut choices) = resolve_target_spec_with_choices(creature1, ctx)?;
+            let (spec2, other_choices) = resolve_target_spec_with_choices(creature2, ctx)?;
+            for choice in other_choices {
+                push_choice(&mut choices, choice);
+            }
+            let effect = Effect::fight(spec1.clone(), spec2.clone());
+            (vec![effect], choices)
+        }
+        EffectAst::FightIterated { creature2 } => {
+            let (spec2, choices) = resolve_target_spec_with_choices(creature2, ctx)?;
+            let effect = Effect::fight(ChooseSpec::Iterated, spec2);
+            (vec![effect], choices)
+        }
+        EffectAst::Clash { opponent } => match opponent {
+            ClashOpponentAst::Opponent => (
+                vec![Effect::new(
+                    crate::effects::ClashEffect::against_any_opponent(),
+                )],
+                Vec::new(),
+            ),
+            ClashOpponentAst::TargetOpponent => {
+                let choice = ChooseSpec::target(ChooseSpec::Player(PlayerFilter::Opponent));
+                (
+                    vec![Effect::new(
+                        crate::effects::ClashEffect::against_target_opponent(),
+                    )],
+                    vec![choice],
+                )
+            }
+            ClashOpponentAst::DefendingPlayer => (
+                vec![Effect::new(
+                    crate::effects::ClashEffect::against_defending_player(),
+                )],
+                Vec::new(),
+            ),
+        },
+        EffectAst::DealDamageEach { amount, filter } => {
+            let resolved_amount = resolve_value_it_tag(amount, ctx)?;
+            let resolved_filter = resolve_it_tag(filter, ctx)?;
+            let tag = ctx.next_tag("damaged");
+            ctx.last_object_tag = Some(tag.clone());
+            let effect = Effect::for_each(
+                resolved_filter,
+                vec![Effect::deal_damage(resolved_amount, ChooseSpec::Iterated).tag(tag)],
+            );
+            (vec![effect], Vec::new())
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(Some(compiled))
 }
 
 pub(crate) fn resolve_it_tag(

@@ -27,7 +27,14 @@ function decisionKey(decision) {
   return decision.description || "";
 }
 
-export default function DecisionRouter({ decision, canAct, inspectorOracleTextHeight = 0 }) {
+export default function DecisionRouter({
+  decision,
+  canAct,
+  inspectorOracleTextHeight = 0,
+  inlineSubmit = true,
+  onSubmitActionChange = null,
+  hideDescription = false,
+}) {
   if (!decision) return null;
 
   const key = decisionKey(decision);
@@ -42,6 +49,9 @@ export default function DecisionRouter({ decision, canAct, inspectorOracleTextHe
           decision={decision}
           canAct={canAct}
           inspectorOracleTextHeight={inspectorOracleTextHeight}
+          inlineSubmit={inlineSubmit}
+          onSubmitActionChange={onSubmitActionChange}
+          hideDescription={hideDescription}
         />
       );
     case "attackers":
@@ -55,6 +65,9 @@ export default function DecisionRouter({ decision, canAct, inspectorOracleTextHe
           decision={decision}
           canAct={canAct}
           inspectorOracleTextHeight={inspectorOracleTextHeight}
+          inlineSubmit={inlineSubmit}
+          onSubmitActionChange={onSubmitActionChange}
+          hideDescription={hideDescription}
         />
       );
     case "select_options":
@@ -64,10 +77,22 @@ export default function DecisionRouter({ decision, canAct, inspectorOracleTextHe
           decision={decision}
           canAct={canAct}
           inspectorOracleTextHeight={inspectorOracleTextHeight}
+          inlineSubmit={inlineSubmit}
+          onSubmitActionChange={onSubmitActionChange}
+          hideDescription={hideDescription}
         />
       );
     case "number":
-      return <NumberDecision key={key} decision={decision} canAct={canAct} />;
+      return (
+        <NumberDecision
+          key={key}
+          decision={decision}
+          canAct={canAct}
+          inlineSubmit={inlineSubmit}
+          onSubmitActionChange={onSubmitActionChange}
+          hideDescription={hideDescription}
+        />
+      );
     default:
       return (
         <div className="text-muted-foreground text-[16px] italic p-2">

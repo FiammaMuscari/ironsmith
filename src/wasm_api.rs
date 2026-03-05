@@ -1874,22 +1874,28 @@ impl WasmGame {
                     .object(entered_id)
                     .is_some_and(|obj| obj.zone == crate::zone::Zone::Battlefield);
                 if entered_battlefield {
+                    let etb_event_provenance = self
+                        .game
+                        .provenance_graph
+                        .alloc_root_event(crate::events::EventKind::EnterBattlefield);
                     let event = if entered_tapped {
-                        crate::triggers::TriggerEvent::new(
+                        crate::triggers::TriggerEvent::new_with_provenance(
                             crate::events::EnterBattlefieldEvent::tapped(
                                 entered_id,
                                 crate::zone::Zone::Command,
                             ),
+                            etb_event_provenance,
                         )
                     } else {
-                        crate::triggers::TriggerEvent::new(
+                        crate::triggers::TriggerEvent::new_with_provenance(
                             crate::events::EnterBattlefieldEvent::new(
                                 entered_id,
                                 crate::zone::Zone::Command,
                             ),
+                            etb_event_provenance,
                         )
                     };
-                    self.game.queue_trigger_event(event);
+                    self.game.queue_trigger_event(etb_event_provenance, event);
                 }
 
                 entered_id
@@ -4513,6 +4519,7 @@ mod tests {
             source: ObjectId::from_raw(1),
             ability_index: 0,
             activator: PlayerId::from_index(0),
+            provenance: crate::provenance::ProvNodeId::default(),
             mana_cost: ManaCost::new(),
             other_costs: Vec::new(),
             mana_to_add: vec![ManaSymbol::Green],
@@ -4540,6 +4547,7 @@ mod tests {
             source: ObjectId::from_raw(1),
             ability_index: 0,
             activator: PlayerId::from_index(0),
+            provenance: crate::provenance::ProvNodeId::default(),
             mana_cost: ManaCost::new(),
             other_costs: Vec::new(),
             mana_to_add: vec![ManaSymbol::Green],
@@ -4704,7 +4712,8 @@ mod tests {
             "cleanup discard should not auto-resolve for the perspective player"
         );
 
-        let opponent = PlayerId::from_index((wasm.perspective.0 + 1) % wasm.game.players.len() as u8);
+        let opponent =
+            PlayerId::from_index((wasm.perspective.0 + 1) % wasm.game.players.len() as u8);
         let opponent_ctx = DecisionContext::SelectObjects(SelectObjectsContext::new(
             opponent,
             None,
@@ -4725,7 +4734,8 @@ mod tests {
     #[test]
     fn cleanup_auto_discard_respects_toggle_and_cleanup_step() {
         let mut wasm = WasmGame::new();
-        let opponent = PlayerId::from_index((wasm.perspective.0 + 1) % wasm.game.players.len() as u8);
+        let opponent =
+            PlayerId::from_index((wasm.perspective.0 + 1) % wasm.game.players.len() as u8);
         let opponent_ctx = DecisionContext::SelectObjects(SelectObjectsContext::new(
             opponent,
             None,
@@ -4754,16 +4764,15 @@ mod tests {
     fn snapshot_perspective_hand_cards_are_not_truncated() {
         let mut wasm = WasmGame::new();
         for _ in 0..20 {
-            wasm.add_card_to_zone(
-                0,
-                "Ornithopter".to_string(),
-                "hand".to_string(),
-                true,
-            )
-            .expect("adding card to hand should succeed");
+            wasm.add_card_to_zone(0, "Ornithopter".to_string(), "hand".to_string(), true)
+                .expect("adding card to hand should succeed");
         }
 
-        let pending_cast_stack_id = wasm.priority_state.pending_cast.as_ref().map(|p| p.stack_id);
+        let pending_cast_stack_id = wasm
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
         let snapshot = GameSnapshot::from_game(
             &wasm.game,
             wasm.perspective,
@@ -4804,7 +4813,11 @@ mod tests {
         wasm.add_card_to_zone(0, "Mountain".to_string(), "battlefield".to_string(), true)
             .expect("adding mountain to battlefield should succeed");
 
-        let pending_cast_stack_id = wasm.priority_state.pending_cast.as_ref().map(|p| p.stack_id);
+        let pending_cast_stack_id = wasm
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
         let snapshot = GameSnapshot::from_game(
             &wasm.game,
             wasm.perspective,

@@ -7637,8 +7637,7 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
                     let rhs_token_idx = token_index_for_word_index(subject_tokens, rhs_word_idx)
                         .unwrap_or(subject_tokens.len());
                     if rhs_token_idx < subject_tokens.len() {
-                        let rhs_tokens =
-                            trim_edge_punctuation(&subject_tokens[rhs_token_idx..]);
+                        let rhs_tokens = trim_edge_punctuation(&subject_tokens[rhs_token_idx..]);
                         if !rhs_tokens.is_empty()
                             && let Ok(filter) = parse_object_filter(&rhs_tokens, false)
                         {

@@ -84,12 +84,15 @@ impl EffectExecutor for DiscoverEffect {
         if let Some(candidate_id) = candidate {
             let Some(candidate_obj) = game.object(candidate_id) else {
                 return Ok(EffectOutcome::count(exiled.len() as i32).with_event(
-                    TriggerEvent::new(KeywordActionEvent::new(
-                        KeywordActionKind::Discover,
-                        player_id,
-                        ctx.source,
-                        count,
-                    )),
+                    TriggerEvent::new_with_provenance(
+                        KeywordActionEvent::new(
+                            KeywordActionKind::Discover,
+                            player_id,
+                            ctx.source,
+                            count,
+                        ),
+                        ctx.provenance,
+                    ),
                 ));
             };
 
@@ -175,8 +178,9 @@ impl EffectExecutor for DiscoverEffect {
         };
 
         Ok(
-            EffectOutcome::from_result(result).with_event(TriggerEvent::new(
+            EffectOutcome::from_result(result).with_event(TriggerEvent::new_with_provenance(
                 KeywordActionEvent::new(KeywordActionKind::Discover, player_id, ctx.source, count),
+                ctx.provenance,
             )),
         )
     }

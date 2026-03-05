@@ -30,6 +30,29 @@ function defaultOpponentAttackerDeclarations(decision) {
   return declarations;
 }
 
+function isPaymentLikeOptionDescription(text) {
+  const description = String(text || "").trim().toLowerCase();
+  if (!description) return false;
+  if (/^pay\b/.test(description)) return true;
+  if (/^use\b.*\bfrom mana pool\b/.test(description)) return true;
+  if (/^tap\b.*:\s*add\b/.test(description)) return true;
+  return false;
+}
+
+function isPaymentSelectOptionsDecision(decision) {
+  if (!decision || decision.kind !== "select_options") return false;
+  if (isPaymentLikeOptionDescription(decision.description || "")) return true;
+  return (decision.options || []).some((opt) => isPaymentLikeOptionDescription(opt?.description || ""));
+}
+
+function isCastOrPlayConfirmDecision(decision) {
+  if (!decision || decision.kind !== "select_options") return false;
+  const legal = (decision.options || []).filter((opt) => opt?.legal !== false);
+  if (legal.length !== 1) return false;
+  const optionText = String(legal[0]?.description || "");
+  return /^\s*(cast|play)\b/i.test(optionText);
+}
+
 function tryBuildAutoResolveCommand(decision) {
   if (!decision) return null;
 
@@ -39,6 +62,9 @@ function tryBuildAutoResolveCommand(decision) {
     decision.max === 1 &&
     !(decision.reason || "").toLowerCase().includes("order")
   ) {
+    if (isPaymentSelectOptionsDecision(decision) || isCastOrPlayConfirmDecision(decision)) {
+      return null;
+    }
     const legal = (decision.options || []).filter((o) => o.legal);
     if (legal.length === 1) {
       return {
@@ -110,7 +136,7 @@ export function GameProvider({ children }) {
   const [autoPassEnabled, setAutoPassEnabled] = useState(true);
   const [holdRule, setHoldRule] = useState("never");
   const [inspectorDebug, setInspectorDebug] = useState(false);
-  const [semanticThreshold, setSemanticThresholdRaw] = useState(35);
+  const [semanticThreshold, setSemanticThresholdRaw] = useState(96);
   const [cardsMeetingThreshold, setCardsMeetingThreshold] = useState(0);
   const [semanticStats, setSemanticStats] = useState(null);
   const logRef = useRef([]);

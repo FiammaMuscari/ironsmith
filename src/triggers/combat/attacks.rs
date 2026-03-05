@@ -162,10 +162,10 @@ mod tests {
         let trigger = AttacksTrigger::any_creature();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(CreatureAttackedEvent::new(
-            creature_id,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::new(creature_id, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -199,18 +199,24 @@ mod tests {
         let trigger = AttacksTrigger::one_or_more(ObjectFilter::creature());
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let first_event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            attacker_one,
-            AttackEventTarget::Player(bob),
-            2,
-        ));
+        let first_event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                attacker_one,
+                AttackEventTarget::Player(bob),
+                2,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&first_event, &ctx));
 
-        let second_event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            attacker_two,
-            AttackEventTarget::Player(bob),
-            2,
-        ));
+        let second_event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                attacker_two,
+                AttackEventTarget::Player(bob),
+                2,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&second_event, &ctx));
     }
 
@@ -243,25 +249,34 @@ mod tests {
             AttacksTrigger::one_or_more_with_min_total_attackers(ObjectFilter::creature(), 3);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let below_threshold = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            attacker_one,
-            AttackEventTarget::Player(bob),
-            2,
-        ));
+        let below_threshold = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                attacker_one,
+                AttackEventTarget::Player(bob),
+                2,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&below_threshold, &ctx));
 
-        let first_event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            attacker_one,
-            AttackEventTarget::Player(bob),
-            3,
-        ));
+        let first_event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                attacker_one,
+                AttackEventTarget::Player(bob),
+                3,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&first_event, &ctx));
 
-        let second_event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            attacker_two,
-            AttackEventTarget::Player(bob),
-            3,
-        ));
+        let second_event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                attacker_two,
+                AttackEventTarget::Player(bob),
+                3,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&second_event, &ctx));
     }
 }

@@ -72,7 +72,10 @@ mod tests {
 
         let source = create_creature(&mut game, "Blocker", alice, vec![]);
         let vampire_attacker = create_creature(&mut game, "Vampire", bob, vec![Subtype::Vampire]);
-        let event = TriggerEvent::new(CreatureBlockedEvent::new(source, vampire_attacker));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureBlockedEvent::new(source, vampire_attacker),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let trigger =
             ThisBlocksObjectTrigger::new(ObjectFilter::creature().with_subtype(Subtype::Vampire));
@@ -88,7 +91,10 @@ mod tests {
 
         let source = create_creature(&mut game, "Blocker", alice, vec![]);
         let zombie_attacker = create_creature(&mut game, "Zombie", bob, vec![Subtype::Zombie]);
-        let event = TriggerEvent::new(CreatureBlockedEvent::new(source, zombie_attacker));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureBlockedEvent::new(source, zombie_attacker),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let trigger =
             ThisBlocksObjectTrigger::new(ObjectFilter::creature().with_subtype(Subtype::Vampire));

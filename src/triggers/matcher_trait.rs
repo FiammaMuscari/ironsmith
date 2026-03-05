@@ -8,7 +8,7 @@ use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::target::FilterContext;
 
-use super::trigger_event::TriggerEvent;
+use super::TriggerEvent;
 
 /// Context provided to trigger matchers for determining if they match an event.
 ///

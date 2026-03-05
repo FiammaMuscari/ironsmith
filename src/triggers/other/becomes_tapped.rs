@@ -39,7 +39,10 @@ mod tests {
         let trigger = BecomesTappedTrigger;
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(PermanentTappedEvent::new(source_id));
+        let event = TriggerEvent::new_with_provenance(
+            PermanentTappedEvent::new(source_id),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 }

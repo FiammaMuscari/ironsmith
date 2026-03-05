@@ -70,6 +70,7 @@ fn apply_processed_damage_outcome(
     initial_target: DamageTarget,
     amount: u32,
     source_is_combat: bool,
+    provenance: crate::provenance::ProvNodeId,
 ) -> EffectOutcome {
     let processed = process_damage_assignments_with_event_with_source_snapshot(
         game,
@@ -107,22 +108,24 @@ fn apply_processed_damage_outcome(
         total_damage_dealt = total_damage_dealt.saturating_add(assignment.amount);
         let mut outcome = EffectOutcome::count(assignment.amount as i32);
         if assignment.amount > 0 {
-            outcome = outcome.with_event(TriggerEvent::new(DamageEvent::new(
-                source,
-                assignment.target,
-                assignment.amount,
-                source_is_combat,
-            )));
+            outcome = outcome.with_event(TriggerEvent::new_with_provenance(
+                DamageEvent::new(
+                    source,
+                    assignment.target,
+                    assignment.amount,
+                    source_is_combat,
+                ),
+                provenance,
+            ));
         }
 
         if let DamageTarget::Player(player_id) = assignment.target
             && applied.life_lost > 0
         {
-            outcome = outcome.with_event(TriggerEvent::new(LifeLossEvent::new(
-                player_id,
-                applied.life_lost,
-                true,
-            )));
+            outcome = outcome.with_event(TriggerEvent::new_with_provenance(
+                LifeLossEvent::new(player_id, applied.life_lost, true),
+                provenance,
+            ));
         }
 
         outcomes.push(outcome);
@@ -170,6 +173,7 @@ impl EffectExecutor for DealDamageEffect {
                     DamageTarget::Player(player_id),
                     amount,
                     self.source_is_combat,
+                    ctx.provenance,
                 ));
             }
             return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
@@ -190,7 +194,8 @@ impl EffectExecutor for DealDamageEffect {
                         DamageTarget::Object(object_id),
                         amount,
                         self.source_is_combat,
-                    ));
+                    ctx.provenance,
+                ));
                 }
                 return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
             }
@@ -225,7 +230,8 @@ impl EffectExecutor for DealDamageEffect {
                         DamageTarget::Player(player_id),
                         amount,
                         self.source_is_combat,
-                    ));
+                    ctx.provenance,
+                ));
                 }
                 AttackEventTarget::Planeswalker(object_id) => {
                     if !game
@@ -241,7 +247,8 @@ impl EffectExecutor for DealDamageEffect {
                         DamageTarget::Object(object_id),
                         amount,
                         self.source_is_combat,
-                    ));
+                    ctx.provenance,
+                ));
                 }
             }
         }
@@ -256,7 +263,8 @@ impl EffectExecutor for DealDamageEffect {
                 DamageTarget::Player(controller),
                 amount,
                 self.source_is_combat,
-            ));
+                    ctx.provenance,
+                ));
         }
 
         // Otherwise, use pre-resolved targets from ctx.targets
@@ -270,7 +278,8 @@ impl EffectExecutor for DealDamageEffect {
                         DamageTarget::Player(*player_id),
                         amount,
                         self.source_is_combat,
-                    ));
+                    ctx.provenance,
+                ));
                 }
                 ResolvedTarget::Object(object_id) => {
                     if let Some(obj) = game.object(*object_id) {
@@ -286,7 +295,8 @@ impl EffectExecutor for DealDamageEffect {
                             DamageTarget::Object(*object_id),
                             amount,
                             self.source_is_combat,
-                        ));
+                    ctx.provenance,
+                ));
                     }
                 }
             }

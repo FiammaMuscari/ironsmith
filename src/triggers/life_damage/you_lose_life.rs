@@ -39,7 +39,10 @@ mod tests {
         let trigger = YouLoseLifeTrigger;
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(LifeLossEvent::from_effect(alice, 2));
+        let event = TriggerEvent::new_with_provenance(
+            LifeLossEvent::from_effect(alice, 2),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 }

@@ -134,7 +134,13 @@ impl EffectExecutor for CopySpellEffect {
             created_ids.push(copy_id);
 
             // Copying a spell can trigger magecraft-like abilities.
-            game.queue_trigger_event(TriggerEvent::new(SpellCopiedEvent::new(copy_id, copier)));
+            game.queue_trigger_event(
+                ctx.provenance,
+                TriggerEvent::new_with_provenance(
+                    SpellCopiedEvent::new(copy_id, copier),
+                    ctx.provenance,
+                ),
+            );
         }
 
         Ok(EffectOutcome::from_result(EffectResult::Objects(

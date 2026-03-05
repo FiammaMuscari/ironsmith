@@ -112,11 +112,17 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // Alice draws - should match
-        let event = TriggerEvent::new(CardsDrawnEvent::single(alice, card_id, true));
+        let event = TriggerEvent::new_with_provenance(
+            CardsDrawnEvent::single(alice, card_id, true),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
 
         // Bob draws - should not match (controller is Alice)
-        let event2 = TriggerEvent::new(CardsDrawnEvent::single(bob, card_id, true));
+        let event2 = TriggerEvent::new_with_provenance(
+            CardsDrawnEvent::single(bob, card_id, true),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event2, &ctx));
     }
 
@@ -127,7 +133,10 @@ mod tests {
             ObjectId::from_raw(2),
             ObjectId::from_raw(3),
         ];
-        let event = TriggerEvent::new(CardsDrawnEvent::new(PlayerId::from_index(0), cards, true));
+        let event = TriggerEvent::new_with_provenance(
+            CardsDrawnEvent::new(PlayerId::from_index(0), cards, true),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         // Batch trigger fires once
         let batch_trigger = PlayerDrawsCardTrigger::new(PlayerFilter::Any);

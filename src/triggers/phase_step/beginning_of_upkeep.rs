@@ -109,7 +109,10 @@ mod tests {
         let trigger = BeginningOfUpkeepTrigger::your_upkeep();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfUpkeepEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfUpkeepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 
@@ -123,7 +126,10 @@ mod tests {
         let trigger = BeginningOfUpkeepTrigger::your_upkeep();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfUpkeepEvent::new(bob));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfUpkeepEvent::new(bob),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 
@@ -137,8 +143,14 @@ mod tests {
         let trigger = BeginningOfUpkeepTrigger::each_upkeep();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event1 = TriggerEvent::new(BeginningOfUpkeepEvent::new(alice));
-        let event2 = TriggerEvent::new(BeginningOfUpkeepEvent::new(bob));
+        let event1 = TriggerEvent::new_with_provenance(
+            BeginningOfUpkeepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
+        let event2 = TriggerEvent::new_with_provenance(
+            BeginningOfUpkeepEvent::new(bob),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event1, &ctx));
         assert!(trigger.matches(&event2, &ctx));
     }
@@ -152,7 +164,10 @@ mod tests {
         let trigger = BeginningOfUpkeepTrigger::your_upkeep();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfDrawStepEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfDrawStepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 

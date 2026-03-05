@@ -10,6 +10,7 @@ use crate::ids::{ObjectId, PlayerId, StableId};
 use crate::object::Object;
 use crate::player::Player;
 use crate::prevention::PreventionEffectManager;
+use crate::provenance::{ProvNodeId, ProvenanceGraph, ProvenanceNodeKind};
 use crate::replacement::{ReplacementEffectId, ReplacementEffectManager};
 use crate::static_abilities::StaticAbility;
 use crate::triggers::TriggerIdentity;
@@ -1135,6 +1136,8 @@ pub struct GameState {
     /// Effects (like VoteEffect) can push events here, and the game loop
     /// processes them after effect resolution.
     pub pending_trigger_events: Vec<crate::triggers::TriggerEvent>,
+    /// Event provenance graph for this game.
+    pub provenance_graph: ProvenanceGraph,
 
     /// Current combat state (Some during combat phase, None otherwise).
     /// Effects can directly add creatures to combat when this is set.
@@ -1443,6 +1446,7 @@ impl GameState {
             mana_spend_effects: ManaSpendEffectTracker::new(),
             delayed_triggers: Vec::new(),
             pending_trigger_events: Vec::new(),
+            provenance_graph: ProvenanceGraph::new(),
             combat: None,
             is_night: false,
             monarch: None,
@@ -2036,7 +2040,13 @@ impl GameState {
             };
             let event =
                 ZoneChangeEvent::new(event_object_id, old_zone, new_zone, pre_move_snapshot);
-            self.queue_trigger_event(TriggerEvent::new(event));
+            let event_provenance = self
+                .provenance_graph
+                .alloc_root_event(crate::events::EventKind::ZoneChange);
+            self.queue_trigger_event(
+                event_provenance,
+                TriggerEvent::new_with_provenance(event, event_provenance),
+            );
         }
 
         // Validate zone consistency in debug builds
@@ -2505,8 +2515,12 @@ impl GameState {
         let obj = self.object_mut(id)?;
         obj.add_counters(counter_type, amount);
 
-        Some(crate::triggers::TriggerEvent::new(
+        let event_provenance = self
+            .provenance_graph
+            .alloc_root_event(crate::events::EventKind::CounterPlaced);
+        Some(crate::triggers::TriggerEvent::new_with_provenance(
             crate::events::other::CounterPlacedEvent::new(id, counter_type, amount),
+            event_provenance,
         ))
     }
 
@@ -2529,14 +2543,19 @@ impl GameState {
             return None;
         }
 
-        let event =
-            crate::triggers::TriggerEvent::new(crate::events::MarkersChangedEvent::removed(
+        let event_provenance = self
+            .provenance_graph
+            .alloc_root_event(crate::events::EventKind::MarkersChanged);
+        let event = crate::triggers::TriggerEvent::new_with_provenance(
+            crate::events::MarkersChangedEvent::removed(
                 counter_type,
                 id,
                 removed,
                 source,
                 source_controller,
-            ));
+            ),
+            event_provenance,
+        );
 
         Some((removed, event))
     }
@@ -2559,7 +2578,10 @@ impl GameState {
         let obj = self.object_mut(id)?;
         obj.add_counters(counter_type, amount);
 
-        Some(crate::triggers::TriggerEvent::new(
+        let event_provenance = self
+            .provenance_graph
+            .alloc_root_event(crate::events::EventKind::MarkersChanged);
+        Some(crate::triggers::TriggerEvent::new_with_provenance(
             crate::events::MarkersChangedEvent::added(
                 counter_type,
                 id,
@@ -2567,6 +2589,7 @@ impl GameState {
                 source,
                 source_controller,
             ),
+            event_provenance,
         ))
     }
 
@@ -2606,7 +2629,10 @@ impl GameState {
             _ => return None,
         }
 
-        Some(crate::triggers::TriggerEvent::new(
+        let event_provenance = self
+            .provenance_graph
+            .alloc_root_event(crate::events::EventKind::MarkersChanged);
+        Some(crate::triggers::TriggerEvent::new_with_provenance(
             crate::events::MarkersChangedEvent::added(
                 counter_type,
                 player_id,
@@ -2614,6 +2640,7 @@ impl GameState {
                 source,
                 source_controller,
             ),
+            event_provenance,
         ))
     }
 
@@ -4180,12 +4207,66 @@ impl GameState {
 
     /// Queue a trigger event to be processed by the game loop.
     /// Use this when effects need to emit events that should generate triggers.
-    pub fn queue_trigger_event(&mut self, event: crate::triggers::TriggerEvent) {
+    ///
+    /// `parent` is the causal provenance node for this emitted event. If the
+    /// event already has a valid provenance, it is preserved.
+    pub fn queue_trigger_event(
+        &mut self,
+        parent: ProvNodeId,
+        mut event: crate::triggers::TriggerEvent,
+    ) {
+        let provenance = event.provenance();
+        if provenance.is_unknown() || self.provenance_graph.node(provenance).is_none() {
+            let event_provenance =
+                if parent.is_unknown() || self.provenance_graph.node(parent).is_none() {
+                    self.provenance_graph.alloc_root_event(event.kind())
+                } else {
+                    self.alloc_child_event_provenance(parent, event.kind())
+                };
+            event.set_provenance(event_provenance);
+        }
+
+        let queued = self
+            .provenance_graph
+            .alloc_child(event.provenance(), ProvenanceNodeKind::TriggerQueued);
+        event.set_provenance(queued);
         self.pending_trigger_events.push(event);
     }
 
     /// Take all pending trigger events (empties the queue).
     pub fn take_pending_trigger_events(&mut self) -> Vec<crate::triggers::TriggerEvent> {
         std::mem::take(&mut self.pending_trigger_events)
+    }
+
+    /// Ensure a replacement-event envelope has provenance.
+    pub fn ensure_event_provenance(&mut self, mut event: Event) -> Event {
+        let provenance = event.provenance();
+        if provenance.is_unknown() || self.provenance_graph.node(provenance).is_none() {
+            let provenance = self.provenance_graph.alloc_root_event(event.kind());
+            event.set_provenance(provenance);
+        }
+        event
+    }
+
+    /// Ensure a trigger-event envelope has provenance.
+    pub fn ensure_trigger_event_provenance(
+        &mut self,
+        mut event: crate::triggers::TriggerEvent,
+    ) -> crate::triggers::TriggerEvent {
+        let provenance = event.provenance();
+        if provenance.is_unknown() || self.provenance_graph.node(provenance).is_none() {
+            let provenance = self.provenance_graph.alloc_root_event(event.kind());
+            event.set_provenance(provenance);
+        }
+        event
+    }
+
+    /// Allocate a provenance child event under `parent` (or a root when parent is unknown).
+    pub fn alloc_child_event_provenance(
+        &mut self,
+        parent: ProvNodeId,
+        kind: EventKind,
+    ) -> ProvNodeId {
+        self.provenance_graph.alloc_child_event(parent, kind)
     }
 }

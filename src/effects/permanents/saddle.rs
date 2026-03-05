@@ -125,7 +125,10 @@ impl EffectExecutor for SaddleCostEffect {
         for id in &chosen {
             if game.object(*id).is_some() && !game.is_tapped(*id) {
                 game.tap(*id);
-                events.push(TriggerEvent::new(PermanentTappedEvent::new(*id)));
+                events.push(TriggerEvent::new_with_provenance(
+                    PermanentTappedEvent::new(*id),
+                    ctx.provenance,
+                ));
             }
         }
 

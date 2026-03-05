@@ -119,13 +119,14 @@ impl EffectExecutor for ScryEffect {
         }
 
         Ok(
-            EffectOutcome::count(scry_count as i32).with_event(TriggerEvent::new(
+            EffectOutcome::count(scry_count as i32).with_event(TriggerEvent::new_with_provenance(
                 KeywordActionEvent::new(
                     KeywordActionKind::Scry,
                     player_id,
                     ctx.source,
                     scry_count as u32,
                 ),
+                ctx.provenance,
             )),
         )
     }

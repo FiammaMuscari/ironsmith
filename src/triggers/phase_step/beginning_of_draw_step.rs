@@ -77,7 +77,10 @@ mod tests {
         let trigger = BeginningOfDrawStepTrigger::your_draw_step();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfDrawStepEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfDrawStepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 
@@ -91,7 +94,10 @@ mod tests {
         let trigger = BeginningOfDrawStepTrigger::your_draw_step();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfDrawStepEvent::new(bob));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfDrawStepEvent::new(bob),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 

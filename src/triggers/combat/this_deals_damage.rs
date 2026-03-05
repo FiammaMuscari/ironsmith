@@ -146,12 +146,10 @@ mod tests {
         let trigger = ThisDealsDamageTrigger::new();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(DamageEvent::new(
-            source_id,
-            DamageTarget::Player(bob),
-            3,
-            false,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(source_id, DamageTarget::Player(bob), 3, false),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }

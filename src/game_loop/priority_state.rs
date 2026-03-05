@@ -61,6 +61,8 @@ pub struct PendingCast {
     pub from_zone: Zone,
     /// The player casting the spell.
     pub caster: PlayerId,
+    /// Provenance parent for costs/effects emitted by this cast flow.
+    pub provenance: ProvNodeId,
     /// Current stage of the casting process.
     pub stage: CastStage,
     /// The chosen X value (if applicable).
@@ -113,6 +115,7 @@ impl PendingCast {
         spell_id: ObjectId,
         from_zone: Zone,
         caster: PlayerId,
+        provenance: ProvNodeId,
         stage: CastStage,
         x_value: Option<u32>,
         remaining_requirements: Vec<TargetRequirement>,
@@ -125,6 +128,7 @@ impl PendingCast {
             spell_id,
             from_zone,
             caster,
+            provenance,
             stage,
             x_value,
             chosen_targets: Vec::new(),
@@ -267,6 +271,8 @@ pub struct PendingActivation {
     pub ability_index: usize,
     /// The player activating the ability.
     pub activator: PlayerId,
+    /// Provenance parent for costs/effects emitted by this activation flow.
+    pub provenance: ProvNodeId,
     /// Current stage of the activation process.
     pub stage: ActivationStage,
     /// The effects of the ability.
@@ -320,6 +326,7 @@ impl PendingActivation {
         source: ObjectId,
         ability_index: usize,
         activator: PlayerId,
+        provenance: ProvNodeId,
         stage: ActivationStage,
         effects: Vec<crate::effect::Effect>,
         remaining_requirements: Vec<TargetRequirement>,
@@ -340,6 +347,7 @@ impl PendingActivation {
             source,
             ability_index,
             activator,
+            provenance,
             stage,
             effects,
             chosen_targets: Vec::new(),
@@ -375,6 +383,8 @@ pub struct PendingManaAbility {
     pub ability_index: usize,
     /// The player activating the ability.
     pub activator: PlayerId,
+    /// Provenance parent for costs/effects emitted by this mana-ability flow.
+    pub provenance: ProvNodeId,
     /// The mana cost that needs to be paid.
     pub mana_cost: crate::mana::ManaCost,
     /// Other (non-mana) costs that have already been validated.

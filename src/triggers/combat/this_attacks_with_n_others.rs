@@ -67,11 +67,14 @@ mod tests {
         let trigger = ThisAttacksWithNOthersTrigger::new(2);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            source_id,
-            AttackEventTarget::Player(bob),
-            3,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                source_id,
+                AttackEventTarget::Player(bob),
+                3,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 
@@ -85,11 +88,14 @@ mod tests {
         let trigger = ThisAttacksWithNOthersTrigger::new(2);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            other_id,
-            AttackEventTarget::Player(bob),
-            3,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                other_id,
+                AttackEventTarget::Player(bob),
+                3,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 
@@ -102,11 +108,14 @@ mod tests {
         let trigger = ThisAttacksWithNOthersTrigger::new(2);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            source_id,
-            AttackEventTarget::Player(bob),
-            2,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                source_id,
+                AttackEventTarget::Player(bob),
+                2,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 }

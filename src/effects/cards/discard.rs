@@ -161,6 +161,7 @@ impl EffectExecutor for DiscardEffect {
                 player_id,
                 cause.clone(),
                 false,
+                ctx.provenance,
                 &mut *ctx.decision_maker,
             );
             if !result.prevented {

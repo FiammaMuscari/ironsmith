@@ -151,9 +151,10 @@ impl EffectExecutor for SacrificeEffect {
                 EventOutcome::Proceed(result) => {
                     sacrificed_count += 1;
                     if result.final_zone == Zone::Graveyard {
-                        sacrifice_events.push(TriggerEvent::new(
+                        sacrifice_events.push(TriggerEvent::new_with_provenance(
                             SacrificeEvent::new(id, Some(ctx.source))
                                 .with_snapshot(pre_snapshot, sacrificing_player),
+                            ctx.provenance,
                         ));
                     }
                 }
@@ -234,9 +235,10 @@ impl SacrificeTargetEffect {
             EventOutcome::Prevented => Ok((false, None)),
             EventOutcome::Proceed(result) => {
                 let event = if result.final_zone == Zone::Graveyard {
-                    Some(TriggerEvent::new(
+                    Some(TriggerEvent::new_with_provenance(
                         SacrificeEvent::new(object_id, Some(ctx.source))
                             .with_snapshot(pre_snapshot, sacrificing_player),
+                        ctx.provenance,
                     ))
                 } else {
                     None

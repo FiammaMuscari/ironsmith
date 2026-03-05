@@ -107,14 +107,15 @@ impl EffectExecutor for ProliferateEffect {
         }
 
         outcome.result = crate::effect::EffectResult::Count(proliferated_count);
-        Ok(
-            outcome.with_event(TriggerEvent::new(KeywordActionEvent::new(
+        Ok(outcome.with_event(TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(
                 KeywordActionKind::Proliferate,
                 ctx.controller,
                 ctx.source,
                 1,
-            ))),
-        )
+            ),
+            ctx.provenance,
+        )))
     }
 }
 

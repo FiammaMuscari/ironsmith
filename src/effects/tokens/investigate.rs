@@ -43,12 +43,15 @@ impl EffectExecutor for InvestigateEffect {
         for _ in 0..count {
             let effect = CreateTokenEffect::you(clue_token_definition(), 1);
             outcomes.push(effect.execute(game, ctx)?);
-            action_events.push(TriggerEvent::new(KeywordActionEvent::new(
-                KeywordActionKind::Investigate,
-                ctx.controller,
-                ctx.source,
-                1,
-            )));
+            action_events.push(TriggerEvent::new_with_provenance(
+                KeywordActionEvent::new(
+                    KeywordActionKind::Investigate,
+                    ctx.controller,
+                    ctx.source,
+                    1,
+                ),
+                ctx.provenance,
+            ));
         }
 
         Ok(EffectOutcome::aggregate(outcomes).with_events(action_events))

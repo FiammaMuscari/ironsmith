@@ -56,6 +56,7 @@ pub fn add_lore_counter_and_check_chapters(
 
     // Check triggers - this will find any saga chapter abilities that should fire
     // based on whether the threshold was crossed by this counter addition
+    let event = game.ensure_trigger_event_provenance(event);
     let triggers = check_triggers(game, &event);
 
     // Add triggered abilities to the queue
@@ -78,4 +79,3 @@ pub fn mark_saga_final_chapter_resolved(game: &mut GameState, saga_id: ObjectId)
         game.set_saga_final_chapter_resolved(saga_id);
     }
 }
-

@@ -114,20 +114,16 @@ mod tests {
         let trigger = KeywordActionTrigger::new(KeywordActionKind::Earthbend, PlayerFilter::You);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let you_event = TriggerEvent::new(KeywordActionEvent::new(
-            KeywordActionKind::Earthbend,
-            alice,
-            source_id,
-            2,
-        ));
+        let you_event = TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(KeywordActionKind::Earthbend, alice, source_id, 2),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&you_event, &ctx));
 
-        let opp_event = TriggerEvent::new(KeywordActionEvent::new(
-            KeywordActionKind::Earthbend,
-            bob,
-            source_id,
-            2,
-        ));
+        let opp_event = TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(KeywordActionKind::Earthbend, bob, source_id, 2),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&opp_event, &ctx));
     }
 
@@ -155,12 +151,10 @@ mod tests {
             stable, source_id,
             "expected stable id to differ after zone change"
         );
-        let event = TriggerEvent::new(KeywordActionEvent::new(
-            KeywordActionKind::Cycle,
-            alice,
-            stable,
-            1,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(KeywordActionKind::Cycle, alice, stable, 1),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let trigger =
             KeywordActionTrigger::from_source(KeywordActionKind::Cycle, PlayerFilter::You);
@@ -175,12 +169,10 @@ mod tests {
         let source_id = ObjectId::from_raw(1);
         let trigger = KeywordActionTrigger::new(KeywordActionKind::Investigate, PlayerFilter::Any);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
-        let event = TriggerEvent::new(KeywordActionEvent::new(
-            KeywordActionKind::Scry,
-            alice,
-            source_id,
-            1,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(KeywordActionKind::Scry, alice, source_id, 1),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { useHover } from "@/context/HoverContext";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,30 @@ import { ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SymbolText } from "@/lib/mana-symbols";
 import { normalizeDecisionText } from "./decisionText";
+
+function isPaymentOptionDescription(text) {
+  return /^\s*pay\b/i.test(String(text || ""));
+}
+
+function isCastOptionDescription(text) {
+  return /^\s*cast\b/i.test(String(text || ""));
+}
+
+function isPlayOptionDescription(text) {
+  return /^\s*play\b/i.test(String(text || ""));
+}
+
+function isPaymentDecision(decision) {
+  if (!decision || decision.kind !== "select_options") return false;
+  if (isPaymentOptionDescription(decision.description || "")) return true;
+  return (decision.options || []).some((opt) => isPaymentOptionDescription(opt.description));
+}
+
+function isSpellCastFlowDecision(decision) {
+  if (!decision || decision.kind !== "select_options") return false;
+  if (isCastOptionDescription(decision.description || "")) return true;
+  return (decision.options || []).some((opt) => isCastOptionDescription(opt.description));
+}
 
 function buildContextualOptions(options, hoveredObjectId) {
   const hasObjectBoundOptions = options.some((opt) => opt.object_id != null);
@@ -153,33 +177,83 @@ function Description({ text }) {
   );
 }
 
+function useExternalSubmitAction(onSubmitActionChange, action) {
+  useEffect(() => {
+    if (!onSubmitActionChange) return undefined;
+    onSubmitActionChange(action || null);
+    return () => onSubmitActionChange(null);
+  }, [onSubmitActionChange, action]);
+}
+
 export default function SelectOptionsDecision({
   decision,
   canAct,
   inspectorOracleTextHeight = 0,
+  inlineSubmit = true,
+  onSubmitActionChange = null,
+  hideDescription = false,
 }) {
   const reason = (decision.reason || "").toLowerCase();
 
   // Dispatch to sub-type based on decision metadata
   if (reason.includes("order")) {
-    return <OrderingDecision decision={decision} canAct={canAct} />;
+    return (
+      <OrderingDecision
+        decision={decision}
+        canAct={canAct}
+        inlineSubmit={inlineSubmit}
+        onSubmitActionChange={onSubmitActionChange}
+        hideDescription={hideDescription}
+      />
+    );
   }
   if (decision.distribute || reason.includes("distribut")) {
-    return <DistributeDecision decision={decision} canAct={canAct} />;
+    return (
+      <DistributeDecision
+        decision={decision}
+        canAct={canAct}
+        inlineSubmit={inlineSubmit}
+        onSubmitActionChange={onSubmitActionChange}
+        hideDescription={hideDescription}
+      />
+    );
   }
   if (decision.counter_type || reason.includes("counter")) {
-    return <CountersDecision decision={decision} canAct={canAct} />;
+    return (
+      <CountersDecision
+        decision={decision}
+        canAct={canAct}
+        inlineSubmit={inlineSubmit}
+        onSubmitActionChange={onSubmitActionChange}
+        hideDescription={hideDescription}
+      />
+    );
   }
   const hasRepeatableOption = (decision.options || []).some((opt) => opt.repeatable);
   if (decision.repeatable || hasRepeatableOption) {
-    return <RepeatableDecision decision={decision} canAct={canAct} />;
+    return (
+      <RepeatableDecision
+        decision={decision}
+        canAct={canAct}
+        inlineSubmit={inlineSubmit}
+        onSubmitActionChange={onSubmitActionChange}
+        hideDescription={hideDescription}
+      />
+    );
   }
 
   const min = decision.min ?? 1;
   const max = decision.max ?? 1;
 
   if (min === 1 && max === 1) {
-    return <SingleSelectDecision decision={decision} canAct={canAct} />;
+    return (
+      <SingleSelectDecision
+        decision={decision}
+        canAct={canAct}
+        onSubmitActionChange={onSubmitActionChange}
+        hideDescription={hideDescription}
+      />
+    );
   }
 
   return (
@@ -187,61 +261,147 @@ export default function SelectOptionsDecision({
       decision={decision}
       canAct={canAct}
       inspectorOracleTextHeight={inspectorOracleTextHeight}
+      inlineSubmit={inlineSubmit}
+      onSubmitActionChange={onSubmitActionChange}
+      hideDescription={hideDescription}
     />
   );
 }
 
-function SingleSelectDecision({ decision, canAct }) {
-  const { dispatch } = useGame();
+function SingleSelectDecision({
+  decision,
+  canAct,
+  onSubmitActionChange = null,
+  hideDescription = false,
+}) {
+  const { dispatch, state } = useGame();
   const { hoveredObjectId, hoverCard, clearHover } = useHover();
   const options = useMemo(() => decision.options || [], [decision.options]);
+  const paymentDecision = useMemo(() => isPaymentDecision(decision), [decision]);
+  const castFlowDecision = useMemo(() => isSpellCastFlowDecision(decision), [decision]);
+  const payOption = useMemo(
+    () => options.find((opt) => isPaymentOptionDescription(opt.description)) || null,
+    [options]
+  );
+  const spellCastPaymentDecision = useMemo(() => {
+    if (!paymentDecision) return false;
+    const topStackObject = (state?.stack_objects || [])[0] || null;
+    if (!topStackObject || topStackObject.ability_kind) return false;
+    if (decision?.source_name && topStackObject.name && decision.source_name !== topStackObject.name) {
+      return false;
+    }
+    return true;
+  }, [paymentDecision, state?.stack_objects, decision?.source_name]);
+  const canSubmitPayment = canAct && !!payOption && payOption.legal !== false;
+  const paymentProgressLabel = canSubmitPayment ? "Submit (1/1)" : "Submit (0/1)";
+  const submitPayment = useCallback(() => {
+    if (!payOption || payOption.legal === false) return;
+    dispatch(
+      { type: "select_options", option_indices: [payOption.index] },
+      payOption.description || "Submit"
+    );
+  }, [dispatch, payOption]);
+  const displayOptions = useMemo(
+    () => (paymentDecision ? options.filter((opt) => !isPaymentOptionDescription(opt.description)) : options),
+    [options, paymentDecision]
+  );
+  const legalDisplayOptions = useMemo(
+    () => displayOptions.filter((opt) => opt.legal !== false),
+    [displayOptions]
+  );
+  const singleLegalOption = useMemo(
+    () => (legalDisplayOptions.length === 1 ? legalDisplayOptions[0] : null),
+    [legalDisplayOptions]
+  );
+  const canSubmitSingle = canAct && !!singleLegalOption;
+  const submitSingle = useCallback(() => {
+    if (!singleLegalOption || singleLegalOption.legal === false) return;
+    dispatch(
+      { type: "select_options", option_indices: [singleLegalOption.index] },
+      singleLegalOption.description || "Submit"
+    );
+  }, [dispatch, singleLegalOption]);
+  const singleSubmitLabel = useMemo(() => {
+    if (!singleLegalOption) return "Submit";
+    const description = String(singleLegalOption.description || "").trim();
+    if (isCastOptionDescription(description)) return "Cast";
+    if (isPlayOptionDescription(description)) return "Play";
+    return "Submit (1/1)";
+  }, [singleLegalOption]);
   const contextual = useMemo(
-    () => buildContextualOptions(options, hoveredObjectId),
-    [options, hoveredObjectId]
+    () => buildContextualOptions(displayOptions, hoveredObjectId),
+    [displayOptions, hoveredObjectId]
   );
   const visibleOptions = useAnimatedRows(contextual.options, contextual.options.length > 0);
   const showHoverHint = contextual.waitingForHover && options.some((opt) => opt.object_id != null);
+  const submitAction = useMemo(() => {
+    if (paymentDecision) {
+      return {
+        label: (spellCastPaymentDecision || castFlowDecision) ? "Cast" : paymentProgressLabel,
+        disabled: !canSubmitPayment,
+        onSubmit: submitPayment,
+      };
+    }
+    if (singleLegalOption) {
+      return {
+        label: singleSubmitLabel,
+        disabled: !canSubmitSingle,
+        onSubmit: submitSingle,
+      };
+    }
+    return null;
+  }, [
+    paymentDecision,
+    spellCastPaymentDecision,
+    castFlowDecision,
+    paymentProgressLabel,
+    canSubmitPayment,
+    submitPayment,
+    singleLegalOption,
+    singleSubmitLabel,
+    canSubmitSingle,
+    submitSingle,
+  ]);
+  useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-1">
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="flex flex-col gap-1">
-          <div className="transition-all duration-200">
-            <div className="sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1">
-              <Description text={decision.description} />
-              {showHoverHint && (
-                <HoverHint text="Hover a related card to show its available choices." />
-              )}
-            </div>
-            <div className="w-full border-b border-[#2f4b67] bg-[rgba(10,20,30,0.45)]">
-              <div className="w-full divide-y divide-[#2f4b67]">
-                {visibleOptions.map((opt) => {
-                  const objId = opt.object_id != null ? String(opt.object_id) : null;
-                  return (
-                    <OptionButton
-                      key={opt.index}
-                      opt={opt}
-                      canAct={canAct}
-                      isHighlighted={objId != null && hoveredObjectId === objId}
-                      onClick={() =>
-                        dispatch(
-                          { type: "select_options", option_indices: [opt.index] },
-                          opt.description
-                        )
-                      }
-                      onMouseEnter={() => objId && hoverCard(objId)}
-                      onMouseLeave={clearHover}
-                    />
-                  );
-                })}
-                {!showHoverHint && visibleOptions.length === 0 && (
-                  <div className="px-2.5 py-2 text-[12px] italic text-[#89a7c7]">No legal choices.</div>
-                )}
+    <div className="flex w-full flex-col gap-1">
+      <div className="transition-all duration-200">
+        <div className="sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1">
+          {!paymentDecision && !hideDescription && <Description text={decision.description} />}
+          {showHoverHint && (
+            <HoverHint text="Hover a related card to show its available choices." />
+          )}
+        </div>
+        <div className="w-full border-b border-[#2f4b67] bg-[rgba(10,20,30,0.45)]">
+          <div className="w-full divide-y divide-[#2f4b67] max-h-[220px] overflow-y-auto">
+            {visibleOptions.map((opt) => {
+              const objId = opt.object_id != null ? String(opt.object_id) : null;
+              return (
+                <OptionButton
+                  key={opt.index}
+                  opt={opt}
+                  canAct={canAct}
+                  isHighlighted={objId != null && hoveredObjectId === objId}
+                  onClick={() =>
+                    dispatch(
+                      { type: "select_options", option_indices: [opt.index] },
+                      opt.description
+                    )
+                  }
+                  onMouseEnter={() => objId && hoverCard(objId)}
+                  onMouseLeave={clearHover}
+                />
+              );
+            })}
+            {!showHoverHint && visibleOptions.length === 0 && (
+              <div className="px-2.5 py-2 text-[12px] italic text-[#89a7c7]">
+                {paymentDecision ? "No additional payment actions." : "No legal choices."}
               </div>
-            </div>
+            )}
           </div>
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -250,10 +410,18 @@ function MultiSelectDecision({
   decision,
   canAct,
   inspectorOracleTextHeight = 0,
+  inlineSubmit = true,
+  onSubmitActionChange = null,
+  hideDescription = false,
 }) {
   const { dispatch } = useGame();
   const { hoveredObjectId, hoverCard, clearHover } = useHover();
-  const options = useMemo(() => decision.options || [], [decision.options]);
+  const rawOptions = useMemo(() => decision.options || [], [decision.options]);
+  const paymentDecision = useMemo(() => isPaymentDecision(decision), [decision]);
+  const options = useMemo(
+    () => (paymentDecision ? rawOptions.filter((opt) => !isPaymentOptionDescription(opt.description)) : rawOptions),
+    [rawOptions, paymentDecision]
+  );
   const [selected, setSelected] = useState(new Set());
   const min = decision.min ?? 0;
   const max = decision.max ?? options.length;
@@ -286,12 +454,30 @@ function MultiSelectDecision({
       return next;
     });
   };
+  const canSubmit = canAct && selected.size >= min && selected.size <= max;
+  const selectedIndices = useMemo(() => Array.from(selected), [selected]);
+  const submitLabel = `Submit (${selected.size})`;
+  const handleSubmit = useCallback(() => {
+    dispatch(
+      { type: "select_options", option_indices: selectedIndices },
+      `Selected ${selectedIndices.length} option(s)`
+    );
+  }, [dispatch, selectedIndices]);
+  const submitAction = useMemo(
+    () => ({
+      label: submitLabel,
+      disabled: !canSubmit,
+      onSubmit: handleSubmit,
+    }),
+    [submitLabel, canSubmit, handleSubmit]
+  );
+  useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   return (
     <div className="flex w-full flex-col gap-1.5">
       <div className="-mx-1.5 transition-all duration-200">
         <div className="sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1">
-          <Description text={decision.description} />
+          {!paymentDecision && !hideDescription && <Description text={decision.description} />}
           <SectionHeader text={`Select ${min === max ? min : `${min}–${max}`}`} />
           {showHoverHint && (
             <HoverHint text="Hover a related card to show its choices. You can keep previous selections." />
@@ -330,27 +516,30 @@ function MultiSelectDecision({
           </div>
         </div>
       </div>
-      <div className="w-full shrink-0 pt-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
-          disabled={!canAct || selected.size < min || selected.size > max}
-          onClick={() =>
-            dispatch(
-              { type: "select_options", option_indices: Array.from(selected) },
-              `Selected ${selected.size} option(s)`
-            )
-          }
-        >
-          Submit ({selected.size})
-        </Button>
-      </div>
+      {inlineSubmit && (
+        <div className="w-full shrink-0 pt-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
+            disabled={!canSubmit}
+            onClick={handleSubmit}
+          >
+            {submitLabel}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
 
-function OrderingDecision({ decision, canAct }) {
+function OrderingDecision({
+  decision,
+  canAct,
+  inlineSubmit = true,
+  onSubmitActionChange = null,
+  hideDescription = false,
+}) {
   const { dispatch } = useGame();
   const [order, setOrder] = useState(
     () => (decision.options || []).map((opt) => opt.index)
@@ -366,12 +555,24 @@ function OrderingDecision({ decision, canAct }) {
       return next;
     });
   };
+  const handleSubmit = useCallback(() => {
+    dispatch({ type: "select_options", option_indices: order.slice() }, "Order submitted");
+  }, [dispatch, order]);
+  const submitAction = useMemo(
+    () => ({
+      label: "Submit Order",
+      disabled: !canAct,
+      onSubmit: handleSubmit,
+    }),
+    [canAct, handleSubmit]
+  );
+  useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-1">
       <ScrollArea className="flex-1 min-h-0">
         <div className="flex flex-col gap-1 pr-1">
-          <Description text={decision.description} />
+          {!hideDescription && <Description text={decision.description} />}
           <SectionHeader text="Order" />
           <div className="flex flex-col gap-0.5">
             {order.map((optIndex, pos) => {
@@ -405,21 +606,27 @@ function OrderingDecision({ decision, canAct }) {
           </div>
         </div>
       </ScrollArea>
-      <div className="shrink-0 border-t border-game-line-2/70 pt-1">
-        <SubmitButton
-          canAct={canAct}
-          onClick={() =>
-            dispatch({ type: "select_options", option_indices: order.slice() }, "Order submitted")
-          }
-        >
-          Submit Order
-        </SubmitButton>
-      </div>
+      {inlineSubmit && (
+        <div className="shrink-0 border-t border-game-line-2/70 pt-1">
+          <SubmitButton
+            canAct={canAct}
+            onClick={handleSubmit}
+          >
+            Submit Order
+          </SubmitButton>
+        </div>
+      )}
     </div>
   );
 }
 
-function DistributeDecision({ decision, canAct }) {
+function DistributeDecision({
+  decision,
+  canAct,
+  inlineSubmit = true,
+  onSubmitActionChange = null,
+  hideDescription = false,
+}) {
   const { dispatch, setStatus } = useGame();
   const options = decision.options || [];
   const total = Number(decision.max || 0);
@@ -438,12 +645,33 @@ function DistributeDecision({ decision, canAct }) {
     });
     return expanded;
   };
+  const canSubmit = canAct && assigned === total;
+  const submitLabel = `Submit (${assigned}/${total})`;
+  const handleSubmit = useCallback(() => {
+    if (assigned !== total) {
+      setStatus(`Must assign exactly ${total} (currently ${assigned})`, true);
+      return;
+    }
+    dispatch(
+      { type: "select_options", option_indices: expandOptionCounts(counts) },
+      "Distribution submitted"
+    );
+  }, [assigned, total, setStatus, dispatch, counts]);
+  const submitAction = useMemo(
+    () => ({
+      label: submitLabel,
+      disabled: !canSubmit,
+      onSubmit: handleSubmit,
+    }),
+    [submitLabel, canSubmit, handleSubmit]
+  );
+  useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-1">
       <ScrollArea className="flex-1 min-h-0">
         <div className="flex flex-col gap-1 pr-1">
-          <Description text={decision.description} />
+          {!hideDescription && <Description text={decision.description} />}
           <SectionHeader text={`Distribute ${total} total`} />
           <div className="flex flex-col gap-0.5">
             {options.map((opt) => (
@@ -465,29 +693,28 @@ function DistributeDecision({ decision, canAct }) {
           </div>
         </div>
       </ScrollArea>
-      <div className="shrink-0 border-t border-game-line-2/70 pt-1">
-        <SubmitButton
-          canAct={canAct}
-          disabled={assigned !== total}
-          onClick={() => {
-            if (assigned !== total) {
-              setStatus(`Must assign exactly ${total} (currently ${assigned})`, true);
-              return;
-            }
-            dispatch(
-              { type: "select_options", option_indices: expandOptionCounts(counts) },
-              "Distribution submitted"
-            );
-          }}
-        >
-          Submit ({assigned}/{total})
-        </SubmitButton>
-      </div>
+      {inlineSubmit && (
+        <div className="shrink-0 border-t border-game-line-2/70 pt-1">
+          <SubmitButton
+            canAct={canAct}
+            disabled={assigned !== total}
+            onClick={handleSubmit}
+          >
+            {submitLabel}
+          </SubmitButton>
+        </div>
+      )}
     </div>
   );
 }
 
-function CountersDecision({ decision, canAct }) {
+function CountersDecision({
+  decision,
+  canAct,
+  inlineSubmit = true,
+  onSubmitActionChange = null,
+  hideDescription = false,
+}) {
   const { dispatch } = useGame();
   const options = decision.options || [];
   const maxTotal = Number(decision.max || 0);
@@ -506,12 +733,29 @@ function CountersDecision({ decision, canAct }) {
     });
     return expanded;
   };
+  const canSubmit = canAct && total <= maxTotal;
+  const submitLabel = `Submit Counters (${total}/${maxTotal})`;
+  const handleSubmit = useCallback(() => {
+    dispatch(
+      { type: "select_options", option_indices: expandOptionCounts(counts) },
+      "Counter choice submitted"
+    );
+  }, [dispatch, counts]);
+  const submitAction = useMemo(
+    () => ({
+      label: submitLabel,
+      disabled: !canSubmit,
+      onSubmit: handleSubmit,
+    }),
+    [submitLabel, canSubmit, handleSubmit]
+  );
+  useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-1">
       <ScrollArea className="flex-1 min-h-0">
         <div className="flex flex-col gap-1 pr-1">
-          <Description text={decision.description} />
+          {!hideDescription && <Description text={decision.description} />}
           <SectionHeader text="Counters" />
           <div className="flex flex-col gap-0.5">
             {options.map((opt) => (
@@ -533,25 +777,28 @@ function CountersDecision({ decision, canAct }) {
           </div>
         </div>
       </ScrollArea>
-      <div className="shrink-0 border-t border-game-line-2/70 pt-1">
-        <SubmitButton
-          canAct={canAct}
-          disabled={total > maxTotal}
-          onClick={() =>
-            dispatch(
-              { type: "select_options", option_indices: expandOptionCounts(counts) },
-              "Counter choice submitted"
-            )
-          }
-        >
-          Submit Counters ({total}/{maxTotal})
-        </SubmitButton>
-      </div>
+      {inlineSubmit && (
+        <div className="shrink-0 border-t border-game-line-2/70 pt-1">
+          <SubmitButton
+            canAct={canAct}
+            disabled={total > maxTotal}
+            onClick={handleSubmit}
+          >
+            {submitLabel}
+          </SubmitButton>
+        </div>
+      )}
     </div>
   );
 }
 
-function RepeatableDecision({ decision, canAct }) {
+function RepeatableDecision({
+  decision,
+  canAct,
+  inlineSubmit = true,
+  onSubmitActionChange = null,
+  hideDescription = false,
+}) {
   const { dispatch } = useGame();
   const options = decision.options || [];
   const maxTotal = Number(decision.max || 0);
@@ -570,12 +817,30 @@ function RepeatableDecision({ decision, canAct }) {
     });
     return expanded;
   };
+  const min = decision.min || 0;
+  const canSubmit = canAct && total >= min && total <= maxTotal;
+  const submitLabel = `Submit (${total})`;
+  const handleSubmit = useCallback(() => {
+    dispatch(
+      { type: "select_options", option_indices: expandOptionCounts(counts) },
+      `Selected ${total} option(s)`
+    );
+  }, [dispatch, counts, total]);
+  const submitAction = useMemo(
+    () => ({
+      label: submitLabel,
+      disabled: !canSubmit,
+      onSubmit: handleSubmit,
+    }),
+    [submitLabel, canSubmit, handleSubmit]
+  );
+  useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-1">
       <ScrollArea className="flex-1 min-h-0">
         <div className="flex flex-col gap-1 pr-1">
-          <Description text={decision.description} />
+          {!hideDescription && <Description text={decision.description} />}
           <SectionHeader text="Repeat" />
           <div className="flex flex-col gap-0.5">
             {options.map((opt) => (
@@ -597,20 +862,17 @@ function RepeatableDecision({ decision, canAct }) {
           </div>
         </div>
       </ScrollArea>
-      <div className="shrink-0 border-t border-game-line-2/70 pt-1">
-        <SubmitButton
-          canAct={canAct}
-          disabled={total < (decision.min || 0) || total > maxTotal}
-          onClick={() =>
-            dispatch(
-              { type: "select_options", option_indices: expandOptionCounts(counts) },
-              `Selected ${total} option(s)`
-            )
-          }
-        >
-          Submit ({total})
-        </SubmitButton>
-      </div>
+      {inlineSubmit && (
+        <div className="shrink-0 border-t border-game-line-2/70 pt-1">
+          <SubmitButton
+            canAct={canAct}
+            disabled={total < min || total > maxTotal}
+            onClick={handleSubmit}
+          >
+            {submitLabel}
+          </SubmitButton>
+        </div>
+      )}
     </div>
   );
 }

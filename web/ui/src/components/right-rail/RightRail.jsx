@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import HoverArtOverlay from "./HoverArtOverlay";
 import InspectorStackTimeline from "./InspectorStackTimeline";
 import { useHoveredObjectId } from "@/context/HoverContext";
@@ -48,10 +48,10 @@ function isFocusedDecision(decision) {
 
 export default function RightRail({
   pinnedObjectId,
-  onVisibilityChange = null,
   onInspectObject = null,
 }) {
   const { state } = useGame();
+  const [inspectorSubmitAction, setInspectorSubmitAction] = useState(null);
   const hoveredObjectId = useHoveredObjectId();
   const decision = state?.decision || null;
   const canAct = !!decision && decision.player === state?.perspective;
@@ -81,9 +81,6 @@ export default function RightRail({
   const validSelectedObjectId = objectExistsInState(state, selectedObjectId)
     ? selectedObjectId
     : null;
-  const validPinnedObjectId = objectExistsInState(state, pinnedInspectorObjectId)
-    ? pinnedInspectorObjectId
-    : null;
   const stackFlowActive = hasStackEntries || (focusedDecision && canAct);
   const suppressDirectResolvingCastInspector =
     !stackFlowActive
@@ -98,24 +95,25 @@ export default function RightRail({
   const shouldShowInspector = validSelectedObjectId != null && !suppressDirectResolvingCastInspector;
   const showStackTimeline = shouldShowInspector || stackFlowActive;
   const shouldShowRail = shouldShowInspector || showStackTimeline;
-  // Reserve layout space only for persistent inspector contexts:
-  // explicit pin (click), stack flow, or focused multi-step decision flow.
-  const shouldReserveSpace = shouldShowRail && (validPinnedObjectId != null || focusedDecision || hasStackEntries);
   const inspectorSuppressStableId = focusedDecision ? null : resolvingCastStableId;
   const containerStyle = useMemo(
     () => ({ width: INSPECTOR_WIDTH, top: 8, bottom: INSPECTOR_BOTTOM_OFFSET }),
     []
   );
+  const handleInspectorSubmitChange = useCallback((nextAction) => {
+    setInspectorSubmitAction(nextAction || null);
+  }, []);
 
   useEffect(() => {
-    if (typeof onVisibilityChange !== "function") return;
-    onVisibilityChange(shouldReserveSpace);
-  }, [onVisibilityChange, shouldReserveSpace]);
+    if (!focusedDecision || !canAct) {
+      setInspectorSubmitAction(null);
+    }
+  }, [focusedDecision, canAct, decision]);
 
   return (
     <aside
       className={cn(
-        "pointer-events-none absolute right-2 z-40 transition-all duration-250 ease-out",
+        "pointer-events-none absolute right-2 z-40 transition-[transform,opacity] duration-140 ease-out",
         shouldShowRail
           ? "translate-x-0 opacity-100"
           : "translate-x-[110%] opacity-0"
@@ -135,6 +133,8 @@ export default function RightRail({
               <HoverArtOverlay
                 objectId={validSelectedObjectId}
                 suppressStableId={inspectorSuppressStableId}
+                submitAction={inspectorSubmitAction}
+                onInspectorSubmitChange={handleInspectorSubmitChange}
               />
             ) : (
               <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,14,23,0.92),rgba(5,10,16,0.95))]" />

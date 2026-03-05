@@ -295,7 +295,7 @@ impl Default for EffectResult {
 /// Ok(EffectOutcome::resolved())
 ///
 /// // Effect that generated an event
-/// Ok(EffectOutcome::count(3).with_event(TriggerEvent::new(DamageEvent { ... })))
+/// Ok(EffectOutcome::count(3).with_event(TriggerEvent::new_with_provenance(DamageEvent { ... }, crate::provenance::ProvNodeId::UNKNOWN)))
 ///
 /// // Aggregating multiple outcomes from child effects
 /// let outcomes: Vec<EffectOutcome> = child_effects.iter()

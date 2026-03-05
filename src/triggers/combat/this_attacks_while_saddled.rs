@@ -46,10 +46,10 @@ mod tests {
         let trigger = ThisAttacksWhileSaddledTrigger;
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(CreatureAttackedEvent::new(
-            source_id,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::new(source_id, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
 
         game.set_saddled_until_end_of_turn(source_id);

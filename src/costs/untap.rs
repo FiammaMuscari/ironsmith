@@ -50,7 +50,13 @@ impl CostPayer for UntapCost {
 
         // Untap the permanent
         game.untap(ctx.source);
-        game.queue_trigger_event(TriggerEvent::new(PermanentUntappedEvent::new(ctx.source)));
+        game.queue_trigger_event(
+            ctx.provenance,
+            TriggerEvent::new_with_provenance(
+                PermanentUntappedEvent::new(ctx.source),
+                ctx.provenance,
+            ),
+        );
 
         Ok(CostPaymentResult::Paid)
     }

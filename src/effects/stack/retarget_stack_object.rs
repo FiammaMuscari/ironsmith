@@ -407,12 +407,15 @@ impl EffectExecutor for RetargetStackObjectEffect {
                         changed += 1;
                         for target in &game.stack[stack_idx].targets {
                             if let Target::Object(target_id) = target {
-                                events.push(TriggerEvent::new(BecomesTargetedEvent::new(
-                                    *target_id,
-                                    object_id,
-                                    entry.controller,
-                                    entry.is_ability,
-                                )));
+                                events.push(TriggerEvent::new_with_provenance(
+                                    BecomesTargetedEvent::new(
+                                        *target_id,
+                                        object_id,
+                                        entry.controller,
+                                        entry.is_ability,
+                                    ),
+                                    ctx.provenance,
+                                ));
                             }
                         }
                     }
@@ -500,12 +503,15 @@ impl EffectExecutor for RetargetStackObjectEffect {
                             *entry_target = fixed_target;
                             changed += 1;
                             if let Target::Object(target_id) = fixed_target {
-                                events.push(TriggerEvent::new(BecomesTargetedEvent::new(
-                                    target_id,
-                                    object_id,
-                                    entry.controller,
-                                    entry.is_ability,
-                                )));
+                                events.push(TriggerEvent::new_with_provenance(
+                                    BecomesTargetedEvent::new(
+                                        target_id,
+                                        object_id,
+                                        entry.controller,
+                                        entry.is_ability,
+                                    ),
+                                    ctx.provenance,
+                                ));
                             }
                         }
                     }

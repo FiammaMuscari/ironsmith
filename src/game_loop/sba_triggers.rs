@@ -298,6 +298,7 @@ fn resolve_triggered_stack_entry_immediately(
     }
 
     for event in all_events {
+        let event = game.ensure_trigger_event_provenance(event);
         let triggers = check_triggers(game, &event);
         for trigger in triggers {
             trigger_queue.add(trigger);
@@ -395,11 +396,21 @@ fn can_stack_trigger_this_turn(game: &GameState, trigger: &TriggeredAbilityEntry
 ///
 /// Returns None if the trigger has mandatory targets but no legal targets exist.
 fn create_triggered_stack_entry_with_targets(
-    game: &GameState,
+    game: &mut GameState,
     trigger: &TriggeredAbilityEntry,
     decision_maker: &mut dyn DecisionMaker,
 ) -> Option<StackEntry> {
     let mut entry = triggered_to_stack_entry(game, trigger);
+    if let Some(triggering_event) = entry.triggering_event.take() {
+        let matched_node = game.provenance_graph.alloc_child(
+            triggering_event.provenance(),
+            crate::provenance::ProvenanceNodeKind::TriggerMatched {
+                source: trigger.source,
+                controller: trigger.controller,
+            },
+        );
+        entry.triggering_event = Some(triggering_event.with_provenance(matched_node));
+    }
 
     // Check if this trigger has targets that need to be selected
     if trigger.ability.choices.is_empty() {

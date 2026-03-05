@@ -131,6 +131,7 @@ impl CostPayer for DiscardCost {
                     ctx.payer,
                     cause.clone(),
                     false,
+                    ctx.provenance,
                     ctx.decision_maker,
                 );
                 if result.prevented {
@@ -243,6 +244,7 @@ impl CostPayer for DiscardHandCost {
                     ctx.payer,
                     cause.clone(),
                     false,
+                    ctx.provenance,
                     ctx.decision_maker,
                 );
             }
@@ -309,6 +311,7 @@ impl CostPayer for DiscardSourceCost {
             ctx.payer,
             cause,
             false,
+            ctx.provenance,
             ctx.decision_maker,
         );
         if result.prevented {

@@ -349,7 +349,14 @@ fn perform_turn_face_up(
         .and_then(|object| turn_face_up_spec(object).ok_or(ActionError::NoSuchAbility))?;
 
     // Pay the morph/megamorph turn-face-up cost.
-    let mut cost_ctx = CostContext::new(permanent_id, player, decision_maker);
+    let action_provenance =
+        game.provenance_graph
+            .alloc_root(crate::provenance::ProvenanceNodeKind::EffectExecution {
+                source: permanent_id,
+                controller: player,
+            });
+    let mut cost_ctx =
+        CostContext::new(permanent_id, player, decision_maker).with_provenance(action_provenance);
     for cost in spec.cost.costs() {
         pay_cost_component_with_choice(game, cost, &mut cost_ctx)
             .map_err(cost_error_to_action_error)?;
@@ -363,10 +370,15 @@ fn perform_turn_face_up(
         object.add_counters(crate::object::CounterType::PlusOnePlusOne, 1);
     }
 
-    game.queue_trigger_event(TriggerEvent::new(crate::events::TurnedFaceUpEvent::new(
-        permanent_id,
-        player,
-    )));
+    let event_provenance =
+        game.alloc_child_event_provenance(action_provenance, crate::events::EventKind::TurnedFaceUp);
+    game.queue_trigger_event(
+        action_provenance,
+        TriggerEvent::new_with_provenance(
+            crate::events::TurnedFaceUpEvent::new(permanent_id, player),
+            event_provenance,
+        ),
+    );
 
     Ok(())
 }
@@ -808,10 +820,16 @@ fn resolve_cost_choice(
                 }
                 EventOutcome::Proceed(result) => {
                     if result.final_zone == Zone::Graveyard {
-                        game.queue_trigger_event(TriggerEvent::new(
-                            SacrificeEvent::new(target_id, Some(ctx.source))
-                                .with_snapshot(snapshot, sacrificing_player),
-                        ));
+                        let event_provenance = game
+                            .alloc_child_event_provenance(ctx.provenance, crate::events::EventKind::Sacrifice);
+                        game.queue_trigger_event(
+                            ctx.provenance,
+                            TriggerEvent::new_with_provenance(
+                                SacrificeEvent::new(target_id, Some(ctx.source))
+                                    .with_snapshot(snapshot, sacrificing_player),
+                                event_provenance,
+                            ),
+                        );
                     }
                     Ok(())
                 }
@@ -855,6 +873,7 @@ fn resolve_cost_choice(
                     ctx.payer,
                     cause.clone(),
                     false,
+                    ctx.provenance,
                     ctx.decision_maker,
                 );
                 if result.prevented {

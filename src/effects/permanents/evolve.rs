@@ -89,12 +89,10 @@ impl EffectExecutor for EvolveEffect {
         ) {
             outcome = outcome.with_event(counter_event);
         }
-        outcome = outcome.with_event(TriggerEvent::new(KeywordActionEvent::new(
-            KeywordActionKind::Evolve,
-            ctx.controller,
-            source_id,
-            1,
-        )));
+        outcome = outcome.with_event(TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(KeywordActionKind::Evolve, ctx.controller, source_id, 1),
+            ctx.provenance,
+        ));
         Ok(outcome)
     }
 }
@@ -135,7 +133,11 @@ mod tests {
         let source = create_creature(&mut game, alice, 1, 2, 2);
         let entered = create_creature(&mut game, alice, 2, 3, 3);
 
-        let event = TriggerEvent::new(EnterBattlefieldEvent::new(entered, Zone::Hand));
+        let event_provenance = game
+            .provenance_graph
+            .alloc_root_event(crate::events::EventKind::EnterBattlefield);
+        let event =
+            TriggerEvent::new_with_provenance(EnterBattlefieldEvent::new(entered, Zone::Hand), event_provenance);
         let mut ctx = ExecutionContext::new_default(source, alice).with_triggering_event(event);
         let outcome = EvolveEffect::new()
             .execute(&mut game, &mut ctx)
@@ -160,7 +162,11 @@ mod tests {
         let source = create_creature(&mut game, alice, 1, 3, 3);
         let entered = create_creature(&mut game, alice, 2, 2, 3);
 
-        let event = TriggerEvent::new(EnterBattlefieldEvent::new(entered, Zone::Hand));
+        let event_provenance = game
+            .provenance_graph
+            .alloc_root_event(crate::events::EventKind::EnterBattlefield);
+        let event =
+            TriggerEvent::new_with_provenance(EnterBattlefieldEvent::new(entered, Zone::Hand), event_provenance);
         let mut ctx = ExecutionContext::new_default(source, alice).with_triggering_event(event);
         let outcome = EvolveEffect::new()
             .execute(&mut game, &mut ctx)

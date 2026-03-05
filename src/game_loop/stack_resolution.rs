@@ -152,6 +152,7 @@ fn resolve_stack_entry_full(
     // Process events from effect outcomes for triggers
     if let Some(ref mut tq) = trigger_queue {
         for event in all_events {
+            let event = game.ensure_trigger_event_provenance(event);
             let triggers = check_triggers(game, &event);
             for t in triggers {
                 tq.add(t);
@@ -216,11 +217,21 @@ fn resolve_stack_entry_full(
 
                     // Check for ETB triggers
                     if let Some(ref mut tq) = trigger_queue {
+                        let etb_event_provenance = game
+                            .provenance_graph
+                            .alloc_root_event(crate::events::EventKind::EnterBattlefield);
                         let etb_event = if enters_tapped {
-                            TriggerEvent::new(EnterBattlefieldEvent::tapped(id, Zone::Stack))
+                            TriggerEvent::new_with_provenance(EnterBattlefieldEvent::tapped(
+                                id,
+                                Zone::Stack,
+                            ), etb_event_provenance)
                         } else {
-                            TriggerEvent::new(EnterBattlefieldEvent::new(id, Zone::Stack))
+                            TriggerEvent::new_with_provenance(
+                                EnterBattlefieldEvent::new(id, Zone::Stack),
+                                etb_event_provenance,
+                            )
                         };
+                        let etb_event = game.ensure_trigger_event_provenance(etb_event);
                         let etb_triggers = check_triggers(game, &etb_event);
                         for trigger in etb_triggers {
                             tq.add(trigger);
@@ -281,11 +292,21 @@ fn resolve_stack_entry_full(
                     // Drain pending ZoneChangeEvent emitted by ETB move processing.
                     drain_pending_trigger_events(game, tq);
 
+                    let etb_event_provenance = game
+                        .provenance_graph
+                        .alloc_root_event(crate::events::EventKind::EnterBattlefield);
                     let etb_event = if result.enters_tapped {
-                        TriggerEvent::new(EnterBattlefieldEvent::tapped(result.new_id, Zone::Stack))
+                        TriggerEvent::new_with_provenance(EnterBattlefieldEvent::tapped(
+                            result.new_id,
+                            Zone::Stack,
+                        ), etb_event_provenance)
                     } else {
-                        TriggerEvent::new(EnterBattlefieldEvent::new(result.new_id, Zone::Stack))
+                        TriggerEvent::new_with_provenance(EnterBattlefieldEvent::new(
+                            result.new_id,
+                            Zone::Stack,
+                        ), etb_event_provenance)
                     };
+                    let etb_event = game.ensure_trigger_event_provenance(etb_event);
                     let etb_triggers = check_triggers(game, &etb_event);
                     for trigger in etb_triggers {
                         tq.add(trigger);

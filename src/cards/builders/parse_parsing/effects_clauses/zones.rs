@@ -2277,9 +2277,10 @@ pub(crate) fn parse_destroy(tokens: &[Token]) -> Result<EffectAst, CardTextError
 
         let target = parse_target_phrase(&target_tokens)?;
 
-        if let Some(instead_if_idx) = predicate_tokens.windows(2).position(|window| {
-            window[0].is_word("instead") && window[1].is_word("if")
-        }) {
+        if let Some(instead_if_idx) = predicate_tokens
+            .windows(2)
+            .position(|window| window[0].is_word("instead") && window[1].is_word("if"))
+        {
             let base_predicate_tokens = trim_commas(&predicate_tokens[..instead_if_idx]);
             let outer_predicate_tokens = trim_commas(&predicate_tokens[instead_if_idx + 2..]);
             if base_predicate_tokens.is_empty() || outer_predicate_tokens.is_empty() {

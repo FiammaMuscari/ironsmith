@@ -74,6 +74,7 @@ impl EffectExecutor for UntapEffect {
         } else {
             ObjectApplyResultPolicy::CountApplied
         };
+        let provenance = ctx.provenance;
 
         let apply_result = apply_to_selected_objects(
             game,
@@ -83,7 +84,10 @@ impl EffectExecutor for UntapEffect {
             |game, _ctx, object_id| {
                 if game.object(object_id).is_some() && game.is_tapped(object_id) {
                     game.untap(object_id);
-                    events.push(TriggerEvent::new(PermanentUntappedEvent::new(object_id)));
+                    events.push(TriggerEvent::new_with_provenance(
+                        PermanentUntappedEvent::new(object_id),
+                        provenance,
+                    ));
                     Ok(true)
                 } else {
                     Ok(false)

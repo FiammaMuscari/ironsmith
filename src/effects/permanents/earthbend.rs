@@ -99,12 +99,15 @@ impl EffectExecutor for EarthbendEffect {
         );
         let _ = execute_effect(game, &Effect::new(schedule), ctx)?;
 
-        events.push(TriggerEvent::new(KeywordActionEvent::new(
-            KeywordActionKind::Earthbend,
-            ctx.controller,
-            ctx.source,
-            self.counters,
-        )));
+        events.push(TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(
+                KeywordActionKind::Earthbend,
+                ctx.controller,
+                ctx.source,
+                self.counters,
+            ),
+            ctx.provenance,
+        ));
 
         Ok(EffectOutcome::resolved().with_events(events))
     }

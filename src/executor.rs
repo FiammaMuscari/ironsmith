@@ -14,6 +14,7 @@ use crate::effect::{Effect, EffectId, EffectOutcome, EffectResult, Value};
 use crate::events::cause::EventCause;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
+use crate::provenance::{ProvNodeId, ProvenanceNodeKind};
 use crate::snapshot::ObjectSnapshot;
 use crate::tag::{SOURCE_EXILED_TAG, TagKey};
 use crate::target::{ChooseSpec, FilterContext};
@@ -142,6 +143,8 @@ pub struct ExecutionContext<'a> {
     /// This enables replacement effects to match based on what caused an event
     /// (e.g., Library of Leng only applies to effect-caused discards, not cost-based).
     pub cause: EventCause,
+    /// Provenance parent node for events emitted during this execution.
+    pub provenance: ProvNodeId,
     /// Optional color restriction for mana-choice decisions in this execution.
     pub mana_color_restriction: Option<Vec<Color>>,
 }
@@ -171,6 +174,7 @@ impl std::fmt::Debug for ExecutionContext<'_> {
             )
             .field("triggering_event", &self.triggering_event)
             .field("cause", &self.cause)
+            .field("provenance", &self.provenance)
             .field("mana_color_restriction", &self.mana_color_restriction)
             .finish()
     }
@@ -202,6 +206,7 @@ impl<'a> ExecutionContext<'a> {
             triggering_event: None,
             chosen_modes: None,
             cause: EventCause::default(),
+            provenance: ProvNodeId::UNKNOWN,
             mana_color_restriction: None,
         }
     }
@@ -238,6 +243,7 @@ impl<'a> ExecutionContext<'a> {
             triggering_event: None,
             chosen_modes: None,
             cause: EventCause::default(),
+            provenance: ProvNodeId::UNKNOWN,
             mana_color_restriction: None,
         }
     }
@@ -264,6 +270,7 @@ impl<'a> ExecutionContext<'a> {
             triggering_event: self.triggering_event,
             chosen_modes: self.chosen_modes,
             cause: self.cause,
+            provenance: self.provenance,
             mana_color_restriction: self.mana_color_restriction,
         }
     }
@@ -271,6 +278,12 @@ impl<'a> ExecutionContext<'a> {
     /// Restrict mana color choices for effects executed in this context.
     pub fn with_mana_color_restriction(mut self, restriction: Option<Vec<Color>>) -> Self {
         self.mana_color_restriction = restriction;
+        self
+    }
+
+    /// Set provenance parent for emitted events.
+    pub fn with_provenance(mut self, provenance: ProvNodeId) -> Self {
+        self.provenance = provenance;
         self
     }
 
@@ -389,6 +402,7 @@ impl<'a> ExecutionContext<'a> {
     /// When Model of Unity triggers, "voted_with_you" should contain players who
     /// voted with Bob, not players who voted with Alice.
     pub fn with_triggering_event(mut self, event: crate::triggers::TriggerEvent) -> Self {
+        self.provenance = event.provenance();
         if let Some(snapshot) = event.snapshot() {
             let snapshots = vec![snapshot.clone()];
             self.set_tagged_objects("triggering", snapshots.clone());
@@ -699,8 +713,28 @@ pub fn execute_effect(
     effect: &Effect,
     ctx: &mut ExecutionContext,
 ) -> Result<EffectOutcome, ExecutionError> {
-    // All effects implement EffectExecutor via the wrapped trait object
-    effect.0.execute(game, ctx)
+    // All effects implement EffectExecutor via the wrapped trait object.
+    let mut outcome = effect.0.execute(game, ctx)?;
+
+    // Attach provenance to all emitted events.
+    if !outcome.events.is_empty() {
+        let execution_node = game.provenance_graph.alloc_child(
+            ctx.provenance,
+            ProvenanceNodeKind::EffectExecution {
+                source: ctx.source,
+                controller: ctx.controller,
+            },
+        );
+        for event in &mut outcome.events {
+            let provenance = event.provenance();
+            if provenance.is_unknown() || game.provenance_graph.node(provenance).is_none() {
+                let node = game.alloc_child_event_provenance(execution_node, event.kind());
+                event.set_provenance(node);
+            }
+        }
+    }
+
+    Ok(outcome)
 }
 
 // ============================================================================

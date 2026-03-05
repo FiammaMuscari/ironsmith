@@ -108,7 +108,10 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // Create an event where the permanent enters tapped
-        let event = TriggerEvent::new(EnterBattlefieldEvent::tapped(land_id, Zone::Hand));
+        let event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -124,7 +127,10 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // Create an event where the permanent enters untapped (default)
-        let event = TriggerEvent::new(EnterBattlefieldEvent::new(land_id, Zone::Hand));
+        let event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::new(land_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }
@@ -141,7 +147,10 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
         // Bob's permanent enters tapped, but Alice's trigger only cares about her permanents
-        let event = TriggerEvent::new(EnterBattlefieldEvent::tapped(land_id, Zone::Hand));
+        let event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }
@@ -156,7 +165,10 @@ mod tests {
         let trigger = EntersBattlefieldTappedTrigger::permanent_you_control();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(EnterBattlefieldEvent::tapped(creature_id, Zone::Hand));
+        let event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::tapped(creature_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -170,7 +182,10 @@ mod tests {
         let trigger = EntersBattlefieldTappedTrigger::permanent_you_control();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfUpkeepEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfUpkeepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 

@@ -107,12 +107,10 @@ mod tests {
         let trigger =
             DealsDamageToTrigger::combat_only(ObjectFilter::creature(), ObjectFilter::creature());
         let ctx = TriggerContext::for_source(source, alice, &game);
-        let event = TriggerEvent::new(DamageEvent::new(
-            source,
-            DamageTarget::Object(target),
-            2,
-            true,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(source, DamageTarget::Object(target), 2, true),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -128,12 +126,10 @@ mod tests {
         let trigger =
             DealsDamageToTrigger::combat_only(ObjectFilter::creature(), ObjectFilter::creature());
         let ctx = TriggerContext::for_source(source, alice, &game);
-        let event = TriggerEvent::new(DamageEvent::new(
-            source,
-            DamageTarget::Object(target),
-            2,
-            false,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(source, DamageTarget::Object(target), 2, false),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }

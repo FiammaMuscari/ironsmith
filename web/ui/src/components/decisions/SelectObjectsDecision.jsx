@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { useHoveredObjectId } from "@/context/HoverContext";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,9 @@ export default function SelectObjectsDecision({
   decision,
   canAct,
   inspectorOracleTextHeight = 0,
+  inlineSubmit = true,
+  onSubmitActionChange = null,
+  hideDescription = false,
 }) {
   const { dispatch } = useGame();
   const hoveredObjectId = useHoveredObjectId();
@@ -51,6 +54,24 @@ export default function SelectObjectsDecision({
   };
 
   const canSubmit = selected.size >= min && selected.size <= max;
+  const selectedIds = useMemo(() => Array.from(selected), [selected]);
+  const submitLabel = `Submit (${selected.size}/${min === max ? min : `${min}-${max}`})`;
+  const handleSubmit = useCallback(() => {
+    dispatch(
+      { type: "select_objects", object_ids: selectedIds },
+      `Selected ${selectedIds.length} object(s)`
+    );
+  }, [dispatch, selectedIds]);
+
+  useEffect(() => {
+    if (!onSubmitActionChange) return undefined;
+    onSubmitActionChange({
+      label: submitLabel,
+      disabled: !canAct || !canSubmit,
+      onSubmit: handleSubmit,
+    });
+    return () => onSubmitActionChange(null);
+  }, [onSubmitActionChange, submitLabel, canAct, canSubmit, handleSubmit]);
 
   useEffect(() => {
     if (hideTimerRef.current) {
@@ -82,7 +103,7 @@ export default function SelectObjectsDecision({
         )}
       >
         <div className="sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1">
-          {decision.description && (
+          {!hideDescription && decision.description && (
             <div className="text-[14px] text-[#b6cae1] leading-snug">
               {normalizeDecisionText(decision.description)}
             </div>
@@ -129,22 +150,19 @@ export default function SelectObjectsDecision({
           </div>
         </div>
       </div>
-      <div className="w-full shrink-0 pt-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
-          disabled={!canAct || !canSubmit}
-          onClick={() =>
-            dispatch(
-              { type: "select_objects", object_ids: Array.from(selected) },
-              `Selected ${selected.size} object(s)`
-            )
-          }
-        >
-          Submit ({selected.size}/{min === max ? min : `${min}-${max}`})
-        </Button>
-      </div>
+      {inlineSubmit && (
+        <div className="w-full shrink-0 pt-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
+            disabled={!canAct || !canSubmit}
+            onClick={handleSubmit}
+          >
+            {submitLabel}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -94,7 +94,10 @@ mod tests {
             PlayerFilter::Opponent,
         );
         let ctx = TriggerContext::for_source(source, alice, &game);
-        let event = TriggerEvent::new(BecomesTargetedEvent::new(source, spell_source, bob, false));
+        let event = TriggerEvent::new_with_provenance(
+            BecomesTargetedEvent::new(source, spell_source, bob, false),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -111,12 +114,10 @@ mod tests {
             PlayerFilter::Opponent,
         );
         let ctx = TriggerContext::for_source(source, alice, &game);
-        let event = TriggerEvent::new(BecomesTargetedEvent::new(
-            source,
-            spell_source,
-            alice,
-            false,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            BecomesTargetedEvent::new(source, spell_source, alice, false),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }

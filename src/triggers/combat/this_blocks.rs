@@ -40,7 +40,10 @@ mod tests {
         let trigger = ThisBlocksTrigger;
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(CreatureBlockedEvent::new(source_id, attacker_id));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureBlockedEvent::new(source_id, attacker_id),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }

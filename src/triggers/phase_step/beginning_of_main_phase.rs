@@ -146,7 +146,10 @@ mod tests {
         let trigger = BeginningOfMainPhaseTrigger::your_precombat_main_phase();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfPrecombatMainPhaseEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfPrecombatMainPhaseEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 
@@ -159,7 +162,10 @@ mod tests {
         let trigger = BeginningOfMainPhaseTrigger::your_postcombat_main_phase();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfPostcombatMainPhaseEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfPostcombatMainPhaseEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 
@@ -172,7 +178,10 @@ mod tests {
         let trigger = BeginningOfMainPhaseTrigger::your_precombat_main_phase();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfPostcombatMainPhaseEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfPostcombatMainPhaseEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 
@@ -185,7 +194,10 @@ mod tests {
         let trigger = BeginningOfMainPhaseTrigger::your_postcombat_main_phase();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfPrecombatMainPhaseEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfPrecombatMainPhaseEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 
@@ -198,8 +210,14 @@ mod tests {
         let trigger = BeginningOfMainPhaseTrigger::new(PlayerFilter::You, MainPhaseType::Either);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let precombat = TriggerEvent::new(BeginningOfPrecombatMainPhaseEvent::new(alice));
-        let postcombat = TriggerEvent::new(BeginningOfPostcombatMainPhaseEvent::new(alice));
+        let precombat = TriggerEvent::new_with_provenance(
+            BeginningOfPrecombatMainPhaseEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
+        let postcombat = TriggerEvent::new_with_provenance(
+            BeginningOfPostcombatMainPhaseEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&precombat, &ctx));
         assert!(trigger.matches(&postcombat, &ctx));
     }
@@ -214,7 +232,10 @@ mod tests {
         let trigger = BeginningOfMainPhaseTrigger::your_precombat_main_phase();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfPrecombatMainPhaseEvent::new(bob));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfPrecombatMainPhaseEvent::new(bob),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 
@@ -228,8 +249,14 @@ mod tests {
         let trigger = BeginningOfMainPhaseTrigger::each_precombat_main_phase();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let alice_event = TriggerEvent::new(BeginningOfPrecombatMainPhaseEvent::new(alice));
-        let bob_event = TriggerEvent::new(BeginningOfPrecombatMainPhaseEvent::new(bob));
+        let alice_event = TriggerEvent::new_with_provenance(
+            BeginningOfPrecombatMainPhaseEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
+        let bob_event = TriggerEvent::new_with_provenance(
+            BeginningOfPrecombatMainPhaseEvent::new(bob),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&alice_event, &ctx));
         assert!(trigger.matches(&bob_event, &ctx));
     }
@@ -243,7 +270,10 @@ mod tests {
         let trigger = BeginningOfMainPhaseTrigger::your_precombat_main_phase();
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(BeginningOfUpkeepEvent::new(alice));
+        let event = TriggerEvent::new_with_provenance(
+            BeginningOfUpkeepEvent::new(alice),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&event, &ctx));
     }
 }

@@ -1,5 +1,85 @@
 use super::*;
 
+type ParsedAbilityRule = fn(&[Token]) -> Result<Option<ParsedAbility>, CardTextError>;
+type OptionalCostRule = fn(&[Token]) -> Result<Option<OptionalCost>, CardTextError>;
+type AlternativeCastRule = fn(&[Token]) -> Result<Option<AlternativeCastingMethod>, CardTextError>;
+
+fn parse_first_parsed_ability_rule(
+    tokens: &[Token],
+) -> Result<Option<(&'static str, ParsedAbility)>, CardTextError> {
+    const RULES: [(&str, ParsedAbilityRule); 5] = [
+        ("equip", parse_equip_line),
+        ("level-up", parse_level_up_line),
+        ("reinforce", parse_reinforce_line),
+        ("cycling", parse_cycling_line),
+        ("morph", parse_morph_keyword_line),
+    ];
+
+    for (branch, rule) in RULES {
+        if let Some(ability) = rule(tokens)? {
+            return Ok(Some((branch, ability)));
+        }
+    }
+
+    Ok(None)
+}
+
+fn parse_first_optional_cost_rule(
+    tokens: &[Token],
+) -> Result<Option<(&'static str, OptionalCost)>, CardTextError> {
+    const RULES: [(&str, OptionalCostRule); 4] = [
+        ("buyback", parse_buyback_line),
+        ("kicker", parse_kicker_line),
+        ("multikicker", parse_multikicker_line),
+        ("entwine", parse_entwine_line),
+    ];
+
+    for (branch, rule) in RULES {
+        if let Some(cost) = rule(tokens)? {
+            return Ok(Some((branch, cost)));
+        }
+    }
+
+    Ok(None)
+}
+
+fn parse_first_alternative_cast_rule(
+    tokens: &[Token],
+    line: &str,
+) -> Result<Option<(&'static str, AlternativeCastingMethod)>, CardTextError> {
+    if let Some(method) = parse_if_conditional_alternative_cost_line(tokens, line)? {
+        return Ok(Some(("if-conditional-alternative-cost", method)));
+    }
+    if let Some(method) = parse_self_free_cast_alternative_cost_line(tokens) {
+        return Ok(Some(("self-free-cast-alternative-cost", method)));
+    }
+    if let Some(method) = parse_you_may_rather_than_spell_cost_line(tokens, line)? {
+        return Ok(Some(("alternative-cost", method)));
+    }
+
+    const RULES: [(&str, AlternativeCastRule); 4] = [
+        ("escape", parse_escape_line),
+        ("bestow", parse_bestow_line),
+        ("flashback", parse_flashback_line),
+        ("madness", parse_madness_line),
+    ];
+
+    for (branch, rule) in RULES {
+        if let Some(method) = rule(tokens)? {
+            return Ok(Some((branch, method)));
+        }
+    }
+
+    Ok(None)
+}
+
+fn line_ast_from_static_abilities(abilities: Vec<StaticAbility>) -> LineAst {
+    match abilities.as_slice() {
+        [ability] => LineAst::StaticAbility(ability.clone()),
+        _ => LineAst::StaticAbilities(abilities),
+    }
+}
+
 pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardTextError> {
     parser_trace_line("parse_line:entry", line);
     let normalized = line
@@ -152,12 +232,7 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         let tokens = tokenize_line(line, line_index);
         if let Ok(Some(abilities)) = parse_static_ability_line(&tokens) {
             parser_trace("parse_line:branch=this-cant-attack-unless-static", &tokens);
-            if abilities.len() == 1 {
-                return Ok(LineAst::StaticAbility(
-                    abilities.into_iter().next().expect("single static ability"),
-                ));
-            }
-            return Ok(LineAst::StaticAbilities(abilities));
+            return Ok(line_ast_from_static_abilities(abilities));
         }
         return Err(CardTextError::ParseError(format!(
             "unsupported this-cant-attack-unless static clause (line: '{}')",
@@ -185,12 +260,7 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         let tokens = tokenize_line(line, line_index);
         if let Ok(Some(abilities)) = parse_static_ability_line(&tokens) {
             parser_trace("parse_line:branch=skulk-rules-text-static", &tokens);
-            if abilities.len() == 1 {
-                return Ok(LineAst::StaticAbility(
-                    abilities.into_iter().next().expect("single static ability"),
-                ));
-            }
-            return Ok(LineAst::StaticAbilities(abilities));
+            return Ok(line_ast_from_static_abilities(abilities));
         }
         return Err(CardTextError::ParseError(format!(
             "unsupported skulk-rules-text static clause (line: '{}')",
@@ -312,84 +382,22 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         )));
     }
 
-    if let Some(method) = parse_if_conditional_alternative_cost_line(&tokens, line)? {
-        parser_trace("parse_line:branch=if-conditional-alternative-cost", &tokens);
+    if let Some((branch, method)) = parse_first_alternative_cast_rule(&tokens, line)? {
+        let stage = format!("parse_line:branch={branch}");
+        parser_trace(stage.as_str(), &tokens);
         return Ok(LineAst::AlternativeCastingMethod(method));
     }
 
-    if let Some(method) = parse_self_free_cast_alternative_cost_line(&tokens) {
-        parser_trace("parse_line:branch=self-free-cast-alternative-cost", &tokens);
-        return Ok(LineAst::AlternativeCastingMethod(method));
-    }
-
-    if let Some(method) = parse_you_may_rather_than_spell_cost_line(&tokens, line)? {
-        parser_trace("parse_line:branch=alternative-cost", &tokens);
-        return Ok(LineAst::AlternativeCastingMethod(method));
-    }
-
-    if let Some(ability) = parse_equip_line(&tokens)? {
-        parser_trace("parse_line:branch=equip", &tokens);
+    if let Some((branch, ability)) = parse_first_parsed_ability_rule(&tokens)? {
+        let stage = format!("parse_line:branch={branch}");
+        parser_trace(stage.as_str(), &tokens);
         return Ok(LineAst::Ability(ability));
     }
 
-    if let Some(ability) = parse_level_up_line(&tokens)? {
-        parser_trace("parse_line:branch=level-up", &tokens);
-        return Ok(LineAst::Ability(ability));
-    }
-
-    if let Some(ability) = parse_reinforce_line(&tokens)? {
-        parser_trace("parse_line:branch=reinforce", &tokens);
-        return Ok(LineAst::Ability(ability));
-    }
-
-    if let Some(ability) = parse_cycling_line(&tokens)? {
-        parser_trace("parse_line:branch=cycling", &tokens);
-        return Ok(LineAst::Ability(ability));
-    }
-
-    if let Some(ability) = parse_morph_keyword_line(&tokens)? {
-        parser_trace("parse_line:branch=morph", &tokens);
-        return Ok(LineAst::Ability(ability));
-    }
-
-    if let Some(cost) = parse_buyback_line(&tokens)? {
-        parser_trace("parse_line:branch=buyback", &tokens);
+    if let Some((branch, cost)) = parse_first_optional_cost_rule(&tokens)? {
+        let stage = format!("parse_line:branch={branch}");
+        parser_trace(stage.as_str(), &tokens);
         return Ok(LineAst::OptionalCost(cost));
-    }
-
-    if let Some(cost) = parse_kicker_line(&tokens)? {
-        parser_trace("parse_line:branch=kicker", &tokens);
-        return Ok(LineAst::OptionalCost(cost));
-    }
-
-    if let Some(cost) = parse_multikicker_line(&tokens)? {
-        parser_trace("parse_line:branch=multikicker", &tokens);
-        return Ok(LineAst::OptionalCost(cost));
-    }
-
-    if let Some(cost) = parse_entwine_line(&tokens)? {
-        parser_trace("parse_line:branch=entwine", &tokens);
-        return Ok(LineAst::OptionalCost(cost));
-    }
-
-    if let Some(method) = parse_escape_line(&tokens)? {
-        parser_trace("parse_line:branch=escape", &tokens);
-        return Ok(LineAst::AlternativeCastingMethod(method));
-    }
-
-    if let Some(method) = parse_bestow_line(&tokens)? {
-        parser_trace("parse_line:branch=bestow", &tokens);
-        return Ok(LineAst::AlternativeCastingMethod(method));
-    }
-
-    if let Some(method) = parse_flashback_line(&tokens)? {
-        parser_trace("parse_line:branch=flashback", &tokens);
-        return Ok(LineAst::AlternativeCastingMethod(method));
-    }
-
-    if let Some(method) = parse_madness_line(&tokens)? {
-        parser_trace("parse_line:branch=madness", &tokens);
-        return Ok(LineAst::AlternativeCastingMethod(method));
     }
 
     if let Some((trigger_idx, _)) = tokens.iter().enumerate().find(|(idx, token)| {
@@ -522,12 +530,7 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
 
     if let Some(abilities) = parse_static_ability_line(&tokens)? {
         parser_trace("parse_line:branch=static", &tokens);
-        if abilities.len() == 1 {
-            return Ok(LineAst::StaticAbility(
-                abilities.into_iter().next().expect("single static ability"),
-            ));
-        }
-        return Ok(LineAst::StaticAbilities(abilities));
+        return Ok(line_ast_from_static_abilities(abilities));
     }
 
     if let Some(actions) = parse_ability_line(&tokens) {

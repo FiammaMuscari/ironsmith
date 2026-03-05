@@ -48,10 +48,10 @@ mod tests {
         let trigger = ThisAttacksTrigger;
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(CreatureAttackedEvent::new(
-            source_id,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::new(source_id, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -67,10 +67,10 @@ mod tests {
         let trigger = ThisAttacksTrigger;
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(CreatureAttackedEvent::new(
-            other_id,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::new(other_id, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }

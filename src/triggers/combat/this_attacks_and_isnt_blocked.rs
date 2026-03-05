@@ -43,10 +43,10 @@ mod tests {
         let trigger = ThisAttacksAndIsntBlockedTrigger;
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let event = TriggerEvent::new(CreatureAttackedAndUnblockedEvent::new(
-            source_id,
-            AttackEventTarget::Player(bob),
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            CreatureAttackedAndUnblockedEvent::new(source_id, AttackEventTarget::Player(bob)),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&event, &ctx));
     }
 

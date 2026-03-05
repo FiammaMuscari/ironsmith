@@ -60,10 +60,14 @@ impl CostPayer for SacrificeSelfCost {
 
         // Move to graveyard
         game.move_object(ctx.source, Zone::Graveyard);
-        game.queue_trigger_event(TriggerEvent::new(
-            SacrificeEvent::new(ctx.source, Some(ctx.source))
-                .with_snapshot(snapshot, sacrificing_player),
-        ));
+        game.queue_trigger_event(
+            ctx.provenance,
+            TriggerEvent::new_with_provenance(
+                SacrificeEvent::new(ctx.source, Some(ctx.source))
+                    .with_snapshot(snapshot, sacrificing_player),
+                ctx.provenance,
+            ),
+        );
 
         Ok(CostPaymentResult::Paid)
     }

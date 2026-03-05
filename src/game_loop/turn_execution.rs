@@ -93,19 +93,27 @@ fn generate_damage_triggers(
             DamageEventTarget::Player(p) => EventDamageTarget::Player(p),
             DamageEventTarget::Object(o) => EventDamageTarget::Object(o),
         };
-        let trigger_event = TriggerEvent::new(DamageEvent::new(
+        let damage_event_provenance = game
+            .provenance_graph
+            .alloc_root_event(crate::events::EventKind::Damage);
+        let trigger_event = TriggerEvent::new_with_provenance(DamageEvent::new(
             event.source,
             damage_target,
             event.amount,
             true, // is_combat
-        ));
+        ), damage_event_provenance);
         queue_triggers_from_event(game, trigger_queue, trigger_event, false);
 
         if let DamageEventTarget::Player(player_id) = event.target
             && event.life_lost > 0
         {
-            let life_loss_event =
-                TriggerEvent::new(LifeLossEvent::new(player_id, event.life_lost, true));
+            let life_loss_event_provenance = game
+                .provenance_graph
+                .alloc_root_event(crate::events::EventKind::LifeLoss);
+            let life_loss_event = TriggerEvent::new_with_provenance(
+                LifeLossEvent::new(player_id, event.life_lost, true),
+                life_loss_event_provenance,
+            );
             queue_triggers_from_event(game, trigger_queue, life_loss_event, false);
         }
 
@@ -129,4 +137,3 @@ pub fn queue_combat_damage_triggers(
 ) {
     generate_damage_triggers(game, events, trigger_queue);
 }
-

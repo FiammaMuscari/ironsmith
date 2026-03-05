@@ -338,12 +338,10 @@ mod tests {
         let gearhulk_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
 
         // Simulate ETB event
-        let event = TriggerEvent::new(ZoneChangeEvent::new(
-            gearhulk_id,
-            Zone::Hand,
-            Zone::Battlefield,
-            None,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(gearhulk_id, Zone::Hand, Zone::Battlefield, None),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(triggered.len(), 1, "Gearhulk should trigger on ETB");

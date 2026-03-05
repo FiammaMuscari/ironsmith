@@ -253,12 +253,10 @@ mod tests {
         let tivit_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
 
         // Simulate Tivit entering the battlefield
-        let event = TriggerEvent::new(ZoneChangeEvent::new(
-            tivit_id,
-            Zone::Hand,
-            Zone::Battlefield,
-            None,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(tivit_id, Zone::Hand, Zone::Battlefield, None),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(triggered.len(), 1, "Tivit should trigger on ETB");
@@ -279,12 +277,15 @@ mod tests {
         let tivit_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
 
         // Simulate Tivit dealing combat damage to Bob
-        let event = TriggerEvent::new(DamageEvent::new(
-            tivit_id,
-            DamageTarget::Player(bob),
-            6,
-            true, // is_combat
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(
+                tivit_id,
+                DamageTarget::Player(bob),
+                6,
+                true, // is_combat
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -309,12 +310,15 @@ mod tests {
         let tivit_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
 
         // Simulate non-combat damage from Tivit to Bob
-        let event = TriggerEvent::new(DamageEvent::new(
-            tivit_id,
-            DamageTarget::Player(bob),
-            6,
-            false, // not combat
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(
+                tivit_id,
+                DamageTarget::Player(bob),
+                6,
+                false, // not combat
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -341,12 +345,15 @@ mod tests {
         let creature_id = game.new_object_id();
 
         // Simulate combat damage to a creature (not a player)
-        let event = TriggerEvent::new(DamageEvent::new(
-            tivit_id,
-            DamageTarget::Object(creature_id),
-            6,
-            true, // is_combat
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            DamageEvent::new(
+                tivit_id,
+                DamageTarget::Object(creature_id),
+                6,
+                true, // is_combat
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -407,12 +414,10 @@ mod tests {
         let tivit_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
 
         // Simulate Tivit entering the battlefield
-        let event = TriggerEvent::new(ZoneChangeEvent::new(
-            tivit_id,
-            Zone::Hand,
-            Zone::Battlefield,
-            None,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            ZoneChangeEvent::new(tivit_id, Zone::Hand, Zone::Battlefield, None),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(

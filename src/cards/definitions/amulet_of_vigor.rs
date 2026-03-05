@@ -120,7 +120,10 @@ mod tests {
         let land_id = create_land(&mut game, "Tapped Land", alice);
 
         // Create event where permanent enters tapped
-        let event = TriggerEvent::new(EnterBattlefieldEvent::tapped(land_id, Zone::Hand));
+        let event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -144,7 +147,10 @@ mod tests {
         let land_id = create_land(&mut game, "Untapped Land", alice);
 
         // Create event where permanent enters untapped (default)
-        let event = TriggerEvent::new(EnterBattlefieldEvent::new(land_id, Zone::Hand));
+        let event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::new(land_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -166,7 +172,10 @@ mod tests {
 
         // Bob's land enters tapped
         let land_id = create_land(&mut game, "Bob's Land", bob);
-        let event = TriggerEvent::new(EnterBattlefieldEvent::tapped(land_id, Zone::Hand));
+        let event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -188,7 +197,10 @@ mod tests {
 
         // Create a land that enters tapped
         let land_id = create_land(&mut game, "Tapped Land", alice);
-        let event = TriggerEvent::new(EnterBattlefieldEvent::tapped(land_id, Zone::Hand));
+        let event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         let triggered = check_triggers(&game, &event);
         assert_eq!(
@@ -218,8 +230,10 @@ mod tests {
         assert!(game.is_tapped(land_id));
 
         // Create execution context with the triggering event
-        let triggering_event =
-            TriggerEvent::new(EnterBattlefieldEvent::tapped(land_id, Zone::Hand));
+        let triggering_event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         let _outcomes = execute_amulet_trigger(&mut game, alice, source, triggering_event);
 
         assert!(
@@ -239,8 +253,10 @@ mod tests {
         game.move_object(land_id, Zone::Graveyard);
 
         // Create execution context with the triggering event
-        let triggering_event =
-            TriggerEvent::new(EnterBattlefieldEvent::tapped(land_id, Zone::Hand));
+        let triggering_event = TriggerEvent::new_with_provenance(
+            EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         let _outcomes = execute_amulet_trigger(&mut game, alice, source, triggering_event);
 
         assert!(

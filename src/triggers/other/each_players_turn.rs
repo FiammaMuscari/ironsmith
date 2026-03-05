@@ -35,7 +35,19 @@ mod tests {
         let trigger = EachPlayersTurnTrigger;
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        assert!(trigger.matches(&TriggerEvent::new(BeginningOfUpkeepEvent::new(alice)), &ctx));
-        assert!(trigger.matches(&TriggerEvent::new(BeginningOfUpkeepEvent::new(bob)), &ctx));
+        assert!(trigger.matches(
+            &TriggerEvent::new_with_provenance(
+                BeginningOfUpkeepEvent::new(alice),
+                crate::provenance::ProvNodeId::UNKNOWN
+            ),
+            &ctx
+        ));
+        assert!(trigger.matches(
+            &TriggerEvent::new_with_provenance(
+                BeginningOfUpkeepEvent::new(bob),
+                crate::provenance::ProvNodeId::UNKNOWN
+            ),
+            &ctx
+        ));
     }
 }

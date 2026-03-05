@@ -177,18 +177,24 @@ mod tests {
         let trigger = AttacksYouTrigger::one_or_more(ObjectFilter::creature());
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
-        let first_event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            attacker_one,
-            AttackEventTarget::Player(alice),
-            2,
-        ));
+        let first_event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                attacker_one,
+                AttackEventTarget::Player(alice),
+                2,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(trigger.matches(&first_event, &ctx));
 
-        let second_event = TriggerEvent::new(CreatureAttackedEvent::with_total_attackers(
-            attacker_two,
-            AttackEventTarget::Player(alice),
-            2,
-        ));
+        let second_event = TriggerEvent::new_with_provenance(
+            CreatureAttackedEvent::with_total_attackers(
+                attacker_two,
+                AttackEventTarget::Player(alice),
+                2,
+            ),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
         assert!(!trigger.matches(&second_event, &ctx));
     }
 }

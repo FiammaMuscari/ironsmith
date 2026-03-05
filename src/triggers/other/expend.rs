@@ -64,12 +64,10 @@ mod tests {
 
         let trigger = ExpendTrigger::new(PlayerFilter::You, 4);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
-        let event = TriggerEvent::new(KeywordActionEvent::new(
-            KeywordActionKind::Expend,
-            alice,
-            ObjectId::from_raw(99),
-            4,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(KeywordActionKind::Expend, alice, ObjectId::from_raw(99), 4),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(trigger.matches(&event, &ctx));
     }
@@ -82,12 +80,10 @@ mod tests {
 
         let trigger = ExpendTrigger::new(PlayerFilter::You, 4);
         let ctx = TriggerContext::for_source(source_id, alice, &game);
-        let event = TriggerEvent::new(KeywordActionEvent::new(
-            KeywordActionKind::Expend,
-            alice,
-            ObjectId::from_raw(99),
-            8,
-        ));
+        let event = TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(KeywordActionKind::Expend, alice, ObjectId::from_raw(99), 8),
+            crate::provenance::ProvNodeId::UNKNOWN,
+        );
 
         assert!(!trigger.matches(&event, &ctx));
     }

@@ -197,8 +197,17 @@ fn queue_vote_events(
             .collect(),
     );
 
-    game.queue_trigger_event(TriggerEvent::new(vote_action_event));
-    game.queue_trigger_event(TriggerEvent::new(voting_event));
+    game.queue_trigger_event(
+        ctx.provenance,
+        TriggerEvent::new_with_provenance(
+            vote_action_event,
+            ctx.provenance,
+        ),
+    );
+    game.queue_trigger_event(
+        ctx.provenance,
+        TriggerEvent::new_with_provenance(voting_event, ctx.provenance),
+    );
 }
 
 fn collect_token_batch(
@@ -243,6 +252,7 @@ fn append_batched_token_events(
     outcome: &mut EffectOutcome,
     cause: EventCause,
     token_batches: Vec<TokenBatchByController>,
+    provenance: crate::provenance::ProvNodeId,
 ) {
     for by_controller in token_batches {
         for (_controller, mut object_ids) in by_controller {
@@ -252,14 +262,10 @@ fn append_batched_token_events(
 
             object_ids.sort();
             object_ids.dedup();
-            outcome
-                .events
-                .push(TriggerEvent::new(ZoneChangeEvent::batch(
-                    object_ids,
-                    Zone::Stack,
-                    Zone::Battlefield,
-                    cause.clone(),
-                )));
+            outcome.events.push(TriggerEvent::new_with_provenance(
+                ZoneChangeEvent::batch(object_ids, Zone::Stack, Zone::Battlefield, cause.clone()),
+                provenance,
+            ));
         }
     }
 }
@@ -297,7 +303,7 @@ fn execute_vote_payloads(
 
     let mut aggregate = EffectOutcome::aggregate(outcomes);
     let cause = EventCause::from_effect(ctx.source, ctx.controller);
-    append_batched_token_events(&mut aggregate, cause, token_batches);
+    append_batched_token_events(&mut aggregate, cause, token_batches, ctx.provenance);
     Ok(aggregate)
 }
 

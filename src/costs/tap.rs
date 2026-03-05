@@ -65,7 +65,13 @@ impl CostPayer for TapCost {
 
         // Tap the permanent
         game.tap(ctx.source);
-        game.queue_trigger_event(TriggerEvent::new(PermanentTappedEvent::new(ctx.source)));
+        game.queue_trigger_event(
+            ctx.provenance,
+            TriggerEvent::new_with_provenance(
+                PermanentTappedEvent::new(ctx.source),
+                ctx.provenance,
+            ),
+        );
 
         Ok(CostPaymentResult::Paid)
     }

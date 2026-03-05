@@ -239,12 +239,15 @@ impl EffectExecutor for ChooseNewTargetsEffect {
                 changed += 1;
                 for target in &game.stack[stack_idx].targets {
                     if let Target::Object(target_id) = target {
-                        events.push(TriggerEvent::new(BecomesTargetedEvent::new(
-                            *target_id,
-                            object_id,
-                            entry.controller,
-                            entry.is_ability,
-                        )));
+                        events.push(TriggerEvent::new_with_provenance(
+                            BecomesTargetedEvent::new(
+                                *target_id,
+                                object_id,
+                                entry.controller,
+                                entry.is_ability,
+                            ),
+                            ctx.provenance,
+                        ));
                     }
                 }
             }

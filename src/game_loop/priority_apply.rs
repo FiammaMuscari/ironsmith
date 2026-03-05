@@ -273,11 +273,20 @@ pub fn apply_priority_response_with_dm(
                 // Drain pending ZoneChangeEvent emitted by ETB move processing.
                 drain_pending_trigger_events(game, trigger_queue);
 
+                let etb_event_provenance =
+                    game.provenance_graph.alloc_root_event(crate::events::EventKind::EnterBattlefield);
                 let etb_event = if result.enters_tapped {
-                    TriggerEvent::new(EnterBattlefieldEvent::tapped(new_id, old_zone))
+                    TriggerEvent::new_with_provenance(
+                        EnterBattlefieldEvent::tapped(new_id, old_zone),
+                        etb_event_provenance,
+                    )
                 } else {
-                    TriggerEvent::new(EnterBattlefieldEvent::new(new_id, old_zone))
+                    TriggerEvent::new_with_provenance(
+                        EnterBattlefieldEvent::new(new_id, old_zone),
+                        etb_event_provenance,
+                    )
                 };
+                let etb_event = game.ensure_trigger_event_provenance(etb_event);
                 let etb_triggers = check_triggers(game, &etb_event);
                 for trigger in etb_triggers {
                     trigger_queue.add(trigger);
@@ -353,6 +362,12 @@ pub fn apply_priority_response_with_dm(
             // Move spell to stack immediately per MTG rule 601.2a
             // This happens at the start of proposal, before any choices are made
             let stack_id = propose_spell_cast(game, *spell_id, *from_zone, player, casting_method)?;
+            let cast_provenance = game.provenance_graph.alloc_root(
+                ProvenanceNodeKind::EffectExecution {
+                    source: stack_id,
+                    controller: player,
+                },
+            );
 
             // Get the spell's mana cost and effects, considering casting method
             // Note: We use stack_id now since the spell has been moved to stack
@@ -431,6 +446,7 @@ pub fn apply_priority_response_with_dm(
                     stack_id,
                     *from_zone,
                     player,
+                    cast_provenance,
                     CastStage::ChoosingX,
                     None,
                     requirements,
@@ -462,6 +478,7 @@ pub fn apply_priority_response_with_dm(
                     stack_id,
                     *from_zone,
                     player,
+                    cast_provenance,
                     CastStage::ChoosingModes, // Will be updated by helper
                     None,
                     requirements,
@@ -572,6 +589,12 @@ pub fn apply_priority_response_with_dm(
             let cost = crate::decision::calculate_effective_activation_total_cost(
                 game, player, *source, &base_cost,
             );
+            let activation_provenance = game.provenance_graph.alloc_root(
+                ProvenanceNodeKind::EffectExecution {
+                    source: *source,
+                    controller: player,
+                },
+            );
 
             // Pay immediate costs and collect costs that need choices
             let mut mana_cost_to_pay: Option<crate::mana::ManaCost> = None;
@@ -579,7 +602,8 @@ pub fn apply_priority_response_with_dm(
             let mut card_choice_costs: Vec<ActivationCardCostChoice> = Vec::new();
             let mut payment_trace: Vec<CostStep> = Vec::new();
 
-            let mut cost_ctx = CostContext::new(*source, player, &mut *decision_maker);
+            let mut cost_ctx = CostContext::new(*source, player, &mut *decision_maker)
+                .with_provenance(activation_provenance);
 
             for cost_component in cost.costs() {
                 use crate::costs::CostProcessingMode;
@@ -600,10 +624,14 @@ pub fn apply_priority_response_with_dm(
                                 .map(|snap| snap.controller)
                                 .or(Some(player));
                             game.move_object(*source, Zone::Graveyard);
-                            game.queue_trigger_event(TriggerEvent::new(
-                                SacrificeEvent::new(*source, Some(*source))
-                                    .with_snapshot(snapshot, sacrificing_player),
-                            ));
+                            game.queue_trigger_event(
+                                activation_provenance,
+                                TriggerEvent::new_with_provenance(
+                                    SacrificeEvent::new(*source, Some(*source))
+                                        .with_snapshot(snapshot, sacrificing_player),
+                                    activation_provenance,
+                                ),
+                            );
                             drain_pending_trigger_events(game, trigger_queue);
 
                             #[cfg(feature = "net")]
@@ -704,6 +732,7 @@ pub fn apply_priority_response_with_dm(
                     *source,
                     *ability_index,
                     player,
+                    activation_provenance,
                     stage,
                     effects.to_vec(),
                     target_requirements,
@@ -787,10 +816,17 @@ pub fn apply_priority_response_with_dm(
                 } else {
                     true // No mana cost
                 };
+                let mana_ability_provenance = game.provenance_graph.alloc_root(
+                    ProvenanceNodeKind::EffectExecution {
+                        source: *source,
+                        controller: player,
+                    },
+                );
 
                 if can_pay_mana {
                     // Pay all costs immediately
-                    let mut cost_ctx = CostContext::new(*source, player, &mut *decision_maker);
+                    let mut cost_ctx = CostContext::new(*source, player, &mut *decision_maker)
+                        .with_provenance(mana_ability_provenance);
 
                     // Pay mana cost first
                     if let Some(ref mc) = mana_cost
@@ -825,7 +861,8 @@ pub fn apply_priority_response_with_dm(
 
                     // Execute additional effects (for complex mana abilities)
                     if !effects_to_run.is_empty() {
-                        let mut ctx = ExecutionContext::new(*source, player, &mut *decision_maker);
+                        let mut ctx = ExecutionContext::new(*source, player, &mut *decision_maker)
+                            .with_provenance(mana_ability_provenance);
                         let mut emitted_events = Vec::new();
 
                         for effect in &effects_to_run {
@@ -864,6 +901,7 @@ pub fn apply_priority_response_with_dm(
                         source: *source,
                         ability_index: *ability_index,
                         activator: player,
+                        provenance: mana_ability_provenance,
                         mana_cost: mana_cost.unwrap_or_default(),
                         other_costs,
                         mana_to_add,
@@ -989,6 +1027,7 @@ fn apply_replacement_choice_response(
         .pending_replacement_choice
         .take()
         .ok_or_else(|| GameLoopError::InvalidState("No pending replacement choice".to_string()))?;
+    let pending_event_provenance = pending.event.provenance();
 
     // Get the chosen effect ID
     let chosen_id = pending
@@ -1027,7 +1066,8 @@ fn apply_replacement_choice_response(
                 .unwrap_or((ObjectId::from_raw(0), PlayerId::from_index(0)));
 
             let mut dm = crate::decision::SelectFirstDecisionMaker;
-            let mut ctx = ExecutionContext::new(source, controller, &mut dm);
+            let mut ctx = ExecutionContext::new(source, controller, &mut dm)
+                .with_provenance(pending_event_provenance);
 
             for effect in effects {
                 // Execute each replacement effect

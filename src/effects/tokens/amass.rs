@@ -86,12 +86,15 @@ impl EffectExecutor for AmassEffect {
         }
 
         if army_candidates.is_empty() {
-            let action_event = TriggerEvent::new(KeywordActionEvent::new(
-                KeywordActionKind::Amass,
-                ctx.controller,
-                ctx.source,
-                self.amount,
-            ));
+            let action_event = TriggerEvent::new_with_provenance(
+                KeywordActionEvent::new(
+                    KeywordActionKind::Amass,
+                    ctx.controller,
+                    ctx.source,
+                    self.amount,
+                ),
+                ctx.provenance,
+            );
             return Ok(EffectOutcome::aggregate(outcomes).with_event(action_event));
         }
 
@@ -135,12 +138,15 @@ impl EffectExecutor for AmassEffect {
         .execute(game, ctx)?;
         outcomes.push(counters_outcome);
 
-        let action_event = TriggerEvent::new(KeywordActionEvent::new(
-            KeywordActionKind::Amass,
-            ctx.controller,
-            ctx.source,
-            self.amount,
-        ));
+        let action_event = TriggerEvent::new_with_provenance(
+            KeywordActionEvent::new(
+                KeywordActionKind::Amass,
+                ctx.controller,
+                ctx.source,
+                self.amount,
+            ),
+            ctx.provenance,
+        );
         Ok(EffectOutcome::aggregate(outcomes).with_event(action_event))
     }
 }

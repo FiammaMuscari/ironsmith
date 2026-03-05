@@ -3,6 +3,36 @@ use crate::cards::builders::effect_ast_traversal::{
     for_each_nested_effects, for_each_nested_effects_mut, try_for_each_nested_effects_mut,
 };
 
+type PairSentenceRule = fn(&[Token], &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError>;
+
+fn parse_pair_sentence_sequence(
+    first: &[Token],
+    second: &[Token],
+) -> Result<Option<(&'static str, Vec<EffectAst>)>, CardTextError> {
+    const RULES: [(&str, PairSentenceRule); 3] = [
+        (
+            "target-chooses-other-cant-block",
+            parse_target_player_chooses_then_other_cant_block,
+        ),
+        (
+            "choose-card-type-then-reveal-and-put",
+            parse_choose_card_type_then_reveal_top_and_put_chosen_to_hand,
+        ),
+        (
+            "choose-creature-type-then-become-type",
+            parse_choose_creature_type_then_become_type,
+        ),
+    ];
+
+    for (name, rule) in RULES {
+        if let Some(combined) = rule(first, second)? {
+            return Ok(Some((name, combined)));
+        }
+    }
+
+    Ok(None)
+}
+
 pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
     let mut effects = Vec::new();
     let sentences = split_on_period(tokens);
@@ -47,42 +77,11 @@ pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>,
         }
 
         if sentence_idx + 1 < sentences.len()
-            && let Some(mut combined) = parse_target_player_chooses_then_other_cant_block(
-                sentence,
-                &sentences[sentence_idx + 1],
-            )?
+            && let Some((rule_name, mut combined)) =
+                parse_pair_sentence_sequence(sentence, &sentences[sentence_idx + 1])?
         {
-            parser_trace(
-                "parse_effect_sentences:sequence-hit:target-chooses-other-cant-block",
-                sentence,
-            );
-            effects.append(&mut combined);
-            sentence_idx += 2;
-            continue;
-        }
-        if sentence_idx + 1 < sentences.len()
-            && let Some(mut combined) =
-                parse_choose_card_type_then_reveal_top_and_put_chosen_to_hand(
-                    sentence,
-                    &sentences[sentence_idx + 1],
-                )?
-        {
-            parser_trace(
-                "parse_effect_sentences:sequence-hit:choose-card-type-then-reveal-and-put",
-                sentence,
-            );
-            effects.append(&mut combined);
-            sentence_idx += 2;
-            continue;
-        }
-        if sentence_idx + 1 < sentences.len()
-            && let Some(mut combined) =
-                parse_choose_creature_type_then_become_type(sentence, &sentences[sentence_idx + 1])?
-        {
-            parser_trace(
-                "parse_effect_sentences:sequence-hit:choose-creature-type-then-become-type",
-                sentence,
-            );
+            let stage = format!("parse_effect_sentences:sequence-hit:{rule_name}");
+            parser_trace(stage.as_str(), sentence);
             effects.append(&mut combined);
             sentence_idx += 2;
             continue;
