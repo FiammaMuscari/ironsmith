@@ -1719,6 +1719,32 @@ fn parse_trigger_clause_opponent_attacks_you_uses_one_or_more() {
 }
 
 #[test]
+fn parse_trigger_clause_commander_enters_or_attacks_keeps_shared_subject() {
+    let tokens = tokenize_line("your commander enters or attacks", 0);
+    let trigger = parse_trigger_clause(&tokens).expect("parse commander enters-or-attacks clause");
+    let TriggerSpec::Either(left, right) = trigger else {
+        panic!("expected Either trigger for enters-or-attacks clause");
+    };
+
+    match *left {
+        TriggerSpec::EntersBattlefield(filter) => {
+            assert!(filter.is_commander, "expected commander marker on ETB branch");
+            assert_eq!(filter.owner, Some(PlayerFilter::You));
+        }
+        other => panic!("expected EntersBattlefield trigger, got {other:?}"),
+    }
+
+    match *right {
+        TriggerSpec::Attacks(filter) => {
+            assert!(filter.is_commander, "expected commander marker on attack branch");
+            assert_eq!(filter.owner, Some(PlayerFilter::You));
+            assert!(filter.card_types.contains(&CardType::Creature));
+        }
+        other => panic!("expected Attacks trigger, got {other:?}"),
+    }
+}
+
+#[test]
 fn parse_trigger_clause_player_subject_combat_damage_uses_one_or_more() {
     let tokens = tokenize_line("you deal combat damage to a player", 0);
     let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");

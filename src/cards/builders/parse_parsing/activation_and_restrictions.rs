@@ -6393,6 +6393,43 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
         }
     }
 
+    if let Some(enters_idx) = tokens
+        .iter()
+        .position(|token| token.is_word("enters") || token.is_word("enter"))
+    {
+        let tail = &tokens[enters_idx + 1..];
+        let shared_subject_or_attack = (tail.len() == 2
+            && tail[0].is_word("or")
+            && (tail[1].is_word("attack") || tail[1].is_word("attacks")))
+            || (tail.len() == 4
+                && tail[0].is_word("the")
+                && tail[1].is_word("battlefield")
+                && tail[2].is_word("or")
+                && (tail[3].is_word("attack") || tail[3].is_word("attacks")));
+        if shared_subject_or_attack {
+            let or_idx = if tail[0].is_word("or") {
+                enters_idx + 1
+            } else {
+                enters_idx + 3
+            };
+            let attack_idx = or_idx + 1;
+            let left_tokens = &tokens[..or_idx];
+            let mut right_tokens = tokens[..enters_idx].to_vec();
+            right_tokens.push(tokens[attack_idx].clone());
+
+            if !left_tokens.is_empty()
+                && let (Ok(left), Ok(right)) = (
+                    parse_trigger_clause(left_tokens),
+                    parse_trigger_clause(&right_tokens),
+                )
+                && !matches!(left, TriggerSpec::Custom(_))
+                && !matches!(right, TriggerSpec::Custom(_))
+            {
+                return Ok(TriggerSpec::Either(Box::new(left), Box::new(right)));
+            }
+        }
+    }
+
     if let Some(or_idx) = split_trigger_or_index(tokens) {
         let left_tokens = &tokens[..or_idx];
         let right_tokens = &tokens[or_idx + 1..];

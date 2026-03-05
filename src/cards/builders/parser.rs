@@ -1040,6 +1040,30 @@ fn infer_static_ability_functional_zones(normalized_line: &str) -> Option<Vec<Zo
     if zones.is_empty() { None } else { Some(zones) }
 }
 
+fn infer_triggered_ability_functional_zones(
+    trigger: &TriggerSpec,
+    normalized_line: &str,
+) -> Vec<Zone> {
+    let mut zones = match trigger {
+        // "When you cast this spell" only functions while this object is on the stack.
+        TriggerSpec::YouCastThisSpell => vec![Zone::Stack],
+        // "When you cycle this card" triggers after the card has been discarded,
+        // so it needs to function from the graveyard.
+        TriggerSpec::KeywordActionFromSource {
+            action: crate::events::KeywordActionKind::Cycle,
+            ..
+        } => vec![Zone::Graveyard],
+        _ => vec![Zone::Battlefield],
+    };
+
+    let normalized = normalized_line.to_ascii_lowercase();
+    if normalized.contains("return this card from your graveyard") {
+        zones = vec![Zone::Graveyard];
+    }
+
+    zones
+}
+
 fn apply_line_ast(
     mut builder: CardDefinitionBuilder,
     parsed: LineAst,
@@ -1355,17 +1379,10 @@ fn apply_line_ast(
                 TriggerSpec::HauntedCreatureDies
             );
 
-            let functional_zones = match &trigger {
-                // "When you cast this spell" only functions while this object is on the stack.
-                TriggerSpec::YouCastThisSpell => vec![Zone::Stack],
-                // "When you cycle this card" triggers after the card has been discarded,
-                // so it needs to function from the graveyard.
-                TriggerSpec::KeywordActionFromSource {
-                    action: crate::events::KeywordActionKind::Cycle,
-                    ..
-                } => vec![Zone::Graveyard],
-                _ => vec![Zone::Battlefield],
-            };
+            let functional_zones = infer_triggered_ability_functional_zones(
+                &trigger,
+                info.normalized.normalized.as_str(),
+            );
             let parsed = parsed_triggered_ability(
                 trigger,
                 effects,

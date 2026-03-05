@@ -5528,6 +5528,45 @@ fn test_parse_cycle_this_card_trigger_compiles() {
 }
 
 #[test]
+fn test_commander_recursion_trigger_uses_graveyard_zone_and_commander_filter() {
+    use crate::zone::Zone;
+
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Commander Recursion Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Whenever your commander enters or attacks, you may pay {2}. If you do, return this card from your graveyard to your hand.",
+        )
+        .expect("parse commander recursion trigger");
+
+    let ability = def
+        .abilities
+        .iter()
+        .find(|ability| matches!(&ability.kind, AbilityKind::Triggered(_)))
+        .expect("expected triggered ability");
+
+    assert!(
+        ability.functional_zones.contains(&Zone::Graveyard)
+            && !ability.functional_zones.contains(&Zone::Battlefield),
+        "expected trigger to function from graveyard only, got {:?}",
+        ability.functional_zones
+    );
+
+    let trigger_debug = match &ability.kind {
+        AbilityKind::Triggered(triggered) => format!("{:?}", triggered.trigger),
+        _ => unreachable!("checked triggered ability above"),
+    };
+    assert!(
+        trigger_debug.contains("AttacksTrigger") && !trigger_debug.contains("ThisAttacksTrigger"),
+        "expected shared-subject attack branch, got {trigger_debug}"
+    );
+    let compact = trigger_debug.split_whitespace().collect::<String>();
+    assert!(
+        compact.contains("is_commander:true") && compact.contains("owner:Some(You"),
+        "expected your-commander ownership filter on both branches, got {trigger_debug}"
+    );
+}
+
+#[test]
 fn test_return_from_graveyard_keeps_with_cycling_filter() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Sacred Excavation Variant")
         .card_types(vec![CardType::Sorcery])

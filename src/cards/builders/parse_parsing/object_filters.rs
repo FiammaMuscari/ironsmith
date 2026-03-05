@@ -1853,6 +1853,14 @@ pub(crate) fn parse_object_filter(
                     filter.noncommander = true;
                 } else {
                     filter.is_commander = true;
+                    match prev {
+                        Some("your") => filter.owner = Some(PlayerFilter::You),
+                        Some("opponent") | Some("opponents") => {
+                            filter.owner = Some(PlayerFilter::Opponent);
+                        }
+                        Some("their") => filter.owner = Some(pronoun_player_filter.clone()),
+                        _ => {}
+                    }
                 }
             }
             "noncommander" | "noncommanders" => filter.noncommander = true,
