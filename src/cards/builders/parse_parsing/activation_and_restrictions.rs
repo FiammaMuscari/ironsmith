@@ -319,7 +319,8 @@ pub(crate) fn parse_activated_line(
     let seed_tag = first_sacrifice_cost_choice_tag(&mana_cost)
         .or_else(|| last_exile_cost_choice_tag(&mana_cost))
         .map(|tag| tag.as_str().to_string());
-    let (effects, choices) = lower_activated_ability_effects_seeded(&effects_ast, seed_tag)?;
+    let resolved_effects_ast = bind_unresolved_it_references(&effects_ast, seed_tag.as_deref());
+    let (effects, choices) = lower_activated_ability_effects(&resolved_effects_ast)?;
     let mana_cost = crate::ability::merge_cost_effects(mana_cost, cost_effects);
 
     Ok(Some(ParsedAbility {
@@ -341,7 +342,7 @@ pub(crate) fn parse_activated_line(
             apply_ability_label(&mut ability);
             ability
         },
-        effects_ast: Some(effects_ast),
+        effects_ast: Some(resolved_effects_ast),
     }))
 }
 
@@ -6764,13 +6765,13 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
         }
     }
 
-    if let Some(put_idx) = tokens
+    if let Some(put_word_idx) = words
         .iter()
-        .position(|token| token.is_word("put") || token.is_word("puts"))
+        .position(|word| *word == "put" || *word == "puts")
     {
-        let subject = &words[..put_idx];
+        let subject = &words[..put_word_idx];
         if let Some(player) = parse_trigger_subject_player_filter(subject) {
-            let tail = &words[put_idx + 1..];
+            let tail = &words[put_word_idx + 1..];
             let has_name_sticker = tail.windows(2).any(|window| window == ["name", "sticker"]);
             let has_on = tail.contains(&"on");
             if has_name_sticker && has_on {
@@ -7229,13 +7230,13 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
         }
     }
 
-    if let Some(draw_idx) = tokens
+    if let Some(draw_word_idx) = words
         .iter()
-        .position(|token| token.is_word("draw") || token.is_word("draws"))
+        .position(|word| *word == "draw" || *word == "draws")
     {
-        let subject = &words[..draw_idx];
+        let subject = &words[..draw_word_idx];
         if let Some(player) = parse_trigger_subject_player_filter(subject) {
-            let tail = &words[draw_idx + 1..];
+            let tail = &words[draw_word_idx + 1..];
             if let Some(card_number) = parse_exact_draw_count_each_turn(tail) {
                 return Ok(TriggerSpec::PlayerDrawsNthCardEachTurn {
                     player,
@@ -7255,27 +7256,29 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
         }
     }
 
-    if let Some(discard_idx) = tokens
+    if let Some(discard_word_idx) = words
         .iter()
-        .position(|token| token.is_word("discard") || token.is_word("discards"))
+        .position(|word| *word == "discard" || *word == "discards")
+        && let Some(discard_token_idx) = token_index_for_word_index(tokens, discard_word_idx)
     {
-        let subject_words = &words[..discard_idx];
+        let subject_words = &words[..discard_word_idx];
         if let Some(player) = parse_trigger_subject_player_filter(subject_words) {
             if let Ok(filter) =
-                parse_discard_trigger_card_filter(&tokens[discard_idx + 1..], &words)
+                parse_discard_trigger_card_filter(&tokens[discard_token_idx + 1..], &words)
             {
                 return Ok(TriggerSpec::PlayerDiscardsCard { player, filter });
             }
         }
     }
 
-    if let Some(sacrifice_idx) = tokens
+    if let Some(sacrifice_word_idx) = words
         .iter()
-        .position(|token| token.is_word("sacrifice") || token.is_word("sacrifices"))
+        .position(|word| *word == "sacrifice" || *word == "sacrifices")
+        && let Some(sacrifice_token_idx) = token_index_for_word_index(tokens, sacrifice_word_idx)
     {
-        let subject_words = &words[..sacrifice_idx];
+        let subject_words = &words[..sacrifice_word_idx];
         if let Some(player) = parse_trigger_subject_player_filter(subject_words) {
-            let mut filter_tokens = &tokens[sacrifice_idx + 1..];
+            let mut filter_tokens = &tokens[sacrifice_token_idx + 1..];
             let mut other = false;
             if filter_tokens
                 .first()

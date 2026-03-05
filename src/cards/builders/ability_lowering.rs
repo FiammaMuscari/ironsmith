@@ -19,9 +19,8 @@ pub(crate) fn lower_activation_primary_mana_effect(
     Ok(effects)
 }
 
-pub(crate) fn lower_activated_ability_effects_seeded(
+pub(crate) fn lower_activated_ability_effects(
     effects_ast: &[EffectAst],
-    seed_last_object_tag: Option<String>,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
-    compile_trigger_effects_seeded(None, effects_ast, seed_last_object_tag)
+    compile_trigger_effects(None, effects_ast)
 }

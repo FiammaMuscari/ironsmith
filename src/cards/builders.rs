@@ -434,9 +434,9 @@ pub(crate) enum TargetAst {
     WithCount(Box<TargetAst>, ChoiceCount),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ObjectRefAst {
-    It,
+    Tagged(TagKey),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1422,6 +1422,9 @@ pub(crate) use ability_lowering::*;
 
 mod parse_parsing;
 pub(crate) use parse_parsing::*;
+
+mod reference_resolution;
+pub(crate) use reference_resolution::*;
 
 mod parse_compile;
 pub(crate) use parse_compile::*;

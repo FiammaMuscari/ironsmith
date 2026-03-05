@@ -743,7 +743,7 @@ pub(crate) fn parse_create(
             }
             let references_iterated_object = true;
             let create = EffectAst::CreateTokenCopy {
-                object: ObjectRefAst::It,
+                object: ObjectRefAst::Tagged(TagKey::from(IT_TAG)),
                 count: resolve_create_count(references_iterated_object),
                 player,
                 enters_tapped,

@@ -206,19 +206,12 @@ pub(crate) fn ensure_concrete_trigger_spec(trigger: &TriggerSpec) -> Result<(), 
 pub(crate) fn compile_statement_effects(
     effects: &[EffectAst],
 ) -> Result<Vec<Effect>, CardTextError> {
-    compile_statement_effects_seeded(effects, None)
-}
-
-pub(crate) fn compile_statement_effects_seeded(
-    effects: &[EffectAst],
-    seed_last_object_tag: Option<String>,
-) -> Result<Vec<Effect>, CardTextError> {
+    let resolved_effects = bind_unresolved_it_references(effects, None);
     let mut ctx = CompileContext::new();
-    ctx.last_object_tag = seed_last_object_tag;
     ctx.force_auto_tag_object_targets = true;
     ctx.allow_life_event_value = false;
-    let prelude = seed_attached_source_tag_prelude(&mut ctx, effects);
-    let (compiled, _) = compile_effects(effects, &mut ctx)?;
+    let prelude = seed_attached_source_tag_prelude(&mut ctx, &resolved_effects);
+    let (compiled, _) = compile_effects(&resolved_effects, &mut ctx)?;
     Ok(prepend_effect_prelude(compiled, prelude))
 }
 
@@ -649,17 +642,18 @@ pub(crate) fn compile_trigger_effects_with_intervening_if(
     ctx.allow_life_event_value = trigger
         .map(|trigger| trigger_supports_event_value(trigger, &EventValueSpec::Amount))
         .unwrap_or(false);
-    let prelude = seed_attached_source_tag_prelude(&mut ctx, effects);
-    maybe_seed_default_trigger_object_tag(&mut ctx, trigger, effects);
+    let resolved_effects = bind_unresolved_it_references(effects, None);
+    let prelude = seed_attached_source_tag_prelude(&mut ctx, &resolved_effects);
+    maybe_seed_default_trigger_object_tag(&mut ctx, trigger, &resolved_effects);
     let mut intervening_if: Option<Condition> = None;
-    let mut effects_to_compile = effects;
+    let mut effects_to_compile = resolved_effects.as_slice();
     let mut extracted_predicate: Option<&PredicateAst> = None;
-    if effects.len() == 1
+    if resolved_effects.len() == 1
         && let EffectAst::Conditional {
             predicate,
             if_true,
             if_false,
-        } = &effects[0]
+        } = &resolved_effects[0]
         && if_false.is_empty()
         && !if_true.is_empty()
     {
@@ -678,30 +672,9 @@ pub(crate) fn compile_trigger_effects_with_intervening_if(
 
     let (compiled, choices) = compile_effects(effects_to_compile, &mut ctx)?;
     let compiled = prepend_effect_prelude(compiled, prelude);
-    let compiled = prepend_trigger_tag_effects(compiled, effects, ctx.last_object_tag.as_deref());
+    let compiled =
+        prepend_trigger_tag_effects(compiled, &resolved_effects, ctx.last_object_tag.as_deref());
     Ok((compiled, choices, intervening_if))
-}
-
-pub(crate) fn compile_trigger_effects_seeded(
-    trigger: Option<&TriggerSpec>,
-    effects: &[EffectAst],
-    seed_last_object_tag: Option<String>,
-) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
-    if let Some(trigger) = trigger {
-        ensure_concrete_trigger_spec(trigger)?;
-    }
-    let mut ctx = CompileContext::new();
-    ctx.last_object_tag = seed_last_object_tag;
-    ctx.last_player_filter = trigger.and_then(inferred_trigger_player_filter);
-    ctx.allow_life_event_value = trigger
-        .map(|trigger| trigger_supports_event_value(trigger, &EventValueSpec::Amount))
-        .unwrap_or(false);
-    let prelude = seed_attached_source_tag_prelude(&mut ctx, effects);
-    maybe_seed_default_trigger_object_tag(&mut ctx, trigger, effects);
-    let (compiled, choices) = compile_effects(effects, &mut ctx)?;
-    let compiled = prepend_effect_prelude(compiled, prelude);
-    let compiled = prepend_trigger_tag_effects(compiled, effects, ctx.last_object_tag.as_deref());
-    Ok((compiled, choices))
 }
 
 pub(crate) fn effects_reference_tag(effects: &[EffectAst], tag: &str) -> bool {
@@ -1000,12 +973,12 @@ pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
                 false
             }
         }
-        EffectAst::PutIntoHand { object, .. } => {
-            matches!(object, ObjectRefAst::It) && tag == IT_TAG
-        }
-        EffectAst::CreateTokenCopy { object, .. } => {
-            matches!(object, ObjectRefAst::It) && tag == IT_TAG
-        }
+        EffectAst::PutIntoHand { object, .. } => match object {
+            ObjectRefAst::Tagged(found) => found.as_str() == tag,
+        },
+        EffectAst::CreateTokenCopy { object, .. } => match object {
+            ObjectRefAst::Tagged(found) => found.as_str() == tag,
+        },
         EffectAst::CreateToken { count, .. } | EffectAst::CreateTokenWithMods { count, .. } => {
             value_references_tag(count, tag)
         }
@@ -1294,7 +1267,9 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
                 || effects_reference_it_tag(if_true)
                 || effects_reference_it_tag(if_false)
         }
-        EffectAst::PutIntoHand { object, .. } => matches!(object, ObjectRefAst::It),
+        EffectAst::PutIntoHand { object, .. } => {
+            matches!(object, ObjectRefAst::Tagged(tag) if tag.as_str() == IT_TAG)
+        }
         EffectAst::PutRestOnBottomOfLibrary => true,
         EffectAst::RetargetStackObject {
             new_target_restriction,
@@ -1306,7 +1281,9 @@ pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
                 false
             }
         }
-        EffectAst::CreateTokenCopy { object, .. } => matches!(object, ObjectRefAst::It),
+        EffectAst::CreateTokenCopy { object, .. } => {
+            matches!(object, ObjectRefAst::Tagged(tag) if tag.as_str() == IT_TAG)
+        }
         EffectAst::GrantPlayTaggedUntilEndOfTurn { tag, .. }
         | EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
             tag, ..
@@ -4658,15 +4635,10 @@ fn try_compile_visibility_and_card_selection_effect(
             (vec![effect], choices)
         }
         EffectAst::PutIntoHand { player, object } => {
-            let tag = match object {
-                ObjectRefAst::It => ctx.last_object_tag.clone().ok_or_else(|| {
-                    CardTextError::ParseError(
-                        "unable to resolve 'it' without prior reference".to_string(),
-                    )
-                })?,
-            };
+            let ObjectRefAst::Tagged(tag) = object;
+            let tag = resolve_it_tag_key(tag, ctx)?;
             let (_, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
-            let effect = Effect::move_to_zone(ChooseSpec::tagged(tag), Zone::Hand, false);
+            let effect = Effect::move_to_zone(ChooseSpec::Tagged(tag), Zone::Hand, false);
             (vec![effect], choices)
         }
         EffectAst::PutSomeIntoHandRestIntoGraveyard { player, count } => {
@@ -5167,14 +5139,8 @@ fn try_compile_token_generation_effect(
             set_base_power_toughness,
             granted_abilities,
         } => {
-            let tag = match object {
-                ObjectRefAst::It => ctx.last_object_tag.clone().ok_or_else(|| {
-                    CardTextError::ParseError(
-                        "unable to resolve 'that creature' without prior reference".to_string(),
-                    )
-                })?,
-            };
-            let tag: TagKey = tag.into();
+            let ObjectRefAst::Tagged(tag) = object;
+            let tag = resolve_it_tag_key(tag, ctx)?;
             let count = resolve_value_it_tag(count, ctx)?;
             let (player_filter, choices) =
                 resolve_effect_player_filter(*player, ctx, true, true, true)?;

@@ -2571,7 +2571,7 @@ pub(crate) fn parse_put_into_hand(
 
         return Ok(EffectAst::PutIntoHand {
             player,
-            object: ObjectRefAst::It,
+            object: ObjectRefAst::Tagged(TagKey::from(IT_TAG)),
         });
     }
 
@@ -2856,7 +2856,7 @@ pub(crate) fn parse_put_into_hand(
                 ) {
                     return Ok(EffectAst::PutIntoHand {
                         player,
-                        object: ObjectRefAst::It,
+                        object: ObjectRefAst::Tagged(TagKey::from(IT_TAG)),
                     });
                 }
             }
