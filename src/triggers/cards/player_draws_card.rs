@@ -114,14 +114,14 @@ mod tests {
         // Alice draws - should match
         let event = TriggerEvent::new_with_provenance(
             CardsDrawnEvent::single(alice, card_id, true),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
 
         // Bob draws - should not match (controller is Alice)
         let event2 = TriggerEvent::new_with_provenance(
             CardsDrawnEvent::single(bob, card_id, true),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event2, &ctx));
     }
@@ -135,7 +135,7 @@ mod tests {
         ];
         let event = TriggerEvent::new_with_provenance(
             CardsDrawnEvent::new(PlayerId::from_index(0), cards, true),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         // Batch trigger fires once

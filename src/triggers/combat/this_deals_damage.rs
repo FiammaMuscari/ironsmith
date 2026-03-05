@@ -148,7 +148,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             DamageEvent::new(source_id, DamageTarget::Player(bob), 3, false),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));

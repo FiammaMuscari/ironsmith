@@ -4216,9 +4216,9 @@ impl GameState {
         mut event: crate::triggers::TriggerEvent,
     ) {
         let provenance = event.provenance();
-        if provenance.is_unknown() || self.provenance_graph.node(provenance).is_none() {
+        if provenance == ProvNodeId::default() || self.provenance_graph.node(provenance).is_none() {
             let event_provenance =
-                if parent.is_unknown() || self.provenance_graph.node(parent).is_none() {
+                if parent == ProvNodeId::default() || self.provenance_graph.node(parent).is_none() {
                     self.provenance_graph.alloc_root_event(event.kind())
                 } else {
                     self.alloc_child_event_provenance(parent, event.kind())
@@ -4241,7 +4241,7 @@ impl GameState {
     /// Ensure a replacement-event envelope has provenance.
     pub fn ensure_event_provenance(&mut self, mut event: Event) -> Event {
         let provenance = event.provenance();
-        if provenance.is_unknown() || self.provenance_graph.node(provenance).is_none() {
+        if provenance == ProvNodeId::default() || self.provenance_graph.node(provenance).is_none() {
             let provenance = self.provenance_graph.alloc_root_event(event.kind());
             event.set_provenance(provenance);
         }
@@ -4254,7 +4254,7 @@ impl GameState {
         mut event: crate::triggers::TriggerEvent,
     ) -> crate::triggers::TriggerEvent {
         let provenance = event.provenance();
-        if provenance.is_unknown() || self.provenance_graph.node(provenance).is_none() {
+        if provenance == ProvNodeId::default() || self.provenance_graph.node(provenance).is_none() {
             let provenance = self.provenance_graph.alloc_root_event(event.kind());
             event.set_provenance(provenance);
         }

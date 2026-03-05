@@ -183,7 +183,7 @@ mod tests {
                 AttackEventTarget::Player(alice),
                 2,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&first_event, &ctx));
 
@@ -193,7 +193,7 @@ mod tests {
                 AttackEventTarget::Player(alice),
                 2,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&second_event, &ctx));
     }

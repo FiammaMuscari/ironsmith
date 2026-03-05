@@ -103,7 +103,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             SpellCopiedEvent::new(spell_id, alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
     }

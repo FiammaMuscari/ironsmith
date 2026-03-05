@@ -148,7 +148,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfPrecombatMainPhaseEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
     }
@@ -164,7 +164,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfPostcombatMainPhaseEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
     }
@@ -180,7 +180,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfPostcombatMainPhaseEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }
@@ -196,7 +196,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfPrecombatMainPhaseEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }
@@ -212,11 +212,11 @@ mod tests {
 
         let precombat = TriggerEvent::new_with_provenance(
             BeginningOfPrecombatMainPhaseEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         let postcombat = TriggerEvent::new_with_provenance(
             BeginningOfPostcombatMainPhaseEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&precombat, &ctx));
         assert!(trigger.matches(&postcombat, &ctx));
@@ -234,7 +234,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfPrecombatMainPhaseEvent::new(bob),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }
@@ -251,11 +251,11 @@ mod tests {
 
         let alice_event = TriggerEvent::new_with_provenance(
             BeginningOfPrecombatMainPhaseEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         let bob_event = TriggerEvent::new_with_provenance(
             BeginningOfPrecombatMainPhaseEvent::new(bob),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&alice_event, &ctx));
         assert!(trigger.matches(&bob_event, &ctx));
@@ -272,7 +272,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfUpkeepEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }

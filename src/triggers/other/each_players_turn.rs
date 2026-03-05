@@ -38,14 +38,14 @@ mod tests {
         assert!(trigger.matches(
             &TriggerEvent::new_with_provenance(
                 BeginningOfUpkeepEvent::new(alice),
-                crate::provenance::ProvNodeId::UNKNOWN
+                crate::provenance::ProvNodeId::default()
             ),
             &ctx
         ));
         assert!(trigger.matches(
             &TriggerEvent::new_with_provenance(
                 BeginningOfUpkeepEvent::new(bob),
-                crate::provenance::ProvNodeId::UNKNOWN
+                crate::provenance::ProvNodeId::default()
             ),
             &ctx
         ));

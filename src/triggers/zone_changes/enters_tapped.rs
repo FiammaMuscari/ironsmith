@@ -110,7 +110,7 @@ mod tests {
         // Create an event where the permanent enters tapped
         let event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));
@@ -129,7 +129,7 @@ mod tests {
         // Create an event where the permanent enters untapped (default)
         let event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::new(land_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(!trigger.matches(&event, &ctx));
@@ -149,7 +149,7 @@ mod tests {
         // Bob's permanent enters tapped, but Alice's trigger only cares about her permanents
         let event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(!trigger.matches(&event, &ctx));
@@ -167,7 +167,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::tapped(creature_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));
@@ -184,7 +184,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfUpkeepEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }

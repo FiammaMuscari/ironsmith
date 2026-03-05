@@ -74,7 +74,7 @@ mod tests {
         let vampire_attacker = create_creature(&mut game, "Vampire", bob, vec![Subtype::Vampire]);
         let event = TriggerEvent::new_with_provenance(
             CreatureBlockedEvent::new(source, vampire_attacker),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let trigger =
@@ -93,7 +93,7 @@ mod tests {
         let zombie_attacker = create_creature(&mut game, "Zombie", bob, vec![Subtype::Zombie]);
         let event = TriggerEvent::new_with_provenance(
             CreatureBlockedEvent::new(source, zombie_attacker),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let trigger =

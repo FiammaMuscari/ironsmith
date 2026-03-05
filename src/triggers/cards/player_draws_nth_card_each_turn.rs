@@ -116,7 +116,7 @@ mod tests {
         game.cards_drawn_this_turn.insert(alice, 2);
         let event = TriggerEvent::new_with_provenance(
             CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
@@ -137,7 +137,7 @@ mod tests {
                 vec![ObjectId::from_raw(2), ObjectId::from_raw(3)],
                 true,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 
@@ -154,7 +154,7 @@ mod tests {
         game.cards_drawn_this_turn.insert(alice, 3);
         let event = TriggerEvent::new_with_provenance(
             CardsDrawnEvent::single(alice, ObjectId::from_raw(2), false),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         let ctx = TriggerContext::for_source(source_id, alice, &game);
 

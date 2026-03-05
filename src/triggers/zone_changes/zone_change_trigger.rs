@@ -580,7 +580,7 @@ mod tests {
                 EventCause::from_sba(),
                 Some(make_creature_snapshot(creature_id, alice, "Bear")),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
 
@@ -593,7 +593,7 @@ mod tests {
                 EventCause::from_sba(),
                 Some(make_creature_snapshot(creature_id, alice, "Bear")),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&exile_event, &ctx));
     }
@@ -617,7 +617,7 @@ mod tests {
                 EventCause::from_sba(),
                 Some(make_creature_snapshot(source_id, alice, "Self")),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
 
@@ -630,7 +630,7 @@ mod tests {
                 EventCause::from_sba(),
                 Some(make_creature_snapshot(other_id, alice, "Other")),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&other_event, &ctx));
     }
@@ -653,7 +653,7 @@ mod tests {
                 Zone::Battlefield,
                 Some(make_creature_snapshot(creature_id, alice, "Bear")),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&from_hand, &ctx));
 
@@ -665,7 +665,7 @@ mod tests {
                 Zone::Battlefield,
                 Some(make_creature_snapshot(creature_id, alice, "Bear")),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&from_graveyard, &ctx));
     }
@@ -689,7 +689,7 @@ mod tests {
         snapshot.stable_id = StableId::from(old_id);
         let event = TriggerEvent::new_with_provenance(
             ZoneChangeEvent::new(new_id, Zone::Stack, Zone::Battlefield, Some(snapshot)),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let trigger = ZoneChangeTrigger::enters_battlefield(ObjectFilter::creature().other());
@@ -721,7 +721,7 @@ mod tests {
                 EventCause::from_effect(source_id, alice),
                 Some(ObjectSnapshot::for_testing(card_id, alice, "Card")),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&alice_discard, &ctx));
 
@@ -734,7 +734,7 @@ mod tests {
                 EventCause::from_effect(source_id, bob),
                 Some(ObjectSnapshot::for_testing(card_id, bob, "Card")),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&bob_discard, &ctx));
     }
@@ -753,7 +753,7 @@ mod tests {
                 Zone::Graveyard,
                 EventCause::from_sba(),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         // "Whenever a creature dies" fires 3 times

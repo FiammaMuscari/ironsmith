@@ -41,7 +41,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             LifeLossEvent::from_effect(alice, 2),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
     }

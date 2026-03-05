@@ -82,7 +82,7 @@ mod tests {
                 AttackEventTarget::Player(bob),
                 1,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));
@@ -104,7 +104,7 @@ mod tests {
                 AttackEventTarget::Player(bob),
                 2,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(!trigger.matches(&event, &ctx));

@@ -79,7 +79,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             LifeGainEvent::new(alice, 3),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
     }
@@ -96,7 +96,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             LifeGainEvent::new(bob, 3),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }

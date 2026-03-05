@@ -66,7 +66,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             KeywordActionEvent::new(KeywordActionKind::Expend, alice, ObjectId::from_raw(99), 4),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));
@@ -82,7 +82,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             KeywordActionEvent::new(KeywordActionKind::Expend, alice, ObjectId::from_raw(99), 8),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(!trigger.matches(&event, &ctx));

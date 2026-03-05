@@ -188,7 +188,7 @@ mod tests {
                 Some(creature_id),
                 Some(alice),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(
             trigger.matches(&your_event, &ctx),
@@ -203,7 +203,7 @@ mod tests {
                 Some(creature_id),
                 Some(bob),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(
             !trigger.matches(&opponent_event, &ctx),
@@ -222,7 +222,7 @@ mod tests {
                 None,
                 None,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert_eq!(trigger.trigger_count(&event), 4);
     }

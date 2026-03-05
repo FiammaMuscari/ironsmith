@@ -185,7 +185,7 @@ mod tests {
         // Check triggers for the ETB event
         let event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::new(creature_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggers = check_triggers(&game, &event);
@@ -214,7 +214,7 @@ mod tests {
         // Check triggers for the ETB event
         let event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::new(creature_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggers = check_triggers(&game, &event);

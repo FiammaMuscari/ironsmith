@@ -79,7 +79,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfDrawStepEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
     }
@@ -96,7 +96,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfDrawStepEvent::new(bob),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }

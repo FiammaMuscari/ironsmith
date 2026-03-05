@@ -1,6 +1,7 @@
 import { useGame } from "@/context/GameContext";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import DecisionRouter from "@/components/decisions/DecisionRouter";
 import { cn } from "@/lib/utils";
 
 function clamp(value, min, max) {
@@ -145,11 +146,43 @@ function PriorityBar({ anchor = null, inline = false }) {
   );
 }
 
+function CombatBar({ anchor = null, inline = false, decision, canAct }) {
+  if (!decision || (decision.kind !== "attackers" && decision.kind !== "blockers")) return null;
+
+  const anchoredStyle = inline ? null : priorityAnchorStyle(anchor);
+  const panelClass = inline
+    ? "pointer-events-none absolute inset-0 z-[120] flex items-center px-2"
+    : "pointer-events-none fixed left-2 bottom-[148px] z-[120] w-[min(96vw,740px)]";
+
+  const innerClass = cn(
+    "priority-inline-panel pointer-events-auto flex w-full items-center gap-2 rounded border border-[#305071] bg-[rgba(7,15,23,0.97)] px-2 py-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.45)] backdrop-blur-[2px]",
+    !inline && anchoredStyle ? "fixed" : ""
+  );
+
+  return (
+    <div className={panelClass}>
+      <div className={innerClass} style={anchoredStyle || undefined}>
+        <DecisionRouter
+          decision={decision}
+          canAct={canAct}
+          combatInline
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function DecisionPopupLayer({ anchor = null, priorityInline = false }) {
   const { state } = useGame();
   const decision = state?.decision || null;
+  const canAct = !!decision && state?.perspective === decision.player;
 
   if (!decision) return null;
-  if (decision.kind !== "priority") return null;
-  return <PriorityBar anchor={anchor} inline={priorityInline} />;
+  if (decision.kind === "priority") {
+    return <PriorityBar anchor={anchor} inline={priorityInline} />;
+  }
+  if (decision.kind === "attackers" || decision.kind === "blockers") {
+    return <CombatBar anchor={anchor} inline={priorityInline} decision={decision} canAct={canAct} />;
+  }
+  return null;
 }

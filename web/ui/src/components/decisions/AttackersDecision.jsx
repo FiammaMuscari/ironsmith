@@ -74,7 +74,7 @@ function resolveDropTarget(x, y, validTargets) {
   return null;
 }
 
-export default function AttackersDecision({ decision, canAct }) {
+export default function AttackersDecision({ decision, canAct, compact = false }) {
   const { dispatch, state } = useGame();
   const { updateArrows, clearArrows, startDragArrow, updateDragArrow, endDragArrow, setCombatMode } = useCombatArrows();
   const options = useMemo(() => decision.attacker_options || [], [decision.attacker_options]);
@@ -307,6 +307,87 @@ export default function AttackersDecision({ decision, canAct }) {
   }, [declarations, updateArrows]);
 
   useEffect(() => clearArrows, [clearArrows]);
+
+  const creatureNameById = useMemo(() => {
+    const map = new Map();
+    for (const opt of options) {
+      const creatureId = Number(opt.creature);
+      map.set(creatureId, opt.creature_name || opt.name || `Creature ${creatureId}`);
+    }
+    return map;
+  }, [options]);
+
+  if (compact) {
+    const pendingOnlySelection = (
+      selectedAttackerId != null
+      && !declarations.some((d) => d.creature === Number(selectedAttackerId))
+    );
+
+    return (
+      <div className="flex h-full min-w-0 items-center gap-2">
+        <div className="shrink-0 min-w-[92px]">
+          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+            {canAct ? "Your Action" : "Opponent Action"}
+          </div>
+          <div className="text-[10px] text-[#b8d2ef]">
+            Attackers
+          </div>
+        </div>
+
+        <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden whitespace-nowrap">
+          <div className="flex w-max min-w-full items-center gap-1.5 pr-2">
+            {declarations.length === 0 && !pendingOnlySelection && (
+              <span className="text-[12px] text-[#b8d2ef]">
+                Select a creature, then point to a player or planeswalker.
+              </span>
+            )}
+
+            {pendingOnlySelection && (
+              <button
+                type="button"
+                className="inline-flex h-7 items-center rounded border border-[rgba(255,126,119,0.75)] bg-[rgba(90,32,37,0.7)] px-2.5 text-[12px] font-semibold text-[#ffd8d6]"
+                disabled={!canAct}
+                onClick={() => setSelectedAttackerId(null)}
+              >
+                {(creatureNameById.get(Number(selectedAttackerId)) || `Creature ${Number(selectedAttackerId)}`)} -&gt; ?
+              </button>
+            )}
+
+            {declarations.map((decl) => {
+              const creatureName = creatureNameById.get(Number(decl.creature)) || `Creature ${Number(decl.creature)}`;
+              const targetName = attackTargetLabel(decl.target, players);
+              return (
+                <button
+                  key={`compact-atk-${decl.creature}`}
+                  type="button"
+                  className="inline-flex h-7 items-center rounded border border-[#4f7cad] bg-[rgba(24,43,64,0.78)] px-2.5 text-[12px] font-semibold text-[#d7ebff] transition-colors hover:border-[#7eb1e5] hover:bg-[rgba(34,58,84,0.9)]"
+                  disabled={!canAct}
+                  onClick={() => setSelectedAttackerId(Number(decl.creature))}
+                >
+                  {creatureName} -&gt; {targetName}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 shrink-0 rounded border border-[#546c86] bg-[rgba(15,27,40,0.92)] px-3 text-[13px] font-bold text-[#f7b869] transition-all hover:border-[#8ca8c7] hover:bg-[rgba(28,43,58,0.95)] hover:text-[#ffd49d]"
+          disabled={!canAct}
+          onClick={() =>
+            dispatch(
+              { type: "declare_attackers", declarations },
+              `Declared ${declarations.length} attacker(s)`
+            )
+          }
+        >
+          Confirm ({declarations.length})
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-2 overflow-x-hidden">

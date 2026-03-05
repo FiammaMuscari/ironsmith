@@ -116,13 +116,13 @@ mod tests {
 
         let you_event = TriggerEvent::new_with_provenance(
             KeywordActionEvent::new(KeywordActionKind::Earthbend, alice, source_id, 2),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&you_event, &ctx));
 
         let opp_event = TriggerEvent::new_with_provenance(
             KeywordActionEvent::new(KeywordActionKind::Earthbend, bob, source_id, 2),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&opp_event, &ctx));
     }
@@ -153,7 +153,7 @@ mod tests {
         );
         let event = TriggerEvent::new_with_provenance(
             KeywordActionEvent::new(KeywordActionKind::Cycle, alice, stable, 1),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let trigger =
@@ -171,7 +171,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             KeywordActionEvent::new(KeywordActionKind::Scry, alice, source_id, 1),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }

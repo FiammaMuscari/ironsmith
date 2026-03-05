@@ -255,7 +255,7 @@ mod tests {
         // Simulate Tivit entering the battlefield
         let event = TriggerEvent::new_with_provenance(
             ZoneChangeEvent::new(tivit_id, Zone::Hand, Zone::Battlefield, None),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -284,7 +284,7 @@ mod tests {
                 6,
                 true, // is_combat
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -317,7 +317,7 @@ mod tests {
                 6,
                 false, // not combat
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -352,7 +352,7 @@ mod tests {
                 6,
                 true, // is_combat
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -416,7 +416,7 @@ mod tests {
         // Simulate Tivit entering the battlefield
         let event = TriggerEvent::new_with_provenance(
             ZoneChangeEvent::new(tivit_id, Zone::Hand, Zone::Battlefield, None),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);

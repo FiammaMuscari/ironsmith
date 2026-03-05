@@ -677,31 +677,31 @@ pub fn generate_step_trigger_events(game: &GameState) -> Option<TriggerEvent> {
     match (game.turn.phase, game.turn.step) {
         (Phase::Beginning, Some(Step::Upkeep)) => Some(TriggerEvent::new_with_provenance(
             BeginningOfUpkeepEvent::new(active),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         )),
         (Phase::Beginning, Some(Step::Draw)) => Some(TriggerEvent::new_with_provenance(
             BeginningOfDrawStepEvent::new(active),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         )),
         (Phase::FirstMain, None) => Some(TriggerEvent::new_with_provenance(
             BeginningOfPrecombatMainPhaseEvent::new(active),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         )),
         (Phase::Combat, Some(Step::BeginCombat)) => Some(TriggerEvent::new_with_provenance(
             BeginningOfCombatEvent::new(active),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         )),
         (Phase::Combat, Some(Step::EndCombat)) => Some(TriggerEvent::new_with_provenance(
             EndOfCombatEvent::new(),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         )),
         (Phase::NextMain, None) => Some(TriggerEvent::new_with_provenance(
             BeginningOfPostcombatMainPhaseEvent::new(active),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         )),
         (Phase::Ending, Some(Step::End)) => Some(TriggerEvent::new_with_provenance(
             BeginningOfEndStepEvent::new(active),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         )),
         _ => None,
     }

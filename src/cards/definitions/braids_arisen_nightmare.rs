@@ -229,7 +229,7 @@ mod tests {
         // Simulate Alice's end step
         let event = TriggerEvent::new_with_provenance(
             BeginningOfEndStepEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -256,7 +256,7 @@ mod tests {
         // Simulate Bob's end step
         let event = TriggerEvent::new_with_provenance(
             BeginningOfEndStepEvent::new(bob),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -287,7 +287,7 @@ mod tests {
         // Simulate Alice's end step
         let event = TriggerEvent::new_with_provenance(
             BeginningOfEndStepEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -310,7 +310,7 @@ mod tests {
         // Simulate Alice's end step
         let event = TriggerEvent::new_with_provenance(
             BeginningOfEndStepEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -337,7 +337,7 @@ mod tests {
         // Simulate Alice's end step
         let event = TriggerEvent::new_with_provenance(
             BeginningOfEndStepEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -350,7 +350,7 @@ mod tests {
         // Bob's end step should trigger
         let event = TriggerEvent::new_with_provenance(
             BeginningOfEndStepEvent::new(bob),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         let triggered = check_triggers(&game, &event);
         assert_eq!(

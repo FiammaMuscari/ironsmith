@@ -2619,914 +2619,95 @@ fn compile_effect_inner(
     effect: &EffectAst,
     ctx: &mut CompileContext,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
-    if let Some(compiled) = try_compile_combat_and_damage_effect(effect, ctx)? {
+    if let Some(compiled) = try_compile_effect_via_handlers(effect, ctx)? {
         return Ok(compiled);
     }
 
     match effect {
-        EffectAst::PutCounters {
-            counter_type,
-            count,
-            target,
-            target_count,
-            distributed,
-        } => {
-            let (base_spec, _) = resolve_target_spec_with_choices(target, ctx)?;
-            let mut spec = base_spec;
-            if let Some(target_count) = target_count {
-                spec = spec.with_count(*target_count);
-            }
-            let mut put_counters =
-                crate::effects::PutCountersEffect::new(*counter_type, count.clone(), spec.clone());
-            if let Some(target_count) = target_count {
-                put_counters = put_counters.with_target_count(*target_count);
-            }
-            if *distributed {
-                put_counters = put_counters.with_distributed(true);
-            }
-            let effect =
-                tag_object_target_effect(Effect::new(put_counters), &spec, ctx, "counters");
-            let choices = if spec.is_target() {
-                vec![spec.clone()]
-            } else {
-                Vec::new()
-            };
-            Ok((vec![effect], choices))
+        EffectAst::DealDamage { .. }
+        | EffectAst::DealDamageEqualToPower { .. }
+        | EffectAst::Fight { .. }
+        | EffectAst::FightIterated { .. }
+        | EffectAst::Clash { .. }
+        | EffectAst::DealDamageEach { .. } => {
+            unreachable!("combat/damage effect should be handled by dedicated handler")
         }
-        EffectAst::PutOrRemoveCounters {
-            put_counter_type,
-            put_count,
-            remove_counter_type,
-            remove_count,
-            put_mode_text,
-            remove_mode_text,
-            target,
-            target_count,
-        } => {
-            let (base_spec, _) = resolve_target_spec_with_choices(target, ctx)?;
-            let mut spec = base_spec;
-            if let Some(target_count) = target_count {
-                spec = spec.with_count(*target_count);
-            }
-
-            let put_effect =
-                Effect::put_counters(*put_counter_type, put_count.clone(), spec.clone());
-            let remove_effect =
-                Effect::remove_counters(*remove_counter_type, remove_count.clone(), spec.clone());
-
-            use crate::effect::EffectMode;
-            let effect = Effect::choose_one(vec![
-                EffectMode {
-                    description: put_mode_text.clone(),
-                    effects: vec![put_effect],
-                },
-                EffectMode {
-                    description: remove_mode_text.clone(),
-                    effects: vec![remove_effect],
-                },
-            ]);
-
-            let effect = tag_object_target_effect(effect, &spec, ctx, "counters");
-            let choices = if spec.is_target() {
-                vec![spec.clone()]
-            } else {
-                Vec::new()
-            };
-            Ok((vec![effect], choices))
+        EffectAst::PutCounters { .. }
+        | EffectAst::PutOrRemoveCounters { .. }
+        | EffectAst::ForEachCounterKindPutOrRemove { .. }
+        | EffectAst::PutCountersAll { .. }
+        | EffectAst::RemoveCountersAll { .. }
+        | EffectAst::DoubleCountersOnEach { .. }
+        | EffectAst::Proliferate
+        | EffectAst::Tap { .. }
+        | EffectAst::TapAll { .. }
+        | EffectAst::Untap { .. }
+        | EffectAst::RemoveFromCombat { .. }
+        | EffectAst::TapOrUntap { .. }
+        | EffectAst::UntapAll { .. }
+        | EffectAst::GrantProtectionChoice { .. }
+        | EffectAst::Earthbend { .. }
+        | EffectAst::Explore { .. }
+        | EffectAst::OpenAttraction
+        | EffectAst::ManifestDread
+        | EffectAst::Bolster { .. }
+        | EffectAst::Support { .. }
+        | EffectAst::Adapt { .. }
+        | EffectAst::CounterActivatedOrTriggeredAbility => {
+            unreachable!("board-state effect should be handled by dedicated handler")
         }
-        EffectAst::ForEachCounterKindPutOrRemove { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
-            Ok((
-                vec![Effect::new(
-                    crate::effects::ForEachCounterKindPutOrRemoveEffect::new(spec),
-                )],
-                choices,
-            ))
+        EffectAst::Draw { .. }
+        | EffectAst::Counter { .. }
+        | EffectAst::CounterUnlessPays { .. }
+        | EffectAst::LoseLife { .. }
+        | EffectAst::GainLife { .. }
+        | EffectAst::LoseGame { .. }
+        | EffectAst::WinGame { .. }
+        | EffectAst::PreventAllCombatDamage { .. }
+        | EffectAst::PreventAllCombatDamageFromSource { .. }
+        | EffectAst::PreventAllCombatDamageToPlayers { .. }
+        | EffectAst::PreventAllCombatDamageToYou { .. }
+        | EffectAst::PreventDamage { .. }
+        | EffectAst::PreventAllDamageToTarget { .. }
+        | EffectAst::PreventNextTimeDamage { .. }
+        | EffectAst::RedirectNextDamageFromSourceToTarget { .. }
+        | EffectAst::RedirectNextTimeDamageToSource { .. }
+        | EffectAst::PreventDamageEach { .. }
+        | EffectAst::AddMana { .. }
+        | EffectAst::AddManaScaled { .. }
+        | EffectAst::AddManaAnyColor { .. }
+        | EffectAst::AddManaAnyOneColor { .. }
+        | EffectAst::AddManaChosenColor { .. }
+        | EffectAst::AddManaFromLandCouldProduce { .. }
+        | EffectAst::AddManaCommanderIdentity { .. }
+        | EffectAst::AddManaImprintedColors
+        | EffectAst::Scry { .. }
+        | EffectAst::Discover { .. }
+        | EffectAst::BecomeBasicLandTypeChoice { .. }
+        | EffectAst::BecomeCreatureTypeChoice { .. }
+        | EffectAst::BecomeColorChoice { .. }
+        | EffectAst::Surveil { .. }
+        | EffectAst::PayMana { .. }
+        | EffectAst::PayEnergy { .. } => {
+            unreachable!("player/resource effect should be handled by dedicated handler")
         }
-        EffectAst::PutCountersAll {
-            counter_type,
-            count,
-            filter,
-        } => {
-            let effect = Effect::for_each(
-                filter.clone(),
-                vec![Effect::put_counters(
-                    *counter_type,
-                    count.clone(),
-                    ChooseSpec::Iterated,
-                )],
-            );
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::RemoveCountersAll {
-            amount,
-            filter,
-            counter_type,
-            up_to,
-        } => {
-            let iterated = ChooseSpec::Iterated;
-            let inner = if let Some(counter_type) = counter_type {
-                if *up_to {
-                    Effect::remove_up_to_counters(*counter_type, amount.clone(), iterated.clone())
-                } else {
-                    Effect::remove_counters(*counter_type, amount.clone(), iterated.clone())
-                }
-            } else {
-                Effect::remove_up_to_any_counters(amount.clone(), iterated.clone())
-            };
-            let effect = Effect::for_each(filter.clone(), vec![inner]);
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::DoubleCountersOnEach {
-            counter_type,
-            filter,
-        } => {
-            let iterated = ChooseSpec::Iterated;
-            let count = Value::CountersOn(Box::new(iterated.clone()), Some(*counter_type));
-            let effect = Effect::for_each(
-                filter.clone(),
-                vec![Effect::put_counters(*counter_type, count, iterated)],
-            );
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::Proliferate => Ok((vec![Effect::proliferate()], Vec::new())),
-        EffectAst::Tap { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
-            let base_effect = if spec.is_target() {
-                Effect::tap(spec.clone())
-            } else {
-                Effect::new(crate::effects::TapEffect::with_spec(spec.clone()))
-            };
-            let effect = tag_object_target_effect(base_effect, &spec, ctx, "tapped");
-            Ok((vec![effect], choices))
-        }
-        EffectAst::TapAll { filter } => {
-            let resolved_filter = resolve_it_tag(filter, ctx)?;
-            let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
-            prelude.push(Effect::tap_all(resolved_filter));
-            Ok((prelude, choices))
-        }
-        EffectAst::Untap { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
-            let base_effect = if spec.is_target() {
-                Effect::untap(spec.clone())
-            } else {
-                Effect::new(crate::effects::UntapEffect::with_spec(spec.clone()))
-            };
-            let effect = tag_object_target_effect(base_effect, &spec, ctx, "untapped");
-            Ok((vec![effect], choices))
-        }
-        EffectAst::RemoveFromCombat { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
-            let effect = tag_object_target_effect(
-                Effect::new(crate::effects::RemoveFromCombatEffect::with_spec(
-                    spec.clone(),
-                )),
-                &spec,
-                ctx,
-                "removed_from_combat",
-            );
-            Ok((vec![effect], choices))
-        }
-        EffectAst::TapOrUntap { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
-            let tap_effect = Effect::tap(spec.clone());
-            let untap_effect = Effect::untap(spec.clone());
-            use crate::effect::EffectMode;
-            let modes = vec![
-                EffectMode {
-                    description: "Tap".to_string(),
-                    effects: vec![tap_effect],
-                },
-                EffectMode {
-                    description: "Untap".to_string(),
-                    effects: vec![untap_effect],
-                },
-            ];
-            let effect =
-                tag_object_target_effect(Effect::choose_one(modes), &spec, ctx, "tap_or_untap");
-            Ok((vec![effect], choices))
-        }
-        EffectAst::UntapAll { filter } => {
-            let resolved_filter = resolve_it_tag(filter, ctx)?;
-            let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
-            prelude.push(Effect::untap_all(resolved_filter));
-            Ok((prelude, choices))
-        }
-        EffectAst::GrantProtectionChoice {
-            target,
-            allow_colorless,
-        } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
-            let mut modes = Vec::new();
-            if *allow_colorless {
-                let ability = StaticAbility::protection(crate::ability::ProtectionFrom::Colorless);
-                modes.push(EffectMode {
-                    description: "Colorless".to_string(),
-                    effects: vec![Effect::new(
-                        crate::effects::GrantAbilitiesTargetEffect::new(
-                            spec.clone(),
-                            vec![ability],
-                            crate::effect::Until::EndOfTurn,
-                        ),
-                    )],
-                });
-            }
-
-            let colors = [
-                ("White", crate::color::Color::White),
-                ("Blue", crate::color::Color::Blue),
-                ("Black", crate::color::Color::Black),
-                ("Red", crate::color::Color::Red),
-                ("Green", crate::color::Color::Green),
-            ];
-
-            for (name, color) in colors {
-                let ability = StaticAbility::protection(crate::ability::ProtectionFrom::Color(
-                    ColorSet::from(color),
-                ));
-                modes.push(EffectMode {
-                    description: name.to_string(),
-                    effects: vec![Effect::new(
-                        crate::effects::GrantAbilitiesTargetEffect::new(
-                            spec.clone(),
-                            vec![ability],
-                            crate::effect::Until::EndOfTurn,
-                        ),
-                    )],
-                });
-            }
-
-            let effect =
-                tag_object_target_effect(Effect::choose_one(modes), &spec, ctx, "protected");
-            Ok((vec![effect], choices))
-        }
-        EffectAst::Earthbend { counters } => {
-            let spec = ChooseSpec::target(ChooseSpec::Object(ObjectFilter::land().you_control()));
-            let effect = tag_object_target_effect(
-                Effect::new(crate::effects::EarthbendEffect::new(
-                    spec.clone(),
-                    *counters,
-                )),
-                &spec,
-                ctx,
-                "earthbend",
-            );
-            Ok((vec![effect], vec![spec]))
-        }
-        EffectAst::Explore { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
-            let effect =
-                tag_object_target_effect(Effect::explore(spec.clone()), &spec, ctx, "explored");
-            Ok((vec![effect], choices))
-        }
-        EffectAst::OpenAttraction => Ok((vec![Effect::open_attraction()], Vec::new())),
-        EffectAst::ManifestDread => Ok((vec![Effect::manifest_dread()], Vec::new())),
-        EffectAst::Bolster { amount } => Ok((vec![Effect::bolster(*amount)], Vec::new())),
-        EffectAst::Support { amount } => Ok((vec![Effect::support(*amount)], Vec::new())),
-        EffectAst::Adapt { amount } => Ok((vec![Effect::adapt(*amount)], Vec::new())),
-        EffectAst::CounterActivatedOrTriggeredAbility => Ok((
-            vec![Effect::counter_activated_or_triggered_ability()],
-            Vec::new(),
-        )),
-        EffectAst::Draw { count, player } => {
-            let count = resolve_value_it_tag(count, ctx)?;
-            compile_player_effect(
-                *player,
-                ctx,
-                true,
-                || Effect::draw(count.clone()),
-                |filter| Effect::target_draws(count.clone(), filter),
-            )
-        }
-        EffectAst::Counter { target } => {
-            compile_tagged_effect_for_target(target, ctx, "countered", Effect::counter)
-        }
-        EffectAst::CounterUnlessPays {
-            target,
-            mana,
-            life,
-            additional_generic,
-        } => {
-            let additional_generic = additional_generic
-                .as_ref()
-                .map(|value| resolve_value_it_tag(value, ctx))
-                .transpose()?;
-            compile_tagged_effect_for_target(target, ctx, "countered", |spec| {
-                Effect::counter_unless_pays_with_life_and_additional(
-                    spec,
-                    mana.clone(),
-                    life.clone(),
-                    additional_generic.clone(),
-                )
-            })
-        }
-        EffectAst::LoseLife { amount, player } => {
-            let amount = resolve_value_it_tag(amount, ctx)?;
-            compile_player_effect(
-                *player,
-                ctx,
-                true,
-                || Effect::lose_life(amount.clone()),
-                |filter| Effect::lose_life_player(amount.clone(), filter),
-            )
-        }
-        EffectAst::GainLife { amount, player } => {
-            let amount = resolve_value_it_tag(amount, ctx)?;
-            compile_player_effect(
-                *player,
-                ctx,
-                true,
-                || Effect::gain_life(amount.clone()),
-                |filter| Effect::gain_life_player(amount.clone(), ChooseSpec::Player(filter)),
-            )
-        }
-        EffectAst::LoseGame { player } => compile_player_effect(
-            *player,
-            ctx,
-            true,
-            Effect::lose_the_game,
-            Effect::lose_the_game_player,
-        ),
-        EffectAst::WinGame { player } => compile_player_effect(
-            *player,
-            ctx,
-            true,
-            Effect::win_the_game,
-            Effect::win_the_game_player,
-        ),
-        EffectAst::PreventAllCombatDamage { duration } => Ok((
-            vec![Effect::prevent_all_combat_damage(duration.clone())],
-            Vec::new(),
-        )),
-        EffectAst::PreventAllCombatDamageFromSource { duration, source } => {
-            compile_effect_for_target(source, ctx, |spec| {
-                Effect::prevent_all_combat_damage_from(spec, duration.clone())
-            })
-        }
-        EffectAst::PreventAllCombatDamageToPlayers { duration } => Ok((
-            vec![Effect::prevent_all_combat_damage_to_players(
-                duration.clone(),
-            )],
-            Vec::new(),
-        )),
-        EffectAst::PreventAllCombatDamageToYou { duration } => Ok((
-            vec![Effect::prevent_all_combat_damage_to_you(duration.clone())],
-            Vec::new(),
-        )),
-        EffectAst::PreventDamage {
-            amount,
-            target,
-            duration,
-        } => {
-            let amount = resolve_value_it_tag(amount, ctx)?;
-            compile_effect_for_target(target, ctx, |spec| {
-                Effect::prevent_damage(amount.clone(), spec, duration.clone())
-            })
-        }
-        EffectAst::PreventAllDamageToTarget { target, duration } => {
-            if let TargetAst::Object(filter, explicit_target_span, _) = target
-                && explicit_target_span.is_none()
-            {
-                let resolved_filter = resolve_it_tag(filter, ctx)?;
-                return Ok((
-                    vec![Effect::prevent_all_damage_to(
-                        resolved_filter,
-                        duration.clone(),
-                    )],
-                    Vec::new(),
-                ));
-            }
-            compile_effect_for_target(target, ctx, |spec| {
-                Effect::prevent_all_damage_to_target(spec, duration.clone())
-            })
-        }
-        EffectAst::PreventNextTimeDamage { source, target } => {
-            let source_spec = match source {
-                PreventNextTimeDamageSourceAst::Choice => {
-                    crate::effects::PreventNextTimeDamageSource::Choice
-                }
-                PreventNextTimeDamageSourceAst::Filter(filter) => {
-                    crate::effects::PreventNextTimeDamageSource::Filter(resolve_it_tag(
-                        filter, ctx,
-                    )?)
-                }
-            };
-            let target_spec = match target {
-                PreventNextTimeDamageTargetAst::AnyTarget => {
-                    crate::effects::PreventNextTimeDamageTarget::AnyTarget
-                }
-                PreventNextTimeDamageTargetAst::You => {
-                    crate::effects::PreventNextTimeDamageTarget::You
-                }
-            };
-            Ok((
-                vec![Effect::new(
-                    crate::effects::PreventNextTimeDamageEffect::new(source_spec, target_spec),
-                )],
-                Vec::new(),
-            ))
-        }
-        EffectAst::RedirectNextDamageFromSourceToTarget { amount, target } => {
-            let amount = resolve_value_it_tag(amount, ctx)?;
-            compile_effect_for_target(target, ctx, |spec| {
-                Effect::new(crate::effects::RedirectNextDamageToTargetEffect::new(
-                    amount.clone(),
-                    spec,
-                ))
-            })
-        }
-        EffectAst::RedirectNextTimeDamageToSource { source, target } => {
-            let source_spec = match source {
-                PreventNextTimeDamageSourceAst::Choice => {
-                    crate::effects::RedirectNextTimeDamageSource::Choice
-                }
-                PreventNextTimeDamageSourceAst::Filter(filter) => {
-                    crate::effects::RedirectNextTimeDamageSource::Filter(resolve_it_tag(
-                        filter, ctx,
-                    )?)
-                }
-            };
-            compile_effect_for_target(target, ctx, |spec| {
-                Effect::new(crate::effects::RedirectNextTimeDamageToSourceEffect::new(
-                    source_spec.clone(),
-                    spec,
-                ))
-            })
-        }
-        EffectAst::PreventDamageEach {
-            amount,
-            filter,
-            duration,
-        } => {
-            let amount = resolve_value_it_tag(amount, ctx)?;
-            let filter = resolve_it_tag(filter, ctx)?;
-            let effect = Effect::for_each(
-                filter,
-                vec![Effect::prevent_damage(
-                    amount,
-                    ChooseSpec::Iterated,
-                    duration.clone(),
-                )],
-            );
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::AddMana { mana, player } => compile_player_effect(
-            *player,
-            ctx,
-            false,
-            || Effect::add_mana(mana.clone()),
-            |filter| Effect::add_mana_player(mana.clone(), filter),
-        ),
-        EffectAst::AddManaScaled {
-            mana,
-            amount,
-            player,
-        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
-            Effect::new(crate::effects::mana::AddScaledManaEffect::new(
-                mana.clone(),
-                amount.clone(),
-                filter,
-            ))
-        }),
-        EffectAst::AddManaAnyColor {
-            amount,
-            player,
-            available_colors,
-        } => compile_player_effect(
-            *player,
-            ctx,
-            false,
-            || {
-                if let Some(colors) = available_colors.clone() {
-                    Effect::add_mana_of_any_color_restricted(amount.clone(), colors)
-                } else {
-                    Effect::add_mana_of_any_color(amount.clone())
-                }
-            },
-            |filter| {
-                if let Some(colors) = available_colors.clone() {
-                    Effect::add_mana_of_any_color_restricted_player(amount.clone(), filter, colors)
-                } else {
-                    Effect::add_mana_of_any_color_player(amount.clone(), filter)
-                }
-            },
-        ),
-        EffectAst::AddManaAnyOneColor { amount, player } => compile_player_effect(
-            *player,
-            ctx,
-            false,
-            || Effect::add_mana_of_any_one_color(amount.clone()),
-            |filter| Effect::add_mana_of_any_one_color_player(amount.clone(), filter),
-        ),
-        EffectAst::AddManaChosenColor {
-            amount,
-            player,
-            fixed_option,
-        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
-            if let Some(fixed) = fixed_option {
-                Effect::new(
-                    crate::effects::mana::AddManaOfChosenColorEffect::with_fixed_option(
-                        amount.clone(),
-                        filter,
-                        *fixed,
-                    ),
-                )
-            } else {
-                Effect::new(crate::effects::mana::AddManaOfChosenColorEffect::new(
-                    amount.clone(),
-                    filter,
-                ))
-            }
-        }),
-        EffectAst::AddManaFromLandCouldProduce {
-            amount,
-            player,
-            land_filter,
-            allow_colorless,
-            same_type,
-        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
-            Effect::add_mana_of_land_produced_types_player(
-                amount.clone(),
-                filter,
-                land_filter.clone(),
-                *allow_colorless,
-                *same_type,
-            )
-        }),
-        EffectAst::AddManaCommanderIdentity { amount, player } => compile_player_effect(
-            *player,
-            ctx,
-            false,
-            || Effect::add_mana_from_commander_color_identity(amount.clone()),
-            |filter| Effect::add_mana_from_commander_color_identity_player(amount.clone(), filter),
-        ),
-        EffectAst::AddManaImprintedColors => Ok((
-            vec![Effect::new(
-                crate::effects::mana::AddManaOfImprintedColorsEffect::new(),
-            )],
-            Vec::new(),
-        )),
-        EffectAst::Scry { count, player } => compile_player_effect(
-            *player,
-            ctx,
-            false,
-            || Effect::scry(count.clone()),
-            |filter| Effect::scry_player(count.clone(), filter),
-        ),
-        EffectAst::Discover { count, player } => compile_player_effect(
-            *player,
-            ctx,
-            false,
-            || Effect::discover(count.clone()),
-            |filter| Effect::discover_player(count.clone(), filter),
-        ),
-        EffectAst::BecomeBasicLandTypeChoice { target, duration } => {
-            compile_tagged_effect_for_target(target, ctx, "become_basic_land_type", |spec| {
-                Effect::new(crate::effects::BecomeBasicLandTypeChoiceEffect::new(
-                    spec,
-                    duration.clone(),
-                ))
-            })
-        }
-        EffectAst::BecomeCreatureTypeChoice {
-            target,
-            duration,
-            excluded_subtypes,
-        } => compile_tagged_effect_for_target(target, ctx, "become_creature_type_choice", |spec| {
-            Effect::new(crate::effects::BecomeCreatureTypeChoiceEffect::new(
-                spec,
-                duration.clone(),
-                excluded_subtypes.clone(),
-            ))
-        }),
-        EffectAst::BecomeColorChoice { target, duration } => {
-            compile_tagged_effect_for_target(target, ctx, "become_color_choice", |spec| {
-                Effect::new(crate::effects::BecomeColorChoiceEffect::new(
-                    spec,
-                    duration.clone(),
-                ))
-            })
-        }
-        EffectAst::Surveil { count, player } => compile_player_effect(
-            *player,
-            ctx,
-            false,
-            || Effect::surveil(count.clone()),
-            |filter| Effect::surveil_player(count.clone(), filter),
-        ),
-        EffectAst::PayMana { cost, player } => {
-            compile_player_effect_from_filter(*player, ctx, false, |filter| {
-                Effect::new(crate::effects::PayManaEffect::new(
-                    cost.clone(),
-                    ChooseSpec::Player(filter),
-                ))
-            })
-        }
-        EffectAst::PayEnergy { amount, player } => {
-            compile_player_effect_from_filter(*player, ctx, false, |filter| {
-                Effect::new(crate::effects::PayEnergyEffect::new(
-                    amount.clone(),
-                    ChooseSpec::Player(filter),
-                ))
-            })
-        }
-        EffectAst::Cant {
-            restriction,
-            duration,
-        } => {
-            let restriction = resolve_restriction_it_tag(restriction, ctx)?;
-            Ok((
-                vec![Effect::cant_until(restriction, duration.clone())],
-                Vec::new(),
-            ))
-        }
-        EffectAst::PlayFromGraveyardUntilEot { player } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = Effect::grant_play_from_graveyard_until_eot(player_filter);
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::GrantPlayTaggedUntilEndOfTurn { tag, player } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
-            let resolved_tag = if tag.as_str() == IT_TAG {
-                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
-                    CardTextError::ParseError(
-                        "unable to resolve 'it' without prior reference".to_string(),
-                    )
-                })?)
-            } else {
-                tag.clone()
-            };
-            Ok((
-                vec![Effect::new(crate::effects::GrantPlayTaggedEffect::new(
-                    resolved_tag,
-                    player_filter,
-                    crate::effects::GrantPlayTaggedDuration::UntilEndOfTurn,
-                ))],
-                Vec::new(),
-            ))
-        }
-        EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
-            tag,
-            player,
-        } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
-            let resolved_tag = if tag.as_str() == IT_TAG {
-                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
-                    CardTextError::ParseError(
-                        "unable to resolve 'it' without prior reference".to_string(),
-                    )
-                })?)
-            } else {
-                tag.clone()
-            };
-            Ok((
-                vec![Effect::new(
-                    crate::effects::GrantTaggedSpellLifeCostByManaValueEffect::new(
-                        resolved_tag,
-                        player_filter,
-                    ),
-                )],
-                Vec::new(),
-            ))
-        }
-        EffectAst::GrantPlayTaggedUntilYourNextTurn { tag, player } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
-            let resolved_tag = if tag.as_str() == IT_TAG {
-                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
-                    CardTextError::ParseError(
-                        "unable to resolve 'it' without prior reference".to_string(),
-                    )
-                })?)
-            } else {
-                tag.clone()
-            };
-            Ok((
-                vec![Effect::new(
-                    crate::effects::GrantPlayTaggedEffect::until_your_next_turn(
-                        resolved_tag,
-                        player_filter,
-                    ),
-                )],
-                Vec::new(),
-            ))
-        }
-        EffectAst::CastTagged {
-            tag,
-            allow_land,
-            as_copy,
-            without_paying_mana_cost,
-        } => {
-            let resolved_tag = if tag.as_str() == IT_TAG {
-                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
-                    CardTextError::ParseError(
-                        "unable to resolve 'it' without prior reference".to_string(),
-                    )
-                })?)
-            } else {
-                tag.clone()
-            };
-            let effect = Effect::cast_tagged(
-                resolved_tag,
-                *allow_land,
-                *as_copy,
-                *without_paying_mana_cost,
-            );
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::ExileInsteadOfGraveyardThisTurn { player } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
-            let effect = Effect::exile_instead_of_graveyard_this_turn(player_filter);
-            Ok((vec![effect], Vec::new()))
-        }
-        EffectAst::GainControl {
-            target,
-            player,
-            duration,
-        } => {
-            let (spec, mut choices) = resolve_target_spec_with_choices(target, ctx)?;
-            let (controller, mut controller_choices) =
-                resolve_effect_player_filter(*player, ctx, true, true, true)?;
-            choices.append(&mut controller_choices);
-            let runtime_modification = if matches!(controller, PlayerFilter::You) {
-                crate::effects::continuous::RuntimeModification::ChangeControllerToEffectController
-            } else {
-                crate::effects::continuous::RuntimeModification::ChangeControllerToPlayer(
-                    controller,
-                )
-            };
-            let effect = tag_object_target_effect(
-                Effect::new(crate::effects::ApplyContinuousEffect::with_spec_runtime(
-                    spec.clone(),
-                    runtime_modification,
-                    duration.clone(),
-                )),
-                &spec,
-                ctx,
-                "controlled",
-            );
-            Ok((vec![effect], choices))
-        }
-        EffectAst::ControlPlayer { player, duration } => {
-            let (start, duration) = match duration {
-                ControlDurationAst::UntilEndOfTurn => (
-                    crate::game_state::PlayerControlStart::Immediate,
-                    crate::game_state::PlayerControlDuration::UntilEndOfTurn,
-                ),
-                ControlDurationAst::DuringNextTurn => (
-                    crate::game_state::PlayerControlStart::NextTurn,
-                    crate::game_state::PlayerControlDuration::UntilEndOfTurn,
-                ),
-                ControlDurationAst::Forever => (
-                    crate::game_state::PlayerControlStart::Immediate,
-                    crate::game_state::PlayerControlDuration::Forever,
-                ),
-                ControlDurationAst::AsLongAsYouControlSource => (
-                    crate::game_state::PlayerControlStart::Immediate,
-                    crate::game_state::PlayerControlDuration::UntilSourceLeaves,
-                ),
-            };
-
-            let mut choices = Vec::new();
-            if let PlayerFilter::Target(inner) = player {
-                let spec = ChooseSpec::target(ChooseSpec::Player((**inner).clone()));
-                choices.push(spec);
-                ctx.last_player_filter = Some(PlayerFilter::target_player());
-            } else {
-                ctx.last_player_filter = Some(player.clone());
-            }
-
-            let effect = Effect::control_player(player.clone(), start, duration);
-            Ok((vec![effect], choices))
-        }
-        EffectAst::ExtraTurnAfterTurn { player } => {
-            let (player_filter, choices) =
-                resolve_effect_player_filter(*player, ctx, true, true, true)?;
-            Ok((vec![Effect::extra_turn_player(player_filter)], choices))
-        }
-        EffectAst::DelayedUntilNextEndStep { player, effects } => {
-            let (delayed_effects, choices) = compile_effects_preserving_last_effect(effects, ctx)?;
-            let effect = Effect::new(crate::effects::ScheduleDelayedTriggerEffect::new(
-                Trigger::beginning_of_end_step(player.clone()),
-                delayed_effects,
-                true,
-                Vec::new(),
-                PlayerFilter::You,
-            ));
-            Ok((vec![effect], choices))
-        }
-        EffectAst::DelayedUntilNextUpkeep { player, effects } => {
-            let (player_filter, mut choices) =
-                resolve_effect_player_filter(*player, ctx, true, true, true)?;
-            let (delayed_effects, nested_choices) =
-                compile_effects_preserving_last_effect(effects, ctx)?;
-            choices.extend(nested_choices);
-            let effect = Effect::new(
-                crate::effects::ScheduleDelayedTriggerEffect::new(
-                    Trigger::beginning_of_upkeep(player_filter),
-                    delayed_effects,
-                    true,
-                    Vec::new(),
-                    PlayerFilter::You,
-                )
-                .starting_next_turn(),
-            );
-            Ok((vec![effect], choices))
-        }
-        EffectAst::DelayedUntilEndStepOfExtraTurn { player, effects } => {
-            let (player_filter, mut choices) =
-                resolve_effect_player_filter(*player, ctx, true, true, true)?;
-            let (delayed_effects, nested_choices) =
-                compile_effects_preserving_last_effect(effects, ctx)?;
-            choices.extend(nested_choices);
-            let effect = Effect::new(
-                crate::effects::ScheduleDelayedTriggerEffect::new(
-                    Trigger::beginning_of_end_step(player_filter),
-                    delayed_effects,
-                    true,
-                    Vec::new(),
-                    PlayerFilter::You,
-                )
-                .starting_next_turn(),
-            );
-            Ok((vec![effect], choices))
-        }
-        EffectAst::DelayedUntilEndOfCombat { effects } => {
-            let (delayed_effects, choices) = compile_effects_preserving_last_effect(effects, ctx)?;
-            let effect = Effect::new(crate::effects::ScheduleDelayedTriggerEffect::new(
-                Trigger::end_of_combat(),
-                delayed_effects,
-                true,
-                Vec::new(),
-                PlayerFilter::You,
-            ));
-            Ok((vec![effect], choices))
-        }
-        EffectAst::DelayedTriggerThisTurn { trigger, effects } => {
-            let (delayed_effects, choices) = compile_trigger_effects(Some(trigger), effects)?;
-            if let TriggerSpec::IsDealtDamage(filter) = trigger {
-                let resolved_filter = resolve_it_tag(filter, ctx)?;
-                if let Some(watched_tag) = watch_tag_from_filter(&resolved_filter) {
-                    let delayed = crate::effects::ScheduleDelayedTriggerEffect::from_tag(
-                        Trigger::is_dealt_damage(ChooseSpec::Source),
-                        delayed_effects,
-                        false,
-                        watched_tag,
-                        PlayerFilter::You,
-                    )
-                    .with_target_filter(resolved_filter)
-                    .until_end_of_turn();
-                    return Ok((vec![Effect::new(delayed)], choices));
-                }
-                let effect = Effect::new(
-                    crate::effects::ScheduleDelayedTriggerEffect::new(
-                        compile_trigger_spec(TriggerSpec::IsDealtDamage(resolved_filter)),
-                        delayed_effects,
-                        false,
-                        Vec::new(),
-                        PlayerFilter::You,
-                    )
-                    .until_end_of_turn(),
-                );
-                return Ok((vec![effect], choices));
-            }
-
-            let effect = Effect::new(
-                crate::effects::ScheduleDelayedTriggerEffect::new(
-                    compile_trigger_spec(trigger.clone()),
-                    delayed_effects,
-                    false,
-                    Vec::new(),
-                    PlayerFilter::You,
-                )
-                .until_end_of_turn(),
-            );
-            Ok((vec![effect], choices))
-        }
-        EffectAst::DelayedWhenLastObjectDiesThisTurn { filter, effects } => {
-            let target_tag = ctx.last_object_tag.clone().ok_or_else(|| {
-                CardTextError::ParseError(
-                    "cannot schedule 'dies this turn' trigger without prior object context"
-                        .to_string(),
-                )
-            })?;
-            let previous_last = ctx.last_object_tag.clone();
-            ctx.last_object_tag = Some("triggering".to_string());
-            let compiled = compile_effects_preserving_last_effect(effects, ctx);
-            ctx.last_object_tag = previous_last;
-            let (delayed_effects, choices) = compiled?;
-            let mut delayed = crate::effects::ScheduleDelayedTriggerEffect::from_tag(
-                Trigger::this_dies(),
-                delayed_effects,
-                true,
-                target_tag,
-                PlayerFilter::You,
-            );
-            if let Some(filter) = filter {
-                delayed = delayed.with_target_filter(resolve_it_tag(filter, ctx)?);
-            }
-            let effect = Effect::new(delayed);
-            Ok((vec![effect], choices))
+        EffectAst::Cant { .. }
+        | EffectAst::PlayFromGraveyardUntilEot { .. }
+        | EffectAst::GrantPlayTaggedUntilEndOfTurn { .. }
+        | EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn { .. }
+        | EffectAst::GrantPlayTaggedUntilYourNextTurn { .. }
+        | EffectAst::CastTagged { .. }
+        | EffectAst::ExileInsteadOfGraveyardThisTurn { .. }
+        | EffectAst::GainControl { .. }
+        | EffectAst::ControlPlayer { .. }
+        | EffectAst::ExtraTurnAfterTurn { .. }
+        | EffectAst::DelayedUntilNextEndStep { .. }
+        | EffectAst::DelayedUntilNextUpkeep { .. }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { .. }
+        | EffectAst::DelayedUntilEndOfCombat { .. }
+        | EffectAst::DelayedTriggerThisTurn { .. }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { .. } => {
+            unreachable!("timing/control effect should be handled by dedicated handler")
         }
         EffectAst::ChooseObjects {
             filter,
@@ -5787,6 +4968,29 @@ fn compile_effect_inner(
     }
 }
 
+type EffectCompileOutcome = (Vec<Effect>, Vec<ChooseSpec>);
+type EffectCompileHandler =
+    fn(&EffectAst, &mut CompileContext) -> Result<Option<EffectCompileOutcome>, CardTextError>;
+
+const EFFECT_COMPILE_HANDLERS: &[EffectCompileHandler] = &[
+    try_compile_combat_and_damage_effect,
+    try_compile_board_state_effect,
+    try_compile_player_resource_and_choice_effect,
+    try_compile_timing_and_control_effect,
+];
+
+fn try_compile_effect_via_handlers(
+    effect: &EffectAst,
+    ctx: &mut CompileContext,
+) -> Result<Option<EffectCompileOutcome>, CardTextError> {
+    for handler in EFFECT_COMPILE_HANDLERS {
+        if let Some(compiled) = handler(effect, ctx)? {
+            return Ok(Some(compiled));
+        }
+    }
+    Ok(None)
+}
+
 pub(crate) fn resolve_effect_player_filter(
     player: PlayerAst,
     ctx: &mut CompileContext,
@@ -6060,6 +5264,945 @@ fn try_compile_combat_and_damage_effect(
                 vec![Effect::deal_damage(resolved_amount, ChooseSpec::Iterated).tag(tag)],
             );
             (vec![effect], Vec::new())
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(Some(compiled))
+}
+
+fn try_compile_board_state_effect(
+    effect: &EffectAst,
+    ctx: &mut CompileContext,
+) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
+    use crate::effect::EffectMode;
+
+    let compiled = match effect {
+        EffectAst::PutCounters {
+            counter_type,
+            count,
+            target,
+            target_count,
+            distributed,
+        } => {
+            let (base_spec, _) = resolve_target_spec_with_choices(target, ctx)?;
+            let mut spec = base_spec;
+            if let Some(target_count) = target_count {
+                spec = spec.with_count(*target_count);
+            }
+            let mut put_counters =
+                crate::effects::PutCountersEffect::new(*counter_type, count.clone(), spec.clone());
+            if let Some(target_count) = target_count {
+                put_counters = put_counters.with_target_count(*target_count);
+            }
+            if *distributed {
+                put_counters = put_counters.with_distributed(true);
+            }
+            let effect =
+                tag_object_target_effect(Effect::new(put_counters), &spec, ctx, "counters");
+            let choices = if spec.is_target() {
+                vec![spec.clone()]
+            } else {
+                Vec::new()
+            };
+            (vec![effect], choices)
+        }
+        EffectAst::PutOrRemoveCounters {
+            put_counter_type,
+            put_count,
+            remove_counter_type,
+            remove_count,
+            put_mode_text,
+            remove_mode_text,
+            target,
+            target_count,
+        } => {
+            let (base_spec, _) = resolve_target_spec_with_choices(target, ctx)?;
+            let mut spec = base_spec;
+            if let Some(target_count) = target_count {
+                spec = spec.with_count(*target_count);
+            }
+
+            let put_effect =
+                Effect::put_counters(*put_counter_type, put_count.clone(), spec.clone());
+            let remove_effect =
+                Effect::remove_counters(*remove_counter_type, remove_count.clone(), spec.clone());
+
+            let effect = Effect::choose_one(vec![
+                EffectMode {
+                    description: put_mode_text.clone(),
+                    effects: vec![put_effect],
+                },
+                EffectMode {
+                    description: remove_mode_text.clone(),
+                    effects: vec![remove_effect],
+                },
+            ]);
+
+            let effect = tag_object_target_effect(effect, &spec, ctx, "counters");
+            let choices = if spec.is_target() {
+                vec![spec.clone()]
+            } else {
+                Vec::new()
+            };
+            (vec![effect], choices)
+        }
+        EffectAst::ForEachCounterKindPutOrRemove { target } => {
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            (
+                vec![Effect::new(
+                    crate::effects::ForEachCounterKindPutOrRemoveEffect::new(spec),
+                )],
+                choices,
+            )
+        }
+        EffectAst::PutCountersAll {
+            counter_type,
+            count,
+            filter,
+        } => {
+            let effect = Effect::for_each(
+                filter.clone(),
+                vec![Effect::put_counters(
+                    *counter_type,
+                    count.clone(),
+                    ChooseSpec::Iterated,
+                )],
+            );
+            (vec![effect], Vec::new())
+        }
+        EffectAst::RemoveCountersAll {
+            amount,
+            filter,
+            counter_type,
+            up_to,
+        } => {
+            let iterated = ChooseSpec::Iterated;
+            let inner = if let Some(counter_type) = counter_type {
+                if *up_to {
+                    Effect::remove_up_to_counters(*counter_type, amount.clone(), iterated.clone())
+                } else {
+                    Effect::remove_counters(*counter_type, amount.clone(), iterated.clone())
+                }
+            } else {
+                Effect::remove_up_to_any_counters(amount.clone(), iterated.clone())
+            };
+            let effect = Effect::for_each(filter.clone(), vec![inner]);
+            (vec![effect], Vec::new())
+        }
+        EffectAst::DoubleCountersOnEach {
+            counter_type,
+            filter,
+        } => {
+            let iterated = ChooseSpec::Iterated;
+            let count = Value::CountersOn(Box::new(iterated.clone()), Some(*counter_type));
+            let effect = Effect::for_each(
+                filter.clone(),
+                vec![Effect::put_counters(*counter_type, count, iterated)],
+            );
+            (vec![effect], Vec::new())
+        }
+        EffectAst::Proliferate => (vec![Effect::proliferate()], Vec::new()),
+        EffectAst::Tap { target } => {
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let base_effect = if spec.is_target() {
+                Effect::tap(spec.clone())
+            } else {
+                Effect::new(crate::effects::TapEffect::with_spec(spec.clone()))
+            };
+            let effect = tag_object_target_effect(base_effect, &spec, ctx, "tapped");
+            (vec![effect], choices)
+        }
+        EffectAst::TapAll { filter } => {
+            let resolved_filter = resolve_it_tag(filter, ctx)?;
+            let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
+            prelude.push(Effect::tap_all(resolved_filter));
+            (prelude, choices)
+        }
+        EffectAst::Untap { target } => {
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let base_effect = if spec.is_target() {
+                Effect::untap(spec.clone())
+            } else {
+                Effect::new(crate::effects::UntapEffect::with_spec(spec.clone()))
+            };
+            let effect = tag_object_target_effect(base_effect, &spec, ctx, "untapped");
+            (vec![effect], choices)
+        }
+        EffectAst::RemoveFromCombat { target } => {
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let effect = tag_object_target_effect(
+                Effect::new(crate::effects::RemoveFromCombatEffect::with_spec(
+                    spec.clone(),
+                )),
+                &spec,
+                ctx,
+                "removed_from_combat",
+            );
+            (vec![effect], choices)
+        }
+        EffectAst::TapOrUntap { target } => {
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let tap_effect = Effect::tap(spec.clone());
+            let untap_effect = Effect::untap(spec.clone());
+            let modes = vec![
+                EffectMode {
+                    description: "Tap".to_string(),
+                    effects: vec![tap_effect],
+                },
+                EffectMode {
+                    description: "Untap".to_string(),
+                    effects: vec![untap_effect],
+                },
+            ];
+            let effect =
+                tag_object_target_effect(Effect::choose_one(modes), &spec, ctx, "tap_or_untap");
+            (vec![effect], choices)
+        }
+        EffectAst::UntapAll { filter } => {
+            let resolved_filter = resolve_it_tag(filter, ctx)?;
+            let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
+            prelude.push(Effect::untap_all(resolved_filter));
+            (prelude, choices)
+        }
+        EffectAst::GrantProtectionChoice {
+            target,
+            allow_colorless,
+        } => {
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let mut modes = Vec::new();
+            if *allow_colorless {
+                let ability = StaticAbility::protection(crate::ability::ProtectionFrom::Colorless);
+                modes.push(EffectMode {
+                    description: "Colorless".to_string(),
+                    effects: vec![Effect::new(
+                        crate::effects::GrantAbilitiesTargetEffect::new(
+                            spec.clone(),
+                            vec![ability],
+                            crate::effect::Until::EndOfTurn,
+                        ),
+                    )],
+                });
+            }
+
+            let colors = [
+                ("White", crate::color::Color::White),
+                ("Blue", crate::color::Color::Blue),
+                ("Black", crate::color::Color::Black),
+                ("Red", crate::color::Color::Red),
+                ("Green", crate::color::Color::Green),
+            ];
+
+            for (name, color) in colors {
+                let ability = StaticAbility::protection(crate::ability::ProtectionFrom::Color(
+                    ColorSet::from(color),
+                ));
+                modes.push(EffectMode {
+                    description: name.to_string(),
+                    effects: vec![Effect::new(
+                        crate::effects::GrantAbilitiesTargetEffect::new(
+                            spec.clone(),
+                            vec![ability],
+                            crate::effect::Until::EndOfTurn,
+                        ),
+                    )],
+                });
+            }
+
+            let effect =
+                tag_object_target_effect(Effect::choose_one(modes), &spec, ctx, "protected");
+            (vec![effect], choices)
+        }
+        EffectAst::Earthbend { counters } => {
+            let spec = ChooseSpec::target(ChooseSpec::Object(ObjectFilter::land().you_control()));
+            let effect = tag_object_target_effect(
+                Effect::new(crate::effects::EarthbendEffect::new(
+                    spec.clone(),
+                    *counters,
+                )),
+                &spec,
+                ctx,
+                "earthbend",
+            );
+            (vec![effect], vec![spec])
+        }
+        EffectAst::Explore { target } => {
+            let (spec, choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let effect =
+                tag_object_target_effect(Effect::explore(spec.clone()), &spec, ctx, "explored");
+            (vec![effect], choices)
+        }
+        EffectAst::OpenAttraction => (vec![Effect::open_attraction()], Vec::new()),
+        EffectAst::ManifestDread => (vec![Effect::manifest_dread()], Vec::new()),
+        EffectAst::Bolster { amount } => (vec![Effect::bolster(*amount)], Vec::new()),
+        EffectAst::Support { amount } => (vec![Effect::support(*amount)], Vec::new()),
+        EffectAst::Adapt { amount } => (vec![Effect::adapt(*amount)], Vec::new()),
+        EffectAst::CounterActivatedOrTriggeredAbility => (
+            vec![Effect::counter_activated_or_triggered_ability()],
+            Vec::new(),
+        ),
+        _ => return Ok(None),
+    };
+
+    Ok(Some(compiled))
+}
+
+fn try_compile_player_resource_and_choice_effect(
+    effect: &EffectAst,
+    ctx: &mut CompileContext,
+) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
+    let compiled = match effect {
+        EffectAst::Draw { count, player } => {
+            let count = resolve_value_it_tag(count, ctx)?;
+            compile_player_effect(
+                *player,
+                ctx,
+                true,
+                || Effect::draw(count.clone()),
+                |filter| Effect::target_draws(count.clone(), filter),
+            )?
+        }
+        EffectAst::Counter { target } => {
+            compile_tagged_effect_for_target(target, ctx, "countered", Effect::counter)?
+        }
+        EffectAst::CounterUnlessPays {
+            target,
+            mana,
+            life,
+            additional_generic,
+        } => {
+            let additional_generic = additional_generic
+                .as_ref()
+                .map(|value| resolve_value_it_tag(value, ctx))
+                .transpose()?;
+            compile_tagged_effect_for_target(target, ctx, "countered", |spec| {
+                Effect::counter_unless_pays_with_life_and_additional(
+                    spec,
+                    mana.clone(),
+                    life.clone(),
+                    additional_generic.clone(),
+                )
+            })?
+        }
+        EffectAst::LoseLife { amount, player } => {
+            let amount = resolve_value_it_tag(amount, ctx)?;
+            compile_player_effect(
+                *player,
+                ctx,
+                true,
+                || Effect::lose_life(amount.clone()),
+                |filter| Effect::lose_life_player(amount.clone(), filter),
+            )?
+        }
+        EffectAst::GainLife { amount, player } => {
+            let amount = resolve_value_it_tag(amount, ctx)?;
+            compile_player_effect(
+                *player,
+                ctx,
+                true,
+                || Effect::gain_life(amount.clone()),
+                |filter| Effect::gain_life_player(amount.clone(), ChooseSpec::Player(filter)),
+            )?
+        }
+        EffectAst::LoseGame { player } => compile_player_effect(
+            *player,
+            ctx,
+            true,
+            Effect::lose_the_game,
+            Effect::lose_the_game_player,
+        )?,
+        EffectAst::WinGame { player } => compile_player_effect(
+            *player,
+            ctx,
+            true,
+            Effect::win_the_game,
+            Effect::win_the_game_player,
+        )?,
+        EffectAst::PreventAllCombatDamage { duration } => (
+            vec![Effect::prevent_all_combat_damage(duration.clone())],
+            Vec::new(),
+        ),
+        EffectAst::PreventAllCombatDamageFromSource { duration, source } => {
+            compile_effect_for_target(source, ctx, |spec| {
+                Effect::prevent_all_combat_damage_from(spec, duration.clone())
+            })?
+        }
+        EffectAst::PreventAllCombatDamageToPlayers { duration } => (
+            vec![Effect::prevent_all_combat_damage_to_players(
+                duration.clone(),
+            )],
+            Vec::new(),
+        ),
+        EffectAst::PreventAllCombatDamageToYou { duration } => (
+            vec![Effect::prevent_all_combat_damage_to_you(duration.clone())],
+            Vec::new(),
+        ),
+        EffectAst::PreventDamage {
+            amount,
+            target,
+            duration,
+        } => {
+            let amount = resolve_value_it_tag(amount, ctx)?;
+            compile_effect_for_target(target, ctx, |spec| {
+                Effect::prevent_damage(amount.clone(), spec, duration.clone())
+            })?
+        }
+        EffectAst::PreventAllDamageToTarget { target, duration } => {
+            if let TargetAst::Object(filter, explicit_target_span, _) = target
+                && explicit_target_span.is_none()
+            {
+                let resolved_filter = resolve_it_tag(filter, ctx)?;
+                (
+                    vec![Effect::prevent_all_damage_to(
+                        resolved_filter,
+                        duration.clone(),
+                    )],
+                    Vec::new(),
+                )
+            } else {
+                compile_effect_for_target(target, ctx, |spec| {
+                    Effect::prevent_all_damage_to_target(spec, duration.clone())
+                })?
+            }
+        }
+        EffectAst::PreventNextTimeDamage { source, target } => {
+            let source_spec = match source {
+                PreventNextTimeDamageSourceAst::Choice => {
+                    crate::effects::PreventNextTimeDamageSource::Choice
+                }
+                PreventNextTimeDamageSourceAst::Filter(filter) => {
+                    crate::effects::PreventNextTimeDamageSource::Filter(resolve_it_tag(
+                        filter, ctx,
+                    )?)
+                }
+            };
+            let target_spec = match target {
+                PreventNextTimeDamageTargetAst::AnyTarget => {
+                    crate::effects::PreventNextTimeDamageTarget::AnyTarget
+                }
+                PreventNextTimeDamageTargetAst::You => {
+                    crate::effects::PreventNextTimeDamageTarget::You
+                }
+            };
+            (
+                vec![Effect::new(
+                    crate::effects::PreventNextTimeDamageEffect::new(source_spec, target_spec),
+                )],
+                Vec::new(),
+            )
+        }
+        EffectAst::RedirectNextDamageFromSourceToTarget { amount, target } => {
+            let amount = resolve_value_it_tag(amount, ctx)?;
+            compile_effect_for_target(target, ctx, |spec| {
+                Effect::new(crate::effects::RedirectNextDamageToTargetEffect::new(
+                    amount.clone(),
+                    spec,
+                ))
+            })?
+        }
+        EffectAst::RedirectNextTimeDamageToSource { source, target } => {
+            let source_spec = match source {
+                PreventNextTimeDamageSourceAst::Choice => {
+                    crate::effects::RedirectNextTimeDamageSource::Choice
+                }
+                PreventNextTimeDamageSourceAst::Filter(filter) => {
+                    crate::effects::RedirectNextTimeDamageSource::Filter(resolve_it_tag(
+                        filter, ctx,
+                    )?)
+                }
+            };
+            compile_effect_for_target(target, ctx, |spec| {
+                Effect::new(crate::effects::RedirectNextTimeDamageToSourceEffect::new(
+                    source_spec.clone(),
+                    spec,
+                ))
+            })?
+        }
+        EffectAst::PreventDamageEach {
+            amount,
+            filter,
+            duration,
+        } => {
+            let amount = resolve_value_it_tag(amount, ctx)?;
+            let filter = resolve_it_tag(filter, ctx)?;
+            let effect = Effect::for_each(
+                filter,
+                vec![Effect::prevent_damage(
+                    amount,
+                    ChooseSpec::Iterated,
+                    duration.clone(),
+                )],
+            );
+            (vec![effect], Vec::new())
+        }
+        EffectAst::AddMana { mana, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::add_mana(mana.clone()),
+            |filter| Effect::add_mana_player(mana.clone(), filter),
+        )?,
+        EffectAst::AddManaScaled {
+            mana,
+            amount,
+            player,
+        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
+            Effect::new(crate::effects::mana::AddScaledManaEffect::new(
+                mana.clone(),
+                amount.clone(),
+                filter,
+            ))
+        })?,
+        EffectAst::AddManaAnyColor {
+            amount,
+            player,
+            available_colors,
+        } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || {
+                if let Some(colors) = available_colors.clone() {
+                    Effect::add_mana_of_any_color_restricted(amount.clone(), colors)
+                } else {
+                    Effect::add_mana_of_any_color(amount.clone())
+                }
+            },
+            |filter| {
+                if let Some(colors) = available_colors.clone() {
+                    Effect::add_mana_of_any_color_restricted_player(amount.clone(), filter, colors)
+                } else {
+                    Effect::add_mana_of_any_color_player(amount.clone(), filter)
+                }
+            },
+        )?,
+        EffectAst::AddManaAnyOneColor { amount, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::add_mana_of_any_one_color(amount.clone()),
+            |filter| Effect::add_mana_of_any_one_color_player(amount.clone(), filter),
+        )?,
+        EffectAst::AddManaChosenColor {
+            amount,
+            player,
+            fixed_option,
+        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
+            if let Some(fixed) = fixed_option {
+                Effect::new(
+                    crate::effects::mana::AddManaOfChosenColorEffect::with_fixed_option(
+                        amount.clone(),
+                        filter,
+                        *fixed,
+                    ),
+                )
+            } else {
+                Effect::new(crate::effects::mana::AddManaOfChosenColorEffect::new(
+                    amount.clone(),
+                    filter,
+                ))
+            }
+        })?,
+        EffectAst::AddManaFromLandCouldProduce {
+            amount,
+            player,
+            land_filter,
+            allow_colorless,
+            same_type,
+        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
+            Effect::add_mana_of_land_produced_types_player(
+                amount.clone(),
+                filter,
+                land_filter.clone(),
+                *allow_colorless,
+                *same_type,
+            )
+        })?,
+        EffectAst::AddManaCommanderIdentity { amount, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::add_mana_from_commander_color_identity(amount.clone()),
+            |filter| Effect::add_mana_from_commander_color_identity_player(amount.clone(), filter),
+        )?,
+        EffectAst::AddManaImprintedColors => (
+            vec![Effect::new(
+                crate::effects::mana::AddManaOfImprintedColorsEffect::new(),
+            )],
+            Vec::new(),
+        ),
+        EffectAst::Scry { count, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::scry(count.clone()),
+            |filter| Effect::scry_player(count.clone(), filter),
+        )?,
+        EffectAst::Discover { count, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::discover(count.clone()),
+            |filter| Effect::discover_player(count.clone(), filter),
+        )?,
+        EffectAst::BecomeBasicLandTypeChoice { target, duration } => {
+            compile_tagged_effect_for_target(target, ctx, "become_basic_land_type", |spec| {
+                Effect::new(crate::effects::BecomeBasicLandTypeChoiceEffect::new(
+                    spec,
+                    duration.clone(),
+                ))
+            })?
+        }
+        EffectAst::BecomeCreatureTypeChoice {
+            target,
+            duration,
+            excluded_subtypes,
+        } => compile_tagged_effect_for_target(target, ctx, "become_creature_type_choice", |spec| {
+            Effect::new(crate::effects::BecomeCreatureTypeChoiceEffect::new(
+                spec,
+                duration.clone(),
+                excluded_subtypes.clone(),
+            ))
+        })?,
+        EffectAst::BecomeColorChoice { target, duration } => {
+            compile_tagged_effect_for_target(target, ctx, "become_color_choice", |spec| {
+                Effect::new(crate::effects::BecomeColorChoiceEffect::new(
+                    spec,
+                    duration.clone(),
+                ))
+            })?
+        }
+        EffectAst::Surveil { count, player } => compile_player_effect(
+            *player,
+            ctx,
+            false,
+            || Effect::surveil(count.clone()),
+            |filter| Effect::surveil_player(count.clone(), filter),
+        )?,
+        EffectAst::PayMana { cost, player } => {
+            compile_player_effect_from_filter(*player, ctx, false, |filter| {
+                Effect::new(crate::effects::PayManaEffect::new(
+                    cost.clone(),
+                    ChooseSpec::Player(filter),
+                ))
+            })?
+        }
+        EffectAst::PayEnergy { amount, player } => {
+            compile_player_effect_from_filter(*player, ctx, false, |filter| {
+                Effect::new(crate::effects::PayEnergyEffect::new(
+                    amount.clone(),
+                    ChooseSpec::Player(filter),
+                ))
+            })?
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(Some(compiled))
+}
+
+fn try_compile_timing_and_control_effect(
+    effect: &EffectAst,
+    ctx: &mut CompileContext,
+) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
+    let compiled = match effect {
+        EffectAst::Cant {
+            restriction,
+            duration,
+        } => {
+            let restriction = resolve_restriction_it_tag(restriction, ctx)?;
+            (
+                vec![Effect::cant_until(restriction, duration.clone())],
+                Vec::new(),
+            )
+        }
+        EffectAst::PlayFromGraveyardUntilEot { player } => {
+            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let effect = Effect::grant_play_from_graveyard_until_eot(player_filter);
+            (vec![effect], Vec::new())
+        }
+        EffectAst::GrantPlayTaggedUntilEndOfTurn { tag, player } => {
+            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let resolved_tag = if tag.as_str() == IT_TAG {
+                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
+                    CardTextError::ParseError(
+                        "unable to resolve 'it' without prior reference".to_string(),
+                    )
+                })?)
+            } else {
+                tag.clone()
+            };
+            (
+                vec![Effect::new(crate::effects::GrantPlayTaggedEffect::new(
+                    resolved_tag,
+                    player_filter,
+                    crate::effects::GrantPlayTaggedDuration::UntilEndOfTurn,
+                ))],
+                Vec::new(),
+            )
+        }
+        EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
+            tag,
+            player,
+        } => {
+            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let resolved_tag = if tag.as_str() == IT_TAG {
+                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
+                    CardTextError::ParseError(
+                        "unable to resolve 'it' without prior reference".to_string(),
+                    )
+                })?)
+            } else {
+                tag.clone()
+            };
+            (
+                vec![Effect::new(
+                    crate::effects::GrantTaggedSpellLifeCostByManaValueEffect::new(
+                        resolved_tag,
+                        player_filter,
+                    ),
+                )],
+                Vec::new(),
+            )
+        }
+        EffectAst::GrantPlayTaggedUntilYourNextTurn { tag, player } => {
+            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let resolved_tag = if tag.as_str() == IT_TAG {
+                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
+                    CardTextError::ParseError(
+                        "unable to resolve 'it' without prior reference".to_string(),
+                    )
+                })?)
+            } else {
+                tag.clone()
+            };
+            (
+                vec![Effect::new(
+                    crate::effects::GrantPlayTaggedEffect::until_your_next_turn(
+                        resolved_tag,
+                        player_filter,
+                    ),
+                )],
+                Vec::new(),
+            )
+        }
+        EffectAst::CastTagged {
+            tag,
+            allow_land,
+            as_copy,
+            without_paying_mana_cost,
+        } => {
+            let resolved_tag = if tag.as_str() == IT_TAG {
+                TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
+                    CardTextError::ParseError(
+                        "unable to resolve 'it' without prior reference".to_string(),
+                    )
+                })?)
+            } else {
+                tag.clone()
+            };
+            let effect = Effect::cast_tagged(
+                resolved_tag,
+                *allow_land,
+                *as_copy,
+                *without_paying_mana_cost,
+            );
+            (vec![effect], Vec::new())
+        }
+        EffectAst::ExileInsteadOfGraveyardThisTurn { player } => {
+            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let effect = Effect::exile_instead_of_graveyard_this_turn(player_filter);
+            (vec![effect], Vec::new())
+        }
+        EffectAst::GainControl {
+            target,
+            player,
+            duration,
+        } => {
+            let (spec, mut choices) = resolve_target_spec_with_choices(target, ctx)?;
+            let (controller, mut controller_choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
+            choices.append(&mut controller_choices);
+            let runtime_modification = if matches!(controller, PlayerFilter::You) {
+                crate::effects::continuous::RuntimeModification::ChangeControllerToEffectController
+            } else {
+                crate::effects::continuous::RuntimeModification::ChangeControllerToPlayer(
+                    controller,
+                )
+            };
+            let effect = tag_object_target_effect(
+                Effect::new(crate::effects::ApplyContinuousEffect::with_spec_runtime(
+                    spec.clone(),
+                    runtime_modification,
+                    duration.clone(),
+                )),
+                &spec,
+                ctx,
+                "controlled",
+            );
+            (vec![effect], choices)
+        }
+        EffectAst::ControlPlayer { player, duration } => {
+            let (start, duration) = match duration {
+                ControlDurationAst::UntilEndOfTurn => (
+                    crate::game_state::PlayerControlStart::Immediate,
+                    crate::game_state::PlayerControlDuration::UntilEndOfTurn,
+                ),
+                ControlDurationAst::DuringNextTurn => (
+                    crate::game_state::PlayerControlStart::NextTurn,
+                    crate::game_state::PlayerControlDuration::UntilEndOfTurn,
+                ),
+                ControlDurationAst::Forever => (
+                    crate::game_state::PlayerControlStart::Immediate,
+                    crate::game_state::PlayerControlDuration::Forever,
+                ),
+                ControlDurationAst::AsLongAsYouControlSource => (
+                    crate::game_state::PlayerControlStart::Immediate,
+                    crate::game_state::PlayerControlDuration::UntilSourceLeaves,
+                ),
+            };
+
+            let mut choices = Vec::new();
+            if let PlayerFilter::Target(inner) = player {
+                let spec = ChooseSpec::target(ChooseSpec::Player((**inner).clone()));
+                choices.push(spec);
+                ctx.last_player_filter = Some(PlayerFilter::target_player());
+            } else {
+                ctx.last_player_filter = Some(player.clone());
+            }
+
+            let effect = Effect::control_player(player.clone(), start, duration);
+            (vec![effect], choices)
+        }
+        EffectAst::ExtraTurnAfterTurn { player } => {
+            let (player_filter, choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
+            (vec![Effect::extra_turn_player(player_filter)], choices)
+        }
+        EffectAst::DelayedUntilNextEndStep { player, effects } => {
+            let (delayed_effects, choices) = compile_effects_preserving_last_effect(effects, ctx)?;
+            let effect = Effect::new(crate::effects::ScheduleDelayedTriggerEffect::new(
+                Trigger::beginning_of_end_step(player.clone()),
+                delayed_effects,
+                true,
+                Vec::new(),
+                PlayerFilter::You,
+            ));
+            (vec![effect], choices)
+        }
+        EffectAst::DelayedUntilNextUpkeep { player, effects } => {
+            let (player_filter, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
+            let (delayed_effects, nested_choices) =
+                compile_effects_preserving_last_effect(effects, ctx)?;
+            choices.extend(nested_choices);
+            let effect = Effect::new(
+                crate::effects::ScheduleDelayedTriggerEffect::new(
+                    Trigger::beginning_of_upkeep(player_filter),
+                    delayed_effects,
+                    true,
+                    Vec::new(),
+                    PlayerFilter::You,
+                )
+                .starting_next_turn(),
+            );
+            (vec![effect], choices)
+        }
+        EffectAst::DelayedUntilEndStepOfExtraTurn { player, effects } => {
+            let (player_filter, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
+            let (delayed_effects, nested_choices) =
+                compile_effects_preserving_last_effect(effects, ctx)?;
+            choices.extend(nested_choices);
+            let effect = Effect::new(
+                crate::effects::ScheduleDelayedTriggerEffect::new(
+                    Trigger::beginning_of_end_step(player_filter),
+                    delayed_effects,
+                    true,
+                    Vec::new(),
+                    PlayerFilter::You,
+                )
+                .starting_next_turn(),
+            );
+            (vec![effect], choices)
+        }
+        EffectAst::DelayedUntilEndOfCombat { effects } => {
+            let (delayed_effects, choices) = compile_effects_preserving_last_effect(effects, ctx)?;
+            let effect = Effect::new(crate::effects::ScheduleDelayedTriggerEffect::new(
+                Trigger::end_of_combat(),
+                delayed_effects,
+                true,
+                Vec::new(),
+                PlayerFilter::You,
+            ));
+            (vec![effect], choices)
+        }
+        EffectAst::DelayedTriggerThisTurn { trigger, effects } => {
+            let (delayed_effects, choices) = compile_trigger_effects(Some(trigger), effects)?;
+            if let TriggerSpec::IsDealtDamage(filter) = trigger {
+                let resolved_filter = resolve_it_tag(filter, ctx)?;
+                if let Some(watched_tag) = watch_tag_from_filter(&resolved_filter) {
+                    let delayed = crate::effects::ScheduleDelayedTriggerEffect::from_tag(
+                        Trigger::is_dealt_damage(ChooseSpec::Source),
+                        delayed_effects,
+                        false,
+                        watched_tag,
+                        PlayerFilter::You,
+                    )
+                    .with_target_filter(resolved_filter)
+                    .until_end_of_turn();
+                    (vec![Effect::new(delayed)], choices)
+                } else {
+                    let effect = Effect::new(
+                        crate::effects::ScheduleDelayedTriggerEffect::new(
+                            compile_trigger_spec(TriggerSpec::IsDealtDamage(resolved_filter)),
+                            delayed_effects,
+                            false,
+                            Vec::new(),
+                            PlayerFilter::You,
+                        )
+                        .until_end_of_turn(),
+                    );
+                    (vec![effect], choices)
+                }
+            } else {
+                let effect = Effect::new(
+                    crate::effects::ScheduleDelayedTriggerEffect::new(
+                        compile_trigger_spec(trigger.clone()),
+                        delayed_effects,
+                        false,
+                        Vec::new(),
+                        PlayerFilter::You,
+                    )
+                    .until_end_of_turn(),
+                );
+                (vec![effect], choices)
+            }
+        }
+        EffectAst::DelayedWhenLastObjectDiesThisTurn { filter, effects } => {
+            let target_tag = ctx.last_object_tag.clone().ok_or_else(|| {
+                CardTextError::ParseError(
+                    "cannot schedule 'dies this turn' trigger without prior object context"
+                        .to_string(),
+                )
+            })?;
+            let previous_last = ctx.last_object_tag.clone();
+            ctx.last_object_tag = Some("triggering".to_string());
+            let compiled = compile_effects_preserving_last_effect(effects, ctx);
+            ctx.last_object_tag = previous_last;
+            let (delayed_effects, choices) = compiled?;
+            let mut delayed = crate::effects::ScheduleDelayedTriggerEffect::from_tag(
+                Trigger::this_dies(),
+                delayed_effects,
+                true,
+                target_tag,
+                PlayerFilter::You,
+            );
+            if let Some(filter) = filter {
+                delayed = delayed.with_target_filter(resolve_it_tag(filter, ctx)?);
+            }
+            let effect = Effect::new(delayed);
+            (vec![effect], choices)
         }
         _ => return Ok(None),
     };

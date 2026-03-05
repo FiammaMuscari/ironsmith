@@ -144,7 +144,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let first_event = TriggerEvent::new_with_provenance(
             DamageEvent::new(attacker_one, DamageTarget::Player(bob), 2, true),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&first_event, &ctx));
 
@@ -152,7 +152,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let second_event = TriggerEvent::new_with_provenance(
             DamageEvent::new(attacker_two, DamageTarget::Player(bob), 2, true),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&second_event, &ctx));
     }
@@ -178,13 +178,13 @@ mod tests {
 
         let hits_charlie = TriggerEvent::new_with_provenance(
             DamageEvent::new(attacker, DamageTarget::Player(charlie), 2, true),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&hits_charlie, &ctx));
 
         let hits_alice = TriggerEvent::new_with_provenance(
             DamageEvent::new(attacker, DamageTarget::Player(alice), 2, true),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&hits_alice, &ctx));
     }

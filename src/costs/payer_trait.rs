@@ -79,7 +79,7 @@ impl<'dm> CostContext<'dm> {
             decision_maker,
             pre_chosen_cards: Vec::new(),
             tagged_objects: HashMap::new(),
-            provenance: ProvNodeId::UNKNOWN,
+            provenance: ProvNodeId::default(),
         }
     }
 
@@ -152,7 +152,7 @@ impl CostCheckContext {
             decision_maker: dm,
             pre_chosen_cards: self.pre_chosen_cards.clone(),
             tagged_objects: HashMap::new(),
-            provenance: ProvNodeId::UNKNOWN,
+            provenance: ProvNodeId::default(),
         }
     }
 }

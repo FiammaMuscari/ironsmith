@@ -340,7 +340,7 @@ mod tests {
         // Simulate ETB event
         let event = TriggerEvent::new_with_provenance(
             ZoneChangeEvent::new(gearhulk_id, Zone::Hand, Zone::Battlefield, None),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);

@@ -41,7 +41,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             CreatureBecameBlockedEvent::new(source_id, 2),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
     }

@@ -100,7 +100,7 @@ mod tests {
         // ETB event should match
         let etb_event = TriggerEvent::new_with_provenance(
             ZoneChangeEvent::new(source_id, Zone::Hand, Zone::Battlefield, None),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&etb_event, &ctx));
     }
@@ -126,7 +126,7 @@ mod tests {
                 3,
                 true, // is_combat
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&damage_event, &ctx));
     }
@@ -153,14 +153,14 @@ mod tests {
                 3,
                 false, // not combat
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&damage_event, &ctx));
 
         // ETB of different object shouldn't match
         let etb_event = TriggerEvent::new_with_provenance(
             ZoneChangeEvent::new(other_id, Zone::Hand, Zone::Battlefield, None),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&etb_event, &ctx));
     }
@@ -189,7 +189,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             ZoneChangeEvent::new(source_id, Zone::Hand, Zone::Battlefield, None),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }

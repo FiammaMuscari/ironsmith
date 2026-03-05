@@ -133,7 +133,7 @@ mod tests {
         .with_votes(votes);
 
         let event =
-            TriggerEvent::new_with_provenance(voting_event, crate::provenance::ProvNodeId::UNKNOWN);
+            TriggerEvent::new_with_provenance(voting_event, crate::provenance::ProvNodeId::default());
         let triggered = check_triggers(&game, &event);
 
         assert_eq!(
@@ -158,7 +158,7 @@ mod tests {
         // Create an ETB event (Model of Unity itself entering)
         let etb_event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::new(model_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &etb_event);
@@ -237,7 +237,7 @@ mod tests {
         .with_votes(votes);
 
         let event =
-            TriggerEvent::new_with_provenance(voting_event, crate::provenance::ProvNodeId::UNKNOWN);
+            TriggerEvent::new_with_provenance(voting_event, crate::provenance::ProvNodeId::default());
         let triggered = check_triggers(&game, &event);
 
         assert_eq!(

@@ -69,7 +69,7 @@ mod tests {
                 Zone::Graveyard,
                 Some(snapshot),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         )
     }
 

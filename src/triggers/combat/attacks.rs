@@ -164,7 +164,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             CreatureAttackedEvent::new(creature_id, AttackEventTarget::Player(bob)),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));
@@ -205,7 +205,7 @@ mod tests {
                 AttackEventTarget::Player(bob),
                 2,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&first_event, &ctx));
 
@@ -215,7 +215,7 @@ mod tests {
                 AttackEventTarget::Player(bob),
                 2,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&second_event, &ctx));
     }
@@ -255,7 +255,7 @@ mod tests {
                 AttackEventTarget::Player(bob),
                 2,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&below_threshold, &ctx));
 
@@ -265,7 +265,7 @@ mod tests {
                 AttackEventTarget::Player(bob),
                 3,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&first_event, &ctx));
 
@@ -275,7 +275,7 @@ mod tests {
                 AttackEventTarget::Player(bob),
                 3,
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&second_event, &ctx));
     }

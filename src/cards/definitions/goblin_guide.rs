@@ -146,7 +146,7 @@ mod tests {
         // Simulate the attack event
         let event = TriggerEvent::new_with_provenance(
             CreatureAttackedEvent::new(guide_id, AttackEventTarget::Player(bob)),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         // Check if triggers fire
@@ -186,7 +186,7 @@ mod tests {
         // Simulate the attack event for the OTHER creature
         let event = TriggerEvent::new_with_provenance(
             CreatureAttackedEvent::new(bear_id, AttackEventTarget::Player(bob)),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         // Check if triggers fire - should NOT trigger Goblin Guide
@@ -239,7 +239,7 @@ mod tests {
         // Simulate the attack event targeting Bob
         let event = TriggerEvent::new_with_provenance(
             CreatureAttackedEvent::new(guide_id, AttackEventTarget::Player(bob)),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         // Check the trigger

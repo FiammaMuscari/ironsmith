@@ -185,7 +185,7 @@ mod tests {
                 Zone::Exile,
                 Some(snapshot),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));
@@ -212,7 +212,7 @@ mod tests {
                 Zone::Exile,
                 Some(snapshot),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(!trigger.matches(&event, &ctx));
@@ -241,7 +241,7 @@ mod tests {
                 Zone::Exile,
                 Some(snapshot),
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(!trigger.matches(&event, &ctx));

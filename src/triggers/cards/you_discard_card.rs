@@ -102,13 +102,13 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             CardDiscardedEvent::new(alice, card_id),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
 
         let opponent_event = TriggerEvent::new_with_provenance(
             CardDiscardedEvent::new(bob, card_id),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&opponent_event, &ctx));
     }
@@ -135,14 +135,14 @@ mod tests {
         assert!(trigger.matches(
             &TriggerEvent::new_with_provenance(
                 CardDiscardedEvent::new(alice, creature),
-                crate::provenance::ProvNodeId::UNKNOWN
+                crate::provenance::ProvNodeId::default()
             ),
             &ctx
         ));
         assert!(!trigger.matches(
             &TriggerEvent::new_with_provenance(
                 CardDiscardedEvent::new(alice, land),
-                crate::provenance::ProvNodeId::UNKNOWN
+                crate::provenance::ProvNodeId::default()
             ),
             &ctx
         ));

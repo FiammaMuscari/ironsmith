@@ -122,7 +122,7 @@ mod tests {
         // Create event where permanent enters tapped
         let event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -149,7 +149,7 @@ mod tests {
         // Create event where permanent enters untapped (default)
         let event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::new(land_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -174,7 +174,7 @@ mod tests {
         let land_id = create_land(&mut game, "Bob's Land", bob);
         let event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -199,7 +199,7 @@ mod tests {
         let land_id = create_land(&mut game, "Tapped Land", alice);
         let event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         let triggered = check_triggers(&game, &event);
@@ -232,7 +232,7 @@ mod tests {
         // Create execution context with the triggering event
         let triggering_event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         let _outcomes = execute_amulet_trigger(&mut game, alice, source, triggering_event);
 
@@ -255,7 +255,7 @@ mod tests {
         // Create execution context with the triggering event
         let triggering_event = TriggerEvent::new_with_provenance(
             EnterBattlefieldEvent::tapped(land_id, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         let _outcomes = execute_amulet_trigger(&mut game, alice, source, triggering_event);
 

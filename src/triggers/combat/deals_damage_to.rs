@@ -109,7 +109,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             DamageEvent::new(source, DamageTarget::Object(target), 2, true),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));
@@ -128,7 +128,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             DamageEvent::new(source, DamageTarget::Object(target), 2, false),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(!trigger.matches(&event, &ctx));

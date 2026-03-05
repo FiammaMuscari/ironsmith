@@ -49,7 +49,7 @@ mod tests {
                 3,
                 true, // is_combat
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));
@@ -72,7 +72,7 @@ mod tests {
                 3,
                 false, // is_combat = false
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(!trigger.matches(&event, &ctx));

@@ -11553,7 +11553,7 @@ fn arcbond_delayed_trigger_deals_damage_to_each_other_creature_and_each_player()
             3,
             false,
         ),
-        crate::provenance::ProvNodeId::UNKNOWN,
+        crate::provenance::ProvNodeId::default(),
     );
     let delayed_entries = crate::triggers::check_delayed_triggers(&mut game, &damage_event);
     assert_eq!(

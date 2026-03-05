@@ -9,6 +9,26 @@ import NumberDecision from "./NumberDecision";
 /** Derive a stable key so React remounts stateful decision components when the
  *  underlying decision changes (e.g. "discard a card" → "search library"). */
 function decisionKey(decision) {
+  if (decision.attacker_options) {
+    return decision.attacker_options
+      .map((opt) => {
+        const targets = (opt.valid_targets || [])
+          .map((target) => JSON.stringify(target))
+          .join("+");
+        return `${Number(opt.creature)}:${opt.must_attack ? 1 : 0}:${targets}`;
+      })
+      .join("|");
+  }
+  if (decision.blocker_options) {
+    return decision.blocker_options
+      .map((opt) => {
+        const blockers = (opt.valid_blockers || [])
+          .map((blocker) => `${Number(blocker.id)}:${blocker.name || ""}`)
+          .join("+");
+        return `${Number(opt.attacker)}:${opt.min_blockers || 0}:${blockers}`;
+      })
+      .join("|");
+  }
   if (decision.candidates) {
     return decision.candidates.map((c) => c.id).join(",");
   }
@@ -34,6 +54,7 @@ export default function DecisionRouter({
   inlineSubmit = true,
   onSubmitActionChange = null,
   hideDescription = false,
+  combatInline = false,
 }) {
   if (!decision) return null;
 
@@ -55,9 +76,9 @@ export default function DecisionRouter({
         />
       );
     case "attackers":
-      return <AttackersDecision key={key} decision={decision} canAct={canAct} />;
+      return <AttackersDecision key={key} decision={decision} canAct={canAct} compact={combatInline} />;
     case "blockers":
-      return <BlockersDecision key={key} decision={decision} canAct={canAct} />;
+      return <BlockersDecision key={key} decision={decision} canAct={canAct} compact={combatInline} />;
     case "select_objects":
       return (
         <SelectObjectsDecision

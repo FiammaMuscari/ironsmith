@@ -111,7 +111,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             CreatureAttackedEvent::new(source, AttackEventTarget::Player(bob)),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));
@@ -141,7 +141,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             CreatureAttackedEvent::new(source, AttackEventTarget::Player(bob)),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(!trigger.matches(&event, &ctx));
@@ -158,7 +158,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             CreatureAttackedEvent::new(other, AttackEventTarget::Player(bob)),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }

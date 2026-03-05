@@ -111,7 +111,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfUpkeepEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
     }
@@ -128,7 +128,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfUpkeepEvent::new(bob),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }
@@ -145,11 +145,11 @@ mod tests {
 
         let event1 = TriggerEvent::new_with_provenance(
             BeginningOfUpkeepEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         let event2 = TriggerEvent::new_with_provenance(
             BeginningOfUpkeepEvent::new(bob),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event1, &ctx));
         assert!(trigger.matches(&event2, &ctx));
@@ -166,7 +166,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             BeginningOfDrawStepEvent::new(alice),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
     }

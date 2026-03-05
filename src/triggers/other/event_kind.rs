@@ -82,7 +82,7 @@ mod tests {
                 HashMap::new(),
                 vec!["a".to_string(), "b".to_string()],
             ),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
     }
@@ -100,11 +100,11 @@ mod tests {
         let ctx = TriggerContext::for_source(source_id, alice, &game);
         let own_event = TriggerEvent::new_with_provenance(
             BecameMonstrousEvent::new(source_id, alice, 3),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         let other_event = TriggerEvent::new_with_provenance(
             BecameMonstrousEvent::new(other_id, alice, 3),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&own_event, &ctx));
         assert!(!trigger.matches(&other_event, &ctx));

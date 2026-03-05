@@ -36,7 +36,7 @@ function pivotToBlockerCentric(attackerOptions) {
   return Array.from(blockerMap.values());
 }
 
-export default function BlockersDecision({ decision, canAct }) {
+export default function BlockersDecision({ decision, canAct, compact = false }) {
   const { dispatch } = useGame();
   const { updateArrows, clearArrows, setCombatMode } = useCombatArrows();
   const attackerOptions = useMemo(() => decision.blocker_options || [], [decision.blocker_options]);
@@ -118,6 +118,75 @@ export default function BlockersDecision({ decision, canAct }) {
   }, [declarations, updateArrows]);
 
   useEffect(() => clearArrows, [clearArrows]);
+
+  const blockerNameById = useMemo(() => {
+    const map = new Map();
+    for (const opt of blockerOptions) {
+      map.set(Number(opt.blocker), opt.name || `Creature ${Number(opt.blocker)}`);
+    }
+    return map;
+  }, [blockerOptions]);
+
+  const attackerNameById = useMemo(() => {
+    const map = new Map();
+    for (const opt of attackerOptions) {
+      const attackerId = Number(opt.attacker);
+      map.set(attackerId, opt.attacker_name || `Attacker ${attackerId}`);
+    }
+    return map;
+  }, [attackerOptions]);
+
+  if (compact) {
+    return (
+      <div className="flex h-full min-w-0 items-center gap-2">
+        <div className="shrink-0 min-w-[92px]">
+          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+            {canAct ? "Your Action" : "Opponent Action"}
+          </div>
+          <div className="text-[10px] text-[#b8d2ef]">
+            Blockers
+          </div>
+        </div>
+
+        <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden whitespace-nowrap">
+          <div className="flex w-max min-w-full items-center gap-1.5 pr-2">
+            {declarations.length === 0 && (
+              <span className="text-[12px] text-[#b8d2ef]">
+                Drag your blockers onto attackers to assign blocks.
+              </span>
+            )}
+            {declarations.map((decl) => {
+              const blockerName = blockerNameById.get(Number(decl.blocker)) || `Creature ${Number(decl.blocker)}`;
+              const attackerName = attackerNameById.get(Number(decl.blocking)) || `Attacker ${Number(decl.blocking)}`;
+              return (
+                <span
+                  key={`compact-blk-${decl.blocker}-${decl.blocking}`}
+                  className="inline-flex h-7 items-center rounded border border-[#4f7cad] bg-[rgba(24,43,64,0.78)] px-2.5 text-[12px] font-semibold text-[#d7ebff]"
+                >
+                  {blockerName} -&gt; {attackerName}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 shrink-0 rounded border border-[#546c86] bg-[rgba(15,27,40,0.92)] px-3 text-[13px] font-bold text-[#69b5f7] transition-all hover:border-[#8ca8c7] hover:bg-[rgba(28,43,58,0.95)] hover:text-[#d7ebff]"
+          disabled={!canAct}
+          onClick={() =>
+            dispatch(
+              { type: "declare_blockers", declarations },
+              `Declared ${declarations.length} blocker(s)`
+            )
+          }
+        >
+          Confirm ({declarations.length})
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-2 overflow-x-hidden">

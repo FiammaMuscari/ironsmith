@@ -48,7 +48,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             CreatureAttackedEvent::new(source_id, AttackEventTarget::Player(bob)),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&event, &ctx));
 

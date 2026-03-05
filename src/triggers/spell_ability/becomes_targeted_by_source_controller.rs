@@ -96,7 +96,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             BecomesTargetedEvent::new(source, spell_source, bob, false),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(trigger.matches(&event, &ctx));
@@ -116,7 +116,7 @@ mod tests {
         let ctx = TriggerContext::for_source(source, alice, &game);
         let event = TriggerEvent::new_with_provenance(
             BecomesTargetedEvent::new(source, spell_source, alice, false),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
 
         assert!(!trigger.matches(&event, &ctx));

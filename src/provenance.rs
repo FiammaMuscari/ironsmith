@@ -7,16 +7,6 @@ use crate::ids::{ObjectId, PlayerId};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ProvNodeId(u64);
 
-impl ProvNodeId {
-    /// Sentinel for "not yet assigned".
-    pub const UNKNOWN: Self = Self(0);
-
-    #[inline]
-    pub fn is_unknown(self) -> bool {
-        self == Self::UNKNOWN
-    }
-}
-
 /// Semantic type of a provenance graph node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvenanceNodeKind {
@@ -78,7 +68,7 @@ impl ProvenanceGraph {
     }
 
     pub fn alloc_child(&mut self, parent: ProvNodeId, kind: ProvenanceNodeKind) -> ProvNodeId {
-        let normalized_parent = if parent.is_unknown() || !self.nodes.contains_key(&parent) {
+        let normalized_parent = if parent == ProvNodeId::default() || !self.nodes.contains_key(&parent) {
             None
         } else {
             Some(parent)
@@ -87,7 +77,7 @@ impl ProvenanceGraph {
     }
 
     pub fn ensure_event_root(&mut self, provenance: ProvNodeId, kind: EventKind) -> ProvNodeId {
-        if provenance.is_unknown() {
+        if provenance == ProvNodeId::default() {
             self.alloc_root_event(kind)
         } else {
             provenance

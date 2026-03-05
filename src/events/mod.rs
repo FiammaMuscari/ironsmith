@@ -212,7 +212,7 @@ impl Event {
                 is_unpreventable: false,
                 remainder: None,
             },
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
@@ -232,13 +232,13 @@ impl Event {
                 is_unpreventable: true,
                 remainder: None,
             },
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
     /// Create a life gain event.
     pub fn life_gain(player: PlayerId, amount: u32) -> Self {
-        Self::new_with_provenance(LifeGainEvent { player, amount }, ProvNodeId::UNKNOWN)
+        Self::new_with_provenance(LifeGainEvent { player, amount }, ProvNodeId::default())
     }
 
     /// Create a life loss event.
@@ -249,7 +249,7 @@ impl Event {
                 amount,
                 from_damage,
             },
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
@@ -262,7 +262,7 @@ impl Event {
     ) -> Self {
         Self::new_with_provenance(
             ZoneChangeEvent::new(object, from, to, snapshot),
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
@@ -281,7 +281,7 @@ impl Event {
                 enters_with_counters,
                 enters_as_copy_of: None,
             },
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
@@ -295,7 +295,7 @@ impl Event {
                 Zone::Graveyard,
                 Some(snapshot),
             ),
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
@@ -307,7 +307,7 @@ impl Event {
                 counter_type,
                 count,
             },
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
@@ -319,7 +319,7 @@ impl Event {
                 counter_type,
                 count,
             },
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
@@ -337,7 +337,7 @@ impl Event {
                 counter_type,
                 count,
             },
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
@@ -349,25 +349,25 @@ impl Event {
                 count,
                 is_first_this_turn,
             },
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
     /// Create a discard event from an effect.
     pub fn discard_from_effect(card: ObjectId, player: PlayerId) -> Self {
-        Self::new_with_provenance(DiscardEvent::from_effect(card, player), ProvNodeId::UNKNOWN)
+        Self::new_with_provenance(DiscardEvent::from_effect(card, player), ProvNodeId::default())
     }
 
     /// Create a discard event as a cost.
     pub fn discard_as_cost(card: ObjectId, player: PlayerId) -> Self {
-        Self::new_with_provenance(DiscardEvent::as_cost(card, player), ProvNodeId::UNKNOWN)
+        Self::new_with_provenance(DiscardEvent::as_cost(card, player), ProvNodeId::default())
     }
 
     /// Create a discard event from a game rule (e.g., cleanup step).
     pub fn discard_from_game_rule(card: ObjectId, player: PlayerId) -> Self {
         Self::new_with_provenance(
             DiscardEvent::from_game_rule(card, player),
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
@@ -375,28 +375,28 @@ impl Event {
     pub fn discard_with_cause(card: ObjectId, player: PlayerId, cause: EventCause) -> Self {
         Self::new_with_provenance(
             DiscardEvent::with_cause(card, player, cause),
-            ProvNodeId::UNKNOWN,
+            ProvNodeId::default(),
         )
     }
 
     /// Create a tap event.
     pub fn tap(permanent: ObjectId) -> Self {
-        Self::new_with_provenance(TapEvent { permanent }, ProvNodeId::UNKNOWN)
+        Self::new_with_provenance(TapEvent { permanent }, ProvNodeId::default())
     }
 
     /// Create an untap event.
     pub fn untap(permanent: ObjectId) -> Self {
-        Self::new_with_provenance(UntapEvent { permanent }, ProvNodeId::UNKNOWN)
+        Self::new_with_provenance(UntapEvent { permanent }, ProvNodeId::default())
     }
 
     /// Create a destroy event.
     pub fn destroy(permanent: ObjectId, source: Option<ObjectId>) -> Self {
-        Self::new_with_provenance(DestroyEvent { permanent, source }, ProvNodeId::UNKNOWN)
+        Self::new_with_provenance(DestroyEvent { permanent, source }, ProvNodeId::default())
     }
 
     /// Create a sacrifice event.
     pub fn sacrifice(permanent: ObjectId, source: Option<ObjectId>) -> Self {
-        Self::new_with_provenance(SacrificeEvent::new(permanent, source), ProvNodeId::UNKNOWN)
+        Self::new_with_provenance(SacrificeEvent::new(permanent, source), ProvNodeId::default())
     }
 }
 

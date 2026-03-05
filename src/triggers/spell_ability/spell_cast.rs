@@ -382,7 +382,7 @@ mod tests {
 
         let event = TriggerEvent::new_with_provenance(
             SpellCastEvent::new(spell_id, alice, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&event, &ctx));
     }
@@ -423,13 +423,13 @@ mod tests {
 
         let from_graveyard = TriggerEvent::new_with_provenance(
             SpellCastEvent::new(spell_id, alice, Zone::Graveyard),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(trigger.matches(&from_graveyard, &ctx));
 
         let from_hand = TriggerEvent::new_with_provenance(
             SpellCastEvent::new(spell_id, alice, Zone::Hand),
-            crate::provenance::ProvNodeId::UNKNOWN,
+            crate::provenance::ProvNodeId::default(),
         );
         assert!(!trigger.matches(&from_hand, &ctx));
     }
