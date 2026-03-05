@@ -1328,6 +1328,11 @@
   animation: card-bumped 350ms ease-out both;
 }
 
+.game-card.stack-card-leave {
+  animation: stack-card-leave 360ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  transform-origin: top center;
+}
+
 @keyframes card-enter {
   0% {
     transform: scale(0.2) rotate(-6deg);
@@ -1358,6 +1363,19 @@
   }
   100% {
     transform: scale(1) translate(0, 0);
+  }
+}
+
+@keyframes stack-card-leave {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: brightness(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -14px, 0) scale(0.97);
+    filter: brightness(0.84);
   }
 }
 
@@ -1523,6 +1541,69 @@
   to {
     transform: translateX(calc(-1 * var(--action-pill-carousel-distance, 0px)));
   }
+}
+
+.inspector-rule-highlight {
+  border-top-color: rgba(247, 184, 105, 0.74);
+  border-bottom-color: rgba(247, 184, 105, 0.74);
+  border-left-color: transparent;
+  border-right-color: transparent;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 221, 173, 0.46),
+    inset 0 -1px 0 rgba(255, 221, 173, 0.46),
+    inset 0 0 18px rgba(0, 0, 0, 0.7),
+    0 0 12px rgba(247, 184, 105, 0.52),
+    0 0 24px rgba(247, 184, 105, 0.28);
+  animation: inspector-rule-highlight-pulse 2.2s ease-in-out infinite;
+}
+
+.inspector-oracle-chip {
+  display: inline;
+  padding-inline: 0.25rem;
+  border-radius: 2px;
+  background-color: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(1.6px);
+  -webkit-backdrop-filter: blur(1.6px);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+@keyframes inspector-rule-highlight-pulse {
+  0%, 100% {
+    border-top-color: rgba(247, 184, 105, 0.68);
+    border-bottom-color: rgba(247, 184, 105, 0.68);
+    border-left-color: transparent;
+    border-right-color: transparent;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 221, 173, 0.42),
+      inset 0 -1px 0 rgba(255, 221, 173, 0.42),
+      inset 0 0 18px rgba(0, 0, 0, 0.72),
+      0 0 10px rgba(247, 184, 105, 0.44),
+      0 0 20px rgba(247, 184, 105, 0.22);
+  }
+  50% {
+    border-top-color: rgba(255, 210, 141, 0.92);
+    border-bottom-color: rgba(255, 210, 141, 0.92);
+    border-left-color: transparent;
+    border-right-color: transparent;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 234, 198, 0.66),
+      inset 0 -1px 0 rgba(255, 234, 198, 0.66),
+      inset 0 0 16px rgba(0, 0, 0, 0.66),
+      0 0 16px rgba(255, 208, 128, 0.74),
+      0 0 34px rgba(247, 184, 105, 0.4);
+  }
+}
+
+.inspector-oracle-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.inspector-oracle-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 /* Hover inspector art reveal */

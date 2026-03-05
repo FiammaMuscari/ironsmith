@@ -54,6 +54,41 @@ function zoneCounts(player) {
   ];
 }
 
+function collectCardObjectIds(card) {
+  const ids = [Number(card?.id)];
+  if (Array.isArray(card?.member_ids)) {
+    for (const memberId of card.member_ids) {
+      ids.push(Number(memberId));
+    }
+  }
+  return ids.filter((id) => Number.isFinite(id));
+}
+
+function actionSignature(action) {
+  return `${action?.kind || ""}|${action?.from_zone || ""}|${String(action?.label || "").trim().toLowerCase()}`;
+}
+
+function resolveSinglePriorityCardAction(state, card) {
+  const decision = state?.decision;
+  if (!decision || decision.kind !== "priority" || decision.player !== state?.perspective) {
+    return null;
+  }
+
+  const objectIds = collectCardObjectIds(card);
+  if (objectIds.length === 0) return null;
+  const objectIdSet = new Set(objectIds.map((id) => String(id)));
+  const candidateActions = (decision.actions || []).filter((action) =>
+    action.kind !== "pass_priority"
+    && action.object_id != null
+    && objectIdSet.has(String(action.object_id))
+  );
+  if (candidateActions.length === 0) return null;
+
+  const uniqueActionKinds = new Set(candidateActions.map(actionSignature));
+  if (uniqueActionKinds.size !== 1) return null;
+  return candidateActions[0];
+}
+
 function ZoneCountInline({ player }) {
   const counts = zoneCounts(player);
   return (
@@ -76,7 +111,7 @@ export default function OpponentZone({
   legalTargetPlayerIds = new Set(),
   legalTargetObjectIds = new Set(),
 }) {
-  const { state } = useGame();
+  const { state, dispatch } = useGame();
   if (!opponents.length) return <section className="board-zone-bg p-1.5 min-h-0" />;
 
   return (
@@ -97,6 +132,7 @@ export default function OpponentZone({
             onInspect={onInspect}
             zoneViews={zoneViews}
             state={state}
+            dispatch={dispatch}
             legalTargetPlayerIds={legalTargetPlayerIds}
             legalTargetObjectIds={legalTargetObjectIds}
           />
@@ -112,6 +148,7 @@ function OpponentSlot({
   onInspect,
   zoneViews,
   state,
+  dispatch,
   legalTargetPlayerIds,
   legalTargetObjectIds,
 }) {
@@ -169,13 +206,9 @@ function OpponentSlot({
   }, [combatModeRef, playerIdx]);
 
   const handleCardClick = (e, card) => {
+    const candidateObjectIds = collectCardObjectIds(card);
+
     if (canPickTargetFromBoard) {
-      const candidateObjectIds = [Number(card.id)];
-      if (Array.isArray(card.member_ids)) {
-        for (const memberId of card.member_ids) {
-          candidateObjectIds.push(Number(memberId));
-        }
-      }
       const matchedTargetId = candidateObjectIds.find((id) => legalTargetObjectIds.has(id));
       if (matchedTargetId != null) {
         window.dispatchEvent(
@@ -186,6 +219,16 @@ function OpponentSlot({
         return;
       }
     }
+
+    const singlePriorityAction = resolveSinglePriorityCardAction(state, card);
+    if (singlePriorityAction) {
+      dispatch(
+        { type: "priority_action", action_index: singlePriorityAction.index },
+        singlePriorityAction.label
+      );
+      return;
+    }
+
     onInspect?.(card.id);
   };
 

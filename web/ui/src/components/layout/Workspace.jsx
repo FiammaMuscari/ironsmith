@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { useDragActions } from "@/context/DragContext";
 import { useHoverActions } from "@/context/HoverContext";
 import TableCore from "@/components/board/TableCore";
 import RightRail from "@/components/right-rail/RightRail";
+import StackTimelineRail from "@/components/right-rail/StackTimelineRail";
 import HandZone from "@/components/board/HandZone";
 import DragOverlay from "@/components/overlays/DragOverlay";
 import CastParticles from "@/components/overlays/CastParticles";
 import ArrowOverlay from "@/components/overlays/ArrowOverlay";
-import DecisionPopupLayer from "@/components/overlays/DecisionPopupLayer";
+
+const HAND_ROW_HEIGHT = 140;
 
 function objectExistsInState(state, objectId) {
   if (!state || objectId == null) return false;
@@ -41,22 +43,20 @@ function objectExistsInState(state, objectId) {
 
 export default function Workspace({
   zoneViews,
-  setZoneViews,
   deckLoadingMode,
   onLoadDecks,
   onCancelDeckLoading,
 }) {
   const [selectedObjectId, setSelectedObjectId] = useState(null);
+  const previousStackIdsRef = useRef([]);
   const { state, dispatch, status } = useGame();
   const { endDrag } = useDragActions();
-  const { clearHover } = useHoverActions();
+  const { clearHover, hoverCard } = useHoverActions();
 
   const players = state?.players || [];
   const perspective = state?.perspective;
   const me = players.find((p) => p.id === perspective) || players[0];
-  const handRowHeight = 140;
-  const actionBridgeHeight = 62;
-  const inspectorReservedWidth = "clamp(240px, 24vw, 360px)";
+  const handRowHeight = HAND_ROW_HEIGHT;
   const addCardError = status?.isError && typeof status?.msg === "string" && status.msg.startsWith("Add card failed:")
     ? status.msg
     : null;
@@ -64,14 +64,6 @@ export default function Workspace({
   const selectedObjectIsValid = objectExistsInState(state, selectedObjectId);
   const decision = state?.decision || null;
   const combatDeclarationActive = decision?.kind === "attackers" || decision?.kind === "blockers";
-  const hasFocusedDecision = Boolean(
-    decision
-    && decision.kind !== "priority"
-    && decision.kind !== "attackers"
-    && decision.kind !== "blockers"
-  );
-  const hasStackEntries = (state?.stack_objects?.length || 0) > 0 || (state?.stack_preview?.length || 0) > 0;
-  const reserveInspectorSpace = selectedObjectIsValid || hasFocusedDecision || hasStackEntries;
 
   useEffect(() => {
     if (addCardError) setDismissedAddCardError(false);
@@ -84,6 +76,29 @@ export default function Workspace({
   }, [selectedObjectId, selectedObjectIsValid]);
 
   useEffect(() => {
+    const stackObjects = state?.stack_objects || [];
+    const currentStackIds = stackObjects.map((entry) => String(entry?.id));
+    const previousStackIds = previousStackIdsRef.current;
+    const removedIds = previousStackIds.filter((id) => !currentStackIds.includes(id));
+
+    if (
+      removedIds.length > 0
+      && selectedObjectId != null
+      && !combatDeclarationActive
+      && previousStackIds.includes(String(selectedObjectId))
+    ) {
+      const nextTopId = stackObjects[0]?.id ?? null;
+      const selectedSnapshot = String(selectedObjectId);
+      setSelectedObjectId((currentSelection) => {
+        if (String(currentSelection) !== selectedSnapshot) return currentSelection;
+        return nextTopId;
+      });
+    }
+
+    previousStackIdsRef.current = currentStackIds;
+  }, [state?.stack_objects, selectedObjectId, combatDeclarationActive]);
+
+  useEffect(() => {
     if (!combatDeclarationActive) return;
     setSelectedObjectId(null);
   }, [combatDeclarationActive]);
@@ -92,8 +107,9 @@ export default function Workspace({
     (objectId) => {
       if (combatDeclarationActive) return;
       setSelectedObjectId(objectId);
+      if (objectId != null) hoverCard(objectId);
     },
-    [combatDeclarationActive]
+    [combatDeclarationActive, hoverCard]
   );
 
   // Handle drag drop — if user drops on the battlefield area, dispatch the action
@@ -123,8 +139,8 @@ export default function Workspace({
         return;
       }
 
-      // Multiple possible actions: pin inspector to this card so choices
-      // are shown inside the card inspector (instead of a floating popover).
+      // Multiple possible actions: pin inspector to this card while actions
+      // remain available in the action strip.
       if (!combatDeclarationActive) {
         setSelectedObjectId(ds.objectId != null ? ds.objectId : null);
       }
@@ -155,7 +171,6 @@ export default function Workspace({
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (target.closest("[data-object-id]")) return;
-      if (target.closest("[data-inspector-action]")) return;
       if (target.closest(".zone-viewer")) return;
       if (target.closest(".priority-inline-panel")) return;
       if (target.closest("button, input, label, a, [role='button']")) return;
@@ -181,16 +196,12 @@ export default function Workspace({
     <section
       className="relative grid gap-2 min-h-0 h-full overflow-hidden"
       style={{
-        gridTemplateRows: `minmax(0,1fr) ${actionBridgeHeight}px ${handRowHeight}px`,
+        gridTemplateRows: `minmax(0,1fr) ${handRowHeight}px`,
       }}
     >
       <DragOverlay />
       <CastParticles />
       <ArrowOverlay />
-      <RightRail
-        pinnedObjectId={selectedObjectId}
-        onInspectObject={handleInspectObject}
-      />
       {addCardError && !dismissedAddCardError && (
         <button
           type="button"
@@ -201,26 +212,28 @@ export default function Workspace({
           {addCardError}
         </button>
       )}
-      <div
-        className="min-h-0 h-full overflow-hidden"
-        style={{ paddingRight: reserveInspectorSpace ? inspectorReservedWidth : "0px" }}
-      >
+      <div className="min-h-0 h-full overflow-hidden">
         <TableCore
           selectedObjectId={selectedObjectId}
           onInspect={handleInspectObject}
           zoneViews={zoneViews}
-          setZoneViews={setZoneViews}
           deckLoadingMode={deckLoadingMode}
           onLoadDecks={onLoadDecks}
           onCancelDeckLoading={onCancelDeckLoading}
         />
       </div>
-      <div className="relative z-20 flex items-center">
-        <div className="h-full w-full rounded border border-[#2b3f57]/65 bg-[linear-gradient(90deg,rgba(7,15,23,0.92),rgba(14,28,44,0.86),rgba(7,15,23,0.92))] shadow-[inset_0_1px_0_rgba(170,208,245,0.12),0_8px_18px_rgba(0,0,0,0.32)]" />
-        <DecisionPopupLayer priorityInline selectedObjectId={selectedObjectId} />
-      </div>
-      <div className="min-h-0 h-full overflow-visible">
-        <HandZone player={me} selectedObjectId={selectedObjectId} onInspect={handleInspectObject} />
+      <div className="min-h-0 h-full overflow-hidden flex items-stretch gap-1.5">
+        <StackTimelineRail
+          selectedObjectId={selectedObjectId}
+          onInspectObject={handleInspectObject}
+        />
+        <div className="min-w-0 flex-1 h-full overflow-visible">
+          <HandZone player={me} selectedObjectId={selectedObjectId} onInspect={handleInspectObject} />
+        </div>
+        <RightRail
+          pinnedObjectId={selectedObjectId}
+          inline
+        />
       </div>
     </section>
   );

@@ -1874,6 +1874,87 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_count_for_attacking_iterated_player_or_their_planeswalkers() {
+        use crate::card::{CardBuilder, PowerToughness};
+        use crate::combat_state::{AttackTarget, AttackerInfo, CombatState};
+        use crate::ids::CardId;
+        use crate::target::ObjectFilter;
+        use crate::types::CardType;
+        use crate::zone::Zone;
+
+        let mut game = GameState::new(
+            vec![
+                "Alice".to_string(),
+                "Bob".to_string(),
+                "Charlie".to_string(),
+            ],
+            20,
+        );
+        let alice = game.players[0].id;
+        let bob = game.players[1].id;
+        let charlie = game.players[2].id;
+
+        let make_creature = |game: &mut GameState, name: &str, controller: PlayerId| {
+            let card = CardBuilder::new(CardId::from_raw(game.new_object_id().0 as u32), name)
+                .card_types(vec![CardType::Creature])
+                .power_toughness(PowerToughness::fixed(2, 2))
+                .build();
+            game.create_object_from_card(&card, controller, Zone::Battlefield)
+        };
+
+        let attacker_a = make_creature(&mut game, "A", alice);
+        let attacker_b = make_creature(&mut game, "B", alice);
+        let attacker_c = make_creature(&mut game, "C", alice);
+
+        let planeswalker_card = CardBuilder::new(
+            CardId::from_raw(game.new_object_id().0 as u32),
+            "Bob Walker",
+        )
+        .card_types(vec![CardType::Planeswalker])
+        .build();
+        let bob_planeswalker =
+            game.create_object_from_card(&planeswalker_card, bob, Zone::Battlefield);
+
+        game.combat = Some(CombatState {
+            attackers: vec![
+                AttackerInfo {
+                    creature: attacker_a,
+                    target: AttackTarget::Player(bob),
+                },
+                AttackerInfo {
+                    creature: attacker_b,
+                    target: AttackTarget::Planeswalker(bob_planeswalker),
+                },
+                AttackerInfo {
+                    creature: attacker_c,
+                    target: AttackTarget::Player(charlie),
+                },
+            ],
+            ..Default::default()
+        });
+
+        let mut filter = ObjectFilter::creature();
+        filter.attacking = true;
+        filter.attacking_player_or_planeswalker_controlled_by = Some(PlayerFilter::IteratedPlayer);
+        let value = Value::Count(filter);
+
+        let mut ctx = ExecutionContext::new_default(game.new_object_id(), alice);
+        ctx.iterated_player = Some(bob);
+        assert_eq!(
+            resolve_value(&game, &value, &ctx).unwrap(),
+            2,
+            "should count attackers attacking Bob or his planeswalker"
+        );
+
+        ctx.iterated_player = Some(charlie);
+        assert_eq!(
+            resolve_value(&game, &value, &ctx).unwrap(),
+            1,
+            "should count only attackers attacking Charlie"
+        );
+    }
+
+    #[test]
     fn test_resolve_player_filter_you() {
         let mut game = new_test_game();
         let player_id = game.players[0].id;

@@ -3,12 +3,16 @@ import { useGame } from "@/context/GameContext";
 import { formatStep } from "@/lib/constants";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
+import ZoneViewer from "@/components/board/ZoneViewer";
 
 const pill = "text-[13px] uppercase cursor-pointer hover:brightness-125 transition-all select-none";
 const inputPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[13px] font-medium border-0 outline-none focus:ring-1 focus:ring-primary/50";
 const selectPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[13px] font-medium border-0 outline-none cursor-pointer uppercase tracking-wide";
 
-export default function AddCardBar() {
+export default function AddCardBar({
+  zoneViews = ["battlefield"],
+  setZoneViews,
+}) {
   const { game, state, refresh, setStatus, semanticThreshold, setSemanticThreshold, cardsMeetingThreshold } = useGame();
   const [cardName, setCardName] = useState("");
   const [zone, setZone] = useState("battlefield");
@@ -124,6 +128,7 @@ export default function AddCardBar() {
       ) : null; })()}
 
       <div className="flex-1" />
+      <ZoneViewer zoneViews={zoneViews} setZoneViews={setZoneViews} embedded />
     </div>
   );
 }

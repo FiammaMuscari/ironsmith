@@ -1386,6 +1386,14 @@ pub(crate) fn merge_filters(base: &ObjectFilter, specific: &ObjectFilter) -> Obj
     if merged.controller.is_none() {
         merged.controller = specific.controller.clone();
     }
+    if merged
+        .attacking_player_or_planeswalker_controlled_by
+        .is_none()
+    {
+        merged.attacking_player_or_planeswalker_controlled_by = specific
+            .attacking_player_or_planeswalker_controlled_by
+            .clone();
+    }
     if merged.owner.is_none() {
         merged.owner = specific.owner.clone();
     }

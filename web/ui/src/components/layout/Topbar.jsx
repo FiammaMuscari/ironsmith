@@ -2,6 +2,7 @@ import { useGame } from "@/context/GameContext";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
+import PhaseTrack from "@/components/board/PhaseTrack";
 import { Github } from "lucide-react";
 
 const pill = "text-[13px] uppercase cursor-pointer hover:brightness-125 transition-all select-none";
@@ -43,7 +44,7 @@ export default function Topbar({
       : "-";
 
   return (
-    <header className="panel-gradient flex items-center gap-1.5 rounded px-2.5 py-1 flex-wrap">
+    <header className="panel-gradient flex items-center gap-1 rounded px-2 py-0.5 flex-nowrap overflow-x-auto overflow-y-hidden">
       <h1 className="m-0 text-[20px] uppercase tracking-wider whitespace-nowrap font-bold">
         Ironsmith
       </h1>
@@ -115,6 +116,9 @@ export default function Topbar({
         />
         Debug
       </label>
+      <div className="mx-1 w-[min(28vw,420px)] min-w-[220px]">
+        <PhaseTrack />
+      </div>
 
       <div className="flex-1" />
 

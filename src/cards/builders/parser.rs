@@ -12,8 +12,7 @@ struct ModalHeader {
     trigger: Option<TriggerSpec>,
     activated: Option<ModalActivatedHeader>,
     x_replacement: Option<Value>,
-    prefix_effects: Vec<Effect>,
-    prefix_choices: Vec<ChooseSpec>,
+    prefix_effects_ast: Vec<EffectAst>,
     modal_gate: Option<ModalGate>,
     line_text: String,
 }
@@ -29,7 +28,14 @@ struct ModalActivatedHeader {
 
 struct PendingModal {
     header: ModalHeader,
-    modes: Vec<EffectMode>,
+    modes: Vec<PendingModalModeAst>,
+}
+
+#[derive(Clone)]
+struct PendingModalModeAst {
+    raw_line: String,
+    description: String,
+    effects_ast: Vec<EffectAst>,
 }
 
 #[derive(Clone)]
@@ -167,34 +173,22 @@ pub(super) fn parse_text_with_annotations(
                     &mut annotations,
                     &info.normalized,
                 );
-                let effects = match compile_statement_effects(&effects_ast) {
-                    Ok(effects) => effects,
-                    Err(err) if allow_unsupported => {
-                        builder = push_unsupported_marker(
-                            builder,
-                            info.raw_line.as_str(),
-                            format!("{err:?}"),
-                        );
-                        idx += 1;
-                        continue;
-                    }
-                    Err(err) => return Err(err),
-                };
                 let description = info
                     .raw_line
                     .trim_start()
                     .trim_start_matches(|c: char| c == '•' || c == '*' || c == '-')
                     .trim()
                     .to_string();
-                pending.modes.push(EffectMode {
+                pending.modes.push(PendingModalModeAst {
+                    raw_line: info.raw_line.clone(),
                     description,
-                    effects,
+                    effects_ast,
                 });
                 idx += 1;
                 continue;
             }
 
-            builder = finalize_pending_modal(builder, &mut pending_modal);
+            builder = finalize_pending_modal(builder, &mut pending_modal, allow_unsupported)?;
             continue;
         }
 
@@ -278,7 +272,6 @@ pub(super) fn parse_text_with_annotations(
                         last_restrictable_ability,
                         effects,
                         info,
-                        allow_unsupported,
                         &mut annotations,
                     )? {
                         handled_followup_statement = true;
@@ -337,7 +330,7 @@ pub(super) fn parse_text_with_annotations(
         idx += 1;
     }
 
-    builder = finalize_pending_modal(builder, &mut pending_modal);
+    builder = finalize_pending_modal(builder, &mut pending_modal, allow_unsupported)?;
 
     if !level_abilities.is_empty() {
         builder = builder.with_level_abilities(level_abilities);
@@ -1211,7 +1204,7 @@ fn apply_line_ast(
             } else {
                 None
             };
-            let compiled = match compile_statement_effects_with_seed(
+            let compiled = match lower_statement_effects_with_seed(
                 &effects,
                 seed_last_object_tag.as_deref(),
             ) {
@@ -1281,7 +1274,7 @@ fn apply_line_ast(
                 )));
             }
 
-            let compiled = match compile_statement_effects(&effects) {
+            let compiled = match lower_statement_effects(&effects) {
                 Ok(compiled) => compiled,
                 Err(err) if allow_unsupported => {
                     return Ok(push_unsupported_marker(
@@ -1314,8 +1307,7 @@ fn apply_line_ast(
                 )));
             }
 
-            let mut modes = Vec::new();
-            for option in options {
+            for option in &options {
                 if option.effects.is_empty() {
                     if allow_unsupported {
                         return Ok(push_unsupported_marker(
@@ -1329,23 +1321,18 @@ fn apply_line_ast(
                         info.raw_line
                     )));
                 }
-
-                let compiled = match compile_statement_effects(&option.effects) {
-                    Ok(compiled) => compiled,
-                    Err(err) if allow_unsupported => {
-                        return Ok(push_unsupported_marker(
-                            builder,
-                            info.raw_line.as_str(),
-                            format!("{err:?}"),
-                        ));
-                    }
-                    Err(err) => return Err(err),
-                };
-                modes.push(EffectMode {
-                    description: option.description.trim().to_string(),
-                    effects: compiled,
-                });
             }
+            let modes = match lower_additional_cost_choice_modes(&options) {
+                Ok(modes) => modes,
+                Err(err) if allow_unsupported => {
+                    return Ok(push_unsupported_marker(
+                        builder,
+                        info.raw_line.as_str(),
+                        format!("{err:?}"),
+                    ));
+                }
+                Err(err) => return Err(err),
+            };
             builder.additional_cost = crate::ability::merge_cost_effects(
                 builder.additional_cost,
                 vec![Effect::choose_one(modes)],
@@ -1359,19 +1346,6 @@ fn apply_line_ast(
             effects,
             max_triggers_per_turn,
         } => {
-            let (compiled_effects, choices, intervening_if) =
-                match compile_trigger_effects_with_intervening_if(Some(&trigger), &effects) {
-                    Ok(compiled) => compiled,
-                    Err(err) if allow_unsupported => {
-                        return Ok(push_unsupported_marker(
-                            builder,
-                            info.raw_line.as_str(),
-                            format!("{err:?}"),
-                        ));
-                    }
-                    Err(err) => return Err(err),
-                };
-
             // Stash haunt effects for delayed trigger scheduling by finalize_haunt().
             let contains_haunted_creature_dies = matches!(
                 &trigger,
@@ -1380,9 +1354,6 @@ fn apply_line_ast(
                 &trigger,
                 TriggerSpec::HauntedCreatureDies
             );
-            if contains_haunted_creature_dies {
-                builder.haunt_delayed_effects = Some((compiled_effects.clone(), choices.clone()));
-            }
 
             let functional_zones = match &trigger {
                 // "When you cast this spell" only functions while this object is on the stack.
@@ -1395,28 +1366,33 @@ fn apply_line_ast(
                 } => vec![Zone::Graveyard],
                 _ => vec![Zone::Battlefield],
             };
-
-            let compiled_trigger = compile_trigger_spec(trigger);
-            let mut merged_intervening_if = intervening_if;
-            if let Some(max) = max_triggers_per_turn {
-                let max_cond = crate::ConditionExpr::MaxTimesEachTurn(max);
-                merged_intervening_if = Some(match merged_intervening_if.take() {
-                    Some(existing) => {
-                        crate::ConditionExpr::And(Box::new(existing), Box::new(max_cond))
-                    }
-                    None => max_cond,
-                });
-            }
-            builder = builder.with_ability(Ability {
-                kind: AbilityKind::Triggered(TriggeredAbility {
-                    trigger: compiled_trigger,
-                    effects: compiled_effects,
-                    choices,
-                    intervening_if: merged_intervening_if,
-                }),
+            let parsed = parsed_triggered_ability(
+                trigger,
+                effects,
                 functional_zones,
-                text: Some(info.raw_line.clone()),
-            });
+                Some(info.raw_line.clone()),
+                max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
+                None,
+            );
+            let parsed = match lower_parsed_ability(parsed) {
+                Ok(parsed) => parsed,
+                Err(err) if allow_unsupported => {
+                    return Ok(push_unsupported_marker(
+                        builder,
+                        info.raw_line.as_str(),
+                        format!("{err:?}"),
+                    ));
+                }
+                Err(err) => return Err(err),
+            };
+
+            if contains_haunted_creature_dies
+                && let AbilityKind::Triggered(triggered) = &parsed.ability.kind
+            {
+                builder.haunt_delayed_effects =
+                    Some((triggered.effects.clone(), triggered.choices.clone()));
+            }
+            builder = builder.with_ability(parsed.ability);
         }
     }
 
@@ -1582,15 +1558,6 @@ fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextEr
 
     let prechoose_tokens = trim_commas(&tokens[effect_start_idx..choose_idx]).to_vec();
     let (prefix_effects_ast, modal_gate) = parse_modal_header_prefix_effects(&prechoose_tokens)?;
-    let (prefix_effects, prefix_choices) = if prefix_effects_ast.is_empty() {
-        (Vec::new(), Vec::new())
-    } else if let Some(trigger_spec) = trigger.as_ref() {
-        compile_trigger_effects(Some(trigger_spec), &prefix_effects_ast)?
-    } else if activated.is_some() {
-        compile_trigger_effects(None, &prefix_effects_ast)?
-    } else {
-        (compile_statement_effects(&prefix_effects_ast)?, Vec::new())
-    };
 
     Ok(Some(ModalHeader {
         min,
@@ -1602,8 +1569,7 @@ fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextEr
         trigger,
         activated,
         x_replacement,
-        prefix_effects,
-        prefix_choices,
+        prefix_effects_ast,
         modal_gate,
         line_text: info.raw_line.clone(),
     }))
@@ -1880,9 +1846,10 @@ fn try_merge_modal_into_remove_mode(
 fn finalize_pending_modal(
     mut builder: CardDefinitionBuilder,
     pending_modal: &mut Option<PendingModal>,
-) -> CardDefinitionBuilder {
+    allow_unsupported: bool,
+) -> Result<CardDefinitionBuilder, CardTextError> {
     let Some(pending) = pending_modal.take() else {
-        return builder;
+        return Ok(builder);
     };
 
     let PendingModal { header, modes } = pending;
@@ -1896,17 +1863,59 @@ fn finalize_pending_modal(
         trigger,
         activated,
         x_replacement: _,
-        prefix_effects,
-        prefix_choices,
+        prefix_effects_ast,
         modal_gate,
         line_text,
     } = header;
 
-    if modes.is_empty() {
-        return builder;
+    let (prefix_effects, prefix_choices) = if prefix_effects_ast.is_empty() {
+        (Vec::new(), Vec::new())
+    } else if trigger.is_some() || activated.is_some() {
+        match lower_effects_with_trigger_context_and_seed(
+            trigger.as_ref(),
+            &prefix_effects_ast,
+            None,
+        ) {
+            Ok(compiled) => compiled,
+            Err(err) if allow_unsupported => {
+                builder = push_unsupported_marker(builder, line_text.as_str(), format!("{err:?}"));
+                return Ok(builder);
+            }
+            Err(err) => return Err(err),
+        }
+    } else {
+        match lower_statement_effects(&prefix_effects_ast) {
+            Ok(effects) => (effects, Vec::new()),
+            Err(err) if allow_unsupported => {
+                builder = push_unsupported_marker(builder, line_text.as_str(), format!("{err:?}"));
+                return Ok(builder);
+            }
+            Err(err) => return Err(err),
+        }
+    };
+
+    let mut compiled_modes = Vec::new();
+    for mode in modes {
+        let effects = match lower_statement_effects(&mode.effects_ast) {
+            Ok(effects) => effects,
+            Err(err) if allow_unsupported => {
+                builder =
+                    push_unsupported_marker(builder, mode.raw_line.as_str(), format!("{err:?}"));
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+        compiled_modes.push(EffectMode {
+            description: mode.description,
+            effects,
+        });
     }
 
-    let mode_count = modes.len() as u32;
+    if compiled_modes.is_empty() {
+        return Ok(builder);
+    }
+
+    let mode_count = compiled_modes.len() as u32;
     let max = header_max.unwrap_or(mode_count).min(mode_count);
     let min = header_min.min(max);
     let with_unchosen_requirement = |effect: Effect| {
@@ -1928,24 +1937,27 @@ fn finalize_pending_modal(
     let modal_effect = if commander_allows_both {
         let max_both = mode_count.min(2).max(1);
         let choose_both = if max_both == 1 {
-            with_unchosen_requirement(Effect::choose_one(modes.clone()))
+            with_unchosen_requirement(Effect::choose_one(compiled_modes.clone()))
         } else {
-            with_unchosen_requirement(Effect::choose_up_to(max_both, 1, modes.clone()))
+            with_unchosen_requirement(Effect::choose_up_to(max_both, 1, compiled_modes.clone()))
         };
-        let choose_one = with_unchosen_requirement(Effect::choose_one(modes.clone()));
+        let choose_one = with_unchosen_requirement(Effect::choose_one(compiled_modes.clone()));
         Effect::conditional(
             Condition::YouControlCommander,
             vec![choose_both],
             vec![choose_one],
         )
     } else if same_mode_more_than_once && min == max {
-        with_unchosen_requirement(Effect::choose_exactly_allow_repeated_modes(max, modes))
+        with_unchosen_requirement(Effect::choose_exactly_allow_repeated_modes(
+            max,
+            compiled_modes,
+        ))
     } else if min == 1 && max == 1 {
-        with_unchosen_requirement(Effect::choose_one(modes))
+        with_unchosen_requirement(Effect::choose_one(compiled_modes))
     } else if min == max {
-        with_unchosen_requirement(Effect::choose_exactly(max, modes))
+        with_unchosen_requirement(Effect::choose_exactly(max, compiled_modes))
     } else {
-        with_unchosen_requirement(Effect::choose_up_to(max, min, modes))
+        with_unchosen_requirement(Effect::choose_up_to(max, min, compiled_modes))
     };
 
     let mut combined_effects = prefix_effects;
@@ -1975,17 +1987,20 @@ fn finalize_pending_modal(
     }
 
     if let Some(trigger) = trigger {
-        let compiled_trigger = compile_trigger_spec(trigger);
-        builder = builder.with_ability(Ability {
-            kind: AbilityKind::Triggered(TriggeredAbility {
-                trigger: compiled_trigger,
-                effects: combined_effects,
-                choices: prefix_choices,
-                intervening_if: None,
-            }),
-            functional_zones: vec![Zone::Battlefield],
-            text: Some(line_text),
-        });
+        let mut ability = parsed_triggered_ability(
+            trigger,
+            Vec::new(),
+            vec![Zone::Battlefield],
+            Some(line_text),
+            None,
+            None,
+        )
+        .ability;
+        if let AbilityKind::Triggered(triggered) = &mut ability.kind {
+            triggered.effects = combined_effects;
+            triggered.choices = prefix_choices;
+        }
+        builder = builder.with_ability(ability);
     } else if let Some(activated) = activated {
         builder = builder.with_ability(Ability {
             kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
@@ -2007,7 +2022,7 @@ fn finalize_pending_modal(
         builder.spell_effect = Some(combined_effects);
     }
 
-    builder
+    Ok(builder)
 }
 
 fn is_bullet_line(line: &str) -> bool {
@@ -2255,78 +2270,6 @@ fn apply_pending_restrictions_to_ability(ability: &mut Ability, pending: &mut Pe
     if !trigger_restrictions.is_empty() {
         pending.trigger.extend(trigger_restrictions);
     }
-}
-
-fn apply_instead_followup_statement_to_last_ability(
-    builder: &mut CardDefinitionBuilder,
-    last_restrictable_ability: Option<usize>,
-    effects: &[EffectAst],
-    info: &LineInfo,
-    allow_unsupported: bool,
-    annotations: &mut ParseAnnotations,
-) -> Result<bool, CardTextError> {
-    let Some(index) = last_restrictable_ability else {
-        return Ok(false);
-    };
-    if index >= builder.abilities.len() {
-        return Ok(false);
-    }
-
-    let normalized = info.normalized.normalized.as_str().to_ascii_lowercase();
-    if !normalized.starts_with("if ") || !normalized.contains(" instead") {
-        return Ok(false);
-    }
-
-    let compiled = match compile_statement_effects(effects) {
-        Ok(compiled) => compiled,
-        Err(err) if allow_unsupported => {
-            return Err(err);
-        }
-        Err(err) => return Err(err),
-    };
-
-    if compiled.len() != 1 {
-        return Ok(false);
-    }
-
-    let Some(replacement) = compiled[0].downcast_ref::<crate::effects::ConditionalEffect>() else {
-        return Ok(false);
-    };
-
-    if !replacement.if_false.is_empty() {
-        return Ok(false);
-    }
-
-    collect_tag_spans_from_effects_with_context(effects, annotations, &info.normalized);
-
-    let conditional = replacement.clone();
-    match &mut builder.abilities[index].kind {
-        AbilityKind::Triggered(ability) => {
-            let original = std::mem::take(&mut ability.effects);
-            if original.is_empty() {
-                return Ok(false);
-            }
-            ability.effects = vec![Effect::new(crate::effects::ConditionalEffect::new(
-                conditional.condition,
-                conditional.if_true,
-                original,
-            ))];
-        }
-        AbilityKind::Activated(ability) => {
-            let original = std::mem::take(&mut ability.effects);
-            if original.is_empty() {
-                return Ok(false);
-            }
-            ability.effects = vec![Effect::new(crate::effects::ConditionalEffect::new(
-                conditional.condition,
-                conditional.if_true,
-                original,
-            ))];
-        }
-        _ => return Ok(false),
-    }
-
-    Ok(true)
 }
 
 fn is_restrictable_ability(ability: &Ability) -> bool {

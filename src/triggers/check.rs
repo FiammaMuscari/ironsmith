@@ -8,6 +8,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::Effect;
 use crate::ability::{AbilityKind, TriggeredAbility};
+use crate::continuous::ContinuousEffect;
 use crate::filter::ObjectRef;
 use crate::game_state::{GameState, Phase, Step};
 use crate::ids::{ObjectId, PlayerId, StableId};
@@ -145,13 +146,17 @@ pub fn compute_delayed_trigger_identity(delayed: &DelayedTrigger) -> TriggerIden
     TriggerIdentity(hasher.finish())
 }
 
-fn battlefield_has_static_ability(game: &GameState, ability_id: StaticAbilityId) -> bool {
+fn battlefield_has_static_ability_with_effects(
+    game: &GameState,
+    ability_id: StaticAbilityId,
+    all_effects: &[ContinuousEffect],
+) -> bool {
     game.battlefield.iter().any(|&obj_id| {
         let Some(obj) = game.object(obj_id) else {
             return false;
         };
         let static_abilities = game
-            .calculated_characteristics(obj_id)
+            .calculated_characteristics_with_effects(obj_id, all_effects)
             .map(|chars| chars.static_abilities)
             .unwrap_or_else(|| {
                 obj.abilities
@@ -190,10 +195,32 @@ fn event_has_creature_entering_battlefield(game: &GameState, trigger_event: &Tri
 }
 
 fn suppresses_creature_etb_triggers(game: &GameState, trigger_event: &TriggerEvent) -> bool {
-    battlefield_has_static_ability(
+    suppresses_creature_etb_triggers_with_effects(game, trigger_event, None)
+}
+
+fn suppresses_creature_etb_triggers_with_effects(
+    game: &GameState,
+    trigger_event: &TriggerEvent,
+    all_effects: Option<&[ContinuousEffect]>,
+) -> bool {
+    if !event_has_creature_entering_battlefield(game, trigger_event) {
+        return false;
+    }
+
+    if let Some(effects) = all_effects {
+        return battlefield_has_static_ability_with_effects(
+            game,
+            StaticAbilityId::CreaturesEnteringDontCauseAbilitiesToTrigger,
+            effects,
+        );
+    }
+
+    let effects = game.all_continuous_effects();
+    battlefield_has_static_ability_with_effects(
         game,
         StaticAbilityId::CreaturesEnteringDontCauseAbilitiesToTrigger,
-    ) && event_has_creature_entering_battlefield(game, trigger_event)
+        &effects,
+    )
 }
 
 /// Check all permanents for triggered abilities that match the given event.
@@ -203,7 +230,8 @@ pub fn check_triggers(
     game: &GameState,
     trigger_event: &TriggerEvent,
 ) -> Vec<TriggeredAbilityEntry> {
-    if suppresses_creature_etb_triggers(game, trigger_event) {
+    let all_effects = game.all_continuous_effects();
+    if suppresses_creature_etb_triggers_with_effects(game, trigger_event, Some(&all_effects)) {
         return Vec::new();
     }
 
@@ -215,9 +243,11 @@ pub fn check_triggers(
             continue;
         };
 
+        let ctx = TriggerContext::for_source(obj_id, obj.controller, game);
+
         // Get calculated abilities (after continuous effects like Humility, Blood Moon)
         let calculated_abilities = game
-            .calculated_characteristics(obj_id)
+            .calculated_characteristics_with_effects(obj_id, &all_effects)
             .map(|c| c.abilities)
             .unwrap_or_else(|| obj.abilities.clone());
 
@@ -231,7 +261,6 @@ pub fn check_triggers(
                 continue;
             }
 
-            let ctx = TriggerContext::for_source(obj_id, obj.controller, game);
             if trigger_ability.trigger.matches(trigger_event, &ctx) {
                 let trigger_count = trigger_ability.trigger.trigger_count(trigger_event);
                 if trigger_count == 0 {
@@ -484,14 +513,16 @@ pub fn check_delayed_triggers(
         {
             continue;
         }
-        let candidate_sources = if delayed.target_objects.is_empty() {
-            vec![ObjectId::from_raw(0)]
+        let fallback_source = ObjectId::from_raw(0);
+        let candidate_sources: &[ObjectId] = if delayed.target_objects.is_empty() {
+            std::slice::from_ref(&fallback_source)
         } else {
-            delayed.target_objects.clone()
+            delayed.target_objects.as_slice()
         };
+        let trigger_identity = compute_delayed_trigger_identity(delayed);
 
         let mut fired = false;
-        for source in candidate_sources {
+        for &source in candidate_sources {
             let ctx = TriggerContext::for_source(source, delayed.controller, game);
             if !delayed.trigger.matches(trigger_event, &ctx) {
                 continue;
@@ -548,7 +579,7 @@ pub fn check_delayed_triggers(
                 source_stable_id,
                 source_name,
                 tagged_objects: delayed.tagged_objects.clone(),
-                trigger_identity: compute_delayed_trigger_identity(delayed),
+                trigger_identity,
             });
 
             if delayed.one_shot {
@@ -561,8 +592,19 @@ pub fn check_delayed_triggers(
         }
     }
 
-    for idx in to_remove.into_iter().rev() {
-        game.delayed_triggers.remove(idx);
+    if !to_remove.is_empty() {
+        to_remove.sort_unstable();
+        to_remove.dedup();
+        let mut remove_iter = to_remove.into_iter().peekable();
+        let mut idx = 0usize;
+        game.delayed_triggers.retain(|_| {
+            let remove = remove_iter.peek().is_some_and(|next| *next == idx);
+            if remove {
+                remove_iter.next();
+            }
+            idx += 1;
+            !remove
+        });
     }
 
     triggered
@@ -578,6 +620,8 @@ fn check_triggers_in_zone(
         return;
     };
 
+    let ctx = TriggerContext::for_source(obj_id, obj.controller, game);
+
     for ability in &obj.abilities {
         let AbilityKind::Triggered(trigger_ability) = &ability.kind else {
             continue;
@@ -587,7 +631,6 @@ fn check_triggers_in_zone(
             continue;
         }
 
-        let ctx = TriggerContext::for_source(obj_id, obj.controller, game);
         if trigger_ability.trigger.matches(trigger_event, &ctx) {
             let trigger_count = trigger_ability.trigger.trigger_count(trigger_event);
             if trigger_count == 0 {

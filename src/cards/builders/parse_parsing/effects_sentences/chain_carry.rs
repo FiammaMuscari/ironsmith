@@ -1918,18 +1918,16 @@ pub(crate) fn parse_until_duration_triggered_clause(
         }
     };
 
-    let (compiled_effects, choices) = compile_trigger_effects(Some(&trigger), &effects)?;
     let trigger_text = trigger_words.join(" ");
-    let ability = Ability {
-        kind: AbilityKind::Triggered(TriggeredAbility {
-            trigger: compile_trigger_spec(trigger),
-            effects: compiled_effects,
-            choices,
-            intervening_if: max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
-        }),
-        functional_zones: vec![Zone::Battlefield],
-        text: Some(trigger_text.clone()),
-    };
+    let ability = lower_parsed_ability(parsed_triggered_ability(
+        trigger,
+        effects,
+        vec![Zone::Battlefield],
+        Some(trigger_text.clone()),
+        max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
+        None,
+    ))?
+    .ability;
     let granted = StaticAbility::grant_object_ability_for_filter(
         ObjectFilter::source(),
         ability,

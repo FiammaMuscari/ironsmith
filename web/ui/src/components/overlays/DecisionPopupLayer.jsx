@@ -301,7 +301,9 @@ function PriorityActionPillLabel({ text, viewportRef, carouselResetVersion = 0 }
         style={{
           "--action-pill-carousel-distance": `${travelDistance}px`,
           "--action-pill-carousel-duration": `${travelDuration.toFixed(2)}s`,
-          animation: "action-pill-carousel var(--action-pill-carousel-duration) linear infinite",
+          "--action-pill-carousel-delay": "0.75s",
+          animation:
+            "action-pill-carousel var(--action-pill-carousel-duration) linear var(--action-pill-carousel-delay) infinite",
         }}
       >
         <span className="pr-7">
@@ -325,11 +327,34 @@ function PriorityActionStrip({
   onActionHoverStart,
   onActionHoverEnd,
 }) {
+  const BASE_LOOP_CYCLES = 5;
   const viewportRef = useRef(null);
   const groupNodeRefs = useRef(new Map());
-  const lastScrollFocusRef = useRef("");
   const previousHoveredGroupKeysRef = useRef(new Set());
+  const previousSelectedGroupKeysRef = useRef(new Set());
   const [carouselResetByGroupKey, setCarouselResetByGroupKey] = useState({});
+  const [isPointerInStrip, setIsPointerInStrip] = useState(false);
+  const [loopEnabled, setLoopEnabled] = useState(false);
+  const effectiveLoopCycles = loopEnabled ? BASE_LOOP_CYCLES : 1;
+  const middleLoopIndex = Math.floor(effectiveLoopCycles / 2);
+  const groupKeysSignature = useMemo(
+    () => groups.map((group) => group.key).join("|"),
+    [groups]
+  );
+  const displayGroups = useMemo(() => {
+    if (!groups.length) return [];
+    const entries = [];
+    for (let cycle = 0; cycle < effectiveLoopCycles; cycle += 1) {
+      for (const group of groups) {
+        entries.push({
+          cycle,
+          group,
+          key: `${group.key}::${cycle}`,
+        });
+      }
+    }
+    return entries;
+  }, [effectiveLoopCycles, groups]);
 
   const isGroupHoveredLinked = useCallback((group) => {
     for (const linkedObjectId of group.linkedObjectIds) {
@@ -374,54 +399,151 @@ function PriorityActionStrip({
   }, [hoveredGroupKeys]);
 
   useEffect(() => {
+    const previousSelected = previousSelectedGroupKeysRef.current;
+    const currentSelected = new Set(selectedGroupKeys);
+    const newlySelected = selectedGroupKeys.filter((key) => !previousSelected.has(key));
+    if (newlySelected.length > 0) {
+      setCarouselResetByGroupKey((prev) => {
+        const next = { ...prev };
+        for (const key of newlySelected) {
+          next[key] = (next[key] || 0) + 1;
+        }
+        return next;
+      });
+    }
+    previousSelectedGroupKeysRef.current = currentSelected;
+  }, [selectedGroupKeys]);
+
+  useEffect(() => {
+    groupNodeRefs.current = new Map();
+  }, [groupKeysSignature, effectiveLoopCycles]);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || !groups.length) return undefined;
+
+    const recomputeLoopEnabled = () => {
+      const cycleWidth = viewport.scrollWidth / effectiveLoopCycles;
+      if (!(cycleWidth > 0)) return;
+      const shouldLoop = cycleWidth > (viewport.clientWidth + 1);
+      setLoopEnabled((prev) => (prev === shouldLoop ? prev : shouldLoop));
+    };
+
+    const raf = window.requestAnimationFrame(recomputeLoopEnabled);
+    if (typeof ResizeObserver === "undefined") {
+      return () => window.cancelAnimationFrame(raf);
+    }
+
+    const observer = new ResizeObserver(() => recomputeLoopEnabled());
+    observer.observe(viewport);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, [effectiveLoopCycles, groupKeysSignature, groups.length]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || !groups.length || !loopEnabled) return undefined;
+
+    const placeAtMiddleSegment = () => {
+      if (viewport.scrollWidth <= viewport.clientWidth + 1) return;
+      const cycleWidth = viewport.scrollWidth / effectiveLoopCycles;
+      if (!(cycleWidth > 0)) return;
+      const target = cycleWidth * middleLoopIndex;
+      if (Math.abs(viewport.scrollLeft - target) > 1) {
+        viewport.scrollLeft = target;
+      }
+    };
+
+    const raf = window.requestAnimationFrame(placeAtMiddleSegment);
+    return () => window.cancelAnimationFrame(raf);
+  }, [effectiveLoopCycles, groupKeysSignature, groups.length, loopEnabled, middleLoopIndex]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || !groups.length || !loopEnabled) return undefined;
+
+    let raf = 0;
+    const normalizeScroll = () => {
+      raf = 0;
+      if (viewport.scrollWidth <= viewport.clientWidth + 1) return;
+      const cycleWidth = viewport.scrollWidth / effectiveLoopCycles;
+      if (!(cycleWidth > 0)) return;
+
+      const minBound = cycleWidth * 0.15;
+      const maxBound = Math.min(
+        Math.max(0, viewport.scrollWidth - viewport.clientWidth),
+        cycleWidth * (effectiveLoopCycles - 0.85)
+      );
+      if (viewport.scrollLeft < minBound) {
+        viewport.scrollLeft += cycleWidth;
+      } else if (viewport.scrollLeft > maxBound) {
+        viewport.scrollLeft -= cycleWidth;
+      }
+    };
+
+    const handleScroll = () => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(normalizeScroll);
+    };
+
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
+    normalizeScroll();
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf);
+      viewport.removeEventListener("scroll", handleScroll);
+    };
+  }, [effectiveLoopCycles, groupKeysSignature, groups.length, loopEnabled]);
+
+  useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
 
-    const focusKind = hoveredGroupKeys.length > 0
+    const objectHoverActive = typeof document !== "undefined"
+      && Boolean(document.querySelector("[data-object-id]:hover"));
+    const focusKind = (!isPointerInStrip && objectHoverActive && hoveredGroupKeys.length > 0)
       ? "hover"
       : (selectedGroupKeys.length > 0 ? "selected" : null);
     const focusKeys = focusKind === "hover" ? hoveredGroupKeys : selectedGroupKeys;
 
-    if (!focusKind || focusKeys.length === 0) {
-      lastScrollFocusRef.current = "";
-      return;
-    }
+    if (!focusKind || focusKeys.length === 0) return;
 
-    const focusSignature = `${focusKind}:${focusKeys.join("|")}`;
-    if (focusSignature === lastScrollFocusRef.current) return;
-    lastScrollFocusRef.current = focusSignature;
+    const scrollFocusedGroupsIntoView = () => {
+      const interactiveNodes = focusKeys
+        .map((key) => groupNodeRefs.current.get(key)?.[middleLoopIndex] || null)
+        .filter(Boolean);
+      if (interactiveNodes.length === 0) return false;
 
-    const nodes = focusKeys
-      .map((key) => groupNodeRefs.current.get(key))
-      .filter(Boolean);
-    if (nodes.length === 0) return;
+      const viewportRect = viewport.getBoundingClientRect();
+      let minDeltaLeft = Number.POSITIVE_INFINITY;
+      for (const node of interactiveNodes) {
+        const nodeRect = node.getBoundingClientRect();
+        minDeltaLeft = Math.min(minDeltaLeft, nodeRect.left - viewportRect.left);
+      }
+      if (!Number.isFinite(minDeltaLeft)) return false;
 
-    let minLeft = Number.POSITIVE_INFINITY;
-    let maxRight = Number.NEGATIVE_INFINITY;
-    for (const node of nodes) {
-      minLeft = Math.min(minLeft, node.offsetLeft);
-      maxRight = Math.max(maxRight, node.offsetLeft + node.offsetWidth);
-    }
-    if (!Number.isFinite(minLeft) || !Number.isFinite(maxRight)) return;
+      const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      const leftAnchorPadding = 0;
+      let targetLeft = viewport.scrollLeft + minDeltaLeft - leftAnchorPadding;
+      targetLeft = Math.min(maxScrollLeft, Math.max(0, targetLeft));
+      viewport.scrollTo({ left: targetLeft, behavior: "smooth" });
+      return true;
+    };
 
-    const viewportLeft = viewport.scrollLeft;
-    const viewportRight = viewportLeft + viewport.clientWidth;
-    const allVisible = minLeft >= (viewportLeft + 2) && maxRight <= (viewportRight - 2);
-    if (allVisible) return;
-
-    const contentWidth = viewport.scrollWidth;
-    const viewportWidth = viewport.clientWidth;
-    const maxScrollLeft = Math.max(0, contentWidth - viewportWidth);
-    const targetWidth = maxRight - minLeft;
-    let targetLeft;
-    if (targetWidth <= viewportWidth) {
-      targetLeft = minLeft - ((viewportWidth - targetWidth) * 0.5);
-    } else {
-      targetLeft = minLeft - 8;
-    }
-    targetLeft = Math.min(maxScrollLeft, Math.max(0, targetLeft));
-    viewport.scrollTo({ left: targetLeft, behavior: "smooth" });
-  }, [hoveredGroupKeys, selectedGroupKeys]);
+    let raf = 0;
+    const tryScroll = (attempt = 0) => {
+      if (scrollFocusedGroupsIntoView()) return;
+      if (attempt >= 4) return;
+      raf = window.requestAnimationFrame(() => {
+        tryScroll(attempt + 1);
+      });
+    };
+    tryScroll(0);
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf);
+    };
+  }, [hoveredGroupKeys, selectedGroupKeys, groupKeysSignature, isPointerInStrip, middleLoopIndex]);
 
   if (!canAct) {
     return (
@@ -440,21 +562,40 @@ function PriorityActionStrip({
   }
 
   return (
-    <div ref={viewportRef} className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden whitespace-nowrap">
+    <div
+      ref={viewportRef}
+      className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden whitespace-nowrap"
+      onMouseEnter={() => setIsPointerInStrip(true)}
+      onMouseLeave={() => setIsPointerInStrip(false)}
+    >
       <div className="flex w-max min-w-full min-h-[32px] items-stretch gap-1.5 pr-2">
-        {groups.map((group) => {
+        {displayGroups.map(({ key, cycle, group }) => {
+          const isInteractiveCycle = cycle === middleLoopIndex;
           const linkedActive = isGroupHoveredLinked(group) || isGroupSelectedLinked(group);
 
           return (
             <button
-              key={group.key}
+              key={key}
               type="button"
+              aria-hidden={!isInteractiveCycle}
+              tabIndex={isInteractiveCycle ? 0 : -1}
               ref={(node) => {
-                if (node) groupNodeRefs.current.set(group.key, node);
-                else groupNodeRefs.current.delete(group.key);
+                const existing = groupNodeRefs.current.get(group.key) || [];
+                if (node) {
+                  existing[cycle] = node;
+                  groupNodeRefs.current.set(group.key, existing);
+                } else if (existing.length > cycle) {
+                  existing[cycle] = undefined;
+                  if (existing.some(Boolean)) {
+                    groupNodeRefs.current.set(group.key, existing);
+                  } else {
+                    groupNodeRefs.current.delete(group.key);
+                  }
+                }
               }}
               className={cn(
             "inline-flex max-w-[360px] min-w-0 items-center self-stretch border-0 border-l-2 px-2.5 text-[12px] font-semibold transition-all",
+                !isInteractiveCycle && "pointer-events-none select-none",
                 linkedActive
                   ? "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]"
                   : "border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] text-[rgba(206,223,242,0.52)]",
@@ -462,8 +603,8 @@ function PriorityActionStrip({
               )}
               style={{ textOverflow: "clip" }}
               onClick={() => onActionClick(group.firstAction)}
-              onMouseEnter={() => onActionHoverStart(group)}
-              onMouseLeave={onActionHoverEnd}
+              onMouseEnter={isInteractiveCycle ? () => onActionHoverStart(group) : undefined}
+              onMouseLeave={isInteractiveCycle ? onActionHoverEnd : undefined}
             >
               {group.count > 1 && (
                 <span className="mr-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-sm bg-[rgba(12,20,31,0.86)] px-1 text-[10px] font-bold leading-none tracking-wide text-[#f5d08b]">
@@ -483,8 +624,24 @@ function PriorityActionStrip({
   );
 }
 
+function resolveDecisionTitle(decision) {
+  if (!decision) return "Decision";
+  switch (decision.kind) {
+    case "targets":
+      return "Choose Targets";
+    case "select_objects":
+      return "Choose Objects";
+    case "select_options":
+      return "Choose Option";
+    case "number":
+      return "Choose Number";
+    default:
+      return "Decision";
+  }
+}
+
 function PriorityBar({ anchor = null, inline = false, selectedObjectId = null }) {
-  const { state, dispatch, holdRule, setHoldRule } = useGame();
+  const { state, dispatch, holdRule, setHoldRule, cancelDecision } = useGame();
   const {
     hoveredObjectId,
     hoverCard,
@@ -492,10 +649,19 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     setHoverLinkedObjects,
     clearHoverLinkedObjects,
   } = useHover();
-  const decision = state?.decision;
-  const canAct = decision && state?.perspective === decision.player;
-  const passAction = (decision?.actions || []).find((action) => action.kind === "pass_priority");
-  const otherActions = (decision?.actions || []).filter((action) => action.kind !== "pass_priority");
+  const decision = state?.decision || null;
+  const canAct = !!decision && state?.perspective === decision.player;
+  const isPriorityDecision = decision?.kind === "priority";
+  const isCombatDecision = decision?.kind === "attackers" || decision?.kind === "blockers";
+  const decisionActions = useMemo(() => decision?.actions || [], [decision]);
+  const passAction = useMemo(
+    () => decisionActions.find((action) => action.kind === "pass_priority"),
+    [decisionActions]
+  );
+  const otherActions = useMemo(
+    () => decisionActions.filter((action) => action.kind !== "pass_priority"),
+    [decisionActions]
+  );
 
   const anchoredStyle = inline ? null : priorityAnchorStyle(anchor);
   const stackSize = Number(state?.stack_size || 0);
@@ -565,7 +731,22 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     clearHoverLinkedObjects();
     clearHover();
   }, [canAct, clearHoverLinkedObjects, clearHover]);
-  if (!decision || decision.kind !== "priority" || !passAction) return null;
+  const decisionIdentity = `${decision?.kind || ""}|${decision?.source_name || ""}|${decision?.description || ""}`;
+  const [submitState, setSubmitState] = useState({ key: "", action: null });
+  const handleSubmitActionChange = useCallback(
+    (nextAction) => {
+      setSubmitState({ key: decisionIdentity, action: nextAction || null });
+    },
+    [decisionIdentity]
+  );
+  const submitAction = submitState.key === decisionIdentity ? submitState.action : null;
+  const canSubmitFocused = canAct
+    && !!submitAction
+    && !submitAction.disabled
+    && typeof submitAction.onSubmit === "function";
+
+  if (!decision || isCombatDecision) return null;
+  if (isPriorityDecision && !passAction) return null;
 
   if (inline) {
     return (
@@ -573,45 +754,105 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
         <div
           className="priority-inline-panel pointer-events-auto flex w-full items-center gap-2 rounded border border-[#305071] bg-[rgba(7,15,23,0.97)] px-2 py-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.45)] backdrop-blur-[2px]"
         >
-          <div className="shrink-0 flex min-w-[308px] min-h-[34px] items-stretch gap-2">
-            <div className="min-w-[110px] flex flex-col justify-center">
-              <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
-                {canAct ? "Your Action" : "Opponent Priority"}
-              </div>
-              {actionGroups.length > 0 && canAct && (
-                <div className="mt-0.5 text-[11px] text-[#d2e5fb]">
-                  {actionGroups.length} available action{actionGroups.length === 1 ? "" : "s"}
+          {isPriorityDecision ? (
+            <>
+              <div className="shrink-0 flex min-w-[308px] min-h-[34px] items-stretch gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[14px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
+                  disabled={!canAct}
+                  onClick={() => triggerPriorityAction(passAction)}
+                >
+                  {passLabel}
+                </Button>
+                <label className="flex items-center gap-1.5 shrink-0 px-1 text-[11px] uppercase tracking-wider cursor-pointer text-[#9db7d5] hover:text-[#d7e8fb] transition-colors">
+                  <Checkbox
+                    checked={holdRule === "always"}
+                    onCheckedChange={(v) => setHoldRule(v ? "always" : "never")}
+                    className="h-3 w-3"
+                  />
+                  Hold
+                </label>
+                <div className="min-w-[86px] flex flex-col justify-center">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+                    {canAct ? "Actions" : "Opponent Priority"}
+                  </div>
+                  {actionGroups.length > 0 && canAct && (
+                    <div className="mt-0.5 text-[11px] text-[#d2e5fb]">
+                      {actionGroups.length} available
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[14px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
-              disabled={!canAct}
-              onClick={() => triggerPriorityAction(passAction)}
-            >
-              {passLabel}
-            </Button>
-          </div>
-          <PriorityActionStrip
-            groups={actionGroups}
-            canAct={canAct}
-            hoveredObjectFamilyIds={hoveredObjectFamilyIds}
-            selectedObjectFamilyIds={selectedObjectFamilyIds}
-            selectedActionIndices={selectedActionIndices}
-            onActionClick={triggerPriorityAction}
-            onActionHoverStart={handleActionHoverStart}
-            onActionHoverEnd={handleActionHoverEnd}
-          />
-          <label className="flex items-center gap-1 shrink-0 text-[11px] uppercase tracking-wider cursor-pointer text-[#9db7d5] hover:text-[#d7e8fb] transition-colors">
-            <Checkbox
-              checked={holdRule === "always"}
-              onCheckedChange={(v) => setHoldRule(v ? "always" : "never")}
-              className="h-3 w-3"
-            />
-            Hold
-          </label>
+              </div>
+              <PriorityActionStrip
+                groups={actionGroups}
+                canAct={canAct}
+                hoveredObjectFamilyIds={hoveredObjectFamilyIds}
+                selectedObjectFamilyIds={selectedObjectFamilyIds}
+                selectedActionIndices={selectedActionIndices}
+                onActionClick={triggerPriorityAction}
+                onActionHoverStart={handleActionHoverStart}
+                onActionHoverEnd={handleActionHoverEnd}
+              />
+            </>
+          ) : (
+            <>
+              <div className="shrink-0 flex min-w-[308px] min-h-[34px] items-stretch gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[14px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
+                  disabled={!canSubmitFocused}
+                  onClick={() => {
+                    if (!canSubmitFocused) return;
+                    submitAction.onSubmit();
+                  }}
+                >
+                  {submitAction?.label || "Submit"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="w-[96px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(139,63,74,0.95)] bg-[rgba(120,35,46,0.86)] px-2 text-[13px] font-bold uppercase tracking-wide text-[#ffd8df] transition-colors hover:border-l-[rgba(188,90,104,0.98)] hover:bg-[rgba(163,50,64,0.9)]"
+                  disabled={!canAct}
+                  onClick={() => {
+                    if (!canAct) return;
+                    cancelDecision();
+                  }}
+                >
+                  Cancel
+                </Button>
+                <div className="min-w-[86px] flex flex-col justify-center">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+                    {resolveDecisionTitle(decision)}
+                  </div>
+                  {decision?.source_name && (
+                    <div className="mt-0.5 text-[11px] text-[#d2e5fb]">
+                      {normalizeDecisionText(decision.source_name)}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="min-w-0 flex-1 overflow-hidden">
+                {canAct ? (
+                  <DecisionRouter
+                    decision={decision}
+                    canAct={canAct}
+                    inlineSubmit={false}
+                    onSubmitActionChange={handleSubmitActionChange}
+                    hideDescription
+                    layout="strip"
+                  />
+                ) : (
+                  <span className="text-[12px] text-[#b8d2ef] whitespace-nowrap">
+                    Waiting for opponent
+                  </span>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -629,46 +870,92 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     >
       <div className="border-b border-[#2f4662]/85 bg-[rgba(10,22,34,0.88)] px-2 py-1.5">
         <div className="flex min-h-[34px] items-stretch gap-2">
-          <div className="flex flex-col justify-center text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
-            {canAct ? "Your Action" : "Opponent Priority"}
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[14px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
-            disabled={!canAct}
-            onClick={() => triggerPriorityAction(passAction)}
-          >
-            {passLabel}
-          </Button>
+          {isPriorityDecision ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[14px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
+                disabled={!canAct}
+                onClick={() => triggerPriorityAction(passAction)}
+              >
+                {passLabel}
+              </Button>
+              <label className="flex items-center gap-1.5 shrink-0 px-1 text-[11px] uppercase tracking-wider cursor-pointer text-[#9db7d5] hover:text-[#d7e8fb] transition-colors">
+                <Checkbox
+                  checked={holdRule === "always"}
+                  onCheckedChange={(v) => setHoldRule(v ? "always" : "never")}
+                  className="h-3 w-3"
+                />
+                Hold
+              </label>
+              <div className="flex flex-col justify-center text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+                {canAct ? "Actions" : "Opponent Priority"}
+              </div>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[14px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
+                disabled={!canSubmitFocused}
+                onClick={() => {
+                  if (!canSubmitFocused) return;
+                  submitAction.onSubmit();
+                }}
+              >
+                {submitAction?.label || "Submit"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="w-[96px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(139,63,74,0.95)] bg-[rgba(120,35,46,0.86)] px-2 text-[13px] font-bold uppercase tracking-wide text-[#ffd8df] transition-colors hover:border-l-[rgba(188,90,104,0.98)] hover:bg-[rgba(163,50,64,0.9)]"
+                disabled={!canAct}
+                onClick={() => {
+                  if (!canAct) return;
+                  cancelDecision();
+                }}
+              >
+                Cancel
+              </Button>
+              <div className="flex flex-col justify-center text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+                {resolveDecisionTitle(decision)}
+              </div>
+            </>
+          )}
         </div>
-        {actionGroups.length > 0 && canAct && (
+        {isPriorityDecision && actionGroups.length > 0 && canAct && (
           <div className="mt-0.5 text-[12px] text-[#d2e5fb]">
-            {actionGroups.length} available action{actionGroups.length === 1 ? "" : "s"}
+            {actionGroups.length} available
           </div>
         )}
       </div>
       <div className="border-b border-[#2f4662]/70 px-2 py-1.5">
-        <PriorityActionStrip
-          groups={actionGroups}
-          canAct={canAct}
-          hoveredObjectFamilyIds={hoveredObjectFamilyIds}
-          selectedObjectFamilyIds={selectedObjectFamilyIds}
-          selectedActionIndices={selectedActionIndices}
-          onActionClick={triggerPriorityAction}
-          onActionHoverStart={handleActionHoverStart}
-          onActionHoverEnd={handleActionHoverEnd}
-        />
-      </div>
-      <div className="flex items-center justify-end px-2 py-2">
-        <label className="flex items-center gap-1 shrink-0 text-[11px] uppercase tracking-wider cursor-pointer text-[#9db7d5] hover:text-[#d7e8fb] transition-colors">
-          <Checkbox
-            checked={holdRule === "always"}
-            onCheckedChange={(v) => setHoldRule(v ? "always" : "never")}
-            className="h-3 w-3"
+        {isPriorityDecision ? (
+          <PriorityActionStrip
+            groups={actionGroups}
+            canAct={canAct}
+            hoveredObjectFamilyIds={hoveredObjectFamilyIds}
+            selectedObjectFamilyIds={selectedObjectFamilyIds}
+            selectedActionIndices={selectedActionIndices}
+            onActionClick={triggerPriorityAction}
+            onActionHoverStart={handleActionHoverStart}
+            onActionHoverEnd={handleActionHoverEnd}
           />
-          Hold
-        </label>
+        ) : (
+          <div className="min-w-0">
+            <DecisionRouter
+              decision={decision}
+              canAct={canAct}
+              inlineSubmit={false}
+              onSubmitActionChange={handleSubmitActionChange}
+              hideDescription
+              layout="strip"
+            />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -712,5 +999,5 @@ export default function DecisionPopupLayer({ anchor = null, priorityInline = fal
   if (decision.kind === "attackers" || decision.kind === "blockers") {
     return <CombatBar anchor={anchor} inline={priorityInline} decision={decision} canAct={canAct} />;
   }
-  return null;
+  return <PriorityBar anchor={anchor} inline={priorityInline} selectedObjectId={selectedObjectId} />;
 }

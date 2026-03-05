@@ -13,7 +13,11 @@ function normalizeZones(zones) {
   return normalized.length > 0 ? normalized : ["battlefield"];
 }
 
-export default function ZoneViewer({ zoneViews = ["battlefield"], setZoneViews }) {
+export default function ZoneViewer({
+  zoneViews = ["battlefield"],
+  setZoneViews,
+  embedded = false,
+}) {
   const activeZones = normalizeZones(zoneViews);
 
   const toggleZone = (zoneId) => {
@@ -26,30 +30,44 @@ export default function ZoneViewer({ zoneViews = ["battlefield"], setZoneViews }
     setZoneViews([...activeZones, zoneId]);
   };
 
+  const zonesContent = (
+    <div className="flex items-center gap-2 shrink-0">
+      <span className="text-[12px] uppercase tracking-wide font-semibold text-[#8fb1d6] shrink-0">Zones</span>
+      <div className="flex items-center gap-2 flex-wrap">
+        {VIEWABLE_ZONES.map((zone) => {
+          const checked = activeZones.includes(zone.id);
+          return (
+            <label
+              key={zone.id}
+              className={`inline-flex items-center gap-1 text-[13px] whitespace-nowrap cursor-pointer uppercase transition-colors ${
+                checked ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Checkbox
+                className="h-3.5 w-3.5"
+                checked={checked}
+                onCheckedChange={() => toggleZone(zone.id)}
+              />
+              {zone.label}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <div className="zone-viewer flex items-center min-w-0">
+        {zonesContent}
+      </div>
+    );
+  }
+
   return (
     <section className="zone-viewer relative z-0 bg-[#0e141d] rounded px-2 py-1.5 min-h-[28px]">
-      <div className="flex items-start gap-2">
-        <span className="text-[12px] uppercase tracking-wide font-semibold text-[#8fb1d6] shrink-0">Zones</span>
-        <div className="flex items-center gap-2 flex-wrap">
-          {VIEWABLE_ZONES.map((zone) => {
-            const checked = activeZones.includes(zone.id);
-            return (
-              <label
-                key={zone.id}
-                className={`inline-flex items-center gap-1 text-[13px] whitespace-nowrap cursor-pointer uppercase transition-colors ${
-                  checked ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Checkbox
-                  className="h-3.5 w-3.5"
-                  checked={checked}
-                  onCheckedChange={() => toggleZone(zone.id)}
-                />
-                {zone.label}
-              </label>
-            );
-          })}
-        </div>
+      <div className="flex items-center gap-4 min-w-0">
+        {zonesContent}
       </div>
     </section>
   );

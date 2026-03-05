@@ -1106,6 +1106,8 @@ pub struct GameState {
 
     // Objects
     objects: HashMap<ObjectId, Object>,
+    // Fast index: stable id -> current object id.
+    stable_id_index: HashMap<StableId, ObjectId>,
 
     // The stack
     pub stack: Vec<StackEntry>,
@@ -1434,6 +1436,7 @@ impl GameState {
             players,
             turn_order,
             objects: HashMap::new(),
+            stable_id_index: HashMap::new(),
             stack: Vec::new(),
             battlefield: Vec::new(),
             command_zone: Vec::new(),
@@ -1824,8 +1827,10 @@ impl GameState {
         let zone = object.zone;
         let id = object.id;
         let owner = object.owner;
+        let stable_id = object.stable_id;
 
         self.objects.insert(id, object);
+        self.stable_id_index.insert(stable_id, id);
 
         // Update zone indexes
         match zone {
@@ -1942,6 +1947,7 @@ impl GameState {
             .map(|obj| crate::snapshot::ObjectSnapshot::from_object(obj, self));
 
         let old_object = self.objects.remove(&old_id)?;
+        self.stable_id_index.remove(&old_object.stable_id);
         let old_zone = old_object.zone;
         let owner = old_object.owner;
         let controller = old_object.controller;
@@ -2267,6 +2273,7 @@ impl GameState {
     /// This does NOT create a new object - the object is simply gone.
     pub fn remove_object(&mut self, id: ObjectId) {
         if let Some(obj) = self.objects.remove(&id) {
+            self.stable_id_index.remove(&obj.stable_id);
             self.remove_from_zone_index(id, obj.zone, obj.owner);
         }
     }
@@ -3594,9 +3601,10 @@ impl GameState {
     /// Returns the current ObjectId of the object with the given stable_id,
     /// or None if no such object exists.
     pub fn find_object_by_stable_id(&self, stable_id: StableId) -> Option<ObjectId> {
+        let id = *self.stable_id_index.get(&stable_id)?;
         self.objects
-            .values()
-            .find(|o| o.stable_id == stable_id)
+            .get(&id)
+            .filter(|o| o.stable_id == stable_id)
             .map(|o| o.id)
     }
 

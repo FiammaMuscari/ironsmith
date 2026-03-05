@@ -55,6 +55,7 @@ export default function DecisionRouter({
   onSubmitActionChange = null,
   hideDescription = false,
   combatInline = false,
+  layout = "panel",
 }) {
   if (!decision) return null;
 
@@ -73,6 +74,7 @@ export default function DecisionRouter({
           inlineSubmit={inlineSubmit}
           onSubmitActionChange={onSubmitActionChange}
           hideDescription={hideDescription}
+          layout={layout}
         />
       );
     case "attackers":
@@ -89,6 +91,7 @@ export default function DecisionRouter({
           inlineSubmit={inlineSubmit}
           onSubmitActionChange={onSubmitActionChange}
           hideDescription={hideDescription}
+          layout={layout}
         />
       );
     case "select_options":
@@ -101,6 +104,7 @@ export default function DecisionRouter({
           inlineSubmit={inlineSubmit}
           onSubmitActionChange={onSubmitActionChange}
           hideDescription={hideDescription}
+          layout={layout}
         />
       );
     case "number":
@@ -112,6 +116,7 @@ export default function DecisionRouter({
           inlineSubmit={inlineSubmit}
           onSubmitActionChange={onSubmitActionChange}
           hideDescription={hideDescription}
+          layout={layout}
         />
       );
     default:

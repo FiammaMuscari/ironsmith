@@ -6,6 +6,7 @@ export default function StackCard({
   entry,
   isNew = false,
   isActive = false,
+  isLeaving = false,
   className = "",
   onClick,
 }) {
@@ -24,6 +25,7 @@ export default function StackCard({
         "game-card w-full min-w-0 min-h-[80px] text-[14px] bg-gradient-to-b from-[#132237] to-[#0d1726] cursor-pointer flex flex-col",
         isNew && "card-enter",
         isActive && "ring-1 ring-[#8ec4ff] shadow-[0_0_0_1px_rgba(142,196,255,0.5),0_10px_22px_rgba(0,0,0,0.46)]",
+        isLeaving && "stack-card-leave pointer-events-none",
         className
       )}
       data-object-id={entry.id}

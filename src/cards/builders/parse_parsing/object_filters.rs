@@ -1222,6 +1222,49 @@ pub(crate) fn parse_object_filter(
     } else {
         PlayerFilter::IteratedPlayer
     };
+
+    if all_words.len() >= 2 {
+        for window in all_words.windows(2) {
+            match window {
+                ["attacking", "you"] => {
+                    filter.attacking_player_or_planeswalker_controlled_by = Some(PlayerFilter::You);
+                }
+                ["attacking", "them"] => {
+                    filter.attacking_player_or_planeswalker_controlled_by =
+                        Some(pronoun_player_filter.clone());
+                }
+                ["attacking", "opponent"] | ["attacking", "opponents"] => {
+                    filter.attacking_player_or_planeswalker_controlled_by =
+                        Some(PlayerFilter::Opponent);
+                }
+                _ => {}
+            }
+        }
+    }
+    if all_words.len() >= 3 {
+        for window in all_words.windows(3) {
+            match window {
+                ["attacking", "that", "player"] | ["attacking", "that", "players"] => {
+                    filter.attacking_player_or_planeswalker_controlled_by =
+                        Some(PlayerFilter::IteratedPlayer);
+                }
+                ["attacking", "defending", "player"] | ["attacking", "defending", "players"] => {
+                    filter.attacking_player_or_planeswalker_controlled_by =
+                        Some(PlayerFilter::Defending);
+                }
+                ["attacking", "target", "player"] | ["attacking", "target", "players"] => {
+                    filter.attacking_player_or_planeswalker_controlled_by =
+                        Some(PlayerFilter::target_player());
+                }
+                ["attacking", "target", "opponent"] | ["attacking", "target", "opponents"] => {
+                    filter.attacking_player_or_planeswalker_controlled_by =
+                        Some(PlayerFilter::target_opponent());
+                }
+                _ => {}
+            }
+        }
+    }
+
     let is_tagged_spell_reference_at = |idx: usize| {
         all_words
             .get(idx.wrapping_sub(1))
@@ -2136,6 +2179,9 @@ pub(crate) fn parse_object_filter(
         || filter.tapped
         || filter.untapped
         || filter.attacking
+        || filter
+            .attacking_player_or_planeswalker_controlled_by
+            .is_some()
         || filter.nonattacking
         || filter.blocking
         || filter.nonblocking
@@ -2190,6 +2236,9 @@ pub(crate) fn parse_object_filter(
         || filter.tapped
         || filter.untapped
         || filter.attacking
+        || filter
+            .attacking_player_or_planeswalker_controlled_by
+            .is_some()
         || filter.nonattacking
         || filter.blocking
         || filter.nonblocking

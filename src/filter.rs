@@ -968,6 +968,11 @@ pub struct ObjectFilter {
     /// If true, must be attacking
     pub attacking: bool,
 
+    /// If set, object must be attacking this player or a planeswalker they control.
+    ///
+    /// This models clauses like "creatures attacking them" and "attacking you".
+    pub attacking_player_or_planeswalker_controlled_by: Option<PlayerFilter>,
+
     /// If true, must not be attacking
     pub nonattacking: bool,
 
@@ -1296,6 +1301,12 @@ impl ObjectFilter {
     /// Set the controller filter.
     pub fn controlled_by(mut self, controller: PlayerFilter) -> Self {
         self.controller = Some(controller);
+        self
+    }
+
+    /// Require the object to be attacking the specified player or a planeswalker they control.
+    pub fn attacking_player_or_planeswalker_controlled_by(mut self, player: PlayerFilter) -> Self {
+        self.attacking_player_or_planeswalker_controlled_by = Some(player);
         self
     }
 
@@ -2293,6 +2304,15 @@ impl ObjectFilter {
         {
             return false;
         }
+        if let Some(player_filter) = &self.attacking_player_or_planeswalker_controlled_by {
+            let Some(defending_player) = attacking_defending_player_for_object(object.id, game)
+            else {
+                return false;
+            };
+            if !player_filter.matches_player(defending_player, ctx) {
+                return false;
+            }
+        }
         if self.blocking
             && !game
                 .combat
@@ -2687,6 +2707,16 @@ impl ObjectFilter {
         }
         if self.untapped && snapshot.tapped {
             return false;
+        }
+        if let Some(player_filter) = &self.attacking_player_or_planeswalker_controlled_by {
+            let Some(defending_player) =
+                attacking_defending_player_for_object(snapshot.object_id, game)
+            else {
+                return false;
+            };
+            if !player_filter.matches_player(defending_player, ctx) {
+                return false;
+            }
         }
 
         // Power check
@@ -3135,6 +3165,12 @@ impl ObjectFilter {
             if self.blocking {
                 parts.push("blocking".to_string());
             }
+        }
+        if let Some(player_filter) = &self.attacking_player_or_planeswalker_controlled_by {
+            let player_text = player_filter.description();
+            post_noun_qualifiers.push(format!(
+                "attacking {player_text} or a planeswalker controlled by {player_text}"
+            ));
         }
         if self.nonattacking && self.nonblocking {
             parts.push("nonattacking/nonblocking".to_string());
@@ -3775,6 +3811,20 @@ fn resolve_snapshot_toughness_for_filter(
     match reference {
         PtReference::Effective => snapshot.toughness,
         PtReference::Base => snapshot_base_toughness_for_filter(snapshot),
+    }
+}
+
+fn attacking_defending_player_for_object(
+    object_id: ObjectId,
+    game: &crate::game_state::GameState,
+) -> Option<PlayerId> {
+    let combat = game.combat.as_ref()?;
+    let target = crate::combat_state::get_attack_target(combat, object_id)?;
+    match target {
+        crate::combat_state::AttackTarget::Player(player_id) => Some(*player_id),
+        crate::combat_state::AttackTarget::Planeswalker(planeswalker_id) => game
+            .object(*planeswalker_id)
+            .map(|object| object.controller),
     }
 }
 

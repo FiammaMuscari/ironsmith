@@ -237,10 +237,9 @@ export default function Shell() {
         onEnterDeckLoading={() => setDeckLoadingMode((m) => !m)}
         deckLoadingMode={deckLoadingMode}
       />
-      <AddCardBar />
+      <AddCardBar zoneViews={zoneViews} setZoneViews={setZoneViews} />
       <Workspace
         zoneViews={zoneViews}
-        setZoneViews={setZoneViews}
         deckLoadingMode={deckLoadingMode}
         onLoadDecks={handleLoadCustomDecks}
         onCancelDeckLoading={() => setDeckLoadingMode(false)}

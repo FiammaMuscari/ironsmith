@@ -9,6 +9,10 @@ import { cn } from "@/lib/utils";
 import { SymbolText } from "@/lib/mana-symbols";
 import { normalizeDecisionText } from "./decisionText";
 
+const STRIP_ITEM_BASE_CLASS = "h-auto min-h-8 max-w-[360px] min-w-[120px] justify-start self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] px-2.5 text-left text-[12px] font-semibold text-[rgba(206,223,242,0.52)] whitespace-nowrap transition-all hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]";
+const STRIP_ITEM_ACTIVE_CLASS = "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]";
+const STRIP_ITEM_DISABLED_CLASS = "border-l-[rgba(63,79,98,0.6)] bg-[rgba(8,15,23,0.76)] text-[#5f7590] hover:border-l-[rgba(63,79,98,0.6)] hover:bg-[rgba(8,15,23,0.76)] hover:text-[#5f7590] hover:shadow-none";
+
 function isPaymentOptionDescription(text) {
   return /^\s*pay\b/i.test(String(text || ""));
 }
@@ -103,6 +107,7 @@ function OptionButton({
   isSelected = false,
   onMouseEnter,
   onMouseLeave,
+  horizontal = false,
 }) {
   const disabled = !canAct || opt.legal === false;
 
@@ -111,11 +116,17 @@ function OptionButton({
       variant="ghost"
       size="sm"
       className={cn(
-        "h-auto min-h-8 w-full justify-start rounded-none border-0 bg-[rgba(15,27,40,0.9)] px-2.5 py-1.5 text-left text-[13px] text-[#c7dbf2] whitespace-normal transition-all hover:bg-[rgba(25,44,66,0.95)] hover:text-[#eaf3ff]",
-        isSelected && "bg-[rgba(36,58,84,0.72)] text-[#eaf4ff]",
-        !isSelected && isHighlighted && "bg-[rgba(25,47,71,0.94)] text-[#d9ecff]",
+        horizontal
+          ? STRIP_ITEM_BASE_CLASS
+          : "h-auto min-h-8 w-full justify-start rounded-none border-0 bg-[rgba(15,27,40,0.9)] px-2.5 py-1.5 text-left text-[13px] text-[#c7dbf2] whitespace-normal transition-all hover:bg-[rgba(25,44,66,0.95)] hover:text-[#eaf3ff]",
+        horizontal && isSelected && STRIP_ITEM_ACTIVE_CLASS,
+        !horizontal && isSelected && "bg-[rgba(36,58,84,0.72)] text-[#eaf4ff]",
+        horizontal && !isSelected && isHighlighted && STRIP_ITEM_ACTIVE_CLASS,
+        !horizontal && !isSelected && isHighlighted && "bg-[rgba(25,47,71,0.94)] text-[#d9ecff]",
         disabled
-          && "bg-[rgba(12,20,30,0.72)] text-[#647f99] hover:bg-[rgba(12,20,30,0.72)] hover:text-[#647f99]"
+          && (horizontal
+            ? STRIP_ITEM_DISABLED_CLASS
+            : "bg-[rgba(12,20,30,0.72)] text-[#647f99] hover:bg-[rgba(12,20,30,0.72)] hover:text-[#647f99]")
       )}
       disabled={disabled}
       onPointerDown={(e) => {
@@ -192,6 +203,7 @@ export default function SelectOptionsDecision({
   inlineSubmit = true,
   onSubmitActionChange = null,
   hideDescription = false,
+  layout = "panel",
 }) {
   const reason = (decision.reason || "").toLowerCase();
 
@@ -204,6 +216,7 @@ export default function SelectOptionsDecision({
         inlineSubmit={inlineSubmit}
         onSubmitActionChange={onSubmitActionChange}
         hideDescription={hideDescription}
+        layout={layout}
       />
     );
   }
@@ -215,6 +228,7 @@ export default function SelectOptionsDecision({
         inlineSubmit={inlineSubmit}
         onSubmitActionChange={onSubmitActionChange}
         hideDescription={hideDescription}
+        layout={layout}
       />
     );
   }
@@ -226,6 +240,7 @@ export default function SelectOptionsDecision({
         inlineSubmit={inlineSubmit}
         onSubmitActionChange={onSubmitActionChange}
         hideDescription={hideDescription}
+        layout={layout}
       />
     );
   }
@@ -238,6 +253,7 @@ export default function SelectOptionsDecision({
         inlineSubmit={inlineSubmit}
         onSubmitActionChange={onSubmitActionChange}
         hideDescription={hideDescription}
+        layout={layout}
       />
     );
   }
@@ -252,6 +268,7 @@ export default function SelectOptionsDecision({
         canAct={canAct}
         onSubmitActionChange={onSubmitActionChange}
         hideDescription={hideDescription}
+        layout={layout}
       />
     );
   }
@@ -264,6 +281,7 @@ export default function SelectOptionsDecision({
       inlineSubmit={inlineSubmit}
       onSubmitActionChange={onSubmitActionChange}
       hideDescription={hideDescription}
+      layout={layout}
     />
   );
 }
@@ -273,9 +291,11 @@ function SingleSelectDecision({
   canAct,
   onSubmitActionChange = null,
   hideDescription = false,
+  layout = "panel",
 }) {
   const { dispatch, state } = useGame();
   const { hoveredObjectId, hoverCard, clearHover } = useHover();
+  const stripLayout = layout === "strip";
   const options = useMemo(() => decision.options || [], [decision.options]);
   const paymentDecision = useMemo(() => isPaymentDecision(decision), [decision]);
   const castFlowDecision = useMemo(() => isSpellCastFlowDecision(decision), [decision]);
@@ -365,16 +385,29 @@ function SingleSelectDecision({
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   return (
-    <div className="flex w-full flex-col gap-1">
+    <div className="flex w-full min-w-0 flex-col gap-1">
       <div className="transition-all duration-200">
-        <div className="sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1">
+        <div
+          className={cn(
+            stripLayout
+              ? "px-1 py-0"
+              : "sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1"
+          )}
+        >
           {!paymentDecision && !hideDescription && <Description text={decision.description} />}
           {showHoverHint && (
             <HoverHint text="Hover a related card to show its available choices." />
           )}
         </div>
-        <div className="w-full border-b border-[#2f4b67] bg-[rgba(10,20,30,0.45)]">
-          <div className="w-full divide-y divide-[#2f4b67] max-h-[220px] overflow-y-auto">
+        <div className={cn(
+          "w-full",
+          stripLayout ? "" : "border-b border-[#2f4b67] bg-[rgba(10,20,30,0.45)]"
+        )}>
+          <div className={cn(
+            stripLayout
+              ? "flex w-max min-w-full items-center gap-1.5 overflow-x-auto overflow-y-hidden py-0.5"
+              : "w-full divide-y divide-[#2f4b67] max-h-[220px] overflow-y-auto"
+          )}>
             {visibleOptions.map((opt) => {
               const objId = opt.object_id != null ? String(opt.object_id) : null;
               return (
@@ -383,6 +416,7 @@ function SingleSelectDecision({
                   opt={opt}
                   canAct={canAct}
                   isHighlighted={objId != null && hoveredObjectId === objId}
+                  horizontal={stripLayout}
                   onClick={() =>
                     dispatch(
                       { type: "select_options", option_indices: [opt.index] },
@@ -395,7 +429,10 @@ function SingleSelectDecision({
               );
             })}
             {!showHoverHint && visibleOptions.length === 0 && (
-              <div className="px-2.5 py-2 text-[12px] italic text-[#89a7c7]">
+              <div className={cn(
+                "text-[12px] italic text-[#89a7c7]",
+                stripLayout ? "px-2 py-1 whitespace-nowrap" : "px-2.5 py-2"
+              )}>
                 {paymentDecision ? "No additional payment actions." : "No legal choices."}
               </div>
             )}
@@ -413,9 +450,11 @@ function MultiSelectDecision({
   inlineSubmit = true,
   onSubmitActionChange = null,
   hideDescription = false,
+  layout = "panel",
 }) {
   const { dispatch } = useGame();
   const { hoveredObjectId, hoverCard, clearHover } = useHover();
+  const stripLayout = layout === "strip";
   const rawOptions = useMemo(() => decision.options || [], [decision.options]);
   const paymentDecision = useMemo(() => isPaymentDecision(decision), [decision]);
   const options = useMemo(
@@ -474,9 +513,13 @@ function MultiSelectDecision({
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
   return (
-    <div className="flex w-full flex-col gap-1.5">
-      <div className="-mx-1.5 transition-all duration-200">
-        <div className="sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1">
+    <div className="flex w-full min-w-0 flex-col gap-1.5">
+        <div className={cn(stripLayout ? "transition-all duration-200" : "-mx-1.5 transition-all duration-200")}>
+          <div className={cn(
+            stripLayout
+              ? "px-1 py-0"
+              : "sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1"
+          )}>
           {!paymentDecision && !hideDescription && <Description text={decision.description} />}
           <SectionHeader text={`Select ${min === max ? min : `${min}–${max}`}`} />
           {showHoverHint && (
@@ -484,10 +527,17 @@ function MultiSelectDecision({
           )}
         </div>
         <div
-          className="w-full overflow-y-auto overflow-x-hidden border-b border-[#2f4b67] bg-[rgba(10,20,30,0.45)] transition-[max-height] duration-300 ease-out"
-          style={{ maxHeight: `${optionsMaxHeight}px` }}
+          className={cn(
+            "w-full transition-[max-height] duration-300 ease-out",
+            stripLayout ? "overflow-x-auto overflow-y-hidden" : "overflow-y-auto overflow-x-hidden"
+          )}
+          style={stripLayout ? undefined : { maxHeight: `${optionsMaxHeight}px` }}
         >
-          <div className="w-full divide-y divide-[#2f4b67]">
+          <div className={cn(
+            stripLayout
+              ? "flex w-max min-w-full items-center gap-1.5 py-0.5"
+              : "w-full divide-y divide-[#2f4b67]"
+          )}>
             {visibleOptions.map((opt) => {
               const objId = opt.object_id != null ? String(opt.object_id) : null;
               const isHighlighted = objId != null && hoveredObjectId === objId;
@@ -499,6 +549,7 @@ function MultiSelectDecision({
                   canAct={canAct}
                   isHighlighted={isHighlighted}
                   isSelected={isSelected}
+                  horizontal={stripLayout}
                   onClick={() => opt.legal !== false && toggle(opt.index)}
                   onMouseEnter={() => objId && hoverCard(objId)}
                   onMouseLeave={clearHover}
@@ -506,22 +557,33 @@ function MultiSelectDecision({
               );
             })}
             {hiddenSelectedCount > 0 && (
-              <div className="px-2.5 py-1 text-[12px] text-[#89a7c7]">
+              <div className={cn(
+                "text-[12px] text-[#89a7c7]",
+                stripLayout ? "px-2 py-1 whitespace-nowrap" : "px-2.5 py-1"
+              )}>
                 {hiddenSelectedCount} selected option(s) from other cards.
               </div>
             )}
             {!showHoverHint && visibleOptions.length === 0 && (
-              <div className="px-2.5 py-2 text-[12px] italic text-[#89a7c7]">No legal choices.</div>
+              <div className={cn(
+                "text-[12px] italic text-[#89a7c7]",
+                stripLayout ? "px-2 py-1 whitespace-nowrap" : "px-2.5 py-2"
+              )}>
+                No legal choices.
+              </div>
             )}
           </div>
         </div>
       </div>
       {inlineSubmit && (
-        <div className="w-full shrink-0 pt-1">
+        <div className={cn("w-full shrink-0", stripLayout ? "pt-0" : "pt-1")}>
           <Button
             variant="ghost"
             size="sm"
-            className="w-full h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
+            className={cn(
+              "h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]",
+              stripLayout ? "w-auto ml-1" : "w-full"
+            )}
             disabled={!canSubmit}
             onClick={handleSubmit}
           >
@@ -539,8 +601,10 @@ function OrderingDecision({
   inlineSubmit = true,
   onSubmitActionChange = null,
   hideDescription = false,
+  layout = "panel",
 }) {
   const { dispatch } = useGame();
+  const stripLayout = layout === "strip";
   const [order, setOrder] = useState(
     () => (decision.options || []).map((opt) => opt.index)
   );
@@ -568,46 +632,74 @@ function OrderingDecision({
   );
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
+  const rows = (
+    <div className={cn(
+      stripLayout ? "flex items-stretch gap-1.5 px-1 py-1" : "flex flex-col gap-0.5"
+    )}>
+      {order.map((optIndex, pos) => {
+        const opt = options.find((o) => o.index === optIndex);
+        if (!opt) return null;
+        return (
+          <div key={optIndex} className={cn(
+            "flex items-center gap-1.5 text-[13px] py-1 px-2 rounded-sm text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.06)]",
+            stripLayout && "min-w-[220px] max-w-[360px] self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] text-[rgba(206,223,242,0.78)] hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff]"
+          )}>
+            <span className="text-[11px] text-[#8ec4ff] font-bold w-4 text-center shrink-0">{pos + 1}</span>
+            <span className={cn("min-w-0", stripLayout ? "flex-1" : "flex-1")}>
+              <SymbolText text={normalizeDecisionText(opt.description)} />
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 w-5 p-0 text-[13px]"
+              disabled={!canAct || pos === 0}
+              onClick={() => move(pos, -1)}
+            >
+              <ChevronUp className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 w-5 p-0 text-[13px]"
+              disabled={!canAct || pos === order.length - 1}
+              onClick={() => move(pos, 1)}
+            >
+              <ChevronDown className="size-3.5" />
+            </Button>
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-1">
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="flex flex-col gap-1 pr-1">
-          {!hideDescription && <Description text={decision.description} />}
-          <SectionHeader text="Order" />
-          <div className="flex flex-col gap-0.5">
-            {order.map((optIndex, pos) => {
-              const opt = options.find((o) => o.index === optIndex);
-              if (!opt) return null;
-              return (
-                <div key={optIndex} className="flex items-center gap-1.5 text-[13px] py-1 px-2 rounded-sm text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.06)]">
-                  <span className="text-[11px] text-[#8ec4ff] font-bold w-4 text-center shrink-0">{pos + 1}</span>
-                  <span className="flex-1 min-w-0"><SymbolText text={normalizeDecisionText(opt.description)} /></span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-5 w-5 p-0 text-[13px]"
-                    disabled={!canAct || pos === 0}
-                    onClick={() => move(pos, -1)}
-                  >
-                    <ChevronUp className="size-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-5 w-5 p-0 text-[13px]"
-                    disabled={!canAct || pos === order.length - 1}
-                    onClick={() => move(pos, 1)}
-                  >
-                    <ChevronDown className="size-3.5" />
-                  </Button>
-                </div>
-              );
-            })}
+    <div className={cn("flex h-full min-h-0 flex-col gap-1", stripLayout && "min-w-0")}>
+      {stripLayout ? (
+        <div className="min-w-0 overflow-x-auto overflow-y-hidden">
+          <div className="flex w-max min-w-full items-center gap-1.5">
+            {!hideDescription && (
+              <div className="shrink-0 px-1">
+                <Description text={decision.description} />
+              </div>
+            )}
+            <SectionHeader text="Order" />
+            {rows}
           </div>
         </div>
-      </ScrollArea>
+      ) : (
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="flex flex-col gap-1 pr-1">
+            {!hideDescription && <Description text={decision.description} />}
+            <SectionHeader text="Order" />
+            {rows}
+          </div>
+        </ScrollArea>
+      )}
       {inlineSubmit && (
-        <div className="shrink-0 border-t border-game-line-2/70 pt-1">
+        <div className={cn(
+          "shrink-0",
+          stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1"
+        )}>
           <SubmitButton
             canAct={canAct}
             onClick={handleSubmit}
@@ -626,8 +718,10 @@ function DistributeDecision({
   inlineSubmit = true,
   onSubmitActionChange = null,
   hideDescription = false,
+  layout = "panel",
 }) {
   const { dispatch, setStatus } = useGame();
+  const stripLayout = layout === "strip";
   const options = decision.options || [];
   const total = Number(decision.max || 0);
   const [counts, setCounts] = useState(() =>
@@ -667,34 +761,60 @@ function DistributeDecision({
   );
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
+  const rows = (
+    <div className={cn(
+      stripLayout ? "flex items-stretch gap-1.5 px-1 py-1" : "flex flex-col gap-0.5"
+    )}>
+      {options.map((opt) => (
+        <label key={opt.index} className={cn(
+          "flex items-center gap-2 text-[13px] py-1 px-2 rounded-sm text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.06)]",
+          stripLayout && "min-w-[220px] max-w-[360px] self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] text-[rgba(206,223,242,0.78)] hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff]"
+        )}>
+          <span className="flex-1 min-w-0"><SymbolText text={normalizeDecisionText(opt.description)} /></span>
+          <Input
+            type="number"
+            className="h-6 w-16 text-[13px] bg-transparent text-center"
+            min={0}
+            max={Number(opt.max_count ?? total)}
+            value={counts[opt.index] || 0}
+            onChange={(e) =>
+              setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
+            }
+            disabled={!canAct || opt.legal === false}
+          />
+        </label>
+      ))}
+    </div>
+  );
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-1">
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="flex flex-col gap-1 pr-1">
-          {!hideDescription && <Description text={decision.description} />}
-          <SectionHeader text={`Distribute ${total} total`} />
-          <div className="flex flex-col gap-0.5">
-            {options.map((opt) => (
-              <label key={opt.index} className="flex items-center gap-2 text-[13px] py-1 px-2 rounded-sm text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.06)]">
-                <span className="flex-1 min-w-0"><SymbolText text={normalizeDecisionText(opt.description)} /></span>
-                <Input
-                  type="number"
-                  className="h-6 w-16 text-[13px] bg-transparent text-center"
-                  min={0}
-                  max={Number(opt.max_count ?? total)}
-                  value={counts[opt.index] || 0}
-                  onChange={(e) =>
-                    setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
-                  }
-                  disabled={!canAct || opt.legal === false}
-                />
-              </label>
-            ))}
+    <div className={cn("flex h-full min-h-0 flex-col gap-1", stripLayout && "min-w-0")}>
+      {stripLayout ? (
+        <div className="min-w-0 overflow-x-auto overflow-y-hidden">
+          <div className="flex w-max min-w-full items-center gap-1.5">
+            {!hideDescription && (
+              <div className="shrink-0 px-1">
+                <Description text={decision.description} />
+              </div>
+            )}
+            <SectionHeader text={`Distribute ${total} total`} />
+            {rows}
           </div>
         </div>
-      </ScrollArea>
+      ) : (
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="flex flex-col gap-1 pr-1">
+            {!hideDescription && <Description text={decision.description} />}
+            <SectionHeader text={`Distribute ${total} total`} />
+            {rows}
+          </div>
+        </ScrollArea>
+      )}
       {inlineSubmit && (
-        <div className="shrink-0 border-t border-game-line-2/70 pt-1">
+        <div className={cn(
+          "shrink-0",
+          stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1"
+        )}>
           <SubmitButton
             canAct={canAct}
             disabled={assigned !== total}
@@ -714,8 +834,10 @@ function CountersDecision({
   inlineSubmit = true,
   onSubmitActionChange = null,
   hideDescription = false,
+  layout = "panel",
 }) {
   const { dispatch } = useGame();
+  const stripLayout = layout === "strip";
   const options = decision.options || [];
   const maxTotal = Number(decision.max || 0);
   const [counts, setCounts] = useState(() =>
@@ -751,34 +873,60 @@ function CountersDecision({
   );
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
+  const rows = (
+    <div className={cn(
+      stripLayout ? "flex items-stretch gap-1.5 px-1 py-1" : "flex flex-col gap-0.5"
+    )}>
+      {options.map((opt) => (
+        <label key={opt.index} className={cn(
+          "flex items-center gap-2 text-[13px] py-1 px-2 rounded-sm text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.06)]",
+          stripLayout && "min-w-[220px] max-w-[360px] self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] text-[rgba(206,223,242,0.78)] hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff]"
+        )}>
+          <span className="flex-1 min-w-0"><SymbolText text={normalizeDecisionText(opt.description)} /></span>
+          <Input
+            type="number"
+            className="h-6 w-16 text-[13px] bg-transparent text-center"
+            min={0}
+            max={Number(opt.max_count ?? maxTotal)}
+            value={counts[opt.index] || 0}
+            onChange={(e) =>
+              setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
+            }
+            disabled={!canAct || opt.legal === false}
+          />
+        </label>
+      ))}
+    </div>
+  );
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-1">
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="flex flex-col gap-1 pr-1">
-          {!hideDescription && <Description text={decision.description} />}
-          <SectionHeader text="Counters" />
-          <div className="flex flex-col gap-0.5">
-            {options.map((opt) => (
-              <label key={opt.index} className="flex items-center gap-2 text-[13px] py-1 px-2 rounded-sm text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.06)]">
-                <span className="flex-1 min-w-0"><SymbolText text={normalizeDecisionText(opt.description)} /></span>
-                <Input
-                  type="number"
-                  className="h-6 w-16 text-[13px] bg-transparent text-center"
-                  min={0}
-                  max={Number(opt.max_count ?? maxTotal)}
-                  value={counts[opt.index] || 0}
-                  onChange={(e) =>
-                    setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
-                  }
-                  disabled={!canAct || opt.legal === false}
-                />
-              </label>
-            ))}
+    <div className={cn("flex h-full min-h-0 flex-col gap-1", stripLayout && "min-w-0")}>
+      {stripLayout ? (
+        <div className="min-w-0 overflow-x-auto overflow-y-hidden">
+          <div className="flex w-max min-w-full items-center gap-1.5">
+            {!hideDescription && (
+              <div className="shrink-0 px-1">
+                <Description text={decision.description} />
+              </div>
+            )}
+            <SectionHeader text="Counters" />
+            {rows}
           </div>
         </div>
-      </ScrollArea>
+      ) : (
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="flex flex-col gap-1 pr-1">
+            {!hideDescription && <Description text={decision.description} />}
+            <SectionHeader text="Counters" />
+            {rows}
+          </div>
+        </ScrollArea>
+      )}
       {inlineSubmit && (
-        <div className="shrink-0 border-t border-game-line-2/70 pt-1">
+        <div className={cn(
+          "shrink-0",
+          stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1"
+        )}>
           <SubmitButton
             canAct={canAct}
             disabled={total > maxTotal}
@@ -798,8 +946,10 @@ function RepeatableDecision({
   inlineSubmit = true,
   onSubmitActionChange = null,
   hideDescription = false,
+  layout = "panel",
 }) {
   const { dispatch } = useGame();
+  const stripLayout = layout === "strip";
   const options = decision.options || [];
   const maxTotal = Number(decision.max || 0);
   const [counts, setCounts] = useState(() =>
@@ -836,34 +986,60 @@ function RepeatableDecision({
   );
   useExternalSubmitAction(onSubmitActionChange, submitAction);
 
+  const rows = (
+    <div className={cn(
+      stripLayout ? "flex items-stretch gap-1.5 px-1 py-1" : "flex flex-col gap-0.5"
+    )}>
+      {options.map((opt) => (
+        <label key={opt.index} className={cn(
+          "flex items-center gap-2 text-[13px] py-1 px-2 rounded-sm text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.06)]",
+          stripLayout && "min-w-[220px] max-w-[360px] self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] text-[rgba(206,223,242,0.78)] hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff]"
+        )}>
+          <span className="flex-1 min-w-0"><SymbolText text={normalizeDecisionText(opt.description)} /></span>
+          <Input
+            type="number"
+            className="h-6 w-16 text-[13px] bg-transparent text-center"
+            min={0}
+            max={Number(opt.max_count ?? maxTotal)}
+            value={counts[opt.index] || 0}
+            onChange={(e) =>
+              setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
+            }
+            disabled={!canAct || opt.legal === false}
+          />
+        </label>
+      ))}
+    </div>
+  );
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-1">
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="flex flex-col gap-1 pr-1">
-          {!hideDescription && <Description text={decision.description} />}
-          <SectionHeader text="Repeat" />
-          <div className="flex flex-col gap-0.5">
-            {options.map((opt) => (
-              <label key={opt.index} className="flex items-center gap-2 text-[13px] py-1 px-2 rounded-sm text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.06)]">
-                <span className="flex-1 min-w-0"><SymbolText text={normalizeDecisionText(opt.description)} /></span>
-                <Input
-                  type="number"
-                  className="h-6 w-16 text-[13px] bg-transparent text-center"
-                  min={0}
-                  max={Number(opt.max_count ?? maxTotal)}
-                  value={counts[opt.index] || 0}
-                  onChange={(e) =>
-                    setCounts((prev) => ({ ...prev, [opt.index]: Number(e.target.value) || 0 }))
-                  }
-                  disabled={!canAct || opt.legal === false}
-                />
-              </label>
-            ))}
+    <div className={cn("flex h-full min-h-0 flex-col gap-1", stripLayout && "min-w-0")}>
+      {stripLayout ? (
+        <div className="min-w-0 overflow-x-auto overflow-y-hidden">
+          <div className="flex w-max min-w-full items-center gap-1.5">
+            {!hideDescription && (
+              <div className="shrink-0 px-1">
+                <Description text={decision.description} />
+              </div>
+            )}
+            <SectionHeader text="Repeat" />
+            {rows}
           </div>
         </div>
-      </ScrollArea>
+      ) : (
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="flex flex-col gap-1 pr-1">
+            {!hideDescription && <Description text={decision.description} />}
+            <SectionHeader text="Repeat" />
+            {rows}
+          </div>
+        </ScrollArea>
+      )}
       {inlineSubmit && (
-        <div className="shrink-0 border-t border-game-line-2/70 pt-1">
+        <div className={cn(
+          "shrink-0",
+          stripLayout ? "pt-0" : "border-t border-game-line-2/70 pt-1"
+        )}>
           <SubmitButton
             canAct={canAct}
             disabled={total < min || total > maxTotal}

@@ -2,15 +2,13 @@ import { useMemo } from "react";
 import { useGame } from "@/context/GameContext";
 import OpponentZone from "./OpponentZone";
 import MyZone from "./MyZone";
-import ZoneViewer from "./ZoneViewer";
 import DeckLoadingView from "./DeckLoadingView";
-import PhaseTrack from "./PhaseTrack";
+import DecisionPopupLayer from "@/components/overlays/DecisionPopupLayer";
 
 export default function TableCore({
   selectedObjectId,
   onInspect,
   zoneViews,
-  setZoneViews,
   deckLoadingMode,
   onLoadDecks,
   onCancelDeckLoading,
@@ -59,7 +57,7 @@ export default function TableCore({
     <main
       className="table-gradient rounded grid gap-1.5 p-1.5 min-h-0 h-full overflow-hidden"
       data-drop-zone
-      style={{ gridTemplateRows: "minmax(0,1.7fr) auto minmax(0,1fr) auto" }}
+      style={{ gridTemplateRows: "minmax(0,1.7fr) 62px minmax(0,1fr)" }}
     >
       <OpponentZone
         opponents={opponents}
@@ -69,7 +67,11 @@ export default function TableCore({
         legalTargetPlayerIds={legalTargetPlayerIds}
         legalTargetObjectIds={legalTargetObjectIds}
       />
-      <PhaseTrack />
+      <div className="relative z-20 flex items-center">
+        <div className="relative h-full w-full rounded border border-[#2b3f57]/65 bg-[linear-gradient(90deg,rgba(7,15,23,0.92),rgba(14,28,44,0.86),rgba(7,15,23,0.92))] shadow-[inset_0_1px_0_rgba(170,208,245,0.12),0_8px_18px_rgba(0,0,0,0.32)]">
+          <DecisionPopupLayer priorityInline selectedObjectId={selectedObjectId} />
+        </div>
+      </div>
       <MyZone
         player={me}
         selectedObjectId={selectedObjectId}
@@ -78,7 +80,6 @@ export default function TableCore({
         legalTargetPlayerIds={legalTargetPlayerIds}
         legalTargetObjectIds={legalTargetObjectIds}
       />
-      <ZoneViewer zoneViews={zoneViews} setZoneViews={setZoneViews} />
     </main>
   );
 }

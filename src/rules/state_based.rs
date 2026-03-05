@@ -83,7 +83,7 @@ pub fn check_state_based_actions(game: &GameState) -> Vec<StateBasedAction> {
     check_state_based_actions_with_effects(game, &all_effects)
 }
 
-fn check_state_based_actions_with_effects(
+pub(crate) fn check_state_based_actions_with_effects(
     game: &GameState,
     all_effects: &[crate::continuous::ContinuousEffect],
 ) -> Vec<StateBasedAction> {
@@ -486,7 +486,15 @@ pub fn apply_state_based_actions_with(
 ) -> bool {
     let all_effects = game.all_continuous_effects();
     let actions = check_state_based_actions_with_effects(game, &all_effects);
+    apply_state_based_actions_from_actions_with(game, actions, &all_effects, decision_maker)
+}
 
+pub(crate) fn apply_state_based_actions_from_actions_with(
+    game: &mut GameState,
+    actions: Vec<StateBasedAction>,
+    all_effects: &[crate::continuous::ContinuousEffect],
+    decision_maker: &mut impl crate::decision::DecisionMaker,
+) -> bool {
     if actions.is_empty() {
         return false;
     }
@@ -536,9 +544,18 @@ pub fn get_legend_rule_specs(
     crate::ids::PlayerId,
     crate::decisions::specs::LegendRuleSpec,
 )> {
+    let actions = check_state_based_actions(game);
+    legend_rule_specs_from_actions(&actions)
+}
+
+pub(crate) fn legend_rule_specs_from_actions(
+    actions: &[StateBasedAction],
+) -> Vec<(
+    crate::ids::PlayerId,
+    crate::decisions::specs::LegendRuleSpec,
+)> {
     use crate::decisions::specs::LegendRuleSpec;
 
-    let actions = check_state_based_actions(game);
     let mut specs = Vec::new();
 
     for action in actions {
@@ -548,7 +565,10 @@ pub fn get_legend_rule_specs(
             permanents,
         } = action
         {
-            specs.push((player, LegendRuleSpec::new(name, permanents)));
+            specs.push((
+                *player,
+                LegendRuleSpec::new(name.clone(), permanents.clone()),
+            ));
         }
     }
 

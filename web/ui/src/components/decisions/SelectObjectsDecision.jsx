@@ -5,6 +5,10 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { normalizeDecisionText } from "./decisionText";
 
+const STRIP_ITEM_BASE_CLASS = "h-8 max-w-[360px] min-w-[120px] justify-start self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] px-2.5 text-[12px] font-semibold text-[rgba(206,223,242,0.52)] transition-all hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]";
+const STRIP_ITEM_ACTIVE_CLASS = "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]";
+const STRIP_ITEM_DISABLED_CLASS = "border-l-[rgba(63,79,98,0.6)] bg-[rgba(8,15,23,0.76)] text-[#5f7590] hover:border-l-[rgba(63,79,98,0.6)] hover:bg-[rgba(8,15,23,0.76)] hover:text-[#5f7590] hover:shadow-none";
+
 export default function SelectObjectsDecision({
   decision,
   canAct,
@@ -12,9 +16,11 @@ export default function SelectObjectsDecision({
   inlineSubmit = true,
   onSubmitActionChange = null,
   hideDescription = false,
+  layout = "panel",
 }) {
   const { dispatch } = useGame();
   const hoveredObjectId = useHoveredObjectId();
+  const stripLayout = layout === "strip";
   const candidates = useMemo(() => decision.candidates || [], [decision.candidates]);
   const [selected, setSelected] = useState(new Set());
   const min = decision.min ?? 0;
@@ -95,14 +101,20 @@ export default function SelectObjectsDecision({
   );
 
   return (
-    <div className="flex w-full flex-col gap-1.5">
+    <div className="flex w-full min-w-0 flex-col gap-1.5">
       <div
         className={cn(
-          "-mx-1.5 transition-all duration-200",
+          stripLayout ? "transition-all duration-200" : "-mx-1.5 transition-all duration-200",
           showRows ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1 pointer-events-none"
         )}
       >
-        <div className="sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1">
+        <div
+          className={cn(
+            stripLayout
+              ? "px-1 py-0"
+              : "sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1"
+          )}
+        >
           {!hideDescription && decision.description && (
             <div className="text-[14px] text-[#b6cae1] leading-snug">
               {normalizeDecisionText(decision.description)}
@@ -118,10 +130,17 @@ export default function SelectObjectsDecision({
           )}
         </div>
         <div
-          className="w-full overflow-y-auto overflow-x-hidden border-b border-[#2f4b67] bg-[rgba(10,20,30,0.45)] transition-[max-height] duration-300 ease-out"
-          style={{ maxHeight: `${optionsMaxHeight}px` }}
+          className={cn(
+            "w-full transition-[max-height] duration-300 ease-out",
+            stripLayout ? "overflow-x-auto overflow-y-hidden" : "overflow-y-auto overflow-x-hidden"
+          )}
+          style={stripLayout ? undefined : { maxHeight: `${optionsMaxHeight}px` }}
         >
-          <div className="w-full divide-y divide-[#2f4b67]">
+          <div className={cn(
+            stripLayout
+              ? "flex w-max min-w-full items-center gap-1.5 py-0.5"
+              : "w-full divide-y divide-[#2f4b67]"
+          )}>
             {visibleCandidates.map((c) => {
               const isSelected = selected.has(c.id);
               const isUnavailable = !isSelected && selected.size >= max;
@@ -132,10 +151,15 @@ export default function SelectObjectsDecision({
                   variant="ghost"
                   size="sm"
                   className={cn(
-                    "h-8 w-full justify-start rounded-none border-0 bg-[rgba(15,27,40,0.9)] px-2.5 text-[13px] text-[#c7dbf2] transition-all hover:bg-[rgba(25,44,66,0.95)] hover:text-[#eaf3ff]",
-                    isSelected && "bg-[rgba(36,58,84,0.72)] text-[#eaf4ff]",
+                    stripLayout
+                      ? STRIP_ITEM_BASE_CLASS
+                      : "h-8 w-full justify-start rounded-none border-0 bg-[rgba(15,27,40,0.9)] px-2.5 text-[13px] text-[#c7dbf2] transition-all hover:bg-[rgba(25,44,66,0.95)] hover:text-[#eaf3ff]",
+                    stripLayout && isSelected && STRIP_ITEM_ACTIVE_CLASS,
+                    !stripLayout && isSelected && "bg-[rgba(36,58,84,0.72)] text-[#eaf4ff]",
                     isDisabled
-                      && "bg-[rgba(12,20,30,0.72)] text-[#647f99] hover:bg-[rgba(12,20,30,0.72)] hover:text-[#647f99]"
+                      && (stripLayout
+                        ? STRIP_ITEM_DISABLED_CLASS
+                        : "bg-[rgba(12,20,30,0.72)] text-[#647f99] hover:bg-[rgba(12,20,30,0.72)] hover:text-[#647f99]")
                   )}
                   disabled={isDisabled}
                   onClick={() => toggleObject(c.id)}
@@ -145,7 +169,12 @@ export default function SelectObjectsDecision({
               );
             })}
             {visibleCandidates.length === 0 && (
-              <div className="px-2.5 py-2 text-[12px] italic text-[#89a7c7]">No legal choices.</div>
+              <div className={cn(
+                "text-[12px] italic text-[#89a7c7]",
+                stripLayout ? "px-2 py-1" : "px-2.5 py-2"
+              )}>
+                No legal choices.
+              </div>
             )}
           </div>
         </div>
@@ -155,7 +184,10 @@ export default function SelectObjectsDecision({
           <Button
             variant="ghost"
             size="sm"
-            className="w-full h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
+            className={cn(
+              "h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]",
+              stripLayout ? "w-auto ml-1" : "w-full"
+            )}
             disabled={!canAct || !canSubmit}
             onClick={handleSubmit}
           >

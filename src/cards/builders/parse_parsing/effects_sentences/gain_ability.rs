@@ -603,19 +603,15 @@ pub(crate) fn parse_granted_activated_or_triggered_ability_for_gain(
                 effects,
                 max_triggers_per_turn,
             } => {
-                let (compiled_effects, choices) =
-                    compile_trigger_effects(Some(&trigger), &effects)?;
-                Ability {
-                    kind: AbilityKind::Triggered(TriggeredAbility {
-                        trigger: compile_trigger_spec(trigger),
-                        effects: compiled_effects,
-                        choices,
-                        intervening_if: max_triggers_per_turn
-                            .map(crate::ConditionExpr::MaxTimesEachTurn),
-                    }),
-                    functional_zones: vec![Zone::Battlefield],
-                    text: None,
-                }
+                lower_parsed_ability(parsed_triggered_ability(
+                    trigger,
+                    effects,
+                    vec![Zone::Battlefield],
+                    None,
+                    max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
+                    None,
+                ))?
+                .ability
             }
             _ => {
                 return Err(CardTextError::ParseError(format!(

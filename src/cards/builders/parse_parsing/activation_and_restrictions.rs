@@ -174,6 +174,7 @@ pub(crate) fn parse_activated_line(
                     ability,
                     effects_ast: Some(effects_ast),
                     seed_last_object_tag,
+                    trigger_spec: None,
                 }));
             }
 
@@ -200,6 +201,7 @@ pub(crate) fn parse_activated_line(
                     ability,
                     effects_ast: Some(effects_ast),
                     seed_last_object_tag,
+                    trigger_spec: None,
                 }));
             }
 
@@ -237,6 +239,7 @@ pub(crate) fn parse_activated_line(
                         ability,
                         effects_ast: None,
                         seed_last_object_tag: None,
+                        trigger_spec: None,
                     }));
                 }
                 let mana_ast = parse_add_mana(mana_tokens, None)?;
@@ -261,6 +264,7 @@ pub(crate) fn parse_activated_line(
                     ability,
                     effects_ast: Some(effects_ast),
                     seed_last_object_tag,
+                    trigger_spec: None,
                 }));
             }
         }
@@ -299,6 +303,7 @@ pub(crate) fn parse_activated_line(
         },
         effects_ast: Some(effects_ast),
         seed_last_object_tag: seed_tag,
+        trigger_spec: None,
     }))
 }
 
@@ -588,6 +593,7 @@ pub(crate) fn parse_level_up_line(
         },
         effects_ast: None,
         seed_last_object_tag: None,
+        trigger_spec: None,
     }))
 }
 
@@ -696,6 +702,7 @@ pub(crate) fn parse_cycling_line(tokens: &[Token]) -> Result<Option<ParsedAbilit
         },
         effects_ast: None,
         seed_last_object_tag: None,
+        trigger_spec: None,
     }))
 }
 
@@ -789,6 +796,7 @@ pub(crate) fn parse_reinforce_line(
         },
         effects_ast: None,
         seed_last_object_tag: None,
+        trigger_spec: None,
     }))
 }
 
@@ -1135,6 +1143,7 @@ pub(crate) fn parse_morph_keyword_line(
         ability: Ability::static_ability(static_ability).with_text(&text),
         effects_ast: None,
         seed_last_object_tag: None,
+        trigger_spec: None,
     }))
 }
 
@@ -1378,6 +1387,7 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
             },
             effects_ast: None,
             seed_last_object_tag: None,
+            trigger_spec: None,
         }));
     }
 
@@ -1424,6 +1434,7 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
         },
         effects_ast: None,
         seed_last_object_tag: None,
+        trigger_spec: None,
     }))
 }
 

@@ -25,20 +25,24 @@ pub fn check_and_apply_sbas_with(
     decision_maker: &mut impl DecisionMaker,
 ) -> Result<(), GameLoopError> {
     use crate::decisions::make_decision;
-    use crate::rules::state_based::{apply_legend_rule_choice, get_legend_rule_specs};
+    use crate::rules::state_based::{
+        apply_legend_rule_choice, apply_state_based_actions_from_actions_with,
+        check_state_based_actions_with_effects, legend_rule_specs_from_actions,
+    };
 
     // Refresh continuous state (static ability effects and "can't" effect tracking)
     // before checking SBAs. This ensures the layer system is up to date.
     game.refresh_continuous_state();
 
     loop {
-        let actions = check_state_based_actions(game);
+        let all_effects = game.all_continuous_effects();
+        let actions = check_state_based_actions_with_effects(game, &all_effects);
         if actions.is_empty() {
             break;
         }
 
         // Handle legend rule decisions first
-        let legend_specs = get_legend_rule_specs(game);
+        let legend_specs = legend_rule_specs_from_actions(&actions);
         let had_legend_decisions = !legend_specs.is_empty();
         for (player, spec) in legend_specs {
             let keep_id: ObjectId = make_decision(game, decision_maker, player, None, spec);
@@ -47,7 +51,24 @@ pub fn check_and_apply_sbas_with(
 
         // Apply the SBAs (legend rule already handled above)
         // Use the decision maker version to allow interactive replacement effect choices
-        let applied = apply_state_based_actions_with(game, decision_maker);
+        let applied = if had_legend_decisions {
+            let post_legend_effects = game.all_continuous_effects();
+            let post_legend_actions =
+                check_state_based_actions_with_effects(game, &post_legend_effects);
+            apply_state_based_actions_from_actions_with(
+                game,
+                post_legend_actions,
+                &post_legend_effects,
+                decision_maker,
+            )
+        } else {
+            apply_state_based_actions_from_actions_with(
+                game,
+                actions,
+                &all_effects,
+                decision_maker,
+            )
+        };
         // SBA moves queue primitive ZoneChangeEvent via move_object; consume them now.
         drain_pending_trigger_events(game, trigger_queue);
         if !applied && !had_legend_decisions {

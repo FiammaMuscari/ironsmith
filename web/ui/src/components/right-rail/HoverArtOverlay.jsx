@@ -2,26 +2,16 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useGame } from "@/context/GameContext";
 import { scryfallImageUrl } from "@/lib/scryfall";
 import { ManaCostIcons, SymbolText } from "@/lib/mana-symbols";
-import DecisionRouter from "@/components/decisions/DecisionRouter";
-import { normalizeDecisionText } from "@/components/decisions/decisionText";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Check, Copy } from "lucide-react";
 
 const ORACLE_TEXT_STYLE = {
-  textShadow: "0 1px 2px rgba(0, 0, 0, 0.98), 0 3px 12px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.95)",
-  WebkitTextStroke: "0.45px rgba(3, 7, 14, 0.95)",
+  textShadow: "0 0 1px rgba(0, 0, 0, 0.95), 0 1px 2px rgba(0, 0, 0, 0.88)",
 };
 
 const METADATA_TEXT_STYLE = {
   textShadow: "0 1px 2px rgba(0, 0, 0, 0.96), 0 2px 10px rgba(0, 0, 0, 0.84)",
 };
-
-function simplifyActionLabel(label = "") {
-  const activateMatch = String(label).match(/^Activate\s+.+?:\s*(.+)$/i);
-  if (activateMatch) return activateMatch[1];
-  return label;
-}
 
 function stripInspectorAbilityPrefixes(text = "") {
   return String(text)
@@ -58,29 +48,17 @@ function lineAbilityMatchScore(lineText, needleText) {
   return 0;
 }
 
-function isInspectorDecision(decision) {
-  return (
-    !!decision
-    && decision.kind !== "priority"
-    && decision.kind !== "attackers"
-    && decision.kind !== "blockers"
-  );
+function normalizeInspectorMeasureText(text = "") {
+  return String(text)
+    .replace(/\{[^}]+\}/g, " OO ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function inspectorDecisionTitle(decision) {
-  if (!decision) return "Decision";
-  switch (decision.kind) {
-    case "targets":
-      return "Choose Targets";
-    case "select_objects":
-      return "Choose Objects";
-    case "select_options":
-      return "Choose Option";
-    case "number":
-      return "Choose Number";
-    default:
-      return "Decision";
-  }
+function measureInspectorTextWidth(ctx, text = "") {
+  const normalized = normalizeInspectorMeasureText(text);
+  if (!normalized) return 0;
+  return ctx.measureText(normalized).width;
 }
 
 function buildObjectNameMap(state) {
@@ -161,50 +139,23 @@ function buildObjectFamilyIds(state, objectIdNum) {
   return ids;
 }
 
-function buildBattlefieldFamilyByObjectId(state) {
-  const familyById = new Map();
-  const players = state?.players || [];
-  for (const player of players) {
-    for (const card of player?.battlefield || []) {
-      const rootId = Number(card?.id);
-      const members = Array.isArray(card?.member_ids) ? card.member_ids : [];
-      const familyIds = [rootId, ...members.map((memberId) => Number(memberId))]
-        .filter((id) => Number.isFinite(id));
-      const familyRoot = Number.isFinite(rootId) ? rootId : familyIds[0];
-      if (!Number.isFinite(familyRoot)) continue;
-      for (const familyId of familyIds) {
-        familyById.set(familyId, familyRoot);
-      }
-    }
-  }
-  return familyById;
-}
-
-function actionTargetsObjectName(action, lowerName) {
-  if (!lowerName) return false;
-  const label = String(action?.label || "").trim().toLowerCase();
-  if (!label) return false;
-  return (
-    label.startsWith(`activate ${lowerName}:`)
-    || label.startsWith(`cast ${lowerName}`)
-    || label.startsWith(`play ${lowerName}`)
-  );
-}
-
 export default function HoverArtOverlay({
   objectId,
   suppressStableId = null,
-  submitAction = null,
+  stackTimelineHeight = 0,
+  compact = false,
   onProtectedTopChange = null,
   onOracleTextHeightChange = null,
-  onInspectorSubmitChange = null,
+  onPreferredWidthChange = null,
 }) {
-  const { state, game, inspectorDebug, dispatch, cancelDecision } = useGame();
+  const { state, game, inspectorDebug } = useGame();
   const objectNameById = useMemo(() => buildObjectNameMap(state), [state]);
   const objectIdNum = objectId != null ? Number(objectId) : null;
   const objectIdKey = Number.isFinite(objectIdNum) ? String(objectIdNum) : null;
   const topHeaderRef = useRef(null);
   const oracleBodyRef = useRef(null);
+  const oracleScrollRef = useRef(null);
+  const ruleLineRefs = useRef(new Map());
 
   const [detailsCache, setDetailsCache] = useState({});
   const [failedImageUrl, setFailedImageUrl] = useState(null);
@@ -286,35 +237,12 @@ export default function HoverArtOverlay({
   }, [details, countersText]);
   const imageUrl = objectName ? scryfallImageUrl(objectName, "art_crop") : "";
   const imageErrored = !!imageUrl && failedImageUrl === imageUrl;
-  const decision = state?.decision || null;
-  const canAct = !!decision && decision.player === state?.perspective;
-  const inspectorDecision = isInspectorDecision(decision) && canAct
-    ? decision
-    : null;
   const topStackObject = (state?.stack_objects || [])[0] || null;
-  const hasStackEntries = (state?.stack_objects?.length || 0) > 0 || (state?.stack_preview?.length || 0) > 0;
-  const decisionSourceName = decision && decision.kind !== "priority" && decision.kind !== "attackers" && decision.kind !== "blockers"
-    ? decision.source_name || null
-    : null;
-  const isBattlefieldSource = String(details?.zone || "").toLowerCase() === "battlefield";
-  const hideOracleText = Boolean(
-    decision
-    && decision.player === state?.perspective
-    && decision.kind !== "priority"
-    && decisionSourceName
-    && details?.name
-    && decisionSourceName === details.name
-    && isBattlefieldSource
-  ) || !!inspectorDecision;
-  const selectedObjectNameLower = String(objectName || "").trim().toLowerCase();
   const detailAbilities = Array.isArray(details?.abilities) ? details.abilities : null;
   const detailStableId = details?.stable_id != null ? String(details.stable_id) : null;
   const topStackId = topStackObject?.id != null ? String(topStackObject.id) : null;
   const topStackStableId = topStackObject?.stable_id != null ? String(topStackObject.stable_id) : null;
   const topStackName = topStackObject?.name != null ? String(topStackObject.name) : "";
-  const topStackAbilityText = String(topStackObject?.ability_text || "").trim();
-  const topStackEffectText = String(topStackObject?.effect_text || "").trim();
-  const topStackAbilityKind = String(topStackObject?.ability_kind || "").toLowerCase();
   const hoveredStackAbilityText = String(hoveredStackObject?.ability_text || "");
   const hoveredStackEffectText = String(hoveredStackObject?.effect_text || "");
   const objectFamilyIds = useMemo(
@@ -322,45 +250,6 @@ export default function HoverArtOverlay({
     [state, objectIdNum]
   );
   const groupedCardCount = objectFamilyIds.size;
-  const inspectorActionGroups = useMemo(() => {
-    if (!decision || decision.kind !== "priority") return [];
-    if (decision.player !== state?.perspective) return [];
-    if (!Number.isFinite(objectIdNum) && !selectedObjectNameLower) return [];
-    const familyById = buildBattlefieldFamilyByObjectId(state);
-    const matched = [];
-    for (const action of decision.actions || []) {
-      if (action.kind === "pass_priority") continue;
-      const actionObjectId = Number(action.object_id);
-      if (Number.isFinite(actionObjectId) && objectFamilyIds.has(actionObjectId)) {
-        matched.push(action);
-        continue;
-      }
-      if (actionTargetsObjectName(action, selectedObjectNameLower)) {
-        matched.push(action);
-      }
-    }
-    const byKey = new Map();
-    for (const action of matched) {
-      const actionObjectId = Number(action.object_id);
-      const familyId = Number.isFinite(actionObjectId)
-        ? (familyById.get(actionObjectId) ?? actionObjectId)
-        : null;
-      const label = simplifyActionLabel(action.label || "");
-      const key = `${action.kind || ""}|${action.from_zone || ""}|${familyId != null ? familyId : "none"}|${label}`;
-      let group = byKey.get(key);
-      if (!group) {
-        group = {
-          key,
-          action,
-          label,
-          count: 0,
-        };
-        byKey.set(key, group);
-      }
-      group.count += 1;
-    }
-    return Array.from(byKey.values());
-  }, [decision, state, objectIdNum, objectFamilyIds, selectedObjectNameLower]);
 
   const suppressObject =
     suppressStableId != null
@@ -390,6 +279,38 @@ export default function HoverArtOverlay({
       .filter(Boolean);
   }, [detailAbilities, hoveredStackAbilityText, hoveredStackEffectText, oracleText]);
   const displayRulesText = displayRulesLines.join("\n");
+  const preferredInlineWidth = useMemo(() => {
+    if (!compact || typeof document === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+
+    let maxTextWidth = 0;
+    context.font = `700 ${compact ? 17 : 22}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
+    maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, objectName || ""));
+    if (groupedCardCount > 1) {
+      maxTextWidth += compact ? 18 : 22;
+    }
+
+    context.font = `700 ${compact ? 15 : 20}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
+    maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, statsText || ""));
+
+    context.font = `600 ${compact ? 11 : 13}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
+    maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, metadataText || ""));
+
+    context.font = `600 ${compact ? 15 : 18}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
+    for (const line of displayRulesLines) {
+      maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, line));
+    }
+
+    const manaSymbols = String(manaCost || "").match(/\{[^}]+\}/g);
+    if (manaSymbols && manaSymbols.length > 0) {
+      maxTextWidth = Math.max(maxTextWidth, manaSymbols.length * (compact ? 16 : 20));
+    }
+
+    const horizontalPadding = compact ? 76 : 98;
+    return Math.ceil(maxTextWidth + horizontalPadding);
+  }, [compact, displayRulesLines, groupedCardCount, manaCost, metadataText, objectName, statsText]);
   const topStackMatchesInspectorObject = useMemo(() => {
     if (!topStackObject) return false;
     if (objectIdNum != null && topStackId === String(objectIdNum)) return true;
@@ -399,14 +320,22 @@ export default function HoverArtOverlay({
     if (objectName && topStackName && topStackName === String(objectName)) return true;
     return false;
   }, [topStackObject, objectIdNum, topStackId, detailStableId, topStackStableId, objectName, topStackName]);
+  const highlightedStackObject = useMemo(() => {
+    if (hoveredStackObject) return hoveredStackObject;
+    if (topStackMatchesInspectorObject) return topStackObject;
+    return null;
+  }, [hoveredStackObject, topStackMatchesInspectorObject, topStackObject]);
+  const highlightedStackAbilityText = String(highlightedStackObject?.ability_text || "").trim();
+  const highlightedStackEffectText = String(highlightedStackObject?.effect_text || "").trim();
+  const highlightedStackAbilityKind = String(highlightedStackObject?.ability_kind || "").toLowerCase();
   const highlightedRuleLineIndices = useMemo(() => {
     const indices = new Set();
-    if (!topStackMatchesInspectorObject) return indices;
+    if (!highlightedStackObject) return indices;
     if (!displayRulesLines.length) return indices;
 
     const stackAbilityText = (
-      topStackAbilityText
-      || topStackEffectText
+      highlightedStackAbilityText
+      || highlightedStackEffectText
     );
     if (stackAbilityText) {
       let bestScore = 0;
@@ -428,7 +357,7 @@ export default function HoverArtOverlay({
     }
 
     if (indices.size === 0) {
-      const kind = topStackAbilityKind;
+      const kind = highlightedStackAbilityKind;
       if (kind.includes("trigger")) {
         const triggerIndex = displayRulesLines.findIndex((line) => (
           /^(when|whenever|at the beginning)\b/i.test(String(line).trim())
@@ -441,7 +370,13 @@ export default function HoverArtOverlay({
     }
 
     return indices;
-  }, [topStackMatchesInspectorObject, displayRulesLines, topStackAbilityText, topStackEffectText, topStackAbilityKind]);
+  }, [
+    highlightedStackObject,
+    displayRulesLines,
+    highlightedStackAbilityText,
+    highlightedStackEffectText,
+    highlightedStackAbilityKind,
+  ]);
   const rawDefinition = details?.raw_compilation || "";
   const canCopyDebug = compiledText.trim().length > 0 || rawDefinition.trim().length > 0;
   const debugClipboardText = [
@@ -482,16 +417,6 @@ export default function HoverArtOverlay({
       // ignore
     }
   }, [canCopyDebug, debugClipboardText]);
-
-  const triggerInspectorAction = useCallback((event, action) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!action) return;
-    dispatch(
-      { type: "priority_action", action_index: action.index },
-      action.label
-    );
-  }, [dispatch]);
 
   useEffect(() => {
     if (!copiedDebug) return;
@@ -561,54 +486,72 @@ export default function HoverArtOverlay({
       window.removeEventListener("resize", publishOracleHeight);
       onOracleTextHeightChange(0);
     };
-  }, [onOracleTextHeightChange, displayRulesText, highlightedRuleLineIndices, metadataText, statsText, hideOracleText]);
+  }, [onOracleTextHeightChange, displayRulesText, highlightedRuleLineIndices, metadataText, statsText]);
 
-  const resolvingEffectText = useMemo(() => {
-    if (!inspectorDecision) return null;
-    const kind = String(topStackObject?.ability_kind || "").trim().toLowerCase();
-    if (kind.includes("trigger")) return "Triggered ability";
-    if (kind.includes("activat")) return "Activated ability";
-    if (kind.includes("mana")) return "Mana ability";
-    return "Spell";
-  }, [inspectorDecision, topStackObject?.ability_kind]);
-  const inspectorDecisionSubtitle = inspectorDecision
-    ? [inspectorDecision.source_name || topStackObject?.name || objectName, resolvingEffectText]
-      .filter(Boolean)
-      .join(" · ")
-    : null;
-  const oracleTopPaddingClass = inspectorDecision
-    ? "pt-[382px]"
-    : inspectorActionGroups.length > 0
-      ? "pt-[246px]"
-      : "pt-[164px]";
-  const inspectorActionTotalCount = useMemo(
-    () => inspectorActionGroups.reduce((sum, group) => sum + group.count, 0),
-    [inspectorActionGroups]
-  );
-  const submitLabel = submitAction?.label || "Submit";
-  const canSubmit = canAct
-    && !!submitAction
-    && !submitAction.disabled
-    && typeof submitAction.onSubmit === "function";
-
-  useEffect(() => {
-    if (!onInspectorSubmitChange || inspectorDecision) return;
-    onInspectorSubmitChange(null);
-  }, [onInspectorSubmitChange, inspectorDecision]);
+  useLayoutEffect(() => {
+    if (typeof onPreferredWidthChange !== "function") return;
+    onPreferredWidthChange(preferredInlineWidth);
+  }, [onPreferredWidthChange, preferredInlineWidth, objectIdKey]);
 
   useEffect(
     () => () => {
-      if (onInspectorSubmitChange) onInspectorSubmitChange(null);
+      if (typeof onPreferredWidthChange === "function") {
+        onPreferredWidthChange(null);
+      }
     },
-    [onInspectorSubmitChange]
+    [onPreferredWidthChange]
   );
+
+  useLayoutEffect(() => {
+    const scroller = oracleScrollRef.current;
+    if (!scroller) return;
+
+    const highlightedIndices = Array.from(highlightedRuleLineIndices).sort((a, b) => a - b);
+    if (highlightedIndices.length === 0) return;
+
+    const firstNode = ruleLineRefs.current.get(highlightedIndices[0]);
+    const lastNode = ruleLineRefs.current.get(highlightedIndices[highlightedIndices.length - 1]);
+    if (!firstNode || !lastNode) return;
+
+    const containerRect = scroller.getBoundingClientRect();
+    const firstRect = firstNode.getBoundingClientRect();
+    const lastRect = lastNode.getBoundingClientRect();
+
+    const targetTop = firstRect.top - containerRect.top + scroller.scrollTop;
+    const targetBottom = lastRect.bottom - containerRect.top + scroller.scrollTop;
+    const viewTop = scroller.scrollTop;
+    const viewBottom = viewTop + scroller.clientHeight;
+    const margin = 8;
+
+    if (targetTop < viewTop + margin) {
+      scroller.scrollTop = Math.max(0, targetTop - margin);
+      return;
+    }
+    if (targetBottom > viewBottom - margin) {
+      scroller.scrollTop = Math.max(0, targetBottom - scroller.clientHeight + margin);
+    }
+  }, [objectIdKey, highlightedRuleLineIndices, displayRulesText]);
+
+  const oracleTopPaddingClass = compact ? "pt-[72px]" : "pt-[164px]";
+  const oracleContainerClass = compact
+    ? `relative z-10 px-2.5 ${oracleTopPaddingClass} pb-2`
+    : `relative z-10 min-h-full flex flex-col justify-end px-2.5 ${oracleTopPaddingClass} pb-2.5`;
+  const topMetadataTextClassName = compact
+    ? "text-[11px] leading-snug text-[#d1e2f6] text-right"
+    : "text-[13px] leading-snug text-[#d1e2f6] text-right";
+  const rulesTextClassName = compact
+    ? "text-[15px] leading-[1.28] text-white font-extrabold"
+    : "text-[18px] leading-[1.32] text-white font-extrabold";
 
   if (!imageUrl || imageErrored || suppressObject) return null;
 
   return (
     <div
       key={imageUrl}
-      className="hover-art-stage hover-art-drop-in absolute inset-0 z-30 pointer-events-none overflow-hidden"
+      className={cn(
+        "hover-art-stage hover-art-drop-in absolute inset-0 z-30 overflow-hidden",
+        compact ? "pointer-events-auto" : "pointer-events-none"
+      )}
     >
       <div className="hover-art-slice-in hover-art-media absolute inset-0">
         <img
@@ -621,15 +564,18 @@ export default function HoverArtOverlay({
           onError={() => setFailedImageUrl(imageUrl)}
         />
       </div>
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(4,8,14,0.05)_0%,rgba(4,8,14,0.2)_50%,rgba(4,8,14,0.66)_100%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.08)_0%,rgba(0,0,0,0.16)_48%,rgba(0,0,0,0.3)_100%)]" />
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute inset-x-0 bottom-0 top-[30%] bg-[linear-gradient(180deg,rgba(4,8,14,0)_0%,rgba(4,8,14,0.76)_44%,rgba(4,8,14,0.96)_100%)] backdrop-blur-[1.6px]" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[34%] bg-[linear-gradient(180deg,rgba(0,0,0,0)_0%,rgba(0,0,0,0.52)_46%,rgba(0,0,0,0.74)_100%)] backdrop-blur-[2.4px]" />
         <div ref={topHeaderRef} className="absolute top-0 left-0 z-10 flex flex-col items-start gap-0">
           {objectName && (
-            <div className="bg-[rgba(5,11,20,0.8)] px-3 py-1.5 text-[22px] font-extrabold leading-[1.02] tracking-[0.02em] text-[#f3f8ff]">
+            <div className={cn(
+              "rounded-r-sm bg-[linear-gradient(90deg,rgba(0,0,0,0.66)_0%,rgba(0,0,0,0.44)_82%,rgba(0,0,0,0.12)_100%)] px-3 py-1.5 font-extrabold leading-[1.02] tracking-[0.02em] text-[#f3f8ff] backdrop-blur-[2px]",
+              compact ? "text-[17px]" : "text-[22px]"
+            )}>
               <span className="inline-flex items-center gap-2">
                 {groupedCardCount > 1 && (
-                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-sm bg-[rgba(12,20,31,0.9)] px-1 text-[12px] font-bold leading-none tracking-wide text-[#f5d08b]">
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-sm border border-[#f5d08b]/70 bg-[rgba(0,0,0,0.45)] px-1 text-[12px] font-bold leading-none tracking-wide text-[#f5d08b]">
                     x{groupedCardCount}
                   </span>
                 )}
@@ -637,109 +583,37 @@ export default function HoverArtOverlay({
               </span>
             </div>
           )}
-          {manaCost && (
-            <div className="bg-[rgba(5,11,20,0.8)] px-3 py-1.5">
-              <ManaCostIcons cost={manaCost} size={20} />
-            </div>
-          )}
         </div>
-        {inspectorActionGroups.length > 0 && (
-          <div className="absolute top-[88px] left-2 right-2 z-[11] overflow-hidden rounded border border-[#5f7f9f] bg-[rgba(7,16,26,0.88)] shadow-[0_12px_26px_rgba(0,0,0,0.5)] pointer-events-auto backdrop-blur-[1.5px]">
-            <div className="border-b border-[#35506b] px-2.5 py-1.5">
-              <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#8cc4ff]">
-                Choose Action
-              </div>
-              <div className="text-[11px] text-[#b8d2ef]">
-                {inspectorActionGroups.length} option{inspectorActionGroups.length === 1 ? "" : "s"}
-                {inspectorActionTotalCount > inspectorActionGroups.length && (
-                  <span>{` (${inspectorActionTotalCount} total)`}</span>
+        {(manaCost || statsText || metadataText) && (
+          <div className="absolute top-0 right-0 z-10 flex max-w-[78%] flex-col items-end gap-0">
+            {(manaCost || statsText) && (
+              <div className="flex items-center gap-1.5">
+                {manaCost && (
+                  <div className="rounded-sm bg-[rgba(0,0,0,0.52)] px-2 py-1 backdrop-blur-[1.8px]">
+                    <ManaCostIcons cost={manaCost} size={compact ? 14 : 18} />
+                  </div>
+                )}
+                {statsText && (
+                  <div
+                    className={cn(
+                      "rounded-sm bg-[rgba(0,0,0,0.52)] px-2.5 py-1 text-[#f8d98e] tracking-wide text-right backdrop-blur-[1.8px]",
+                      compact ? "text-[15px] font-extrabold leading-none" : "text-[20px] font-extrabold leading-none"
+                    )}
+                    style={METADATA_TEXT_STYLE}
+                  >
+                    {statsText}
+                  </div>
                 )}
               </div>
-            </div>
-            <div className="max-h-[152px] overflow-y-auto divide-y divide-[#2f4965]">
-              {inspectorActionGroups.map((group) => (
-                <button
-                  key={group.key}
-                  type="button"
-                  data-inspector-action="true"
-                  className="flex w-full items-start gap-2 px-3 py-1.5 text-left transition-colors hover:bg-[rgba(18,35,54,0.9)]"
-                  onClick={(event) => triggerInspectorAction(event, group.action)}
-                >
-                  {group.count > 1 && (
-                    <span className="mt-[1px] inline-flex h-4 min-w-4 items-center justify-center rounded-sm bg-[rgba(12,20,31,0.88)] px-1 text-[10px] font-bold leading-none tracking-wide text-[#f5d08b]">
-                      x{group.count}
-                    </span>
-                  )}
-                  <SymbolText
-                    text={normalizeDecisionText(group.label)}
-                    className="block text-[18px] font-extrabold leading-[1.12] text-[#f2f8ff]"
-                    style={ORACLE_TEXT_STYLE}
-                  />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {inspectorDecision && (
-          <div
-            className={cn(
-              "absolute inset-x-2 top-[88px] z-[12] min-h-0 overflow-hidden rounded border border-[#5d7ea0] bg-[linear-gradient(180deg,rgba(6,14,22,0.76),rgba(6,14,22,0.9))] shadow-[0_16px_34px_rgba(0,0,0,0.55)] pointer-events-auto backdrop-blur-[2.2px] flex flex-col",
-              hasStackEntries ? "bottom-[176px]" : "bottom-[8px]"
             )}
-          >
-            <div className="border-b border-[#3c5876] bg-[rgba(8,19,31,0.9)] px-2.5 py-1.5">
-              <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#8cc4ff]">
-                {inspectorDecisionTitle(inspectorDecision)}
+            {metadataText && (
+              <div
+                className={cn("rounded-sm bg-[rgba(0,0,0,0.48)] px-2.5 py-1 backdrop-blur-[1.8px]", topMetadataTextClassName)}
+                style={METADATA_TEXT_STYLE}
+              >
+                {metadataText}
               </div>
-              {inspectorDecisionSubtitle && (
-                <SymbolText
-                  text={normalizeDecisionText(inspectorDecisionSubtitle)}
-                  className="mt-0.5 block text-[13px] leading-snug text-[#d2e5fb]"
-                />
-              )}
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1">
-              <DecisionRouter
-                decision={inspectorDecision}
-                canAct={canAct}
-                inspectorOracleTextHeight={0}
-                inlineSubmit={false}
-                onSubmitActionChange={onInspectorSubmitChange}
-                hideDescription
-              />
-            </div>
-            <article className="shrink-0 border-t border-[#3c5876] bg-[rgba(8,18,30,0.88)] px-2 py-1.5">
-              <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9dccff]">
-                Current Decision
-              </div>
-              <div className="mt-1 grid grid-cols-2 gap-1.5">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 rounded-sm border border-[#3d6ea5] bg-[rgba(40,84,136,0.78)] px-2 text-[12px] font-bold tracking-wide text-[#d9ecff] transition-colors hover:bg-[rgba(58,114,182,0.9)]"
-                  disabled={!canSubmit}
-                  onClick={() => {
-                    if (!canSubmit) return;
-                    submitAction.onSubmit();
-                  }}
-                >
-                  {submitLabel}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 rounded-sm border border-[#8b3f4a] bg-[rgba(120,35,46,0.76)] px-2 text-[12px] font-bold uppercase tracking-wide text-[#ffd8df] transition-colors hover:bg-[rgba(163,50,64,0.9)]"
-                  disabled={!canAct}
-                  onClick={() => {
-                    cancelDecision();
-                  }}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </article>
+            )}
           </div>
         )}
         {inspectorDebug && (
@@ -776,51 +650,47 @@ export default function HoverArtOverlay({
           </div>
         )}
 
-        {!inspectorDecision && (
-          <div className="absolute inset-x-0 top-0 bottom-[172px] overflow-y-auto">
-            <div className={`relative z-10 min-h-full flex flex-col justify-end px-2.5 ${oracleTopPaddingClass} pb-2.5`}>
-              <div ref={oracleBodyRef} className="space-y-1">
-                {statsText && (
-                  <div
-                    className="text-[20px] font-extrabold leading-none text-[#f8d98e] tracking-wide text-right"
-                    style={METADATA_TEXT_STYLE}
-                  >
-                    {statsText}
-                  </div>
-                )}
-                {metadataText && (
-                  <div
-                    className="text-[15px] leading-snug text-[#d1e2f6]"
-                    style={METADATA_TEXT_STYLE}
-                  >
-                    {metadataText}
-                  </div>
-                )}
-                {displayRulesLines.length > 0 && (
-                  <div className="space-y-0.5">
-                    {displayRulesLines.map((line, lineIndex) => (
-                      <div
-                        key={`${lineIndex}-${line.slice(0, 32)}`}
+        <div
+          ref={oracleScrollRef}
+          className="inspector-oracle-scroll absolute inset-x-0 top-0 overflow-y-auto pointer-events-auto overscroll-contain touch-pan-y"
+          style={{ bottom: `${Math.max(0, stackTimelineHeight - 4)}px` }}
+        >
+          <div className={oracleContainerClass}>
+            <div ref={oracleBodyRef} className="space-y-1">
+              {displayRulesLines.length > 0 && (
+                <div className="space-y-0.5">
+                  {displayRulesLines.map((line, lineIndex) => (
+                    <div
+                      key={`${lineIndex}-${line.slice(0, 32)}`}
+                      ref={(node) => {
+                        if (node) {
+                          ruleLineRefs.current.set(lineIndex, node);
+                        } else {
+                          ruleLineRefs.current.delete(lineIndex);
+                        }
+                      }}
+                      className={cn(
+                        "inline-block max-w-full"
+                      )}
+                    >
+                      <SymbolText
+                        text={line}
                         className={cn(
-                          "rounded-sm px-1 -mx-1",
+                          rulesTextClassName,
+                          "inspector-oracle-chip",
                           highlightedRuleLineIndices.has(lineIndex)
-                            ? "bg-[linear-gradient(90deg,rgba(0,0,0,0.82)_0%,rgba(0,0,0,0.74)_65%,rgba(0,0,0,0.48)_100%)] ring-1 ring-[rgba(255,255,255,0.2)] shadow-[inset_0_0_22px_rgba(0,0,0,0.78),0_0_18px_rgba(0,0,0,0.62)]"
+                            ? "inspector-rule-highlight border-y"
                             : ""
                         )}
-                      >
-                        <SymbolText
-                          text={hideOracleText ? "" : line}
-                          className="text-[18px] leading-[1.32] text-[#ecf4ff] block"
-                          style={ORACLE_TEXT_STYLE}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                        style={ORACLE_TEXT_STYLE}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

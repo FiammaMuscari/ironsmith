@@ -5886,24 +5886,26 @@ fn parse_triggered_granted_ability(tokens: &[Token]) -> Result<Option<Ability>, 
             effects,
             max_triggers_per_turn,
         } => {
-            let (compiled_effects, choices) = compile_trigger_effects(Some(&trigger), &effects)?;
-            if compiled_effects.is_empty() {
+            let parsed = parsed_triggered_ability(
+                trigger,
+                effects,
+                vec![Zone::Battlefield],
+                Some(words(&trigger_tokens).join(" ")),
+                max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
+                None,
+            );
+            let parsed = lower_parsed_ability(parsed)?;
+            let ability = parsed.ability;
+            if matches!(
+                &ability.kind,
+                AbilityKind::Triggered(triggered) if triggered.effects.is_empty()
+            ) {
                 return Err(CardTextError::ParseError(format!(
                     "unsupported empty triggered granted ability clause (clause: '{}')",
                     words(&trigger_tokens).join(" ")
                 )));
             }
-            Ability {
-                kind: AbilityKind::Triggered(TriggeredAbility {
-                    trigger: compile_trigger_spec(trigger),
-                    effects: compiled_effects,
-                    choices,
-                    intervening_if: max_triggers_per_turn
-                        .map(crate::ConditionExpr::MaxTimesEachTurn),
-                }),
-                functional_zones: vec![Zone::Battlefield],
-                text: Some(words(&trigger_tokens).join(" ")),
-            }
+            ability
         }
         _ => return Ok(None),
     };
@@ -8830,24 +8832,26 @@ pub(crate) fn parse_attached_has_keywords_and_triggered_ability_line(
             effects,
             max_triggers_per_turn,
         } => {
-            let (compiled_effects, choices) = compile_trigger_effects(Some(&trigger), &effects)?;
-            if compiled_effects.is_empty() {
+            let parsed = parsed_triggered_ability(
+                trigger,
+                effects,
+                vec![Zone::Battlefield],
+                Some(words(&trigger_tokens).join(" ")),
+                max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
+                None,
+            );
+            let parsed = lower_parsed_ability(parsed)?;
+            let ability = parsed.ability;
+            if matches!(
+                &ability.kind,
+                AbilityKind::Triggered(triggered) if triggered.effects.is_empty()
+            ) {
                 return Err(CardTextError::ParseError(format!(
                     "unsupported empty attached triggered grant clause (clause: '{}')",
                     clause_text
                 )));
             }
-            Ability {
-                kind: AbilityKind::Triggered(TriggeredAbility {
-                    trigger: compile_trigger_spec(trigger),
-                    effects: compiled_effects,
-                    choices,
-                    intervening_if: max_triggers_per_turn
-                        .map(crate::ConditionExpr::MaxTimesEachTurn),
-                }),
-                functional_zones: vec![Zone::Battlefield],
-                text: Some(words(&trigger_tokens).join(" ")),
-            }
+            ability
         }
         _ => {
             return Err(CardTextError::ParseError(format!(
@@ -9050,28 +9054,26 @@ pub(crate) fn parse_attached_gets_and_has_ability_line(
         max_triggers_per_turn,
     } = parse_triggered_line(&ability_tokens)?
     {
-        let (compiled_effects, choices) = compile_trigger_effects(Some(&trigger), &effects)?;
-        if compiled_effects.is_empty() {
+        let parsed = parsed_triggered_ability(
+            trigger,
+            effects,
+            vec![Zone::Battlefield],
+            Some(words(&ability_tokens).join(" ")),
+            max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
+            None,
+        );
+        let parsed = lower_parsed_ability(parsed)?;
+        let triggered = parsed.ability;
+        if matches!(
+            &triggered.kind,
+            AbilityKind::Triggered(inner) if inner.effects.is_empty()
+        ) {
             return Err(CardTextError::ParseError(format!(
                 "unsupported empty attached triggered grant clause (clause: '{}')",
                 line_words.join(" ")
             )));
         }
-        let mut intervening_if = None;
-        if let Some(max) = max_triggers_per_turn {
-            intervening_if = Some(crate::ConditionExpr::MaxTimesEachTurn(max));
-        }
         let text = words(&ability_tokens).join(" ");
-        let triggered = Ability {
-            kind: AbilityKind::Triggered(TriggeredAbility {
-                trigger: compile_trigger_spec(trigger),
-                effects: compiled_effects,
-                choices,
-                intervening_if,
-            }),
-            functional_zones: vec![Zone::Battlefield],
-            text: Some(text.clone()),
-        };
         let grant = grant_object_ability_for_anthem_subject(&clause, triggered, text);
         return Ok(Some(vec![anthem, grant]));
     }
@@ -10500,25 +10502,25 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                 effects,
                 max_triggers_per_turn,
             } => {
-                let (compiled_effects, choices) =
-                    compile_trigger_effects(Some(&trigger), &effects)?;
-                if compiled_effects.is_empty() {
+                let parsed = parsed_triggered_ability(
+                    trigger,
+                    effects,
+                    vec![Zone::Battlefield],
+                    None,
+                    max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
+                    None,
+                );
+                let parsed = lower_parsed_ability(parsed)?;
+                if matches!(
+                    &parsed.ability.kind,
+                    AbilityKind::Triggered(inner) if inner.effects.is_empty()
+                ) {
                     return Err(CardTextError::ParseError(format!(
                         "unsupported empty granted triggered ability clause (clause: '{}')",
                         clause_words.join(" ")
                     )));
                 }
-                granted_object_abilities.push(Ability {
-                    kind: AbilityKind::Triggered(TriggeredAbility {
-                        trigger: compile_trigger_spec(trigger),
-                        effects: compiled_effects,
-                        choices,
-                        intervening_if: max_triggers_per_turn
-                            .map(crate::ConditionExpr::MaxTimesEachTurn),
-                    }),
-                    functional_zones: vec![Zone::Battlefield],
-                    text: None,
-                });
+                granted_object_abilities.push(parsed.ability);
             }
             _ => {
                 return Err(CardTextError::ParseError(format!(

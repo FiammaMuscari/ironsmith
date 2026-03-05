@@ -5,6 +5,11 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { X, ArrowRight } from "lucide-react";
 
+const STRIP_ITEM_BASE_CLASS = "h-8 max-w-[360px] min-w-[120px] justify-start self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] px-2.5 text-[12px] font-semibold text-[rgba(206,223,242,0.52)] transition-all hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]";
+const STRIP_ITEM_ACTIVE_CLASS = "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]";
+const STRIP_ITEM_DISABLED_CLASS = "border-l-[rgba(63,79,98,0.6)] bg-[rgba(8,15,23,0.76)] text-[#5f7590] hover:border-l-[rgba(63,79,98,0.6)] hover:bg-[rgba(8,15,23,0.76)] hover:text-[#5f7590] hover:shadow-none";
+const STRIP_META_ITEM_CLASS = "inline-flex h-8 max-w-[460px] min-w-[220px] items-center self-stretch rounded-none border-0 border-l-2 border-l-[rgba(93,121,148,0.52)] bg-[rgba(10,18,28,0.62)] px-2.5 text-[12px] font-semibold text-[#9cc2e6] whitespace-nowrap";
+
 function targetObjectId(target) {
   if (!target || target.kind === "player") return null;
   if (target.object != null) return String(target.object);
@@ -110,6 +115,7 @@ function ActiveRequirementTargets({
   onSkipRequirement,
   showSkip,
   skipLabel,
+  horizontal = false,
 }) {
   const legalTargets = req.legal_targets || [];
   const objectTargets = legalTargets.filter((target) => targetObjectId(target) != null);
@@ -152,6 +158,7 @@ function ActiveRequirementTargets({
   );
 
   useEffect(() => {
+    if (horizontal) return undefined;
     const contentNode = panelContentRef.current;
     if (!contentNode) return undefined;
 
@@ -187,7 +194,7 @@ function ActiveRequirementTargets({
         heightAnimationFrameRef.current = null;
       }
     };
-  }, [showRows, showSkip, visibleTargets.length, optionsMaxHeight]);
+  }, [horizontal, showRows, showSkip, visibleTargets.length, optionsMaxHeight]);
 
   useEffect(() => {
     if (!hasHoverMatch || hoveredObjectId == null) return;
@@ -197,6 +204,84 @@ function ActiveRequirementTargets({
     if (!node) return;
     node.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
   }, [hasHoverMatch, hoveredObjectId, visibleTargets]);
+
+  const targetButtons = visibleTargets.map((target, tIdx) => {
+    const listKey = targetListKey(target);
+    const isSelected = selectedTargets.some((selection) => targetsMatch(selection, target));
+    const isHoveredTarget =
+      hoveredObjectId != null && listKey === `object:${String(hoveredObjectId)}`;
+    const isUnavailable = !isSelected && (!isActive || !canSelectMore);
+    const label =
+      target.kind === "player"
+        ? target.name || `Player ${target.player}`
+        : target.name || `Object ${target.object}`;
+    return (
+      <Button
+        key={`${listKey}:${tIdx}`}
+        variant="ghost"
+        size="sm"
+        className={cn(
+          horizontal
+            ? STRIP_ITEM_BASE_CLASS
+            : "h-7 w-full justify-start rounded-none border-0 bg-[rgba(15,27,40,0.9)] px-2.5 text-[13px] text-[#c7dbf2] transition-all hover:bg-[rgba(25,44,66,0.95)] hover:text-[#eaf3ff]",
+          horizontal && isSelected && STRIP_ITEM_ACTIVE_CLASS,
+          !horizontal && isSelected && "bg-[rgba(36,58,84,0.72)] text-[#eaf4ff]",
+          horizontal && !isSelected && isHoveredTarget && STRIP_ITEM_ACTIVE_CLASS,
+          !horizontal && !isSelected && isHoveredTarget && "bg-[rgba(25,47,71,0.94)] text-[#d9ecff]",
+          isUnavailable
+            && (horizontal
+              ? STRIP_ITEM_DISABLED_CLASS
+              : "bg-[rgba(12,20,30,0.72)] text-[#647f99] hover:bg-[rgba(12,20,30,0.72)] hover:text-[#647f99]")
+        )}
+        disabled={!canAct || isUnavailable}
+        onClick={() =>
+          onSelectTarget(target, reqIdx, { toggleExisting: true, strictRequirement: true })}
+        ref={(node) => {
+          if (node) {
+            targetButtonRefs.current.set(listKey, node);
+          } else {
+            targetButtonRefs.current.delete(listKey);
+          }
+        }}
+      >
+        {label}
+      </Button>
+    );
+  });
+
+  if (horizontal) {
+    return (
+      <div
+        className={cn(
+          "transition-all duration-200",
+          showRows ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1 pointer-events-none"
+        )}
+      >
+        <div className="flex min-w-max items-center gap-1.5 py-0.5">
+          <div className={cn(STRIP_META_ITEM_CLASS, !isActive && "opacity-80")}>
+            {header}
+          </div>
+          {targetButtons}
+          {!showRows && (
+            <div className="px-2 text-[12px] italic text-[#89a7c7] whitespace-nowrap">
+              No legal targets.
+            </div>
+          )}
+          {showSkip && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(STRIP_ITEM_BASE_CLASS, "h-8 min-w-[140px]")}
+              disabled={!canAct}
+              onClick={onSkipRequirement}
+            >
+              {skipLabel}
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full">
@@ -210,50 +295,12 @@ function ActiveRequirementTargets({
           {header}
         </div>
         <div
-          className="w-full overflow-y-auto overflow-x-hidden border-b border-[#2f4b67] bg-[rgba(10,20,30,0.45)] transition-[max-height] duration-300 ease-out"
+          className="w-full overflow-y-auto overflow-x-hidden transition-[max-height] duration-300 ease-out"
           style={{ maxHeight: `${panelMaxHeight}px` }}
         >
           <div ref={panelContentRef} className="w-full">
             <div className="w-full divide-y divide-[#2f4b67]">
-              {visibleTargets.map((target, tIdx) => {
-                const listKey = targetListKey(target);
-                const isSelected = selectedTargets.some((selection) => targetsMatch(selection, target));
-                const isHoveredTarget =
-                  hoveredObjectId != null && listKey === `object:${String(hoveredObjectId)}`;
-                const isUnavailable = !isSelected && (!isActive || !canSelectMore);
-                const label =
-                  target.kind === "player"
-                    ? target.name || `Player ${target.player}`
-                    : target.name || `Object ${target.object}`;
-                return (
-                  <Button
-                    key={`${listKey}:${tIdx}`}
-                    variant="ghost"
-                    size="sm"
-                    className={cn(
-                      "h-7 w-full justify-start rounded-none border-0 bg-[rgba(15,27,40,0.9)] px-2.5 text-[13px] text-[#c7dbf2] transition-all hover:bg-[rgba(25,44,66,0.95)] hover:text-[#eaf3ff]",
-                      isSelected
-                        && "bg-[rgba(36,58,84,0.72)] text-[#eaf4ff]",
-                      !isSelected && isHoveredTarget
-                        && "bg-[rgba(25,47,71,0.94)] text-[#d9ecff]",
-                      isUnavailable
-                        && "bg-[rgba(12,20,30,0.72)] text-[#647f99] hover:bg-[rgba(12,20,30,0.72)] hover:text-[#647f99]"
-                    )}
-                    disabled={!canAct || isUnavailable}
-                    onClick={() =>
-                      onSelectTarget(target, reqIdx, { toggleExisting: true, strictRequirement: true })}
-                    ref={(node) => {
-                      if (node) {
-                        targetButtonRefs.current.set(listKey, node);
-                      } else {
-                        targetButtonRefs.current.delete(listKey);
-                      }
-                    }}
-                  >
-                    {label}
-                  </Button>
-                );
-              })}
+              {targetButtons}
             </div>
           </div>
         </div>
@@ -262,7 +309,7 @@ function ActiveRequirementTargets({
         <Button
           variant="ghost"
           size="sm"
-          className="mt-1 h-6 w-full justify-start rounded-none border-x-0 border-y border-[#2a3d52] bg-[rgba(10,19,29,0.75)] px-2.5 text-[12px] !text-[#9ab6d3] hover:border-[#3f5f83] hover:bg-[rgba(17,30,46,0.92)] hover:!text-[#ddecff]"
+          className="mt-1 h-6 w-full justify-start rounded-none border-y border-x-0 border-[#2a3d52] bg-[rgba(10,19,29,0.75)] px-2.5 text-[12px] text-[#9ab6d3] hover:border-[#3f5f83] hover:bg-[rgba(17,30,46,0.92)] hover:text-[#ddecff]"
           disabled={!canAct}
           onClick={onSkipRequirement}
         >
@@ -279,8 +326,10 @@ export default function TargetsDecision({
   inspectorOracleTextHeight = 0,
   inlineSubmit = true,
   onSubmitActionChange = null,
+  layout = "panel",
 }) {
   const { dispatch, state } = useGame();
+  const stripLayout = layout === "strip";
   const hoveredObjectId = useHoveredObjectId();
   const requirements = decision.requirements || [];
   const { objectNames: objectNamesById, playerNames: playerNamesById } = useMemo(
@@ -465,9 +514,13 @@ export default function TargetsDecision({
   if (requirements.length === 0) return null;
 
   return (
-    <div className="flex w-full flex-col gap-1.5">
+    <div className="flex w-full min-w-0 flex-col gap-1.5">
       <div className="flex flex-col gap-1.5">
-        <div className="grid gap-1.5">
+        <div className={cn(
+          stripLayout
+            ? "flex min-w-0 gap-1.5 overflow-x-auto overflow-y-hidden pb-1"
+            : "grid gap-1.5"
+        )}>
           {requirements.map((req, reqIdx) => {
             const isActive = reqIdx === currentReqIdx && !allDone;
             const reqSelections = selectionsByReq[reqIdx] || [];
@@ -479,10 +532,23 @@ export default function TargetsDecision({
             const shouldShowSelectedChips = reqSelections.length > 0 && !isActive && !showCompletedOptions;
             const shouldShowTargetOptions = isActive || showCompletedOptions;
             const requirementHeader = (
-              <div className="text-[13px] text-[#b6cae1] leading-snug">
-                <span className="font-semibold text-[#d6e7fa]">Target {reqIdx + 1}:</span>{" "}
+              <div className={cn(
+                "leading-snug",
+                stripLayout
+                  ? "text-[12px] whitespace-nowrap text-[#9cc2e6]"
+                  : "text-[13px] text-[#b6cae1]"
+              )}>
+                <span className={cn(
+                  "font-semibold",
+                  stripLayout ? "text-[#c8def5]" : "text-[#d6e7fa]"
+                )}>
+                  Target {reqIdx + 1}:
+                </span>{" "}
                 {req.description || "Choose a target"}
-                <span className="ml-1 text-[12px] text-[#8ba4c1]">
+                <span className={cn(
+                  "ml-1 text-[12px]",
+                  stripLayout ? "text-[#86a6c8]" : "text-[#8ba4c1]"
+                )}>
                   ({reqMin}-{req.max_targets ?? req.legal_targets?.length ?? "?"}{isOptional ? ", optional" : ""})
                 </span>
               </div>
@@ -492,15 +558,25 @@ export default function TargetsDecision({
               <div
                 key={reqIdx}
                 className={cn(
-                  "rounded-sm px-1.5 py-1 border-l-2 border-[#2a3b4d] bg-[rgba(7,15,23,0.35)]",
-                  isActive && "border-[#5f9ad6] bg-[rgba(18,34,52,0.56)] shadow-[inset_0_0_0_1px_rgba(95,154,214,0.2)]"
+                  stripLayout
+                    ? "flex min-w-max items-center gap-1.5"
+                    : "rounded-sm border-l-2 border-[#2a3b4d] bg-[rgba(7,15,23,0.35)] px-1.5 py-1",
+                  !stripLayout && isActive && "border-[#5f9ad6] bg-[rgba(18,34,52,0.56)] shadow-[inset_0_0_0_1px_rgba(95,154,214,0.2)]"
                 )}
               >
-                {!shouldShowTargetOptions && <div className="mb-1">{requirementHeader}</div>}
+                {!shouldShowTargetOptions && !stripLayout && <div className="mb-1">{requirementHeader}</div>}
 
                 {/* Show current selections for this requirement */}
                 {shouldShowSelectedChips && (
-                  <div className="mb-1 flex flex-wrap gap-0.5">
+                  <div className={cn(
+                    "mb-1 flex",
+                    stripLayout ? "items-center gap-1.5 mb-0" : "flex-wrap gap-0.5"
+                  )}>
+                    {stripLayout && (
+                      <div className={STRIP_META_ITEM_CLASS}>
+                        {requirementHeader}
+                      </div>
+                    )}
                     {reqSelections.map((sel, selIdx) => {
                       const selectedName = pickBestTargetName({
                         target: sel,
@@ -519,7 +595,11 @@ export default function TargetsDecision({
                           key={selIdx}
                           variant="ghost"
                           size="sm"
-                          className="h-5 rounded-full border border-[#4a6f94] bg-[rgba(22,40,60,0.9)] px-1.5 text-[12px] text-[#d7e8fa] hover:border-[#6993bf] hover:bg-[rgba(29,52,78,0.95)]"
+                          className={cn(
+                            stripLayout
+                              ? cn(STRIP_ITEM_BASE_CLASS, STRIP_ITEM_ACTIVE_CLASS)
+                              : "h-5 rounded-full border border-[#4a6f94] bg-[rgba(22,40,60,0.9)] px-1.5 text-[12px] text-[#d7e8fa] hover:border-[#6993bf] hover:bg-[rgba(29,52,78,0.95)]"
+                          )}
                           disabled={!canAct}
                           onClick={() => handleRemoveTarget(reqIdx, selIdx)}
                         >
@@ -545,6 +625,7 @@ export default function TargetsDecision({
                     onSkipRequirement={handleSkipRequirement}
                     showSkip={isActive && (isOptional || currentMet) && !allDone}
                     skipLabel={isOptional ? "Skip (optional)" : <>Next requirement <ArrowRight className="size-3 inline" /></>}
+                    horizontal={stripLayout}
                   />
                 )}
               </div>
@@ -554,11 +635,14 @@ export default function TargetsDecision({
       </div>
 
       {inlineSubmit && (
-        <div className="w-full shrink-0 pt-1">
+        <div className={cn("w-full shrink-0", stripLayout ? "pt-0" : "pt-1")}>
           <Button
             variant="ghost"
             size="sm"
-            className="w-full h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
+            className={cn(
+              "h-7 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]",
+              stripLayout ? "w-auto ml-1" : "w-full"
+            )}
             disabled={!canAct || !canSubmit}
             onClick={handleSubmit}
           >

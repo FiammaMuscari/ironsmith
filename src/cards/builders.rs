@@ -245,6 +245,7 @@ pub(crate) struct ParsedAbility {
     ability: Ability,
     effects_ast: Option<Vec<EffectAst>>,
     seed_last_object_tag: Option<String>,
+    trigger_spec: Option<TriggerSpec>,
 }
 
 #[derive(Debug, Clone)]

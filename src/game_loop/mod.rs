@@ -53,7 +53,6 @@ use crate::rules::combat::{
 use crate::rules::damage::{
     DamageResult, DamageTarget, calculate_damage_with_game, distribute_trample_damage,
 };
-use crate::rules::state_based::{apply_state_based_actions_with, check_state_based_actions};
 use crate::snapshot::ObjectSnapshot;
 use crate::target::ChooseSpec;
 use crate::triggers::{

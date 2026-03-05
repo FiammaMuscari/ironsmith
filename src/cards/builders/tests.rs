@@ -2064,6 +2064,26 @@ fn test_parse_opponent_attacks_you_trigger_uses_one_or_more_mode() {
 }
 
 #[test]
+fn test_parse_attack_life_loss_uses_iterated_defending_player_attack_filter() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Within Range Probe")
+        .card_types(vec![CardType::Enchantment])
+        .parse_text(
+            "Whenever you attack, each opponent loses life equal to the number of creatures attacking them.",
+        )
+        .expect("attack life-loss trigger should parse");
+
+    let debug = format!("{:?}", def.abilities);
+    assert!(
+        debug.contains("AttacksTrigger") && debug.contains("one_or_more: true"),
+        "expected one-or-more attacks trigger, got {debug}"
+    );
+    assert!(
+        debug.contains("attacking_player_or_planeswalker_controlled_by: Some(IteratedPlayer)"),
+        "expected count filter to bind to iterated defending player, got {debug}"
+    );
+}
+
+#[test]
 fn test_parse_target_creature_you_control_fights_target_creature_you_dont_control() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Prey Upon Probe")
         .card_types(vec![CardType::Sorcery])
