@@ -2511,6 +2511,10 @@ fn test_parse_echo_keyword_line_with_mana_cost() {
         debug.contains("paymanaeffect"),
         "expected echo mana variant to include a mana payment effect, got {debug}"
     );
+    assert!(
+        debug.contains("withideffect"),
+        "expected echo trigger to track counter removal outcome with WithIdEffect, got {debug}"
+    );
 }
 
 #[test]
@@ -2540,6 +2544,10 @@ fn test_parse_echo_keyword_line_with_non_mana_cost() {
     assert!(
         debug.contains("unlessactioneffect"),
         "expected echo non-mana variant to use unless-action payment flow, got {debug}"
+    );
+    assert!(
+        debug.contains("withideffect"),
+        "expected echo trigger to track counter removal outcome with WithIdEffect, got {debug}"
     );
 }
 

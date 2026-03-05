@@ -314,6 +314,7 @@
   .attack-candidate,
   .blocker-candidate,
   .attack-selected,
+  .action-link,
   .inspected
 ) {
   box-shadow:
@@ -341,6 +342,7 @@
   .attack-candidate,
   .blocker-candidate,
   .attack-selected,
+  .action-link,
   .inspected
 ):hover,
 .game-card.field-card:is(
@@ -362,6 +364,7 @@
   .attack-candidate,
   .blocker-candidate,
   .attack-selected,
+  .action-link,
   .inspected
 ).hovered {
   transform: scale(1.03) translateY(-2px);
@@ -639,7 +642,8 @@
 
 .game-card.target-legal,
 .game-card.attack-candidate,
-.game-card.blocker-candidate {
+.game-card.blocker-candidate,
+.game-card.action-link {
   --aura-ring-1-strength: 1.24;
   --aura-ring-2-strength: 1.2;
   --aura-ring-1-inner: 47%;
@@ -652,6 +656,7 @@
 }
 
 .game-card.attack-selected,
+.game-card.action-link,
 .game-card.inspected {
   --aura-ring-1-strength: 1.32;
   --aura-ring-2-strength: 1.28;
@@ -686,7 +691,8 @@
 
 .game-card.target-legal,
 .game-card.attack-candidate,
-.game-card.blocker-candidate {
+.game-card.blocker-candidate,
+.game-card.action-link {
   --aura-inner-strength: 1.08;
 }
 
@@ -708,6 +714,7 @@
   .attack-candidate,
   .blocker-candidate,
   .attack-selected,
+  .action-link,
   .inspected
 ) .game-card-surface::before {
   animation: glow-aura-inner var(--aura-duration-inner) ease-in-out infinite;
@@ -731,6 +738,7 @@
 .game-card.attack-candidate::before,
 .game-card.blocker-candidate::before,
 .game-card.attack-selected::before,
+.game-card.action-link::before,
 .game-card.inspected::before {
   animation: glow-aura-primary var(--aura-duration-1) cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
   animation-delay: var(--aura-delay-1);
@@ -753,6 +761,7 @@
 .game-card.attack-candidate::after,
 .game-card.blocker-candidate::after,
 .game-card.attack-selected::after,
+.game-card.action-link::after,
 .game-card.inspected::after {
   animation: none;
   opacity: calc((var(--aura-opacity-2-min) * 0.14) + (var(--aura-opacity-2-max) * 0.1) + 0.008);
@@ -1122,6 +1131,30 @@
     inset 0 0 8px 3px rgba(255, 59, 48, 0.35) !important;
 }
 
+.game-card.action-link {
+  --glow-rgb: 255, 255, 255;
+  --aura-opacity-1-min: 0.3;
+  --aura-opacity-1-max: 0.66;
+  --aura-opacity-2-min: 0.16;
+  --aura-opacity-2-max: 0.38;
+  --aura-duration-1: 2.15s;
+  --aura-duration-2: 3.2s;
+  box-shadow:
+    0 0 14px 4px rgba(255, 255, 255, 0.66),
+    0 0 28px 8px rgba(255, 255, 255, 0.31),
+    inset 0 0 8px 3px rgba(255, 255, 255, 0.36) !important;
+}
+
+.game-card.action-link:hover,
+.game-card.action-link.hovered {
+  transform: translateY(-2px) scale(1.055);
+  z-index: 9;
+  box-shadow:
+    0 0 20px 7px rgba(255, 255, 255, 0.78),
+    0 0 40px 14px rgba(255, 255, 255, 0.4),
+    inset 0 0 12px 4px rgba(255, 255, 255, 0.48) !important;
+}
+
 .game-card.attack-selected:hover,
 .game-card.attack-selected.hovered {
   transform: translateY(-2px) scale(1.055);
@@ -1480,6 +1513,15 @@
   }
   50% {
     filter: brightness(1.15);
+  }
+}
+
+@keyframes action-pill-carousel {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-1 * var(--action-pill-carousel-distance, 0px)));
   }
 }
 

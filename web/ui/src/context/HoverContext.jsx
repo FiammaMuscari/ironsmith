@@ -1,29 +1,52 @@
 import { createContext, useContext, useState, useCallback, useMemo } from "react";
 
 const HoverStateContext = createContext(undefined);
+const HoverLinkedObjectsContext = createContext(undefined);
 const HoverActionsContext = createContext(undefined);
 
 export function HoverProvider({ children }) {
   const [hoveredObjectId, setHoveredObjectId] = useState(null);
+  const [hoveredLinkedObjectIds, setHoveredLinkedObjectIds] = useState(() => new Set());
 
   const hoverCard = useCallback((objectId) => {
     setHoveredObjectId(objectId != null ? String(objectId) : null);
   }, []);
 
+  const setHoverLinkedObjects = useCallback((objectIds) => {
+    if (!objectIds) {
+      setHoveredLinkedObjectIds(new Set());
+      return;
+    }
+    const ids = Array.isArray(objectIds) ? objectIds : Array.from(objectIds);
+    const normalized = new Set(
+      ids
+        .filter((id) => id != null)
+        .map((id) => String(id))
+    );
+    setHoveredLinkedObjectIds(normalized);
+  }, []);
+
+  const clearHoverLinkedObjects = useCallback(() => {
+    setHoveredLinkedObjectIds(new Set());
+  }, []);
+
   const clearHover = useCallback(() => {
     setHoveredObjectId(null);
+    setHoveredLinkedObjectIds(new Set());
   }, []);
 
   const actions = useMemo(
-    () => ({ hoverCard, clearHover }),
-    [hoverCard, clearHover]
+    () => ({ hoverCard, clearHover, setHoverLinkedObjects, clearHoverLinkedObjects }),
+    [hoverCard, clearHover, setHoverLinkedObjects, clearHoverLinkedObjects]
   );
 
   return (
     <HoverStateContext.Provider value={hoveredObjectId}>
-      <HoverActionsContext.Provider value={actions}>
-        {children}
-      </HoverActionsContext.Provider>
+      <HoverLinkedObjectsContext.Provider value={hoveredLinkedObjectIds}>
+        <HoverActionsContext.Provider value={actions}>
+          {children}
+        </HoverActionsContext.Provider>
+      </HoverLinkedObjectsContext.Provider>
     </HoverStateContext.Provider>
   );
 }
@@ -44,6 +67,22 @@ export function useHoverActions() {
 
 export function useHover() {
   const hoveredObjectId = useHoveredObjectId();
-  const { hoverCard, clearHover } = useHoverActions();
-  return { hoveredObjectId, hoverCard, clearHover };
+  const hoveredLinkedObjectIds = useContext(HoverLinkedObjectsContext);
+  if (hoveredLinkedObjectIds === undefined) {
+    throw new Error("useHover must be inside HoverProvider");
+  }
+  const {
+    hoverCard,
+    clearHover,
+    setHoverLinkedObjects,
+    clearHoverLinkedObjects,
+  } = useHoverActions();
+  return {
+    hoveredObjectId,
+    hoveredLinkedObjectIds,
+    hoverCard,
+    clearHover,
+    setHoverLinkedObjects,
+    clearHoverLinkedObjects,
+  };
 }

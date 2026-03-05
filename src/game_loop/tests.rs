@@ -1229,6 +1229,65 @@ mod tests {
     }
 
     #[test]
+    fn test_echo_upkeep_trigger_without_payment_sacrifices_source() {
+        use crate::ability::AbilityKind;
+        use crate::cards::CardDefinitionBuilder;
+        use crate::ids::CardId;
+        use crate::object::CounterType;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let mogg_war_marshal = CardDefinitionBuilder::new(CardId::new(), "Mogg War Marshal")
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(1, 1))
+            .parse_text(
+                "Echo {1}{R} (At the beginning of your upkeep, if this came under your control since the beginning of your last upkeep, sacrifice it unless you pay its echo cost.)",
+            )
+            .expect("echo ability should parse");
+        let marshal_id =
+            game.create_object_from_definition(&mogg_war_marshal, alice, Zone::Battlefield);
+        game.object_mut(marshal_id)
+            .expect("mogg war marshal should exist")
+            .counters
+            .insert(CounterType::Echo, 1);
+
+        let echo_effects = game
+            .object(marshal_id)
+            .expect("mogg war marshal should exist")
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered) => Some(triggered.effects.clone()),
+                _ => None,
+            })
+            .expect("echo trigger effects should exist");
+        game.push_to_stack(StackEntry::ability(marshal_id, alice, echo_effects));
+
+        let mut dm = crate::decision::SelectFirstDecisionMaker;
+        resolve_stack_entry_with(&mut game, &mut dm).expect("echo trigger should resolve");
+
+        let still_on_battlefield = game.battlefield.iter().any(|id| {
+            game.object(*id)
+                .is_some_and(|obj| obj.name == "Mogg War Marshal")
+        });
+        assert!(
+            !still_on_battlefield,
+            "Mogg War Marshal should be sacrificed when echo is unpaid"
+        );
+        let in_graveyard = game.player(alice).is_some_and(|player| {
+            player.graveyard.iter().any(|id| {
+                game.object(*id)
+                    .is_some_and(|obj| obj.name == "Mogg War Marshal")
+            })
+        });
+        assert!(
+            in_graveyard,
+            "Mogg War Marshal should end up in graveyard after unpaid echo"
+        );
+    }
+
+    #[test]
     fn test_resolve_stack_entry_with_graveyard_object_target() {
         let mut game = setup_game();
         let alice = PlayerId::from_index(0);

@@ -1140,6 +1140,7 @@ fn apply_line_ast(
             }
         }
         LineAst::Ability(parsed_ability) => {
+            let parsed_ability = lower_parsed_ability(parsed_ability)?;
             if let Some(ref effects_ast) = parsed_ability.effects_ast {
                 collect_tag_spans_from_effects_with_context(
                     effects_ast,

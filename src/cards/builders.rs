@@ -244,6 +244,7 @@ pub(crate) struct AdditionalCostChoiceOptionAst {
 pub(crate) struct ParsedAbility {
     ability: Ability,
     effects_ast: Option<Vec<EffectAst>>,
+    seed_last_object_tag: Option<String>,
 }
 
 #[derive(Debug, Clone)]

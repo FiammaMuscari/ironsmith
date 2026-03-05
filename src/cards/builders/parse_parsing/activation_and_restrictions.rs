@@ -91,8 +91,10 @@ pub(crate) fn parse_activated_line(
         if is_primary_add_clause {
             let (mana_cost, cost_effects) = parse_activation_cost(cost_tokens)?;
             let mana_cost = crate::ability::merge_cost_effects(mana_cost, cost_effects);
+            let seed_last_object_tag = first_sacrifice_cost_choice_tag(&mana_cost)
+                .or_else(|| last_exile_cost_choice_tag(&mana_cost))
+                .map(|tag| tag.as_str().to_string());
 
-            let mut extra_effects = Vec::new();
             let mut extra_effects_ast = Vec::new();
             if effect_sentences.len() > 1 {
                 for sentence in &effect_sentences[1..] {
@@ -100,8 +102,6 @@ pub(crate) fn parse_activated_line(
                         continue;
                     }
                     let ast = parse_effect_sentence(sentence)?;
-                    let compiled = lower_activation_sentence_effects(&ast)?;
-                    extra_effects.extend(compiled);
                     extra_effects_ast.extend(ast);
                 }
             }
@@ -153,12 +153,10 @@ pub(crate) fn parse_activated_line(
                 || has_chosen_color
             {
                 let mana_ast = parse_add_mana(mana_tokens, None)?;
-                let mut effects = lower_activation_primary_mana_effect(&mana_ast)?;
-                effects.extend(extra_effects);
                 let mut ability = Ability {
                     kind: AbilityKind::Activated(ActivatedAbility {
                         mana_cost,
-                        effects,
+                        effects: vec![],
                         choices: vec![],
                         timing: ActivationTiming::AnyTime,
                         additional_restrictions: vec![],
@@ -175,17 +173,16 @@ pub(crate) fn parse_activated_line(
                 return Ok(Some(ParsedAbility {
                     ability,
                     effects_ast: Some(effects_ast),
+                    seed_last_object_tag,
                 }));
             }
 
-            if has_or_choice_mana && !extra_effects.is_empty() {
+            if has_or_choice_mana && !extra_effects_ast.is_empty() {
                 let mana_ast = parse_add_mana(mana_tokens, None)?;
-                let mut effects = lower_activation_primary_mana_effect(&mana_ast)?;
-                effects.extend(extra_effects);
                 let mut ability = Ability {
                     kind: AbilityKind::Activated(ActivatedAbility {
                         mana_cost,
-                        effects,
+                        effects: vec![],
                         choices: vec![],
                         timing: ActivationTiming::AnyTime,
                         additional_restrictions: vec![],
@@ -202,6 +199,7 @@ pub(crate) fn parse_activated_line(
                 return Ok(Some(ParsedAbility {
                     ability,
                     effects_ast: Some(effects_ast),
+                    seed_last_object_tag,
                 }));
             }
 
@@ -219,41 +217,7 @@ pub(crate) fn parse_activated_line(
             }
 
             if !mana.is_empty() {
-                if let Some(amount) = dynamic_amount {
-                    let amount = resolve_mana_ability_scaled_amount_from_cost(amount, &mana_cost)?;
-                    let mut effects =
-                        vec![Effect::new(crate::effects::mana::AddScaledManaEffect::new(
-                            mana,
-                            amount,
-                            PlayerFilter::You,
-                        ))];
-                    effects.extend(extra_effects);
-                    let mut ability = Ability {
-                        kind: AbilityKind::Activated(ActivatedAbility {
-                            mana_cost,
-                            effects,
-                            choices: vec![],
-                            timing: ActivationTiming::AnyTime,
-                            additional_restrictions: vec![],
-                            activation_restrictions: vec![],
-                            mana_output: Some(vec![]),
-                            activation_condition: mana_activation_condition.clone(),
-                        }),
-                        functional_zones: functional_zones.clone(),
-                        text: None,
-                    };
-                    apply_ability_label(&mut ability);
-                    let effects_ast = if extra_effects_ast.is_empty() {
-                        None
-                    } else {
-                        Some(extra_effects_ast)
-                    };
-                    return Ok(Some(ParsedAbility {
-                        ability,
-                        effects_ast,
-                    }));
-                }
-                if extra_effects.is_empty() {
+                if dynamic_amount.is_none() && extra_effects_ast.is_empty() {
                     let mut ability = Ability {
                         kind: AbilityKind::Activated(ActivatedAbility {
                             mana_cost,
@@ -269,41 +233,34 @@ pub(crate) fn parse_activated_line(
                         text: None,
                     };
                     apply_ability_label(&mut ability);
-                    let effects_ast = if extra_effects_ast.is_empty() {
-                        None
-                    } else {
-                        Some(extra_effects_ast)
-                    };
                     return Ok(Some(ParsedAbility {
                         ability,
-                        effects_ast,
+                        effects_ast: None,
+                        seed_last_object_tag: None,
                     }));
                 }
-                let mut effects = vec![Effect::add_mana(mana)];
-                effects.extend(extra_effects);
+                let mana_ast = parse_add_mana(mana_tokens, None)?;
                 let mut ability = Ability {
                     kind: AbilityKind::Activated(ActivatedAbility {
                         mana_cost,
-                        effects,
+                        effects: vec![],
                         choices: vec![],
                         timing: ActivationTiming::AnyTime,
                         additional_restrictions: vec![],
                         activation_restrictions: vec![],
                         mana_output: Some(vec![]),
-                        activation_condition: mana_activation_condition,
+                        activation_condition: mana_activation_condition.clone(),
                     }),
                     functional_zones: functional_zones.clone(),
                     text: None,
                 };
                 apply_ability_label(&mut ability);
-                let effects_ast = if extra_effects_ast.is_empty() {
-                    None
-                } else {
-                    Some(extra_effects_ast)
-                };
+                let mut effects_ast = vec![mana_ast];
+                effects_ast.extend(extra_effects_ast);
                 return Ok(Some(ParsedAbility {
                     ability,
-                    effects_ast,
+                    effects_ast: Some(effects_ast),
+                    seed_last_object_tag,
                 }));
             }
         }
@@ -319,8 +276,6 @@ pub(crate) fn parse_activated_line(
     let seed_tag = first_sacrifice_cost_choice_tag(&mana_cost)
         .or_else(|| last_exile_cost_choice_tag(&mana_cost))
         .map(|tag| tag.as_str().to_string());
-    let (effects, choices) =
-        lower_activated_ability_effects_with_seed(&effects_ast, seed_tag.as_deref())?;
     let mana_cost = crate::ability::merge_cost_effects(mana_cost, cost_effects);
 
     Ok(Some(ParsedAbility {
@@ -328,8 +283,8 @@ pub(crate) fn parse_activated_line(
             let mut ability = Ability {
                 kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
                     mana_cost,
-                    effects,
-                    choices,
+                    effects: vec![],
+                    choices: vec![],
                     timing,
                     additional_restrictions: additional_activation_restrictions,
                     activation_restrictions: vec![],
@@ -343,6 +298,7 @@ pub(crate) fn parse_activated_line(
             ability
         },
         effects_ast: Some(effects_ast),
+        seed_last_object_tag: seed_tag,
     }))
 }
 
@@ -377,25 +333,6 @@ pub(crate) fn last_exile_cost_choice_tag(mana_cost: &crate::cost::TotalCost) -> 
         }
     }
     found
-}
-
-pub(crate) fn resolve_mana_ability_scaled_amount_from_cost(
-    amount: Value,
-    mana_cost: &crate::cost::TotalCost,
-) -> Result<Value, CardTextError> {
-    if let Value::ManaValueOf(spec) = &amount
-        && let ChooseSpec::Tagged(tag) = spec.as_ref()
-        && tag.as_str() == IT_TAG
-    {
-        let Some(sac_tag) = first_sacrifice_cost_choice_tag(mana_cost) else {
-            return Err(CardTextError::ParseError(
-                "mana-value scaling requires a sacrificed object cost reference".to_string(),
-            ));
-        };
-        return Ok(Value::ManaValueOf(Box::new(ChooseSpec::Tagged(sac_tag))));
-    }
-
-    Ok(amount)
 }
 
 pub(crate) fn infer_activated_functional_zones(
@@ -650,6 +587,7 @@ pub(crate) fn parse_level_up_line(
             text: Some(level_up_text),
         },
         effects_ast: None,
+        seed_last_object_tag: None,
     }))
 }
 
@@ -757,6 +695,7 @@ pub(crate) fn parse_cycling_line(tokens: &[Token]) -> Result<Option<ParsedAbilit
             text: Some(render_text),
         },
         effects_ast: None,
+        seed_last_object_tag: None,
     }))
 }
 
@@ -849,6 +788,7 @@ pub(crate) fn parse_reinforce_line(
             text: Some(render_text),
         },
         effects_ast: None,
+        seed_last_object_tag: None,
     }))
 }
 
@@ -1194,6 +1134,7 @@ pub(crate) fn parse_morph_keyword_line(
     Ok(Some(ParsedAbility {
         ability: Ability::static_ability(static_ability).with_text(&text),
         effects_ast: None,
+        seed_last_object_tag: None,
     }))
 }
 
@@ -1436,6 +1377,7 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
                 text: Some(equip_text),
             },
             effects_ast: None,
+            seed_last_object_tag: None,
         }));
     }
 
@@ -1481,6 +1423,7 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
             text: Some(equip_text),
         },
         effects_ast: None,
+        seed_last_object_tag: None,
     }))
 }
 

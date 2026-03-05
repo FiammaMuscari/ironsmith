@@ -5762,6 +5762,7 @@ pub(crate) fn parse_anthem_and_keyword_line(
                 }
                 return Ok(None);
             };
+            let parsed = lower_parsed_ability(parsed)?;
             let mut ability = parsed.ability;
             let display = words(&ability_tail_tokens).join(" ");
             if ability.text.is_none() {
@@ -6101,6 +6102,7 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
                     }
                     return Ok(None);
                 };
+                let parsed = lower_parsed_ability(parsed)?;
                 let mut ability = parsed.ability;
                 let display = words(&activated_tail).join(" ");
                 if ability.text.is_none() {
@@ -9024,6 +9026,7 @@ pub(crate) fn parse_attached_gets_and_has_ability_line(
         .iter()
         .any(|token| matches!(token, Token::Colon(_)));
     if let Some(parsed) = parse_activated_line(&ability_tokens)? {
+        let parsed = lower_parsed_ability(parsed)?;
         let mut ability = parsed.ability;
         let display = words(&ability_tokens).join(" ");
         if ability.text.is_none() {
@@ -9106,6 +9109,7 @@ pub(crate) fn parse_equipped_gets_and_has_activated_ability_line(
         }
         return Ok(None);
     };
+    let parsed = lower_parsed_ability(parsed)?;
 
     let mut static_abilities = Vec::new();
     if let Some(get_idx) = tokens
@@ -10273,6 +10277,7 @@ pub(crate) fn parse_enchanted_has_activated_ability_line(
     let Some(parsed) = parse_activated_line(ability_tokens)? else {
         return Ok(None);
     };
+    let parsed = lower_parsed_ability(parsed)?;
 
     let mut ability = parsed.ability;
     if ability.text.is_none() {
@@ -10484,6 +10489,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                 clause_words.join(" ")
             )));
         };
+        let parsed = lower_parsed_ability(parsed)?;
         granted_object_abilities.push(parsed.ability);
     } else if let Some(parsed) = parse_cycling_line(ability_tokens)? {
         granted_object_abilities.push(parsed.ability);

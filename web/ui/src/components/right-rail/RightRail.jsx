@@ -145,7 +145,7 @@ export default function RightRail({
         "pointer-events-none absolute right-2 z-40 transition-[transform,opacity] duration-140 ease-out",
         shouldShowRail
           ? "translate-x-0 opacity-100"
-          : "translate-x-[110%] opacity-0"
+          : "-translate-x-[110%] opacity-0"
       )}
       style={containerStyle}
       aria-hidden={!shouldShowRail}

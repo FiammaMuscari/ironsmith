@@ -595,7 +595,7 @@ pub(crate) fn parse_granted_activated_or_triggered_ability_for_gain(
                 clause_words.join(" ")
             )));
         };
-        parsed.ability
+        lower_parsed_ability(parsed)?.ability
     } else {
         match parse_triggered_line(ability_tokens)? {
             LineAst::Triggered {
@@ -723,10 +723,9 @@ pub(crate) fn parse_gain_ability_to_source_sentence(
     }
 
     let ability_tokens = &tokens[gain_idx + 1..];
-    if let Some(ability) = parse_activated_line(ability_tokens)? {
-        return Ok(Some(EffectAst::GrantAbilityToSource {
-            ability: ability.ability,
-        }));
+    if let Some(parsed) = parse_activated_line(ability_tokens)? {
+        let ability = lower_parsed_ability(parsed)?.ability;
+        return Ok(Some(EffectAst::GrantAbilityToSource { ability }));
     }
 
     Ok(None)

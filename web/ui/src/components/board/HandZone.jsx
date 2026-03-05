@@ -1,6 +1,6 @@
 import { useRef, useMemo, useEffect, useCallback } from "react";
 import { useGame } from "@/context/GameContext";
-import { useHoverActions } from "@/context/HoverContext";
+import { useHover } from "@/context/HoverContext";
 import { useDragActions } from "@/context/DragContext";
 import useNewCards from "@/hooks/useNewCards";
 import GameCard from "@/components/cards/GameCard";
@@ -100,7 +100,7 @@ function buildPlayableMaps(state, player) {
 
 export default function HandZone({ player, selectedObjectId, onInspect }) {
   const { state } = useGame();
-  const { hoverCard, clearHover } = useHoverActions();
+  const { hoverCard, clearHover, hoveredObjectId, hoveredLinkedObjectIds } = useHover();
   const { startDrag, updateDrag, endDrag } = useDragActions();
   const dragThresholdRef = useRef(null);
   const activePointerIdRef = useRef(null);
@@ -116,6 +116,18 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
     () => isMe ? buildPlayableMaps(state, player) : { handPlayable: new Map(), extraPlayable: new Map() },
     [isMe, state, player]
   );
+  const priorityActionObjectIds = useMemo(() => {
+    const ids = new Set();
+    const decision = state?.decision;
+    if (!decision || decision.kind !== "priority" || decision.player !== state?.perspective) {
+      return ids;
+    }
+    for (const action of decision.actions || []) {
+      if (action.kind === "pass_priority" || action.object_id == null) continue;
+      ids.add(String(action.object_id));
+    }
+    return ids;
+  }, [state?.decision, state?.perspective]);
 
   // Extra playable cards as array for rendering
   const extraCards = useMemo(() => {
@@ -245,7 +257,16 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
             {handCards.map((card, i) => {
               const plays = handPlayable.get(Number(card.id)) || [];
               const isPlayable = plays.length > 0;
-              const glowKind = isPlayable ? handGlowFromTypes(card.card_types) : null;
+              const baseGlowKind = isPlayable ? handGlowFromTypes(card.card_types) : null;
+              const isActionLinkedHover = (
+                hoveredLinkedObjectIds.has(String(card.id))
+                || (
+                  hoveredObjectId != null
+                  && String(hoveredObjectId) === String(card.id)
+                  && priorityActionObjectIds.has(String(card.id))
+                )
+              );
+              const glowKind = isActionLinkedHover ? "action-link" : baseGlowKind;
               const isNew = newIds.has(card.id);
               const isBumped = bumpedIds.has(card.id);
               let bumpDir = 0;
@@ -288,13 +309,21 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
               const card = { id: extra.id, name: extra.name };
               const plays = extra.actions;
               const isPlayable = plays.length > 0;
+              const isActionLinkedHover = (
+                hoveredLinkedObjectIds.has(String(extra.id))
+                || (
+                  hoveredObjectId != null
+                  && String(hoveredObjectId) === String(extra.id)
+                  && priorityActionObjectIds.has(String(extra.id))
+                )
+              );
               return (
                 <GameCard
                   key={`extra-${extra.id}`}
                   card={card}
                   variant="hand"
                   isPlayable={isPlayable}
-                  glowKind={isPlayable ? "extra" : null}
+                  glowKind={isActionLinkedHover ? "action-link" : (isPlayable ? "extra" : null)}
                   isNew
                   isInspected={selectedObjectId != null && String(extra.id) === String(selectedObjectId)}
                   onClick={plays.length === 0

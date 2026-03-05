@@ -325,13 +325,29 @@ export default function AttackersDecision({ decision, canAct, compact = false })
 
     return (
       <div className="flex h-full min-w-0 items-center gap-2">
-        <div className="shrink-0 min-w-[92px]">
-          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
-            {canAct ? "Your Action" : "Opponent Action"}
+        <div className="shrink-0 flex min-w-[308px] min-h-[34px] items-stretch gap-2">
+          <div className="min-w-[110px] flex flex-col justify-center">
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+              {canAct ? "Your Action" : "Opponent Action"}
+            </div>
+            <div className="text-[10px] text-[#b8d2ef]">
+              Attackers
+            </div>
           </div>
-          <div className="text-[10px] text-[#b8d2ef]">
-            Attackers
-          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[13px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
+            disabled={!canAct}
+            onClick={() =>
+              dispatch(
+                { type: "declare_attackers", declarations },
+                `Declared ${declarations.length} attacker(s)`
+              )
+            }
+          >
+            Confirm ({declarations.length})
+          </Button>
         </div>
 
         <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden whitespace-nowrap">
@@ -370,21 +386,6 @@ export default function AttackersDecision({ decision, canAct, compact = false })
             })}
           </div>
         </div>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 shrink-0 rounded border border-[#546c86] bg-[rgba(15,27,40,0.92)] px-3 text-[13px] font-bold text-[#f7b869] transition-all hover:border-[#8ca8c7] hover:bg-[rgba(28,43,58,0.95)] hover:text-[#ffd49d]"
-          disabled={!canAct}
-          onClick={() =>
-            dispatch(
-              { type: "declare_attackers", declarations },
-              `Declared ${declarations.length} attacker(s)`
-            )
-          }
-        >
-          Confirm ({declarations.length})
-        </Button>
       </div>
     );
   }

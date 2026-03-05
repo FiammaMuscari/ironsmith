@@ -71,6 +71,7 @@ export default function GameCard({
         glowKind === "battle" && "glow-battle",
         glowKind === "artifact" && "glow-artifact",
         glowKind === "planeswalker" && "glow-planeswalker",
+        glowKind === "action-link" && "action-link",
         glowKind === "attack-candidate" && "attack-candidate",
         glowKind === "attack-selected" && "attack-selected",
         glowKind === "blocker-candidate" && "blocker-candidate",

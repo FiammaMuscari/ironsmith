@@ -1,6 +1,7 @@
 import { useRef, useLayoutEffect, useEffect, useCallback, useMemo } from "react";
-import { useHoverActions, useHoveredObjectId } from "@/context/HoverContext";
+import { useHover } from "@/context/HoverContext";
 import { useCombatArrows } from "@/context/CombatArrowContext";
+import { useGame } from "@/context/GameContext";
 import useNewCards from "@/hooks/useNewCards";
 import GameCard from "@/components/cards/GameCard";
 
@@ -15,9 +16,21 @@ export default function BattlefieldRow({
   allowVerticalScroll = false,
 }) {
   const rowRef = useRef(null);
-  const { hoverCard, clearHover } = useHoverActions();
-  const hoveredObjectId = useHoveredObjectId();
+  const { state } = useGame();
+  const { hoverCard, clearHover, hoveredObjectId, hoveredLinkedObjectIds } = useHover();
   const { combatMode, combatModeRef, dragArrow, startDragArrow, updateDragArrow, endDragArrow } = useCombatArrows();
+  const priorityActionObjectIds = useMemo(() => {
+    const ids = new Set();
+    const decision = state?.decision;
+    if (!decision || decision.kind !== "priority" || decision.player !== state?.perspective) {
+      return ids;
+    }
+    for (const action of decision.actions || []) {
+      if (action.kind === "pass_priority" || action.object_id == null) continue;
+      ids.add(String(action.object_id));
+    }
+    return ids;
+  }, [state?.decision, state?.perspective]);
   const cardIds = useMemo(() => cards.map((c) => c.id), [cards]);
   const { newIds, bumpedIds } = useNewCards(cardIds);
   const dragRef = useRef(null);
@@ -248,6 +261,7 @@ export default function BattlefieldRow({
           }
         }
         const isLegalTarget = cardObjectIds.some((id) => legalTargetObjectIds.has(id));
+        const hasLinkedPriorityAction = cardObjectIds.some((id) => priorityActionObjectIds.has(String(id)));
         const isNew = newIds.has(card.id);
         const isBumped = bumpedIds.has(card.id);
         let bumpDir = 0;
@@ -274,6 +288,14 @@ export default function BattlefieldRow({
           hoveredObjectId != null &&
           String(card.id) === String(hoveredObjectId)
         );
+        const isActionLinkedHover = (
+          cardObjectIds.some((id) => hoveredLinkedObjectIds.has(String(id)))
+          || (
+          hoveredObjectId != null
+          && hasLinkedPriorityAction
+          && cardObjectIds.some((id) => String(id) === String(hoveredObjectId))
+          )
+        );
         // Determine ability glow kind: mana vs non-mana
         let abilityGlow = null;
         if (isActivatable) {
@@ -291,11 +313,13 @@ export default function BattlefieldRow({
             : isCombatCandidate
               ? (combatMode.mode === "attackers" ? "attack-candidate" : "blocker-candidate")
               : null;
-        const appliedGlowKind = isLegalTarget
-          ? "spell"
-          : isAttackHoverTarget
-            ? "attack-selected"
-            : (isCombatCandidate ? combatGlowKind : abilityGlow);
+        const appliedGlowKind = isActionLinkedHover
+          ? "action-link"
+          : isLegalTarget
+            ? "spell"
+            : isAttackHoverTarget
+              ? "attack-selected"
+              : (isCombatCandidate ? combatGlowKind : abilityGlow);
 
         return (
           <GameCard
@@ -305,7 +329,7 @@ export default function BattlefieldRow({
             isInspected={isInteractable && selectedObjectId === card.id}
             isPlayable={isInteractable}
             glowKind={appliedGlowKind}
-            isHovered={isAttackHoverTarget}
+            isHovered={isAttackHoverTarget || isActionLinkedHover}
             isNew={isNew}
             isBumped={isBumped}
             bumpDirection={bumpDir}

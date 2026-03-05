@@ -217,7 +217,7 @@ export default function Workspace({
       </div>
       <div className="relative z-20 flex items-center">
         <div className="h-full w-full rounded border border-[#2b3f57]/65 bg-[linear-gradient(90deg,rgba(7,15,23,0.92),rgba(14,28,44,0.86),rgba(7,15,23,0.92))] shadow-[inset_0_1px_0_rgba(170,208,245,0.12),0_8px_18px_rgba(0,0,0,0.32)]" />
-        <DecisionPopupLayer priorityInline />
+        <DecisionPopupLayer priorityInline selectedObjectId={selectedObjectId} />
       </div>
       <div className="min-h-0 h-full overflow-visible">
         <HandZone player={me} selectedObjectId={selectedObjectId} onInspect={handleInspectObject} />
