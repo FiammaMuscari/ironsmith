@@ -90,9 +90,11 @@ impl EffectExecutor for DrawCardsEffect {
         match process_draw(game, player_id, count, is_first, &mut ctx.decision_maker) {
             EventOutcome::Prevented => Ok(EffectOutcome::from_result(EffectResult::Prevented)),
             EventOutcome::Proceed(final_count) => {
-                // Actually draw the cards using GameState::draw_cards
-                // which properly updates object zones
-                let drawn = game.draw_cards(player_id, final_count as usize);
+                let drawn = game.draw_cards_with_dm(
+                    player_id,
+                    final_count as usize,
+                    &mut *ctx.decision_maker,
+                );
 
                 // Track cards drawn this turn
                 let cards_before = *game.cards_drawn_this_turn.entry(player_id).or_insert(0);

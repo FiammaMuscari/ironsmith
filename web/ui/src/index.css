@@ -1822,32 +1822,36 @@
 .hand-inspector-inline-shell {
   --hand-inspector-peek-height: 136px;
   isolation: isolate;
-  border-radius: 14px 14px 8px 8px;
-  transform-origin: bottom center;
-  clip-path: inset(calc(100% - var(--hand-inspector-peek-height)) 0 0 0 round 14px 14px 8px 8px);
+  border-radius: 20px 20px 16px 16px;
+  transform-origin: bottom right;
+  clip-path: inset(calc(100% - var(--hand-inspector-peek-height)) 0 0 0 round 20px 20px 16px 16px);
   opacity: 0;
-  transform: perspective(1400px) rotateX(76deg) translate3d(0, 28px, 0) scale(0.92);
-  filter: brightness(0.82) saturate(0.86);
+  transform: perspective(1400px) rotateY(-18deg) rotateX(18deg) rotateZ(1.8deg) translate3d(28px, 18px, 0) scale(0.965);
+  filter: brightness(0.84) saturate(0.9);
   transition:
     clip-path 420ms cubic-bezier(0.22, 1, 0.36, 1),
     transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
     filter 320ms ease,
     opacity 220ms ease;
   will-change: transform, clip-path, filter;
+  box-shadow:
+    0 0 0 1px rgba(118, 169, 226, 0.12),
+    0 18px 28px rgba(0, 0, 0, 0.32),
+    12px 28px 44px rgba(0, 0, 0, 0.38);
 }
 
 .hand-inspector-inline-shell.is-open {
-  clip-path: inset(0 0 0 0 round 14px);
+  clip-path: inset(0 0 0 0 round 20px 20px 16px 16px);
   opacity: 1;
-  transform: perspective(1400px) rotateX(0deg) translate3d(0, 0, 0) scale(1);
+  transform: perspective(1400px) rotateY(0deg) rotateX(0deg) rotateZ(0deg) translate3d(0, 0, 0) scale(1);
   filter: brightness(1) saturate(1);
 }
 
 .hand-inspector-inline-shell.is-closed {
-  clip-path: inset(calc(100% - var(--hand-inspector-peek-height)) 0 0 0 round 14px 14px 8px 8px);
+  clip-path: inset(calc(100% - var(--hand-inspector-peek-height)) 0 0 0 round 20px 20px 16px 16px);
   opacity: 0;
-  transform: perspective(1400px) rotateX(76deg) translate3d(0, 28px, 0) scale(0.92);
-  filter: brightness(0.82) saturate(0.86);
+  transform: perspective(1400px) rotateY(-18deg) rotateX(18deg) rotateZ(1.8deg) translate3d(28px, 18px, 0) scale(0.965);
+  filter: brightness(0.84) saturate(0.9);
 }
 
 .hand-inspector-inline-shell::before {

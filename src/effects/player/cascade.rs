@@ -160,7 +160,14 @@ impl EffectExecutor for CascadeEffect {
         game.shuffle_slice(&mut to_bottom);
 
         for exiled_id in to_bottom {
-            if let Some(new_id) = game.move_object(exiled_id, Zone::Library) {
+            if let Some((new_id, final_zone)) = game.move_object_with_commander_options(
+                exiled_id,
+                Zone::Library,
+                &mut *ctx.decision_maker,
+            ) {
+                if final_zone != Zone::Library {
+                    continue;
+                }
                 let owner = game.object(new_id).map(|obj| obj.owner);
                 if let Some(owner) = owner
                     && let Some(player) = game.player_mut(owner)

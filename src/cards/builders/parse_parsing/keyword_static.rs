@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::LazyLock;
 
 pub(crate) fn parse_ability_line(tokens: &[Token]) -> Option<Vec<KeywordAction>> {
     if let Some(actions) = parse_flashback_keyword_line(tokens) {
@@ -269,6 +270,16 @@ enum StaticAbilityLineRuleAst {
     Multi(fn(&[Token]) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError>),
 }
 
+#[derive(Clone, Copy)]
+struct StaticAbilityLineRuleDef {
+    id: &'static str,
+    rule: StaticAbilityLineRuleAst,
+}
+
+struct StaticAbilityLineRuleIndex {
+    by_head: std::collections::HashMap<&'static str, Vec<usize>>,
+}
+
 fn run_static_ability_ast_line_rule(
     rule: StaticAbilityLineRuleAst,
     tokens: &[Token],
@@ -282,34 +293,108 @@ fn run_static_ability_ast_line_rule(
     }
 }
 
+fn build_static_ability_line_rule_index(
+    rules: &'static [StaticAbilityLineRuleDef],
+) -> StaticAbilityLineRuleIndex {
+    let mut by_head = std::collections::HashMap::<&'static str, Vec<usize>>::new();
+    for (idx, rule) in rules.iter().enumerate() {
+        for head in static_ability_rule_head_hints(rule.id) {
+            by_head.entry(head).or_default().push(idx);
+        }
+    }
+    StaticAbilityLineRuleIndex { by_head }
+}
+
+fn static_ability_rule_head_hints(rule_id: &'static str) -> &'static [&'static str] {
+    match rule_id {
+        "parse_characteristic_defining_pt_line" => &["this", "its"],
+        "parse_conditional_source_spell_keyword_line" => &["if"],
+        "parse_conditional_all_creatures_able_to_block_line" => &["as"],
+        "parse_toph_first_metalbender_line" => &["the"],
+        "parse_spell_cost_increase_per_target_beyond_first_line" => &["this"],
+        "parse_source_can_attack_as_though_no_defender_as_long_as_line" => &["this"],
+        "parse_no_maximum_hand_size_line" => &["you"],
+        "parse_additional_land_play_line" => &["you"],
+        "parse_play_lands_from_graveyard_line" => &["you"],
+        "parse_legend_rule_doesnt_apply_line" => &["the"],
+        _ => match rule_id
+            .strip_prefix("parse_")
+            .and_then(|id| id.split('_').next())
+        {
+            Some("ward") => &["ward"],
+            Some("skulk") => &["skulk"],
+            Some("if") => &["if"],
+            Some("choose") => &["choose"],
+            Some("enchanted") => &["enchanted"],
+            Some("enters") => &["enters"],
+            Some("damage") => &["damage"],
+            Some("pay") => &["pay"],
+            Some("copy") => &["copy"],
+            Some("players") => &["players"],
+            Some("shuffle") => &["shuffle"],
+            Some("permanents") => &["permanents"],
+            Some("creatures") => &["creatures"],
+            Some("buyback") => &["buyback"],
+            Some("flashback") => &["flashback"],
+            Some("spells") => &["spells"],
+            Some("foretelling") => &["foretelling"],
+            Some("all") => &["all"],
+            Some("blood") => &["blood"],
+            Some("land") => &["land"],
+            Some("lands") => &["lands"],
+            Some("remove") => &["remove"],
+            Some("attached") => &["attached"],
+            Some("soulbond") => &["soulbond"],
+            Some("may") => &["may"],
+            Some("equipped") => &["equipped"],
+            Some("as") => &["as"],
+            Some("prevent") => &["prevent"],
+            Some("reveal") => &["reveal"],
+            Some("activated") => &["activated"],
+            _ => &[],
+        },
+    }
+}
+
 macro_rules! single_static_ability_ast_rule {
     ($parse:ident) => {
-        StaticAbilityLineRuleAst::Single(|tokens| Ok($parse(tokens)?.map(StaticAbilityAst::from)))
+        StaticAbilityLineRuleDef {
+            id: stringify!($parse),
+            rule: StaticAbilityLineRuleAst::Single(|tokens| {
+                Ok($parse(tokens)?.map(StaticAbilityAst::from))
+            }),
+        }
     };
 }
 
 macro_rules! single_static_ability_ast_infallible_rule {
     ($parse:ident) => {
-        StaticAbilityLineRuleAst::SingleInfallible(|tokens| {
-            $parse(tokens).map(StaticAbilityAst::from)
-        })
+        StaticAbilityLineRuleDef {
+            id: stringify!($parse),
+            rule: StaticAbilityLineRuleAst::SingleInfallible(|tokens| {
+                $parse(tokens).map(StaticAbilityAst::from)
+            }),
+        }
     };
 }
 
 macro_rules! multi_static_ability_ast_rule {
     ($parse:ident) => {
-        StaticAbilityLineRuleAst::Multi(|tokens| {
-            Ok($parse(tokens)?.map(|abilities| {
-                abilities
-                    .into_iter()
-                    .map(StaticAbilityAst::from)
-                    .collect::<Vec<_>>()
-            }))
-        })
+        StaticAbilityLineRuleDef {
+            id: stringify!($parse),
+            rule: StaticAbilityLineRuleAst::Multi(|tokens| {
+                Ok($parse(tokens)?.map(|abilities| {
+                    abilities
+                        .into_iter()
+                        .map(StaticAbilityAst::from)
+                        .collect::<Vec<_>>()
+                }))
+            }),
+        }
     };
 }
 
-fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleAst] {
+fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
     &[
         single_static_ability_ast_rule!(parse_ward_static_ability_line),
         single_static_ability_ast_rule!(parse_skulk_rules_text_line),
@@ -340,12 +425,23 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleAst] {
         single_static_ability_ast_rule!(parse_copy_activated_abilities_line),
         single_static_ability_ast_rule!(parse_players_spend_mana_as_any_color_line),
         single_static_ability_ast_rule!(parse_source_activation_spend_mana_as_any_color_line),
-        StaticAbilityLineRuleAst::Single(parse_enchanted_has_activated_ability_line),
+        StaticAbilityLineRuleDef {
+            id: stringify!(parse_enchanted_has_activated_ability_line),
+            rule: StaticAbilityLineRuleAst::Single(parse_enchanted_has_activated_ability_line),
+        },
         multi_static_ability_ast_rule!(
             parse_has_base_power_toughness_and_granted_keywords_static_line
         ),
-        StaticAbilityLineRuleAst::Multi(parse_filter_has_granted_ability_line),
-        StaticAbilityLineRuleAst::Multi(parse_equipped_gets_and_has_activated_ability_line),
+        StaticAbilityLineRuleDef {
+            id: stringify!(parse_filter_has_granted_ability_line),
+            rule: StaticAbilityLineRuleAst::Multi(parse_filter_has_granted_ability_line),
+        },
+        StaticAbilityLineRuleDef {
+            id: stringify!(parse_equipped_gets_and_has_activated_ability_line),
+            rule: StaticAbilityLineRuleAst::Multi(
+                parse_equipped_gets_and_has_activated_ability_line,
+            ),
+        },
         single_static_ability_ast_rule!(parse_shuffle_into_library_from_graveyard_line),
         single_static_ability_ast_rule!(parse_permanents_enter_tapped_line),
         single_static_ability_ast_rule!(
@@ -371,8 +467,14 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleAst] {
         multi_static_ability_ast_rule!(parse_lands_are_pt_creatures_still_lands_line),
         single_static_ability_ast_rule!(parse_remove_snow_line),
         multi_static_ability_ast_rule!(parse_attached_is_legendary_gets_and_has_keywords_line),
-        StaticAbilityLineRuleAst::Multi(parse_soulbond_shared_line),
-        StaticAbilityLineRuleAst::Multi(parse_granted_keyword_static_line),
+        StaticAbilityLineRuleDef {
+            id: stringify!(parse_soulbond_shared_line),
+            rule: StaticAbilityLineRuleAst::Multi(parse_soulbond_shared_line),
+        },
+        StaticAbilityLineRuleDef {
+            id: stringify!(parse_granted_keyword_static_line),
+            rule: StaticAbilityLineRuleAst::Multi(parse_granted_keyword_static_line),
+        },
         multi_static_ability_ast_rule!(parse_lose_all_abilities_and_transform_base_pt_line),
         multi_static_ability_ast_rule!(parse_lose_all_abilities_and_base_pt_line),
         single_static_ability_ast_rule!(parse_all_creatures_lose_flying_line),
@@ -381,7 +483,10 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleAst] {
             parse_each_creature_can_block_additional_creature_each_combat_line
         ),
         multi_static_ability_ast_rule!(parse_anthem_and_type_color_addition_line),
-        StaticAbilityLineRuleAst::Multi(parse_anthem_and_keyword_line),
+        StaticAbilityLineRuleDef {
+            id: stringify!(parse_anthem_and_keyword_line),
+            rule: StaticAbilityLineRuleAst::Multi(parse_anthem_and_keyword_line),
+        },
         multi_static_ability_ast_rule!(parse_anthem_and_granted_ability_line),
         single_static_ability_ast_rule!(parse_all_have_indestructible_line),
         single_static_ability_ast_rule!(
@@ -398,9 +503,20 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleAst] {
         single_static_ability_ast_rule!(parse_attached_cant_attack_or_block_line),
         single_static_ability_ast_rule!(parse_attached_prevent_all_damage_dealt_by_attached_line),
         multi_static_ability_ast_rule!(parse_attached_gets_and_cant_block_line),
-        StaticAbilityLineRuleAst::Multi(parse_attached_has_keywords_and_triggered_ability_line),
-        StaticAbilityLineRuleAst::Multi(parse_attached_gets_and_has_ability_line),
-        StaticAbilityLineRuleAst::Multi(parse_anthem_with_trailing_segments_line),
+        StaticAbilityLineRuleDef {
+            id: stringify!(parse_attached_has_keywords_and_triggered_ability_line),
+            rule: StaticAbilityLineRuleAst::Multi(
+                parse_attached_has_keywords_and_triggered_ability_line,
+            ),
+        },
+        StaticAbilityLineRuleDef {
+            id: stringify!(parse_attached_gets_and_has_ability_line),
+            rule: StaticAbilityLineRuleAst::Multi(parse_attached_gets_and_has_ability_line),
+        },
+        StaticAbilityLineRuleDef {
+            id: stringify!(parse_anthem_with_trailing_segments_line),
+            rule: StaticAbilityLineRuleAst::Multi(parse_anthem_with_trailing_segments_line),
+        },
         multi_static_ability_ast_rule!(parse_gets_and_attacks_each_combat_if_able_line),
         single_static_ability_ast_rule!(parse_conditional_all_creatures_able_to_block_line),
         single_static_ability_ast_rule!(
@@ -411,7 +527,10 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleAst] {
         ),
         single_static_ability_ast_rule!(parse_attacks_each_combat_if_able_line),
         single_static_ability_ast_rule!(parse_source_must_be_blocked_if_able_line),
-        StaticAbilityLineRuleAst::Multi(parse_composed_anthem_effects_line),
+        StaticAbilityLineRuleDef {
+            id: stringify!(parse_composed_anthem_effects_line),
+            rule: StaticAbilityLineRuleAst::Multi(parse_composed_anthem_effects_line),
+        },
         single_static_ability_ast_rule!(parse_has_base_power_toughness_static_line),
         single_static_ability_ast_rule!(parse_isnt_creature_line),
         single_static_ability_ast_rule!(parse_anthem_line),
@@ -440,11 +559,30 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleAst] {
     ]
 }
 
+static STATIC_ABILITY_AST_LINE_RULE_INDEX: LazyLock<StaticAbilityLineRuleIndex> =
+    LazyLock::new(|| build_static_ability_line_rule_index(static_ability_ast_line_rules()));
+
 pub(crate) fn parse_static_ability_ast_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
-    for rule in static_ability_ast_line_rules() {
-        if let Some(abilities) = run_static_ability_ast_line_rule(*rule, tokens)? {
+    let rules = static_ability_ast_line_rules();
+    let head = words(tokens).first().copied().unwrap_or("");
+    let mut tried = vec![false; rules.len()];
+
+    if let Some(candidate_indices) = STATIC_ABILITY_AST_LINE_RULE_INDEX.by_head.get(head) {
+        for &idx in candidate_indices {
+            tried[idx] = true;
+            if let Some(abilities) = run_static_ability_ast_line_rule(rules[idx].rule, tokens)? {
+                return Ok(Some(abilities));
+            }
+        }
+    }
+
+    for (idx, rule) in rules.iter().enumerate() {
+        if tried[idx] {
+            continue;
+        }
+        if let Some(abilities) = run_static_ability_ast_line_rule(rule.rule, tokens)? {
             return Ok(Some(abilities));
         }
     }

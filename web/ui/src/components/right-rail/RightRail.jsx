@@ -10,6 +10,11 @@ const INSPECTOR_INLINE_MIN_WIDTH = 220;
 const INSPECTOR_INLINE_FALLBACK_WIDTH = 300;
 const INSPECTOR_INLINE_MAX_WIDTH = "min(32vw, 420px)";
 const DEFAULT_INSPECTOR_BOTTOM_OFFSET = 8;
+const INLINE_EXPANDED_DEFAULT_HEIGHT = 306;
+const INLINE_EXPANDED_MIN_HEIGHT = 212;
+const INLINE_EXPANDED_SAFE_GAP = 12;
+const INLINE_EXPANDED_BOTTOM_GAP = 4;
+const INLINE_EXPANDED_RIGHT_BLEED = 18;
 
 function objectExistsInState(state, objectId) {
   if (objectId == null) return false;
@@ -22,6 +27,7 @@ function objectExistsInState(state, objectId) {
       player?.hand_cards || [],
       player?.graveyard_cards || [],
       player?.exile_cards || [],
+      player?.command_cards || [],
     ];
     for (const cards of zones) {
       for (const card of cards) {
@@ -78,6 +84,7 @@ export default function RightRail({
   inline = false,
   inlineExpanded = false,
   forceInlineExpanded = false,
+  fullArtInlineExpanded = false,
 }) {
   const { state } = useGame();
   const [preferredInlineWidth, setPreferredInlineWidth] = useState(null);
@@ -87,6 +94,7 @@ export default function RightRail({
   const railMotionRef = useRef(null);
   const compactMotionRef = useRef(null);
   const expandedMotionRef = useRef(null);
+  const [expandedInlineHeight, setExpandedInlineHeight] = useState(INLINE_EXPANDED_DEFAULT_HEIGHT);
   const hoveredObjectId = useHoveredObjectId();
   const decision = state?.decision || null;
   const stackObjects = state?.stack_objects || [];
@@ -197,9 +205,11 @@ export default function RightRail({
     cancelMotion(expandedMotionRef.current);
     expandedMotionRef.current = animate(expandedEl, {
       opacity: useExpandedInlineInspector ? 1 : 0,
-      y: useExpandedInlineInspector ? 0 : 22,
-      scale: useExpandedInlineInspector ? 1 : 0.94,
-      rotateX: useExpandedInlineInspector ? 0 : 72,
+      x: useExpandedInlineInspector ? 0 : 32,
+      y: useExpandedInlineInspector ? 0 : 10,
+      scale: useExpandedInlineInspector ? 1 : 0.965,
+      rotateY: useExpandedInlineInspector ? 0 : -18,
+      rotateZ: useExpandedInlineInspector ? 0 : 1.8,
       duration: 420,
       ease: uiSpring({ duration: 420, bounce: 0.12 }),
     });
@@ -209,6 +219,56 @@ export default function RightRail({
       expandedMotionRef.current = null;
     };
   }, [useExpandedInlineInspector]);
+
+  useLayoutEffect(() => {
+    if (!inline) return undefined;
+    const railEl = railRef.current;
+    if (!railEl) return undefined;
+
+    const workspaceEl = railEl.closest("section");
+    const stripEl = workspaceEl?.querySelector(".priority-inline-panel");
+    let rafId = null;
+
+    const measureExpandedHeight = () => {
+      const hostRect = (workspaceEl || railEl).getBoundingClientRect();
+      const stripRect = stripEl?.getBoundingClientRect?.() || null;
+      const safeTop = stripRect
+        ? stripRect.bottom + INLINE_EXPANDED_SAFE_GAP
+        : hostRect.top + INLINE_EXPANDED_SAFE_GAP;
+      const safeBottom = hostRect.bottom - INLINE_EXPANDED_BOTTOM_GAP;
+      const availableHeight = Math.floor(safeBottom - safeTop);
+      const nextHeight = Math.max(
+        INLINE_EXPANDED_MIN_HEIGHT,
+        Math.min(INLINE_EXPANDED_DEFAULT_HEIGHT, availableHeight)
+      );
+
+      setExpandedInlineHeight((currentHeight) => (
+        Math.abs(currentHeight - nextHeight) >= 1 ? nextHeight : currentHeight
+      ));
+    };
+
+    const scheduleMeasure = () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        measureExpandedHeight();
+      });
+    };
+
+    scheduleMeasure();
+
+    const observer = new ResizeObserver(scheduleMeasure);
+    observer.observe(railEl);
+    if (workspaceEl) observer.observe(workspaceEl);
+    if (stripEl) observer.observe(stripEl);
+    window.addEventListener("resize", scheduleMeasure);
+
+    return () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+    };
+  }, [inline, shouldRenderExpandedInlineInspector, shouldShowRail]);
 
   const containerStyle = useMemo(
     () => (inline
@@ -256,15 +316,20 @@ export default function RightRail({
           <div
             ref={expandedInspectorRef}
             className={cn(
-              "hand-inspector-inline-shell absolute inset-x-0 bottom-0 overflow-hidden border border-[#2a3647]/75 bg-[rgba(8,12,18,0.94)] shadow-[0_24px_48px_rgba(0,0,0,0.34)]",
+              "hand-inspector-inline-shell absolute bottom-0 overflow-hidden border border-[#2a3647]/75 bg-[rgba(8,12,18,0.94)]",
               useExpandedInlineInspector ? "is-open" : "is-closed"
             )}
-            style={{ height: "clamp(236px, 34vh, 392px)", transformOrigin: "bottom center" }}
+            style={{
+              width: "100%",
+              right: `-${INLINE_EXPANDED_RIGHT_BLEED}px`,
+              height: `${expandedInlineHeight}px`,
+              transformOrigin: "bottom right",
+            }}
           >
             <HoverArtOverlay
               objectId={validSelectedObjectId}
               suppressStableId={inspectorSuppressStableId}
-              displayMode={forceInlineExpanded ? "full-art" : "inspector"}
+              displayMode={fullArtInlineExpanded ? "full-art" : "inspector"}
             />
           </div>
         )}

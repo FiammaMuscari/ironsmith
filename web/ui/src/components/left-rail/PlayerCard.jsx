@@ -1,8 +1,9 @@
 import { cn } from "@/lib/utils";
 import ManaPool from "./ManaPool";
 
-export default function PlayerCard({ player, isActive, isPerspective, label }) {
+export default function PlayerCard({ player, isActive, isPerspective }) {
   const exileCards = Array.isArray(player.exile_cards) ? player.exile_cards : [];
+  const commandCards = Array.isArray(player.command_cards) ? player.command_cards : [];
 
   const battlefieldCount = (player.battlefield || []).reduce((total, card) => {
     const count = Number(card.count);
@@ -36,6 +37,9 @@ export default function PlayerCard({ player, isActive, isPerspective, label }) {
         </span>
         <span className="bg-[#0b121b] px-1.5 rounded-sm" title="Exile">
           Exl <span className="font-bold text-[#d6e6fb]">{exileCards.length}</span>
+        </span>
+        <span className="bg-[#0b121b] px-1.5 rounded-sm" title="Command">
+          Cmd <span className="font-bold text-[#d6e6fb]">{player.command_size ?? commandCards.length}</span>
         </span>
         <span className="bg-[#0b121b] px-1.5 rounded-sm" title="Battlefield">
           BF <span className="font-bold text-[#d6e6fb]">{battlefieldCount}</span>

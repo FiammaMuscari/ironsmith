@@ -1404,6 +1404,13 @@ pub struct GameState {
     /// Objects designated as commanders.
     pub commanders: HashSet<ObjectId>,
 
+    /// Number of times each commander has been cast from the command zone.
+    pub commander_casts_from_command_zone: HashMap<ObjectId, u32>,
+
+    /// Commanders whose owner declined the current graveyard/exile -> command
+    /// zone choice for this specific object instance.
+    pub declined_commander_command_zone_moves: HashSet<ObjectId>,
+
     /// Imprinted cards - maps a permanent to the card(s) exiled with it via imprint.
     /// Used by Chrome Mox, Isochron Scepter, etc.
     pub imprinted_cards: HashMap<ObjectId, Vec<ObjectId>>,
@@ -1524,6 +1531,8 @@ impl GameState {
             madness_exiled: HashSet::new(),
             saga_final_chapter_resolved: HashSet::new(),
             commanders: HashSet::new(),
+            commander_casts_from_command_zone: HashMap::new(),
+            declined_commander_command_zone_moves: HashSet::new(),
             imprinted_cards: HashMap::new(),
             exiled_with_source: HashMap::new(),
             linked_exile_groups: HashMap::new(),
@@ -1568,7 +1577,11 @@ impl GameState {
     /// Shuffle a player's library using the deterministic match RNG.
     pub fn shuffle_player_library(&mut self, player_id: PlayerId) {
         let seed = self.next_random_u64();
-        let Some(index) = self.players.iter().position(|player| player.id == player_id) else {
+        let Some(index) = self
+            .players
+            .iter()
+            .position(|player| player.id == player_id)
+        else {
             return;
         };
         let mut rng = StdRng::seed_from_u64(seed);
@@ -1986,6 +1999,38 @@ impl GameState {
         drawn
     }
 
+    /// Draws cards for a player, allowing commander draw replacements to be chosen.
+    ///
+    /// Only cards that actually move to hand are returned.
+    pub fn draw_cards_with_dm(
+        &mut self,
+        player: PlayerId,
+        count: usize,
+        decision_maker: &mut (impl crate::decision::DecisionMaker + ?Sized),
+    ) -> Vec<ObjectId> {
+        let mut drawn = Vec::new();
+        for _ in 0..count {
+            let card_id = if let Some(player_obj) = self.player(player) {
+                player_obj.library.last().copied()
+            } else {
+                None
+            };
+
+            let Some(id) = card_id else {
+                break;
+            };
+
+            let final_zone =
+                self.resolve_commander_move_destination(id, Zone::Hand, decision_maker);
+            if let Some(new_id) = self.move_object(id, final_zone)
+                && final_zone == Zone::Hand
+            {
+                drawn.push(new_id);
+            }
+        }
+        drawn
+    }
+
     /// Moves an object to a new zone.
     /// Per MTG rule 400.7, this creates a new object (new ID).
     /// Returns the new ObjectId.
@@ -1998,6 +2043,7 @@ impl GameState {
 
         let old_object = self.objects.remove(&old_id)?;
         self.stable_id_index.remove(&old_object.stable_id);
+        self.declined_commander_command_zone_moves.remove(&old_id);
         let old_zone = old_object.zone;
         let owner = old_object.owner;
         let controller = old_object.controller;
@@ -2324,6 +2370,7 @@ impl GameState {
     pub fn remove_object(&mut self, id: ObjectId) {
         if let Some(obj) = self.objects.remove(&id) {
             self.stable_id_index.remove(&obj.stable_id);
+            self.declined_commander_command_zone_moves.remove(&id);
             self.remove_from_zone_index(id, obj.zone, obj.owner);
         }
     }
@@ -3094,6 +3141,134 @@ impl GameState {
         }
     }
 
+    /// Resolve a commander's stable identity from either its original or current object ID.
+    pub fn commander_identity(&self, obj_id: ObjectId) -> Option<ObjectId> {
+        if self
+            .players
+            .iter()
+            .any(|player| player.commanders.contains(&obj_id))
+        {
+            return Some(obj_id);
+        }
+
+        let obj = self.object(obj_id)?;
+        let stable_identity = obj.stable_id.object_id();
+        self.players
+            .iter()
+            .any(|player| player.commanders.contains(&stable_identity))
+            .then_some(stable_identity)
+    }
+
+    /// Resolve the current object ID for a stored commander identity.
+    pub fn current_commander_object(&self, commander_id: ObjectId) -> Option<ObjectId> {
+        if self.object(commander_id).is_some() {
+            return Some(commander_id);
+        }
+
+        self.find_object_by_stable_id(StableId::from(commander_id))
+    }
+
+    /// Resolve the destination for a commander moving to hand or library.
+    ///
+    /// For all other zone changes, this returns `requested_zone` unchanged.
+    pub fn resolve_commander_move_destination(
+        &self,
+        object_id: ObjectId,
+        requested_zone: Zone,
+        decision_maker: &mut (impl crate::decision::DecisionMaker + ?Sized),
+    ) -> Zone {
+        let destination_text = match requested_zone {
+            Zone::Hand => "putting it into its owner's hand",
+            Zone::Library => "putting it into its owner's library",
+            _ => return requested_zone,
+        };
+
+        if !self.is_commander(object_id) {
+            return requested_zone;
+        }
+
+        let Some(obj) = self.object(object_id) else {
+            return requested_zone;
+        };
+        let owner = obj.owner;
+        let name = obj.name.clone();
+        let choice_ctx = crate::decisions::context::BooleanContext::new(
+            owner,
+            Some(object_id),
+            format!("move it to the command zone instead of {destination_text}"),
+        )
+        .with_source_name(name);
+
+        if decision_maker.decide_boolean(self, &choice_ctx) {
+            Zone::Command
+        } else {
+            requested_zone
+        }
+    }
+
+    /// Move an object while applying commander hand/library replacement choices.
+    pub fn move_object_with_commander_options(
+        &mut self,
+        object_id: ObjectId,
+        requested_zone: Zone,
+        decision_maker: &mut (impl crate::decision::DecisionMaker + ?Sized),
+    ) -> Option<(ObjectId, Zone)> {
+        let final_zone =
+            self.resolve_commander_move_destination(object_id, requested_zone, decision_maker);
+        self.move_object(object_id, final_zone)
+            .map(|new_id| (new_id, final_zone))
+    }
+
+    /// Returns how many times a commander has been cast from the command zone.
+    pub fn commander_cast_count(&self, commander_id: ObjectId) -> u32 {
+        let identity = self
+            .commander_identity(commander_id)
+            .unwrap_or(commander_id);
+        self.commander_casts_from_command_zone
+            .get(&identity)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Records that a commander was cast from the command zone.
+    pub fn record_commander_cast_from_command_zone(&mut self, commander_id: ObjectId) {
+        if let Some(identity) = self.commander_identity(commander_id) {
+            *self
+                .commander_casts_from_command_zone
+                .entry(identity)
+                .or_insert(0) += 1;
+        }
+    }
+
+    /// Records combat damage dealt to a player by a commander.
+    pub fn record_commander_damage(
+        &mut self,
+        player_id: PlayerId,
+        commander_id: ObjectId,
+        amount: u32,
+    ) {
+        if amount == 0 {
+            return;
+        }
+        let Some(identity) = self.commander_identity(commander_id) else {
+            return;
+        };
+        if let Some(player) = self.player_mut(player_id) {
+            player.record_commander_damage(identity, amount);
+        }
+    }
+
+    /// Returns true if this exact commander object already declined moving to command zone.
+    pub fn commander_command_zone_move_declined(&self, object_id: ObjectId) -> bool {
+        self.declined_commander_command_zone_moves
+            .contains(&object_id)
+    }
+
+    /// Mark this commander object as having declined the current command-zone move.
+    pub fn decline_commander_command_zone_move(&mut self, object_id: ObjectId) {
+        self.declined_commander_command_zone_moves.insert(object_id);
+    }
+
     /// Set the current monarch designation holder.
     ///
     /// Use `None` to clear the designation.
@@ -3627,23 +3802,7 @@ impl GameState {
     /// This handles the dual-identity nature of objects where zone changes
     /// create new IDs but stable_id persists.
     pub fn is_commander(&self, obj_id: ObjectId) -> bool {
-        // Check by current ID in all player commander lists
-        for player in &self.players {
-            if player.commanders.contains(&obj_id) {
-                return true;
-            }
-        }
-
-        // Check by stable_id in case the commander moved zones
-        if let Some(obj) = self.object(obj_id) {
-            for player in &self.players {
-                if player.commanders.contains(&obj.stable_id.object_id()) {
-                    return true;
-                }
-            }
-        }
-
-        false
+        self.commander_identity(obj_id).is_some()
     }
 
     /// Find an object by its stable_id (stable identifier).
@@ -4063,7 +4222,7 @@ impl GameState {
 
     /// Check if an object is designated as a commander.
     pub fn is_commander_object(&self, id: ObjectId) -> bool {
-        self.commanders.contains(&id)
+        self.is_commander(id)
     }
 
     /// Designate an object as a commander.

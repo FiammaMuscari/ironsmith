@@ -59,6 +59,9 @@ pub enum StateBasedAction {
 
     /// A saga's final chapter ability has resolved; sacrifice it.
     SagaSacrifice(ObjectId),
+
+    /// A commander in graveyard or exile returns to the command zone.
+    CommanderReturnsToCommandZone(ObjectId),
 }
 
 /// Reason why a player loses the game.
@@ -91,6 +94,7 @@ pub(crate) fn check_state_based_actions_with_effects(
 
     // Check player state-based actions
     check_player_sbas(game, &mut actions);
+    check_commander_zone_sbas(game, &mut actions);
 
     // Check permanent state-based actions
     check_permanent_sbas(game, &all_effects, &mut actions);
@@ -138,7 +142,30 @@ fn check_player_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
             });
         }
 
+        if player.commander_damage.values().any(|&damage| damage >= 21) {
+            actions.push(StateBasedAction::PlayerLoses {
+                player: player.id,
+                reason: LoseReason::CommanderDamage,
+            });
+        }
+
         // Note: "drew from empty library" is tracked separately when draw happens
+    }
+}
+
+fn check_commander_zone_sbas(game: &GameState, actions: &mut Vec<StateBasedAction>) {
+    for player in &game.players {
+        for &obj_id in &player.graveyard {
+            if game.is_commander(obj_id) && !game.commander_command_zone_move_declined(obj_id) {
+                actions.push(StateBasedAction::CommanderReturnsToCommandZone(obj_id));
+            }
+        }
+    }
+
+    for &obj_id in &game.exile {
+        if game.is_commander(obj_id) && !game.commander_command_zone_move_declined(obj_id) {
+            actions.push(StateBasedAction::CommanderReturnsToCommandZone(obj_id));
+        }
     }
 }
 
@@ -462,10 +489,8 @@ fn check_legend_rule(game: &GameState, actions: &mut Vec<StateBasedAction>) {
 /// `get_legend_rule_decisions()` and `apply_legend_rule_choice()` to handle
 /// those interactively.
 ///
-/// Note: This version auto-passes all replacement effect choices. Use
-/// `apply_state_based_actions_with` to provide a decision maker for interactive
-/// replacement effect choices (e.g., when Yawgmoth's Will and another effect
-/// both want to replace a zone change).
+/// Note: This version uses the CLI decision maker for any interactive choices
+/// that arise while applying SBAs.
 pub fn apply_state_based_actions(game: &mut GameState) -> bool {
     let mut auto_dm = crate::decision::CliDecisionMaker;
     apply_state_based_actions_with(game, &mut auto_dm)
@@ -482,7 +507,7 @@ pub fn apply_state_based_actions(game: &mut GameState) -> bool {
 /// those interactively.
 pub fn apply_state_based_actions_with(
     game: &mut GameState,
-    decision_maker: &mut impl crate::decision::DecisionMaker,
+    decision_maker: &mut (impl crate::decision::DecisionMaker + ?Sized),
 ) -> bool {
     let all_effects = game.all_continuous_effects();
     let actions = check_state_based_actions_with_effects(game, &all_effects);
@@ -493,7 +518,7 @@ pub(crate) fn apply_state_based_actions_from_actions_with(
     game: &mut GameState,
     actions: Vec<StateBasedAction>,
     all_effects: &[crate::continuous::ContinuousEffect],
-    decision_maker: &mut impl crate::decision::DecisionMaker,
+    decision_maker: &mut (impl crate::decision::DecisionMaker + ?Sized),
 ) -> bool {
     if actions.is_empty() {
         return false;
@@ -621,7 +646,7 @@ fn apply_single_sba_with_snapshots(
     game: &mut GameState,
     action: StateBasedAction,
     _pre_captured_snapshots: &std::collections::HashMap<ObjectId, ObjectSnapshot>,
-    decision_maker: &mut impl crate::decision::DecisionMaker,
+    decision_maker: &mut (impl crate::decision::DecisionMaker + ?Sized),
 ) {
     match action {
         StateBasedAction::ObjectDies(obj_id) => {
@@ -731,5 +756,171 @@ fn apply_single_sba_with_snapshots(
             // Saga is sacrificed (put into graveyard) after final chapter resolves
             game.move_object(obj_id, Zone::Graveyard);
         }
+
+        StateBasedAction::CommanderReturnsToCommandZone(obj_id) => {
+            let Some(obj) = game.object(obj_id) else {
+                return;
+            };
+            let owner = obj.owner;
+            let name = obj.name.clone();
+            let choice_ctx = crate::decisions::context::BooleanContext::new(
+                owner,
+                Some(obj_id),
+                "move it to the command zone",
+            )
+            .with_source_name(name);
+
+            if decision_maker.decide_boolean(game, &choice_ctx) {
+                game.move_object(obj_id, Zone::Command);
+            } else {
+                game.decline_commander_command_zone_move(obj_id);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::decision::DecisionMaker;
+    use crate::ids::CardId;
+    use crate::mana::{ManaCost, ManaSymbol};
+
+    #[derive(Default)]
+    struct AlwaysYesDecisionMaker;
+
+    impl DecisionMaker for AlwaysYesDecisionMaker {
+        fn decide_boolean(
+            &mut self,
+            _game: &GameState,
+            _ctx: &crate::decisions::context::BooleanContext,
+        ) -> bool {
+            true
+        }
+    }
+
+    struct SequenceDecisionMaker {
+        answers: std::collections::VecDeque<bool>,
+        calls: usize,
+    }
+
+    impl SequenceDecisionMaker {
+        fn new(answers: impl IntoIterator<Item = bool>) -> Self {
+            Self {
+                answers: answers.into_iter().collect(),
+                calls: 0,
+            }
+        }
+    }
+
+    impl DecisionMaker for SequenceDecisionMaker {
+        fn decide_boolean(
+            &mut self,
+            _game: &GameState,
+            _ctx: &crate::decisions::context::BooleanContext,
+        ) -> bool {
+            self.calls += 1;
+            self.answers.pop_front().unwrap_or(false)
+        }
+    }
+
+    #[test]
+    fn commander_damage_loss_requires_twenty_one_from_one_commander() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 40);
+        let bob = PlayerId::from_index(1);
+
+        {
+            let player = game.player_mut(bob).expect("bob should exist");
+            player.record_commander_damage(ObjectId::from_raw(100), 11);
+            player.record_commander_damage(ObjectId::from_raw(200), 10);
+        }
+
+        let actions = check_state_based_actions(&game);
+        assert!(
+            !actions.iter().any(|action| {
+                matches!(
+                    action,
+                    StateBasedAction::PlayerLoses {
+                        player,
+                        reason: LoseReason::CommanderDamage,
+                    } if *player == bob
+                )
+            }),
+            "combined damage from different commanders should not be lethal"
+        );
+
+        game.player_mut(bob)
+            .expect("bob should exist")
+            .record_commander_damage(ObjectId::from_raw(100), 10);
+
+        let actions = check_state_based_actions(&game);
+        assert!(actions.iter().any(|action| {
+            matches!(
+                action,
+                StateBasedAction::PlayerLoses {
+                    player,
+                    reason: LoseReason::CommanderDamage,
+                } if *player == bob
+            )
+        }));
+    }
+
+    #[test]
+    fn commander_in_graveyard_returns_to_command_zone() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 40);
+        let alice = PlayerId::from_index(0);
+
+        let commander = CardBuilder::new(CardId::from_raw(300), "Returned Commander")
+            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Green]))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let commander_id = game.create_object_from_card(&commander, alice, Zone::Graveyard);
+        game.set_as_commander(commander_id, alice);
+
+        let mut dm = AlwaysYesDecisionMaker;
+        assert!(apply_state_based_actions_with(&mut game, &mut dm));
+
+        let command_zone_ids = game.objects_in_zone(Zone::Command);
+        assert_eq!(command_zone_ids.len(), 1);
+        assert!(game.is_commander(command_zone_ids[0]));
+        assert_eq!(
+            game.object(command_zone_ids[0])
+                .map(|obj| obj.name.as_str()),
+            Some("Returned Commander")
+        );
+    }
+
+    #[test]
+    fn commander_decline_is_sticky_until_that_object_changes_zones() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 40);
+        let alice = PlayerId::from_index(0);
+
+        let commander = CardBuilder::new(CardId::from_raw(301), "Sticky Commander")
+            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Green]))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let commander_id = game.create_object_from_card(&commander, alice, Zone::Graveyard);
+        game.set_as_commander(commander_id, alice);
+
+        let mut dm = SequenceDecisionMaker::new([false, false]);
+        assert!(apply_state_based_actions_with(&mut game, &mut dm));
+        assert_eq!(dm.calls, 1, "first graveyard SBA should ask once");
+        assert_eq!(game.objects_in_zone(Zone::Graveyard), vec![commander_id]);
+
+        assert!(!apply_state_based_actions_with(&mut game, &mut dm));
+        assert_eq!(
+            dm.calls, 1,
+            "declined commander should not reprompt while it stays put"
+        );
+
+        let exile_id = game
+            .move_object(commander_id, Zone::Exile)
+            .expect("commander should move to exile");
+        assert!(apply_state_based_actions_with(&mut game, &mut dm));
+        assert_eq!(dm.calls, 2, "new object in exile should prompt again");
+        assert_eq!(game.objects_in_zone(Zone::Exile), vec![exile_id]);
     }
 }

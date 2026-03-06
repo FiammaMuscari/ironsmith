@@ -293,7 +293,7 @@ pub struct PublicPlayerState {
     pub library_size: u32,
     pub graveyard: Vec<GameObjectId>,
     pub commanders: Vec<GameObjectId>,
-    pub commander_damage: Vec<(GamePlayerId, u32)>,
+    pub commander_damage: Vec<(GameObjectId, u32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

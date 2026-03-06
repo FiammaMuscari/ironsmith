@@ -1,7 +1,16 @@
 import { useMemo, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { Badge } from "@/components/ui/badge";
-import { LOBBY_DECK_SIZE, parseDeckList } from "@/lib/decklists";
+import {
+  COMMANDER_DECK_SIZE,
+  LOBBY_DECK_SIZE,
+  MATCH_FORMAT_COMMANDER,
+  MATCH_FORMAT_NORMAL,
+  PARTNER_DECK_SIZE,
+  normalizeMatchFormat,
+  parseCommanderList,
+  parseDeckList,
+} from "@/lib/decklists";
 
 const pill =
   "text-[13px] uppercase cursor-pointer hover:brightness-125 transition-all select-none";
@@ -11,14 +20,40 @@ const labelClass =
   "grid gap-1 text-[12px] uppercase tracking-[0.18em] text-muted-foreground";
 const textareaClass =
   "min-h-[220px] w-full rounded-md border border-[#344a61] bg-[#0b1118] p-3 text-[14px] text-foreground outline-none focus:border-primary/60 font-mono resize-none";
+const commanderTextareaClass =
+  "min-h-[108px] w-full rounded-md border border-[#344a61] bg-[#0b1118] p-3 text-[14px] text-foreground outline-none focus:border-primary/60 font-mono resize-none";
 
-function formatPlayerStatus(player, localPeerId) {
+function formatName(format) {
+  return normalizeMatchFormat(format) === MATCH_FORMAT_COMMANDER
+    ? "Commander"
+    : "Normal";
+}
+
+function commanderDeckTarget(commanderCount) {
+  return commanderCount === 2 ? PARTNER_DECK_SIZE : COMMANDER_DECK_SIZE;
+}
+
+function formatPlayerStatus(player, localPeerId, format) {
   if (player.connected === false) return "Offline";
   if (player.ready) return player.peerId === localPeerId ? "You / Ready" : "Ready";
+
+  if (normalizeMatchFormat(format) === MATCH_FORMAT_COMMANDER) {
+    const mainCount = Number(player.deckCount || 0);
+    const commanderCount = Number(player.commanderCount || 0);
+    const prefix = player.peerId === localPeerId ? "You / " : "";
+    return `${prefix}${mainCount} + ${commanderCount}`;
+  }
+
   const deckCount = Number(player.deckCount || 0);
   return player.peerId === localPeerId
     ? `You / ${deckCount}/${LOBBY_DECK_SIZE}`
     : `${deckCount}/${LOBBY_DECK_SIZE}`;
+}
+
+function formatDeckRequirement(format) {
+  return normalizeMatchFormat(format) === MATCH_FORMAT_COMMANDER
+    ? `Submit a ${COMMANDER_DECK_SIZE}-card main deck plus 1 commander, or a ${PARTNER_DECK_SIZE}-card main deck plus 2 commanders.`
+    : `Submit exactly ${LOBBY_DECK_SIZE} main-deck cards.`;
 }
 
 export default function LobbyOverlay({
@@ -34,6 +69,7 @@ export default function LobbyOverlay({
     updateLobbyDeck,
   } = useGame();
   const [mode, setMode] = useState("create");
+  const [createFormat, setCreateFormat] = useState(MATCH_FORMAT_NORMAL);
   const [createName, setCreateName] = useState(defaultName);
   const [joinName, setJoinName] = useState(defaultName);
   const [joinCode, setJoinCode] = useState("");
@@ -41,11 +77,14 @@ export default function LobbyOverlay({
   const [startingLife, setStartingLife] = useState(defaultStartingLife);
   const [createDeckText, setCreateDeckText] = useState("");
   const [joinDeckText, setJoinDeckText] = useState("");
+  const [createCommanderText, setCreateCommanderText] = useState("");
+  const [joinCommanderText, setJoinCommanderText] = useState("");
 
   const lobbyActive = multiplayer.mode !== "idle";
   const playerCount = multiplayer.players.length;
   const readyPlayers = multiplayer.players.filter((player) => player.ready).length;
   const slotsRemaining = Math.max(0, multiplayer.desiredPlayers - playerCount);
+  const activeFormat = normalizeMatchFormat(multiplayer.format);
   const createDeckCount = useMemo(
     () => parseDeckList(createDeckText).length,
     [createDeckText]
@@ -54,20 +93,40 @@ export default function LobbyOverlay({
     () => parseDeckList(joinDeckText).length,
     [joinDeckText]
   );
+  const createCommanderCount = useMemo(
+    () => parseCommanderList(createCommanderText).length,
+    [createCommanderText]
+  );
+  const joinCommanderCount = useMemo(
+    () => parseCommanderList(joinCommanderText).length,
+    [joinCommanderText]
+  );
   const localPlayer = multiplayer.players.find(
     (player) => player.peerId === multiplayer.localPeerId
   );
   const localReady = Boolean(localPlayer?.ready);
-  const startPending =
-    !multiplayer.matchStarted &&
-    multiplayer.mode === "starting";
+  const startPending = !multiplayer.matchStarted && multiplayer.mode === "starting";
+  const activeCommanderTarget = commanderDeckTarget(multiplayer.localCommanderCount);
+  const createCommanderTarget = commanderDeckTarget(createCommanderCount);
+
+  const handleCreateFormatChange = (nextFormat) => {
+    const normalized = normalizeMatchFormat(nextFormat);
+    setCreateFormat(normalized);
+    setStartingLife((prev) => {
+      if (normalized === MATCH_FORMAT_COMMANDER && prev === 20) return 40;
+      if (normalized === MATCH_FORMAT_NORMAL && prev === 40) return 20;
+      return prev;
+    });
+  };
 
   const handleCreate = () => {
     createLobby({
       name: createName,
       desiredPlayers,
       startingLife,
+      format: createFormat,
       deckText: createDeckText,
+      commanderText: createCommanderText,
     });
   };
 
@@ -76,12 +135,13 @@ export default function LobbyOverlay({
       name: joinName,
       lobbyId: joinCode,
       deckText: joinDeckText,
+      commanderText: joinCommanderText,
     });
   };
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-[#04070dcc]/85 px-4">
-      <div className="w-full max-w-4xl rounded-xl border border-[#2b3e55] bg-[linear-gradient(180deg,#101826_0%,#0a121d_100%)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+      <div className="w-full max-w-5xl rounded-xl border border-[#2b3e55] bg-[linear-gradient(180deg,#101826_0%,#0a121d_100%)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="grid gap-1">
             <span className="text-[11px] uppercase tracking-[0.24em] text-[#7d97b4]">
@@ -120,59 +180,93 @@ export default function LobbyOverlay({
             </div>
 
             {mode === "create" ? (
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
                 <div className="grid gap-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className={labelClass}>
+                      Your Name
+                      <input
+                        className={inputClass}
+                        value={createName}
+                        onChange={(event) => setCreateName(event.target.value)}
+                        placeholder="Host name"
+                      />
+                    </label>
+                    <label className={labelClass}>
+                      Format
+                      <select
+                        className={inputClass}
+                        value={createFormat}
+                        onChange={(event) => handleCreateFormatChange(event.target.value)}
+                      >
+                        <option value={MATCH_FORMAT_NORMAL}>Normal</option>
+                        <option value={MATCH_FORMAT_COMMANDER}>Commander</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className={labelClass}>
+                      Starting Life
+                      <input
+                        className={inputClass}
+                        type="number"
+                        min={1}
+                        value={startingLife}
+                        onChange={(event) => setStartingLife(Number(event.target.value) || 20)}
+                      />
+                    </label>
+                    <label className={labelClass}>
+                      Players
+                      <select
+                        className={inputClass}
+                        value={desiredPlayers}
+                        onChange={(event) => setDesiredPlayers(Number(event.target.value) || 2)}
+                      >
+                        <option value={2}>2 Players</option>
+                        <option value={3}>3 Players</option>
+                        <option value={4}>4 Players</option>
+                      </select>
+                    </label>
+                  </div>
                   <label className={labelClass}>
-                    Your Name
-                    <input
-                      className={inputClass}
-                      value={createName}
-                      onChange={(event) => setCreateName(event.target.value)}
-                      placeholder="Host name"
-                    />
-                  </label>
-                  <label className={labelClass}>
-                    Starting Life
-                    <input
-                      className={inputClass}
-                      type="number"
-                      min={1}
-                      value={startingLife}
-                      onChange={(event) => setStartingLife(Number(event.target.value) || 20)}
-                    />
-                  </label>
-                  <label className={labelClass}>
-                    Your Deck
+                    Main Deck
                     <textarea
                       className={textareaClass}
                       value={createDeckText}
                       onChange={(event) => setCreateDeckText(event.target.value)}
-                      placeholder={`Paste a ${LOBBY_DECK_SIZE}-card main deck...\n\n4 Lightning Bolt\n4 Counterspell\n24 Island`}
+                      placeholder={
+                        createFormat === MATCH_FORMAT_COMMANDER
+                          ? `Paste a ${COMMANDER_DECK_SIZE}-card Commander main deck...\n\n1 Sol Ring\n1 Swords to Plowshares\n35 Plains`
+                          : `Paste a ${LOBBY_DECK_SIZE}-card main deck...\n\n4 Lightning Bolt\n4 Counterspell\n24 Island`
+                      }
                     />
                   </label>
+                  {createFormat === MATCH_FORMAT_COMMANDER ? (
+                    <label className={labelClass}>
+                      Commander(s)
+                      <textarea
+                        className={commanderTextareaClass}
+                        value={createCommanderText}
+                        onChange={(event) => setCreateCommanderText(event.target.value)}
+                        placeholder={"1 Atraxa, Praetors' Voice\nor\nTymna the Weaver\nKraum, Ludevic's Opus"}
+                      />
+                    </label>
+                  ) : null}
                 </div>
 
                 <div className="grid gap-4 rounded-lg border border-[#243447] bg-[#09111a] p-4">
-                  <label className={labelClass}>
-                    Players
-                    <select
-                      className={inputClass}
-                      value={desiredPlayers}
-                      onChange={(event) => setDesiredPlayers(Number(event.target.value) || 2)}
-                    >
-                      <option value={2}>2 Players</option>
-                      <option value={3}>3 Players</option>
-                      <option value={4}>4 Players</option>
-                    </select>
-                  </label>
                   <div className="grid gap-1 text-[13px] leading-6 text-muted-foreground">
+                    <span>Format: {formatName(createFormat)}</span>
                     <span>
-                      Host deck: {createDeckCount}/{LOBBY_DECK_SIZE} cards
+                      Main deck:{" "}
+                      {createFormat === MATCH_FORMAT_COMMANDER
+                        ? `${createDeckCount}/${createCommanderTarget}`
+                        : `${createDeckCount}/${LOBBY_DECK_SIZE}`}
                     </span>
-                    <span>
-                      Each player becomes ready after submitting exactly{" "}
-                      {LOBBY_DECK_SIZE} main-deck cards.
-                    </span>
+                    {createFormat === MATCH_FORMAT_COMMANDER ? (
+                      <span>Commander(s): {createCommanderCount}/1-2</span>
+                    ) : null}
+                    <span>{formatDeckRequirement(createFormat)}</span>
                     <span>
                       The match auto-starts once every seat is filled and ready.
                     </span>
@@ -187,48 +281,57 @@ export default function LobbyOverlay({
                 </div>
               </div>
             ) : (
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
                 <div className="grid gap-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className={labelClass}>
+                      Your Name
+                      <input
+                        className={inputClass}
+                        value={joinName}
+                        onChange={(event) => setJoinName(event.target.value)}
+                        placeholder="Guest name"
+                      />
+                    </label>
+                    <label className={labelClass}>
+                      Lobby Code
+                      <input
+                        className={inputClass}
+                        value={joinCode}
+                        onChange={(event) => setJoinCode(event.target.value)}
+                        placeholder="Host peer ID"
+                      />
+                    </label>
+                  </div>
                   <label className={labelClass}>
-                    Your Name
-                    <input
-                      className={inputClass}
-                      value={joinName}
-                      onChange={(event) => setJoinName(event.target.value)}
-                      placeholder="Guest name"
-                    />
-                  </label>
-                  <label className={labelClass}>
-                    Lobby Code
-                    <input
-                      className={inputClass}
-                      value={joinCode}
-                      onChange={(event) => setJoinCode(event.target.value)}
-                      placeholder="Host peer ID"
-                    />
-                  </label>
-                  <label className={labelClass}>
-                    Your Deck
+                    Main Deck
                     <textarea
                       className={textareaClass}
                       value={joinDeckText}
                       onChange={(event) => setJoinDeckText(event.target.value)}
-                      placeholder={`Paste a ${LOBBY_DECK_SIZE}-card main deck...\n\n4 Thoughtseize\n4 Fatal Push\n24 Swamp`}
+                      placeholder={`Paste your main deck now or finish it inside the lobby.\n\nNormal lobbies need ${LOBBY_DECK_SIZE} cards.\nCommander lobbies need ${COMMANDER_DECK_SIZE} or ${PARTNER_DECK_SIZE} main-deck cards.`}
+                    />
+                  </label>
+                  <label className={labelClass}>
+                    Commander(s)
+                    <textarea
+                      className={commanderTextareaClass}
+                      value={joinCommanderText}
+                      onChange={(event) => setJoinCommanderText(event.target.value)}
+                      placeholder={"Optional until you see the host format.\nIf the lobby is Commander, add 1 or 2 commanders here."}
                     />
                   </label>
                 </div>
 
                 <div className="grid gap-4 rounded-lg border border-[#243447] bg-[#09111a] p-4">
                   <div className="grid gap-1 text-[13px] leading-6 text-muted-foreground">
+                    <span>Main deck: {joinDeckCount} cards</span>
+                    <span>Commander(s): {joinCommanderCount}</span>
                     <span>
-                      Join deck: {joinDeckCount}/{LOBBY_DECK_SIZE} cards
+                      Join first, then the lobby will tell you whether the host chose Normal or Commander.
                     </span>
                     <span>
-                      You are only ready after the host receives exactly{" "}
-                      {LOBBY_DECK_SIZE} main-deck cards from you.
-                    </span>
-                    <span>
-                      You can still join early and finish the deck inside the lobby.
+                      You only become ready after the host receives a valid deck submission for that format.
                     </span>
                   </div>
                   <Badge
@@ -270,34 +373,65 @@ export default function LobbyOverlay({
                               playerCount - readyPlayers
                             } player${
                               playerCount - readyPlayers === 1 ? "" : "s"
-                            } to submit ${LOBBY_DECK_SIZE} cards.`
+                            } to submit a valid ${formatName(activeFormat)} deck.`
                         : localReady
                           ? "Ready. Waiting for the remaining players."
-                          : `Paste exactly ${LOBBY_DECK_SIZE} main-deck cards to become ready.`}
+                          : formatDeckRequirement(activeFormat)}
                 </p>
               </div>
 
               {!multiplayer.matchStarted ? (
-                <div className="grid gap-2 rounded-lg border border-[#243447] bg-[#09111a] p-4">
+                <div className="grid gap-3 rounded-lg border border-[#243447] bg-[#09111a] p-4">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] uppercase tracking-[0.22em] text-[#7d97b4]">
                       Your Deck
                     </span>
                     <span className="text-[13px] text-muted-foreground">
-                      {multiplayer.localDeckCount}/{LOBBY_DECK_SIZE}
+                      Format: {formatName(activeFormat)}
                     </span>
                   </div>
                   <textarea
                     className={textareaClass}
+                    disabled={startPending}
                     value={multiplayer.localDeckText}
-                    onChange={(event) => updateLobbyDeck(event.target.value)}
-                    placeholder={`Paste a ${LOBBY_DECK_SIZE}-card main deck...\n\n4 Swords to Plowshares\n4 Brainstorm\n24 Plains`}
+                    onChange={(event) =>
+                      updateLobbyDeck({ deckText: event.target.value })
+                    }
+                    placeholder={
+                      activeFormat === MATCH_FORMAT_COMMANDER
+                        ? `Paste your Commander main deck...\n\n1 Sol Ring\n1 Brainstorm\n33 Island`
+                        : `Paste a ${LOBBY_DECK_SIZE}-card main deck...\n\n4 Swords to Plowshares\n4 Brainstorm\n24 Plains`
+                    }
                   />
-                  <p className="text-[13px] leading-6 text-muted-foreground">
-                    {localReady
-                      ? "Ready. The host has your current 60-card main deck."
-                      : `Not ready. The deck must contain exactly ${LOBBY_DECK_SIZE} main-deck cards.`}
-                  </p>
+                  <div className="grid gap-1 text-[13px] leading-6 text-muted-foreground">
+                    <span>
+                      Main deck:{" "}
+                      {activeFormat === MATCH_FORMAT_COMMANDER
+                        ? `${multiplayer.localDeckCount}/${activeCommanderTarget}`
+                        : `${multiplayer.localDeckCount}/${LOBBY_DECK_SIZE}`}
+                    </span>
+                    {activeFormat === MATCH_FORMAT_COMMANDER ? (
+                      <>
+                        <textarea
+                          className={commanderTextareaClass}
+                          disabled={startPending}
+                          value={multiplayer.localCommanderText}
+                          onChange={(event) =>
+                            updateLobbyDeck({ commanderText: event.target.value })
+                          }
+                          placeholder={"1 Commander\nor\nCommander One\nCommander Two"}
+                        />
+                        <span>
+                          Commander(s): {multiplayer.localCommanderCount}/1-2
+                        </span>
+                      </>
+                    ) : null}
+                    <span>
+                      {localReady
+                        ? "Ready. The host has your current deck submission."
+                        : formatDeckRequirement(activeFormat)}
+                    </span>
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -321,7 +455,7 @@ export default function LobbyOverlay({
                       {player.index + 1}. {player.name}
                     </span>
                     <span className="text-[12px] uppercase tracking-[0.18em] text-muted-foreground">
-                      {formatPlayerStatus(player, multiplayer.localPeerId)}
+                      {formatPlayerStatus(player, multiplayer.localPeerId, activeFormat)}
                     </span>
                   </div>
                 ))}
@@ -329,7 +463,7 @@ export default function LobbyOverlay({
 
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[13px] text-muted-foreground">
-                  Starting life: {multiplayer.startingLife}
+                  {formatName(activeFormat)} • Starting life: {multiplayer.startingLife}
                 </span>
                 <Badge
                   variant="secondary"

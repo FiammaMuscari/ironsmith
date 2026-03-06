@@ -5,6 +5,7 @@ const VIEWABLE_ZONES = [
   { id: "hand", label: "Hand" },
   { id: "graveyard", label: "Graveyard" },
   { id: "exile", label: "Exile" },
+  { id: "command", label: "Command" },
 ];
 
 function normalizeZones(zones) {

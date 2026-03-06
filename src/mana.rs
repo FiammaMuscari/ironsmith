@@ -211,6 +211,23 @@ impl ManaCost {
 
         ManaCost::from_pips(new_pips)
     }
+
+    /// Returns a new ManaCost with additional generic mana appended.
+    pub fn add_generic(&self, increase: u32) -> ManaCost {
+        if increase == 0 {
+            return self.clone();
+        }
+
+        let mut new_pips = self.pips.clone();
+        let mut remaining = increase;
+        while remaining > 0 {
+            let chunk = remaining.min(u8::MAX as u32) as u8;
+            new_pips.push(vec![ManaSymbol::Generic(chunk)]);
+            remaining -= chunk as u32;
+        }
+
+        ManaCost::from_pips(new_pips)
+    }
 }
 
 #[cfg(test)]
@@ -405,5 +422,16 @@ mod tests {
         // Hybrid pip is not pure Generic, so it's kept
         assert_eq!(reduced.pip_count(), 1);
         assert_eq!(reduced.mana_value(), 2);
+    }
+
+    #[test]
+    fn test_add_generic() {
+        let cost = ManaCost::from_pips(vec![vec![ManaSymbol::White], vec![ManaSymbol::Blue]]);
+        let increased = cost.add_generic(3);
+
+        assert_eq!(increased.pip_count(), 3);
+        assert_eq!(increased.mana_value(), 5);
+        assert_eq!(increased.generic_mana_total(), 3);
+        assert_eq!(increased.to_oracle(), "{W}{U}{3}");
     }
 }

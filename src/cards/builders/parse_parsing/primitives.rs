@@ -508,6 +508,20 @@ pub(crate) struct IdGenContext {
 }
 
 #[derive(Debug, Clone, Default)]
+pub(crate) struct LoweringReferenceFrame {
+    pub(crate) last_effect_id: Option<EffectId>,
+    pub(crate) last_object_tag: Option<String>,
+    pub(crate) last_player_filter: Option<PlayerFilter>,
+    pub(crate) iterated_player: bool,
+    pub(crate) allow_life_event_value: bool,
+    pub(crate) bind_unbound_x_to_last_effect: bool,
+}
+
+pub(crate) trait ReferenceFrameSource {
+    fn reference_frame(&self) -> LoweringReferenceFrame;
+}
+
+#[derive(Debug, Clone, Default)]
 pub(crate) struct LoweringFrame {
     pub(crate) last_effect_id: Option<EffectId>,
     pub(crate) last_object_tag: Option<String>,
@@ -565,6 +579,17 @@ impl CompileContext {
         self.next_tag_id = id_gen.next_tag_id;
     }
 
+    pub(crate) fn reference_frame(&self) -> LoweringReferenceFrame {
+        LoweringReferenceFrame {
+            last_effect_id: self.last_effect_id,
+            last_object_tag: self.last_object_tag.clone(),
+            last_player_filter: self.last_player_filter.clone(),
+            iterated_player: self.iterated_player,
+            allow_life_event_value: self.allow_life_event_value,
+            bind_unbound_x_to_last_effect: self.bind_unbound_x_to_last_effect,
+        }
+    }
+
     pub(crate) fn lowering_frame(&self) -> LoweringFrame {
         LoweringFrame {
             last_effect_id: self.last_effect_id,
@@ -599,5 +624,17 @@ impl CompileContext {
         let tag = format!("{prefix}_{}", self.next_tag_id);
         self.next_tag_id += 1;
         tag
+    }
+}
+
+impl ReferenceFrameSource for CompileContext {
+    fn reference_frame(&self) -> LoweringReferenceFrame {
+        CompileContext::reference_frame(self)
+    }
+}
+
+impl ReferenceFrameSource for LoweringReferenceFrame {
+    fn reference_frame(&self) -> LoweringReferenceFrame {
+        self.clone()
     }
 }

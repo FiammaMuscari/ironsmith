@@ -614,49 +614,10 @@ fn get_spell_mana_cost(
     spell_id: ObjectId,
     caster: PlayerId,
     casting_method: &CastingMethod,
+    from_zone: Zone,
 ) -> Option<crate::mana::ManaCost> {
     let obj = game.object(spell_id)?;
-    match casting_method {
-        CastingMethod::Normal => obj.mana_cost.clone(),
-        CastingMethod::Alternative(idx) => {
-            if let Some(method) = obj.alternative_casts.get(*idx) {
-                // Methods with a modeled TotalCost can explicitly set "no mana cost" (None).
-                // Methods without TotalCost fall back to the spell's printed mana cost.
-                if method.total_cost().is_some() {
-                    method.mana_cost().cloned()
-                } else {
-                    method
-                        .mana_cost()
-                        .cloned()
-                        .or_else(|| obj.mana_cost.clone())
-                }
-            } else {
-                obj.mana_cost.clone()
-            }
-        }
-        CastingMethod::GrantedEscape { .. } => obj.mana_cost.clone(),
-        CastingMethod::GrantedFlashback => obj.mana_cost.clone(),
-        CastingMethod::PlayFrom {
-            use_alternative: None,
-            ..
-        } => obj.mana_cost.clone(),
-        CastingMethod::PlayFrom {
-            use_alternative: Some(idx),
-            zone,
-            ..
-        } => crate::decision::resolve_play_from_alternative_method(game, caster, obj, *zone, *idx)
-            .map(|method| {
-                if method.total_cost().is_some() {
-                    method.mana_cost().cloned()
-                } else {
-                    method
-                        .mana_cost()
-                        .cloned()
-                        .or_else(|| obj.mana_cost.clone())
-                }
-            })
-            .unwrap_or_else(|| obj.mana_cost.clone()),
-    }
+    crate::decision::spell_mana_cost_for_cast(game, caster, obj, casting_method, from_zone)
 }
 
 /// Get pips that require announcement (hybrid/Phyrexian pips with multiple options).
@@ -693,6 +654,7 @@ fn continue_to_targeting_or_finalize(
             pending.spell_id,
             pending.caster,
             &pending.casting_method,
+            pending.from_zone,
         )
     {
         let pips_to_announce = get_pips_requiring_announcement(&mana_cost);
@@ -900,54 +862,13 @@ fn continue_to_mana_payment(
 
     // Compute the effective mana cost for this spell
     let effective_cost = if let Some(obj) = game.object(pending.spell_id) {
-        // Get base cost from casting method
-        let base_cost = match &pending.casting_method {
-            CastingMethod::Normal => obj.mana_cost.clone(),
-            CastingMethod::Alternative(idx) => {
-                if let Some(method) = obj.alternative_casts.get(*idx) {
-                    // Methods with a modeled TotalCost can explicitly set "no mana cost" (None).
-                    // Methods without TotalCost fall back to the spell's printed mana cost.
-                    if method.total_cost().is_some() {
-                        method.mana_cost().cloned()
-                    } else {
-                        method
-                            .mana_cost()
-                            .cloned()
-                            .or_else(|| obj.mana_cost.clone())
-                    }
-                } else {
-                    obj.mana_cost.clone()
-                }
-            }
-            CastingMethod::GrantedEscape { .. } => obj.mana_cost.clone(),
-            CastingMethod::GrantedFlashback => obj.mana_cost.clone(),
-            CastingMethod::PlayFrom {
-                use_alternative: None,
-                ..
-            } => obj.mana_cost.clone(),
-            CastingMethod::PlayFrom {
-                use_alternative: Some(idx),
-                zone,
-                ..
-            } => crate::decision::resolve_play_from_alternative_method(
-                game,
-                pending.caster,
-                obj,
-                *zone,
-                *idx,
-            )
-            .map(|method| {
-                if method.total_cost().is_some() {
-                    method.mana_cost().cloned()
-                } else {
-                    method
-                        .mana_cost()
-                        .cloned()
-                        .or_else(|| obj.mana_cost.clone())
-                }
-            })
-            .unwrap_or_else(|| obj.mana_cost.clone()),
-        };
+        let base_cost = crate::decision::spell_mana_cost_for_cast(
+            game,
+            pending.caster,
+            obj,
+            &pending.casting_method,
+            pending.from_zone,
+        );
 
         // Apply cost reductions (affinity, delve, convoke, improvise)
         base_cost.map(|bc| {

@@ -2069,55 +2069,71 @@ pub(crate) fn parse_object_filter(
         CardType::Battle,
     ];
 
-    if saw_spell && saw_permanent {
-        let has_permanent_spell_phrase = all_words
-            .windows(2)
-            .any(|window| window == ["permanent", "spell"] || window == ["permanent", "spells"]);
-        let has_standalone_permanent = all_words.iter().enumerate().any(|(idx, word)| {
-            (*word == "permanent" || *word == "permanents")
-                && !matches!(all_words.get(idx + 1).copied(), Some("spell" | "spells"))
-        });
-        let has_standalone_spell = all_words.iter().enumerate().any(|(idx, word)| {
-            (*word == "spell" || *word == "spells")
-                && !matches!(
-                    idx.checked_sub(1).and_then(|i| all_words.get(i)).copied(),
-                    Some("permanent")
-                )
-        });
-
-        if has_standalone_permanent || has_standalone_spell {
-            let mut spell_filter = filter.clone();
-            spell_filter.any_of.clear();
-            spell_filter.zone = Some(Zone::Stack);
-
-            let permanent_spell_only = has_permanent_spell_phrase && !has_standalone_spell;
-            if permanent_spell_only {
-                if spell_filter.card_types.is_empty() && spell_filter.all_card_types.is_empty() {
-                    spell_filter.card_types = permanent_type_defaults.clone();
-                }
-            } else if spell_filter.card_types == permanent_type_defaults
-                && spell_filter.all_card_types.is_empty()
-            {
-                spell_filter.card_types.clear();
-            }
-
-            let mut permanent_filter = filter.clone();
-            permanent_filter.any_of.clear();
-            permanent_filter.zone = Some(Zone::Battlefield);
-            if permanent_filter.card_types.is_empty() && permanent_filter.all_card_types.is_empty()
-            {
-                permanent_filter.card_types = permanent_type_defaults.clone();
-            }
-
-            let mut combined_filter = ObjectFilter::default();
-            combined_filter.any_of = vec![spell_filter, permanent_filter];
-            filter = combined_filter;
-        } else {
-            if filter.card_types.is_empty() && filter.all_card_types.is_empty() {
-                filter.card_types = permanent_type_defaults.clone();
-            }
-            filter.zone = Some(Zone::Stack);
+    let segment_has_standalone_spell = |segment: &[String]| {
+        let contains_spell = segment
+            .iter()
+            .any(|word| matches!(word.as_str(), "spell" | "spells"));
+        if !contains_spell {
+            return false;
         }
+
+        !segment.iter().any(|word| {
+            matches!(
+                word.as_str(),
+                "permanent" | "permanents" | "card" | "cards" | "source" | "sources"
+            ) || parse_card_type(word).is_some()
+                || parse_subtype_flexible(word).is_some()
+        })
+    };
+    let segment_has_nonspell_permanent_head = |segment: &[String]| {
+        let contains_spell = segment
+            .iter()
+            .any(|word| matches!(word.as_str(), "spell" | "spells"));
+        if contains_spell {
+            return false;
+        }
+
+        segment.iter().any(|word| {
+            matches!(word.as_str(), "permanent" | "permanents")
+                || parse_card_type(word).is_some_and(is_permanent_type)
+                || parse_subtype_flexible(word).is_some()
+        })
+    };
+    let has_standalone_spell_segment = segment_words_lists
+        .iter()
+        .any(|segment| segment_has_standalone_spell(segment));
+    let has_nonspell_permanent_segment = segment_words_lists
+        .iter()
+        .any(|segment| segment_has_nonspell_permanent_head(segment));
+
+    if saw_spell && has_standalone_spell_segment && has_nonspell_permanent_segment {
+        let mut spell_filter = filter.clone();
+        spell_filter.any_of.clear();
+        spell_filter.zone = Some(Zone::Stack);
+        spell_filter.card_types.clear();
+        spell_filter.all_card_types.clear();
+        spell_filter.subtypes.clear();
+        spell_filter.type_or_subtype_union = false;
+
+        let mut permanent_filter = filter.clone();
+        permanent_filter.any_of.clear();
+        permanent_filter.zone = Some(Zone::Battlefield);
+        permanent_filter.has_mana_cost = false;
+        if permanent_filter.card_types.is_empty()
+            && permanent_filter.all_card_types.is_empty()
+            && permanent_filter.subtypes.is_empty()
+        {
+            permanent_filter.card_types = permanent_type_defaults.clone();
+        }
+
+        let mut combined_filter = ObjectFilter::default();
+        combined_filter.any_of = vec![spell_filter, permanent_filter];
+        filter = combined_filter;
+    } else if saw_spell && saw_permanent {
+        if filter.card_types.is_empty() && filter.all_card_types.is_empty() {
+            filter.card_types = permanent_type_defaults.clone();
+        }
+        filter.zone = Some(Zone::Stack);
     } else {
         if saw_permanent && filter.card_types.is_empty() && filter.all_card_types.is_empty() {
             filter.card_types = permanent_type_defaults.clone();

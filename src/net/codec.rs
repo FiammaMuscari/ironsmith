@@ -481,7 +481,7 @@ impl CanonicalDecode for PublicPlayerState {
             library_size: u32::decode(input)?,
             graveyard: Vec::<GameObjectId>::decode(input)?,
             commanders: Vec::<GameObjectId>::decode(input)?,
-            commander_damage: Vec::<(GamePlayerId, u32)>::decode(input)?,
+            commander_damage: Vec::<(GameObjectId, u32)>::decode(input)?,
         })
     }
 }

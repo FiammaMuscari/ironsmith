@@ -48,7 +48,11 @@ impl CostPayer for ReturnSelfToHandCost {
         self.can_pay(game, ctx)?;
 
         // Return to hand
-        game.move_object(ctx.source, Zone::Hand);
+        let _ = game.move_object_with_commander_options(
+            ctx.source,
+            Zone::Hand,
+            &mut *ctx.decision_maker,
+        );
 
         Ok(CostPaymentResult::Paid)
     }
@@ -138,7 +142,11 @@ impl CostPayer for ReturnToHandCost {
                 return Err(CostPaymentError::NoValidReturnTarget);
             }
             ctx.pre_chosen_cards.remove(0);
-            game.move_object(target_id, Zone::Hand);
+            let _ = game.move_object_with_commander_options(
+                target_id,
+                Zone::Hand,
+                &mut *ctx.decision_maker,
+            );
             return Ok(CostPaymentResult::Paid);
         }
 

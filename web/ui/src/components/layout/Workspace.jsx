@@ -26,6 +26,7 @@ function objectExistsInState(state, objectId) {
       player?.hand_cards || [],
       player?.graveyard_cards || [],
       player?.exile_cards || [],
+      player?.command_cards || [],
     ];
     for (const cards of zones) {
       for (const card of cards) {
@@ -52,7 +53,7 @@ function shouldExpandInlineInspector(player, objectId) {
     return true;
   }
 
-  for (const zone of [player.graveyard_cards || [], player.exile_cards || []]) {
+  for (const zone of [player.graveyard_cards || [], player.exile_cards || [], player.command_cards || []]) {
     for (const card of zone) {
       if (String(card?.id) === needle && card?.show_in_pseudo_hand) {
         return true;
@@ -74,6 +75,7 @@ export default function Workspace({
   onCancelDeckLoading,
 }) {
   const [selectedObjectId, setSelectedObjectId] = useState(null);
+  const [pinnedInspectorObjectId, setPinnedInspectorObjectId] = useState(null);
   const [expandedInspectorObjectId, setExpandedInspectorObjectId] = useState(null);
   const [handLaneHovered, setHandLaneHovered] = useState(false);
   const previousStackIdsRef = useRef([]);
@@ -92,7 +94,10 @@ export default function Workspace({
     : null;
   const [dismissedAddCardError, setDismissedAddCardError] = useState(null);
   const selectedObjectIsValid = objectExistsInState(state, selectedObjectId);
-  const forceInlineInspectorExpanded = sameObjectId(expandedInspectorObjectId, selectedObjectId);
+  const forceInlineInspectorExpanded =
+    sameObjectId(pinnedInspectorObjectId, selectedObjectId)
+    || sameObjectId(expandedInspectorObjectId, selectedObjectId);
+  const forceInlineInspectorFullArt = sameObjectId(expandedInspectorObjectId, selectedObjectId);
   const inlineInspectorExpanded =
     shouldExpandInlineInspector(me, selectedObjectId) || forceInlineInspectorExpanded;
   const handLaneOpen = handLaneHovered;
@@ -106,6 +111,9 @@ export default function Workspace({
     queueMicrotask(() => {
       setSelectedObjectId((currentSelection) => (
         String(currentSelection) === invalidSelection ? null : currentSelection
+      ));
+      setPinnedInspectorObjectId((currentPinned) => (
+        sameObjectId(currentPinned, invalidSelection) ? null : currentPinned
       ));
       setExpandedInspectorObjectId((currentExpanded) => (
         sameObjectId(currentExpanded, invalidSelection) ? null : currentExpanded
@@ -132,6 +140,7 @@ export default function Workspace({
           if (String(currentSelection) !== selectedSnapshot) return currentSelection;
           return nextTopId;
         });
+        setPinnedInspectorObjectId(null);
         setExpandedInspectorObjectId((currentExpanded) => (
           currentExpanded == null ? currentExpanded : null
         ));
@@ -145,6 +154,7 @@ export default function Workspace({
     if (!combatDeclarationActive) return;
     queueMicrotask(() => {
       setSelectedObjectId(null);
+      setPinnedInspectorObjectId(null);
       setExpandedInspectorObjectId(null);
     });
   }, [combatDeclarationActive]);
@@ -177,9 +187,8 @@ export default function Workspace({
     (objectId) => {
       if (combatDeclarationActive) return;
       setSelectedObjectId(objectId);
-      setExpandedInspectorObjectId((currentExpanded) => (
-        sameObjectId(currentExpanded, objectId) ? currentExpanded : null
-      ));
+      setPinnedInspectorObjectId(objectId == null ? null : String(objectId));
+      setExpandedInspectorObjectId(null);
       if (objectId != null) hoverCard(objectId);
     },
     [combatDeclarationActive, hoverCard]
@@ -189,6 +198,7 @@ export default function Workspace({
     (objectId) => {
       if (combatDeclarationActive || objectId == null) return;
       setSelectedObjectId(objectId);
+      setPinnedInspectorObjectId(String(objectId));
       setExpandedInspectorObjectId((currentExpanded) => (
         sameObjectId(currentExpanded, objectId) ? null : String(objectId)
       ));
@@ -250,6 +260,7 @@ export default function Workspace({
         );
         if (!combatDeclarationActive && ds.objectId != null) {
           setSelectedObjectId(ds.objectId);
+          setPinnedInspectorObjectId(null);
           setExpandedInspectorObjectId(null);
         }
         return;
@@ -259,6 +270,7 @@ export default function Workspace({
       // remain available in the action strip.
       if (!combatDeclarationActive) {
         setSelectedObjectId(ds.objectId != null ? ds.objectId : null);
+        setPinnedInspectorObjectId(null);
         setExpandedInspectorObjectId(null);
       }
       clearHover();
@@ -300,6 +312,7 @@ export default function Workspace({
       if (!inDeadZone) return;
 
       setSelectedObjectId(null);
+      setPinnedInspectorObjectId(null);
       setExpandedInspectorObjectId(null);
       clearHover();
     };
@@ -376,6 +389,7 @@ export default function Workspace({
           inline
           inlineExpanded={inlineInspectorExpanded}
           forceInlineExpanded={forceInlineInspectorExpanded}
+          fullArtInlineExpanded={forceInlineInspectorFullArt}
         />
       </div>
     </section>

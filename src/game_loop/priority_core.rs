@@ -57,7 +57,7 @@ pub fn advance_priority_with_dm(
     }
 
     // Check and apply state-based actions
-    check_and_apply_sbas(game, trigger_queue)?;
+    check_and_apply_sbas_with(game, trigger_queue, decision_maker)?;
 
     // Put triggered abilities on the stack with target selection
     put_triggers_on_stack_with_dm(game, trigger_queue, decision_maker)?;

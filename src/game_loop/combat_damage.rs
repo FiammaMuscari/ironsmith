@@ -606,11 +606,12 @@ fn apply_damage_to_player(
             continue;
         }
         total_damage_dealt = total_damage_dealt.saturating_add(assignment.amount);
-        if let DamageTarget::Player(target_player) = assignment.target
-            && target_player == player_id
-        {
-            damage_to_original = damage_to_original.saturating_add(assignment.amount);
-            life_lost_to_original = life_lost_to_original.saturating_add(applied.life_lost);
+        if let DamageTarget::Player(target_player) = assignment.target {
+            game.record_commander_damage(target_player, source_id, assignment.amount);
+            if target_player == player_id {
+                damage_to_original = damage_to_original.saturating_add(assignment.amount);
+                life_lost_to_original = life_lost_to_original.saturating_add(applied.life_lost);
+            }
         }
     }
 

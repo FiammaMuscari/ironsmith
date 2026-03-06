@@ -22,7 +22,7 @@ pub fn check_and_apply_sbas(
 pub fn check_and_apply_sbas_with(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
-    decision_maker: &mut impl DecisionMaker,
+    decision_maker: &mut (impl DecisionMaker + ?Sized),
 ) -> Result<(), GameLoopError> {
     use crate::decisions::make_decision;
     use crate::rules::state_based::{
@@ -62,12 +62,7 @@ pub fn check_and_apply_sbas_with(
                 decision_maker,
             )
         } else {
-            apply_state_based_actions_from_actions_with(
-                game,
-                actions,
-                &all_effects,
-                decision_maker,
-            )
+            apply_state_based_actions_from_actions_with(game, actions, &all_effects, decision_maker)
         };
         // SBA moves queue primitive ZoneChangeEvent via move_object; consume them now.
         drain_pending_trigger_events(game, trigger_queue);

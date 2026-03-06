@@ -894,13 +894,15 @@ pub fn compute_commander_actions(game: &GameState, player: PlayerId) -> Vec<Lega
     // Check for commanders that can be cast from command zone
     if let Some(player_obj) = game.player(player) {
         for &commander_id in player_obj.get_commanders() {
-            if let Some(commander) = game.object(commander_id) {
+            if let Some(current_id) = game.current_commander_object(commander_id)
+                && let Some(commander) = game.object(current_id)
+            {
                 // Only if the commander is in the command zone
                 if commander.zone == Zone::Command
                     && can_cast_spell(game, player, commander, &CastingMethod::Normal)
                 {
                     actions.push(LegalAction::CastSpell {
-                        spell_id: commander_id,
+                        spell_id: current_id,
                         from_zone: Zone::Command,
                         casting_method: CastingMethod::Normal,
                     });
@@ -1622,6 +1624,66 @@ fn has_valid_spell_timing(
     game.turn.active_player == player && crate::turn::is_sorcery_timing(game)
 }
 
+/// Resolve the mana cost for a spell cast from a specific zone and method.
+pub fn spell_mana_cost_for_cast(
+    game: &GameState,
+    player: PlayerId,
+    spell: &crate::object::Object,
+    casting_method: &CastingMethod,
+    from_zone: Zone,
+) -> Option<crate::mana::ManaCost> {
+    let base_cost = match casting_method {
+        CastingMethod::Normal => spell.mana_cost.clone(),
+        CastingMethod::Alternative(idx) => {
+            if let Some(method) = spell.alternative_casts.get(*idx) {
+                if method.total_cost().is_some() {
+                    method.mana_cost().cloned()
+                } else {
+                    method
+                        .mana_cost()
+                        .cloned()
+                        .or_else(|| spell.mana_cost.clone())
+                }
+            } else {
+                spell.mana_cost.clone()
+            }
+        }
+        CastingMethod::GrantedEscape { .. } => spell.mana_cost.clone(),
+        CastingMethod::GrantedFlashback => spell.mana_cost.clone(),
+        CastingMethod::PlayFrom {
+            use_alternative: None,
+            ..
+        } => spell.mana_cost.clone(),
+        CastingMethod::PlayFrom {
+            use_alternative: Some(idx),
+            zone,
+            ..
+        } => {
+            if let Some(method) =
+                resolve_play_from_alternative_method(game, player, spell, *zone, *idx)
+            {
+                if method.total_cost().is_some() {
+                    method.mana_cost().cloned()
+                } else {
+                    method
+                        .mana_cost()
+                        .cloned()
+                        .or_else(|| spell.mana_cost.clone())
+                }
+            } else {
+                spell.mana_cost.clone()
+            }
+        }
+    };
+
+    if from_zone == Zone::Command {
+        let tax = game.commander_cast_count(spell.id).saturating_mul(2);
+        base_cost.map(|cost| cost.add_generic(tax))
+    } else {
+        base_cost
+    }
+}
+
 /// Check if a spell can be cast by a player using the given casting method.
 pub fn can_cast_spell(
     game: &GameState,
@@ -1654,27 +1716,7 @@ pub fn can_cast_spell(
     }
 
     // Determine which mana cost to check based on casting method.
-    let base_mana_cost = match casting_method {
-        CastingMethod::Normal => spell.mana_cost.clone(),
-        CastingMethod::Alternative(idx) => spell
-            .alternative_casts
-            .get(*idx)
-            .and_then(|method| method.mana_cost().cloned())
-            .or_else(|| spell.mana_cost.clone()),
-        CastingMethod::GrantedEscape { .. } => spell.mana_cost.clone(),
-        CastingMethod::GrantedFlashback => spell.mana_cost.clone(),
-        CastingMethod::PlayFrom {
-            use_alternative: None,
-            ..
-        } => spell.mana_cost.clone(),
-        CastingMethod::PlayFrom {
-            use_alternative: Some(idx),
-            zone,
-            ..
-        } => resolve_play_from_alternative_method(game, player, spell, *zone, *idx)
-            .and_then(|method| method.mana_cost().cloned())
-            .or_else(|| spell.mana_cost.clone()),
-    };
+    let base_mana_cost = spell_mana_cost_for_cast(game, player, spell, casting_method, spell.zone);
 
     // Check mana availability with cost reductions applied
     if let Some(base_cost) = base_mana_cost.as_ref() {
@@ -8571,6 +8613,143 @@ mod tests {
                 ..
             } if spell_id == ObjectId::from_raw(103)
         ));
+    }
+
+    #[test]
+    fn test_commander_tax_applies_to_recasts_from_command_zone() {
+        use crate::ability::Ability;
+        use crate::cost::TotalCost;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+
+        let commander = CardBuilder::new(CardId::from_raw(2000), "Test Commander")
+            .mana_cost(ManaCost::from_pips(vec![
+                vec![ManaSymbol::Generic(1)],
+                vec![ManaSymbol::Green],
+            ]))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let commander_id = game.create_object_from_card(&commander, alice, Zone::Command);
+        game.set_as_commander(commander_id, alice);
+
+        for idx in 0..2 {
+            let land = CardBuilder::new(
+                CardId::from_raw(2100 + idx),
+                &format!("Green Source {}", idx),
+            )
+            .card_types(vec![CardType::Land])
+            .build();
+            let land_id = game.create_object_from_card(&land, alice, Zone::Battlefield);
+            game.object_mut(land_id)
+                .expect("green source should exist")
+                .abilities
+                .push(Ability::mana(TotalCost::free(), vec![ManaSymbol::Green]));
+        }
+
+        let commander_obj = game
+            .object(commander_id)
+            .expect("commander should remain in command zone")
+            .clone();
+        assert!(
+            can_cast_spell(&game, alice, &commander_obj, &CastingMethod::Normal),
+            "initial cast should be affordable with two mana"
+        );
+
+        game.record_commander_cast_from_command_zone(commander_id);
+        let commander_obj = game
+            .object(commander_id)
+            .expect("commander should remain in command zone")
+            .clone();
+        assert!(
+            !can_cast_spell(&game, alice, &commander_obj, &CastingMethod::Normal),
+            "recast should require commander tax"
+        );
+
+        for idx in 0..2 {
+            let land = CardBuilder::new(
+                CardId::from_raw(2200 + idx),
+                &format!("Extra Green Source {}", idx),
+            )
+            .card_types(vec![CardType::Land])
+            .build();
+            let land_id = game.create_object_from_card(&land, alice, Zone::Battlefield);
+            game.object_mut(land_id)
+                .expect("extra green source should exist")
+                .abilities
+                .push(Ability::mana(TotalCost::free(), vec![ManaSymbol::Green]));
+        }
+
+        let commander_obj = game
+            .object(commander_id)
+            .expect("commander should remain in command zone")
+            .clone();
+        assert!(
+            can_cast_spell(&game, alice, &commander_obj, &CastingMethod::Normal),
+            "four mana should pay the taxed commander cost"
+        );
+    }
+
+    #[test]
+    fn test_compute_commander_actions_uses_current_object_after_zone_change() {
+        use crate::ability::Ability;
+        use crate::cost::TotalCost;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+
+        let commander = CardBuilder::new(CardId::from_raw(2300), "Looping Commander")
+            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Green]))
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let commander_id = game.create_object_from_card(&commander, alice, Zone::Command);
+        game.set_as_commander(commander_id, alice);
+
+        let land = CardBuilder::new(CardId::from_raw(2301), "Green Source")
+            .card_types(vec![CardType::Land])
+            .build();
+        let land_id = game.create_object_from_card(&land, alice, Zone::Battlefield);
+        game.object_mut(land_id)
+            .expect("green source should exist")
+            .abilities
+            .push(Ability::mana(TotalCost::free(), vec![ManaSymbol::Green]));
+
+        let battlefield_id = game
+            .move_object(commander_id, Zone::Battlefield)
+            .expect("commander should move to battlefield");
+        let graveyard_id = game
+            .move_object(battlefield_id, Zone::Graveyard)
+            .expect("commander should move to graveyard");
+        assert_ne!(graveyard_id, commander_id);
+
+        assert!(crate::rules::state_based::apply_state_based_actions(
+            &mut game
+        ));
+
+        let current_commander_id = game
+            .objects_in_zone(Zone::Command)
+            .into_iter()
+            .find(|&id| game.is_commander(id))
+            .expect("commander should return to command zone");
+        assert_ne!(current_commander_id, commander_id);
+
+        let actions = compute_commander_actions(&game, alice);
+        assert!(actions.iter().any(|action| {
+            matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id,
+                    from_zone: Zone::Command,
+                    casting_method: CastingMethod::Normal,
+                } if *spell_id == current_commander_id
+            )
+        }));
     }
 
     #[test]

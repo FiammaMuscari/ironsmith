@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Peer from "peerjs";
-import { isLobbyDeckReady, parseDeckList } from "@/lib/decklists";
+import {
+  MATCH_FORMAT_COMMANDER,
+  MATCH_FORMAT_NORMAL,
+  evaluateLobbyDeckSubmission,
+  normalizeMatchFormat,
+  parseCommanderList,
+  parseDeckList,
+} from "@/lib/decklists";
 
 const PROTOCOL_VERSION = 1;
 const DEFAULT_OPENING_HAND_SIZE = 7;
@@ -16,8 +23,11 @@ function createEmptyState() {
     localPlayerIndex: null,
     desiredPlayers: 0,
     startingLife: 20,
+    format: MATCH_FORMAT_NORMAL,
     localDeckText: "",
+    localCommanderText: "",
     localDeckCount: 0,
+    localCommanderCount: 0,
     players: [],
     matchStarted: false,
     lastAppliedSequence: 0,
@@ -40,29 +50,41 @@ function safeSend(conn, payload) {
   conn.send(payload);
 }
 
-function sanitizeDeckList(deck) {
-  if (!Array.isArray(deck)) return [];
-  return deck
+function sanitizeCardList(cards) {
+  if (!Array.isArray(cards)) return [];
+  return cards
     .map((card) => String(card || "").trim())
     .filter(Boolean);
 }
 
-function parseDeckText(text) {
-  const deck = sanitizeDeckList(parseDeckList(text));
+function parseDeckSubmission(format, deckText, commanderText = "") {
+  const deck = sanitizeCardList(parseDeckList(deckText));
+  const commanders = sanitizeCardList(parseCommanderList(commanderText));
+  const status = evaluateLobbyDeckSubmission(format, deck, commanders);
   return {
     deck,
-    deckCount: deck.length,
-    ready: isLobbyDeckReady(deck),
+    commanders,
+    deckCount: status.deckCount,
+    commanderCount: status.commanderCount,
+    ready: status.ready,
   };
 }
 
-function withDeckState(player, deck) {
-  const normalizedDeck = sanitizeDeckList(deck);
+function withDeckState(player, format, deck, commanders = []) {
+  const normalizedDeck = sanitizeCardList(deck);
+  const normalizedCommanders = sanitizeCardList(commanders);
+  const status = evaluateLobbyDeckSubmission(
+    format,
+    normalizedDeck,
+    normalizedCommanders
+  );
   return {
     ...player,
     deck: normalizedDeck,
-    deckCount: normalizedDeck.length,
-    ready: isLobbyDeckReady(normalizedDeck),
+    commanders: normalizedCommanders,
+    deckCount: status.deckCount,
+    commanderCount: status.commanderCount,
+    ready: status.ready,
   };
 }
 
@@ -78,6 +100,7 @@ function toPublicPlayer(player) {
     connected: player.connected !== false,
     ready: Boolean(player.ready),
     deckCount: Number(player.deckCount || 0),
+    commanderCount: Number(player.commanderCount || 0),
   };
 }
 
@@ -177,7 +200,9 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         playerNames: payload.players.map((player) => player.name),
         startingLife: payload.startingLife,
         seed: payload.seed,
+        format: payload.format,
         decks: payload.decks,
+        commanders: payload.commanders,
         openingHandSize: payload.openingHandSize ?? DEFAULT_OPENING_HAND_SIZE,
       });
       await currentGame.setPerspective(localEntry.index);
@@ -194,8 +219,11 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         localPlayerIndex: localEntry.index,
         desiredPlayers: payload.players.length,
         startingLife: payload.startingLife,
+        format: normalizeMatchFormat(payload.format),
         localDeckCount:
           payload.decks?.[localEntry.index]?.length ?? prev.localDeckCount,
+        localCommanderCount:
+          payload.commanders?.[localEntry.index]?.length ?? prev.localCommanderCount,
         players: payload.players,
         matchStarted: true,
         lastAppliedSequence: 0,
@@ -217,6 +245,7 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
       hostPeerId: session.localPeerId,
       desiredPlayers: session.desiredPlayers,
       startingLife: session.startingLife,
+      format: session.format,
       players: toPublicPlayers(session.players),
       matchStarted: session.matchStarted,
     });
@@ -230,8 +259,14 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
     if (session.players.length !== session.desiredPlayers) return;
 
     const players = reindexPlayers(session.players);
-    const decks = players.map((player) => sanitizeDeckList(player.deck));
-    if (decks.some((deck) => !isLobbyDeckReady(deck))) return;
+    if (!players.every((player) => player.ready)) return;
+
+    const decks = players.map((player) => sanitizeCardList(player.deck));
+    const format = normalizeMatchFormat(session.format);
+    const commanders =
+      format === MATCH_FORMAT_COMMANDER
+        ? players.map((player) => sanitizeCardList(player.commanders))
+        : null;
 
     const payload = {
       type: "match_start",
@@ -239,7 +274,9 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
       lobbyId: session.lobbyId,
       hostPeerId: session.localPeerId,
       players: players.map(toPublicPlayer),
+      format,
       decks,
+      commanders: commanders || undefined,
       startingLife: session.startingLife,
       seed: createMatchSeed(),
       openingHandSize: DEFAULT_OPENING_HAND_SIZE,
@@ -262,9 +299,7 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
       return;
     }
     if (session.players.length !== session.desiredPlayers) return;
-    if (!session.players.every((player) => player.ready && isLobbyDeckReady(player.deck))) {
-      return;
-    }
+    if (!session.players.every((player) => player.ready)) return;
     void startHostedMatch();
   }, [startHostedMatch]);
 
@@ -297,6 +332,7 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
               hostPeerId: message.hostPeerId || prev.hostPeerId,
               desiredPlayers: Number(message.desiredPlayers || prev.desiredPlayers || 0),
               startingLife: Number(message.startingLife || prev.startingLife || 20),
+              format: normalizeMatchFormat(message.format || prev.format),
               players: message.players || [],
               localPlayerIndex: localEntry ? localEntry.index : prev.localPlayerIndex,
               matchStarted: Boolean(message.matchStarted),
@@ -381,9 +417,9 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         ? (await gameRef.current.uiState())?.decision?.player
         : null;
       if (
-        expectedActor !== null &&
-        expectedActor !== undefined &&
-        Number(expectedActor) !== Number(actorIndex)
+        expectedActor !== null
+        && expectedActor !== undefined
+        && Number(expectedActor) !== Number(actorIndex)
       ) {
         if (senderPeerId) {
           const conn = clientConnectionsRef.current.get(senderPeerId);
@@ -458,7 +494,6 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
             message.name,
             `Player ${session.players.length + 1}`
           );
-          const deck = sanitizeDeckList(message.deck);
           updateMultiplayer((prev) => ({
             ...prev,
             mode: "lobby",
@@ -470,7 +505,9 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
                   name,
                   connected: true,
                 },
-                deck
+                prev.format,
+                message.deck,
+                message.commanders
               ),
             ]),
           }));
@@ -482,13 +519,17 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         case "deck_update": {
           const session = multiplayerRef.current;
           if (session.matchStarted) return;
-          const deck = sanitizeDeckList(message.deck);
           updateMultiplayer((prev) => ({
             ...prev,
             players: reindexPlayers(
               prev.players.map((player) =>
                 player.peerId === conn.peer
-                  ? withDeckState(player, deck)
+                  ? withDeckState(
+                      player,
+                      prev.format,
+                      message.deck,
+                      message.commanders
+                    )
                   : player
               )
             ),
@@ -536,12 +577,24 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
   );
 
   const createLobby = useCallback(
-    ({ name, desiredPlayers, startingLife, deckText = "" }) => {
+    ({
+      name,
+      desiredPlayers,
+      startingLife,
+      format = MATCH_FORMAT_NORMAL,
+      deckText = "",
+      commanderText = "",
+    }) => {
       teardownPeer();
       const localName = sanitizePlayerName(name, "Host");
       const targetPlayers = Math.max(2, Math.min(4, Number(desiredPlayers) || 2));
       const lifeTotal = Math.max(1, Number(startingLife) || 20);
-      const deckSubmission = parseDeckText(deckText);
+      const normalizedFormat = normalizeMatchFormat(format);
+      const deckSubmission = parseDeckSubmission(
+        normalizedFormat,
+        deckText,
+        commanderText
+      );
       const peer = new Peer();
       peerRef.current = peer;
 
@@ -552,12 +605,20 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         localName,
         desiredPlayers: targetPlayers,
         startingLife: lifeTotal,
+        format: normalizedFormat,
         localDeckText: String(deckText || ""),
+        localCommanderText: String(commanderText || ""),
         localDeckCount: deckSubmission.deckCount,
+        localCommanderCount: deckSubmission.commanderCount,
       });
 
       peer.on("open", (peerId) => {
-        const currentDeck = parseDeckText(multiplayerRef.current.localDeckText);
+        const session = multiplayerRef.current;
+        const currentDeck = parseDeckSubmission(
+          session.format,
+          session.localDeckText,
+          session.localCommanderText
+        );
         updateMultiplayer((prev) => ({
           ...prev,
           mode: "lobby",
@@ -566,6 +627,7 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
           localPeerId: peerId,
           localPlayerIndex: 0,
           localDeckCount: currentDeck.deckCount,
+          localCommanderCount: currentDeck.commanderCount,
           players: [
             withDeckState(
               {
@@ -574,7 +636,9 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
                 index: 0,
                 connected: true,
               },
-              currentDeck.deck
+              prev.format,
+              currentDeck.deck,
+              currentDeck.commanders
             ),
           ],
         }));
@@ -590,7 +654,7 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
   );
 
   const joinLobby = useCallback(
-    ({ name, lobbyId, deckText = "" }) => {
+    ({ name, lobbyId, deckText = "", commanderText = "" }) => {
       teardownPeer();
       const localName = sanitizePlayerName(name, "Guest");
       const targetLobby = String(lobbyId || "").trim();
@@ -599,7 +663,11 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         return;
       }
 
-      const deckSubmission = parseDeckText(deckText);
+      const deckSubmission = parseDeckSubmission(
+        MATCH_FORMAT_NORMAL,
+        deckText,
+        commanderText
+      );
       const peer = new Peer();
       peerRef.current = peer;
 
@@ -611,7 +679,9 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         hostPeerId: targetLobby,
         localName,
         localDeckText: String(deckText || ""),
+        localCommanderText: String(commanderText || ""),
         localDeckCount: deckSubmission.deckCount,
+        localCommanderCount: deckSubmission.commanderCount,
       });
 
       peer.on("open", (peerId) => {
@@ -623,12 +693,18 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         const conn = peer.connect(targetLobby, { reliable: true });
         hostConnectionRef.current = conn;
         conn.on("open", () => {
-          const currentDeck = parseDeckText(multiplayerRef.current.localDeckText);
+          const session = multiplayerRef.current;
+          const currentDeck = parseDeckSubmission(
+            session.format,
+            session.localDeckText,
+            session.localCommanderText
+          );
           safeSend(conn, {
             type: "join_request",
             protocolVersion: PROTOCOL_VERSION,
             name: localName,
             deck: currentDeck.deck,
+            commanders: currentDeck.commanders,
           });
           setStatus(`Joined lobby ${targetLobby}`);
         });
@@ -649,19 +725,47 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
   );
 
   const updateLobbyDeck = useCallback(
-    (text) => {
-      const deckText = String(text || "");
-      const deckSubmission = parseDeckText(deckText);
+    (updates) => {
+      const currentSession = multiplayerRef.current;
+      if (currentSession.matchStarted || currentSession.mode === "starting") {
+        return;
+      }
+
+      const nextDeckText =
+        typeof updates === "string"
+          ? String(updates)
+          : Object.prototype.hasOwnProperty.call(updates || {}, "deckText")
+            ? String(updates.deckText || "")
+            : currentSession.localDeckText;
+      const nextCommanderText =
+        typeof updates === "string"
+          ? currentSession.localCommanderText
+          : Object.prototype.hasOwnProperty.call(updates || {}, "commanderText")
+            ? String(updates.commanderText || "")
+            : currentSession.localCommanderText;
+
+      const deckSubmission = parseDeckSubmission(
+        currentSession.format,
+        nextDeckText,
+        nextCommanderText
+      );
       const nextSession = updateMultiplayer((prev) => ({
         ...prev,
-        localDeckText: deckText,
+        localDeckText: nextDeckText,
+        localCommanderText: nextCommanderText,
         localDeckCount: deckSubmission.deckCount,
+        localCommanderCount: deckSubmission.commanderCount,
         players:
           prev.role === "host" && prev.localPeerId
             ? reindexPlayers(
                 prev.players.map((player) =>
                   player.peerId === prev.localPeerId
-                    ? withDeckState(player, deckSubmission.deck)
+                    ? withDeckState(
+                        player,
+                        prev.format,
+                        deckSubmission.deck,
+                        deckSubmission.commanders
+                      )
                     : player
                 )
               )
@@ -680,6 +784,7 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
           type: "deck_update",
           protocolVersion: PROTOCOL_VERSION,
           deck: deckSubmission.deck,
+          commanders: deckSubmission.commanders,
         });
       }
     },

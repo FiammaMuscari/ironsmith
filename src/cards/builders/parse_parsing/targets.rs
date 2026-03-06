@@ -538,6 +538,26 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
             target_count,
         ));
     }
+    if remaining_words.len() >= 5
+        && remaining_words[0] == "that"
+        && second_word_is_object_head
+        && remaining_words[2] == "or"
+        && is_demonstrative_object_head(remaining_words[3])
+        && matches!(
+            remaining_words[4],
+            "controller" | "controllers" | "owner" | "owners"
+        )
+    {
+        let player = if remaining_words[4].starts_with("owner") {
+            PlayerFilter::OwnerOf(crate::filter::ObjectRef::tagged(IT_TAG))
+        } else {
+            PlayerFilter::ControllerOf(crate::filter::ObjectRef::tagged(IT_TAG))
+        };
+        return Ok(wrap_target_count(
+            TargetAst::Player(player, target_span),
+            target_count,
+        ));
+    }
     if remaining_words.starts_with(&["its", "controller"])
         || remaining_words.starts_with(&["its", "controllers"])
         || remaining_words.starts_with(&["their", "controller"])

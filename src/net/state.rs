@@ -486,12 +486,12 @@ pub fn verify_contrib_request_for_game(
 }
 
 fn public_player_state(player: &Player) -> PublicPlayerState {
-    let mut commander_damage: Vec<(GamePlayerId, u32)> = player
+    let mut commander_damage: Vec<(GameObjectId, u32)> = player
         .commander_damage
         .iter()
-        .map(|(player_id, amount)| (GamePlayerId::from(*player_id), *amount))
+        .map(|(commander_id, amount)| (GameObjectId::from(*commander_id), *amount))
         .collect();
-    commander_damage.sort_by_key(|(player_id, _)| player_id.0);
+    commander_damage.sort_by_key(|(commander_id, _)| commander_id.0);
 
     PublicPlayerState {
         id: player.id.into(),

@@ -143,7 +143,12 @@ impl EffectExecutor for NinjutsuCostEffect {
         }
 
         let _new_id = game
-            .move_object(chosen_attacker, Zone::Hand)
+            .move_object_with_commander_options(
+                chosen_attacker,
+                Zone::Hand,
+                &mut *ctx.decision_maker,
+            )
+            .map(|(new_id, _)| new_id)
             .ok_or_else(|| {
                 ExecutionError::Impossible("Failed to return chosen attacker to hand".to_string())
             })?;

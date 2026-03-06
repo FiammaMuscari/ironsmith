@@ -5,12 +5,13 @@ import { useCombatArrows } from "@/context/CombatArrowContext";
 import { useGame } from "@/context/GameContext";
 import { cn } from "@/lib/utils";
 
-const ZONE_ORDER = ["battlefield", "hand", "graveyard", "exile"];
+const ZONE_ORDER = ["battlefield", "hand", "graveyard", "exile", "command"];
 const ZONE_LABELS = {
   battlefield: "Battlefield",
   hand: "Hand",
   graveyard: "Graveyard",
   exile: "Exile",
+  command: "Command",
 };
 
 function normalizeZoneViews(zoneViews) {
@@ -25,6 +26,7 @@ function getZoneCards(player, zone) {
     case "hand": return player.hand_cards || [];
     case "graveyard": return player.graveyard_cards || [];
     case "exile": return player.exile_cards || [];
+    case "command": return player.command_cards || [];
     default: return player.battlefield || [];
   }
 }
@@ -41,6 +43,7 @@ function buildZoneEntries(player, zoneViews) {
 
 function zoneCounts(player) {
   const exileCards = Array.isArray(player.exile_cards) ? player.exile_cards : [];
+  const commandCards = Array.isArray(player.command_cards) ? player.command_cards : [];
   const battlefieldCount = (player.battlefield || []).reduce((total, card) => {
     const count = Number(card.count);
     return total + (Number.isFinite(count) && count > 1 ? count : 1);
@@ -51,6 +54,7 @@ function zoneCounts(player) {
     { label: "Hand", count: player.hand_size ?? 0 },
     { label: "Graveyard", count: player.graveyard_size ?? 0 },
     { label: "Exile", count: exileCards.length },
+    { label: "Command", count: player.command_size ?? commandCards.length },
   ];
 }
 

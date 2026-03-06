@@ -93,6 +93,9 @@ function buildObjectNameById(players, stackObjects) {
     for (const card of player?.exile_cards || []) {
       register(card?.id, card?.name);
     }
+    for (const card of player?.command_cards || []) {
+      register(card?.id, card?.name);
+    }
     for (const card of player?.battlefield || []) {
       register(card?.id, card?.name);
       if (Array.isArray(card?.member_ids)) {
@@ -619,42 +622,31 @@ function PriorityActionStrip({
         {displayGroups.map(({ key, cycle, group }) => {
           const isInteractiveCycle = cycle === middleLoopIndex;
           const linkedActive = isGroupHoveredLinked(group) || isGroupSelectedLinked(group);
-
-          return (
-            <button
-              key={key}
-              type="button"
-              aria-hidden={!isInteractiveCycle}
-              tabIndex={isInteractiveCycle ? 0 : -1}
-              ref={(node) => {
-                const existing = groupNodeRefs.current.get(group.key) || [];
-                if (node) {
-                  existing[cycle] = node;
-                  groupNodeRefs.current.set(group.key, existing);
-                  displayNodeRefs.current.set(key, node);
-                } else if (existing.length > cycle) {
-                  existing[cycle] = undefined;
-                  if (existing.some(Boolean)) {
-                    groupNodeRefs.current.set(group.key, existing);
-                  } else {
-                    groupNodeRefs.current.delete(group.key);
-                  }
-                  displayNodeRefs.current.delete(key);
-                }
-              }}
-              className={cn(
+          const setNodeRef = (node) => {
+            const existing = groupNodeRefs.current.get(group.key) || [];
+            if (node) {
+              existing[cycle] = node;
+              groupNodeRefs.current.set(group.key, existing);
+              displayNodeRefs.current.set(key, node);
+            } else if (existing.length > cycle) {
+              existing[cycle] = undefined;
+              if (existing.some(Boolean)) {
+                groupNodeRefs.current.set(group.key, existing);
+              } else {
+                groupNodeRefs.current.delete(group.key);
+              }
+              displayNodeRefs.current.delete(key);
+            }
+          };
+          const pillClassName = cn(
             "inline-flex max-w-[360px] min-w-0 items-center self-stretch border-0 border-l-2 px-2.5 text-[12px] font-semibold transition-all",
-                !isInteractiveCycle && "pointer-events-none select-none",
-                linkedActive
-                  ? "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]"
-                  : "border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] text-[rgba(206,223,242,0.52)]",
-                "hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]"
-              )}
-              style={{ textOverflow: "clip" }}
-              onClick={() => onActionClick(group.firstAction)}
-              onMouseEnter={isInteractiveCycle ? () => onActionHoverStart(group) : undefined}
-              onMouseLeave={isInteractiveCycle ? onActionHoverEnd : undefined}
-            >
+            linkedActive
+              ? "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]"
+              : "border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] text-[rgba(206,223,242,0.52)]",
+            isInteractiveCycle && "hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]"
+          );
+          const pillContent = (
+            <>
               {group.count > 1 && (
                 <span className="mr-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-sm bg-[rgba(12,20,31,0.86)] px-1 text-[10px] font-bold leading-none tracking-wide text-[#f5d08b]">
                   x{group.count}
@@ -665,6 +657,35 @@ function PriorityActionStrip({
                 viewportRef={viewportRef}
                 carouselResetVersion={carouselResetByGroupKey[group.key] || 0}
               />
+            </>
+          );
+
+          if (!isInteractiveCycle) {
+            return (
+              <div
+                key={key}
+                aria-hidden="true"
+                ref={setNodeRef}
+                className={pillClassName}
+                style={{ textOverflow: "clip" }}
+              >
+                {pillContent}
+              </div>
+            );
+          }
+
+          return (
+            <button
+              key={key}
+              type="button"
+              ref={setNodeRef}
+              className={pillClassName}
+              style={{ textOverflow: "clip" }}
+              onClick={() => onActionClick(group.firstAction)}
+              onMouseEnter={() => onActionHoverStart(group)}
+              onMouseLeave={onActionHoverEnd}
+            >
+              {pillContent}
             </button>
           );
         })}

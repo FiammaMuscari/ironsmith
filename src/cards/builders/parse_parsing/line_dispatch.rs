@@ -597,11 +597,13 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         .strip_prefix("creatures cant attack you unless their controller pays ")
         .and_then(|rest| rest.strip_suffix(" for each creature they control thats attacking you"))
         .is_some_and(|amount| !amount.is_empty() && amount.chars().all(|ch| ch.is_ascii_digit()));
-    let unsupported_diagnostic = diagnose_line_unsupported(
-        &line_view,
-        is_collective_restraint_domain_attack_tax,
-        is_fixed_attack_tax_per_attacker,
-    );
+    let unsupported_diagnostic = || {
+        diagnose_line_unsupported(
+            &line_view,
+            is_collective_restraint_domain_attack_tax,
+            is_fixed_attack_tax_per_attacker,
+        )
+    };
 
     let is_this_cant_attack_unless_clause = normalized
         .starts_with("this creature cant attack unless")
@@ -848,7 +850,7 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
     }
 
     if let Some(abilities) = parse_static_ability_ast_line(&tokens)? {
-        if let Some(diag) = unsupported_diagnostic.clone() {
+        if let Some(diag) = unsupported_diagnostic() {
             return Err(diag);
         }
         parser_trace("parse_line:branch=static", &tokens);
@@ -864,7 +866,7 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
     let effects = match parse_effect_sentences(&tokens) {
         Ok(effects) => effects,
         Err(parse_err) => {
-            if let Some(diag) = unsupported_diagnostic.clone() {
+            if let Some(diag) = unsupported_diagnostic() {
                 return Err(diag);
             }
             return Err(parse_err);
@@ -872,7 +874,7 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
     };
     if effects.is_empty() {
         parser_trace("parse_line:branch=statement-empty", &tokens);
-        if let Some(diag) = unsupported_diagnostic {
+        if let Some(diag) = unsupported_diagnostic() {
             return Err(diag);
         }
         let head = tokens

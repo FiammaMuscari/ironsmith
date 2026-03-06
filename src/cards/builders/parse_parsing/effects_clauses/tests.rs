@@ -86,6 +86,23 @@ fn parse_target_phrase_top_two_cards_of_your_library_preserves_count() {
 }
 
 #[test]
+fn parse_target_phrase_that_creatures_or_spells_controller_targets_player() {
+    let tokens = tokenize_line("that creature's or spell's controller", 0);
+    let target = parse_target_phrase(&tokens).expect("parse disjunctive controller target");
+
+    match target {
+        TargetAst::Player(PlayerFilter::ControllerOf(crate::filter::ObjectRef::Tagged(tag)), _) => {
+            assert_eq!(
+                tag.as_str(),
+                IT_TAG,
+                "expected target to reuse tagged trigger object"
+            );
+        }
+        other => panic!("expected tagged controller target, got {other:?}"),
+    }
+}
+
+#[test]
 fn parse_deal_damage_equal_to_each_opponent_wraps_for_each_opponent() {
     let tokens = tokenize_line(
         "deals damage equal to the number of cards in your hand to each opponent",
@@ -442,6 +459,16 @@ fn parse_static_ast_keeps_filter_activated_grant_unlowered() {
         lowered[0].id(),
         StaticAbilityId::GrantObjectAbilityForFilter
     );
+}
+
+#[test]
+fn parse_ward_static_line() {
+    let tokens = tokenize_line("Ward {2}", 0);
+    let abilities = parse_static_ability_line(&tokens)
+        .expect("parse ward static line")
+        .expect("expected ward static ability");
+    assert_eq!(abilities.len(), 1);
+    assert_eq!(abilities[0].id(), StaticAbilityId::Ward);
 }
 
 #[test]
@@ -1541,6 +1568,36 @@ fn parse_object_filter_spell_or_permanent_builds_zone_disjunction() {
 }
 
 #[test]
+fn parse_object_filter_red_creature_or_spell_builds_zone_disjunction() {
+    let tokens = tokenize_line("red creature or spell", 0);
+    let filter = parse_object_filter(&tokens, false).expect("parse creature-or-spell filter");
+    assert_eq!(filter.any_of.len(), 2);
+
+    let stack_branch = filter
+        .any_of
+        .iter()
+        .find(|branch| branch.zone == Some(Zone::Stack))
+        .expect("expected stack branch");
+    assert_eq!(stack_branch.colors, Some(crate::color::ColorSet::RED));
+    assert!(
+        stack_branch.card_types.is_empty() && stack_branch.all_card_types.is_empty(),
+        "standalone spell branch should not inherit the creature restriction"
+    );
+
+    let battlefield_branch = filter
+        .any_of
+        .iter()
+        .find(|branch| branch.zone == Some(Zone::Battlefield))
+        .expect("expected battlefield branch");
+    assert_eq!(battlefield_branch.colors, Some(crate::color::ColorSet::RED));
+    assert_eq!(battlefield_branch.card_types, vec![CardType::Creature]);
+    assert!(
+        !battlefield_branch.has_mana_cost,
+        "battlefield creature branch should still match tokens"
+    );
+}
+
+#[test]
 fn parse_object_filter_permanent_spell_stays_stack_only() {
     let tokens = tokenize_line("blue permanent spell", 0);
     let filter = parse_object_filter(&tokens, false).expect("parse permanent spell filter");
@@ -1896,6 +1953,30 @@ fn parse_redirect_next_time_source_damage_to_this_creature() {
             ..
         }
     )));
+}
+
+#[test]
+fn parse_if_you_cast_a_spell_this_way_uses_specialized_sentence_rule() {
+    let tokens = tokenize_line(
+        "If you cast a spell this way, rather than pay its mana cost, you may pay life equal to its mana value.",
+        0,
+    );
+    let effects = parse_effect_sentence(&tokens).expect("parse spell-this-way pay-life clause");
+    assert!(matches!(
+        effects.as_slice(),
+        [EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
+            tag,
+            player: PlayerAst::You,
+        }] if tag == &TagKey::from(IT_TAG)
+    ));
+}
+
+#[test]
+fn parse_double_target_creatures_power_sentence() {
+    let tokens = tokenize_line("Double target creature's power until end of turn.", 0);
+    let effects = parse_effect_sentence(&tokens).expect("parse double target power sentence");
+    assert_eq!(effects.len(), 1);
+    assert!(matches!(effects[0], EffectAst::Pump { .. }));
 }
 
 #[test]

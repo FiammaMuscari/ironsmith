@@ -321,6 +321,15 @@ pub fn execute_untap_step_with(game: &mut GameState, decision_maker: &mut impl D
 /// Returns a list of TriggerEvents for cards that were drawn, which can be used
 /// to check for card-draw triggers (including Miracle).
 pub fn execute_draw_step(game: &mut GameState) -> Vec<crate::triggers::TriggerEvent> {
+    let mut dm = crate::decision::AutoPassDecisionMaker;
+    execute_draw_step_with(game, &mut dm)
+}
+
+/// Executes the draw step for the active player with an explicit decision maker.
+pub fn execute_draw_step_with(
+    game: &mut GameState,
+    decision_maker: &mut (impl DecisionMaker + ?Sized),
+) -> Vec<crate::triggers::TriggerEvent> {
     use crate::events::other::CardsDrawnEvent;
     use crate::triggers::TriggerEvent;
 
@@ -352,8 +361,7 @@ pub fn execute_draw_step(game: &mut GameState) -> Vec<crate::triggers::TriggerEv
     let mut draw_events = Vec::new();
 
     if can_draw {
-        // Draw using GameState method to properly update object zones
-        let drawn = game.draw_cards(active_player, 1);
+        let drawn = game.draw_cards_with_dm(active_player, 1, decision_maker);
 
         // Track cards drawn this turn
         *game.cards_drawn_this_turn.entry(active_player).or_insert(0) += drawn.len() as u32;
@@ -665,6 +673,65 @@ mod tests {
         assert!(
             game.is_tapped(cant_untap_artifact),
             "can't-untap restriction should prevent untapping"
+        );
+    }
+
+    #[test]
+    fn execute_draw_step_with_can_move_drawn_commander_to_command_zone() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let commander = CardBuilder::new(CardId::from_raw(9000), "Topdeck Commander")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let commander_id = game.create_object_from_card(&commander, alice, Zone::Library);
+        game.set_as_commander(commander_id, alice);
+
+        let mut dm = AlwaysYesDecisionMaker;
+        let events = execute_draw_step_with(&mut game, &mut dm);
+
+        assert!(
+            events.is_empty(),
+            "redirected commander should not count as a draw"
+        );
+        assert!(
+            game.player(alice)
+                .expect("alice should exist")
+                .hand
+                .is_empty()
+        );
+        assert_eq!(game.objects_in_zone(Zone::Command).len(), 1);
+        assert_eq!(
+            game.cards_drawn_this_turn.get(&alice).copied().unwrap_or(0),
+            0
+        );
+    }
+
+    #[test]
+    fn execute_draw_step_with_can_leave_commander_in_hand() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let commander = CardBuilder::new(CardId::from_raw(9001), "Honest Commander")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let commander_id = game.create_object_from_card(&commander, alice, Zone::Library);
+        game.set_as_commander(commander_id, alice);
+
+        let mut dm = AlwaysNoDecisionMaker;
+        let events = execute_draw_step_with(&mut game, &mut dm);
+
+        assert_eq!(
+            events.len(),
+            1,
+            "keeping the commander should produce a draw event"
+        );
+        assert_eq!(
+            game.player(alice).expect("alice should exist").hand.len(),
+            1
+        );
+        assert!(game.objects_in_zone(Zone::Command).is_empty());
+        assert_eq!(
+            game.cards_drawn_this_turn.get(&alice).copied().unwrap_or(0),
+            1
         );
     }
 }

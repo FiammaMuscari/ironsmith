@@ -273,7 +273,7 @@ fn continue_interactive_replacement(
     redirect_zone: Zone,
     life_cost: Option<u32>,
     provenance: crate::provenance::ProvNodeId,
-    decision_maker: &mut impl DecisionMaker,
+    decision_maker: &mut (impl DecisionMaker + ?Sized),
 ) -> InteractiveReplacementResult {
     // Handle discard-or-redirect (Mox Diamond pattern)
     if let Some(filter) = filter {
@@ -307,7 +307,7 @@ fn handle_discard_or_redirect(
     filter: &crate::target::ObjectFilter,
     redirect_zone: Zone,
     provenance: crate::provenance::ProvNodeId,
-    decision_maker: &mut impl DecisionMaker,
+    decision_maker: &mut (impl DecisionMaker + ?Sized),
 ) -> InteractiveReplacementResult {
     match response {
         InteractiveReplacementResponse::Objects(cards) => {
@@ -514,7 +514,7 @@ pub fn execute_discard(
                 }
 
                 let new_id = if destination == Zone::Library {
-                    move_to_top_of_library(game, card_id, player)
+                    move_to_top_of_library(game, card_id, player, decision_maker)
                 } else {
                     game.move_object(card_id, destination)
                 };
@@ -572,7 +572,7 @@ pub fn execute_discard(
                     };
 
                     let new_id = if chosen_zone == Zone::Library {
-                        move_to_top_of_library(game, card_id, player)
+                        move_to_top_of_library(game, card_id, player, decision_maker)
                     } else {
                         game.move_object(card_id, chosen_zone)
                     };
@@ -611,9 +611,14 @@ fn move_to_top_of_library(
     game: &mut GameState,
     card_id: crate::ids::ObjectId,
     owner: crate::ids::PlayerId,
+    decision_maker: &mut (impl DecisionMaker + ?Sized),
 ) -> Option<crate::ids::ObjectId> {
     // Get the new ID from the zone change
-    let new_id = game.move_object(card_id, Zone::Library)?;
+    let (new_id, final_zone) =
+        game.move_object_with_commander_options(card_id, Zone::Library, decision_maker)?;
+    if final_zone != Zone::Library {
+        return Some(new_id);
+    }
 
     // The card should now be at the end of the library array (which represents the top)
     // move_object already handles this correctly for Zone::Library
@@ -1559,7 +1564,7 @@ pub fn process_destroy(
     game: &mut GameState,
     permanent: crate::ids::ObjectId,
     source: Option<crate::ids::ObjectId>,
-    dm: &mut impl DecisionMaker,
+    dm: &mut (impl DecisionMaker + ?Sized),
 ) -> DestroyOutcome {
     use crate::executor::{ExecutionContext, execute_effect};
 
@@ -1671,7 +1676,7 @@ pub fn process_zone_change(
 
     // Finality counter rule text: "If a creature with a finality counter on it would die, exile it instead."
     // Apply this as a baseline destination rewrite for battlefield->graveyard moves.
-    let mut requested_to = to;
+    let mut requested_to = game.resolve_commander_move_destination(object, to, dm);
     if from == Zone::Battlefield
         && to == Zone::Graveyard
         && game.object_has_card_type(object, CardType::Creature)
@@ -1729,7 +1734,7 @@ pub fn process_draw(
     player: PlayerId,
     count: u32,
     is_first_this_turn: bool,
-    dm: &mut impl DecisionMaker,
+    dm: &mut (impl DecisionMaker + ?Sized),
 ) -> DrawOutcome {
     use crate::events::{DrawEvent, downcast_event};
 
@@ -2334,7 +2339,7 @@ pub fn process_etb_with_event_and_dm(
     game: &mut GameState,
     object: crate::ids::ObjectId,
     from: Zone,
-    dm: &mut impl DecisionMaker,
+    dm: &mut (impl DecisionMaker + ?Sized),
 ) -> EtbEventResult {
     use crate::ability::AbilityKind;
     use crate::decisions::{

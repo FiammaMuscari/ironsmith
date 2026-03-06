@@ -37,10 +37,11 @@ function buildPlayableMaps(state, player) {
 
   const handIds = new Set((player?.hand_cards || []).map((c) => Number(c.id)));
 
-  // Build zone lookup for card names (graveyard, exile)
+  // Build zone lookup for card names (graveyard, exile, command)
   const cardNameById = new Map();
   for (const c of player?.graveyard_cards || []) cardNameById.set(Number(c.id), c.name);
   for (const c of player?.exile_cards || []) cardNameById.set(Number(c.id), c.name);
+  for (const c of player?.command_cards || []) cardNameById.set(Number(c.id), c.name);
   for (const c of player?.hand_cards || []) cardNameById.set(Number(c.id), c.name);
 
   for (const action of actions) {
@@ -96,6 +97,7 @@ function buildPlayableMaps(state, player) {
 
   addPseudoHandCandidates(player?.graveyard_cards, "graveyard");
   addPseudoHandCandidates(player?.exile_cards, "exile");
+  addPseudoHandCandidates(player?.command_cards, "command");
 
   return { handPlayable, extraPlayable };
 }

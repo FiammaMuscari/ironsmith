@@ -89,6 +89,9 @@ function buildObjectNameMap(state) {
     for (const card of player?.exile_cards || []) {
       map.set(Number(card.id), card.name);
     }
+    for (const card of player?.command_cards || []) {
+      map.set(Number(card.id), card.name);
+    }
     for (const card of player?.battlefield || []) {
       const cardId = Number(card.id);
       if (Number.isFinite(cardId)) {

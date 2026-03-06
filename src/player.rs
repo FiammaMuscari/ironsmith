@@ -530,8 +530,8 @@ pub struct Player {
     /// or certain artifacts (per recent rule changes).
     pub commanders: Vec<ObjectId>,
 
-    // Commander damage tracking (source player -> damage)
-    pub commander_damage: HashMap<PlayerId, u32>,
+    // Commander damage tracking (commander identity -> damage)
+    pub commander_damage: HashMap<ObjectId, u32>,
 }
 
 impl Player {
@@ -580,6 +580,16 @@ impl Player {
     /// Returns the list of commander IDs.
     pub fn get_commanders(&self) -> &[ObjectId] {
         &self.commanders
+    }
+
+    /// Records combat damage dealt to this player by a commander.
+    pub fn record_commander_damage(&mut self, commander: ObjectId, amount: u32) {
+        *self.commander_damage.entry(commander).or_insert(0) += amount;
+    }
+
+    /// Returns the combat damage this player has taken from a commander.
+    pub fn commander_damage_from(&self, commander: ObjectId) -> u32 {
+        self.commander_damage.get(&commander).copied().unwrap_or(0)
     }
 
     /// Returns true if this player can play a land this turn.
@@ -781,15 +791,15 @@ mod tests {
     fn test_commander_damage() {
         let mut player = Player::new(PlayerId::from_index(0), "Grace", 40);
 
-        player.commander_damage.insert(PlayerId::from_index(1), 10);
-        player.commander_damage.insert(PlayerId::from_index(2), 5);
+        player.commander_damage.insert(ObjectId::from_raw(101), 10);
+        player.commander_damage.insert(ObjectId::from_raw(202), 5);
 
         assert_eq!(
-            player.commander_damage.get(&PlayerId::from_index(1)),
+            player.commander_damage.get(&ObjectId::from_raw(101)),
             Some(&10)
         );
         assert_eq!(
-            player.commander_damage.get(&PlayerId::from_index(2)),
+            player.commander_damage.get(&ObjectId::from_raw(202)),
             Some(&5)
         );
     }

@@ -720,7 +720,9 @@ fn execute_pip_payment_action(
             source_id,
             ability_index,
         } => {
-            // Activate the mana ability - this just generates mana, doesn't pay the pip
+            let before_pool = game
+                .player(player)
+                .map(|player_obj| player_obj.mana_pool.clone());
             let mana_color_restriction = pip_mana_color_restriction(pip, allow_any_color);
             crate::special_actions::perform_activate_mana_ability_restricted_colors(
                 game,
@@ -731,7 +733,29 @@ fn execute_pip_payment_action(
                 decision_maker,
             )?;
             record_pip_payment_action(payment_trace, action);
-            Ok(false) // Pip not yet paid, just generated mana
+
+            let produced_symbols = before_pool
+                .as_ref()
+                .and_then(|before| {
+                    game.player(player)
+                        .map(|player_obj| mana_pool_delta_symbols(before, &player_obj.mana_pool))
+                })
+                .unwrap_or_default();
+
+            if let Some(symbol) =
+                spend_pool_mana_for_pip(game, player, pip, allow_any_color, &produced_symbols)
+            {
+                if let Some(spent) = mana_spent_to_cast.as_deref_mut() {
+                    track_spent_mana_symbol(spent, symbol);
+                }
+                record_pip_payment_action(
+                    payment_trace,
+                    &ManaPipPaymentAction::UseFromPool(symbol),
+                );
+                return Ok(true);
+            }
+
+            Ok(false)
         }
         ManaPipPaymentAction::PayLife(amount) => {
             if let Some(player_obj) = game.player_mut(player) {
@@ -764,6 +788,127 @@ fn execute_pip_payment_action(
             Ok(true) // Pip was paid
         }
     }
+}
+
+fn mana_pool_delta_symbols(before: &ManaPool, after: &ManaPool) -> Vec<crate::mana::ManaSymbol> {
+    use crate::mana::ManaSymbol;
+
+    let mut produced = Vec::new();
+    for (symbol, delta) in [
+        (ManaSymbol::White, after.white.saturating_sub(before.white)),
+        (ManaSymbol::Blue, after.blue.saturating_sub(before.blue)),
+        (ManaSymbol::Black, after.black.saturating_sub(before.black)),
+        (ManaSymbol::Red, after.red.saturating_sub(before.red)),
+        (ManaSymbol::Green, after.green.saturating_sub(before.green)),
+        (
+            ManaSymbol::Colorless,
+            after.colorless.saturating_sub(before.colorless),
+        ),
+    ] {
+        for _ in 0..delta {
+            produced.push(symbol);
+        }
+    }
+    produced
+}
+
+fn spend_pool_mana_for_pip(
+    game: &mut GameState,
+    player: PlayerId,
+    pip: &[crate::mana::ManaSymbol],
+    allow_any_color: bool,
+    preferred_symbols: &[crate::mana::ManaSymbol],
+) -> Option<crate::mana::ManaSymbol> {
+    use crate::mana::ManaSymbol;
+
+    let mut candidates = Vec::new();
+
+    for &symbol in preferred_symbols {
+        if !matches!(
+            symbol,
+            ManaSymbol::White
+                | ManaSymbol::Blue
+                | ManaSymbol::Black
+                | ManaSymbol::Red
+                | ManaSymbol::Green
+                | ManaSymbol::Colorless
+        ) {
+            continue;
+        }
+        if symbol_can_pay_pip(symbol, pip, allow_any_color) && !candidates.contains(&symbol) {
+            candidates.push(symbol);
+        }
+    }
+
+    for symbol in [
+        ManaSymbol::White,
+        ManaSymbol::Blue,
+        ManaSymbol::Black,
+        ManaSymbol::Red,
+        ManaSymbol::Green,
+        ManaSymbol::Colorless,
+    ] {
+        if symbol_can_pay_pip(symbol, pip, allow_any_color) && !candidates.contains(&symbol) {
+            candidates.push(symbol);
+        }
+    }
+
+    let player_obj = game.player_mut(player)?;
+    for symbol in candidates {
+        if player_obj.mana_pool.remove(symbol, 1) {
+            return Some(symbol);
+        }
+    }
+
+    None
+}
+
+fn symbol_can_pay_pip(
+    symbol: crate::mana::ManaSymbol,
+    pip: &[crate::mana::ManaSymbol],
+    allow_any_color: bool,
+) -> bool {
+    use crate::mana::ManaSymbol;
+
+    let has_colored_requirement = pip.iter().any(|candidate| {
+        matches!(
+            candidate,
+            ManaSymbol::White
+                | ManaSymbol::Blue
+                | ManaSymbol::Black
+                | ManaSymbol::Red
+                | ManaSymbol::Green
+        )
+    });
+
+    pip.iter().any(|candidate| match candidate {
+        ManaSymbol::Generic(_) | ManaSymbol::Snow => matches!(
+            symbol,
+            ManaSymbol::White
+                | ManaSymbol::Blue
+                | ManaSymbol::Black
+                | ManaSymbol::Red
+                | ManaSymbol::Green
+                | ManaSymbol::Colorless
+        ),
+        ManaSymbol::White => {
+            symbol == ManaSymbol::White || (allow_any_color && has_colored_requirement)
+        }
+        ManaSymbol::Blue => {
+            symbol == ManaSymbol::Blue || (allow_any_color && has_colored_requirement)
+        }
+        ManaSymbol::Black => {
+            symbol == ManaSymbol::Black || (allow_any_color && has_colored_requirement)
+        }
+        ManaSymbol::Red => {
+            symbol == ManaSymbol::Red || (allow_any_color && has_colored_requirement)
+        }
+        ManaSymbol::Green => {
+            symbol == ManaSymbol::Green || (allow_any_color && has_colored_requirement)
+        }
+        ManaSymbol::Colorless => symbol == ManaSymbol::Colorless,
+        ManaSymbol::Life(_) | ManaSymbol::X => false,
+    })
 }
 
 fn track_spent_mana_symbol(pool: &mut ManaPool, symbol: crate::mana::ManaSymbol) {
@@ -1734,7 +1879,11 @@ fn apply_sacrifice_target_response(
                         ));
                     }
 
-                    game.move_object(target_id, Zone::Hand);
+                    let _ = game.move_object_with_commander_options(
+                        target_id,
+                        Zone::Hand,
+                        decision_maker,
+                    );
 
                     #[cfg(feature = "net")]
                     {
@@ -1848,49 +1997,13 @@ fn apply_casting_method_choice_response(
     // Get the spell's mana cost and effects, considering casting method
     // Note: We use stack_id now since the spell has been moved to stack
     let (mana_cost, effects) = if let Some(obj) = game.object(stack_id) {
-        let cost = match &casting_method {
-            CastingMethod::Normal => obj.mana_cost.clone(),
-            CastingMethod::Alternative(idx) => {
-                if let Some(method) = obj.alternative_casts.get(*idx) {
-                    // Methods with a modeled TotalCost can explicitly set "no mana cost" (None).
-                    // Methods without TotalCost fall back to the spell's printed mana cost.
-                    if method.total_cost().is_some() {
-                        method.mana_cost().cloned()
-                    } else {
-                        method
-                            .mana_cost()
-                            .cloned()
-                            .or_else(|| obj.mana_cost.clone())
-                    }
-                } else {
-                    obj.mana_cost.clone()
-                }
-            }
-            CastingMethod::GrantedEscape { .. } => obj.mana_cost.clone(),
-            CastingMethod::GrantedFlashback => obj.mana_cost.clone(),
-            CastingMethod::PlayFrom {
-                use_alternative: None,
-                ..
-            } => obj.mana_cost.clone(),
-            CastingMethod::PlayFrom {
-                use_alternative: Some(idx),
-                zone,
-                ..
-            } => crate::decision::resolve_play_from_alternative_method(
-                game, player, obj, *zone, *idx,
-            )
-            .map(|method| {
-                if method.total_cost().is_some() {
-                    method.mana_cost().cloned()
-                } else {
-                    method
-                        .mana_cost()
-                        .cloned()
-                        .or_else(|| obj.mana_cost.clone())
-                }
-            })
-            .unwrap_or_else(|| obj.mana_cost.clone()),
-        };
+        let cost = crate::decision::spell_mana_cost_for_cast(
+            game,
+            player,
+            obj,
+            &casting_method,
+            from_zone,
+        );
         (cost, obj.spell_effect.clone().unwrap_or_default())
     } else {
         (None, Vec::new())
@@ -2053,41 +2166,38 @@ fn finalize_spell_cast(
     // Get the mana cost, alternative additional cost, and exile count based on casting method.
     let (base_mana_cost, alternative_additional_cost, granted_escape_exile_count) =
         if let Some(obj) = game.object(spell_id) {
+            let base_mana_cost = crate::decision::spell_mana_cost_for_cast(
+                game,
+                caster,
+                obj,
+                &casting_method,
+                from_zone,
+            );
             match &casting_method {
-                CastingMethod::Normal => {
-                    (obj.mana_cost.clone(), crate::cost::TotalCost::free(), None)
-                }
+                CastingMethod::Normal => (base_mana_cost, crate::cost::TotalCost::free(), None),
                 CastingMethod::Alternative(idx) => {
                     if let Some(method) = obj.alternative_casts.get(*idx) {
                         if let Some(total_cost) = method.total_cost() {
-                            (total_cost.mana_cost().cloned(), total_cost.clone(), None)
+                            (base_mana_cost, total_cost.clone(), None)
                         } else {
-                            // Methods without modeled total_cost fall back to printed mana cost.
-                            let mana = method
-                                .mana_cost()
-                                .cloned()
-                                .or_else(|| obj.mana_cost.clone());
-                            (mana, crate::cost::TotalCost::free(), None)
+                            (base_mana_cost, crate::cost::TotalCost::free(), None)
                         }
                     } else {
-                        (obj.mana_cost.clone(), crate::cost::TotalCost::free(), None)
+                        (base_mana_cost, crate::cost::TotalCost::free(), None)
                     }
                 }
                 CastingMethod::GrantedEscape { exile_count, .. } => (
-                    obj.mana_cost.clone(),
+                    base_mana_cost,
                     crate::cost::TotalCost::free(),
                     Some(*exile_count),
                 ),
                 CastingMethod::GrantedFlashback => {
-                    (obj.mana_cost.clone(), crate::cost::TotalCost::free(), None)
+                    (base_mana_cost, crate::cost::TotalCost::free(), None)
                 }
                 CastingMethod::PlayFrom {
                     use_alternative: None,
                     ..
-                } => {
-                    // Yawgmoth's Will normal cost
-                    (obj.mana_cost.clone(), crate::cost::TotalCost::free(), None)
-                }
+                } => (base_mana_cost, crate::cost::TotalCost::free(), None),
                 CastingMethod::PlayFrom {
                     use_alternative: Some(idx),
                     zone,
@@ -2097,19 +2207,12 @@ fn finalize_spell_cast(
                 )
                 .map(|method| {
                     if let Some(total_cost) = method.total_cost() {
-                        (total_cost.mana_cost().cloned(), total_cost.clone(), None)
+                        (base_mana_cost.clone(), total_cost.clone(), None)
                     } else {
-                        (
-                            method
-                                .mana_cost()
-                                .cloned()
-                                .or_else(|| obj.mana_cost.clone()),
-                            crate::cost::TotalCost::free(),
-                            None,
-                        )
+                        (base_mana_cost.clone(), crate::cost::TotalCost::free(), None)
                     }
                 })
-                .unwrap_or_else(|| (obj.mana_cost.clone(), crate::cost::TotalCost::free(), None)),
+                .unwrap_or_else(|| (base_mana_cost, crate::cost::TotalCost::free(), None)),
             }
         } else {
             (None, crate::cost::TotalCost::free(), None)
@@ -2309,6 +2412,9 @@ fn finalize_spell_cast(
 
     // Track that a spell was cast this turn (per-caster)
     *game.spells_cast_this_turn.entry(caster).or_insert(0) += 1;
+    if from_zone == Zone::Command {
+        game.record_commander_cast_from_command_zone(new_id);
+    }
     game.spells_cast_this_turn_total = game.spells_cast_this_turn_total.saturating_add(1);
     game.spell_cast_order_this_turn
         .insert(new_id, game.spells_cast_this_turn_total);
@@ -2817,6 +2923,7 @@ mod priority_mana_tests {
             ability_index: 0,
         };
         let mut payment_trace = Vec::new();
+        let mut mana_spent = ManaPool::default();
         let black_pip = vec![ManaSymbol::Black];
 
         let pip_paid = execute_pip_payment_action(
@@ -2829,24 +2936,29 @@ mod priority_mana_tests {
             &action,
             &mut dm,
             &mut payment_trace,
-            None,
+            Some(&mut mana_spent),
         )
         .expect("mana ability activation during pip payment should succeed");
 
         assert!(
-            !pip_paid,
-            "activating mana ability should generate mana before pip is paid"
+            pip_paid,
+            "activating a mana ability for a pip should immediately spend usable mana"
         );
 
         let pool = &game.player(alice).expect("alice exists").mana_pool;
         assert_eq!(
-            pool.black, 1,
-            "mana should be restricted to current pip color"
+            pool.black, 0,
+            "generated mana should be consumed for the pip"
         );
         assert_eq!(pool.red, 0, "disallowed color should not be produced");
+        assert_eq!(
+            mana_spent.black, 1,
+            "spent mana tracking should reflect the auto-paid pip"
+        );
         assert!(
             !game.battlefield.contains(&treasure_id),
             "treasure should be sacrificed as part of activation cost"
         );
+        let _ = payment_trace;
     }
 }

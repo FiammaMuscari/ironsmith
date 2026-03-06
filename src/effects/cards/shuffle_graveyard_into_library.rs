@@ -36,7 +36,11 @@ impl EffectExecutor for ShuffleGraveyardIntoLibraryEffect {
             .unwrap_or_default();
 
         for card_id in graveyard_cards {
-            let _ = game.move_object(card_id, Zone::Library);
+            let _ = game.move_object_with_commander_options(
+                card_id,
+                Zone::Library,
+                &mut *ctx.decision_maker,
+            );
         }
 
         game.shuffle_player_library(player_id);

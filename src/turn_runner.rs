@@ -6,9 +6,9 @@
 
 use crate::combat_state::CombatState;
 use crate::decision::{AttackerDeclaration, BlockerDeclaration, GameResult};
-use crate::decisions::context::DecisionContext;
+use crate::decisions::context::{BooleanContext, DecisionContext};
 use crate::game_loop::{
-    GameLoopError, apply_attacker_declarations, apply_blocker_declarations, check_and_apply_sbas,
+    GameLoopError, apply_attacker_declarations, apply_blocker_declarations,
     execute_combat_damage_step, generate_and_queue_step_triggers, get_declare_attackers_decision,
     get_declare_blockers_decision, put_triggers_on_stack, queue_combat_damage_triggers,
 };
@@ -17,7 +17,7 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::rules::combat::deals_first_strike_damage_with_game;
 use crate::rules::state_based::check_state_based_actions;
 use crate::triggers::TriggerQueue;
-use crate::turn::{execute_cleanup_step, execute_draw_step, execute_untap_step};
+use crate::turn::{execute_cleanup_step, execute_untap_step};
 
 /// What the caller should do next after calling [`TurnRunner::advance`].
 #[derive(Debug)]
@@ -61,8 +61,10 @@ pub enum TurnState {
     DeclareBlockersApply,
     DeclareBlockersPriority,
     CombatDamageFirstStrike,
+    CombatDamageFirstStrikeSbas,
     CombatDamageFirstStrikePriority,
     CombatDamageRegular,
+    CombatDamageRegularSbas,
     CombatDamageRegularPriority,
     EndCombat,
     EndCombatPriority,
@@ -84,6 +86,17 @@ pub enum TurnState {
     Complete,
 }
 
+#[derive(Debug, Clone)]
+enum PendingCommanderChoice {
+    DrawToHand { object_id: ObjectId },
+    StateBasedReturn { object_id: ObjectId },
+}
+
+enum RunnerProgress<T> {
+    Complete(T),
+    NeedsDecision(DecisionContext),
+}
+
 /// Drives a single turn as a state machine.
 #[derive(Debug, Clone)]
 pub struct TurnRunner {
@@ -98,6 +111,10 @@ pub struct TurnRunner {
     pending_blockers: Option<(Vec<BlockerDeclaration>, PlayerId)>,
     /// Pending discard selection from the caller.
     pending_discard: Option<Vec<ObjectId>>,
+    /// Pending yes/no response for runner-driven boolean decisions.
+    pending_boolean: Option<bool>,
+    /// Commander-specific choice that paused the runner.
+    pending_commander_choice: Option<PendingCommanderChoice>,
     /// Defending player for the current combat.
     defending_player: Option<PlayerId>,
 }
@@ -112,6 +129,8 @@ impl TurnRunner {
             pending_attackers: None,
             pending_blockers: None,
             pending_discard: None,
+            pending_boolean: None,
+            pending_commander_choice: None,
             defending_player: None,
         }
     }
@@ -174,7 +193,10 @@ impl TurnRunner {
 
             TurnState::Draw => {
                 game.turn.step = Some(Step::Draw);
-                let draw_events = execute_draw_step(game);
+                let draw_events = match self.execute_draw_step_with_choices(game) {
+                    RunnerProgress::Complete(draw_events) => draw_events,
+                    RunnerProgress::NeedsDecision(ctx) => return Ok(TurnAction::Decision(ctx)),
+                };
                 generate_and_queue_step_triggers(game, tq);
 
                 // Queue triggers for each drawn card (Miracle, etc.)
@@ -333,10 +355,18 @@ impl TurnRunner {
 
                 let events = execute_combat_damage_step(game, &self.combat, true);
                 queue_combat_damage_triggers(game, &events, tq);
-                check_and_apply_sbas(game, tq)?;
+                self.state = TurnState::CombatDamageFirstStrikeSbas;
+                Ok(TurnAction::Continue)
+            }
 
-                self.state = TurnState::CombatDamageFirstStrikePriority;
-                Ok(TurnAction::RunPriority)
+            TurnState::CombatDamageFirstStrikeSbas => {
+                match self.apply_sbas_until_commander_choice(game, tq)? {
+                    RunnerProgress::Complete(()) => {
+                        self.state = TurnState::CombatDamageFirstStrikePriority;
+                        Ok(TurnAction::RunPriority)
+                    }
+                    RunnerProgress::NeedsDecision(ctx) => Ok(TurnAction::Decision(ctx)),
+                }
             }
 
             TurnState::CombatDamageFirstStrikePriority => {
@@ -350,10 +380,18 @@ impl TurnRunner {
 
                 let events = execute_combat_damage_step(game, &self.combat, false);
                 queue_combat_damage_triggers(game, &events, tq);
-                check_and_apply_sbas(game, tq)?;
+                self.state = TurnState::CombatDamageRegularSbas;
+                Ok(TurnAction::Continue)
+            }
 
-                self.state = TurnState::CombatDamageRegularPriority;
-                Ok(TurnAction::RunPriority)
+            TurnState::CombatDamageRegularSbas => {
+                match self.apply_sbas_until_commander_choice(game, tq)? {
+                    RunnerProgress::Complete(()) => {
+                        self.state = TurnState::CombatDamageRegularPriority;
+                        Ok(TurnAction::RunPriority)
+                    }
+                    RunnerProgress::NeedsDecision(ctx) => Ok(TurnAction::Decision(ctx)),
+                }
             }
 
             TurnState::CombatDamageRegularPriority => {
@@ -433,7 +471,10 @@ impl TurnRunner {
                 let sbas_happened = !check_state_based_actions(game).is_empty();
 
                 if triggers_fired || sbas_happened {
-                    check_and_apply_sbas(game, tq)?;
+                    match self.apply_sbas_until_commander_choice(game, tq)? {
+                        RunnerProgress::Complete(()) => {}
+                        RunnerProgress::NeedsDecision(ctx) => return Ok(TurnAction::Decision(ctx)),
+                    }
                     put_triggers_on_stack(game, tq)?;
                     if !game.stack_is_empty() {
                         self.state = TurnState::CleanupRecursivePriority;
@@ -477,6 +518,11 @@ impl TurnRunner {
     /// Provide a discard selection in response to a `Decision(SelectObjects(...))`.
     pub fn respond_discard(&mut self, cards: Vec<ObjectId>) {
         self.pending_discard = Some(cards);
+    }
+
+    /// Provide a boolean response in response to a `Decision(Boolean(...))`.
+    pub fn respond_boolean(&mut self, answer: bool) {
+        self.pending_boolean = Some(answer);
     }
 
     /// Signal that the priority loop has completed.
@@ -539,6 +585,197 @@ impl TurnRunner {
         // Done with cleanup, execute final cleanup step
         self.state = TurnState::CleanupApply;
         Ok(TurnAction::Continue)
+    }
+
+    fn execute_draw_step_with_choices(
+        &mut self,
+        game: &mut GameState,
+    ) -> RunnerProgress<Vec<crate::triggers::TriggerEvent>> {
+        use crate::events::other::CardsDrawnEvent;
+        use crate::triggers::TriggerEvent;
+
+        let active_player = game.turn.active_player;
+        if game.skip_next_draw_step.remove(&active_player) {
+            game.turn.priority_player = Some(active_player);
+            return RunnerProgress::Complete(Vec::new());
+        }
+
+        let current_draws = game
+            .cards_drawn_this_turn
+            .get(&active_player)
+            .copied()
+            .unwrap_or(0);
+        let is_first_draw = current_draws == 0;
+        let can_draw = if !game.can_draw_extra_cards(active_player) {
+            current_draws == 0
+        } else {
+            true
+        };
+
+        let mut drawn = Vec::new();
+        if can_draw {
+            match self.pending_commander_choice.take() {
+                Some(PendingCommanderChoice::DrawToHand { object_id }) => {
+                    let send_to_command = self.pending_boolean.take().unwrap_or(false);
+                    let final_zone = if send_to_command {
+                        crate::zone::Zone::Command
+                    } else {
+                        crate::zone::Zone::Hand
+                    };
+                    if let Some(new_id) = game.move_object(object_id, final_zone)
+                        && final_zone == crate::zone::Zone::Hand
+                    {
+                        drawn.push(new_id);
+                    }
+                }
+                Some(other) => {
+                    self.pending_commander_choice = Some(other);
+                }
+                None => {
+                    if let Some(card_id) = game
+                        .player(active_player)
+                        .and_then(|player| player.library.last().copied())
+                    {
+                        if game.is_commander(card_id) {
+                            if let Some(obj) = game.object(card_id) {
+                                let ctx = DecisionContext::Boolean(
+                                    BooleanContext::new(
+                                        obj.owner,
+                                        Some(card_id),
+                                        "move it to the command zone instead of putting it into its owner's hand",
+                                    )
+                                    .with_source_name(obj.name.clone()),
+                                );
+                                self.pending_commander_choice =
+                                    Some(PendingCommanderChoice::DrawToHand { object_id: card_id });
+                                return RunnerProgress::NeedsDecision(ctx);
+                            }
+                        } else if let Some(new_id) =
+                            game.move_object(card_id, crate::zone::Zone::Hand)
+                        {
+                            drawn.push(new_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        *game.cards_drawn_this_turn.entry(active_player).or_insert(0) += drawn.len() as u32;
+
+        let mut draw_events = Vec::new();
+        if !drawn.is_empty() {
+            let draw_event_provenance = game
+                .provenance_graph
+                .alloc_root_event(crate::events::EventKind::CardsDrawn);
+            let event = CardsDrawnEvent::new(active_player, drawn, is_first_draw);
+            draw_events.push(TriggerEvent::new_with_provenance(
+                event,
+                draw_event_provenance,
+            ));
+        }
+
+        game.turn.priority_player = Some(active_player);
+        RunnerProgress::Complete(draw_events)
+    }
+
+    fn apply_sbas_until_commander_choice(
+        &mut self,
+        game: &mut GameState,
+        tq: &mut TriggerQueue,
+    ) -> Result<RunnerProgress<()>, GameLoopError> {
+        use crate::decisions::make_decision;
+        use crate::rules::state_based::{
+            StateBasedAction, apply_legend_rule_choice,
+            apply_state_based_actions_from_actions_with, check_state_based_actions_with_effects,
+            legend_rule_specs_from_actions,
+        };
+
+        game.refresh_continuous_state();
+
+        loop {
+            let all_effects = game.all_continuous_effects();
+            let actions = check_state_based_actions_with_effects(game, &all_effects);
+            if actions.is_empty() {
+                self.pending_boolean = None;
+                self.pending_commander_choice = None;
+                return Ok(RunnerProgress::Complete(()));
+            }
+
+            let legend_specs = legend_rule_specs_from_actions(&actions);
+            if !legend_specs.is_empty() {
+                let mut auto_dm = crate::decision::AutoPassDecisionMaker;
+                for (player, spec) in legend_specs {
+                    let keep_id: ObjectId = make_decision(game, &mut auto_dm, player, None, spec);
+                    apply_legend_rule_choice(game, keep_id);
+                }
+                crate::game_loop::drain_pending_trigger_events(game, tq);
+                continue;
+            }
+
+            let mut commander_returns = Vec::new();
+            let mut other_actions = Vec::new();
+            for action in actions {
+                match action {
+                    StateBasedAction::CommanderReturnsToCommandZone(obj_id) => {
+                        commander_returns.push(obj_id);
+                    }
+                    other => other_actions.push(other),
+                }
+            }
+
+            if !other_actions.is_empty() {
+                let mut auto_dm = crate::decision::AutoPassDecisionMaker;
+                let applied = apply_state_based_actions_from_actions_with(
+                    game,
+                    other_actions,
+                    &all_effects,
+                    &mut auto_dm,
+                );
+                crate::game_loop::drain_pending_trigger_events(game, tq);
+                if !applied {
+                    self.pending_boolean = None;
+                    self.pending_commander_choice = None;
+                    return Ok(RunnerProgress::Complete(()));
+                }
+                continue;
+            }
+
+            let Some(obj_id) = commander_returns.first().copied() else {
+                self.pending_boolean = None;
+                self.pending_commander_choice = None;
+                return Ok(RunnerProgress::Complete(()));
+            };
+
+            match self.pending_commander_choice.take() {
+                Some(PendingCommanderChoice::StateBasedReturn { object_id })
+                    if object_id == obj_id =>
+                {
+                    let send_to_command = self.pending_boolean.take().unwrap_or(false);
+                    if send_to_command {
+                        game.move_object(obj_id, crate::zone::Zone::Command);
+                    } else {
+                        game.decline_commander_command_zone_move(obj_id);
+                    }
+                    crate::game_loop::drain_pending_trigger_events(game, tq);
+                    continue;
+                }
+                Some(other) => {
+                    self.pending_commander_choice = Some(other);
+                }
+                None => {}
+            }
+
+            let Some(obj) = game.object(obj_id) else {
+                continue;
+            };
+            let ctx = DecisionContext::Boolean(
+                BooleanContext::new(obj.owner, Some(obj_id), "move it to the command zone")
+                    .with_source_name(obj.name.clone()),
+            );
+            self.pending_commander_choice =
+                Some(PendingCommanderChoice::StateBasedReturn { object_id: obj_id });
+            return Ok(RunnerProgress::NeedsDecision(ctx));
+        }
     }
 }
 
@@ -605,6 +842,9 @@ mod tests {
                         DecisionContext::SelectObjects(_) => {
                             runner.respond_discard(Vec::new());
                         }
+                        DecisionContext::Boolean(_) => {
+                            runner.respond_boolean(false);
+                        }
                         _ => {
                             // Other decisions: skip
                         }
@@ -634,5 +874,64 @@ mod tests {
         let action = runner.advance(&mut game, &mut tq).unwrap();
         assert!(matches!(action, TurnAction::RunPriority));
         assert!(matches!(runner.state(), TurnState::UpkeepPriority));
+    }
+
+    #[test]
+    fn test_turn_runner_pauses_for_drawn_commander_choice() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let commander =
+            crate::card::CardBuilder::new(crate::ids::CardId::from_raw(9100), "Runner Commander")
+                .card_types(vec![crate::types::CardType::Creature])
+                .build();
+        let commander_id =
+            game.create_object_from_card(&commander, alice, crate::zone::Zone::Library);
+        game.set_as_commander(commander_id, alice);
+
+        let mut tq = TriggerQueue::new();
+        let mut runner = TurnRunner::new();
+        runner.state = TurnState::Draw;
+
+        let action = runner.advance(&mut game, &mut tq).unwrap();
+        assert!(matches!(
+            action,
+            TurnAction::Decision(DecisionContext::Boolean(_))
+        ));
+
+        runner.respond_boolean(true);
+        let action = runner.advance(&mut game, &mut tq).unwrap();
+        assert!(matches!(action, TurnAction::RunPriority));
+        assert_eq!(game.objects_in_zone(crate::zone::Zone::Command).len(), 1);
+    }
+
+    #[test]
+    fn test_turn_runner_pauses_for_commander_sba_choice() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let commander =
+            crate::card::CardBuilder::new(crate::ids::CardId::from_raw(9101), "Fallen Commander")
+                .card_types(vec![crate::types::CardType::Creature])
+                .build();
+        let commander_id =
+            game.create_object_from_card(&commander, alice, crate::zone::Zone::Graveyard);
+        game.set_as_commander(commander_id, alice);
+
+        let mut tq = TriggerQueue::new();
+        let mut runner = TurnRunner::new();
+
+        let action = runner
+            .apply_sbas_until_commander_choice(&mut game, &mut tq)
+            .unwrap();
+        assert!(matches!(
+            action,
+            RunnerProgress::NeedsDecision(DecisionContext::Boolean(_))
+        ));
+
+        runner.respond_boolean(true);
+        let action = runner
+            .apply_sbas_until_commander_choice(&mut game, &mut tq)
+            .unwrap();
+        assert!(matches!(action, RunnerProgress::Complete(())));
+        assert_eq!(game.objects_in_zone(crate::zone::Zone::Command).len(), 1);
     }
 }

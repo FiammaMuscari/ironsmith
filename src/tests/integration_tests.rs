@@ -1461,6 +1461,12 @@ mod tests {
             command_zone_ids.is_empty(),
             "Command zone should be empty after casting commander"
         );
+
+        let commander_identity = game
+            .player(PlayerId::from_index(0))
+            .expect("player should exist")
+            .commanders[0];
+        assert_eq!(game.commander_cast_count(commander_identity), 1);
     }
 
     // Card-specific replay tests have been moved to their respective card definition files.
