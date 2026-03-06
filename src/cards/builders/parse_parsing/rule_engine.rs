@@ -1,4 +1,6 @@
-use super::*;
+use crate::cards::builders::CardTextError;
+use crate::cards::builders::Token;
+use crate::cards::builders::parse_parsing::lex::words;
 
 pub(crate) const RULE_SHAPE_HAS_COLON: u32 = 1 << 0;
 pub(crate) const RULE_SHAPE_HAS_COMMA: u32 = 1 << 1;

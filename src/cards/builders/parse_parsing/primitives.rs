@@ -1,4 +1,16 @@
-use super::*;
+use crate::cards::TextSpan;
+use crate::cards::builders::{
+    IT_TAG, KeywordAction, Token, keyword_action_to_static_ability, parse_ability_phrase,
+    parse_counter_type_from_tokens, parse_counter_type_word, parse_object_filter,
+    parse_subtype_word, parse_supertype_word, token_index_for_word_index,
+};
+use crate::effect::EffectId;
+use crate::filter::{AlternativeCastKind, ObjectFilter};
+use crate::static_abilities::StaticAbilityId;
+use crate::{
+    CardType, ChooseSpec, ColorSet, ManaSymbol, PlayerFilter, Subtype, Supertype, TagKey, Value,
+    Zone,
+};
 
 pub(crate) fn parse_card_type(word: &str) -> Option<CardType> {
     match word {

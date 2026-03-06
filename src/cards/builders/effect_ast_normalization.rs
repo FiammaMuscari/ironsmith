@@ -1,4 +1,4 @@
-use super::*;
+use crate::cards::builders::EffectAst;
 
 pub(crate) fn normalize_effects_ast(effects: &[EffectAst]) -> Vec<EffectAst> {
     let mut normalized = effects.to_vec();
@@ -67,7 +67,9 @@ fn is_noop_effect(effect: &EffectAst) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::cards::builders::{EffectAst, PlayerAst, normalize_effects_ast};
+    use crate::effect::{Until, Value};
+    use crate::filter::ObjectFilter;
 
     #[test]
     fn normalize_removes_empty_global_grant_effect() {

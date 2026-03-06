@@ -1,4 +1,8 @@
-use super::*;
+use crate::cards::builders::{
+    CardTextError, IT_TAG, TargetAst, Token, is_article, parse_card_type, parse_non_type,
+    parse_number, parse_object_filter, parse_subtype_word, span_from_tokens, words,
+};
+use crate::{CardType, ChoiceCount, ObjectFilter, PlayerFilter, TagKey, Zone};
 
 pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTextError> {
     let mut tokens = tokens;

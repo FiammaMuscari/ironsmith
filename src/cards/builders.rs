@@ -16,7 +16,6 @@ use crate::effect::{
     EventValueSpec, Until, Value,
 };
 use crate::effects::VoteOption;
-use crate::filter::AlternativeCastKind;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::object::CounterType;
