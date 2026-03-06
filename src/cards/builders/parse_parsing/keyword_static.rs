@@ -1,4 +1,56 @@
-use super::*;
+#[allow(unused_imports)]
+use crate::ability::{Ability, AbilityKind, TriggeredAbility};
+#[allow(unused_imports)]
+use crate::cards::builders::ability_lowering::{lower_static_abilities_ast, parsed_triggered_ability};
+#[allow(unused_imports)]
+use crate::cards::builders::{
+    CardTextError, GrantedAbilityAst, IT_TAG, KeywordAction, LineAst, ParsedAbility, TagKey,
+    StaticAbilityAst, TextSpan, Token,
+};
+#[allow(unused_imports)]
+use crate::cards::builders::parse_parsing::{
+    color_from_color_set, contains_until_end_of_turn, is_article, is_at_trigger_intro,
+    is_land_subtype, is_negated_untap_clause, is_source_reference_words,
+    is_untap_during_each_other_players_untap_step_words, keyword_title, merge_spell_filters,
+    normalize_cant_words, parse_ability_phrase, parse_activated_line, parse_activation_cost,
+    parse_all_creatures_able_to_block_source_line, parse_cant_clauses, parse_card_type,
+    parse_color, parse_cost_reduction_line, parse_counter_type_from_tokens,
+    parse_counter_type_word, parse_cycling_line, parse_devotion_value_from_add_clause,
+    parse_enters_tapped_line, parse_equal_to_aggregate_filter_value,
+    parse_equal_to_number_of_counters_on_reference_value,
+    parse_equal_to_number_of_filter_plus_or_minus_fixed_value,
+    parse_equal_to_number_of_filter_value, parse_equal_to_number_of_opponents_you_have_value,
+    parse_flashback_keyword_line, parse_granted_activated_or_triggered_ability_for_gain,
+    parse_mana_symbol, parse_named_number, parse_number, parse_object_filter,
+    parse_source_must_be_blocked_if_able_line, parse_spell_filter, parse_subtype_flexible,
+    parse_subtype_word, parse_triggered_line, parse_value, parse_zone_word, parser_trace,
+    parser_trace_stack, replace_unbound_x_with_value, scale_dynamic_cost_modifier_value,
+    spell_filter_has_identity, split_on_and, split_on_comma, split_on_comma_or_semicolon,
+    starts_with_until_end_of_turn, trim_commas, trim_edge_punctuation,
+    value_contains_unbound_x, words,
+};
+#[allow(unused_imports)]
+use crate::color::ColorSet;
+#[allow(unused_imports)]
+use crate::cost::TotalCost;
+#[allow(unused_imports)]
+use crate::effect::{Effect, EventValueSpec, Value};
+#[allow(unused_imports)]
+use crate::mana::{ManaCost, ManaSymbol};
+#[allow(unused_imports)]
+use crate::object::CounterType;
+#[allow(unused_imports)]
+use crate::static_abilities::{
+    Anthem, AnthemCountExpression, AnthemValue, GrantAbility, StaticAbility,
+};
+#[allow(unused_imports)]
+use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
+#[allow(unused_imports)]
+use crate::triggers::Trigger;
+#[allow(unused_imports)]
+use crate::types::{CardType, Subtype, Supertype};
+#[allow(unused_imports)]
+use crate::zone::Zone;
 use std::sync::LazyLock;
 
 pub(crate) fn parse_ability_line(tokens: &[Token]) -> Option<Vec<KeywordAction>> {

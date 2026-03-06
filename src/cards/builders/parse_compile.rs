@@ -1,7 +1,71 @@
+#[allow(unused_imports)]
+use crate::ability;
+#[allow(unused_imports)]
+use crate::ability::{
+    Ability, AbilityKind, ActivatedAbility, ActivationTiming, TriggeredAbility,
+};
+#[allow(unused_imports)]
+use crate::card::PowerToughness;
+#[allow(unused_imports)]
+use crate::cards::builders::ability_lowering::lower_parsed_ability;
+#[allow(unused_imports)]
+use crate::cards::builders::effect_pipeline::{
+    prepare_effects_for_lowering, PreparedEffectsForLowering,
+};
+#[allow(unused_imports)]
+use crate::cards::builders::reference_resolution::{
+    resolve_effect_sequence_references, EffectReferenceResolutionConfig,
+};
+#[allow(unused_imports)]
+use crate::cards::builders::{
+    CardDefinitionBuilder, CardTextError, ClashOpponentAst, ControlDurationAst, DamageBySpec,
+    EffectAst, GrantedAbilityAst, IfResultPredicate, LineAst, NewTargetRestrictionAst,
+    ObjectRefAst, ParseAnnotations, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
+    PreventNextTimeDamageTargetAst, RetargetModeAst, ReturnControllerAst,
+    SharedTypeConstraintAst, TagKey, TargetAst, TriggerSpec, IT_TAG,
+};
+#[allow(unused_imports)]
+use crate::cards::builders::parse_parsing::{
+    contains_until_end_of_turn, map_span_to_original, parse_card_type, parse_number_word_i32,
+    parse_subtype_word, CompileContext, IdGenContext, LoweringFrame, LoweringReferenceFrame,
+    NormalizedLine, ReferenceFrameSource,
+};
 use super::effect_ast_traversal::{
     assert_effect_ast_variant_coverage, for_each_nested_effects, for_each_nested_effects_mut,
 };
-use super::*;
+#[allow(unused_imports)]
+use crate::cards::CardDefinition;
+#[allow(unused_imports)]
+use crate::color::ColorSet;
+#[allow(unused_imports)]
+use crate::cost::TotalCost;
+#[allow(unused_imports)]
+use crate::effect::{
+    ChoiceCount, Condition, Effect, EffectId, EffectMode, EffectPredicate, EventValueSpec,
+    Until, Value,
+};
+#[allow(unused_imports)]
+use crate::effects::composition::VoteOption;
+#[allow(unused_imports)]
+use crate::filter::{
+    ObjectFilter, ObjectRef, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation,
+};
+#[allow(unused_imports)]
+use crate::ids::CardId;
+#[allow(unused_imports)]
+use crate::mana::{ManaCost, ManaSymbol};
+#[allow(unused_imports)]
+use crate::static_abilities::StaticAbility;
+#[allow(unused_imports)]
+use crate::target::ChooseSpec;
+#[allow(unused_imports)]
+use crate::triggers::Trigger;
+#[allow(unused_imports)]
+use crate::types::{CardType, Subtype};
+#[allow(unused_imports)]
+use crate::zone::Zone;
+#[allow(unused_imports)]
+use std::collections::HashMap;
 
 pub(crate) fn compile_trigger_spec(trigger: TriggerSpec) -> Trigger {
     match trigger {
