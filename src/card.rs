@@ -286,6 +286,10 @@ impl CardBuilder {
         &self.name
     }
 
+    pub fn oracle_text_ref(&self) -> &str {
+        &self.oracle_text
+    }
+
     pub fn mana_cost_ref(&self) -> Option<&ManaCost> {
         self.mana_cost.as_ref()
     }
