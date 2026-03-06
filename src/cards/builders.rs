@@ -1480,6 +1480,9 @@ pub(crate) use ability_lowering::*;
 mod parse_parsing;
 pub(crate) use parse_parsing::*;
 
+mod card_ast;
+pub(crate) use card_ast::*;
+
 pub(crate) use effect_ast_normalization::*;
 pub(crate) use effect_pipeline::*;
 
@@ -1868,7 +1871,7 @@ impl CardDefinitionBuilder {
         self,
         text: impl Into<String>,
     ) -> Result<(CardDefinition, ParseAnnotations), CardTextError> {
-        parser::parse_text_with_annotations(self, text.into())
+        effect_pipeline::parse_text_with_annotations(self, text.into())
     }
 
     /// Build a CardDefinition from oracle text, prepending metadata lines

@@ -1,66 +1,24 @@
 use super::effect_ast_traversal::try_for_each_nested_effects_mut;
 use super::*;
 
-#[derive(Clone)]
-struct ModalHeader {
-    min: u32,
-    max: Option<u32>,
-    same_mode_more_than_once: bool,
-    mode_must_be_unchosen: bool,
-    mode_must_be_unchosen_this_turn: bool,
-    commander_allows_both: bool,
-    trigger: Option<TriggerSpec>,
-    activated: Option<ModalActivatedHeader>,
-    x_replacement: Option<Value>,
-    prefix_effects_ast: Vec<EffectAst>,
-    modal_gate: Option<ModalGate>,
-    line_text: String,
-}
-
-#[derive(Clone)]
-struct ModalActivatedHeader {
-    mana_cost: TotalCost,
-    functional_zones: Vec<Zone>,
-    timing: ActivationTiming,
-    additional_restrictions: Vec<String>,
-    activation_restrictions: Vec<crate::ConditionExpr>,
-}
+type ModalHeader = ParsedModalHeader;
+type ModalActivatedHeader = ParsedModalActivatedHeader;
+type ModalGate = ParsedModalGate;
+type PendingRestrictions = ParsedRestrictions;
 
 struct PendingModal {
-    header: ModalHeader,
-    modes: Vec<PendingModalModeAst>,
+    header: ParsedModalHeader,
+    modes: Vec<ParsedModalModeAst>,
 }
 
-#[derive(Clone)]
-struct PendingModalModeAst {
-    raw_line: String,
-    description: String,
-    effects_ast: Vec<EffectAst>,
-}
-
-#[derive(Clone)]
-struct ModalGate {
-    predicate: EffectPredicate,
-    remove_mode_only: bool,
-}
-
-#[derive(Default)]
-struct PendingRestrictions {
-    activation: Vec<String>,
-    trigger: Vec<String>,
-}
-
-pub(super) fn parse_text_with_annotations(
+pub(super) fn parse_card_ast_with_annotations(
     builder: CardDefinitionBuilder,
     text: String,
-) -> Result<(CardDefinition, ParseAnnotations), CardTextError> {
-    let (mut builder, mut annotations, line_infos) = collect_line_infos(builder, text.as_str())?;
-
-    let mut level_abilities: Vec<LevelAbility> = Vec::new();
-    let mut pending_modal: Option<PendingModal> = None;
-    let mut pending_restrictions = PendingRestrictions::default();
-    let mut last_restrictable_ability: Option<usize> = None;
+) -> Result<ParsedCardAst, CardTextError> {
+    let (builder, mut annotations, line_infos) = collect_line_infos(builder, text.as_str())?;
     let allow_unsupported = parser_allow_unsupported_enabled();
+    let mut items = Vec::new();
+    let mut pending_modal: Option<ParsedModalAst> = None;
 
     let mut idx = 0usize;
     while idx < line_infos.len() {
@@ -69,53 +27,10 @@ pub(super) fn parse_text_with_annotations(
         if !allow_unsupported
             && let Some((min_level, max_level)) = parse_level_header(&info.normalized.normalized)
         {
-            let mut level = LevelAbility::new(min_level, max_level);
-            idx += 1;
-
-            while idx < line_infos.len() {
-                let next = &line_infos[idx];
-                if parse_level_header(&next.normalized.normalized).is_some() {
-                    break;
-                }
-
-                let normalized_line = next.normalized.normalized.as_str();
-                if let Some(pt) = parse_power_toughness(normalized_line) {
-                    if let (PtValue::Fixed(power), PtValue::Fixed(toughness)) =
-                        (pt.power, pt.toughness)
-                    {
-                        level = level.with_pt(power, toughness);
-                    }
-                    idx += 1;
-                    continue;
-                }
-
-                let tokens = tokenize_line(normalized_line, next.line_index);
-                if let Some(actions) = parse_ability_line(&tokens) {
-                    reject_unimplemented_keyword_actions(&actions, next.raw_line.as_str())?;
-                    for action in actions {
-                        if let Some(ability) = keyword_action_to_static_ability(action) {
-                            level.abilities.push(ability);
-                        }
-                    }
-                    idx += 1;
-                    continue;
-                }
-
-                if let Some(abilities) = parse_static_ability_ast_line(&tokens)? {
-                    level
-                        .abilities
-                        .extend(lower_static_abilities_ast(abilities)?);
-                    idx += 1;
-                    continue;
-                }
-
-                return Err(CardTextError::ParseError(format!(
-                    "unsupported level ability line: '{}'",
-                    next.raw_line
-                )));
-            }
-
-            level_abilities.push(level);
+            let (level, next_idx) =
+                parse_level_ability_ast(&line_infos, idx, info, min_level, max_level)?;
+            items.push(ParsedCardItem::LevelAbility(level));
+            idx = next_idx;
             continue;
         }
 
@@ -125,11 +40,11 @@ pub(super) fn parse_text_with_annotations(
                 let mut effects_ast = match parse_effect_sentences(&tokens) {
                     Ok(effects_ast) => effects_ast,
                     Err(err) if allow_unsupported => {
-                        builder = push_unsupported_marker(
-                            builder,
-                            info.raw_line.as_str(),
-                            format!("{err:?}"),
-                        );
+                        items.push(ParsedCardItem::Line(ParsedLineAst {
+                            info: info.clone(),
+                            chunks: vec![unsupported_line_ast(info, format!("{err:?}"))],
+                            restrictions: ParsedRestrictions::default(),
+                        }));
                         idx += 1;
                         continue;
                     }
@@ -137,11 +52,14 @@ pub(super) fn parse_text_with_annotations(
                 };
                 if effects_ast.is_empty() {
                     if allow_unsupported {
-                        builder = push_unsupported_marker(
-                            builder,
-                            info.raw_line.as_str(),
-                            "modal bullet line produced no effects".to_string(),
-                        );
+                        items.push(ParsedCardItem::Line(ParsedLineAst {
+                            info: info.clone(),
+                            chunks: vec![unsupported_line_ast(
+                                info,
+                                "modal bullet line produced no effects".to_string(),
+                            )],
+                            restrictions: ParsedRestrictions::default(),
+                        }));
                         idx += 1;
                         continue;
                     }
@@ -159,11 +77,11 @@ pub(super) fn parse_text_with_annotations(
                     )
                 {
                     if allow_unsupported {
-                        builder = push_unsupported_marker(
-                            builder,
-                            info.raw_line.as_str(),
-                            format!("{err:?}"),
-                        );
+                        items.push(ParsedCardItem::Line(ParsedLineAst {
+                            info: info.clone(),
+                            chunks: vec![unsupported_line_ast(info, format!("{err:?}"))],
+                            restrictions: ParsedRestrictions::default(),
+                        }));
                         idx += 1;
                         continue;
                     }
@@ -181,8 +99,8 @@ pub(super) fn parse_text_with_annotations(
                     .trim_start_matches(|c: char| c == '•' || c == '*' || c == '-')
                     .trim()
                     .to_string();
-                pending.modes.push(PendingModalModeAst {
-                    raw_line: info.raw_line.clone(),
+                pending.modes.push(ParsedModalModeAst {
+                    info: info.clone(),
                     description,
                     effects_ast,
                 });
@@ -190,7 +108,11 @@ pub(super) fn parse_text_with_annotations(
                 continue;
             }
 
-            builder = finalize_pending_modal(builder, &mut pending_modal, allow_unsupported)?;
+            items.push(ParsedCardItem::Modal(
+                pending_modal
+                    .take()
+                    .expect("pending modal must exist while parsing bullet block"),
+            ));
             continue;
         }
 
@@ -200,7 +122,7 @@ pub(super) fn parse_text_with_annotations(
         if next_is_bullet {
             match parse_modal_header(info) {
                 Ok(Some(header)) => {
-                    pending_modal = Some(PendingModal {
+                    pending_modal = Some(ParsedModalAst {
                         header,
                         modes: Vec::new(),
                     });
@@ -209,11 +131,11 @@ pub(super) fn parse_text_with_annotations(
                 }
                 Ok(None) => {}
                 Err(err) if allow_unsupported => {
-                    builder = push_unsupported_marker(
-                        builder,
-                        info.raw_line.as_str(),
-                        format!("{err:?}"),
-                    );
+                    items.push(ParsedCardItem::Line(ParsedLineAst {
+                        info: info.clone(),
+                        chunks: vec![unsupported_line_ast(info, format!("{err:?}"))],
+                        restrictions: ParsedRestrictions::default(),
+                    }));
                     idx += 1;
                     continue;
                 }
@@ -223,13 +145,14 @@ pub(super) fn parse_text_with_annotations(
 
         let line_sentences =
             split_sentences_for_parse(&info.normalized.normalized, info.line_index);
+        let mut restrictions = ParsedRestrictions::default();
         let mut parsed_portion = Vec::new();
         for sentence in line_sentences {
             if sentence.is_empty() {
                 continue;
             }
 
-            if queue_restriction(&sentence, info.line_index, &mut pending_restrictions) {
+            if queue_restriction(&sentence, info.line_index, &mut restrictions) {
                 continue;
             }
 
@@ -237,11 +160,10 @@ pub(super) fn parse_text_with_annotations(
         }
 
         for restriction in extract_parenthetical_restrictions(&info.raw_line) {
-            let _ = queue_restriction(&restriction, info.line_index, &mut pending_restrictions);
+            let _ = queue_restriction(&restriction, info.line_index, &mut restrictions);
         }
 
-        let mut handled_restrictions_for_new_ability = false;
-
+        let mut chunks = Vec::new();
         if !parsed_portion.is_empty() {
             let parse_chunks = split_trigger_sentence_chunks(&parsed_portion, info.line_index);
             for line_text in parse_chunks {
@@ -258,93 +180,122 @@ pub(super) fn parse_text_with_annotations(
                             .unwrap_or(reason.as_str())
                             .trim()
                             .to_string();
-                        let marker = StaticAbility::unsupported_parser_line(
-                            info.raw_line.trim(),
-                            short_reason,
-                        );
-                        LineAst::StaticAbility(marker.into())
+                        unsupported_line_ast(info, short_reason)
                     }
                     Err(err) => return Err(err),
                 };
 
-                let mut handled_followup_statement = false;
-                if let LineAst::Statement { effects } = &parsed {
-                    if apply_instead_followup_statement_to_last_ability(
-                        &mut builder,
-                        last_restrictable_ability,
-                        effects,
-                        info,
-                        &mut annotations,
-                    )? {
-                        handled_followup_statement = true;
-                        handled_restrictions_for_new_ability = true;
-                    }
-                }
-
-                if handled_followup_statement {
-                    continue;
-                }
-
-                let abilities_before = builder.abilities.len();
                 collect_tag_spans_from_line(&parsed, &mut annotations, &info.normalized);
-                builder =
-                    apply_line_ast(builder, parsed, info, allow_unsupported, &mut annotations)?;
-                let abilities_after = builder.abilities.len();
-
-                for ability_idx in abilities_before..abilities_after {
-                    apply_pending_restrictions_to_ability(
-                        &mut builder.abilities[ability_idx],
-                        &mut pending_restrictions,
-                    );
-                    handled_restrictions_for_new_ability = true;
-                }
-
-                if abilities_after > abilities_before {
-                    let mut last_restrictable = None;
-                    for ability_idx in (abilities_before..abilities_after).rev() {
-                        if is_restrictable_ability(&builder.abilities[ability_idx]) {
-                            last_restrictable = Some(ability_idx);
-                            break;
-                        }
-                    }
-                    if last_restrictable.is_some() {
-                        last_restrictable_ability = last_restrictable;
-                    }
-                }
+                chunks.push(parsed);
             }
         }
 
-        if !handled_restrictions_for_new_ability
-            && let Some(index) = last_restrictable_ability
-            && index < builder.abilities.len()
+        if !chunks.is_empty()
+            || !restrictions.activation.is_empty()
+            || !restrictions.trigger.is_empty()
         {
-            apply_pending_restrictions_to_ability(
-                &mut builder.abilities[index],
-                &mut pending_restrictions,
-            );
-        }
-
-        if !pending_restrictions.activation.is_empty() || !pending_restrictions.trigger.is_empty() {
-            pending_restrictions.activation.clear();
-            pending_restrictions.trigger.clear();
+            items.push(ParsedCardItem::Line(ParsedLineAst {
+                info: info.clone(),
+                chunks,
+                restrictions,
+            }));
         }
 
         idx += 1;
     }
 
-    builder = finalize_pending_modal(builder, &mut pending_modal, allow_unsupported)?;
-
-    if !level_abilities.is_empty() {
-        builder = builder.with_level_abilities(level_abilities);
+    if let Some(pending) = pending_modal.take() {
+        items.push(ParsedCardItem::Modal(pending));
     }
 
+    Ok(ParsedCardAst {
+        builder,
+        annotations,
+        items,
+        allow_unsupported,
+    })
+}
+
+fn parse_level_ability_ast(
+    line_infos: &[LineInfo],
+    header_idx: usize,
+    _header_info: &LineInfo,
+    min_level: u32,
+    max_level: Option<u32>,
+) -> Result<(ParsedLevelAbilityAst, usize), CardTextError> {
+    let mut level = ParsedLevelAbilityAst {
+        min_level,
+        max_level,
+        pt: None,
+        items: Vec::new(),
+    };
+    let mut idx = header_idx + 1;
+
+    while idx < line_infos.len() {
+        let next = &line_infos[idx];
+        if parse_level_header(&next.normalized.normalized).is_some() {
+            break;
+        }
+
+        let normalized_line = next.normalized.normalized.as_str();
+        if let Some(pt) = parse_power_toughness(normalized_line) {
+            if let (PtValue::Fixed(power), PtValue::Fixed(toughness)) = (pt.power, pt.toughness) {
+                level.pt = Some((power, toughness));
+            }
+            idx += 1;
+            continue;
+        }
+
+        let tokens = tokenize_line(normalized_line, next.line_index);
+        if let Some(actions) = parse_ability_line(&tokens) {
+            reject_unimplemented_keyword_actions(&actions, next.raw_line.as_str())?;
+            level
+                .items
+                .push(ParsedLevelAbilityItemAst::KeywordActions(actions));
+            idx += 1;
+            continue;
+        }
+
+        if let Some(abilities) = parse_static_ability_ast_line(&tokens)? {
+            level
+                .items
+                .push(ParsedLevelAbilityItemAst::StaticAbilities(abilities));
+            idx += 1;
+            continue;
+        }
+
+        return Err(CardTextError::ParseError(format!(
+            "unsupported level ability line: '{}'",
+            next.raw_line
+        )));
+    }
+
+    Ok((level, idx))
+}
+
+fn unsupported_line_ast(info: &LineInfo, reason: String) -> LineAst {
+    let marker = StaticAbility::unsupported_parser_line(info.raw_line.trim(), reason);
+    LineAst::StaticAbility(marker.into())
+}
+
+pub(super) fn lower_parsed_modal(
+    builder: CardDefinitionBuilder,
+    modal: ParsedModalAst,
+    allow_unsupported: bool,
+) -> Result<CardDefinitionBuilder, CardTextError> {
+    let mut pending = Some(PendingModal {
+        header: modal.header,
+        modes: modal.modes,
+    });
+    finalize_pending_modal(builder, &mut pending, allow_unsupported)
+}
+
+pub(super) fn finalize_lowered_card(mut builder: CardDefinitionBuilder) -> CardDefinitionBuilder {
     builder = normalize_channel_spell_effect(builder);
     builder = normalize_chaotic_transformation_spell_effect(builder);
     builder = normalize_glimpse_of_nature_spell_effect(builder);
     builder = normalize_take_to_the_streets_spell_effect(builder);
-    builder = finalize_haunt(builder);
-
-    Ok((builder.build(), annotations))
+    finalize_haunt(builder)
 }
 
 fn collect_line_infos(
@@ -1066,7 +1017,7 @@ fn infer_triggered_ability_functional_zones(
     zones
 }
 
-fn apply_line_ast(
+pub(super) fn apply_line_ast(
     mut builder: CardDefinitionBuilder,
     parsed: LineAst,
     info: &LineInfo,
@@ -1940,8 +1891,11 @@ fn finalize_pending_modal(
         let effects = match lower_statement_effects(&mode.effects_ast) {
             Ok(effects) => effects,
             Err(err) if allow_unsupported => {
-                builder =
-                    push_unsupported_marker(builder, mode.raw_line.as_str(), format!("{err:?}"));
+                builder = push_unsupported_marker(
+                    builder,
+                    mode.info.raw_line.as_str(),
+                    format!("{err:?}"),
+                );
                 continue;
             }
             Err(err) => return Err(err),
@@ -2275,7 +2229,10 @@ fn extract_parenthetical_restrictions(line: &str) -> Vec<String> {
         .collect()
 }
 
-fn apply_pending_restrictions_to_ability(ability: &mut Ability, pending: &mut PendingRestrictions) {
+pub(super) fn apply_pending_restrictions_to_ability(
+    ability: &mut Ability,
+    pending: &mut PendingRestrictions,
+) {
     let activation_restrictions = std::mem::take(&mut pending.activation);
     let trigger_restrictions = std::mem::take(&mut pending.trigger);
 
@@ -2313,7 +2270,7 @@ fn apply_pending_restrictions_to_ability(ability: &mut Ability, pending: &mut Pe
     }
 }
 
-fn is_restrictable_ability(ability: &Ability) -> bool {
+pub(super) fn is_restrictable_ability(ability: &Ability) -> bool {
     matches!(
         ability.kind,
         AbilityKind::Activated(_) | AbilityKind::Triggered(_)
