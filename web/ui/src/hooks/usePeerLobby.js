@@ -11,6 +11,8 @@ import {
 
 const PROTOCOL_VERSION = 1;
 const DEFAULT_OPENING_HAND_SIZE = 7;
+const PEER_OPEN_TIMEOUT_MS = 10000;
+const PEER_CONNECT_TIMEOUT_MS = 15000;
 
 function createEmptyState() {
   return {
@@ -24,6 +26,7 @@ function createEmptyState() {
     desiredPlayers: 0,
     startingLife: 20,
     format: MATCH_FORMAT_NORMAL,
+    signalingServer: "",
     localDeckText: "",
     localCommanderText: "",
     localDeckCount: 0,
@@ -43,6 +46,127 @@ function sanitizePlayerName(raw, fallback = "Player") {
 function createMatchSeed() {
   const seed = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
   return seed > 0 ? seed : 1;
+}
+
+function readPeerEnv(name) {
+  const value = import.meta.env?.[name];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function parseBooleanEnv(value, fallback) {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+function parseNumberEnv(value, fallback) {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function formatPeerError(err, fallback = "Peer connection failed") {
+  const type = String(err?.type || "").trim();
+  const message = String(err?.message || err || "").trim();
+
+  if (type === "peer-unavailable") {
+    return "Lobby host was not found on the current signaling server. The code can still be correct if the host disconnected or the two machines are using different VITE_PEER_* settings.";
+  }
+  if (type === "network" || type === "server-error" || type === "socket-error") {
+    return "Could not reach the PeerJS signaling server.";
+  }
+  if (type === "socket-closed" || type === "disconnected") {
+    return "Disconnected from the PeerJS signaling server.";
+  }
+  if (type === "browser-incompatible") {
+    return "This browser does not support the required WebRTC data-channel features.";
+  }
+  if (type === "webrtc") {
+    return message || "The browser could not establish a WebRTC peer connection.";
+  }
+  if (message) {
+    return `${fallback}: ${message}`;
+  }
+  return fallback;
+}
+
+function isRecoverablePeerError(err) {
+  const type = String(err?.type || "").trim();
+  return (
+    type === "network" ||
+    type === "socket-error" ||
+    type === "socket-closed" ||
+    type === "disconnected"
+  );
+}
+
+function parseIceConfig() {
+  const raw = readPeerEnv("VITE_PEER_ICE_SERVERS");
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return {
+        iceServers: parsed,
+        sdpSemantics: "unified-plan",
+      };
+    }
+  } catch (err) {
+    console.warn("Failed to parse VITE_PEER_ICE_SERVERS:", err);
+  }
+
+  return null;
+}
+
+function describePeerServer(options) {
+  const host = options?.host || "0.peerjs.com";
+  const port = options?.port || 443;
+  return `${host}:${port}`;
+}
+
+function buildPeerOptions() {
+  const host = readPeerEnv("VITE_PEER_HOST");
+  const path = readPeerEnv("VITE_PEER_PATH");
+  const key = readPeerEnv("VITE_PEER_KEY");
+  const port = parseNumberEnv(readPeerEnv("VITE_PEER_PORT"), 0);
+  const debug = parseNumberEnv(
+    readPeerEnv("VITE_PEER_DEBUG"),
+    import.meta.env.DEV ? 2 : 1
+  );
+  const pingInterval = parseNumberEnv(readPeerEnv("VITE_PEER_PING_INTERVAL"), 0);
+  const iceConfig = parseIceConfig();
+
+  const options = {
+    debug,
+  };
+
+  if (iceConfig) {
+    options.config = iceConfig;
+  }
+
+  if (host) {
+    options.host = host;
+  }
+  if (path) {
+    options.path = path;
+  }
+  if (key) {
+    options.key = key;
+  }
+  if (port > 0) {
+    options.port = port;
+  }
+  if (pingInterval > 0) {
+    options.pingInterval = pingInterval;
+  }
+  if (readPeerEnv("VITE_PEER_SECURE")) {
+    options.secure = parseBooleanEnv(readPeerEnv("VITE_PEER_SECURE"), true);
+  }
+
+  return options;
 }
 
 function safeSend(conn, payload) {
@@ -120,12 +244,15 @@ function canHostedMatchStart(session) {
 }
 
 export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) {
+  const initialPeerOptions = buildPeerOptions();
   const [multiplayer, setMultiplayer] = useState(() => createEmptyState());
   const peerRef = useRef(null);
   const hostConnectionRef = useRef(null);
   const clientConnectionsRef = useRef(new Map());
   const gameRef = useRef(game);
   const multiplayerRef = useRef(multiplayer);
+  const peerOptionsRef = useRef(initialPeerOptions);
+  const peerServerLabelRef = useRef(describePeerServer(initialPeerOptions));
 
   useEffect(() => {
     gameRef.current = game;
@@ -141,7 +268,7 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
     multiplayerRef.current = next;
     setMultiplayer(next);
     return next;
-  }, []);
+  }, [setMultiplayer]);
 
   const teardownPeer = useCallback(() => {
     const hostConn = hostConnectionRef.current;
@@ -299,14 +426,6 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
       setStatus(`Match start failed: ${err}`, true);
     }
   }, [applyMatchStart, broadcastToClients, setStatus, updateMultiplayer]);
-
-  const handleHostDisconnect = useCallback(() => {
-    updateMultiplayer((prev) => ({
-      ...prev,
-      mode: prev.matchStarted ? "in_match" : "idle",
-    }));
-    setStatus("Disconnected from lobby host", true);
-  }, [setStatus, updateMultiplayer]);
 
   const handleHostMessage = useCallback(
     async (message) => {
@@ -589,8 +708,44 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         deckText,
         commanderText
       );
-      const peer = new Peer();
+      const peer = new Peer(peerOptionsRef.current);
       peerRef.current = peer;
+      let reconnectTimer = null;
+      let reconnectAttempts = 0;
+      const clearReconnect = () => {
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        reconnectAttempts = 0;
+      };
+      const scheduleReconnect = (reason) => {
+        if (peerRef.current !== peer || peer.destroyed || reconnectTimer) return;
+        reconnectAttempts += 1;
+        const delay = Math.min(8000, 1000 * reconnectAttempts);
+        setStatus(
+          `${reason} Retrying signaling in ${Math.ceil(delay / 1000)}s...`,
+          true
+        );
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
+          if (peerRef.current !== peer || peer.destroyed) return;
+          try {
+            peer.reconnect();
+          } catch (err) {
+            setStatus(formatPeerError(err, "Could not reconnect lobby signaling"), true);
+            leaveLobby("");
+          }
+        }, delay);
+      };
+      const openTimeout = window.setTimeout(() => {
+        if (peerRef.current !== peer || peer.open) return;
+        setStatus(
+          `Could not register the lobby with the PeerJS signaling server (${peerServerLabelRef.current}).`,
+          true
+        );
+        leaveLobby("");
+      }, PEER_OPEN_TIMEOUT_MS);
 
       updateMultiplayer({
         ...createEmptyState(),
@@ -600,14 +755,34 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         desiredPlayers: targetPlayers,
         startingLife: lifeTotal,
         format: normalizedFormat,
+        signalingServer: peerServerLabelRef.current,
         localDeckText: String(deckText || ""),
         localCommanderText: String(commanderText || ""),
         localDeckCount: deckSubmission.deckCount,
         localCommanderCount: deckSubmission.commanderCount,
       });
+      setStatus(`Registering lobby with PeerJS (${peerServerLabelRef.current})...`);
 
       peer.on("open", (peerId) => {
+        clearTimeout(openTimeout);
+        clearReconnect();
         const session = multiplayerRef.current;
+        const isReconnect =
+          session.role === "host" && session.localPeerId && session.localPeerId === peerId;
+        if (isReconnect) {
+          updateMultiplayer((prev) => ({
+            ...prev,
+            mode: prev.matchStarted ? "in_match" : "lobby",
+            lobbyId: prev.lobbyId || peerId,
+            hostPeerId: peerId,
+            localPeerId: peerId,
+          }));
+          if (!session.matchStarted) {
+            broadcastLobbyState();
+          }
+          setStatus(`Lobby signaling reconnected: ${peerId}`);
+          return;
+        }
         const currentDeck = parseDeckSubmission(
           session.format,
           session.localDeckText,
@@ -640,11 +815,26 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
       });
       peer.on("connection", configureHostConnection);
       peer.on("error", (err) => {
-        setStatus(`Lobby error: ${err}`, true);
+        clearTimeout(openTimeout);
+        if (isRecoverablePeerError(err)) {
+          scheduleReconnect(formatPeerError(err, "Lost lobby signaling"));
+          return;
+        }
+        setStatus(formatPeerError(err, "Lobby error"), true);
         leaveLobby("");
       });
+      peer.on("disconnected", () => {
+        clearTimeout(openTimeout);
+        scheduleReconnect(
+          `Disconnected from the PeerJS signaling server (${peerServerLabelRef.current}).`
+        );
+      });
+      peer.on("close", () => {
+        clearTimeout(openTimeout);
+        clearReconnect();
+      });
     },
-    [configureHostConnection, leaveLobby, setStatus, teardownPeer, updateMultiplayer]
+    [broadcastLobbyState, configureHostConnection, leaveLobby, peerOptionsRef, setStatus, teardownPeer, updateMultiplayer]
   );
 
   const joinLobby = useCallback(
@@ -662,8 +852,34 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         deckText,
         commanderText
       );
-      const peer = new Peer();
+      const peer = new Peer(peerOptionsRef.current);
       peerRef.current = peer;
+      let reconnectTimer = null;
+      let reconnectAttempts = 0;
+      let hostReconnectTimer = null;
+      let hostReconnectAttempts = 0;
+      const clearReconnect = () => {
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        reconnectAttempts = 0;
+      };
+      const clearHostReconnect = () => {
+        if (hostReconnectTimer) {
+          clearTimeout(hostReconnectTimer);
+          hostReconnectTimer = null;
+        }
+        hostReconnectAttempts = 0;
+      };
+      const peerOpenTimeout = window.setTimeout(() => {
+        if (peerRef.current !== peer || peer.open) return;
+        setStatus(
+          `Could not connect to the PeerJS signaling server (${peerServerLabelRef.current}).`,
+          true
+        );
+        leaveLobby("");
+      }, PEER_OPEN_TIMEOUT_MS);
 
       updateMultiplayer({
         ...createEmptyState(),
@@ -672,21 +888,86 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
         lobbyId: targetLobby,
         hostPeerId: targetLobby,
         localName,
+        signalingServer: peerServerLabelRef.current,
         localDeckText: String(deckText || ""),
         localCommanderText: String(commanderText || ""),
         localDeckCount: deckSubmission.deckCount,
         localCommanderCount: deckSubmission.commanderCount,
       });
+      setStatus(`Connecting to the PeerJS signaling server (${peerServerLabelRef.current})...`);
 
-      peer.on("open", (peerId) => {
+      const scheduleHostReconnect = (reason) => {
+        if (peerRef.current !== peer || peer.destroyed || multiplayerRef.current.matchStarted) {
+          return;
+        }
+
         updateMultiplayer((prev) => ({
           ...prev,
-          localPeerId: peerId,
+          mode: "joining",
+          submittingAction: false,
         }));
 
-        const conn = peer.connect(targetLobby, { reliable: true });
+        if (peer.disconnected || !peer.open) {
+          setStatus(`${reason} Waiting for the signaling server to reconnect...`, true);
+          return;
+        }
+        if (hostReconnectTimer) return;
+
+        hostReconnectAttempts += 1;
+        const delay = Math.min(8000, 1000 * hostReconnectAttempts);
+        setStatus(
+          `${reason} Retrying lobby host in ${Math.ceil(delay / 1000)}s...`,
+          true
+        );
+        hostReconnectTimer = window.setTimeout(() => {
+          hostReconnectTimer = null;
+          if (peerRef.current !== peer || peer.destroyed || multiplayerRef.current.matchStarted) {
+            return;
+          }
+          setStatus("Reconnecting to lobby host...");
+          connectToHost();
+        }, delay);
+      };
+
+      const connectToHost = () => {
+        if (peerRef.current !== peer || peer.destroyed) return;
+
+        const currentConn = hostConnectionRef.current;
+        if (currentConn?.open) return;
+        if (currentConn) {
+          hostConnectionRef.current = null;
+          try {
+            currentConn.close();
+          } catch (err) {
+            void err;
+          }
+        }
+
+        const conn = peer.connect(targetLobby, {
+          reliable: true,
+          serialization: "json",
+        });
         hostConnectionRef.current = conn;
+        const connOpenTimeout = window.setTimeout(() => {
+          if (hostConnectionRef.current !== conn || conn.open) return;
+          hostConnectionRef.current = null;
+          try {
+            conn.close();
+          } catch (err) {
+            void err;
+          }
+          scheduleHostReconnect(
+            "Could not reach the lobby host. If the code is correct, this is usually a WebRTC connectivity issue between the two machines."
+          );
+        }, PEER_CONNECT_TIMEOUT_MS);
+        const clearJoinTimeouts = () => {
+          clearTimeout(peerOpenTimeout);
+          clearTimeout(connOpenTimeout);
+        };
         conn.on("open", () => {
+          if (hostConnectionRef.current !== conn) return;
+          clearJoinTimeouts();
+          clearHostReconnect();
           const session = multiplayerRef.current;
           const currentDeck = parseDeckSubmission(
             session.format,
@@ -702,20 +983,101 @@ export function usePeerLobby({ game, setState, setStatus, applySyncedCommand }) 
           });
           setStatus(`Joined lobby ${targetLobby}`);
         });
+        conn.on("iceStateChanged", (state) => {
+          if (hostConnectionRef.current !== conn) return;
+          if (state === "checking") {
+            setStatus("Negotiating direct peer connection...");
+            return;
+          }
+          if (state === "failed") {
+            clearJoinTimeouts();
+            hostConnectionRef.current = null;
+            scheduleHostReconnect(
+              "Could not establish a direct peer connection to the lobby host. The two machines likely need TURN relay support."
+            );
+            return;
+          }
+          if (state === "disconnected") {
+            setStatus("Peer connection interrupted while joining.", true);
+          }
+        });
         conn.on("data", (message) => {
+          if (hostConnectionRef.current !== conn) return;
           void handleHostMessage(message).catch((err) => {
             setStatus(`Lobby message failed: ${err}`, true);
           });
         });
-        conn.on("close", handleHostDisconnect);
-        conn.on("error", handleHostDisconnect);
+        conn.on("close", () => {
+          if (hostConnectionRef.current !== conn) return;
+          clearJoinTimeouts();
+          hostConnectionRef.current = null;
+          scheduleHostReconnect("Disconnected from lobby host.");
+        });
+        conn.on("error", (err) => {
+          if (hostConnectionRef.current !== conn) return;
+          clearJoinTimeouts();
+          hostConnectionRef.current = null;
+          scheduleHostReconnect(formatPeerError(err, "Lobby connection failed"));
+        });
+      };
+      const scheduleReconnect = (reason) => {
+        if (peerRef.current !== peer || peer.destroyed || reconnectTimer) return;
+        reconnectAttempts += 1;
+        const delay = Math.min(8000, 1000 * reconnectAttempts);
+        setStatus(
+          `${reason} Retrying signaling in ${Math.ceil(delay / 1000)}s...`,
+          true
+        );
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
+          if (peerRef.current !== peer || peer.destroyed) return;
+          try {
+            peer.reconnect();
+          } catch (err) {
+            setStatus(formatPeerError(err, "Could not reconnect lobby signaling"), true);
+            leaveLobby("");
+          }
+        }, delay);
+      };
+
+      peer.on("open", (peerId) => {
+        clearTimeout(peerOpenTimeout);
+        clearReconnect();
+        clearHostReconnect();
+        const previousPeerId = multiplayerRef.current.localPeerId;
+        updateMultiplayer((prev) => ({
+          ...prev,
+          localPeerId: peerId,
+        }));
+        if (previousPeerId === peerId && hostConnectionRef.current?.open) {
+          setStatus(`Lobby signaling reconnected: ${peerId}`);
+          return;
+        }
+        setStatus("Connecting to lobby host...");
+        connectToHost();
       });
       peer.on("error", (err) => {
-        setStatus(`Lobby error: ${err}`, true);
+        clearTimeout(peerOpenTimeout);
+        if (isRecoverablePeerError(err)) {
+          scheduleReconnect(formatPeerError(err, "Lost lobby signaling"));
+          return;
+        }
+        setStatus(formatPeerError(err, "Lobby error"), true);
         leaveLobby("");
       });
+      peer.on("disconnected", () => {
+        clearTimeout(peerOpenTimeout);
+        scheduleReconnect(
+          `Disconnected from the PeerJS signaling server (${peerServerLabelRef.current}).`
+        );
+      });
+      peer.on("close", () => {
+        clearTimeout(peerOpenTimeout);
+        clearReconnect();
+        clearHostReconnect();
+      });
     },
-    [handleHostDisconnect, handleHostMessage, leaveLobby, setStatus, teardownPeer, updateMultiplayer]
+    [handleHostMessage, leaveLobby, peerOptionsRef, setStatus, teardownPeer, updateMultiplayer]
   );
 
   const updateLobbyDeck = useCallback(

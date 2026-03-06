@@ -286,6 +286,13 @@ pub fn apply_priority_response_with_dm(
                 for trigger in etb_triggers {
                     trigger_queue.add(trigger);
                 }
+
+                if game
+                    .object(new_id)
+                    .is_some_and(|obj| obj.subtypes.contains(&Subtype::Saga))
+                {
+                    add_lore_counter_and_check_chapters(game, new_id, trigger_queue);
+                }
             }
 
             // Mark that the player has played a land this turn

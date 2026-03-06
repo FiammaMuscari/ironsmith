@@ -28,7 +28,7 @@ use crate::ids::{
 };
 use crate::mana::ManaSymbol;
 use crate::triggers::TriggerQueue;
-use crate::types::CardType;
+use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -111,6 +111,19 @@ fn power_toughness_signature_for_group(obj: &crate::object::Object) -> String {
         (Some(power), Some(toughness)) => format!("{power}/{toughness}"),
         _ => "-".to_string(),
     }
+}
+
+fn counter_snapshots_for_object(obj: &crate::object::Object) -> Vec<CounterSnapshot> {
+    let mut counters: Vec<CounterSnapshot> = obj
+        .counters
+        .iter()
+        .map(|(kind, amount)| CounterSnapshot {
+            kind: split_camel_case(&format!("{kind:?}")),
+            amount: *amount,
+        })
+        .collect();
+    counters.sort_unstable_by(|left, right| left.kind.cmp(&right.kind));
+    counters
 }
 
 fn protected_object_ids_for_decision(decision: Option<&DecisionContext>) -> HashSet<ObjectId> {
@@ -237,6 +250,9 @@ fn grouped_battlefield_for_player(
                     .or_else(|| obj.toughness())?;
                 Some(format!("{p}/{t}"))
             });
+            let counters = representative
+                .map(counter_snapshots_for_object)
+                .unwrap_or_default();
             PermanentSnapshot {
                 id,
                 name,
@@ -245,6 +261,7 @@ fn grouped_battlefield_for_player(
                 member_ids,
                 lane: key.lane.as_str().to_string(),
                 power_toughness,
+                counters,
             }
         })
         .collect();
@@ -302,6 +319,7 @@ struct PermanentSnapshot {
     member_ids: Vec<u64>,
     lane: String,
     power_toughness: Option<String>,
+    counters: Vec<CounterSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2007,6 +2025,23 @@ impl WasmGame {
                         )
                     };
                     self.game.queue_trigger_event(etb_event_provenance, event);
+
+                    crate::game_loop::drain_pending_trigger_events(
+                        &mut self.game,
+                        &mut self.trigger_queue,
+                    );
+
+                    if self
+                        .game
+                        .object(entered_id)
+                        .is_some_and(|obj| obj.subtypes.contains(&Subtype::Saga))
+                    {
+                        crate::game_loop::add_lore_counter_and_check_chapters(
+                            &mut self.game,
+                            entered_id,
+                            &mut self.trigger_queue,
+                        );
+                    }
                 }
 
                 entered_id
@@ -3916,14 +3951,7 @@ fn build_object_details_snapshot(game: &GameState, id: ObjectId) -> Option<Objec
     } else {
         (obj.power(), obj.toughness())
     };
-    let counters = obj
-        .counters
-        .iter()
-        .map(|(kind, amount)| CounterSnapshot {
-            kind: split_camel_case(&format!("{kind:?}")),
-            amount: *amount,
-        })
-        .collect();
+    let counters = counter_snapshots_for_object(obj);
 
     Some(ObjectDetailsSnapshot {
         id: obj.id.0,
@@ -4684,7 +4712,7 @@ mod tests {
     use super::{
         GameSnapshot, PendingReplayAction, ReplayRoot, WasmGame, build_object_details_snapshot,
     };
-    use crate::cards::definitions::{basic_mountain, grizzly_bears, lightning_bolt};
+    use crate::cards::definitions::{basic_mountain, grizzly_bears, lightning_bolt, urzas_saga};
     use crate::continuous::ContinuousEffect;
     use crate::decision::LegalAction;
     use crate::decision::compute_legal_actions;
@@ -4756,6 +4784,110 @@ mod tests {
             Some(1),
             "addCardToZone battlefield path should apply Tayam ETB replacement counter"
         );
+    }
+
+    #[test]
+    fn add_card_to_zone_battlefield_adds_initial_saga_lore_counter() {
+        let mut wasm = WasmGame::new();
+
+        let entered_id = wasm
+            .add_card_to_zone(
+                0,
+                "Urza's Saga".to_string(),
+                "battlefield".to_string(),
+                false,
+            )
+            .expect("should add Urza's Saga to battlefield with ETB processing");
+
+        let entered = wasm
+            .game
+            .object(ObjectId::from_raw(entered_id))
+            .expect("entered saga should exist");
+        assert_eq!(
+            entered.counters.get(&CounterType::Lore).copied(),
+            Some(1),
+            "battlefield ETB path should give a Saga its initial lore counter"
+        );
+    }
+
+    #[test]
+    fn playing_urzas_saga_from_hand_adds_initial_lore_counter_and_surfaces_snapshot_counters() {
+        let mut wasm = WasmGame::new();
+        let alice = PlayerId::from_index(0);
+
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        let saga_id = wasm
+            .game
+            .create_object_from_definition(&urzas_saga(), alice, Zone::Hand);
+
+        wasm.priority_epoch_checkpoint = Some(wasm.capture_replay_checkpoint());
+        wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(
+            alice,
+            compute_legal_actions(&wasm.game, alice),
+        )));
+
+        let priority_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => ctx,
+            other => panic!("expected priority decision, got {other:?}"),
+        };
+        let play_saga_index = priority_ctx
+            .actions
+            .iter()
+            .position(|action| matches!(action, LegalAction::PlayLand { land_id } if *land_id == saga_id))
+            .expect("expected play Urza's Saga action");
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "priority_action",
+                "action_index": play_saga_index,
+            }))
+            .expect("priority action should serialize"),
+        )
+        .expect("playing Urza's Saga should succeed");
+
+        let entered_id = wasm
+            .game
+            .player(alice)
+            .expect("alice should exist")
+            .battlefield
+            .iter()
+            .copied()
+            .find(|&id| {
+                wasm.game
+                    .object(id)
+                    .is_some_and(|object| object.name == "Urza's Saga")
+            })
+            .expect("Urza's Saga should be on battlefield");
+
+        let entered = wasm
+            .game
+            .object(entered_id)
+            .expect("played saga should still exist");
+        assert_eq!(
+            entered.counters.get(&CounterType::Lore).copied(),
+            Some(1),
+            "playing Urza's Saga as a land should give it its initial lore counter"
+        );
+
+        let snapshot = GameSnapshot::from_game(&wasm.game, alice, None, None, None, false);
+        let me = snapshot
+            .players
+            .iter()
+            .find(|player| player.id == alice.0)
+            .expect("perspective player should exist");
+        let saga = me
+            .battlefield
+            .iter()
+            .find(|perm| perm.name == "Urza's Saga")
+            .expect("snapshot should include Urza's Saga");
+
+        assert_eq!(saga.counters.len(), 1, "snapshot should surface Saga counters");
+        assert_eq!(saga.counters[0].kind, "Lore");
+        assert_eq!(saga.counters[0].amount, 1);
     }
 
     #[test]

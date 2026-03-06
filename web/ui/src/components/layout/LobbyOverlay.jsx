@@ -71,6 +71,7 @@ export default function LobbyOverlay({
     leaveLobby,
     startHostedMatch,
     updateLobbyDeck,
+    status,
   } = useGame();
   const [mode, setMode] = useState("create");
   const [createFormat, setCreateFormat] = useState(MATCH_FORMAT_NORMAL);
@@ -112,6 +113,14 @@ export default function LobbyOverlay({
   const startPending = !multiplayer.matchStarted && multiplayer.mode === "starting";
   const activeCommanderTarget = commanderDeckTarget(multiplayer.localCommanderCount);
   const createCommanderTarget = commanderDeckTarget(createCommanderCount);
+  const showLobbyStatus = Boolean(
+    status?.msg
+    && (
+      status.isError
+      || lobbyActive
+      || /(lobby|peerjs|peer connection|signaling)/i.test(status.msg)
+    )
+  );
 
   const handleCreateFormatChange = (nextFormat) => {
     const normalized = normalizeMatchFormat(nextFormat);
@@ -360,7 +369,11 @@ export default function LobbyOverlay({
                   {multiplayer.lobbyId || multiplayer.hostPeerId || "Connecting"}
                 </div>
                 <p className="text-[13px] text-muted-foreground">
-                  {multiplayer.matchStarted
+                  {multiplayer.mode === "hosting"
+                    ? "Registering lobby with PeerJS..."
+                    : multiplayer.mode === "joining"
+                      ? "Connecting to lobby host..."
+                      : multiplayer.matchStarted
                     ? `Seat ${
                         multiplayer.localPlayerIndex != null
                           ? multiplayer.localPlayerIndex + 1
@@ -385,6 +398,9 @@ export default function LobbyOverlay({
                             ? "All players are ready. Waiting for the host to start."
                             : "Ready. Waiting for the remaining players."
                           : formatDeckRequirement(activeFormat)}
+                </p>
+                <p className="text-[12px] uppercase tracking-[0.18em] text-[#7d97b4]">
+                  Signaling: {multiplayer.signalingServer || "0.peerjs.com:443"}
                 </p>
               </div>
 
@@ -498,9 +514,22 @@ export default function LobbyOverlay({
                   Leave Lobby
                 </Badge>
               </div>
+
             </div>
           </div>
         )}
+
+        {showLobbyStatus ? (
+          <div
+            className={`mt-4 rounded-lg border px-3 py-2 text-[13px] ${
+              status.isError
+                ? "border-[#6a2d35] bg-[#1b1013] text-[#ffb8c0]"
+                : "border-[#243447] bg-[#09111a] text-muted-foreground"
+            }`}
+          >
+            {status.msg}
+          </div>
+        ) : null}
       </div>
     </div>
   );

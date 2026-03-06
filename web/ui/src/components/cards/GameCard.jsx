@@ -13,6 +13,19 @@ function glowPhaseFromSeed(seed) {
   return Math.abs(hash);
 }
 
+function formatCounterBadge(counter) {
+  const amount = Number(counter?.amount);
+  const rawKind = String(counter?.kind || "").trim();
+  if (!rawKind || !Number.isFinite(amount) || amount <= 0) return null;
+
+  if (rawKind === "Plus One Plus One") return `${amount} +1/+1`;
+  if (rawKind === "Minus One Minus One") return `${amount} -1/-1`;
+  if (rawKind === "Lore") return `${amount} lore`;
+  if (rawKind === "Loyalty") return `${amount} loyalty`;
+
+  return `${amount} ${rawKind.toLowerCase()}`;
+}
+
 export default function GameCard({
   card,
   compact = false,
@@ -66,6 +79,9 @@ export default function GameCard({
       paddingBlock: "clamp(1px, calc(var(--bf-card-height, 96px) * 0.01), 3px)",
     }
     : undefined;
+  const counterBadges = variant === "battlefield" && Array.isArray(card.counters)
+    ? card.counters.map(formatCounterBadge).filter(Boolean)
+    : [];
 
   useLayoutEffect(() => {
     const node = rootRef.current;
@@ -212,6 +228,19 @@ export default function GameCard({
           >
             x{groupSize}
           </span>
+        )}
+
+        {variant === "battlefield" && counterBadges.length > 0 && (
+          <div className="absolute right-1 top-7 z-2 flex max-w-[58%] flex-col items-end gap-1">
+            {counterBadges.map((label, index) => (
+              <span
+                key={`${label}-${index}`}
+                className="bg-[rgba(16,24,35,0.92)] text-[#dce8f6] text-[11px] font-semibold leading-none px-1.5 py-1 rounded-sm tracking-[0.02em] shadow-[0_2px_6px_rgba(0,0,0,0.32)]"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
         )}
 
         {/* P/T badge (battlefield) */}
