@@ -205,237 +205,58 @@ fn finalize_lowered_card(
     mut builder: CardDefinitionBuilder,
     state: &mut LoweredCardState,
 ) -> CardDefinitionBuilder {
-    builder = normalize_channel_spell_effect(builder);
-    builder = normalize_chaotic_transformation_spell_effect(builder);
-    builder = normalize_glimpse_of_nature_spell_effect(builder);
+    builder = normalize_spell_delayed_trigger_effects(builder);
     builder = normalize_take_to_the_streets_spell_effect(builder);
     apply_pending_mechanic_linkages(builder, state)
 }
 
-fn normalize_channel_spell_effect(mut builder: CardDefinitionBuilder) -> CardDefinitionBuilder {
-    use crate::ability::{ActivatedAbility, ActivationTiming};
-    use crate::effect::{EffectPredicate, Value};
-    use crate::mana::ManaSymbol;
-    use crate::target::{ChooseSpec, PlayerFilter};
-
-    let Some(effects) = builder.spell_effect.as_ref() else {
-        return builder;
-    };
-    if effects.len() != 2 {
-        return builder;
-    }
-
-    let Some(with_id) = effects[0].downcast_ref::<crate::effects::WithIdEffect>() else {
-        return builder;
-    };
-    let Some(lose) = with_id
-        .effect
-        .downcast_ref::<crate::effects::LoseLifeEffect>()
-    else {
-        return builder;
-    };
-    if !matches!(lose.amount, Value::Fixed(1)) {
-        return builder;
-    }
-    if !matches!(lose.player, ChooseSpec::Player(PlayerFilter::You)) {
-        return builder;
-    }
-
-    let Some(if_effect) = effects[1].downcast_ref::<crate::effects::IfEffect>() else {
-        return builder;
-    };
-    if if_effect.condition != with_id.id
-        || !matches!(if_effect.predicate, EffectPredicate::Happened)
-        || !if_effect.else_.is_empty()
-        || if_effect.then.len() != 1
-    {
-        return builder;
-    }
-    let Some(add_mana) = if_effect.then[0].downcast_ref::<crate::effects::AddManaEffect>() else {
-        return builder;
-    };
-    if add_mana.player != PlayerFilter::You || add_mana.mana != vec![ManaSymbol::Colorless] {
-        return builder;
-    }
-
-    let ability = ActivatedAbility {
-        mana_cost: crate::cost::TotalCost::from_cost(crate::costs::Cost::life(1)),
-        effects: vec![],
-        choices: vec![],
-        timing: ActivationTiming::AnyTime,
-        additional_restrictions: vec![],
-        activation_restrictions: vec![],
-        mana_output: Some(vec![ManaSymbol::Colorless]),
-        activation_condition: Some(crate::effect::Condition::ActivationTiming(
-            ActivationTiming::AnyTime,
-        )),
-    };
-    builder.spell_effect = Some(vec![crate::effect::Effect::new(
-        crate::effects::GrantManaAbilityUntilEotEffect::new(ability),
-    )]);
-    builder
-}
-
-fn normalize_chaotic_transformation_spell_effect(
-    mut builder: CardDefinitionBuilder,
-) -> CardDefinitionBuilder {
-    use crate::effect::{ChoiceCount, Effect};
-    use crate::tag::TagKey;
-    use crate::target::{
-        ChooseSpec, ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation,
-    };
-    use crate::types::CardType;
-    use crate::zone::Zone;
-
-    let oracle_text = builder.card_builder.oracle_text_ref().to_ascii_lowercase();
-    if !oracle_text.contains("for each permanent exiled this way")
-        || !oracle_text.contains("shares a card type with it")
-    {
-        return builder;
-    }
-
-    fn battlefield_type_filter(card_type: CardType) -> ObjectFilter {
-        let mut filter = ObjectFilter::default();
-        filter.zone = Some(Zone::Battlefield);
-        filter.card_types = vec![card_type];
-        filter
-    }
-
-    fn exile_up_to_one_target(filter: ObjectFilter) -> Effect {
-        let target =
-            ChooseSpec::target(ChooseSpec::Object(filter)).with_count(ChoiceCount::up_to(1));
-        Effect::new(crate::effects::MoveToZoneEffect {
-            target,
-            zone: Zone::Exile,
-            to_top: true,
-            battlefield_controller: crate::effects::BattlefieldController::Preserve,
-            enters_tapped: false,
-        })
-        .tag_all(TagKey::from("exiled_0"))
-    }
-
-    let mut effects = Vec::new();
-    effects.push(exile_up_to_one_target(battlefield_type_filter(
-        CardType::Artifact,
-    )));
-    effects.push(exile_up_to_one_target(battlefield_type_filter(
-        CardType::Creature,
-    )));
-    effects.push(exile_up_to_one_target(battlefield_type_filter(
-        CardType::Enchantment,
-    )));
-    effects.push(exile_up_to_one_target(battlefield_type_filter(
-        CardType::Planeswalker,
-    )));
-    effects.push(exile_up_to_one_target(battlefield_type_filter(
-        CardType::Land,
-    )));
-
-    let mut library_filter = ObjectFilter::default();
-    library_filter.zone = Some(Zone::Library);
-    library_filter.owner = Some(PlayerFilter::IteratedPlayer);
-    library_filter.card_types = vec![
-        CardType::Artifact,
-        CardType::Creature,
-        CardType::Enchantment,
-        CardType::Land,
-        CardType::Planeswalker,
-        CardType::Battle,
-    ];
-    library_filter
-        .tagged_constraints
-        .push(TaggedObjectConstraint {
-            tag: TagKey::from("__it__"),
-            relation: TaggedOpbjectRelation::SharesCardType,
-        });
-
-    let reveal_top_match = Effect::new(
-        crate::effects::ChooseObjectsEffect::new(
-            library_filter,
-            ChoiceCount::up_to(1),
-            PlayerFilter::IteratedPlayer,
-            TagKey::from("revealed_0"),
-        )
-        .in_zone(Zone::Library)
-        .with_description("cards")
-        .reveal()
-        .top_only(),
-    );
-    let put_onto_battlefield = Effect::new(crate::effects::PutOntoBattlefieldEffect::new(
-        ChooseSpec::Iterated,
-        false,
-        PlayerFilter::IteratedPlayer,
-    ));
-    let put_each_revealed = Effect::new(crate::effects::ForEachTaggedEffect::new(
-        TagKey::from("revealed_0"),
-        vec![put_onto_battlefield],
-    ));
-    let shuffle = Effect::new(crate::effects::ShuffleLibraryEffect::new(
-        PlayerFilter::IteratedPlayer,
-    ));
-
-    let per_exiled = Effect::new(crate::effects::ForEachTaggedEffect::new(
-        TagKey::from("exiled_0"),
-        vec![Effect::new(crate::effects::SequenceEffect {
-            effects: vec![reveal_top_match, put_each_revealed, shuffle],
-        })],
-    ));
-
-    effects.push(per_exiled);
-
-    builder.spell_effect = Some(effects);
-    builder
-}
-
-fn normalize_glimpse_of_nature_spell_effect(
+fn normalize_spell_delayed_trigger_effects(
     mut builder: CardDefinitionBuilder,
 ) -> CardDefinitionBuilder {
     use crate::ability::AbilityKind;
     use crate::target::PlayerFilter;
 
-    if builder
+    let is_spell = builder
         .card_builder
-        .oracle_text_ref()
-        .trim()
-        .to_ascii_lowercase()
-        != "whenever you cast a creature spell this turn, draw a card."
-    {
-        return builder;
-    }
-
-    let Some(trigger_idx) = builder
-        .abilities
+        .card_types_ref()
         .iter()
-        .position(|ability| matches!(ability.kind, AbilityKind::Triggered(_)))
-    else {
-        return builder;
-    };
-
-    let ability_text = builder.abilities[trigger_idx]
-        .text
-        .as_deref()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if !ability_text.contains("this turn") {
+        .any(|card_type| matches!(card_type, CardType::Instant | CardType::Sorcery));
+    if !is_spell {
         return builder;
     }
 
-    let triggered = match builder.abilities.remove(trigger_idx).kind {
-        AbilityKind::Triggered(triggered) => triggered,
-        _ => return builder,
-    };
+    let mut delayed = Vec::new();
+    builder.abilities.retain(|ability| {
+        let AbilityKind::Triggered(triggered) = &ability.kind else {
+            return true;
+        };
+        let ability_text = ability
+            .text
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !ability_text.contains("this turn") {
+            return true;
+        }
 
-    let schedule = crate::effect::Effect::new(
-        crate::effects::ScheduleDelayedTriggerEffect::new(
-            triggered.trigger,
-            triggered.effects,
-            false,
-            Vec::new(),
-            PlayerFilter::You,
-        )
-        .until_end_of_turn(),
-    );
-    builder.spell_effect = Some(vec![schedule]);
+        delayed.push(crate::effect::Effect::new(
+            crate::effects::ScheduleDelayedTriggerEffect::new(
+                triggered.trigger.clone(),
+                triggered.effects.clone(),
+                false,
+                Vec::new(),
+                PlayerFilter::You,
+            )
+            .until_end_of_turn(),
+        ));
+        false
+    });
+
+    if delayed.is_empty() {
+        return builder;
+    }
+
+    builder.spell_effect.get_or_insert_with(Vec::new).extend(delayed);
     builder
 }
 

@@ -1,9 +1,17 @@
 use ironsmith::{
     ability::AbilityKind,
     cards::CardDefinitionBuilder,
-    effects::HauntExileEffect,
+    continuous::Modification,
+    effect::Value,
+    effects::{
+        continuous::RuntimeModification, ApplyContinuousEffect, ForEachTaggedEffect,
+        HauntExileEffect, ScheduleDelayedTriggerEffect,
+    },
     ids::CardId,
+    static_abilities::StaticAbilityId,
+    target::PlayerFilter,
     types::CardType,
+    types::Subtype,
 };
 
 #[test]
@@ -49,5 +57,92 @@ fn parser_feature_smoke_haunt_linkage_stitches_into_haunt_ability() {
             .downcast_ref::<HauntExileEffect>()
             .is_some(),
         "haunt keyword should carry the delayed haunt exile effect"
+    );
+}
+
+#[test]
+fn parser_feature_smoke_spell_trigger_line_becomes_delayed_effect() {
+    let text = "Whenever you cast a creature spell this turn, draw a card.";
+    let def = CardDefinitionBuilder::new(CardId::new(), "Delayed Trigger Smoke")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(text)
+        .expect("spell delayed trigger smoke should parse");
+
+    assert!(def.abilities.is_empty());
+    let effects = def.spell_effect.expect("spell should lower to spell effects");
+    assert_eq!(effects.len(), 1);
+    let delayed = effects[0]
+        .downcast_ref::<ScheduleDelayedTriggerEffect>()
+        .expect("spell trigger should lower to a delayed trigger effect");
+    assert!(delayed.until_end_of_turn);
+}
+
+#[test]
+fn parser_feature_smoke_channel_remains_explicitly_unsupported() {
+    let text =
+        "Until end of turn, any time you could activate a mana ability, you may pay 1 life. If you do, add {C}.";
+    let err = CardDefinitionBuilder::new(CardId::new(), "Channel Smoke")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(text)
+        .expect_err("channel smoke should stay unsupported");
+    let rendered = format!("{err:?}").to_ascii_lowercase();
+    assert!(
+        rendered.contains("unsupported until-end-of-turn permission clause"),
+        "expected explicit unsupported channel outcome, got {rendered}"
+    );
+}
+
+#[test]
+fn parser_feature_smoke_take_to_the_streets_merges_citizen_bonus() {
+    let text = "Creatures you control get +2/+2 until end of turn. Citizens you control get an additional +1/+1 and gain vigilance until end of turn.";
+    let def = CardDefinitionBuilder::new(CardId::new(), "Take to the Streets Smoke")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(text)
+        .expect("take to the streets smoke should parse");
+
+    let effects = def.spell_effect.expect("take to the streets should lower to spell effects");
+    let apply = effects[1]
+        .downcast_ref::<ApplyContinuousEffect>()
+        .expect("citizen rider should lower to a continuous effect");
+
+    let filter = match &apply.target {
+        ironsmith::continuous::EffectTarget::Filter(filter) => filter,
+        other => panic!("expected filter-targeted continuous effect, got {other:?}"),
+    };
+    assert_eq!(filter.controller, Some(PlayerFilter::You));
+    assert!(filter.subtypes.contains(&Subtype::Citizen));
+    assert!(apply.modification.as_ref().is_some_and(|modification| {
+        matches!(
+            modification,
+            Modification::AddAbility(ability) if ability.id() == StaticAbilityId::Vigilance
+        )
+    }));
+    assert!(apply.runtime_modifications.iter().any(|modification| {
+        matches!(
+            modification,
+            RuntimeModification::ModifyPowerToughness {
+                power: Value::Fixed(1),
+                toughness: Value::Fixed(1),
+            }
+        )
+    }));
+}
+
+#[test]
+fn parser_feature_smoke_chaotic_transformation_uses_generic_for_each_tagged_lowering() {
+    let text = "Exile up to one target artifact, up to one target creature, up to one target enchantment, up to one target planeswalker, and/or up to one target land. For each permanent exiled this way, its controller reveals cards from the top of their library until they reveal a card that shares a card type with it, puts that card onto the battlefield, then shuffles.";
+    let def = CardDefinitionBuilder::new(CardId::new(), "Chaotic Transformation Smoke")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(text)
+        .expect("chaotic transformation smoke should parse");
+
+    let effects = def
+        .spell_effect
+        .expect("chaotic transformation should lower to spell effects");
+    assert!(
+        effects
+            .iter()
+            .any(|effect| effect.downcast_ref::<ForEachTaggedEffect>().is_some()),
+        "chaotic transformation should use generic for-each-tagged lowering"
     );
 }
