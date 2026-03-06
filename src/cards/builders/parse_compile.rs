@@ -234,11 +234,6 @@ fn compile_statement_effects_prepared(
         ctx.last_object_tag = Some(prepared.bindings.seed_tag.as_str().to_string());
     }
     let prelude = seed_attached_source_tag_prelude(&mut ctx, &resolved_effects);
-    let resolved_effects = annotate_effect_reference_frames(
-        &resolved_effects,
-        ctx.id_gen_context(),
-        ctx.lowering_frame(),
-    )?;
     let mut id_gen = ctx.id_gen_context();
     let frame_in = ctx.lowering_frame();
     let (compiled, _, frame_out) =
@@ -705,11 +700,6 @@ pub(crate) fn compile_trigger_effects_with_intervening_if_seed(
     }
     let prelude = seed_attached_source_tag_prelude(&mut ctx, &resolved_effects);
     maybe_seed_default_trigger_object_tag(&mut ctx, trigger, &resolved_effects);
-    let resolved_effects = annotate_effect_reference_frames(
-        &resolved_effects,
-        ctx.id_gen_context(),
-        ctx.lowering_frame(),
-    )?;
     let mut intervening_if: Option<Condition> = None;
     let mut effects_to_compile = resolved_effects.as_slice();
     let mut extracted_predicate: Option<&PredicateAst> = None;

@@ -47,15 +47,15 @@ pub(crate) fn resolve_effect_sequence_references(
 pub(crate) fn annotate_effect_reference_frames(
     effects: &[EffectAst],
     id_gen: IdGenContext,
-    frame: LoweringFrame,
+    mut frame: LoweringFrame,
 ) -> Result<Vec<EffectAst>, CardTextError> {
-    let mut ctx = CompileContext::from_parts(id_gen, frame);
+    let mut id_gen = id_gen;
     let mut annotated = Vec::with_capacity(effects.len());
 
-    for effect in effects {
+    for (idx, effect) in effects.iter().enumerate() {
         let (stripped, auto_tag_object_targets, assigned_effect_id) =
             resolved_metadata_parts(effect);
-        let reference_frame = ctx.reference_frame();
+        let reference_frame = lowering_reference_frame(&frame);
         let annotated_effect = EffectAst::ResolvedMetadata {
             effect: Box::new(stripped.clone()),
             auto_tag_object_targets,
@@ -63,20 +63,489 @@ pub(crate) fn annotate_effect_reference_frames(
             reference_frame: Some(reference_frame),
         };
 
-        ctx.auto_tag_object_targets = ctx.force_auto_tag_object_targets || auto_tag_object_targets;
-        let (compiled_effects, _) = compile_effect(&stripped, &mut ctx)?;
+        let remaining = if idx + 1 < effects.len() {
+            &effects[idx + 1..]
+        } else {
+            &[]
+        };
+        frame.auto_tag_object_targets = frame.force_auto_tag_object_targets
+            || auto_tag_object_targets
+            || effects_reference_it_tag(remaining)
+            || effects_reference_its_controller(remaining);
+        advance_reference_frame_for_effect(&stripped, &mut id_gen, &mut frame)?;
         if let Some(id) = assigned_effect_id {
-            if compiled_effects.is_empty() {
-                ctx.last_effect_id = None;
-            } else {
-                ctx.last_effect_id = Some(id);
-            }
+            frame.last_effect_id = Some(id);
         }
 
         annotated.push(annotated_effect);
     }
 
     Ok(annotated)
+}
+
+fn lowering_reference_frame(frame: &LoweringFrame) -> LoweringReferenceFrame {
+    LoweringReferenceFrame {
+        last_effect_id: frame.last_effect_id,
+        last_object_tag: frame.last_object_tag.clone(),
+        last_player_filter: frame.last_player_filter.clone(),
+        iterated_player: frame.iterated_player,
+        allow_life_event_value: frame.allow_life_event_value,
+        bind_unbound_x_to_last_effect: frame.bind_unbound_x_to_last_effect,
+    }
+}
+
+fn next_reference_tag(id_gen: &mut IdGenContext, prefix: &str) -> String {
+    let tag = format!("{prefix}_{}", id_gen.next_tag_id);
+    id_gen.next_tag_id += 1;
+    tag
+}
+
+fn track_effect_player(
+    player: PlayerAst,
+    frame: &mut LoweringFrame,
+    allow_target: bool,
+    allow_target_opponent: bool,
+) -> Result<(), CardTextError> {
+    if matches!(player, PlayerAst::Implicit) {
+        return Ok(());
+    }
+
+    let refs = lowering_reference_frame(frame);
+    let filter = match player {
+        PlayerAst::Target if allow_target => PlayerFilter::target_player(),
+        PlayerAst::TargetOpponent if allow_target_opponent => {
+            PlayerFilter::Target(Box::new(PlayerFilter::Opponent))
+        }
+        _ => resolve_non_target_player_filter(player, &refs)?,
+    };
+    frame.last_player_filter = Some(filter);
+    Ok(())
+}
+
+fn track_target_player(target: &TargetAst, frame: &mut LoweringFrame) {
+    if let TargetAst::Player(filter, _) | TargetAst::PlayerOrPlaneswalker(filter, _) = target {
+        frame.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
+    }
+}
+
+fn maybe_tag_target(
+    target: &TargetAst,
+    frame: &mut LoweringFrame,
+    id_gen: &mut IdGenContext,
+    prefix: &str,
+) -> Result<(), CardTextError> {
+    let refs = lowering_reference_frame(frame);
+    let (spec, _) = resolve_target_spec_with_choices(target, &refs)?;
+    if frame.auto_tag_object_targets && spec.is_target() && choose_spec_targets_object(&spec) {
+        frame.last_object_tag = Some(next_reference_tag(id_gen, prefix));
+    }
+    track_target_player(target, frame);
+    Ok(())
+}
+
+fn advance_effects_preserving_last_effect(
+    effects: &[EffectAst],
+    id_gen: &mut IdGenContext,
+    frame: &mut LoweringFrame,
+) -> Result<(), CardTextError> {
+    let saved_last_effect = frame.last_effect_id;
+    advance_reference_frames(effects, id_gen, frame)?;
+    frame.last_effect_id = saved_last_effect;
+    Ok(())
+}
+
+fn advance_effects_in_iterated_player_context(
+    effects: &[EffectAst],
+    id_gen: &mut IdGenContext,
+    frame: &mut LoweringFrame,
+    tagged_object: Option<String>,
+) -> Result<(), CardTextError> {
+    let saved = frame.clone();
+    let mut nested = saved.clone();
+    nested.iterated_player = true;
+    nested.last_effect_id = None;
+    if let Some(tag) = tagged_object {
+        nested.last_object_tag = Some(tag);
+    }
+    advance_reference_frames(effects, id_gen, &mut nested)?;
+    if saved.last_object_tag != nested.last_object_tag {
+        frame.last_object_tag = nested.last_object_tag;
+    }
+    Ok(())
+}
+
+fn advance_reference_frames(
+    effects: &[EffectAst],
+    id_gen: &mut IdGenContext,
+    frame: &mut LoweringFrame,
+) -> Result<(), CardTextError> {
+    for effect in effects {
+        advance_reference_frame_for_effect(effect, id_gen, frame)?;
+    }
+    Ok(())
+}
+
+fn advance_reference_frame_for_effect(
+    effect: &EffectAst,
+    id_gen: &mut IdGenContext,
+    frame: &mut LoweringFrame,
+) -> Result<(), CardTextError> {
+    let effect = strip_resolved_metadata(effect.clone());
+    match effect {
+        EffectAst::ResolvedMetadata { .. } => {}
+        EffectAst::Draw { player, .. }
+        | EffectAst::LoseLife { player, .. }
+        | EffectAst::GainLife { player, .. }
+        | EffectAst::Mill { player, .. }
+        | EffectAst::SetLifeTotal { player, .. }
+        | EffectAst::PoisonCounters { player, .. }
+        | EffectAst::EnergyCounters { player, .. }
+        | EffectAst::Scry { player, .. }
+        | EffectAst::Discover { player, .. }
+        | EffectAst::Surveil { player, .. }
+        | EffectAst::PayMana { player, .. }
+        | EffectAst::PayEnergy { player, .. }
+        | EffectAst::AddMana { player, .. }
+        | EffectAst::AddManaScaled { player, .. }
+        | EffectAst::AddManaAnyColor { player, .. }
+        | EffectAst::AddManaAnyOneColor { player, .. }
+        | EffectAst::AddManaChosenColor { player, .. }
+        | EffectAst::AddManaFromLandCouldProduce { player, .. }
+        | EffectAst::AddManaCommanderIdentity { player, .. }
+        | EffectAst::ExtraTurnAfterTurn { player }
+        | EffectAst::RevealTop { player }
+        | EffectAst::RevealHand { player }
+        | EffectAst::PutIntoHand { player, .. }
+        | EffectAst::PutSomeIntoHandRestIntoGraveyard { player, .. }
+        | EffectAst::PutSomeIntoHandRestOnBottomOfLibrary { player, .. }
+        | EffectAst::DiscardHand { player }
+        | EffectAst::Discard { player, .. }
+        | EffectAst::SkipTurn { player }
+        | EffectAst::SkipCombatPhases { player }
+        | EffectAst::SkipNextCombatPhaseThisTurn { player }
+        | EffectAst::SkipDrawStep { player }
+        | EffectAst::ShuffleGraveyardIntoLibrary { player }
+        | EffectAst::ReorderGraveyard { player }
+        | EffectAst::ShuffleLibrary { player } => {
+            track_effect_player(player, frame, true, true)?;
+        }
+        EffectAst::ControlPlayer { player, .. } => {
+            frame.last_player_filter = Some(player);
+        }
+        EffectAst::LookAtHand { target }
+        | EffectAst::TargetOnly { target }
+        | EffectAst::Counter { target }
+        | EffectAst::CounterUnlessPays { target, .. }
+        | EffectAst::CopySpell { target, .. }
+        | EffectAst::PreventDamage { target, .. }
+        | EffectAst::PreventAllDamageToTarget { target, .. }
+        | EffectAst::RedirectNextDamageFromSourceToTarget { target, .. }
+        | EffectAst::RedirectNextTimeDamageToSource { target, .. }
+        | EffectAst::Transform { target }
+        | EffectAst::Flip { target } => {
+            maybe_tag_target(&target, frame, id_gen, "targeted")?;
+        }
+        EffectAst::DealDamage { target, .. } | EffectAst::DealDamageEqualToPower { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "damaged")?;
+        }
+        EffectAst::PutCounters { target, .. }
+        | EffectAst::PutOrRemoveCounters { target, .. }
+        | EffectAst::RemoveUpToAnyCounters { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "counters")?;
+        }
+        EffectAst::Tap { target } => {
+            maybe_tag_target(&target, frame, id_gen, "tapped")?;
+        }
+        EffectAst::Untap { target } => {
+            maybe_tag_target(&target, frame, id_gen, "untapped")?;
+        }
+        EffectAst::RemoveFromCombat { target } => {
+            maybe_tag_target(&target, frame, id_gen, "removed_from_combat")?;
+        }
+        EffectAst::TapOrUntap { target } => {
+            maybe_tag_target(&target, frame, id_gen, "tap_or_untap")?;
+        }
+        EffectAst::GrantProtectionChoice { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "protected")?;
+        }
+        EffectAst::Explore { target } => {
+            maybe_tag_target(&target, frame, id_gen, "explored")?;
+        }
+        EffectAst::GainControl { target, player, .. } => {
+            track_effect_player(player, frame, true, true)?;
+            maybe_tag_target(&target, frame, id_gen, "controlled")?;
+        }
+        EffectAst::RetargetStackObject { .. } => {
+            if frame.auto_tag_object_targets {
+                frame.last_object_tag = Some(next_reference_tag(id_gen, "retargeted"));
+            }
+        }
+        EffectAst::Connive { target } => {
+            maybe_tag_target(&target, frame, id_gen, "connived")?;
+        }
+        EffectAst::Goad { target } => {
+            maybe_tag_target(&target, frame, id_gen, "goaded")?;
+        }
+        EffectAst::Destroy { target } | EffectAst::DestroyNoRegeneration { target } => {
+            maybe_tag_target(&target, frame, id_gen, "destroyed")?;
+        }
+        EffectAst::Exile { target, .. } | EffectAst::ExileUntilSourceLeaves { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "exiled")?;
+        }
+        EffectAst::ReturnToHand { target, .. } | EffectAst::Regenerate { target } => {
+            maybe_tag_target(&target, frame, id_gen, "returned")?;
+        }
+        EffectAst::ReturnToBattlefield { target, .. } => {
+            let refs = lowering_reference_frame(frame);
+            let (spec, _) = resolve_target_spec_with_choices(&target, &refs)?;
+            if frame.auto_tag_object_targets && choose_spec_targets_object(&spec) {
+                frame.last_object_tag = Some(next_reference_tag(id_gen, "returned"));
+            }
+        }
+        EffectAst::MoveToLibrarySecondFromTop { target } | EffectAst::MoveToZone { target, .. } => {
+            let refs = lowering_reference_frame(frame);
+            let (spec, _) = resolve_target_spec_with_choices(&target, &refs)?;
+            if frame.auto_tag_object_targets && choose_spec_targets_object(&spec) {
+                frame.last_object_tag = Some(next_reference_tag(id_gen, "moved"));
+            }
+        }
+        EffectAst::RevealTagged { tag } | EffectAst::LookAtTopCards { tag, .. } => {
+            frame.last_object_tag = Some(if tag.as_str() == IT_TAG {
+                frame
+                    .last_object_tag
+                    .clone()
+                    .unwrap_or_else(|| next_reference_tag(id_gen, "revealed"))
+            } else {
+                tag.as_str().to_string()
+            });
+        }
+        EffectAst::ChooseObjects { tag, player, .. } => {
+            track_effect_player(player, frame, true, true)?;
+            frame.last_object_tag = Some(tag.as_str().to_string());
+        }
+        EffectAst::SearchLibrary { player, .. } => {
+            track_effect_player(player, frame, true, true)?;
+            if frame.auto_tag_object_targets {
+                frame.last_object_tag = Some(next_reference_tag(id_gen, "searched"));
+            }
+        }
+        EffectAst::Sacrifice { player, .. } => {
+            track_effect_player(player, frame, true, true)?;
+            frame.last_object_tag = Some(next_reference_tag(id_gen, "sacrificed"));
+        }
+        EffectAst::SacrificeAll { player, .. } => {
+            track_effect_player(player, frame, true, true)?;
+        }
+        EffectAst::CreateToken { player, .. }
+        | EffectAst::CreateTokenCopy { player, .. }
+        | EffectAst::CreateTokenCopyFromSource { player, .. } => {
+            track_effect_player(player, frame, true, true)?;
+            if frame.auto_tag_object_targets {
+                frame.last_object_tag = Some(next_reference_tag(id_gen, "created"));
+            }
+        }
+        EffectAst::CreateTokenWithMods {
+            player,
+            attached_to,
+            ..
+        } => {
+            track_effect_player(player, frame, true, true)?;
+            if frame.auto_tag_object_targets || attached_to.is_some() {
+                frame.last_object_tag = Some(next_reference_tag(id_gen, "created"));
+            }
+        }
+        EffectAst::MoveAllCounters { .. } => {
+            if frame.auto_tag_object_targets {
+                let _ = next_reference_tag(id_gen, "from");
+                frame.last_object_tag = Some(next_reference_tag(id_gen, "to"));
+            }
+        }
+        EffectAst::Pump { target, .. } | EffectAst::PumpForEach { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "pumped")?;
+        }
+        EffectAst::SetBasePowerToughness { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "set_base_pt")?;
+        }
+        EffectAst::BecomeBasePtCreature { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "animated_creature")?;
+        }
+        EffectAst::AddCardTypes { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "typed")?;
+        }
+        EffectAst::AddSubtypes { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "subtyped")?;
+        }
+        EffectAst::SetBasePower { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "set_base_power")?;
+        }
+        EffectAst::SetColors { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "set_colors")?;
+        }
+        EffectAst::MakeColorless { target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "set_colorless")?;
+        }
+        EffectAst::GrantAbilitiesToTarget { target, .. }
+        | EffectAst::GrantAbilitiesChoiceToTarget { target, .. }
+        | EffectAst::RemoveAbilitiesFromTarget { target, .. }
+        | EffectAst::PreventAllCombatDamageFromSource { source: target, .. } => {
+            maybe_tag_target(&target, frame, id_gen, "targeted")?;
+        }
+        EffectAst::PumpAll { .. } => {
+            if frame.auto_tag_object_targets {
+                frame.last_object_tag = Some(next_reference_tag(id_gen, "pumped"));
+            }
+        }
+        EffectAst::ReturnAllToBattlefield { .. } => {
+            if frame.auto_tag_object_targets {
+                frame.last_object_tag = Some(next_reference_tag(id_gen, "returned"));
+            }
+        }
+        EffectAst::ExchangeControl { .. } => {
+            frame.last_object_tag = Some(next_reference_tag(id_gen, "exchanged"));
+        }
+        EffectAst::May { effects }
+        | EffectAst::DelayedUntilNextEndStep { effects, .. }
+        | EffectAst::DelayedUntilEndOfCombat { effects }
+        | EffectAst::DelayedTriggerThisTurn { effects, .. }
+        | EffectAst::DelayedWhenLastObjectDiesThisTurn { effects, .. } => {
+            advance_effects_preserving_last_effect(&effects, id_gen, frame)?;
+        }
+        EffectAst::MayByPlayer { player, effects } => {
+            advance_effects_preserving_last_effect(&effects, id_gen, frame)?;
+            track_effect_player(player, frame, true, true)?;
+        }
+        EffectAst::MayByTaggedController { effects, .. } => {
+            advance_effects_preserving_last_effect(&effects, id_gen, frame)?;
+        }
+        EffectAst::DelayedUntilNextUpkeep { player, effects }
+        | EffectAst::DelayedUntilEndStepOfExtraTurn { player, effects } => {
+            advance_effects_preserving_last_effect(&effects, id_gen, frame)?;
+            track_effect_player(player, frame, true, true)?;
+        }
+        EffectAst::Conditional {
+            if_true, if_false, ..
+        } => {
+            let saved = frame.clone();
+            let mut true_frame = saved.clone();
+            advance_reference_frames(&if_true, id_gen, &mut true_frame)?;
+            if if_false.is_empty() {
+                *frame = true_frame;
+            } else {
+                let mut false_frame = saved.clone();
+                advance_reference_frames(&if_false, id_gen, &mut false_frame)?;
+                frame.last_object_tag = saved.last_object_tag;
+                frame.last_player_filter = saved.last_player_filter;
+                frame.iterated_player = saved.iterated_player;
+            }
+        }
+        EffectAst::ResolvedIfResult {
+            condition, effects, ..
+        } => {
+            let saved_last_effect = frame.last_effect_id;
+            let saved_bind = frame.bind_unbound_x_to_last_effect;
+            frame.last_effect_id = Some(condition);
+            frame.bind_unbound_x_to_last_effect = true;
+            advance_reference_frames(&effects, id_gen, frame)?;
+            frame.last_effect_id = saved_last_effect;
+            frame.bind_unbound_x_to_last_effect = saved_bind;
+        }
+        EffectAst::ForEachOpponent { effects }
+        | EffectAst::ForEachPlayersFiltered { effects, .. }
+        | EffectAst::ForEachPlayer { effects }
+        | EffectAst::ForEachTargetPlayers { effects, .. }
+        | EffectAst::ForEachTaggedPlayer { effects, .. } => {
+            advance_effects_in_iterated_player_context(&effects, id_gen, frame, None)?;
+        }
+        EffectAst::ForEachObject { effects, .. } => {
+            let saved = frame.clone();
+            let mut nested = saved.clone();
+            nested.last_effect_id = None;
+            nested.last_object_tag = Some(IT_TAG.to_string());
+            advance_reference_frames(&effects, id_gen, &mut nested)?;
+        }
+        EffectAst::ForEachTagged { tag, effects } => {
+            let tagged_object = if tag.as_str() == IT_TAG {
+                frame.last_object_tag.clone()
+            } else {
+                Some(tag.as_str().to_string())
+            };
+            advance_effects_in_iterated_player_context(&effects, id_gen, frame, tagged_object)?;
+        }
+        EffectAst::Fight { .. }
+        | EffectAst::FightIterated { .. }
+        | EffectAst::Clash { .. }
+        | EffectAst::DealDamageEach { .. }
+        | EffectAst::ForEachCounterKindPutOrRemove { .. }
+        | EffectAst::PutCountersAll { .. }
+        | EffectAst::DoubleCountersOnEach { .. }
+        | EffectAst::Proliferate
+        | EffectAst::TapAll { .. }
+        | EffectAst::UntapAll { .. }
+        | EffectAst::LoseGame { .. }
+        | EffectAst::WinGame { .. }
+        | EffectAst::PreventAllCombatDamage { .. }
+        | EffectAst::PreventAllCombatDamageToPlayers { .. }
+        | EffectAst::PreventAllCombatDamageToYou { .. }
+        | EffectAst::PreventNextTimeDamage { .. }
+        | EffectAst::PreventDamageEach { .. }
+        | EffectAst::Earthbend { .. }
+        | EffectAst::OpenAttraction
+        | EffectAst::ManifestDread
+        | EffectAst::Bolster { .. }
+        | EffectAst::Support { .. }
+        | EffectAst::Adapt { .. }
+        | EffectAst::CounterActivatedOrTriggeredAbility
+        | EffectAst::AddManaImprintedColors
+        | EffectAst::BecomeBasicLandTypeChoice { .. }
+        | EffectAst::BecomeCreatureTypeChoice { .. }
+        | EffectAst::BecomeColorChoice { .. }
+        | EffectAst::Cant { .. }
+        | EffectAst::PlayFromGraveyardUntilEot { .. }
+        | EffectAst::GrantPlayTaggedUntilEndOfTurn { .. }
+        | EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn { .. }
+        | EffectAst::GrantPlayTaggedUntilYourNextTurn { .. }
+        | EffectAst::CastTagged { .. }
+        | EffectAst::ExileInsteadOfGraveyardThisTurn { .. }
+        | EffectAst::RevealTopChooseCardTypePutToHandRestBottom { .. }
+        | EffectAst::PutRestOnBottomOfLibrary
+        | EffectAst::UnlessPays { .. }
+        | EffectAst::UnlessAction { .. }
+        | EffectAst::IfResult { .. }
+        | EffectAst::ForEachOpponentDoesNot { .. }
+        | EffectAst::ForEachPlayerDoesNot { .. }
+        | EffectAst::ForEachOpponentDid { .. }
+        | EffectAst::ForEachPlayerDid { .. }
+        | EffectAst::Enchant { .. }
+        | EffectAst::Attach { .. }
+        | EffectAst::Investigate { .. }
+        | EffectAst::Amass { .. }
+        | EffectAst::DestroyAll { .. }
+        | EffectAst::DestroyAllNoRegeneration { .. }
+        | EffectAst::DestroyAllOfChosenColor { .. }
+        | EffectAst::DestroyAllOfChosenColorNoRegeneration { .. }
+        | EffectAst::DestroyAllAttachedTo { .. }
+        | EffectAst::ExileWhenSourceLeaves { .. }
+        | EffectAst::SacrificeSourceWhenLeaves { .. }
+        | EffectAst::ExileAll { .. }
+        | EffectAst::Monstrosity { .. }
+        | EffectAst::ConniveIterated
+        | EffectAst::RemoveCountersAll { .. }
+        | EffectAst::RegenerateAll { .. }
+        | EffectAst::SwitchPowerToughness { .. }
+        | EffectAst::PumpByLastEffect { .. }
+        | EffectAst::GrantAbilitiesAll { .. }
+        | EffectAst::RemoveAbilitiesAll { .. }
+        | EffectAst::GrantAbilitiesChoiceAll { .. }
+        | EffectAst::GrantAbilityToSource { .. }
+        | EffectAst::ReorderTopOfLibrary { .. }
+        | EffectAst::VoteStart { .. }
+        | EffectAst::VoteOption { .. }
+        | EffectAst::VoteExtra { .. }
+        | EffectAst::ReturnAllToHand { .. }
+        | EffectAst::ReturnAllToHandOfChosenColor { .. } => {}
+    }
+
+    Ok(())
 }
 
 fn resolve_effect_sequence_references_with_state(
