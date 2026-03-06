@@ -1,5 +1,16 @@
-use super::*;
+use crate::cards::builders::{
+    CardTextError, ChoiceCount, EffectAst, IT_TAG, PlayerAst, PredicateAst, TagKey, TargetAst,
+    Token, bind_implicit_player_context, find_verb, is_until_end_of_turn,
+    negated_action_word_index, parse_effect_chain, parse_effect_chain_inner, parse_number,
+    parse_object_filter, parse_pt_modifier, parse_pt_modifier_values,
+    parse_target_count_range_prefix, parse_target_phrase, parse_value, parse_where_x_value_clause,
+    remove_first_word, starts_with_until_end_of_turn, token_index_for_word_index, trim_commas,
+    words,
+};
 use crate::cards::builders::effect_ast_traversal::for_each_nested_effects_mut;
+use crate::effect::Value;
+use crate::target::{ObjectFilter, PlayerFilter};
+use crate::effect::Until;
 
 pub(crate) fn parse_for_each_object_subject(
     subject_tokens: &[Token],
