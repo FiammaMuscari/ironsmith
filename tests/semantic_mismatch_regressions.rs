@@ -217,6 +217,22 @@ fn regression_semantic_mismatch_beast_hunt_reveal_all_creatures() {
 }
 
 #[test]
+fn regression_semantic_mismatch_benefaction_of_rhonas_put_from_among_guard() {
+    let err = CardDefinitionBuilder::new(CardId::new(), "Benefaction of Rhonas")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text(
+            "Reveal the top five cards of your library. You may put a creature card and/or an enchantment card from among them into your hand. Put the rest into your graveyard.",
+        )
+        .expect_err("Benefaction of Rhonas should not silently miscompile");
+    let rendered = format!("{err:?}").to_ascii_lowercase();
+
+    assert!(
+        rendered.contains("unsupported put-from-among clause"),
+        "expected explicit unsupported error for put-from-among wording, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_uurg_power_only_cda() {
     let rendered = rendered_lines(
         "Uurg's power is equal to the number of land cards in your graveyard.\nAt the beginning of your upkeep, surveil 1.\n{B}{G}, Sacrifice a land: You gain 2 life.",

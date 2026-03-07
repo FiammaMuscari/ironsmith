@@ -423,8 +423,8 @@ fn line_has_choose_leading_spell_clause(view: &ClauseView<'_>) -> bool {
 
 fn line_has_put_from_among_clause(view: &ClauseView<'_>) -> bool {
     let normalized = normalized_line(view);
-    normalized.contains("put a land card from among them into your hand")
-        || normalized.contains("put a card from among them into your hand")
+    normalized.contains("put a ")
+        && normalized.contains("from among them into your hand")
 }
 
 fn line_has_standalone_token_reminder_clause(view: &ClauseView<'_>) -> bool {
