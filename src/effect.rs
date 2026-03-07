@@ -3454,6 +3454,19 @@ impl Effect {
         ))
     }
 
+    /// Exile cards from the top of a library until one matches `filter`, then
+    /// let a player play that exiled card until end of turn.
+    pub fn exile_until_match_grant_play_until_eot(
+        player: PlayerFilter,
+        filter: ObjectFilter,
+        caster: PlayerFilter,
+    ) -> Self {
+        use crate::effects::ExileUntilMatchGrantPlayEffect;
+        Self::new(ExileUntilMatchGrantPlayEffect::new(
+            player, filter, caster,
+        ))
+    }
+
     /// Create a "surveil" effect.
     pub fn surveil(count: impl Into<Value>) -> Self {
         use crate::effects::SurveilEffect;

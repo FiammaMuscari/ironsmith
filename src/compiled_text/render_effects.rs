@@ -6033,6 +6033,20 @@ fn describe_effect_impl(effect: &Effect) -> String {
             "{player} {player_verb} cards from the top of {library_owner} library until {player_pronoun} exile {selection}. {caster} may cast that card{free_cast_suffix}. Then {player} puts the exiled cards that weren't cast this way on the bottom of {library_owner} library in a random order"
         );
     }
+    if let Some(exile_until_match) =
+        effect.downcast_ref::<crate::effects::ExileUntilMatchGrantPlayEffect>()
+    {
+        let player = describe_player_filter(&exile_until_match.player);
+        let player_verb = player_verb(&player, "exile", "exiles");
+        let player_pronoun = if player == "you" { "you" } else { "they" };
+        let library_owner = describe_possessive_player_filter(&exile_until_match.player);
+        let selection =
+            describe_search_selection_with_cards(&exile_until_match.filter.description());
+        let caster = describe_player_filter(&exile_until_match.caster);
+        return format!(
+            "{player} {player_verb} cards from the top of {library_owner} library until {player_pronoun} exile {selection}. {caster} may play that card until end of turn"
+        );
+    }
     if let Some(become_basic) =
         effect.downcast_ref::<crate::effects::BecomeBasicLandTypeChoiceEffect>()
     {

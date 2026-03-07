@@ -287,6 +287,21 @@ fn regression_semantic_mismatch_brighthearth_banneret_reinforce_discard_cost() {
 }
 
 #[test]
+fn regression_semantic_mismatch_territorial_bruntar_exile_until_nonland() {
+    let rendered = rendered_lines(
+        "Reach\nLandfall — Whenever a land you control enters, exile cards from the top of your library until you exile a nonland card. You may cast that card this turn.",
+        "Territorial Bruntar",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("until you exile a nonland card")
+            && rendered.contains("you may play that card until end of turn"),
+        "expected exile-until-match grant-play semantics, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_uurg_power_only_cda() {
     let rendered = rendered_lines(
         "Uurg's power is equal to the number of land cards in your graveyard.\nAt the beginning of your upkeep, surveil 1.\n{B}{G}, Sacrifice a land: You gain 2 life.",

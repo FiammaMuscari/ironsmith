@@ -874,6 +874,11 @@ pub(crate) enum EffectAst {
         count: Value,
         player: PlayerAst,
     },
+    ExileUntilMatchGrantPlayUntilEndOfTurn {
+        player: PlayerAst,
+        filter: ObjectFilter,
+        caster: PlayerAst,
+    },
     ExileUntilMatchCast {
         player: PlayerAst,
         filter: ObjectFilter,

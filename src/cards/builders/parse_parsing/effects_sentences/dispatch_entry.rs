@@ -214,10 +214,14 @@ fn parse_pair_sentence_sequence(
     first: &[Token],
     second: &[Token],
 ) -> Result<Option<(&'static str, Vec<EffectAst>)>, CardTextError> {
-    const RULES: [(&str, PairSentenceRule); 5] = [
+    const RULES: [(&str, PairSentenceRule); 6] = [
         (
             "delayed-dies-exile-top-power-choose-play",
             parse_delayed_dies_exile_top_power_choose_play,
+        ),
+        (
+            "exile-until-match-grant-play-this-turn",
+            parse_exile_until_match_grant_play_this_turn,
         ),
         (
             "target-chooses-other-cant-block",
@@ -244,6 +248,89 @@ fn parse_pair_sentence_sequence(
     }
 
     Ok(None)
+}
+
+fn parse_exile_until_match_grant_play_this_turn(
+    first: &[Token],
+    second: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let first_tokens = trim_commas(first);
+    let Some(exile_idx) = first_tokens
+        .iter()
+        .position(|token| token.is_word("exile") || token.is_word("exiles"))
+    else {
+        return Ok(None);
+    };
+    let player = if exile_idx == 0 {
+        PlayerAst::You
+    } else {
+        match parse_subject(&first_tokens[..exile_idx]) {
+            SubjectAst::Player(player) => player,
+            _ => return Ok(None),
+        }
+    };
+
+    let Some(until_idx) = first_tokens.iter().position(|token| token.is_word("until")) else {
+        return Ok(None);
+    };
+    if until_idx <= exile_idx + 1 {
+        return Ok(None);
+    }
+
+    let prefix_words: Vec<&str> = words(&first_tokens[exile_idx + 1..until_idx])
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    if !prefix_words.starts_with(&["cards", "from", "top", "of"])
+        || !prefix_words.ends_with(&["library"])
+    {
+        return Ok(None);
+    }
+
+    let until_tokens = trim_commas(&first_tokens[until_idx + 1..]);
+    let Some(match_verb_idx) = until_tokens
+        .iter()
+        .position(|token| token.is_word("exile") || token.is_word("exiles"))
+    else {
+        return Ok(None);
+    };
+    if match_verb_idx == 0 || match_verb_idx + 1 >= until_tokens.len() {
+        return Ok(None);
+    }
+    let filter_tokens = trim_commas(&until_tokens[match_verb_idx + 1..]);
+    if filter_tokens.is_empty() {
+        return Ok(None);
+    }
+    let filter = match parse_object_filter(&filter_tokens, false) {
+        Ok(filter) => filter,
+        Err(_) => return Ok(None),
+    };
+
+    let second_tokens = trim_commas(second);
+    let Some(may_idx) = second_tokens.iter().position(|token| token.is_word("may")) else {
+        return Ok(None);
+    };
+    if may_idx == 0 || may_idx + 1 >= second_tokens.len() {
+        return Ok(None);
+    }
+    let caster = match parse_subject(&second_tokens[..may_idx]) {
+        SubjectAst::Player(player) => player,
+        _ => return Ok(None),
+    };
+    let tail_words = words(&second_tokens[may_idx + 1..]);
+    let is_supported_clause = tail_words == ["cast", "that", "card", "this", "turn"]
+        || tail_words == ["cast", "it", "this", "turn"]
+        || tail_words == ["play", "that", "card", "this", "turn"]
+        || tail_words == ["play", "it", "this", "turn"];
+    if !is_supported_clause {
+        return Ok(None);
+    }
+
+    Ok(Some(vec![EffectAst::ExileUntilMatchGrantPlayUntilEndOfTurn {
+        player,
+        filter,
+        caster,
+    }]))
 }
 
 fn parse_look_at_top_reveal_match_put_rest_bottom(

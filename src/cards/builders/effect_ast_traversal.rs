@@ -157,6 +157,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::AddManaImprintedColors => {}
         EffectAst::Scry { .. } => {}
         EffectAst::Discover { .. } => {}
+        EffectAst::ExileUntilMatchGrantPlayUntilEndOfTurn { .. } => {}
         EffectAst::ExileUntilMatchCast { .. } => {}
         EffectAst::BecomeBasicLandTypeChoice { .. } => {}
         EffectAst::BecomeCreatureTypeChoice { .. } => {}

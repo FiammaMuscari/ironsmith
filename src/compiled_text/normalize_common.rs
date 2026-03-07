@@ -5176,6 +5176,9 @@ fn describe_search_selection_with_cards(selection: &str) -> String {
     if let Some(name) = selection.strip_prefix("permanent named ") {
         return format!("a card named {name}");
     }
+    if selection == "nonland permanent" || selection == "nonland permanent card" {
+        return "a nonland card".to_string();
+    }
     if let Some((head, tail)) = selection.split_once(" with mana value ") {
         let head = head.trim();
         let value = tail.trim_end_matches(" card").trim();

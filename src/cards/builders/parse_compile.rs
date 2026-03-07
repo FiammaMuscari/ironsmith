@@ -3926,6 +3926,29 @@ fn try_compile_player_resource_and_choice_effect(
             || Effect::discover(count.clone()),
             |filter| Effect::discover_player(count.clone(), filter),
         )?,
+        EffectAst::ExileUntilMatchGrantPlayUntilEndOfTurn {
+            player,
+            filter,
+            caster,
+        } => {
+            let (library_player, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
+            let (casting_player, casting_choices) =
+                resolve_effect_player_filter(*caster, ctx, true, true, true)?;
+            for choice in casting_choices {
+                push_choice(&mut choices, choice);
+            }
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
+            ctx.last_player_filter = Some(library_player.clone());
+            (
+                vec![Effect::exile_until_match_grant_play_until_eot(
+                    library_player,
+                    resolved_filter,
+                    casting_player,
+                )],
+                choices,
+            )
+        }
         EffectAst::ExileUntilMatchCast {
             player,
             filter,
