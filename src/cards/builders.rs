@@ -502,6 +502,7 @@ pub(crate) enum PredicateAst {
     ItIsLandCard,
     ItMatches(ObjectFilter),
     TaggedMatches(TagKey, ObjectFilter),
+    EnchantedPermanentAttackedThisTurn,
     PlayerTaggedObjectMatches {
         player: PlayerAst,
         tag: TagKey,
@@ -602,6 +603,7 @@ pub(crate) enum PredicateAst {
         symbol: Option<ManaSymbol>,
     },
     Unmodeled(String),
+    Not(Box<PredicateAst>),
     And(Box<PredicateAst>, Box<PredicateAst>),
 }
 

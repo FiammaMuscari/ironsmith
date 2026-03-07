@@ -1694,6 +1694,9 @@ pub enum Condition {
     /// A tagged object matches a filter.
     TaggedObjectMatches(TagKey, ObjectFilter),
 
+    /// The permanent enchanted by this source attacked this turn.
+    EnchantedPermanentAttackedThisTurn,
+
     /// The first object target matches a filter.
     TargetMatches(ObjectFilter),
 

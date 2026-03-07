@@ -506,6 +506,38 @@ fn regression_semantic_mismatch_deadly_alliance_party_cost_clause() {
 }
 
 #[test]
+fn regression_semantic_mismatch_insubordination_enchanted_controller_clause() {
+    let rendered = rendered_lines(
+        "Enchant creature\nAt the beginning of the end step of enchanted creature's controller, this Aura deals 2 damage to that player unless that creature attacked this turn.",
+        "Insubordination",
+        &[CardType::Enchantment],
+    );
+
+    assert!(
+        rendered.contains("enchant creature"),
+        "expected aura attachment line to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("enchanted")
+            && rendered.contains("controller")
+            && rendered.contains("end step"),
+        "expected the trigger to stay tied to enchanted creature's controller, got {rendered}"
+    );
+    assert!(
+        rendered.contains("2 damage"),
+        "expected damage payload to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("attacked this turn"),
+        "expected the unless-attacked condition to remain, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("deals 2 damage to a creature"),
+        "damage target should remain the player, not collapse into a creature target, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_dwarven_thaumaturgist_switch_pt() {
     let rendered = rendered_lines(
         "{T}: Switch target creature's power and toughness until end of turn.",

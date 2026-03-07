@@ -57,6 +57,16 @@ fn describe_player_filter(filter: &PlayerFilter) -> String {
             strip_leading_article(&describe_player_filter(base)),
             strip_leading_article(&describe_player_filter(excluded))
         ),
+        PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag))
+            if tag.as_str() == "enchanted" =>
+        {
+            "enchanted creature's controller".to_string()
+        }
+        PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag))
+            if tag.as_str() == "equipped" =>
+        {
+            "equipped creature's controller".to_string()
+        }
         PlayerFilter::ControllerOf(crate::target::ObjectRef::Target) => {
             "its controller".to_string()
         }
@@ -7143,6 +7153,9 @@ fn describe_condition(condition: &Condition) -> String {
         }
         Condition::TargetManaValueLteColorsSpentToCastThisSpell => {
             "the target's mana value is less than or equal to the number of colors of mana spent to cast this spell".to_string()
+        }
+        Condition::EnchantedPermanentAttackedThisTurn => {
+            "enchanted creature attacked this turn".to_string()
         }
         Condition::SourceIsTapped => "this source is tapped".to_string(),
         Condition::SourceIsFaceDown => "this source is transformed".to_string(),

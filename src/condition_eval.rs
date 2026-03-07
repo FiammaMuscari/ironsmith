@@ -216,6 +216,7 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::ColorsOfManaSpentToCastThisSpellOrMore(..) => {}
         Condition::YouControlCommander => {}
         Condition::TaggedObjectMatches(..) => {}
+        Condition::EnchantedPermanentAttackedThisTurn => {}
         Condition::TargetMatches(..) => {}
         Condition::PlayerTaggedObjectMatches { .. } => {}
         Condition::PlayerOwnsCardNamedInZones { .. } => {}
@@ -797,6 +798,7 @@ pub fn evaluate_condition_external(
 
         // Conditions requiring targets / effect execution context are not evaluable here.
         Condition::TaggedObjectMatches(_, _)
+        | Condition::EnchantedPermanentAttackedThisTurn
         | Condition::TargetMatches(_)
         | Condition::PlayerTaggedObjectMatches { .. }
         | Condition::TargetIsTapped
@@ -1316,6 +1318,7 @@ fn evaluate_condition_simple(
         | Condition::SourceIsSoulbondPaired
         | Condition::XValueAtLeast(_) => false,
         Condition::TaggedObjectMatches(_, _) => false,
+        Condition::EnchantedPermanentAttackedThisTurn => false,
         Condition::TargetMatches(_) => false,
         Condition::PlayerTaggedObjectMatches { .. } => false,
         // Target-dependent conditions default to false during casting
@@ -1861,6 +1864,10 @@ fn evaluate_condition(
             }
             Ok(false)
         }
+        Condition::EnchantedPermanentAttackedThisTurn => Ok(game
+            .object(ctx.source)
+            .and_then(|source_obj| source_obj.attached_to)
+            .is_some_and(|attached_to| game.creature_attacked_this_turn(attached_to))),
         Condition::TargetMatches(filter) => {
             let filter_ctx = ctx.filter_context(game);
             let Some(crate::executor::ResolvedTarget::Object(id)) = ctx.targets.first() else {

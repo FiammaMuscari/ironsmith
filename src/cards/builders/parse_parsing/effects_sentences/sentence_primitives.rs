@@ -3575,6 +3575,73 @@ pub(crate) fn parse_sentence_damage_unless_controller_has_source_deal_damage(
     Ok(Some(vec![unless]))
 }
 
+pub(crate) fn parse_sentence_damage_to_that_player_unless_enchanted_attacked(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Some(unless_idx) = tokens.iter().position(|token| token.is_word("unless")) else {
+        return Ok(None);
+    };
+
+    let before_tokens = trim_commas(&tokens[..unless_idx]);
+    let after_tokens = trim_commas(&tokens[unless_idx + 1..]);
+    if before_tokens.is_empty() || after_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    if !matches!(
+        words(&after_tokens).as_slice(),
+        ["that", "creature", "attacked", "this", "turn"]
+            | ["enchanted", "creature", "attacked", "this", "turn"]
+    ) {
+        return Ok(None);
+    }
+
+    let Some(deal_idx) = before_tokens
+        .iter()
+        .position(|token| token.is_word("deal") || token.is_word("deals"))
+    else {
+        return Ok(None);
+    };
+
+    if !matches!(
+        words(&before_tokens[..deal_idx]).as_slice(),
+        ["this", "aura"] | ["this", "permanent"] | ["this", "enchantment"]
+    ) {
+        return Ok(None);
+    }
+
+    let damage_tokens = &before_tokens[deal_idx + 1..];
+    let Some((amount, used)) = parse_value(damage_tokens) else {
+        return Ok(None);
+    };
+    if !damage_tokens
+        .get(used)
+        .is_some_and(|token| token.is_word("damage"))
+    {
+        return Ok(None);
+    }
+
+    let mut target_tokens = trim_commas(&damage_tokens[used + 1..]);
+    if target_tokens
+        .first()
+        .is_some_and(|token| token.is_word("to"))
+    {
+        target_tokens.remove(0);
+    }
+    if words(&target_tokens).as_slice() != ["that", "player"] {
+        return Ok(None);
+    }
+
+    Ok(Some(vec![EffectAst::Conditional {
+        predicate: PredicateAst::Not(Box::new(PredicateAst::EnchantedPermanentAttackedThisTurn)),
+        if_true: vec![EffectAst::DealDamage {
+            amount,
+            target: TargetAst::Player(PlayerFilter::IteratedPlayer, None),
+        }],
+        if_false: Vec::new(),
+    }]))
+}
+
 pub(crate) fn parse_sentence_unless_pays(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
@@ -4323,6 +4390,10 @@ pub(crate) const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
     SentencePrimitive {
         name: "damage-unless-controller-has-source-deal-damage",
         parser: parse_sentence_damage_unless_controller_has_source_deal_damage,
+    },
+    SentencePrimitive {
+        name: "damage-to-that-player-unless-enchanted-attacked",
+        parser: parse_sentence_damage_to_that_player_unless_enchanted_attacked,
     },
     SentencePrimitive {
         name: "unless-pays",

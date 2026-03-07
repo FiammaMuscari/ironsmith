@@ -48,6 +48,16 @@ impl TriggerMatcher for BeginningOfEndStepTrigger {
             PlayerFilter::You => "At the beginning of your end step".to_string(),
             PlayerFilter::Any => "At the beginning of each player's end step".to_string(),
             PlayerFilter::Opponent => "At the beginning of each opponent's end step".to_string(),
+            PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag))
+                if tag.as_str() == "enchanted" =>
+            {
+                "At the beginning of the end step of enchanted permanent's controller".to_string()
+            }
+            PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag))
+                if tag.as_str() == "equipped" =>
+            {
+                "At the beginning of the end step of equipped creature's controller".to_string()
+            }
             PlayerFilter::Target(_) | PlayerFilter::IteratedPlayer => {
                 "At the beginning of that player's end step".to_string()
             }
@@ -62,6 +72,19 @@ fn player_filter_matches(filter: &PlayerFilter, player: PlayerId, ctx: &TriggerC
         PlayerFilter::Opponent => player != ctx.controller,
         PlayerFilter::Any => true,
         PlayerFilter::Specific(id) => player == *id,
+        PlayerFilter::ControllerOf(crate::target::ObjectRef::Tagged(tag))
+            if matches!(tag.as_str(), "enchanted" | "equipped") =>
+        {
+            let Some(source) = ctx.game.object(ctx.source_id) else {
+                return false;
+            };
+            let Some(attached_to) = source.attached_to else {
+                return false;
+            };
+            ctx.game
+                .object(attached_to)
+                .is_some_and(|obj| obj.controller == player)
+        }
         _ => true,
     }
 }

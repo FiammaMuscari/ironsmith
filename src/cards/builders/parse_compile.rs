@@ -543,6 +543,9 @@ pub(crate) fn compile_condition_from_predicate_ast(
             let resolved_tag = resolve_it_tag_key(tag, &refs)?;
             Condition::TaggedObjectMatches(resolved_tag, resolved)
         }
+        PredicateAst::EnchantedPermanentAttackedThisTurn => {
+            Condition::EnchantedPermanentAttackedThisTurn
+        }
         PredicateAst::PlayerTaggedObjectMatches {
             player,
             tag,
@@ -756,6 +759,10 @@ pub(crate) fn compile_condition_from_predicate_ast(
             }
         }
         PredicateAst::Unmodeled(text) => Condition::Unmodeled(text.clone()),
+        PredicateAst::Not(inner) => {
+            let inner = compile_condition_from_predicate_ast(inner, ctx, saved_last_tag)?;
+            Condition::Not(Box::new(inner))
+        }
         PredicateAst::And(left, right) => {
             let left = compile_condition_from_predicate_ast(left, ctx, saved_last_tag)?;
             let right = compile_condition_from_predicate_ast(right, ctx, saved_last_tag)?;
