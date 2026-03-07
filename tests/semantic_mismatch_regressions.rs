@@ -1391,3 +1391,31 @@ fn regression_semantic_mismatch_glinting_creeper_converge_multiplier() {
         "expected the evasion clause to remain intact, got {rendered}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_silas_renn_cast_not_play_from_graveyard() {
+    let text = "Deathtouch\nWhenever Silas Renn deals combat damage to a player, choose target artifact card in your graveyard. You may cast that card this turn.\nPartner";
+    let def = CardDefinitionBuilder::new(CardId::new(), "Silas Renn, Seeker Adept")
+        .card_types(vec![CardType::Creature])
+        .parse_text(text)
+        .expect("Silas Renn should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains(
+            "choose target artifact card in your graveyard. you may cast that card until end of turn"
+        ),
+        "expected graveyard permission to remain a cast-only permission on the chosen card, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("may play")
+            && !rendered.contains("tagged 'targeted_0'"),
+        "graveyard cast permission should not degrade into play-or-tag scaffolding, got {rendered}"
+    );
+
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        debug.contains("grantplaytaggedeffect") && debug.contains("allow_land: false"),
+        "expected lowered permission to stay cast-only, got {debug}"
+    );
+}

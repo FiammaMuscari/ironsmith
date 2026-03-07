@@ -923,6 +923,7 @@ pub(crate) enum EffectAst {
     GrantPlayTaggedUntilEndOfTurn {
         tag: TagKey,
         player: PlayerAst,
+        allow_land: bool,
     },
     GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn {
         tag: TagKey,
@@ -931,6 +932,7 @@ pub(crate) enum EffectAst {
     GrantPlayTaggedUntilYourNextTurn {
         tag: TagKey,
         player: PlayerAst,
+        allow_land: bool,
     },
     CastTagged {
         tag: TagKey,

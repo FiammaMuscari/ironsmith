@@ -1796,6 +1796,7 @@ mod tests {
             EffectAst::GrantPlayTaggedUntilEndOfTurn {
                 tag: TagKey::from(IT_TAG),
                 player: PlayerAst::You,
+                allow_land: false,
             },
         ];
 
@@ -1826,6 +1827,7 @@ mod tests {
             EffectAst::GrantPlayTaggedUntilEndOfTurn {
                 tag: TagKey::from(IT_TAG),
                 player: PlayerAst::You,
+                allow_land: false,
             },
         ];
 
@@ -1913,6 +1915,7 @@ mod tests {
                 EffectAst::GrantPlayTaggedUntilEndOfTurn {
                     tag: TagKey::from(IT_TAG),
                     player: PlayerAst::You,
+                    allow_land: false,
                 },
             ],
             if_false: vec![
@@ -1927,6 +1930,7 @@ mod tests {
                 EffectAst::GrantPlayTaggedUntilEndOfTurn {
                     tag: TagKey::from(IT_TAG),
                     player: PlayerAst::You,
+                    allow_land: false,
                 },
             ],
         }];

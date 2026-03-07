@@ -205,6 +205,7 @@ fn parse_delayed_dies_exile_top_power_choose_play(
             EffectAst::GrantPlayTaggedUntilYourNextTurn {
                 tag: chosen_tag,
                 player: PlayerAst::You,
+                allow_land: true,
             },
         ],
     }]))

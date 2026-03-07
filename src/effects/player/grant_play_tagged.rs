@@ -1,4 +1,4 @@
-//! Grant temporary "you may play this exiled card" permissions for tagged cards.
+//! Grant temporary "you may cast/play this tagged card" permissions.
 
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
@@ -9,7 +9,6 @@ use crate::grant::Grantable;
 use crate::grant_registry::GrantSource;
 use crate::tag::TagKey;
 use crate::target::PlayerFilter;
-use crate::zone::Zone;
 
 /// Duration for play-from-exile permissions granted from tagged cards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,12 +19,13 @@ pub enum GrantPlayTaggedDuration {
     UntilYourNextTurnEnd,
 }
 
-/// Grant "you may play" from exile for cards tagged in the current context.
+/// Grant temporary permission to cast or play cards tagged in the current context.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GrantPlayTaggedEffect {
     pub tag: TagKey,
     pub player: PlayerFilter,
     pub duration: GrantPlayTaggedDuration,
+    pub allow_land: bool,
 }
 
 impl GrantPlayTaggedEffect {
@@ -33,16 +33,18 @@ impl GrantPlayTaggedEffect {
         tag: impl Into<TagKey>,
         player: PlayerFilter,
         duration: GrantPlayTaggedDuration,
+        allow_land: bool,
     ) -> Self {
         Self {
             tag: tag.into(),
             player,
             duration,
+            allow_land,
         }
     }
 
     pub fn until_your_next_turn(tag: impl Into<TagKey>, player: PlayerFilter) -> Self {
-        Self::new(tag, player, GrantPlayTaggedDuration::UntilYourNextTurnEnd)
+        Self::new(tag, player, GrantPlayTaggedDuration::UntilYourNextTurnEnd, true)
     }
 
     /// Compute the turn number corresponding to the end of `player`'s next turn.
@@ -154,13 +156,13 @@ impl EffectExecutor for GrantPlayTaggedEffect {
             let Some(object) = game.object(object_id) else {
                 continue;
             };
-            if object.zone != Zone::Exile || !seen.insert(object_id) {
+            if (!self.allow_land && object.is_land()) || !seen.insert(object_id) {
                 continue;
             }
 
             game.grant_registry.grant_to_card(
                 object_id,
-                Zone::Exile,
+                object.zone,
                 player_id,
                 Grantable::PlayFrom,
                 GrantSource::Effect {

@@ -1963,6 +1963,7 @@ mod tests {
         let effects = vec![EffectAst::GrantPlayTaggedUntilEndOfTurn {
             tag: TagKey::from(IT_TAG),
             player: PlayerAst::You,
+            allow_land: true,
         }];
 
         let prepared = prepare_effects_for_lowering(
@@ -1990,6 +1991,7 @@ mod tests {
         let effects = vec![EffectAst::GrantPlayTaggedUntilEndOfTurn {
             tag: TagKey::from(IT_TAG),
             player: PlayerAst::You,
+            allow_land: true,
         }];
 
         let prepared = prepare_effects_with_trigger_context_for_lowering(

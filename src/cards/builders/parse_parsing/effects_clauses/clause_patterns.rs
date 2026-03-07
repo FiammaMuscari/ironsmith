@@ -161,6 +161,7 @@ pub(crate) fn parse_until_end_of_turn_may_play_tagged_clause(
     Ok(Some(EffectAst::GrantPlayTaggedUntilEndOfTurn {
         tag: TagKey::from(IT_TAG),
         player: PlayerAst::You,
+        allow_land: true,
     }))
 }
 
@@ -199,6 +200,7 @@ pub(crate) fn parse_until_your_next_turn_may_play_tagged_clause(
     Ok(Some(EffectAst::GrantPlayTaggedUntilYourNextTurn {
         tag: TagKey::from(IT_TAG),
         player: PlayerAst::You,
+        allow_land: true,
     }))
 }
 
@@ -237,6 +239,7 @@ pub(crate) fn parse_cast_or_play_tagged_clause(
         return Ok(Some(EffectAst::GrantPlayTaggedUntilEndOfTurn {
             tag: TagKey::from(IT_TAG),
             player: PlayerAst::Implicit,
+            allow_land: is_play,
         }));
     }
 

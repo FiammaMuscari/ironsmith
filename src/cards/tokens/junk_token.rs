@@ -43,6 +43,7 @@ pub fn junk_token_definition() -> CardDefinition {
                     exile_tag,
                     PlayerFilter::You,
                     crate::effects::GrantPlayTaggedDuration::UntilEndOfTurn,
+                    true,
                 )),
             ],
             choices: vec![],

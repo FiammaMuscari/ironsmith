@@ -4081,7 +4081,11 @@ fn try_compile_timing_and_control_effect(
             let effect = Effect::grant_play_from_graveyard_until_eot(player_filter);
             (vec![effect], Vec::new())
         }
-        EffectAst::GrantPlayTaggedUntilEndOfTurn { tag, player } => {
+        EffectAst::GrantPlayTaggedUntilEndOfTurn {
+            tag,
+            player,
+            allow_land,
+        } => {
             let player_filter =
                 resolve_non_target_player_filter(*player, &current_reference_env(ctx))?;
             let resolved_tag = if tag.as_str() == IT_TAG {
@@ -4098,6 +4102,7 @@ fn try_compile_timing_and_control_effect(
                     resolved_tag,
                     player_filter,
                     crate::effects::GrantPlayTaggedDuration::UntilEndOfTurn,
+                    *allow_land,
                 ))],
                 Vec::new(),
             )
@@ -4127,7 +4132,11 @@ fn try_compile_timing_and_control_effect(
                 Vec::new(),
             )
         }
-        EffectAst::GrantPlayTaggedUntilYourNextTurn { tag, player } => {
+        EffectAst::GrantPlayTaggedUntilYourNextTurn {
+            tag,
+            player,
+            allow_land,
+        } => {
             let player_filter =
                 resolve_non_target_player_filter(*player, &current_reference_env(ctx))?;
             let resolved_tag = if tag.as_str() == IT_TAG {
@@ -4140,12 +4149,12 @@ fn try_compile_timing_and_control_effect(
                 tag.clone()
             };
             (
-                vec![Effect::new(
-                    crate::effects::GrantPlayTaggedEffect::until_your_next_turn(
-                        resolved_tag,
-                        player_filter,
-                    ),
-                )],
+                vec![Effect::new(crate::effects::GrantPlayTaggedEffect::new(
+                    resolved_tag,
+                    player_filter,
+                    crate::effects::GrantPlayTaggedDuration::UntilYourNextTurnEnd,
+                    *allow_land,
+                ))],
                 Vec::new(),
             )
         }
@@ -9124,6 +9133,7 @@ mod parse_compile_tests {
             EffectAst::GrantPlayTaggedUntilEndOfTurn {
                 tag: TagKey::from(IT_TAG),
                 player: PlayerAst::You,
+                allow_land: false,
             },
         ];
 

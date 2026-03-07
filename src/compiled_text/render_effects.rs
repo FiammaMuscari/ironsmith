@@ -5552,6 +5552,12 @@ fn describe_effect_impl(effect: &Effect) -> String {
         if let Some(decider) = may.decider.as_ref() {
             let who = describe_player_filter(decider);
             let mut inner = describe_effect_list(&may.effects);
+            let may_prefix = format!("{who} may ");
+            if inner.starts_with(&may_prefix) {
+                inner = inner[may_prefix.len()..].to_string();
+            } else if who == "you" && inner.starts_with("you may ") {
+                inner = inner["you may ".len()..].to_string();
+            }
             let prefix = format!("{who} ");
             if inner.starts_with(&prefix) {
                 inner = inner[prefix.len()..].to_string();
@@ -6860,10 +6866,21 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 "until the end of your next turn"
             }
         };
+        let verb = if grant_play_tagged.allow_land {
+            "play"
+        } else {
+            "cast"
+        };
+        let object_text = if grant_play_tagged.tag.as_str().starts_with("targeted_")
+            || grant_play_tagged.tag.as_str() == "__it__"
+        {
+            "that card".to_string()
+        } else {
+            format!("tagged '{}' cards", grant_play_tagged.tag.as_str())
+        };
         return format!(
-            "{} may play tagged '{}' cards {timing}",
+            "{} may {verb} {object_text} {timing}",
             describe_player_filter(&grant_play_tagged.player),
-            grant_play_tagged.tag.as_str()
         );
     }
     if let Some(grant_tagged_spell_life) =
