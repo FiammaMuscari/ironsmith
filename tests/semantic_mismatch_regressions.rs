@@ -175,3 +175,21 @@ fn regression_semantic_mismatch_courageous_outrider_look_at_top_reveal_choice() 
         "looked-at cards should not resolve to the triggering-object tag, got {rendered}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_brawn_graveyard_and_forest_condition() {
+    let rendered = rendered_lines(
+        "Trample\nAs long as this card is in your graveyard and you control a Forest, creatures you control have trample.",
+        "Brawn",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("this card is in your graveyard and you control a forest"),
+        "expected both graveyard and Forest conditions to render together, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("and("),
+        "static condition renderer should not leak debug formatting, got {rendered}"
+    );
+}

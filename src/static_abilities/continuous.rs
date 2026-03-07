@@ -417,8 +417,41 @@ fn comparison_display(cmp: &Comparison) -> String {
     }
 }
 
+fn flatten_static_condition_and(
+    condition: &crate::ConditionExpr,
+    out: &mut Vec<crate::ConditionExpr>,
+) {
+    match condition {
+        crate::ConditionExpr::And(left, right) => {
+            flatten_static_condition_and(left, out);
+            flatten_static_condition_and(right, out);
+        }
+        _ => out.push(condition.clone()),
+    }
+}
+
 fn describe_static_condition(condition: &crate::ConditionExpr) -> String {
     match condition {
+        crate::ConditionExpr::And(_, _) => {
+            let mut clauses = Vec::new();
+            flatten_static_condition_and(condition, &mut clauses);
+            let described = clauses
+                .iter()
+                .map(describe_static_condition)
+                .collect::<Vec<_>>();
+            if described
+                .iter()
+                .all(|clause| clause.starts_with("as long as "))
+            {
+                let joined = described
+                    .iter()
+                    .map(|clause| clause.trim_start_matches("as long as "))
+                    .collect::<Vec<_>>()
+                    .join(" and ");
+                return format!("as long as {joined}");
+            }
+            return described.join(" and ");
+        }
         crate::ConditionExpr::YourTurn => "as long as it's your turn".to_string(),
         crate::ConditionExpr::Not(inner)
             if matches!(inner.as_ref(), crate::ConditionExpr::YourTurn) =>
