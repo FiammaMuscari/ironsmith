@@ -2025,6 +2025,46 @@ fn value_is_iterated_object_count(value: &Value) -> bool {
     })
 }
 
+fn pluralize_token_phrase(token_phrase: &str) -> String {
+    if let Some((head, tail)) = token_phrase.split_once(" token with ") {
+        return format!("{head} tokens with {tail}");
+    }
+    if let Some((head, tail)) = token_phrase.split_once(" token named ") {
+        return format!("{head} tokens named {tail}");
+    }
+    if let Some(head) = token_phrase.strip_suffix(" token") {
+        return format!("{head} tokens");
+    }
+    format!("{token_phrase}s")
+}
+
+fn should_render_token_count_with_where_x(value: &Value) -> bool {
+    if matches!(
+        value,
+        Value::Fixed(_)
+            | Value::X
+            | Value::XTimes(_)
+            | Value::EffectValue(_)
+            | Value::EffectValueOffset(_, _)
+            | Value::EventValue(_)
+            | Value::EventValueOffset(_, _)
+            | Value::WasKicked
+            | Value::WasBoughtBack
+            | Value::WasEntwined
+            | Value::WasPaid(_)
+            | Value::WasPaidLabel(_)
+            | Value::TimesPaid(_)
+            | Value::TimesPaidLabel(_)
+            | Value::KickCount
+            | Value::MagicGamesLostToOpponentsSinceLastWin
+    ) {
+        return false;
+    }
+
+    let rendered = describe_value(value);
+    rendered.chars().any(char::is_whitespace) || rendered.contains('\'')
+}
+
 fn describe_compact_token_count(value: &Value, token_name: &str) -> String {
     match value {
         Value::Fixed(1) => format!("a {token_name} token"),
@@ -5321,12 +5361,8 @@ fn describe_effect_impl(effect: &Effect) -> String {
         if let Some(compact) = describe_compact_create_token(create_token) {
             return compact;
         }
-        let token_pronoun = if matches!(create_token.count, Value::Fixed(1)) {
-            "it"
-        } else {
-            "them"
-        };
-        let append_token_cleanup_sentences = |mut text: String| {
+        let append_token_cleanup_sentences = |mut text: String, singular: bool| {
+            let token_pronoun = if singular { "it" } else { "them" };
             if create_token.exile_at_end_of_combat {
                 text.push_str(&format!(". Exile {token_pronoun} at end of combat"));
             }
@@ -5345,9 +5381,13 @@ fn describe_effect_impl(effect: &Effect) -> String {
             }
             text
         };
-        let append_token_entry_flags = |mut text: String| {
+        let append_token_entry_flags = |mut text: String, singular: bool| {
             if create_token.enters_tapped && create_token.enters_attacking {
-                text.push_str(" that's tapped and attacking");
+                if singular {
+                    text.push_str(" that's tapped and attacking");
+                } else {
+                    text.push_str(" that are tapped and attacking");
+                }
                 return text;
             }
             if create_token.enters_tapped {
@@ -5369,8 +5409,8 @@ fn describe_effect_impl(effect: &Effect) -> String {
                     describe_possessive_player_filter(&create_token.controller)
                 )
             };
-            text = append_token_entry_flags(text);
-            return append_token_cleanup_sentences(text);
+            text = append_token_entry_flags(text, true);
+            return append_token_cleanup_sentences(text, true);
         }
         if let Some(for_each_count) = describe_create_for_each_count(&create_token.count) {
             let token_blueprint = describe_token_blueprint(&create_token.token);
@@ -5384,24 +5424,38 @@ fn describe_effect_impl(effect: &Effect) -> String {
                     for_each_count
                 )
             };
-            text = append_token_entry_flags(text);
-            return append_token_cleanup_sentences(text);
+            text = append_token_entry_flags(text, true);
+            return append_token_cleanup_sentences(text, true);
         }
+        let use_where_x = should_render_token_count_with_where_x(&create_token.count);
+        let singular_count = matches!(create_token.count, Value::Fixed(1)) && !use_where_x;
         let token_blueprint = describe_token_blueprint(&create_token.token);
-        let count_text = describe_effect_count_backref(&create_token.count)
-            .unwrap_or_else(|| describe_value(&create_token.count));
+        let token_phrase = if singular_count {
+            token_blueprint
+        } else {
+            pluralize_token_phrase(&token_blueprint)
+        };
+        let count_text = if use_where_x {
+            "X".to_string()
+        } else {
+            describe_effect_count_backref(&create_token.count)
+                .unwrap_or_else(|| describe_value(&create_token.count))
+        };
         let mut text = if matches!(create_token.controller, PlayerFilter::You) {
-            format!("Create {} {}", count_text, token_blueprint)
+            format!("Create {} {}", count_text, token_phrase)
         } else {
             format!(
                 "Create {} {} under {} control",
                 count_text,
-                token_blueprint,
+                token_phrase,
                 describe_possessive_player_filter(&create_token.controller)
             )
         };
-        text = append_token_entry_flags(text);
-        return append_token_cleanup_sentences(text);
+        text = append_token_entry_flags(text, singular_count);
+        if use_where_x {
+            text.push_str(&format!(", where X is {}", describe_value(&create_token.count)));
+        }
+        return append_token_cleanup_sentences(text, singular_count);
     }
     if let Some(create_copy) = effect.downcast_ref::<crate::effects::CreateTokenCopyEffect>() {
         let target = match &create_copy.target {

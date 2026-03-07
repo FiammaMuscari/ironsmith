@@ -432,7 +432,11 @@ fn regression_semantic_mismatch_one_with_the_kami_trigger_disjunction() {
         "expected modified-creature trigger branch to remain, got {rendered}"
     );
     assert!(
-        rendered.contains("power"),
+        rendered.contains("create x 1/1 colorless spirit creature tokens"),
+        "expected variable token count to stay explicit, got {rendered}"
+    );
+    assert!(
+        rendered.contains("where x is") && rendered.contains("power"),
         "expected token count to stay tied to the dying creature's power, got {rendered}"
     );
     assert!(
