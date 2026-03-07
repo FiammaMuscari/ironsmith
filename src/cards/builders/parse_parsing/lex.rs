@@ -155,6 +155,23 @@ pub(crate) fn words(tokens: &[Token]) -> Vec<&str> {
     tokens.iter().filter_map(Token::as_word).collect()
 }
 
+pub(crate) fn strip_leading_instead_prefix(tokens: &[Token]) -> Option<Vec<Token>> {
+    if !tokens.first().is_some_and(|token| token.is_word("instead"))
+        || tokens
+            .get(1)
+            .is_some_and(|token| token.is_word("of") || token.is_word("if"))
+    {
+        return None;
+    }
+
+    let stripped = trim_commas(&tokens[1..]);
+    if stripped.is_empty() {
+        None
+    } else {
+        Some(stripped)
+    }
+}
+
 pub(crate) fn parser_stacktrace_enabled() -> bool {
     std::env::var("IRONSMITH_PARSER_STACKTRACE")
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))

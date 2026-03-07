@@ -13,7 +13,8 @@ use crate::cards::builders::{
     parse_subtype_word, parse_target_phrase, parse_target_player_choose_objects_clause,
     parse_value, parse_you_choose_objects_clause, parser_trace, parser_trace_stack,
     remove_first_word, remove_through_first_word, run_clause_primitives, span_from_tokens,
-    starts_with_until_end_of_turn, token_index_for_word_index, trim_commas, words,
+    starts_with_until_end_of_turn, strip_leading_instead_prefix, token_index_for_word_index,
+    trim_commas, words,
 };
 use crate::{ChooseSpec, ObjectFilter, TagKey, Until, Value};
 
@@ -21,6 +22,9 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
     if tokens.is_empty() {
         return Err(CardTextError::ParseError("empty effect clause".to_string()));
     }
+
+    let stripped_instead = strip_leading_instead_prefix(tokens);
+    let tokens = stripped_instead.as_deref().unwrap_or(tokens);
 
     if let Some(player) = parse_leading_player_may(tokens) {
         let mut stripped = remove_through_first_word(tokens, "may");

@@ -1500,3 +1500,30 @@ fn regression_semantic_mismatch_experimental_synthesizer_play_that_card() {
         "rendered text should not leak internal exiled-tag scaffolding, got {rendered}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_flare_of_faith_human_branch_targets_creature() {
+    let text = "Target creature gets +2/+2 until end of turn. If it's a Human, instead it gets +3/+3 and gains indestructible until end of turn.";
+    let def = CardDefinitionBuilder::new(CardId::new(), "Flare of Faith")
+        .parse_text(text)
+        .expect("Flare of Faith should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("if it's a human")
+            && rendered.contains("target creature gets +3/+3 until end of turn")
+            && rendered.contains("target creature gains indestructible until end of turn"),
+        "expected the Human branch to stay attached to the targeted creature, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("this permanents get +3/+3")
+            && !rendered.contains("permanents gain indestructible"),
+        "Human branch should not retarget onto the source/permanents, got {rendered}"
+    );
+
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        !debug.contains("source: true"),
+        "conditional replacement branch should not lower through a source-only pump, got {debug}"
+    );
+}

@@ -17,6 +17,7 @@ use crate::cards::builders::parse_parsing::{
     parse_sentence_put_onto_battlefield_with_counters_on_it,
     parse_sentence_return_with_counters_on_it, parse_simple_gain_ability_clause,
     parse_simple_lose_ability_clause, parse_subject_object_filter,
+    strip_leading_instead_prefix,
     parse_until_end_of_turn_may_play_tagged_clause,
     parse_until_your_next_turn_may_play_tagged_clause, parse_verb_first_clause,
     parse_win_the_game_clause, run_sentence_primitives, segment_has_effect_head,
@@ -40,6 +41,10 @@ use crate::target::{ObjectFilter, PlayerFilter};
 use crate::zone::Zone;
 
 pub(crate) fn parse_effect_chain(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
+    if let Some(stripped) = strip_leading_instead_prefix(tokens) {
+        return parse_effect_chain(&stripped);
+    }
+
     let words = words(tokens);
     let starts_with_each_opponent =
         words.starts_with(&["each", "opponent"]) || words.starts_with(&["each", "opponents"]);
