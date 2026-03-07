@@ -1478,3 +1478,25 @@ fn regression_semantic_mismatch_joint_assault_paired_condition() {
         "expected lowered predicate to use a soulbond-paired condition, got {debug}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_experimental_synthesizer_play_that_card() {
+    let rendered = rendered_lines(
+        "When this artifact enters or leaves the battlefield, exile the top card of your library. Until end of turn, you may play that card.",
+        "Experimental Synthesizer",
+        &[CardType::Artifact],
+    );
+
+    assert!(
+        rendered.contains("exile the top card of your library"),
+        "expected the impulse-draw exile clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("you may play that card until end of turn"),
+        "expected the play permission to stay anchored to that card, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("tagged 'exiled_"),
+        "rendered text should not leak internal exiled-tag scaffolding, got {rendered}"
+    );
+}

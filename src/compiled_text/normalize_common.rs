@@ -1310,6 +1310,45 @@ fn normalize_repeated_dynamic_buff(line: &str) -> Option<String> {
     Some(rewritten)
 }
 
+fn normalize_singular_tagged_play_permission(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    let singular_source = lower.contains("exile the top card")
+        || lower.contains("reveal the top card")
+        || lower.contains("look at the top card");
+    if !singular_source {
+        return None;
+    }
+
+    let rewrites = [
+        ("you may play tagged 'exiled_", "play"),
+        ("you may cast tagged 'exiled_", "cast"),
+        ("you may play tagged 'revealed_", "play"),
+        ("you may cast tagged 'revealed_", "cast"),
+    ];
+    for (needle, verb) in rewrites {
+        let Some((prefix, rest)) = split_once_ascii_ci(line, needle) else {
+            continue;
+        };
+        let Some((_, tail)) = rest.split_once('\'') else {
+            continue;
+        };
+
+        if let Some(remaining) = strip_prefix_ascii_ci(tail, " cards until end of turn") {
+            return Some(format!(
+                "{prefix}you may {verb} that card until end of turn{remaining}"
+            ));
+        }
+        if let Some(remaining) = strip_prefix_ascii_ci(tail, " cards until the end of your next turn")
+        {
+            return Some(format!(
+                "{prefix}you may {verb} that card until the end of your next turn{remaining}"
+            ));
+        }
+    }
+
+    None
+}
+
 fn normalize_common_semantic_phrasing(line: &str) -> String {
     let mut normalized = line.trim().to_string();
     if let Some(rewritten) = normalize_granted_activated_ability_clause(&normalized) {
@@ -1335,6 +1374,9 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
         normalized = rewritten;
     }
     if let Some(rewritten) = normalize_repeated_dynamic_buff(&normalized) {
+        normalized = rewritten;
+    }
+    if let Some(rewritten) = normalize_singular_tagged_play_permission(&normalized) {
         normalized = rewritten;
     }
     normalized = normalize_create_named_token_article(&normalized);
