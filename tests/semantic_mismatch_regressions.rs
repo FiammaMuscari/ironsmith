@@ -191,6 +191,24 @@ fn regression_semantic_mismatch_beast_hunt_reveal_all_creatures() {
 }
 
 #[test]
+fn regression_semantic_mismatch_uurg_power_only_cda() {
+    let rendered = rendered_lines(
+        "Uurg's power is equal to the number of land cards in your graveyard.\nAt the beginning of your upkeep, surveil 1.\n{B}{G}, Sacrifice a land: You gain 2 life.",
+        "Uurg, Spawn of Turg",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("power is the number of land cards in your graveyard"),
+        "expected the power-defining clause to remain, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("its toughness is"),
+        "power-only characteristic-defining ability should not invent a toughness clause, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_corpse_augur_graveyard_owner_kept() {
     let rendered = rendered_lines(
         "When this creature dies, you draw X cards and you lose X life, where X is the number of creature cards in target player's graveyard.",

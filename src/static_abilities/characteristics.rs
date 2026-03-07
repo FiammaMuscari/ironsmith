@@ -44,6 +44,11 @@ impl StaticAbilityKind for CharacteristicDefiningPT {
                 "This creature's power and toughness are each equal to {}",
                 describe_value(&self.power)
             )
+        } else if matches!(self.toughness, Value::SourceToughness) {
+            format!(
+                "This creature's power is {}",
+                describe_value(&self.power)
+            )
         } else {
             format!(
                 "This creature's power is {}, and its toughness is {}",
@@ -124,6 +129,18 @@ mod tests {
         assert_eq!(
             ability.display(),
             "This creature's power and toughness are each equal to 2 plus the number of creatures you control"
+        );
+    }
+
+    #[test]
+    fn test_display_power_only_omits_source_toughness_placeholder() {
+        let ability = CharacteristicDefiningPT::new(
+            Value::Count(ObjectFilter::land().in_your_graveyard()),
+            Value::SourceToughness,
+        );
+        assert_eq!(
+            ability.display(),
+            "This creature's power is the number of land cards in your graveyard"
         );
     }
 
