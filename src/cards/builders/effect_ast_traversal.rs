@@ -20,7 +20,15 @@ macro_rules! nested_effects_variants {
                 effects: $effects,
                 ..
             }
+            | EffectAst::ResolvedWhenResult {
+                effects: $effects,
+                ..
+            }
             | EffectAst::IfResult {
+                effects: $effects,
+                ..
+            }
+            | EffectAst::WhenResult {
                 effects: $effects,
                 ..
             }
@@ -217,7 +225,9 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::MayByPlayer { .. } => {}
         EffectAst::MayByTaggedController { .. } => {}
         EffectAst::ResolvedIfResult { .. } => {}
+        EffectAst::ResolvedWhenResult { .. } => {}
         EffectAst::IfResult { .. } => {}
+        EffectAst::WhenResult { .. } => {}
         EffectAst::ForEachOpponent { .. } => {}
         EffectAst::ForEachPlayersFiltered { .. } => {}
         EffectAst::ForEachPlayer { .. } => {}

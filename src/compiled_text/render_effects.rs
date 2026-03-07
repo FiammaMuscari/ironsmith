@@ -163,6 +163,17 @@ fn describe_effect_list(effects: &[Effect]) -> String {
         }
         if idx + 1 < filtered.len()
             && let Some(with_id) = filtered[idx].downcast_ref::<crate::effects::WithIdEffect>()
+            && let Some(reflexive) =
+                filtered[idx + 1].downcast_ref::<crate::effects::ReflexiveTriggerEffect>()
+            && let Some(compact) =
+                describe_with_id_then_reflexive_trigger(with_id, reflexive)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < filtered.len()
+            && let Some(with_id) = filtered[idx].downcast_ref::<crate::effects::WithIdEffect>()
             && let Some(if_effect) = filtered[idx + 1].downcast_ref::<crate::effects::IfEffect>()
             && let Some(compact) = describe_with_id_then_if(with_id, if_effect)
         {
@@ -3002,6 +3013,51 @@ fn describe_with_id_then_if(
     }
 }
 
+fn describe_with_id_then_reflexive_trigger(
+    with_id: &crate::effects::WithIdEffect,
+    reflexive: &crate::effects::ReflexiveTriggerEffect,
+) -> Option<String> {
+    if reflexive.condition != with_id.id {
+        return None;
+    }
+
+    let setup = describe_effect(&with_id.effect);
+    let triggered = describe_effect_list(&reflexive.effects);
+    let condition = if let Some(may) = with_id.effect.downcast_ref::<crate::effects::MayEffect>() {
+        let who = may
+            .decider
+            .as_ref()
+            .map(describe_player_filter)
+            .unwrap_or_else(|| "you".to_string());
+        match reflexive.predicate {
+            EffectPredicate::DidNotHappen => {
+                if who == "you" {
+                    "When you don't".to_string()
+                } else {
+                    format!("When {who} doesn't")
+                }
+            }
+            _ => {
+                if who == "you" {
+                    "When you do".to_string()
+                } else {
+                    format!("When {who} does")
+                }
+            }
+        }
+    } else {
+        match reflexive.predicate {
+            EffectPredicate::Happened => "When it happens".to_string(),
+            EffectPredicate::HappenedNotReplaced => {
+                "When it happens and isn't replaced".to_string()
+            }
+            _ => format!("When {}", describe_effect_predicate(&reflexive.predicate)),
+        }
+    };
+
+    Some(format!("{setup}. {condition}, {triggered}"))
+}
+
 fn describe_with_id_then_choose_new_targets(
     with_id: &crate::effects::WithIdEffect,
     choose_new: &crate::effects::ChooseNewTargetsEffect,
@@ -5240,6 +5296,14 @@ fn describe_effect_impl(effect: &Effect) -> String {
             describe_effect_predicate(&if_effect.predicate),
             then_text,
             else_text
+        );
+    }
+    if let Some(reflexive) = effect.downcast_ref::<crate::effects::ReflexiveTriggerEffect>() {
+        return format!(
+            "When effect #{} {}, {}",
+            reflexive.condition.0,
+            describe_effect_predicate(&reflexive.predicate),
+            describe_effect_list(&reflexive.effects)
         );
     }
     if let Some(cast_tagged) = effect.downcast_ref::<crate::effects::CastTaggedEffect>() {

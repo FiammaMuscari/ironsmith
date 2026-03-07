@@ -11991,18 +11991,24 @@ fn parse_object_filter_with_entered_since_last_turn_ended_clause() {
 }
 
 #[test]
-fn parse_when_you_do_followup_clause_as_result_conditional() {
+fn parse_when_you_do_followup_clause_as_reflexive_trigger() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Invasion Variant")
         .card_types(vec![CardType::Battle])
         .parse_text(
             "When this permanent enters, you may sacrifice an artifact or creature. When you do, exile target artifact or creature an opponent controls.",
         )
-        .expect("when-you-do followup clause should parse as dependent conditional");
+        .expect("when-you-do followup clause should parse as a reflexive trigger");
 
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("if you do"),
-        "expected dependent followup to keep if-you-do linkage, got {rendered}"
+        rendered.contains("when you do"),
+        "expected reflexive followup to keep when-you-do linkage, got {rendered}"
+    );
+
+    let debug = format!("{:#?}", def.abilities);
+    assert!(
+        debug.contains("ReflexiveTriggerEffect"),
+        "expected reflexive followup lowering, got {debug}"
     );
 }
 

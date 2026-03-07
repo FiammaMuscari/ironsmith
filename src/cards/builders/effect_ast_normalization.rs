@@ -25,7 +25,10 @@ fn normalize_nested_effects(effect: &mut EffectAst) {
         | EffectAst::May { effects }
         | EffectAst::MayByPlayer { effects, .. }
         | EffectAst::MayByTaggedController { effects, .. }
+        | EffectAst::ResolvedIfResult { effects, .. }
+        | EffectAst::ResolvedWhenResult { effects, .. }
         | EffectAst::IfResult { effects, .. }
+        | EffectAst::WhenResult { effects, .. }
         | EffectAst::ForEachOpponent { effects }
         | EffectAst::ForEachPlayersFiltered { effects, .. }
         | EffectAst::ForEachPlayer { effects }

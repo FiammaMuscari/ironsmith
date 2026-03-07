@@ -4450,6 +4450,27 @@ fn try_compile_flow_and_iteration_effect(
             let effect = Effect::if_then(condition, predicate, inner_effects);
             (vec![effect], inner_choices)
         }
+        EffectAst::WhenResult { predicate, effects } => {
+            let condition = ctx.last_effect_id.ok_or_else(|| {
+                CardTextError::ParseError("missing prior effect for when clause".to_string())
+            })?;
+            let (inner_effects, inner_choices) = with_preserved_lowering_context(
+                ctx,
+                |ctx| {
+                    ctx.last_effect_id = Some(condition);
+                    ctx.bind_unbound_x_to_last_effect = true;
+                },
+                |ctx| compile_effects(effects, ctx),
+            )?;
+            let predicate = match predicate {
+                IfResultPredicate::Did => EffectPredicate::Happened,
+                IfResultPredicate::DidNot => EffectPredicate::DidNotHappen,
+                IfResultPredicate::DiesThisWay => EffectPredicate::HappenedNotReplaced,
+            };
+            let effect =
+                Effect::reflexive_trigger(condition, predicate, inner_effects, inner_choices);
+            (vec![effect], Vec::new())
+        }
         EffectAst::ForEachOpponent { effects } => {
             let (inner_effects, inner_choices) =
                 compile_effects_in_iterated_player_context(effects, ctx, None)?;
@@ -5295,6 +5316,22 @@ fn try_compile_stack_and_condition_effect(
             };
             let effect = Effect::if_then(*condition, predicate, inner_effects);
             (vec![effect], inner_choices)
+        }
+        EffectAst::ResolvedWhenResult {
+            condition,
+            predicate,
+            effects,
+        } => {
+            let (inner_effects, inner_choices) =
+                with_preserved_lowering_context(ctx, |_| {}, |ctx| compile_effects(effects, ctx))?;
+            let predicate = match predicate {
+                IfResultPredicate::Did => EffectPredicate::Happened,
+                IfResultPredicate::DidNot => EffectPredicate::DidNotHappen,
+                IfResultPredicate::DiesThisWay => EffectPredicate::HappenedNotReplaced,
+            };
+            let effect =
+                Effect::reflexive_trigger(*condition, predicate, inner_effects, inner_choices);
+            (vec![effect], Vec::new())
         }
         EffectAst::CopySpell {
             target,
@@ -6410,8 +6447,7 @@ fn try_compile_object_zone_and_exchange_effect(
             player,
             tag,
         } => {
-            let (chooser, choices) =
-                resolve_effect_player_filter(*player, ctx, true, true, false)?;
+            let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, false)?;
             let mut resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             preserve_chooser_relative_player_filters(filter, &mut resolved_filter, &chooser);
             let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);

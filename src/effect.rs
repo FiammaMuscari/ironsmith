@@ -2962,6 +2962,21 @@ impl Effect {
         Self::new(IfEffect::new(condition, predicate, then, else_))
     }
 
+    /// Create a reflexive triggered ability based on a prior effect result.
+    ///
+    /// Example: "When you do, target player draws two cards."
+    pub fn reflexive_trigger(
+        condition: EffectId,
+        predicate: EffectPredicate,
+        effects: Vec<Effect>,
+        choices: Vec<ChooseSpec>,
+    ) -> Self {
+        use crate::effects::ReflexiveTriggerEffect;
+        Self::new(ReflexiveTriggerEffect::new(
+            condition, predicate, effects, choices,
+        ))
+    }
+
     /// Create a "for each object matching filter" effect.
     ///
     /// Example: "For each creature you control, gain 1 life."

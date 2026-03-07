@@ -6,8 +6,8 @@ use crate::cards::builders::{
     NewTargetRestrictionAst, ObjectRefAst, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
     RefState, ReferenceEnv, ReferenceFrame, ReferenceImports, RetargetModeAst, TargetAst,
     choose_spec_targets_object, effect_references_event_derived_amount, effects_reference_it_tag,
-    effects_reference_its_controller, infer_player_filter_from_object_filter,
-    resolve_it_tag, resolve_non_target_player_filter, resolve_target_spec_with_choices,
+    effects_reference_its_controller, infer_player_filter_from_object_filter, resolve_it_tag,
+    resolve_non_target_player_filter, resolve_target_spec_with_choices,
 };
 use crate::effect::{EffectId, EventValueSpec};
 use crate::target::ObjectRef;
@@ -542,6 +542,17 @@ fn advance_reference_frame_for_effect(
             frame.last_effect_id = saved_last_effect;
             frame.bind_unbound_x_to_last_effect = saved_bind;
         }
+        EffectAst::ResolvedWhenResult {
+            condition, effects, ..
+        } => {
+            let saved_last_effect = frame.last_effect_id;
+            let saved_bind = frame.bind_unbound_x_to_last_effect;
+            frame.last_effect_id = Some(*condition);
+            frame.bind_unbound_x_to_last_effect = true;
+            advance_reference_frames(&effects, id_gen, frame)?;
+            frame.last_effect_id = saved_last_effect;
+            frame.bind_unbound_x_to_last_effect = saved_bind;
+        }
         EffectAst::ForEachOpponent { effects }
         | EffectAst::ForEachPlayersFiltered { effects, .. }
         | EffectAst::ForEachPlayer { effects }
@@ -605,6 +616,7 @@ fn advance_reference_frame_for_effect(
         | EffectAst::UnlessPays { .. }
         | EffectAst::UnlessAction { .. }
         | EffectAst::IfResult { .. }
+        | EffectAst::WhenResult { .. }
         | EffectAst::ForEachOpponentDoesNot { .. }
         | EffectAst::ForEachPlayerDoesNot { .. }
         | EffectAst::ForEachOpponentDid { .. }
@@ -700,18 +712,21 @@ fn maybe_assign_effect_result_id(
     id_gen: &mut IdGenContext,
     allow_life_event_value: bool,
 ) -> Option<EffectId> {
-    let next_is_if_result =
-        idx + 1 < effects.len() && matches!(effects[idx + 1], EffectAst::IfResult { .. });
-    let next_is_if_result_with_opponent_doesnt = next_is_if_result
+    let next_is_result_gate = idx + 1 < effects.len()
+        && matches!(
+            effects[idx + 1],
+            EffectAst::IfResult { .. } | EffectAst::WhenResult { .. }
+        );
+    let next_is_if_result_with_opponent_doesnt = next_is_result_gate
         && idx + 2 < effects.len()
         && matches!(effects[idx + 2], EffectAst::ForEachOpponentDoesNot { .. });
-    let next_is_if_result_with_player_doesnt = next_is_if_result
+    let next_is_if_result_with_player_doesnt = next_is_result_gate
         && idx + 2 < effects.len()
         && matches!(effects[idx + 2], EffectAst::ForEachPlayerDoesNot { .. });
-    let next_is_if_result_with_opponent_did = next_is_if_result
+    let next_is_if_result_with_opponent_did = next_is_result_gate
         && idx + 2 < effects.len()
         && matches!(effects[idx + 2], EffectAst::ForEachOpponentDid { .. });
-    let next_is_if_result_with_player_did = next_is_if_result
+    let next_is_if_result_with_player_did = next_is_result_gate
         && idx + 2 < effects.len()
         && matches!(effects[idx + 2], EffectAst::ForEachPlayerDid { .. });
     let next_needs_event_derived_amount = !allow_life_event_value
@@ -724,7 +739,7 @@ fn maybe_assign_effect_result_id(
         || next_is_if_result_with_player_doesnt
         || next_is_if_result_with_opponent_did
         || next_is_if_result_with_player_did
-        || next_is_if_result
+        || next_is_result_gate
         || next_needs_event_derived_amount
         || next_needs_prior_effect_value)
     {
@@ -755,6 +770,26 @@ fn resolve_effect_references_in_effect(
             },
         )?;
         return Ok(EffectAst::ResolvedIfResult {
+            condition,
+            predicate,
+            effects,
+        });
+    }
+
+    if let EffectAst::WhenResult { predicate, effects } = effect {
+        let condition = state.last_effect_id.ok_or_else(|| {
+            CardTextError::ParseError("missing prior effect for when clause".to_string())
+        })?;
+        let effects = resolve_effect_sequence_references_with_state(
+            &effects,
+            id_gen,
+            EffectReferenceResolutionState {
+                last_effect_id: Some(condition),
+                allow_life_event_value: state.allow_life_event_value,
+                bind_unbound_x_to_last_effect: true,
+            },
+        )?;
+        return Ok(EffectAst::ResolvedWhenResult {
             condition,
             predicate,
             effects,
@@ -860,6 +895,19 @@ fn advance_reference_env_for_effect(
             })
         }
         EffectAst::ResolvedIfResult {
+            condition, effects, ..
+        } => {
+            let mut nested_env = env.clone();
+            nested_env.last_effect_id = RefState::Known(*condition);
+            nested_env.bind_unbound_x_to_last_effect = true;
+            let nested =
+                annotate_effect_sequence_with_env_internal(effects, nested_env, config, id_gen)?;
+            let mut out_env = nested.final_env;
+            out_env.last_effect_id = env.last_effect_id.clone();
+            out_env.bind_unbound_x_to_last_effect = env.bind_unbound_x_to_last_effect;
+            Ok(out_env)
+        }
+        EffectAst::ResolvedWhenResult {
             condition, effects, ..
         } => {
             let mut nested_env = env.clone();
@@ -1217,10 +1265,9 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             bind_unresolved_it_in_value(amount, seed_tag)
                 + bind_unresolved_it_in_filter(land_filter, seed_tag)
         }
-        EffectAst::ExileUntilMatchCast {
-            filter,
-            ..
-        } => bind_unresolved_it_in_filter(filter, seed_tag),
+        EffectAst::ExileUntilMatchCast { filter, .. } => {
+            bind_unresolved_it_in_filter(filter, seed_tag)
+        }
         EffectAst::Cant { restriction, .. } => {
             bind_unresolved_it_in_restriction(restriction, seed_tag)
         }

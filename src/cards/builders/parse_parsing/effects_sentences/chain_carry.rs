@@ -17,13 +17,13 @@ use crate::cards::builders::parse_parsing::{
     parse_sentence_put_onto_battlefield_with_counters_on_it,
     parse_sentence_return_with_counters_on_it, parse_simple_gain_ability_clause,
     parse_simple_lose_ability_clause, parse_subject_object_filter,
-    split_leading_if_result_prefix,
     parse_until_end_of_turn_may_play_tagged_clause,
     parse_until_your_next_turn_may_play_tagged_clause, parse_verb_first_clause,
     parse_win_the_game_clause, run_sentence_primitives, segment_has_effect_head,
-    split_effect_chain_on_and, split_on_comma_or_semicolon, split_segments_on_comma_effect_head,
-    split_segments_on_comma_then, starts_with_inline_token_rules_tail,
-    starts_with_target_indicator, starts_with_until_end_of_turn, target_ast_to_object_filter,
+    split_effect_chain_on_and, split_leading_result_prefix, split_on_comma_or_semicolon,
+    split_segments_on_comma_effect_head, split_segments_on_comma_then,
+    starts_with_inline_token_rules_tail, starts_with_target_indicator,
+    starts_with_until_end_of_turn, target_ast_to_object_filter,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -160,10 +160,16 @@ pub(crate) fn parse_effect_chain_with_sentence_primitives(
 }
 
 pub(crate) fn parse_effect_chain_inner(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
-    if let Some((predicate, stripped)) = split_leading_if_result_prefix(tokens) {
-        return Ok(vec![EffectAst::IfResult {
-            predicate,
-            effects: parse_effect_sentence(&stripped)?,
+    if let Some((kind, predicate, stripped)) = split_leading_result_prefix(tokens) {
+        return Ok(vec![match kind {
+            super::LeadingResultPrefixKind::If => EffectAst::IfResult {
+                predicate,
+                effects: parse_effect_sentence(&stripped)?,
+            },
+            super::LeadingResultPrefixKind::When => EffectAst::WhenResult {
+                predicate,
+                effects: parse_effect_sentence(&stripped)?,
+            },
         }]);
     }
 
@@ -212,21 +218,28 @@ pub(crate) fn parse_effect_chain_inner(tokens: &[Token]) -> Result<Vec<EffectAst
     segments = expand_segments_with_multi_create_clauses(segments);
     let mut carried_context: Option<CarryContext> = None;
     for segment in segments {
-        let segment_effects =
-            if let Some(effects) = parse_sentence_return_with_counters_on_it(&segment)? {
-                Some(effects)
-            } else if let Some(effects) =
-                parse_sentence_put_onto_battlefield_with_counters_on_it(&segment)?
-            {
-                Some(effects)
-            } else if let Some((predicate, stripped)) = split_leading_if_result_prefix(&segment) {
-                Some(vec![EffectAst::IfResult {
+        let segment_effects = if let Some(effects) =
+            parse_sentence_return_with_counters_on_it(&segment)?
+        {
+            Some(effects)
+        } else if let Some(effects) =
+            parse_sentence_put_onto_battlefield_with_counters_on_it(&segment)?
+        {
+            Some(effects)
+        } else if let Some((kind, predicate, stripped)) = split_leading_result_prefix(&segment) {
+            Some(vec![match kind {
+                super::LeadingResultPrefixKind::If => EffectAst::IfResult {
                     predicate,
                     effects: parse_effect_sentence(&stripped)?,
-                }])
-            } else {
-                parse_sentence_exile_source_with_counters(&segment)?
-            };
+                },
+                super::LeadingResultPrefixKind::When => EffectAst::WhenResult {
+                    predicate,
+                    effects: parse_effect_sentence(&stripped)?,
+                },
+            }])
+        } else {
+            parse_sentence_exile_source_with_counters(&segment)?
+        };
         if let Some(segment_effects) = segment_effects {
             for mut effect in segment_effects {
                 if let Some(context) = carried_context {

@@ -79,7 +79,7 @@ pub use composition::{
     ConditionalEffect, CounterAbilityEffect, EmitKeywordActionEffect, ExploreEffect,
     ForEachControllerOfTaggedEffect, ForEachObject, ForEachTaggedEffect, ForEachTaggedPlayerEffect,
     ForPlayersEffect, IfEffect, ManifestDreadEffect, MayEffect, OpenAttractionEffect,
-    SequenceEffect, SupportEffect, TagAllEffect, TagAttachedToSourceEffect,
+    ReflexiveTriggerEffect, SequenceEffect, SupportEffect, TagAllEffect, TagAttachedToSourceEffect,
     TagTriggeringDamageTargetEffect, TagTriggeringObjectEffect, TaggedEffect, TargetOnlyEffect,
     UnlessActionEffect, UnlessPaysEffect, VoteEffect, VoteOption, WithIdEffect,
 };
@@ -115,11 +115,11 @@ pub use permanents::{
 };
 pub use player::{
     CascadeEffect, CastSourceEffect, CastTaggedEffect, ControlPlayerEffect, CreateEmblemEffect,
-    DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect,
-    ExileUntilMatchCastEffect, ExperienceCountersEffect, ExtraTurnAfterNextTurnEffect,
-    ExtraTurnEffect, GrantEffect, GrantPlayFromGraveyardEffect, GrantPlayTaggedDuration,
-    GrantPlayTaggedEffect, GrantTaggedSpellLifeCostByManaValueEffect, LoseTheGameEffect,
-    PayEnergyEffect, PoisonCountersEffect, SkipCombatPhasesEffect, SkipDrawStepEffect,
+    DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect, ExileUntilMatchCastEffect,
+    ExperienceCountersEffect, ExtraTurnAfterNextTurnEffect, ExtraTurnEffect, GrantEffect,
+    GrantPlayFromGraveyardEffect, GrantPlayTaggedDuration, GrantPlayTaggedEffect,
+    GrantTaggedSpellLifeCostByManaValueEffect, LoseTheGameEffect, PayEnergyEffect,
+    PoisonCountersEffect, SkipCombatPhasesEffect, SkipDrawStepEffect,
     SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, WinTheGameEffect,
 };
 pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};

@@ -1004,13 +1004,23 @@ pub(crate) fn parse_if_result_predicate(tokens: &[Token]) -> Option<IfResultPred
     None
 }
 
-pub(crate) fn split_leading_if_result_prefix(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LeadingResultPrefixKind {
+    If,
+    When,
+}
+
+pub(crate) fn split_leading_result_prefix(
     tokens: &[Token],
-) -> Option<(IfResultPredicate, Vec<Token>)> {
+) -> Option<(LeadingResultPrefixKind, IfResultPredicate, Vec<Token>)> {
     let trimmed = trim_commas(tokens);
-    if !trimmed.first().is_some_and(|token| token.is_word("if")) {
+    let kind = if trimmed.first().is_some_and(|token| token.is_word("if")) {
+        LeadingResultPrefixKind::If
+    } else if trimmed.first().is_some_and(|token| token.is_word("when")) {
+        LeadingResultPrefixKind::When
+    } else {
         return None;
-    }
+    };
 
     let comma_idx = trimmed
         .iter()
@@ -1030,6 +1040,16 @@ pub(crate) fn split_leading_if_result_prefix(
         return None;
     }
 
+    Some((kind, predicate, trailing_tokens))
+}
+
+pub(crate) fn split_leading_if_result_prefix(
+    tokens: &[Token],
+) -> Option<(IfResultPredicate, Vec<Token>)> {
+    let (kind, predicate, trailing_tokens) = split_leading_result_prefix(tokens)?;
+    if !matches!(kind, LeadingResultPrefixKind::If) {
+        return None;
+    }
     Some((predicate, trailing_tokens))
 }
 

@@ -3,10 +3,10 @@ use crate::cards::builders::effect_ast_traversal::{
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
-    CardTextError, CarryContext, EffectAst, IT_TAG, IfResultPredicate, PlayerAst, TagKey,
-    SubjectAst, TargetAst, TextSpan, Token, TokenCopyFollowup,
-    append_token_reminder_to_last_create_effect,
-    build_may_cast_tagged_effect, collapse_token_copy_end_of_combat_exile_followup,
+    CardTextError, CarryContext, EffectAst, IT_TAG, IfResultPredicate, PlayerAst, SubjectAst,
+    TagKey, TargetAst, TextSpan, Token, TokenCopyFollowup,
+    append_token_reminder_to_last_create_effect, build_may_cast_tagged_effect,
+    collapse_token_copy_end_of_combat_exile_followup,
     collapse_token_copy_next_end_step_exile_followup, effect_creates_any_token,
     effect_creates_eldrazi_spawn_or_scion, explicit_player_for_carry,
     is_activate_only_restriction_sentence, is_article, is_exile_that_token_at_end_of_combat,
@@ -16,13 +16,13 @@ use crate::cards::builders::{
     maybe_apply_carried_player, maybe_apply_carried_player_with_clause, normalize_cant_words,
     normalize_search_library_filter, parse_choose_card_type_then_reveal_top_and_put_chosen_to_hand,
     parse_choose_creature_type_then_become_type, parse_choose_target_prelude_sentence,
-    parse_effect_chain, parse_effect_clause_with_trailing_if, parse_effect_sentence, parse_number,
-    parse_may_cast_it_sentence, parse_object_filter, parse_search_library_disjunction_filter,
-    parse_sentence_exile_that_token_when_source_leaves,
-    parse_sentence_sacrifice_source_when_that_token_leaves,
+    parse_effect_chain, parse_effect_clause_with_trailing_if, parse_effect_sentence,
+    parse_may_cast_it_sentence, parse_number, parse_object_filter,
+    parse_search_library_disjunction_filter, parse_sentence_exile_that_token_when_source_leaves,
+    parse_sentence_sacrifice_source_when_that_token_leaves, parse_subject,
     parse_target_player_chooses_then_other_cant_block, parse_token_copy_modifier_sentence,
-    parse_where_x_value_clause, parse_subject, parser_trace, replace_unbound_x_with_value,
-    span_from_tokens, split_on_period, strip_embedded_token_rules_text, target_ast_to_object_filter,
+    parse_where_x_value_clause, parser_trace, replace_unbound_x_with_value, span_from_tokens,
+    split_on_period, strip_embedded_token_rules_text, target_ast_to_object_filter,
     token_index_for_word_index, trim_commas, value_contains_unbound_x, words,
 };
 use crate::effect::{ChoiceCount, Until, Value};
@@ -76,7 +76,10 @@ fn parse_reveal_top_count_put_all_matching_into_hand_rest_graveyard(
 
     let second_tokens = trim_commas(second);
     let second_words = words(&second_tokens);
-    if !matches!(second_words.get(..2), Some(["put", "all"] | ["puts", "all"])) {
+    if !matches!(
+        second_words.get(..2),
+        Some(["put", "all"] | ["puts", "all"])
+    ) {
         return Ok(None);
     }
     let Some(revealed_idx) = second_words
@@ -107,19 +110,24 @@ fn parse_reveal_top_count_put_all_matching_into_hand_rest_graveyard(
     filter.zone = None;
 
     let after_revealed = &second_words[revealed_idx + 3..];
-    let has_hand_clause = after_revealed.windows(3).any(|window| window == ["into", "your", "hand"]);
-    let has_rest_clause = after_revealed.windows(5).any(|window| {
-        window == ["and", "the", "rest", "into", "your"]
-    }) && after_revealed.contains(&"graveyard");
+    let has_hand_clause = after_revealed
+        .windows(3)
+        .any(|window| window == ["into", "your", "hand"]);
+    let has_rest_clause = after_revealed
+        .windows(5)
+        .any(|window| window == ["and", "the", "rest", "into", "your"])
+        && after_revealed.contains(&"graveyard");
     if !has_hand_clause || !has_rest_clause {
         return Ok(None);
     }
 
-    Ok(Some(vec![EffectAst::RevealTopPutMatchingIntoHandRestIntoGraveyard {
-        player: PlayerAst::You,
-        count,
-        filter,
-    }]))
+    Ok(Some(vec![
+        EffectAst::RevealTopPutMatchingIntoHandRestIntoGraveyard {
+            player: PlayerAst::You,
+            count,
+            filter,
+        },
+    ]))
 }
 
 fn parse_delayed_dies_exile_top_power_choose_play(
@@ -147,7 +155,8 @@ fn parse_delayed_dies_exile_top_power_choose_play(
         "exile", "number", "of", "cards", "from", "top", "of", "your", "library", "equal", "to",
         "its", "power",
     ]);
-    let ends_with_choose_exiled = action_words.ends_with(&["choose", "card", "exiled", "this", "way"]);
+    let ends_with_choose_exiled =
+        action_words.ends_with(&["choose", "card", "exiled", "this", "way"]);
     if !starts_with_exile_top_power || !ends_with_choose_exiled {
         return Ok(None);
     }
@@ -168,10 +177,12 @@ fn parse_delayed_dies_exile_top_power_choose_play(
     let chosen_tag = TagKey::from("chosen_0");
     let mut exiled_filter = ObjectFilter::default();
     exiled_filter.zone = Some(Zone::Exile);
-    exiled_filter.tagged_constraints.push(TaggedObjectConstraint {
-        tag: looked_tag.clone(),
-        relation: TaggedOpbjectRelation::IsTaggedObject,
-    });
+    exiled_filter
+        .tagged_constraints
+        .push(TaggedObjectConstraint {
+            tag: looked_tag.clone(),
+            relation: TaggedOpbjectRelation::IsTaggedObject,
+        });
 
     Ok(Some(vec![EffectAst::DelayedWhenLastObjectDiesThisTurn {
         filter: None,
@@ -723,7 +734,7 @@ pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>,
             sentence_idx += 1;
             continue;
         }
-        sentence_tokens = rewrite_when_you_do_clause_prefix(&sentence_tokens);
+        sentence_tokens = rewrite_when_one_or_more_this_way_clause_prefix(&sentence_tokens);
 
         // Oracle frequently splits shuffle followups as a standalone sentence:
         // "If you search your library this way, shuffle." This clause is redundant when the
@@ -1575,21 +1586,8 @@ pub(crate) fn most_recent_extra_turn_player(effects: &[EffectAst]) -> Option<Pla
     })
 }
 
-pub(crate) fn rewrite_when_you_do_clause_prefix(tokens: &[Token]) -> Vec<Token> {
+pub(crate) fn rewrite_when_one_or_more_this_way_clause_prefix(tokens: &[Token]) -> Vec<Token> {
     let clause_words = words(tokens);
-    if clause_words.starts_with(&["when", "you", "do"]) {
-        let mut rewritten = tokens.to_vec();
-        for token in &mut rewritten {
-            if let Token::Word(word, _) = token {
-                if word.eq_ignore_ascii_case("when") {
-                    *word = "if".to_string();
-                }
-                break;
-            }
-        }
-        return rewritten;
-    }
-
     // Generic "When one or more ... this way, ..." follow-ups are semantically
     // "If you do, ..." against the immediately previous effect result.
     let has_this_way = clause_words

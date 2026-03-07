@@ -28,6 +28,7 @@ mod for_players;
 mod if_effect;
 mod may;
 mod mechanic_actions;
+mod reflexive_trigger;
 mod sequence;
 mod tag_attached_to_source;
 mod tag_triggering_damage_target;
@@ -58,6 +59,7 @@ pub use mechanic_actions::{
     AdaptEffect, BolsterEffect, CounterAbilityEffect, ExploreEffect, ManifestDreadEffect,
     OpenAttractionEffect, SupportEffect,
 };
+pub use reflexive_trigger::ReflexiveTriggerEffect;
 pub use sequence::SequenceEffect;
 pub use tag_attached_to_source::TagAttachedToSourceEffect;
 pub use tag_triggering_damage_target::TagTriggeringDamageTargetEffect;

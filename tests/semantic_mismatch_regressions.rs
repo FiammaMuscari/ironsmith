@@ -1,9 +1,9 @@
+use ironsmith::effects::{
+    ChooseObjectsEffect, ExileUntilMatchCastEffect, GrantPlayTaggedEffect, ReflexiveTriggerEffect,
+    ScheduleDelayedTriggerEffect,
+};
 use ironsmith::{
     cards::CardDefinitionBuilder, compiled_text::compiled_lines, ids::CardId, types::CardType,
-};
-use ironsmith::effects::{
-    ChooseObjectsEffect, ExileUntilMatchCastEffect, GrantPlayTaggedEffect,
-    ScheduleDelayedTriggerEffect,
 };
 
 fn rendered_lines(text: &str, name: &str, card_types: &[CardType]) -> String {
@@ -222,7 +222,8 @@ fn regression_semantic_mismatch_end_blaze_epiphany_delayed_exile_choice_permissi
         "expected delayed death trigger to remain, got {rendered}"
     );
     assert!(
-        rendered.contains("exile a number of cards from the top of your library equal to its power"),
+        rendered
+            .contains("exile a number of cards from the top of your library equal to its power"),
         "expected top-of-library exile count tied to that creature's power, got {rendered}"
     );
     assert!(
@@ -230,7 +231,9 @@ fn regression_semantic_mismatch_end_blaze_epiphany_delayed_exile_choice_permissi
         "expected next-turn play permission to remain, got {rendered}"
     );
 
-    let effects = def.spell_effect.expect("spell should lower to spell effects");
+    let effects = def
+        .spell_effect
+        .expect("spell should lower to spell effects");
     assert_eq!(effects.len(), 2, "expected damage plus one delayed trigger");
     assert!(
         effects
@@ -276,8 +279,7 @@ fn regression_semantic_mismatch_dazzling_sphinx_exile_until_instant_or_sorcery()
         "expected free-cast permission to remain, got {rendered}"
     );
     assert!(
-        rendered.contains("weren't cast this way")
-            && rendered.contains("random order"),
+        rendered.contains("weren't cast this way") && rendered.contains("random order"),
         "expected bottom-the-rest random-order clause to remain, got {rendered}"
     );
 
@@ -423,9 +425,8 @@ fn regression_semantic_mismatch_formidable_speaker_if_you_do_search() {
     );
 
     assert!(
-        rendered.contains(
-            "you may discard a card. if you do, search your library for a creature card"
-        ),
+        rendered
+            .contains("you may discard a card. if you do, search your library for a creature card"),
         "expected the discard and search clauses to stay linked by the if-you-do gate, got {rendered}"
     );
     assert!(
@@ -443,6 +444,47 @@ fn regression_semantic_mismatch_formidable_speaker_if_you_do_search() {
 }
 
 #[test]
+fn regression_semantic_mismatch_unscrupulous_contractor_when_you_do_reflexive_trigger() {
+    let text = "When this creature enters, you may sacrifice a creature. When you do, target player draws two cards and loses 2 life.\nPlot {2}{B}";
+    let def = CardDefinitionBuilder::new(CardId::new(), "Unscrupulous Contractor")
+        .card_types(vec![CardType::Creature])
+        .parse_text(text)
+        .expect("Unscrupulous Contractor should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("when you do, target player draws two cards")
+            && rendered.contains("target player loses 2 life"),
+        "expected reflexive trigger wording to remain explicit, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("if you do, target player draws two cards"),
+        "reflexive trigger must not collapse into an immediate if-you-do clause, got {rendered}"
+    );
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        abilities_debug.contains("ReflexiveTriggerEffect"),
+        "expected lowered reflexive trigger runtime effect, got {abilities_debug}"
+    );
+    assert!(
+        !abilities_debug.contains("IfEffect"),
+        "reflexive followup should not lower to IfEffect anymore, got {abilities_debug}"
+    );
+    assert!(
+        def.abilities.iter().any(|ability| {
+            matches!(&ability.kind, ironsmith::ability::AbilityKind::Triggered(triggered)
+                if triggered.choices.is_empty()
+                    && triggered
+                        .effects
+                        .iter()
+                        .any(|effect| effect.downcast_ref::<ReflexiveTriggerEffect>().is_some()))
+        }),
+        "outer ETB trigger should keep target selection inside the reflexive trigger"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_deny_the_divine_countered_spell_exiled() {
     let rendered = rendered_lines(
         "Counter target creature or enchantment spell. If that spell is countered this way, exile it instead of putting it into its owner's graveyard.",
@@ -455,8 +497,7 @@ fn regression_semantic_mismatch_deny_the_divine_countered_spell_exiled() {
         "expected counter clause to remain, got {rendered}"
     );
     assert!(
-        rendered.contains("if you do, exile it")
-            || rendered.contains("if it happened, exile it"),
+        rendered.contains("if you do, exile it") || rendered.contains("if it happened, exile it"),
         "expected the follow-up to exile the countered spell itself, got {rendered}"
     );
     assert!(

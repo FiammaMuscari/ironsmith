@@ -1136,7 +1136,16 @@ pub(crate) enum EffectAst {
         predicate: IfResultPredicate,
         effects: Vec<EffectAst>,
     },
+    ResolvedWhenResult {
+        condition: EffectId,
+        predicate: IfResultPredicate,
+        effects: Vec<EffectAst>,
+    },
     IfResult {
+        predicate: IfResultPredicate,
+        effects: Vec<EffectAst>,
+    },
+    WhenResult {
         predicate: IfResultPredicate,
         effects: Vec<EffectAst>,
     },
