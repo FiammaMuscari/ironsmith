@@ -1,4 +1,10 @@
-use crate::cards::builders::parse_parsing::effects_sentences::TokenCopyFollowup;
+#[allow(unused_imports)]
+use crate::cards::builders::{
+    CardTextError, EffectAst, ExtraTurnAnchorAst, IT_TAG, LineAst, PlayerAst, SubjectAst, TagKey,
+    TargetAst, TextSpan, Token, TriggerSpec, Verb, is_article, is_source_reference_words,
+    parse_card_type, parse_object_filter, parse_subject, parse_target_phrase, parse_value,
+    target_ast_to_object_filter, token_index_for_word_index, words,
+};
 use crate::cards::builders::parse_parsing::{
     ClauseView, POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, POST_CONDITIONAL_SENTENCE_PRIMITIVES,
     PRE_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, PRE_CONDITIONAL_SENTENCE_PRIMITIVES,
@@ -12,17 +18,9 @@ use crate::cards::builders::parse_parsing::{
     parser_trace, replace_unbound_x_in_effects_anywhere, run_sentence_primitives, split_on_and,
     split_on_comma, split_until_source_leaves_tail, target_object_filter_mut,
 };
-#[allow(unused_imports)]
-use crate::cards::builders::{
-    CardTextError, EffectAst, ExtraTurnAnchorAst, IT_TAG, LineAst, PlayerAst, SubjectAst, TagKey,
-    TargetAst, TextSpan, Token, TriggerSpec, Verb, is_article, is_source_reference_words,
-    parse_card_type, parse_object_filter, parse_subject, parse_target_phrase, parse_value,
-    target_ast_to_object_filter, token_index_for_word_index, words,
-};
+use crate::cards::builders::parse_parsing::effects_sentences::TokenCopyFollowup;
 use crate::effect::{ChoiceCount, EventValueSpec, Until, Value};
-use crate::target::{
-    ChooseSpec, ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation,
-};
+use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation};
 use crate::types::CardType;
 use crate::zone::Zone;
 
@@ -485,10 +483,7 @@ const SENTENCE_UNSUPPORTED_RULES: [UnsupportedRuleDef; 34] = [
 const SENTENCE_UNSUPPORTED_DIAGNOSER: UnsupportedDiagnoser =
     UnsupportedDiagnoser::new(&SENTENCE_UNSUPPORTED_RULES);
 
-fn diagnose_sentence_unsupported(
-    tokens: &[Token],
-    _sentence_words: &[&str],
-) -> Option<CardTextError> {
+fn diagnose_sentence_unsupported(tokens: &[Token]) -> Option<CardTextError> {
     let view = ClauseView::from_tokens(tokens);
     SENTENCE_UNSUPPORTED_DIAGNOSER.diagnose(&view, "clause")
 }
@@ -563,7 +558,7 @@ fn parse_effect_chain_rule(view: &ClauseView<'_>) -> Result<Option<Vec<EffectAst
     parse_effect_chain(view.tokens).map(Some)
 }
 
-const SENTENCE_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 8] = [
+const SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 5] = [
     RuleDef {
         id: "redirect-next-damage",
         priority: 100,
@@ -586,25 +581,28 @@ const SENTENCE_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 8] = [
         run: parse_double_target_power_sentence_rule,
     },
     RuleDef {
-        id: "preconditional-primitives",
-        priority: 130,
-        heads: SENTENCE_PRIMITIVE_RULE_HEADS,
-        shape_mask: 0,
-        run: parse_preconditional_sentence_primitives_rule,
-    },
-    RuleDef {
         id: "spell-this-way-pay-life",
-        priority: 140,
+        priority: 130,
         heads: &["if"],
         shape_mask: RULE_SHAPE_STARTS_IF,
         run: parse_spell_this_way_pay_life_rule,
     },
     RuleDef {
         id: "conditional",
-        priority: 150,
+        priority: 140,
         heads: &["if"],
         shape_mask: RULE_SHAPE_STARTS_IF,
         run: parse_conditional_sentence_rule,
+    },
+];
+
+const SENTENCE_POST_DIAGNOSTIC_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 3] = [
+    RuleDef {
+        id: "preconditional-primitives",
+        priority: 150,
+        heads: SENTENCE_PRIMITIVE_RULE_HEADS,
+        shape_mask: 0,
+        run: parse_preconditional_sentence_primitives_rule,
     },
     RuleDef {
         id: "postconditional-primitives",
@@ -622,13 +620,32 @@ const SENTENCE_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 8] = [
     },
 ];
 
-const SENTENCE_PARSE_INDEX: RuleIndex<Vec<EffectAst>> = RuleIndex::new(&SENTENCE_PARSE_RULES);
+const SENTENCE_PRE_DIAGNOSTIC_PARSE_INDEX: RuleIndex<Vec<EffectAst>> =
+    RuleIndex::new(&SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES);
+const SENTENCE_POST_DIAGNOSTIC_PARSE_INDEX: RuleIndex<Vec<EffectAst>> =
+    RuleIndex::new(&SENTENCE_POST_DIAGNOSTIC_PARSE_RULES);
 
 fn run_sentence_parse_rules(
     tokens: &[Token],
 ) -> Result<(&'static str, Vec<EffectAst>), CardTextError> {
     let view = ClauseView::from_tokens(tokens);
-    if let Some((rule_id, effects)) = SENTENCE_PARSE_INDEX.run_first(&view)? {
+    match SENTENCE_PRE_DIAGNOSTIC_PARSE_INDEX.run_first(&view) {
+        Ok(Some((rule_id, effects))) => return Ok((rule_id, effects)),
+        Ok(None) => {}
+        Err(parse_err) => {
+            if let Some(diag) = diagnose_sentence_unsupported(tokens) {
+                return Err(diag);
+            }
+            return Err(parse_err);
+        }
+    }
+
+    // Keep unsupported sentence grammar ahead of the generic primitive/effect-chain fallback.
+    if let Some(diag) = diagnose_sentence_unsupported(tokens) {
+        return Err(diag);
+    }
+
+    if let Some((rule_id, effects)) = SENTENCE_POST_DIAGNOSTIC_PARSE_INDEX.run_first(&view)? {
         return Ok((rule_id, effects));
     }
 
@@ -1031,9 +1048,6 @@ pub(crate) fn parse_effect_sentence_inner(
         parser_trace("parse_effect_sentence:leading-then", &tokens[1..]);
         return parse_effect_sentence(&tokens[1..]);
     }
-    if let Some(diag) = diagnose_sentence_unsupported(tokens, &sentence_words) {
-        return Err(diag);
-    }
     if tokens
         .iter()
         .any(|token| token.is_word("search") || token.is_word("searches"))
@@ -1043,15 +1057,7 @@ pub(crate) fn parse_effect_sentence_inner(
         apply_where_x_to_damage_amounts(tokens, &mut effects)?;
         return Ok(effects);
     }
-    let (rule_id, mut effects) = match run_sentence_parse_rules(tokens) {
-        Ok(result) => result,
-        Err(parse_err) => {
-            if let Some(diag) = diagnose_sentence_unsupported(tokens, &sentence_words) {
-                return Err(diag);
-            }
-            return Err(parse_err);
-        }
-    };
+    let (rule_id, mut effects) = run_sentence_parse_rules(tokens)?;
     let stage = format!("parse_effect_sentence:rule={rule_id}");
     parser_trace(stage.as_str(), tokens);
     apply_where_x_to_damage_amounts(tokens, &mut effects)?;

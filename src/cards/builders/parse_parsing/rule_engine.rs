@@ -31,6 +31,7 @@ pub(crate) struct ClauseView<'a> {
     pub(crate) key: RuleKey<'a>,
     pub(crate) normalized: Option<&'a str>,
     pub(crate) normalized_without_braces: Option<&'a str>,
+    pub(crate) line_index: Option<usize>,
 }
 
 impl<'a> ClauseView<'a> {
@@ -45,6 +46,7 @@ impl<'a> ClauseView<'a> {
             key: RuleKey::new(head, shape),
             normalized: None,
             normalized_without_braces: None,
+            line_index: None,
         }
     }
 
@@ -53,6 +55,7 @@ impl<'a> ClauseView<'a> {
         normalized: &'a str,
         normalized_without_braces: &'a str,
         tokens: &'a [Token],
+        line_index: usize,
     ) -> Self {
         let words = words(tokens);
         let head = words.first().copied().unwrap_or("");
@@ -64,6 +67,7 @@ impl<'a> ClauseView<'a> {
             key: RuleKey::new(head, shape),
             normalized: Some(normalized),
             normalized_without_braces: Some(normalized_without_braces),
+            line_index: Some(line_index),
         }
     }
 
@@ -74,6 +78,27 @@ impl<'a> ClauseView<'a> {
             self.words.join(" ")
         }
     }
+}
+
+pub(crate) fn unsupported_rule_error(
+    rule_id: &str,
+    message: &str,
+    subject_label: &str,
+    text: &str,
+) -> CardTextError {
+    CardTextError::ParseError(format!(
+        "{message} ({subject_label}: '{text}') [rule={rule_id}]"
+    ))
+}
+
+pub(crate) fn unsupported_rule_error_for_view(
+    rule_id: &str,
+    message: &str,
+    subject_label: &str,
+    view: &ClauseView<'_>,
+) -> CardTextError {
+    let text = view.display_text();
+    unsupported_rule_error(rule_id, message, subject_label, &text)
 }
 
 fn clause_shape(tokens: &[Token], words: &[&str]) -> u32 {
@@ -200,11 +225,12 @@ impl UnsupportedDiagnoser {
         for idx in candidate_indices {
             let rule = &self.rules[idx];
             if (rule.predicate)(view) {
-                let text = view.display_text();
-                return Some(CardTextError::ParseError(format!(
-                    "{} ({}: '{}') [rule={}]",
-                    rule.message, subject_label, text, rule.id
-                )));
+                return Some(unsupported_rule_error_for_view(
+                    rule.id,
+                    rule.message,
+                    subject_label,
+                    view,
+                ));
             }
         }
         None

@@ -3,9 +3,9 @@ use crate::cards::builders::effect_ast_traversal::{
 };
 use crate::cards::builders::{
     AnnotatedEffect, AnnotatedEffectSequence, CardTextError, EffectAst, IT_TAG, IdGenContext,
-    LoweringFrame, NewTargetRestrictionAst, ObjectRefAst, PlayerAst, PredicateAst,
-    PreventNextTimeDamageSourceAst, RefState, ReferenceEnv, ReferenceImports, RetargetModeAst,
-    TargetAst, choose_spec_targets_object, effect_references_event_derived_amount,
+    NewTargetRestrictionAst, ObjectRefAst, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
+    RefState, ReferenceEnv, ReferenceFrame, ReferenceImports, RetargetModeAst, TargetAst,
+    choose_spec_targets_object, effect_references_event_derived_amount,
     effects_reference_it_tag, effects_reference_its_controller,
     infer_player_filter_from_object_filter, resolve_non_target_player_filter,
     resolve_target_spec_with_choices,
@@ -80,11 +80,21 @@ pub(crate) fn annotate_effect_sequence(
         config.initial_last_effect_id,
     );
     let mut id_gen = id_gen;
-    annotate_effect_sequence_with_env(effects, env, config, &mut id_gen)
+    annotate_effect_sequence_with_env_internal(effects, env, config, &mut id_gen)
 }
 
-fn lowering_reference_frame(frame: &LoweringFrame) -> ReferenceEnv {
-    ReferenceEnv::from_lowering_frame(frame)
+pub(crate) fn annotate_effect_sequence_from_env(
+    effects: &[EffectAst],
+    env: ReferenceEnv,
+    config: EffectReferenceResolutionConfig,
+    id_gen: IdGenContext,
+) -> Result<AnnotatedEffectSequence, CardTextError> {
+    let mut id_gen = id_gen;
+    annotate_effect_sequence_with_env_internal(effects, env, config, &mut id_gen)
+}
+
+fn lowering_reference_frame(frame: &ReferenceFrame) -> ReferenceEnv {
+    ReferenceEnv::from_frame(frame)
 }
 
 fn next_reference_tag(id_gen: &mut IdGenContext, prefix: &str) -> String {
@@ -95,7 +105,7 @@ fn next_reference_tag(id_gen: &mut IdGenContext, prefix: &str) -> String {
 
 fn track_effect_player(
     player: PlayerAst,
-    frame: &mut LoweringFrame,
+    frame: &mut ReferenceFrame,
     allow_target: bool,
     allow_target_opponent: bool,
 ) -> Result<(), CardTextError> {
@@ -115,7 +125,7 @@ fn track_effect_player(
     Ok(())
 }
 
-fn track_target_player(target: &TargetAst, frame: &mut LoweringFrame) {
+fn track_target_player(target: &TargetAst, frame: &mut ReferenceFrame) {
     match target {
         TargetAst::Player(filter, _) | TargetAst::PlayerOrPlaneswalker(filter, _) => {
             frame.last_player_filter = Some(PlayerFilter::Target(Box::new(filter.clone())));
@@ -125,7 +135,7 @@ fn track_target_player(target: &TargetAst, frame: &mut LoweringFrame) {
     }
 }
 
-fn track_player_from_object_filter(filter: &ObjectFilter, frame: &mut LoweringFrame) {
+fn track_player_from_object_filter(filter: &ObjectFilter, frame: &mut ReferenceFrame) {
     if let Some(tag) = frame.last_object_tag.as_deref() {
         if filter.owner.is_some() {
             frame.last_player_filter = Some(PlayerFilter::OwnerOf(ObjectRef::tagged(tag)));
@@ -150,7 +160,7 @@ fn track_player_from_object_filter(filter: &ObjectFilter, frame: &mut LoweringFr
 
 fn maybe_tag_target(
     target: &TargetAst,
-    frame: &mut LoweringFrame,
+    frame: &mut ReferenceFrame,
     id_gen: &mut IdGenContext,
     prefix: &str,
 ) -> Result<(), CardTextError> {
@@ -166,7 +176,7 @@ fn maybe_tag_target(
 fn advance_effects_preserving_last_effect(
     effects: &[EffectAst],
     id_gen: &mut IdGenContext,
-    frame: &mut LoweringFrame,
+    frame: &mut ReferenceFrame,
 ) -> Result<(), CardTextError> {
     let saved_last_effect = frame.last_effect_id;
     advance_reference_frames(effects, id_gen, frame)?;
@@ -177,7 +187,7 @@ fn advance_effects_preserving_last_effect(
 fn advance_effects_in_iterated_player_context(
     effects: &[EffectAst],
     id_gen: &mut IdGenContext,
-    frame: &mut LoweringFrame,
+    frame: &mut ReferenceFrame,
     tagged_object: Option<String>,
 ) -> Result<(), CardTextError> {
     let saved = frame.clone();
@@ -197,7 +207,7 @@ fn advance_effects_in_iterated_player_context(
 fn advance_reference_frames(
     effects: &[EffectAst],
     id_gen: &mut IdGenContext,
-    frame: &mut LoweringFrame,
+    frame: &mut ReferenceFrame,
 ) -> Result<(), CardTextError> {
     for effect in effects {
         advance_reference_frame_for_effect(effect, id_gen, frame)?;
@@ -208,7 +218,7 @@ fn advance_reference_frames(
 fn advance_reference_frame_for_effect(
     effect: &EffectAst,
     id_gen: &mut IdGenContext,
-    frame: &mut LoweringFrame,
+    frame: &mut ReferenceFrame,
 ) -> Result<(), CardTextError> {
     match effect {
         EffectAst::Draw { player, .. }
@@ -593,7 +603,7 @@ fn effect_reference_resolution_state(env: &ReferenceEnv) -> EffectReferenceResol
     }
 }
 
-fn annotate_effect_sequence_with_env(
+fn annotate_effect_sequence_with_env_internal(
     effects: &[EffectAst],
     mut current_env: ReferenceEnv,
     config: EffectReferenceResolutionConfig,
@@ -788,13 +798,13 @@ fn advance_reference_env_for_effect(
             if_true, if_false, ..
         } => {
             let true_sequence =
-                annotate_effect_sequence_with_env(if_true, env.clone(), config, id_gen)?;
+                annotate_effect_sequence_with_env_internal(if_true, env.clone(), config, id_gen)?;
             if if_false.is_empty() {
                 return Ok(true_sequence.final_env);
             }
 
             let false_sequence =
-                annotate_effect_sequence_with_env(if_false, env.clone(), config, id_gen)?;
+                annotate_effect_sequence_with_env_internal(if_false, env.clone(), config, id_gen)?;
             Ok(ReferenceEnv {
                 last_object_tag: RefState::join(
                     &true_sequence.final_env.last_object_tag,
@@ -816,19 +826,20 @@ fn advance_reference_env_for_effect(
             let mut nested_env = env.clone();
             nested_env.last_effect_id = RefState::Known(*condition);
             nested_env.bind_unbound_x_to_last_effect = true;
-            let nested = annotate_effect_sequence_with_env(effects, nested_env, config, id_gen)?;
+            let nested =
+                annotate_effect_sequence_with_env_internal(effects, nested_env, config, id_gen)?;
             let mut out_env = nested.final_env;
             out_env.last_effect_id = env.last_effect_id.clone();
             out_env.bind_unbound_x_to_last_effect = env.bind_unbound_x_to_last_effect;
             Ok(out_env)
         }
         _ => {
-            let mut frame = env.to_lowering_frame(
+            let mut frame = env.to_frame(
                 auto_tag_object_targets,
                 config.force_auto_tag_object_targets,
             );
             advance_reference_frame_for_effect(effect, id_gen, &mut frame)?;
-            Ok(ReferenceEnv::from_lowering_frame(&frame))
+            Ok(ReferenceEnv::from_frame(&frame))
         }
     }
 }

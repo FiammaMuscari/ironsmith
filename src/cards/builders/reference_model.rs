@@ -11,6 +11,46 @@ pub(crate) enum RefState<T> {
     Ambiguous,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ReferenceFrame {
+    pub(crate) last_effect_id: Option<EffectId>,
+    pub(crate) last_object_tag: Option<String>,
+    pub(crate) last_player_filter: Option<PlayerFilter>,
+    pub(crate) iterated_player: bool,
+    pub(crate) auto_tag_object_targets: bool,
+    pub(crate) force_auto_tag_object_targets: bool,
+    pub(crate) allow_life_event_value: bool,
+    pub(crate) bind_unbound_x_to_last_effect: bool,
+}
+
+impl ReferenceFrame {
+    pub(crate) fn from_lowering_frame(frame: &LoweringFrame) -> Self {
+        Self {
+            last_effect_id: frame.last_effect_id,
+            last_object_tag: frame.last_object_tag.clone(),
+            last_player_filter: frame.last_player_filter.clone(),
+            iterated_player: frame.iterated_player,
+            auto_tag_object_targets: frame.auto_tag_object_targets,
+            force_auto_tag_object_targets: frame.force_auto_tag_object_targets,
+            allow_life_event_value: frame.allow_life_event_value,
+            bind_unbound_x_to_last_effect: frame.bind_unbound_x_to_last_effect,
+        }
+    }
+
+    pub(crate) fn to_lowering_frame(&self) -> LoweringFrame {
+        LoweringFrame {
+            last_effect_id: self.last_effect_id,
+            last_object_tag: self.last_object_tag.clone(),
+            last_player_filter: self.last_player_filter.clone(),
+            iterated_player: self.iterated_player,
+            auto_tag_object_targets: self.auto_tag_object_targets,
+            force_auto_tag_object_targets: self.force_auto_tag_object_targets,
+            allow_life_event_value: self.allow_life_event_value,
+            bind_unbound_x_to_last_effect: self.bind_unbound_x_to_last_effect,
+        }
+    }
+}
+
 impl<T: Clone + PartialEq> RefState<T> {
     pub(crate) fn from_option(value: Option<T>) -> Self {
         match value {
@@ -58,12 +98,24 @@ impl ReferenceImports {
         }
     }
 
-    pub(crate) fn from_lowering_frame(frame: &LoweringFrame) -> Self {
+    pub(crate) fn from_env(env: &ReferenceEnv) -> Self {
+        Self {
+            last_object_tag: env.last_object_tag.clone().into_option(),
+            last_player_filter: env.last_player_filter.clone().into_option(),
+            last_effect_id: env.last_effect_id.clone().into_option(),
+        }
+    }
+
+    pub(crate) fn from_frame(frame: &ReferenceFrame) -> Self {
         Self {
             last_object_tag: frame.last_object_tag.as_ref().map(TagKey::from),
             last_player_filter: frame.last_player_filter.clone(),
             last_effect_id: frame.last_effect_id,
         }
+    }
+
+    pub(crate) fn from_lowering_frame(frame: &LoweringFrame) -> Self {
+        Self::from_frame(&ReferenceFrame::from_lowering_frame(frame))
     }
 }
 
@@ -110,7 +162,7 @@ impl ReferenceEnv {
         }
     }
 
-    pub(crate) fn from_lowering_frame(frame: &LoweringFrame) -> Self {
+    pub(crate) fn from_frame(frame: &ReferenceFrame) -> Self {
         Self {
             last_object_tag: RefState::from_option(
                 frame.last_object_tag.as_ref().map(TagKey::from),
@@ -123,12 +175,16 @@ impl ReferenceEnv {
         }
     }
 
-    pub(crate) fn to_lowering_frame(
+    pub(crate) fn from_lowering_frame(frame: &LoweringFrame) -> Self {
+        Self::from_frame(&ReferenceFrame::from_lowering_frame(frame))
+    }
+
+    pub(crate) fn to_frame(
         &self,
         auto_tag_object_targets: bool,
         force_auto_tag_object_targets: bool,
-    ) -> LoweringFrame {
-        LoweringFrame {
+    ) -> ReferenceFrame {
+        ReferenceFrame {
             last_effect_id: self.last_effect_id.clone().into_option(),
             last_object_tag: self
                 .last_object_tag
@@ -142,6 +198,15 @@ impl ReferenceEnv {
             allow_life_event_value: self.allow_life_event_value,
             bind_unbound_x_to_last_effect: self.bind_unbound_x_to_last_effect,
         }
+    }
+
+    pub(crate) fn to_lowering_frame(
+        &self,
+        auto_tag_object_targets: bool,
+        force_auto_tag_object_targets: bool,
+    ) -> LoweringFrame {
+        self.to_frame(auto_tag_object_targets, force_auto_tag_object_targets)
+            .to_lowering_frame()
     }
 
     pub(crate) fn known_last_object_tag(&self) -> Option<&TagKey> {
@@ -192,8 +257,12 @@ impl ReferenceExports {
         }
     }
 
+    pub(crate) fn from_frame(frame: &ReferenceFrame) -> Self {
+        Self::from_env(&ReferenceEnv::from_frame(frame))
+    }
+
     pub(crate) fn from_lowering_frame(frame: &LoweringFrame) -> Self {
-        Self::from_env(&ReferenceEnv::from_lowering_frame(frame))
+        Self::from_frame(&ReferenceFrame::from_lowering_frame(frame))
     }
 
     pub(crate) fn join(left: &Self, right: &Self) -> Self {

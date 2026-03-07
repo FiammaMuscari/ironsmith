@@ -13,7 +13,9 @@ use crate::cards::CardDefinition;
 use crate::cards::builders::ability_lowering::lower_parsed_ability;
 #[allow(unused_imports)]
 use crate::cards::builders::effect_pipeline::{
-    PreparedEffectsForLowering, prepare_effects_for_lowering,
+    EffectPreludeTag, PreparedEffectsForLowering, PreparedPredicateForLowering,
+    PreparedTriggeredEffectsForLowering, prepare_effects_for_lowering,
+    prepare_effects_with_trigger_context_for_lowering, prepare_triggered_effects_for_lowering,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::parse_parsing::{
@@ -280,83 +282,82 @@ pub(crate) fn compile_statement_effects_with_imports(
     effects: &[EffectAst],
     imports: &ReferenceImports,
 ) -> Result<LoweredEffects, CardTextError> {
-    let prepared = prepare_effects_for_lowering(effects, imports.clone());
-    compile_statement_effects_prepared(&prepared)
+    let prepared = prepare_effects_for_lowering(effects, imports.clone())?;
+    materialize_prepared_statement_effects(&prepared)
 }
 
-fn compile_statement_effects_prepared(
+pub(crate) fn materialize_prepared_statement_effects(
     prepared: &PreparedEffectsForLowering,
 ) -> Result<LoweredEffects, CardTextError> {
     let mut ctx = CompileContext::new();
-    ctx.force_auto_tag_object_targets = true;
-    ctx.allow_life_event_value = false;
-    seed_reference_imports(&mut ctx, &prepared.imports);
-    let prelude = seed_attached_source_tag_prelude(&mut ctx, &prepared.effects);
-    let mut id_gen = ctx.id_gen_context();
-    let frame_in = ctx.lowering_frame();
-    let (compiled, _, frame_out) =
-        compile_effects_with_explicit_frame(&prepared.effects, &mut id_gen, frame_in)?;
-    ctx.apply_id_gen_context(id_gen);
-    ctx.apply_lowering_frame(frame_out);
+    ctx.force_auto_tag_object_targets = prepared.force_auto_tag_object_targets;
+    ctx.apply_reference_env(&prepared.initial_env);
+    let (compiled, _) = compile_annotated_effects_with_context(&prepared.annotated, &mut ctx)?;
     Ok(LoweredEffects {
-        effects: prepend_effect_prelude(compiled, prelude),
+        effects: prepend_effect_prelude(compiled, compile_effect_prelude_tags(&prepared.prelude)),
         choices: Vec::new(),
-        exports: ReferenceExports::from_lowering_frame(&ctx.lowering_frame()),
+        exports: ReferenceExports::from_env(&ctx.reference_env()),
     })
 }
 
-fn seed_attached_source_tag_prelude(
-    ctx: &mut CompileContext,
-    effects: &[EffectAst],
-) -> Vec<Effect> {
-    let mut prelude = Vec::new();
-    for tag in ["equipped", "enchanted"] {
-        if effects_reference_tag(effects, tag) {
-            if ctx.last_object_tag.is_none() {
-                ctx.last_object_tag = Some(tag.to_string());
-            }
-            prelude.push(Effect::tag_attached_to_source(tag));
-        }
-    }
+pub(crate) fn materialize_prepared_effects_with_trigger_context(
+    prepared: &PreparedEffectsForLowering,
+) -> Result<LoweredEffects, CardTextError> {
+    let mut ctx = CompileContext::new();
+    ctx.force_auto_tag_object_targets = prepared.force_auto_tag_object_targets;
+    ctx.apply_reference_env(&prepared.initial_env);
+    let (compiled, choices) = compile_annotated_effects_with_context(&prepared.annotated, &mut ctx)?;
+    Ok(LoweredEffects {
+        effects: prepend_effect_prelude(compiled, compile_effect_prelude_tags(&prepared.prelude)),
+        choices,
+        exports: ReferenceExports::from_env(&ctx.reference_env()),
+    })
+}
+
+pub(crate) fn materialize_prepared_triggered_effects(
+    prepared: &PreparedTriggeredEffectsForLowering,
+) -> Result<(LoweredEffects, Option<Condition>), CardTextError> {
+    let lowered = materialize_prepared_effects_with_trigger_context(&prepared.prepared)?;
+    let intervening_if = prepared
+        .intervening_if
+        .as_ref()
+        .map(compile_prepared_predicate_for_lowering)
+        .transpose()?;
+    Ok((lowered, intervening_if))
+}
+
+pub(crate) fn compile_effect_prelude_tags(prelude: &[EffectPreludeTag]) -> Vec<Effect> {
     prelude
+        .iter()
+        .map(|tag| match tag {
+            EffectPreludeTag::AttachedSource(tag) => Effect::tag_attached_to_source(tag.as_str()),
+            EffectPreludeTag::TriggeringObject(tag) => Effect::tag_triggering_object(tag.as_str()),
+            EffectPreludeTag::TriggeringDamageTarget(tag) => {
+                Effect::tag_triggering_damage_target(tag.as_str())
+            }
+        })
+        .collect()
 }
 
-fn seed_reference_imports(ctx: &mut CompileContext, imports: &ReferenceImports) {
-    if let Some(tag) = imports.last_object_tag.as_ref()
-        && tag.as_str() != IT_TAG
-    {
-        ctx.last_object_tag = Some(tag.as_str().to_string());
-    }
-    if let Some(player_filter) = imports.last_player_filter.as_ref() {
-        ctx.last_player_filter = Some(player_filter.clone());
-    }
-    if let Some(effect_id) = imports.last_effect_id {
-        ctx.last_effect_id = Some(effect_id);
-    }
+pub(crate) fn compile_condition_from_predicate_ast_with_env(
+    predicate: &PredicateAst,
+    refs: &ReferenceEnv,
+    saved_last_object_tag: Option<&TagKey>,
+) -> Result<Condition, CardTextError> {
+    let mut ctx = CompileContext::new();
+    ctx.apply_reference_env(refs);
+    let saved_last_tag = saved_last_object_tag.map(|tag| tag.as_str().to_string());
+    compile_condition_from_predicate_ast(predicate, &mut ctx, &saved_last_tag)
 }
 
-fn maybe_seed_default_trigger_object_tag(
-    ctx: &mut CompileContext,
-    trigger: Option<&TriggerSpec>,
-    effects: &[EffectAst],
-) {
-    if ctx.last_object_tag.is_none()
-        && (effects_reference_it_tag(effects) || effects_reference_its_controller(effects))
-    {
-        let default_tag = if matches!(
-            trigger,
-            Some(
-                TriggerSpec::ThisDealsDamageTo(_)
-                    | TriggerSpec::ThisDealsCombatDamageTo(_)
-                    | TriggerSpec::DealsCombatDamageTo { .. }
-            )
-        ) {
-            "damaged"
-        } else {
-            "triggering"
-        };
-        ctx.last_object_tag = Some(default_tag.to_string());
-    }
+pub(crate) fn compile_prepared_predicate_for_lowering(
+    prepared: &PreparedPredicateForLowering,
+) -> Result<Condition, CardTextError> {
+    compile_condition_from_predicate_ast_with_env(
+        &prepared.predicate,
+        &prepared.reference_env,
+        prepared.saved_last_object_tag.as_ref(),
+    )
 }
 
 fn prepend_effect_prelude(mut compiled: Vec<Effect>, mut prelude: Vec<Effect>) -> Vec<Effect> {
@@ -365,21 +366,6 @@ fn prepend_effect_prelude(mut compiled: Vec<Effect>, mut prelude: Vec<Effect>) -
     }
     prelude.append(&mut compiled);
     prelude
-}
-
-fn prepend_trigger_tag_effects(
-    mut compiled: Vec<Effect>,
-    effects: &[EffectAst],
-    last_object_tag: Option<&str>,
-) -> Vec<Effect> {
-    if effects_reference_tag(effects, "triggering") || matches!(last_object_tag, Some("triggering"))
-    {
-        compiled.insert(0, Effect::tag_triggering_object("triggering"));
-    }
-    if effects_reference_tag(effects, "damaged") || matches!(last_object_tag, Some("damaged")) {
-        compiled.insert(0, Effect::tag_triggering_damage_target("damaged"));
-    }
-    compiled
 }
 
 pub(crate) fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<PlayerFilter> {
@@ -481,13 +467,9 @@ pub(crate) fn compile_trigger_effects_with_imports(
     effects: &[EffectAst],
     imports: &ReferenceImports,
 ) -> Result<LoweredEffects, CardTextError> {
-    let (effects, choices, _, exports) =
-        compile_trigger_effects_with_intervening_if_imports_internal(trigger, effects, imports)?;
-    Ok(LoweredEffects {
-        effects,
-        choices,
-        exports,
-    })
+    let prepared =
+        prepare_effects_with_trigger_context_for_lowering(trigger, effects, imports.clone())?;
+    materialize_prepared_effects_with_trigger_context(&prepared)
 }
 
 pub(crate) fn compile_condition_from_predicate_ast(
@@ -766,76 +748,20 @@ pub(crate) fn compile_trigger_effects_with_intervening_if_imports(
     effects: &[EffectAst],
     imports: &ReferenceImports,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>, Option<Condition>), CardTextError> {
-    let (effects, choices, intervening_if, _) =
-        compile_trigger_effects_with_intervening_if_imports_internal(trigger, effects, imports)?;
-    Ok((effects, choices, intervening_if))
-}
-
-fn compile_trigger_effects_with_intervening_if_imports_internal(
-    trigger: Option<&TriggerSpec>,
-    effects: &[EffectAst],
-    imports: &ReferenceImports,
-) -> Result<
-    (
-        Vec<Effect>,
-        Vec<ChooseSpec>,
-        Option<Condition>,
-        ReferenceExports,
-    ),
-    CardTextError,
-> {
-    if let Some(trigger) = trigger {
-        ensure_concrete_trigger_spec(trigger)?;
-    }
-    let mut ctx = CompileContext::new();
-    ctx.last_player_filter = trigger.and_then(inferred_trigger_player_filter);
-    ctx.allow_life_event_value = trigger
-        .map(|trigger| trigger_supports_event_value(trigger, &EventValueSpec::Amount))
-        .unwrap_or(false);
-    let prepared = prepare_effects_for_lowering(effects, imports.clone());
-    seed_reference_imports(&mut ctx, &prepared.imports);
-    let prelude = seed_attached_source_tag_prelude(&mut ctx, &prepared.effects);
-    maybe_seed_default_trigger_object_tag(&mut ctx, trigger, &prepared.effects);
-    let mut intervening_if: Option<Condition> = None;
-    let mut effects_to_compile = prepared.effects.as_slice();
-    let mut extracted_predicate: Option<&PredicateAst> = None;
-    if prepared.effects.len() == 1
-        && let EffectAst::Conditional {
-            predicate,
-            if_true,
-            if_false,
-        } = &prepared.effects[0]
-        && if_false.is_empty()
-        && !if_true.is_empty()
-    {
-        extracted_predicate = Some(predicate);
-        effects_to_compile = if_true;
-    }
-
-    let saved_last_tag = ctx.last_object_tag.clone();
-    if let Some(predicate) = extracted_predicate {
-        intervening_if = Some(compile_condition_from_predicate_ast(
-            predicate,
-            &mut ctx,
-            &saved_last_tag,
-        )?);
-    }
-
-    let mut id_gen = ctx.id_gen_context();
-    let frame_in = ctx.lowering_frame();
-    let (compiled, choices, frame_out) =
-        compile_effects_with_explicit_frame(effects_to_compile, &mut id_gen, frame_in)?;
-    ctx.apply_id_gen_context(id_gen);
-    ctx.apply_lowering_frame(frame_out);
-    let compiled = prepend_effect_prelude(compiled, prelude);
-    let compiled =
-        prepend_trigger_tag_effects(compiled, &prepared.effects, ctx.last_object_tag.as_deref());
-    Ok((
-        compiled,
-        choices,
-        intervening_if,
-        ReferenceExports::from_lowering_frame(&ctx.lowering_frame()),
-    ))
+    let prepared = if let Some(trigger) = trigger {
+        prepare_triggered_effects_for_lowering(trigger, effects, imports.clone())?
+    } else {
+        PreparedTriggeredEffectsForLowering {
+            prepared: prepare_effects_with_trigger_context_for_lowering(
+                None,
+                effects,
+                imports.clone(),
+            )?,
+            intervening_if: None,
+        }
+    };
+    let (lowered, intervening_if) = materialize_prepared_triggered_effects(&prepared)?;
+    Ok((lowered.effects, lowered.choices, intervening_if))
 }
 
 pub(crate) fn effects_reference_tag(effects: &[EffectAst], tag: &str) -> bool {
@@ -1620,7 +1546,7 @@ pub(crate) fn compile_effects(
     compile_annotated_effects_with_context(&annotated, ctx)
 }
 
-fn compile_annotated_effects_with_context(
+pub(crate) fn compile_annotated_effects_with_context(
     annotated: &AnnotatedEffectSequence,
     ctx: &mut CompileContext,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
