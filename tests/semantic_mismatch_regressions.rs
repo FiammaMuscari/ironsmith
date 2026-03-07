@@ -446,6 +446,28 @@ fn regression_semantic_mismatch_one_with_the_kami_trigger_disjunction() {
 }
 
 #[test]
+fn regression_semantic_mismatch_fear_of_falling_shared_duration() {
+    let rendered = rendered_lines(
+        "Flying\nWhenever this creature attacks, target creature defending player controls gets -2/-0 and loses flying until your next turn.",
+        "Fear of Falling",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("gets -2/-0 until your next turn"),
+        "expected the power reduction to keep the shared next-turn duration, got {rendered}"
+    );
+    assert!(
+        rendered.contains("loses flying until your next turn"),
+        "expected the flying-loss clause to keep the shared next-turn duration, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("gets -2/-0 until end of turn"),
+        "shared duration should not collapse back to end of turn, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_contagious_vorrac_if_not_into_hand_followup() {
     let rendered = rendered_lines(
         "When this creature enters, look at the top four cards of your library. You may reveal a land card from among them and put it into your hand. Put the rest on the bottom of your library in a random order. If you didn't put a card into your hand this way, proliferate.",

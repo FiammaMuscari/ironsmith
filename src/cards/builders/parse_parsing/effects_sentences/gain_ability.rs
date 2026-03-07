@@ -239,13 +239,14 @@ pub(crate) fn parse_gain_ability_sentence(
     }
     let gain_idx = word_list
         .iter()
-        .position(|word| matches!(*word, "gain" | "gains" | "has" | "have"));
+        .position(|word| matches!(*word, "gain" | "gains" | "has" | "have" | "lose" | "loses"));
     let Some(gain_idx) = gain_idx else {
         return Ok(None);
     };
     let Some(gain_token_idx) = token_index_for_word_index(tokens, gain_idx) else {
         return Ok(None);
     };
+    let losing = matches!(word_list[gain_idx], "lose" | "loses");
 
     let after_gain = &word_list[gain_idx + 1..];
     if matches!(word_list[gain_idx], "gain" | "gains") {
@@ -375,7 +376,7 @@ pub(crate) fn parse_gain_ability_sentence(
             .filter_map(keyword_action_to_static_ability)
             .map(GrantedAbilityAst::from)
             .collect::<Vec<_>>()
-    } else if let Some(actions) = parse_choice_of_abilities(&ability_tokens) {
+    } else if !losing && let Some(actions) = parse_choice_of_abilities(&ability_tokens) {
         grant_is_choice = true;
         reject_unimplemented_keyword_actions(&actions, &word_list.join(" "))?;
         actions
@@ -387,6 +388,7 @@ pub(crate) fn parse_gain_ability_sentence(
         Vec::new()
     };
     if abilities.is_empty()
+        && !losing
         && let Some(granted) =
             parse_granted_activated_or_triggered_ability_for_gain(&ability_tokens, &word_list)?
     {
@@ -399,8 +401,8 @@ pub(crate) fn parse_gain_ability_sentence(
         abilities.push(StaticAbility::must_attack().into());
     }
 
-    // Check for "gets +X/+Y and gains/has ..." pattern - if there's a pump modifier
-    // before the granting verb, extract it as a separate Pump/PumpAll effect.
+    // Check for "gets +X/+Y and gains/has/loses ..." patterns - if there's a pump
+    // modifier before the ability verb, extract it as a separate Pump/PumpAll effect.
     let before_gain = &word_list[subject_start_word_idx..gain_idx];
     let get_idx = before_gain.iter().position(|w| *w == "get" || *w == "gets");
     let pump_effect = if let Some(gi) = get_idx {
@@ -452,7 +454,13 @@ pub(crate) fn parse_gain_ability_sentence(
                 condition: None,
             });
         }
-        if grant_is_choice {
+        if losing {
+            effects.push(EffectAst::RemoveAbilitiesFromTarget {
+                target,
+                abilities,
+                duration,
+            });
+        } else if grant_is_choice {
             effects.push(EffectAst::GrantAbilitiesChoiceToTarget {
                 target,
                 abilities,
@@ -483,7 +491,13 @@ pub(crate) fn parse_gain_ability_sentence(
                 condition: None,
             });
         }
-        if grant_is_choice {
+        if losing {
+            effects.push(EffectAst::RemoveAbilitiesFromTarget {
+                target,
+                abilities,
+                duration,
+            });
+        } else if grant_is_choice {
             effects.push(EffectAst::GrantAbilitiesChoiceToTarget {
                 target,
                 abilities,
@@ -517,7 +531,13 @@ pub(crate) fn parse_gain_ability_sentence(
         } else {
             target
         };
-        if grant_is_choice {
+        if losing {
+            effects.push(EffectAst::RemoveAbilitiesFromTarget {
+                target: grant_target,
+                abilities,
+                duration,
+            });
+        } else if grant_is_choice {
             effects.push(EffectAst::GrantAbilitiesChoiceToTarget {
                 target: grant_target,
                 abilities,
@@ -534,7 +554,7 @@ pub(crate) fn parse_gain_ability_sentence(
         return Ok(Some(effects));
     }
 
-    if real_subject_words.as_slice() == ["you"] {
+    if !losing && real_subject_words.as_slice() == ["you"] {
         let has_protection_from_everything =
             abilities.iter().any(grants_protection_from_everything);
         if has_protection_from_everything {
@@ -555,7 +575,8 @@ pub(crate) fn parse_gain_ability_sentence(
 
     let filter = parse_object_filter(&real_subject_tokens, false).map_err(|_| {
         CardTextError::ParseError(format!(
-            "unsupported subject in gain-ability clause (clause: '{}')",
+            "unsupported subject in {}-ability clause (clause: '{}')",
+            if losing { "lose" } else { "gain" },
             word_list.join(" ")
         ))
     })?;
@@ -568,7 +589,13 @@ pub(crate) fn parse_gain_ability_sentence(
             duration: duration.clone(),
         });
     }
-    if grant_is_choice {
+    if losing {
+        effects.push(EffectAst::RemoveAbilitiesAll {
+            filter,
+            abilities,
+            duration,
+        });
+    } else if grant_is_choice {
         effects.push(EffectAst::GrantAbilitiesChoiceAll {
             filter,
             abilities,
@@ -829,6 +856,27 @@ mod tests {
         assert!(
             compiled_debug.contains("GrantObjectAbilityForFilter"),
             "expected removed granted object ability after lowering, got {compiled_debug}"
+        );
+    }
+
+    #[test]
+    fn pump_and_lose_ability_sentence_keeps_shared_until_your_next_turn() {
+        let tokens = tokenize_line(
+            "Target creature gets -2/-0 and loses flying until your next turn.",
+            0,
+        );
+        let effects = parse_gain_ability_sentence(&tokens)
+            .expect("pump-and-lose sentence should parse")
+            .expect("pump-and-lose sentence should produce effects");
+
+        let debug = format!("{effects:?}");
+        assert!(
+            debug.contains("Pump") && debug.contains("RemoveAbilitiesFromTarget"),
+            "expected pump plus remove-ability effects, got {debug}"
+        );
+        assert!(
+            debug.matches("YourNextTurn").count() >= 2,
+            "expected shared duration to apply to both effects, got {debug}"
         );
     }
 }
