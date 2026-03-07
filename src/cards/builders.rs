@@ -981,6 +981,7 @@ pub(crate) enum EffectAst {
         player: PlayerAst,
         filter: ObjectFilter,
         reveal: bool,
+        if_not_chosen: Vec<EffectAst>,
     },
     PutRestOnBottomOfLibrary,
     CopySpell {

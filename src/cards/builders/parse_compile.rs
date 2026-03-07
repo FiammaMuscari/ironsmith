@@ -4741,7 +4741,8 @@ fn try_compile_visibility_and_card_selection_effect(
                 )
             })?;
 
-            let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, false)?;
+            let (chooser, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, false)?;
 
             // Choose N from the looked-at cards (which are typically tagged by a prior LookAtTopCardsEffect).
             let mut choose_filter = ObjectFilter::tagged(looked_tag.clone());
@@ -4865,6 +4866,7 @@ fn try_compile_visibility_and_card_selection_effect(
             player,
             filter,
             reveal,
+            if_not_chosen,
         } => {
             use crate::effect::Condition;
             use crate::target::{ObjectFilter, TaggedObjectConstraint, TaggedOpbjectRelation};
@@ -4907,13 +4909,17 @@ fn try_compile_visibility_and_card_selection_effect(
                     ))],
                 ));
             }
-            compiled.push(Effect::for_each_tagged(
-                chosen_tag.clone(),
-                vec![Effect::move_to_zone(
-                    ChooseSpec::Iterated,
-                    Zone::Hand,
-                    false,
-                )],
+            let move_to_hand_id = ctx.next_effect_id();
+            compiled.push(Effect::with_id(
+                move_to_hand_id.0,
+                Effect::for_each_tagged(
+                    chosen_tag.clone(),
+                    vec![Effect::move_to_zone(
+                        ChooseSpec::Iterated,
+                        Zone::Hand,
+                        false,
+                    )],
+                ),
             ));
 
             let mut membership_filter = ObjectFilter::default();
@@ -4941,7 +4947,22 @@ fn try_compile_visibility_and_card_selection_effect(
                 )],
             ));
 
+            if !if_not_chosen.is_empty() {
+                let (if_not_effects, if_not_choices) = with_preserved_lowering_context(
+                    ctx,
+                    |_| {},
+                    |ctx| compile_effects(if_not_chosen, ctx),
+                )?;
+                compiled.push(Effect::if_then(
+                    move_to_hand_id,
+                    EffectPredicate::DidNotHappen,
+                    if_not_effects,
+                ));
+                choices.extend(if_not_choices);
+            }
+
             ctx.last_object_tag = Some(chosen_tag);
+            ctx.last_effect_id = Some(move_to_hand_id);
             (compiled, choices)
         }
         EffectAst::PutRestOnBottomOfLibrary => {

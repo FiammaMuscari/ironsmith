@@ -290,3 +290,33 @@ fn regression_semantic_mismatch_one_with_the_kami_trigger_disjunction() {
         "dying-creature power should not degrade into an unrelated target reference, got {rendered}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_contagious_vorrac_if_not_into_hand_followup() {
+    let rendered = rendered_lines(
+        "When this creature enters, look at the top four cards of your library. You may reveal a land card from among them and put it into your hand. Put the rest on the bottom of your library in a random order. If you didn't put a card into your hand this way, proliferate.",
+        "Contagious Vorrac",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("look at the top four cards of your library"),
+        "expected top-of-library look clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("land"),
+        "expected land-card selection to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("put the rest on the bottom of your library"),
+        "expected rest-on-bottom clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("proliferate"),
+        "expected fallback proliferate clause to remain, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("if that doesn't happen"),
+        "fallback clause should track whether a card was put into hand, got {rendered}"
+    );
+}

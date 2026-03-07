@@ -15,7 +15,8 @@ use crate::cards::builders::{
     maybe_apply_carried_player, maybe_apply_carried_player_with_clause, normalize_cant_words,
     normalize_search_library_filter, parse_choose_card_type_then_reveal_top_and_put_chosen_to_hand,
     parse_choose_creature_type_then_become_type, parse_choose_target_prelude_sentence,
-    parse_effect_clause_with_trailing_if, parse_effect_sentence, parse_may_cast_it_sentence,
+    parse_effect_chain, parse_effect_clause_with_trailing_if, parse_effect_sentence,
+    parse_may_cast_it_sentence,
     parse_object_filter, parse_search_library_disjunction_filter,
     parse_sentence_exile_that_token_when_source_leaves,
     parse_sentence_sacrifice_source_when_that_token_leaves,
@@ -31,6 +32,8 @@ use crate::target::{ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOp
 type PairSentenceRule = fn(&[Token], &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError>;
 type TripleSentenceRule =
     fn(&[Token], &[Token], &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError>;
+type QuadSentenceRule =
+    fn(&[Token], &[Token], &[Token], &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError>;
 
 fn parse_pair_sentence_sequence(
     first: &[Token],
@@ -156,6 +159,7 @@ fn parse_look_at_top_reveal_match_put_rest_bottom(
             player: chooser,
             filter,
             reveal: true,
+            if_not_chosen: Vec::new(),
         },
     );
     Ok(Some(effects))
@@ -270,6 +274,85 @@ fn parse_triple_sentence_sequence(
     Ok(None)
 }
 
+fn parse_if_no_card_into_hand_this_way_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let words: Vec<&str> = words(tokens)
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+
+    let has_expected_prefix = words.starts_with(&[
+        "if", "you", "didnt", "put", "card", "into", "your", "hand", "this", "way",
+    ]) || words.starts_with(&[
+        "if", "you", "did", "not", "put", "card", "into", "your", "hand", "this", "way",
+    ]);
+    if !has_expected_prefix {
+        return Ok(None);
+    }
+
+    let Some(comma_idx) = tokens
+        .iter()
+        .position(|token| matches!(token, Token::Comma(_)))
+    else {
+        return Ok(None);
+    };
+    if comma_idx + 1 >= tokens.len() {
+        return Ok(None);
+    }
+
+    let effects = parse_effect_chain(&tokens[comma_idx + 1..])?;
+    if effects.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(effects))
+}
+
+fn parse_look_at_top_reveal_match_put_rest_bottom_then_if_not_into_hand(
+    first: &[Token],
+    second: &[Token],
+    third: &[Token],
+    fourth: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Some(mut effects) = parse_look_at_top_reveal_match_put_rest_bottom(first, second, third)?
+    else {
+        return Ok(None);
+    };
+    let Some(if_not_chosen) = parse_if_no_card_into_hand_this_way_sentence(fourth)? else {
+        return Ok(None);
+    };
+
+    let Some(EffectAst::ChooseFromLookedCardsIntoHandRestOnBottomOfLibrary {
+        if_not_chosen: existing,
+        ..
+    }) = effects.get_mut(1)
+    else {
+        return Ok(None);
+    };
+    *existing = if_not_chosen;
+    Ok(Some(effects))
+}
+
+fn parse_quad_sentence_sequence(
+    first: &[Token],
+    second: &[Token],
+    third: &[Token],
+    fourth: &[Token],
+) -> Result<Option<(&'static str, Vec<EffectAst>)>, CardTextError> {
+    const RULES: [(&str, QuadSentenceRule); 1] = [(
+        "look-at-top-reveal-match-put-rest-bottom-if-not-into-hand",
+        parse_look_at_top_reveal_match_put_rest_bottom_then_if_not_into_hand,
+    )];
+
+    for (name, rule) in RULES {
+        if let Some(combined) = rule(first, second, third, fourth)? {
+            return Ok(Some((name, combined)));
+        }
+    }
+
+    Ok(None)
+}
+
 pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
     let mut effects = Vec::new();
     let sentences = split_on_period(tokens);
@@ -310,6 +393,21 @@ pub(crate) fn parse_effect_sentences(tokens: &[Token]) -> Result<Vec<EffectAst>,
         let sentence = &sentences[sentence_idx];
         if sentence.is_empty() {
             sentence_idx += 1;
+            continue;
+        }
+
+        if sentence_idx + 3 < sentences.len()
+            && let Some((rule_name, mut combined)) = parse_quad_sentence_sequence(
+                sentence,
+                &sentences[sentence_idx + 1],
+                &sentences[sentence_idx + 2],
+                &sentences[sentence_idx + 3],
+            )?
+        {
+            let stage = format!("parse_effect_sentences:sequence-hit:{rule_name}");
+            parser_trace(stage.as_str(), sentence);
+            effects.append(&mut combined);
+            sentence_idx += 4;
             continue;
         }
 
