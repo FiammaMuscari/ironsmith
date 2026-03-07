@@ -9,8 +9,9 @@ use crate::cards::builders::parse_parsing::{
     parse_prevent_next_time_damage_sentence, parse_pt_modifier,
     parse_redirect_next_damage_sentence, parse_search_library_sentence,
     parse_simple_gain_ability_clause, parse_trigger_clause, parse_where_x_value_clause,
-    parser_trace, replace_unbound_x_in_effects_anywhere, run_sentence_primitives, split_on_and,
-    split_on_comma, split_until_source_leaves_tail, target_object_filter_mut,
+    parser_trace, replace_unbound_x_in_effects_anywhere, run_sentence_primitives,
+    split_leading_if_result_prefix, split_on_and, split_on_comma, split_until_source_leaves_tail,
+    target_object_filter_mut,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -1061,6 +1062,13 @@ pub(crate) fn parse_effect_sentence_inner(
     if tokens.first().is_some_and(|token| token.is_word("then")) && tokens.len() > 1 {
         parser_trace("parse_effect_sentence:leading-then", &tokens[1..]);
         return parse_effect_sentence(&tokens[1..]);
+    }
+    if let Some((predicate, stripped)) = split_leading_if_result_prefix(tokens) {
+        parser_trace("parse_effect_sentence:leading-if-result", &stripped);
+        return Ok(vec![EffectAst::IfResult {
+            predicate,
+            effects: parse_effect_sentence(&stripped)?,
+        }]);
     }
     if tokens
         .iter()

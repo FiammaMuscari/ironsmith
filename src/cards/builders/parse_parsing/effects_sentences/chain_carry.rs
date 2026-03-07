@@ -17,6 +17,7 @@ use crate::cards::builders::parse_parsing::{
     parse_sentence_put_onto_battlefield_with_counters_on_it,
     parse_sentence_return_with_counters_on_it, parse_simple_gain_ability_clause,
     parse_simple_lose_ability_clause, parse_subject_object_filter,
+    split_leading_if_result_prefix,
     parse_until_end_of_turn_may_play_tagged_clause,
     parse_until_your_next_turn_may_play_tagged_clause, parse_verb_first_clause,
     parse_win_the_game_clause, run_sentence_primitives, segment_has_effect_head,
@@ -28,9 +29,9 @@ use crate::cards::builders::parse_parsing::{
 use crate::cards::builders::{
     CardTextError, ClashOpponentAst, EffectAst, GrantedAbilityAst, IT_TAG, LineAst, PlayerAst,
     PredicateAst, ReferenceImports, RetargetModeAst, SubjectAst, TagKey, TargetAst, TextSpan,
-    Token, TriggerSpec, is_article, parse_effect_clause, parse_keyword_mechanic_clause,
-    parse_predicate, parse_subject, parse_target_phrase, parse_triggered_line, parse_value,
-    span_from_tokens, split_on_or, trim_commas, words,
+    Token, TriggerSpec, is_article, parse_effect_clause, parse_effect_sentence,
+    parse_keyword_mechanic_clause, parse_predicate, parse_subject, parse_target_phrase,
+    parse_triggered_line, parse_value, span_from_tokens, split_on_or, trim_commas, words,
 };
 use crate::effect::{ChoiceCount, Until};
 use crate::mana::ManaSymbol;
@@ -159,6 +160,13 @@ pub(crate) fn parse_effect_chain_with_sentence_primitives(
 }
 
 pub(crate) fn parse_effect_chain_inner(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
+    if let Some((predicate, stripped)) = split_leading_if_result_prefix(tokens) {
+        return Ok(vec![EffectAst::IfResult {
+            predicate,
+            effects: parse_effect_sentence(&stripped)?,
+        }]);
+    }
+
     if let Some(effects) = parse_search_library_sentence(tokens)? {
         return Ok(effects);
     }
@@ -211,6 +219,11 @@ pub(crate) fn parse_effect_chain_inner(tokens: &[Token]) -> Result<Vec<EffectAst
                 parse_sentence_put_onto_battlefield_with_counters_on_it(&segment)?
             {
                 Some(effects)
+            } else if let Some((predicate, stripped)) = split_leading_if_result_prefix(&segment) {
+                Some(vec![EffectAst::IfResult {
+                    predicate,
+                    effects: parse_effect_sentence(&stripped)?,
+                }])
             } else {
                 parse_sentence_exile_source_with_counters(&segment)?
             };

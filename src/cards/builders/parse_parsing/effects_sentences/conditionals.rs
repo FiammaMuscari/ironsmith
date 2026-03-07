@@ -1004,6 +1004,35 @@ pub(crate) fn parse_if_result_predicate(tokens: &[Token]) -> Option<IfResultPred
     None
 }
 
+pub(crate) fn split_leading_if_result_prefix(
+    tokens: &[Token],
+) -> Option<(IfResultPredicate, Vec<Token>)> {
+    let trimmed = trim_commas(tokens);
+    if !trimmed.first().is_some_and(|token| token.is_word("if")) {
+        return None;
+    }
+
+    let comma_idx = trimmed
+        .iter()
+        .position(|token| matches!(token, Token::Comma(_)))?;
+    if comma_idx <= 1 || comma_idx + 1 >= trimmed.len() {
+        return None;
+    }
+
+    let predicate_tokens = trim_commas(&trimmed[1..comma_idx]);
+    if predicate_tokens.is_empty() {
+        return None;
+    }
+    let predicate = parse_if_result_predicate(&predicate_tokens)?;
+
+    let trailing_tokens = trim_commas(&trimmed[comma_idx + 1..]);
+    if trailing_tokens.is_empty() {
+        return None;
+    }
+
+    Some((predicate, trailing_tokens))
+}
+
 pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
     let mut filtered: Vec<&str> = words(tokens)
         .into_iter()

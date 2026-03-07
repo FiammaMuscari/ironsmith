@@ -12943,6 +12943,13 @@ fn parse_if_you_do_search_library_clause_keeps_full_tail_effect() {
 
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
+        rendered.contains("if you do")
+            && rendered.contains("search your library for a demon card")
+            && rendered.contains("put it into your hand")
+            && rendered.contains("shuffle"),
+        "expected if-you-do gate plus full search/reveal/put/shuffle tail, got {rendered}"
+    );
+    assert!(
         rendered.contains("search your library for a demon card")
             && rendered.contains("put it into your hand")
             && rendered.contains("shuffle"),
