@@ -428,6 +428,32 @@ fn regression_semantic_mismatch_dire_tactics_negative_control_predicate() {
 }
 
 #[test]
+fn regression_semantic_mismatch_apocalypse_runner_shared_target_followup() {
+    let rendered = rendered_lines(
+        "{T}: Target creature you control with power 2 or less gains lifelink until end of turn and can't be blocked this turn.\nCrew 3",
+        "Apocalypse Runner",
+        &[],
+    );
+
+    assert!(
+        rendered.contains("gains lifelink until end of turn"),
+        "expected lifelink grant to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("can't be blocked this turn"),
+        "expected unblockable follow-up to remain attached to the same target, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("choose it"),
+        "shared-target follow-up should not introduce a spurious extra choice, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("target permanent can't be blocked"),
+        "shared-target follow-up should not degrade into an unconstrained permanent clause, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_dwarven_thaumaturgist_switch_pt() {
     let rendered = rendered_lines(
         "{T}: Switch target creature's power and toughness until end of turn.",

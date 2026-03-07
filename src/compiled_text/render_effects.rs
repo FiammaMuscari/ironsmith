@@ -395,7 +395,7 @@ fn describe_effect_list(effects: &[Effect]) -> String {
         if idx + 1 < filtered.len()
             && let Some(tagged) = filtered[idx].downcast_ref::<crate::effects::TaggedEffect>()
             && let Some(cant) = filtered[idx + 1].downcast_ref::<crate::effects::CantEffect>()
-            && let Some(compact) = describe_tagged_target_then_cant_block(tagged, cant)
+            && let Some(compact) = describe_tagged_target_then_cant_restriction(tagged, cant)
         {
             parts.push(compact);
             idx += 2;
@@ -1715,19 +1715,21 @@ fn describe_choose_then_cant_block(
     Some(sentence)
 }
 
-fn describe_tagged_target_then_cant_block(
+fn describe_tagged_target_then_cant_restriction(
     tagged: &crate::effects::TaggedEffect,
     cant: &crate::effects::CantEffect,
 ) -> Option<String> {
     let target_only = tagged
         .effect
         .downcast_ref::<crate::effects::TargetOnlyEffect>()?;
-    let crate::effect::Restriction::Block(filter) = &cant.restriction else {
-        return None;
-    };
     if cant.duration != crate::effect::Until::EndOfTurn {
         return None;
     }
+    let (filter, restriction_text) = match &cant.restriction {
+        crate::effect::Restriction::Block(filter) => (filter, "can't block this turn"),
+        crate::effect::Restriction::BeBlocked(filter) => (filter, "can't be blocked this turn"),
+        _ => return None,
+    };
     if !filter.tagged_constraints.iter().any(|constraint| {
         constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
             && constraint.tag.as_str() == tagged.tag.as_str()
@@ -1736,7 +1738,7 @@ fn describe_tagged_target_then_cant_block(
     }
 
     let subject = capitalize_first(&describe_choose_spec(&target_only.target));
-    Some(format!("{subject} can't block this turn"))
+    Some(format!("{subject} {restriction_text}"))
 }
 
 fn tap_uses_chosen_tag(spec: &ChooseSpec, tag: &str) -> bool {
