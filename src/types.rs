@@ -182,6 +182,7 @@ pub enum Subtype {
     Imp,
     Insect,
     Inkling,
+    Jackal,
     Jellyfish,
     Kavu,
     Kirin,
@@ -467,6 +468,7 @@ impl Subtype {
                 | Subtype::Imp
                 | Subtype::Insect
                 | Subtype::Inkling
+                | Subtype::Jackal
                 | Subtype::Jellyfish
                 | Subtype::Kavu
                 | Subtype::Kirin

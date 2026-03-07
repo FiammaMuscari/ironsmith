@@ -242,3 +242,25 @@ fn regression_semantic_mismatch_errand_rider_then_if_negative_control() {
         "expected follow-up move clause to remain, got {rendered}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_spider_ham_animal_may_ham_subtypes() {
+    let rendered = rendered_lines(
+        "When Spider-Ham enters, create a Food token.\nAnimal May-Ham — Other Spiders, Boars, Bats, Bears, Birds, Cats, Dogs, Frogs, Jackals, Lizards, Mice, Otters, Rabbits, Raccoons, Rats, Squirrels, Turtles, and Wolves you control get +1/+1.",
+        "Spider-Ham, Peter Porker",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("jackal"),
+        "expected Jackal subtype to remain in the anthem list, got {rendered}"
+    );
+    assert!(
+        rendered.contains("wolf"),
+        "expected Wolf subtype to remain in the anthem list, got {rendered}"
+    );
+    assert!(
+        rendered.contains("food token"),
+        "expected ETB Food token clause to remain, got {rendered}"
+    );
+}
