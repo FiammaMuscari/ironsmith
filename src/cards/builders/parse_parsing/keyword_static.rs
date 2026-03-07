@@ -7115,6 +7115,10 @@ pub(crate) fn parse_enters_with_counters_line(
     let tail_has_words = tail.iter().any(|token| token.as_word().is_some());
     if tail_has_words {
         let tail_words = tail.iter().filter_map(Token::as_word).collect::<Vec<_>>();
+        let scaled_for_each_count = |dynamic: Value, base_count: &Value| match base_count {
+            Value::Fixed(multiplier) => scale_dynamic_cost_modifier_value(dynamic, *multiplier),
+            _ => dynamic,
+        };
         if tail_words.first().copied() == Some("if") {
             let condition_tokens = trim_commas(&tail[1..]);
             let parsed =
@@ -7167,13 +7171,13 @@ pub(crate) fn parse_enters_with_counters_line(
             .starts_with(&["for", "each", "creature", "that", "died", "this", "turn"])
             || tail_words.starts_with(&["for", "each", "creatures", "that", "died", "this", "turn"])
         {
-            count = Value::CreaturesDiedThisTurn;
+            count = scaled_for_each_count(Value::CreaturesDiedThisTurn, &count);
         } else if tail_words.starts_with(&[
             "for", "each", "color", "of", "mana", "spent", "to", "cast", "it",
         ]) || tail_words.starts_with(&[
             "for", "each", "colour", "of", "mana", "spent", "to", "cast", "it",
         ]) {
-            count = Value::ColorsOfManaSpentToCastThisSpell;
+            count = scaled_for_each_count(Value::ColorsOfManaSpentToCastThisSpell, &count);
         } else if tail_words.starts_with(&[
             "for", "each", "creature", "that", "died", "under", "your", "control", "this", "turn",
         ]) || tail_words.starts_with(&[
@@ -7188,11 +7192,14 @@ pub(crate) fn parse_enters_with_counters_line(
             "this",
             "turn",
         ]) {
-            count = Value::CreaturesDiedThisTurnControlledBy(PlayerFilter::You);
+            count = scaled_for_each_count(
+                Value::CreaturesDiedThisTurnControlledBy(PlayerFilter::You),
+                &count,
+            );
         } else if tail_words.starts_with(&["for", "each", "time", "it", "was", "kicked"])
             || tail_words.starts_with(&["for", "each", "time", "this", "spell", "was", "kicked"])
         {
-            count = Value::KickCount;
+            count = scaled_for_each_count(Value::KickCount, &count);
         } else if tail_words
             == [
                 "for",

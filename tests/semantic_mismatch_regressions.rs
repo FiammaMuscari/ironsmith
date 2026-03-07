@@ -1368,3 +1368,26 @@ fn regression_semantic_mismatch_skola_grovedancer_graveyard_ownership() {
         "expected activated mill ability to remain intact, got {rendered}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_glinting_creeper_converge_multiplier() {
+    let rendered = rendered_lines(
+        "Converge — This creature enters with two +1/+1 counters on it for each color of mana spent to cast it.\nThis creature can't be blocked by creatures with power 2 or less.",
+        "Glinting Creeper",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("twice the number of")
+            && rendered.contains("+1/+1 counters on it"),
+        "expected converge multiplier to preserve the printed two-per-color scaling, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("colorsofmana"),
+        "rendered text should not leak the internal enum/debug name, got {rendered}"
+    );
+    assert!(
+        rendered.contains("can't be blocked by creatures with power 2 or less"),
+        "expected the evasion clause to remain intact, got {rendered}"
+    );
+}

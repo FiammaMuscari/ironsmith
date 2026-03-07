@@ -10,6 +10,7 @@ use super::{
 };
 use crate::ability::LevelAbility;
 use crate::color::Color;
+use crate::compiled_text::describe_value;
 use crate::effect::{Condition, Effect, Value};
 use crate::events::cards::matchers::{WouldDiscardMatcher, WouldDrawCardMatcher};
 use crate::events::damage::matchers::{
@@ -812,8 +813,8 @@ impl StaticAbilityKind for EntersWithCounters {
                 }
             }
             _ => format!(
-                "Enters the battlefield with {:?} {} counters on it",
-                self.count, counter
+                "Enters the battlefield with {} {counter} counters on it",
+                describe_value(&self.count)
             ),
         }
     }
