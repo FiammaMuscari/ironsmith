@@ -1527,3 +1527,24 @@ fn regression_semantic_mismatch_flare_of_faith_human_branch_targets_creature() {
         "conditional replacement branch should not lower through a source-only pump, got {debug}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_cinderheart_giant_keeps_random_choice() {
+    let text =
+        "Trample\nWhen this creature dies, it deals 7 damage to a creature an opponent controls chosen at random.";
+    let def = CardDefinitionBuilder::new(CardId::new(), "Cinderheart Giant")
+        .parse_text(text)
+        .expect("Cinderheart Giant should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("chosen at random"),
+        "expected rendered text to preserve the random target clause, got {rendered}"
+    );
+
+    let debug = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        debug.contains("random: true"),
+        "expected lowered target count to keep random selection semantics, got {debug}"
+    );
+}

@@ -1,6 +1,7 @@
 use crate::cards::builders::{
     CardTextError, IT_TAG, TargetAst, Token, is_article, parse_card_type, parse_non_type,
-    parse_number, parse_object_filter, parse_subtype_word, span_from_tokens, words,
+    parse_number, parse_object_filter, parse_subtype_word, span_from_tokens,
+    token_index_for_word_index, words,
 };
 use crate::{CardType, ChoiceCount, ObjectFilter, PlayerFilter, TagKey, Zone};
 
@@ -13,6 +14,15 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
         return Err(CardTextError::ParseError(
             "missing target phrase".to_string(),
         ));
+    }
+
+    let mut random_choice = false;
+    let token_words = words(tokens);
+    if token_words.ends_with(&["chosen", "at", "random"])
+        && let Some(random_idx) = token_index_for_word_index(tokens, token_words.len() - 3)
+    {
+        tokens = &tokens[..random_idx];
+        random_choice = true;
     }
 
     let mut idx = 0;
@@ -275,6 +285,10 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
             target_count = Some(ChoiceCount::dynamic_x());
             idx += 1;
         }
+    }
+
+    if random_choice {
+        target_count = Some(target_count.unwrap_or_default().at_random());
     }
 
     if tokens.get(idx).is_some_and(|token| token.is_word("on")) {
@@ -861,6 +875,7 @@ pub(crate) fn parse_target_count_range_prefix(tokens: &[Token]) -> Option<(Choic
             min: first as usize,
             max: Some(second as usize),
             dynamic_x: false,
+            random: false,
         },
         first_used + 1 + second_used,
     ))

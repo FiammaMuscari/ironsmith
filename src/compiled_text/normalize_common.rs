@@ -4766,8 +4766,17 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
         ChooseSpec::Iterated => "that object".to_string(),
         ChooseSpec::WithCount(inner, count) => {
             let inner_text = describe_choose_spec(inner);
+            let random_suffix = if count.is_random() {
+                if count.is_single() {
+                    " chosen at random"
+                } else {
+                    " at random"
+                }
+            } else {
+                ""
+            };
             if count.is_single() {
-                inner_text
+                format!("{inner_text}{random_suffix}")
             } else {
                 if let ChooseSpec::Target(target_inner) = inner.as_ref() {
                     let target_desc = describe_choose_spec(target_inner);
@@ -4779,29 +4788,29 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
                             .unwrap_or_else(|| n.to_string())
                     };
                     if count.is_dynamic_x() {
-                        return format!("X target {plural}");
+                        return format!("X target {plural}{random_suffix}");
                     }
                     match (count.min, count.max) {
-                        (0, None) => format!("any number of target {plural}"),
-                        (min, None) => format!("at least {min} target {plural}"),
+                        (0, None) => format!("any number of target {plural}{random_suffix}"),
+                        (min, None) => format!("at least {min} target {plural}{random_suffix}"),
                         (0, Some(max)) => {
                             if max == 1 {
-                                format!("up to one target {base}")
+                                format!("up to one target {base}{random_suffix}")
                             } else {
-                                format!("up to {} target {plural}", count_text(max))
+                                format!("up to {} target {plural}{random_suffix}", count_text(max))
                             }
                         }
                         (min, Some(max)) if min == max => {
                             if min == 1 {
-                                format!("target {base}")
+                                format!("target {base}{random_suffix}")
                             } else {
-                                format!("{} target {plural}", count_text(min))
+                                format!("{} target {plural}{random_suffix}", count_text(min))
                             }
                         }
-                        (1, Some(2)) => format!("one or two target {plural}"),
-                        (1, Some(3)) => format!("one, two, or three target {plural}"),
+                        (1, Some(2)) => format!("one or two target {plural}{random_suffix}"),
+                        (1, Some(3)) => format!("one, two, or three target {plural}{random_suffix}"),
                         (min, Some(max)) => {
-                            format!("{} to {} target {plural}", count_text(min), count_text(max))
+                            format!("{} to {} target {plural}{random_suffix}", count_text(min), count_text(max))
                         }
                     }
                 } else {
@@ -4813,33 +4822,33 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
                             .unwrap_or_else(|| n.to_string())
                     };
                     if count.is_dynamic_x() {
-                        return format!("X {plural}");
+                        return format!("X {plural}{random_suffix}");
                     }
                     match (count.min, count.max) {
-                        (0, None) => format!("any number of {plural}"),
+                        (0, None) => format!("any number of {plural}{random_suffix}"),
                         (min, None) => {
                             if min == 1 {
-                                format!("at least one {base}")
+                                format!("at least one {base}{random_suffix}")
                             } else {
-                                format!("at least {} {plural}", count_text(min))
+                                format!("at least {} {plural}{random_suffix}", count_text(min))
                             }
                         }
                         (0, Some(max)) => {
                             if max == 1 {
-                                format!("up to one {base}")
+                                format!("up to one {base}{random_suffix}")
                             } else {
-                                format!("up to {} {plural}", count_text(max))
+                                format!("up to {} {plural}{random_suffix}", count_text(max))
                             }
                         }
                         (min, Some(max)) if min == max => {
                             if min == 1 {
-                                format!("one {base}")
+                                format!("one {base}{random_suffix}")
                             } else {
-                                format!("{} {plural}", count_text(min))
+                                format!("{} {plural}{random_suffix}", count_text(min))
                             }
                         }
                         (min, Some(max)) => {
-                            format!("{} to {} {plural}", count_text(min), count_text(max))
+                            format!("{} to {} {plural}{random_suffix}", count_text(min), count_text(max))
                         }
                     }
                 }
@@ -5156,15 +5165,21 @@ fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
 }
 
 fn describe_choice_count(count: &ChoiceCount) -> String {
-    if count.is_dynamic_x() {
-        return "X".to_string();
-    }
-    match (count.min, count.max) {
+    let base = if count.is_dynamic_x() {
+        "X".to_string()
+    } else {
+        match (count.min, count.max) {
         (0, None) => "any number".to_string(),
         (min, None) => format!("at least {min}"),
         (0, Some(max)) => format!("up to {max}"),
         (min, Some(max)) if min == max => format!("exactly {min}"),
         (min, Some(max)) => format!("{min} to {max}"),
+        }
+    };
+    if count.is_random() {
+        format!("{base} at random")
+    } else {
+        base
     }
 }
 

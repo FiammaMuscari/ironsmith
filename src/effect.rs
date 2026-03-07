@@ -55,6 +55,8 @@ pub struct ChoiceCount {
     pub max: Option<usize>,
     /// Whether this count came from a dynamic `X target ...` clause.
     pub dynamic_x: bool,
+    /// Whether the chosen object(s) should be selected at random.
+    pub random: bool,
 }
 
 impl Default for ChoiceCount {
@@ -70,6 +72,7 @@ impl ChoiceCount {
             min: n,
             max: Some(n),
             dynamic_x: false,
+            random: false,
         }
     }
 
@@ -79,6 +82,7 @@ impl ChoiceCount {
             min: 0,
             max: None,
             dynamic_x: false,
+            random: false,
         }
     }
 
@@ -88,6 +92,7 @@ impl ChoiceCount {
             min: n,
             max: None,
             dynamic_x: false,
+            random: false,
         }
     }
 
@@ -97,6 +102,7 @@ impl ChoiceCount {
             min: 0,
             max: Some(n),
             dynamic_x: false,
+            random: false,
         }
     }
 
@@ -106,6 +112,7 @@ impl ChoiceCount {
             min: 0,
             max: None,
             dynamic_x: true,
+            random: false,
         }
     }
 
@@ -121,6 +128,15 @@ impl ChoiceCount {
 
     pub const fn is_dynamic_x(&self) -> bool {
         self.dynamic_x
+    }
+
+    pub const fn is_random(&self) -> bool {
+        self.random
+    }
+
+    pub fn at_random(mut self) -> Self {
+        self.random = true;
+        self
     }
 }
 
