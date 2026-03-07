@@ -1846,7 +1846,7 @@ fn describe_each_controlled_by_iterated(filter: &ObjectFilter) -> Option<String>
         && !filter.nonblocking
         && !filter.blocked
         && !filter.unblocked
-        && filter.zone.is_none()
+        && matches!(filter.zone, None | Some(Zone::Battlefield))
         && filter.tagged_constraints.is_empty()
         && filter.targets_object.is_none()
         && filter.targets_player.is_none()
@@ -1870,7 +1870,8 @@ fn describe_each_controlled_by_iterated(filter: &ObjectFilter) -> Option<String>
                 out
             }
         };
-        return Some(format!("each {list} they control"));
+        let other = if filter.other { "other " } else { "" };
+        return Some(format!("each {other}{list} they control"));
     }
     None
 }
@@ -1892,7 +1893,19 @@ fn describe_for_players_damage_and_controlled_damage(
     if for_each.effects.len() != 1 {
         return None;
     }
-    let deal_object = for_each.effects[0].downcast_ref::<crate::effects::DealDamageEffect>()?;
+    let deal_object = if let Some(deal) =
+        for_each.effects[0].downcast_ref::<crate::effects::DealDamageEffect>()
+    {
+        deal
+    } else if let Some(tagged) =
+        for_each.effects[0].downcast_ref::<crate::effects::TaggedEffect>()
+    {
+        tagged
+            .effect
+            .downcast_ref::<crate::effects::DealDamageEffect>()?
+    } else {
+        return None;
+    };
     if deal_object.amount != deal_player.amount {
         return None;
     }
@@ -1900,6 +1913,16 @@ fn describe_for_players_damage_and_controlled_damage(
         return None;
     }
     let objects = describe_each_controlled_by_iterated(&for_each.filter)?;
+    if for_players.filter == PlayerFilter::Any
+        && matches!(for_each.filter.controller, Some(PlayerFilter::IteratedPlayer))
+        && for_each.filter.other
+        && for_each.filter.card_types == vec![CardType::Creature]
+    {
+        return Some(format!(
+            "Deal {} damage to each player and each other creature",
+            describe_value(&deal_player.amount)
+        ));
+    }
     let player_filter_text = describe_player_filter(&for_players.filter);
     let each_player = strip_leading_article(&player_filter_text);
     Some(format!(
@@ -6368,6 +6391,18 @@ fn describe_effect_impl(effect: &Effect) -> String {
         trigger_text = cleanup_decompiled_text(&trigger_text);
         let trigger_lower = trigger_text.to_ascii_lowercase();
         let delayed_text = lowercase_first(&describe_effect_list(&schedule.effects));
+        if schedule.target_tag.is_some()
+            && (trigger_lower.contains("when this creature is dealt damage")
+                || trigger_lower.contains("whenever this creature is dealt damage"))
+        {
+            return format!("Whenever that creature is dealt damage this turn, {delayed_text}");
+        }
+        if schedule.target_tag.is_some()
+            && (trigger_lower.contains("when this permanent is dealt damage")
+                || trigger_lower.contains("whenever this permanent is dealt damage"))
+        {
+            return format!("Whenever that permanent is dealt damage this turn, {delayed_text}");
+        }
         if schedule.one_shot && schedule.start_next_turn {
             if trigger_lower.contains("that player's end step")
                 || trigger_lower.contains("target player's end step")

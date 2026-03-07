@@ -507,6 +507,32 @@ fn regression_semantic_mismatch_deny_the_divine_countered_spell_exiled() {
 }
 
 #[test]
+fn regression_semantic_mismatch_arcbond_delayed_damage_fanout() {
+    let rendered = rendered_lines(
+        "Choose target creature. Whenever that creature is dealt damage this turn, it deals that much damage to each other creature and each player.",
+        "Arcbond",
+        &[CardType::Instant],
+    );
+
+    assert!(
+        rendered.contains("choose target creature"),
+        "expected chosen-target setup to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("whenever that creature is dealt damage this turn"),
+        "expected delayed trigger to stay tied to the chosen creature, got {rendered}"
+    );
+    assert!(
+        rendered.contains("each other creature and each player"),
+        "expected damage fanout to cover both each other creature and each player, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("that player"),
+        "arcbond fanout should not collapse into a per-player controller clause, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_heal_next_turns_upkeep() {
     let rendered = rendered_lines(
         "Prevent the next 1 damage that would be dealt to any target this turn.\nDraw a card at the beginning of the next turn's upkeep.",
