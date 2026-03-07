@@ -320,3 +320,30 @@ fn regression_semantic_mismatch_contagious_vorrac_if_not_into_hand_followup() {
         "fallback clause should track whether a card was put into hand, got {rendered}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_strongarm_tactics_discarded_creature_followup() {
+    let rendered = rendered_lines(
+        "Each player discards a card. Then each player who didn't discard a creature card this way loses 4 life.",
+        "Strongarm Tactics",
+        &[CardType::Sorcery],
+    );
+
+    assert!(
+        rendered.contains("each player discards a card"),
+        "expected discard clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("didn't discard a creature card this way")
+            || rendered.contains("did not discard a creature card this way"),
+        "expected discarded-creature qualifier to remain explicit, got {rendered}"
+    );
+    assert!(
+        rendered.contains("loses 4 life"),
+        "expected life-loss follow-up to remain, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("if that doesn't happen"),
+        "discard qualifier should not collapse into a generic result predicate, got {rendered}"
+    );
+}

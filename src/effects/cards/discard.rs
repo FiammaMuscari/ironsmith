@@ -6,6 +6,8 @@ use crate::effects::helpers::{normalize_object_selection, resolve_player_filter,
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::filter::ObjectFilter;
 use crate::game_state::GameState;
+use crate::snapshot::ObjectSnapshot;
+use crate::tag::TagKey;
 use crate::target::PlayerFilter;
 use crate::types::CardType;
 
@@ -38,6 +40,9 @@ pub struct DiscardEffect {
     pub random: bool,
     /// Optional hand-card restriction for cards that can be discarded.
     pub card_filter: Option<ObjectFilter>,
+    /// Optional tag used to track discarded cards for later clauses such as
+    /// "didn't discard a creature card this way".
+    pub tag: Option<TagKey>,
 }
 
 impl DiscardEffect {
@@ -58,7 +63,14 @@ impl DiscardEffect {
             player,
             random,
             card_filter,
+            tag: None,
         }
+    }
+
+    /// Tag discarded cards for later reference in the same effect sequence.
+    pub fn with_tag(mut self, tag: impl Into<TagKey>) -> Self {
+        self.tag = Some(tag.into());
+        self
     }
 
     /// The controller discards N cards (player chooses).
@@ -111,6 +123,7 @@ impl EffectExecutor for DiscardEffect {
         let player_id = resolve_player_filter(game, &self.player, ctx)?;
         let count = resolve_value(game, &self.count, ctx)?.max(0) as usize;
         let mut discarded = 0;
+        let mut discarded_snapshots = Vec::new();
 
         let mut hand_cards: Vec<_> = game
             .player(player_id)
@@ -164,7 +177,16 @@ impl EffectExecutor for DiscardEffect {
             );
             if !result.prevented {
                 discarded += 1;
+                if let Some(obj) = game.object(card_id) {
+                    discarded_snapshots.push(ObjectSnapshot::from_object(obj, game));
+                }
             }
+        }
+
+        if let Some(tag) = &self.tag
+            && !discarded_snapshots.is_empty()
+        {
+            ctx.tag_objects(tag.clone(), discarded_snapshots);
         }
 
         Ok(EffectOutcome::count(discarded))

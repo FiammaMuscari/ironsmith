@@ -9,7 +9,7 @@ use crate::effect_text_shared;
 use crate::object::CounterType;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::types::{Subtype, Supertype};
-use crate::{CardDefinition, CardType, Effect, ManaSymbol, Zone};
+use crate::{CardDefinition, CardType, Effect, ManaSymbol, TagKey, Zone};
 
 thread_local! {
     static EFFECT_RENDER_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -6552,9 +6552,42 @@ fn tag_action_from_name(tag: &str) -> Option<&'static str> {
         "sacrificed" => Some("sacrificed"),
         "destroyed" => Some("destroyed"),
         "exiled" => Some("exiled"),
+        "discarded" => Some("discarded"),
         "died" => Some("died"),
         _ => None,
     }
+}
+
+fn describe_player_tagged_object_text(tag: &TagKey, filter: &ObjectFilter) -> String {
+    let card_context = tag.as_str().starts_with("discarded_")
+        || tag.as_str().starts_with("exiled_")
+        || tag.as_str().starts_with("revealed_");
+    if card_context
+        && !filter.card_types.is_empty()
+        && filter.zone.is_none()
+        && filter.controller.is_none()
+        && filter.owner.is_none()
+        && filter.subtypes.is_empty()
+        && filter.any_of.is_empty()
+        && filter.tagged_constraints.is_empty()
+    {
+        let words = filter
+            .card_types
+            .iter()
+            .map(|card_type| describe_card_type_word_local(*card_type).to_string())
+            .collect::<Vec<_>>();
+        return with_indefinite_article(&format!("{} card", join_with_or(&words)));
+    }
+
+    let desc = filter.description();
+    let stripped = strip_leading_article(&desc).to_ascii_lowercase();
+    if card_context && stripped == "land" {
+        return "a land card".to_string();
+    }
+    if card_context && stripped == "creature" {
+        return "a creature card".to_string();
+    }
+    with_indefinite_article(&desc)
 }
 
 fn describe_player_relative_condition(condition: &Condition) -> Option<String> {
@@ -7002,7 +7035,7 @@ fn describe_condition(condition: &Condition) -> String {
             }
         Condition::PlayerTaggedObjectMatches { player, tag, filter } => {
             if let Some(action) = tag_action_from_name(tag.as_str()) {
-                let object_text = with_indefinite_article(&filter.description());
+                let object_text = describe_player_tagged_object_text(tag, filter);
                 format!(
                     "{} {} {} this way",
                     describe_player_filter(player),

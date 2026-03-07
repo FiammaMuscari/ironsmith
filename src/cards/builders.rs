@@ -1025,6 +1025,7 @@ pub(crate) enum EffectAst {
         player: PlayerAst,
         random: bool,
         filter: Option<ObjectFilter>,
+        tag: Option<TagKey>,
     },
     Connive {
         target: TargetAst,
@@ -1152,9 +1153,11 @@ pub(crate) enum EffectAst {
     },
     ForEachOpponentDoesNot {
         effects: Vec<EffectAst>,
+        predicate: Option<PredicateAst>,
     },
     ForEachPlayerDoesNot {
         effects: Vec<EffectAst>,
+        predicate: Option<PredicateAst>,
     },
     ForEachOpponentDid {
         effects: Vec<EffectAst>,
@@ -9389,16 +9392,20 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         let effects = def.spell_effect.expect("spell effects");
         let debug = format!("{effects:?}");
         assert!(
-            debug.contains("DidNotHappen"),
-            "expected did-not branch keyed to prior discard result, got {debug}"
+            debug.contains("PlayerTaggedObjectMatches"),
+            "expected discarded-card predicate branch, got {debug}"
         );
         assert!(
             debug.contains("LoseLifeEffect"),
             "expected lose-life consequence branch, got {debug}"
         );
         assert!(
-            !debug.contains("predicate: Happened"),
-            "did-not branch should not collapse into generic happened check, got {debug}"
+            debug.contains("card_types: [Creature]"),
+            "expected discarded-card qualifier to remain creature-specific, got {debug}"
+        );
+        assert!(
+            !debug.contains("DidNotHappen"),
+            "did-not branch should not collapse into a generic result predicate, got {debug}"
         );
     }
 

@@ -42,8 +42,14 @@ macro_rules! nested_effects_variants {
                 effects: $effects,
                 ..
             }
-            | EffectAst::ForEachOpponentDoesNot { effects: $effects }
-            | EffectAst::ForEachPlayerDoesNot { effects: $effects }
+            | EffectAst::ForEachOpponentDoesNot {
+                effects: $effects,
+                ..
+            }
+            | EffectAst::ForEachPlayerDoesNot {
+                effects: $effects,
+                ..
+            }
             | EffectAst::ForEachOpponentDid {
                 effects: $effects,
                 ..

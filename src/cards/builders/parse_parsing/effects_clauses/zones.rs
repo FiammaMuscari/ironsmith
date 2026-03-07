@@ -211,6 +211,7 @@ pub(crate) fn parse_discard(
             player,
             random: false,
             filter: Some(tagged_filter),
+            tag: None,
         });
     }
 
@@ -271,6 +272,7 @@ pub(crate) fn parse_discard(
         player,
         random,
         filter: discard_filter,
+        tag: None,
     })
 }
 

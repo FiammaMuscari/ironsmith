@@ -2380,6 +2380,7 @@ fn parse_discard_a_red_or_green_card_qualifier() {
             player: PlayerAst::You,
             random: false,
             filter: Some(filter),
+            ..
         } if filter.zone == Some(Zone::Hand)
     ));
 }

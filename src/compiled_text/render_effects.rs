@@ -432,6 +432,81 @@ fn describe_effect_list(effects: &[Effect]) -> String {
     cleanup_decompiled_text(&text)
 }
 
+fn describe_false_only_conditional(
+    condition: &crate::effect::Condition,
+    false_branch: &str,
+) -> String {
+    if let crate::effect::Condition::PlayerTaggedObjectMatches {
+        player,
+        tag,
+        filter,
+    } = condition
+    {
+        let verb = if tag.as_str().starts_with("discarded_") {
+            Some("discard")
+        } else if tag.as_str().starts_with("sacrificed_") {
+            Some("sacrifice")
+        } else if tag.as_str().starts_with("exiled_") {
+            Some("exile")
+        } else if tag.as_str().starts_with("destroyed_") {
+            Some("destroy")
+        } else {
+            None
+        };
+        if let Some(verb) = verb {
+            let object_text = if (tag.as_str().starts_with("discarded_")
+                || tag.as_str().starts_with("exiled_")
+                || tag.as_str().starts_with("revealed_"))
+                && !filter.card_types.is_empty()
+                && filter.zone.is_none()
+                && filter.controller.is_none()
+                && filter.owner.is_none()
+                && filter.subtypes.is_empty()
+                && filter.any_of.is_empty()
+                && filter.tagged_constraints.is_empty()
+            {
+                let words = filter
+                    .card_types
+                    .iter()
+                    .map(|card_type| describe_card_type_word_local(*card_type).to_string())
+                    .collect::<Vec<_>>();
+                with_indefinite_article(&format!("{} card", join_with_or(&words)))
+            } else {
+                let desc = filter.description();
+                let stripped = strip_leading_article(&desc).to_ascii_lowercase();
+                if (tag.as_str().starts_with("discarded_")
+                    || tag.as_str().starts_with("exiled_")
+                    || tag.as_str().starts_with("revealed_"))
+                    && stripped == "land"
+                {
+                    "a land card".to_string()
+                } else if (tag.as_str().starts_with("discarded_")
+                    || tag.as_str().starts_with("exiled_")
+                    || tag.as_str().starts_with("revealed_"))
+                    && stripped == "creature"
+                {
+                    "a creature card".to_string()
+                } else {
+                    with_indefinite_article(&desc)
+                }
+            };
+            return format!(
+                "If {} didn't {} {} this way, {}",
+                describe_player_filter(player),
+                verb,
+                object_text,
+                false_branch
+            );
+        }
+    }
+
+    format!(
+        "If it isn't true that {}, {}",
+        lowercase_first(&describe_condition(condition)),
+        false_branch
+    )
+}
+
 fn describe_exile_then_return(
     tagged: &crate::effects::TaggedEffect,
     move_back: &crate::effects::MoveToZoneEffect,
@@ -4870,6 +4945,9 @@ fn describe_effect_impl(effect: &Effect) -> String {
         }
         let true_branch = describe_effect_list(&conditional.if_true);
         let false_branch = describe_effect_list(&conditional.if_false);
+        if true_branch.is_empty() && !false_branch.is_empty() {
+            return describe_false_only_conditional(&conditional.condition, &false_branch);
+        }
         if false_branch.is_empty() {
             return format!(
                 "If {}, {}",

@@ -671,7 +671,11 @@ pub(crate) fn parse_for_each_opponent_clause(
             )));
         }
         let effects = parse_effect_chain_inner(&effect_tokens)?;
-        return Ok(Some(EffectAst::ForEachOpponentDoesNot { effects }));
+        let predicate = parse_negated_who_this_way_predicate(&inner_tokens)?;
+        return Ok(Some(EffectAst::ForEachOpponentDoesNot {
+            effects,
+            predicate,
+        }));
     }
 
     if inner_words.first().copied() == Some("who")
@@ -822,7 +826,7 @@ pub(crate) fn parse_who_did_this_way_predicate(
         return Ok(None);
     };
     let verb = inner_words.get(1).copied().unwrap_or("");
-    let supports_tag = matches!(verb, "sacrificed" | "destroyed" | "exiled");
+    let supports_tag = matches!(verb, "sacrificed" | "destroyed" | "exiled" | "discarded");
     if !supports_tag {
         return Ok(None);
     }
@@ -843,6 +847,53 @@ pub(crate) fn parse_who_did_this_way_predicate(
         Ok(filter) => filter,
         Err(_) => return Ok(None),
     };
+    Ok(Some(PredicateAst::PlayerTaggedObjectMatches {
+        player: PlayerAst::That,
+        tag: TagKey::from(IT_TAG),
+        filter,
+    }))
+}
+
+fn parse_negated_who_this_way_predicate(
+    inner_tokens: &[Token],
+) -> Result<Option<PredicateAst>, CardTextError> {
+    let inner_words = words(inner_tokens);
+    if inner_words.first().copied() != Some("who") {
+        return Ok(None);
+    }
+    let Some(this_way_idx) = inner_words
+        .windows(2)
+        .position(|window| window == ["this", "way"])
+    else {
+        return Ok(None);
+    };
+    let Some((negation_idx, negation_len)) = negated_action_word_index(&inner_words) else {
+        return Ok(None);
+    };
+    let verb_idx = negation_idx + negation_len;
+    let verb = inner_words.get(verb_idx).copied().unwrap_or("");
+    if !matches!(verb, "discard" | "discarded") || this_way_idx <= verb_idx + 1 {
+        return Ok(None);
+    }
+
+    let filter_start =
+        token_index_for_word_index(inner_tokens, verb_idx + 1).unwrap_or(inner_tokens.len());
+    let filter_end =
+        token_index_for_word_index(inner_tokens, this_way_idx).unwrap_or(inner_tokens.len());
+    if filter_start >= filter_end {
+        return Ok(None);
+    }
+
+    let filter_tokens = trim_commas(&inner_tokens[filter_start..filter_end]);
+    if filter_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let filter = match parse_object_filter(&filter_tokens, false) {
+        Ok(filter) => filter,
+        Err(_) => return Ok(None),
+    };
+
     Ok(Some(PredicateAst::PlayerTaggedObjectMatches {
         player: PlayerAst::That,
         tag: TagKey::from(IT_TAG),
@@ -1023,7 +1074,8 @@ pub(crate) fn parse_for_each_player_clause(
             )));
         }
         let effects = parse_effect_chain_inner(&effect_tokens)?;
-        return Ok(Some(EffectAst::ForEachPlayerDoesNot { effects }));
+        let predicate = parse_negated_who_this_way_predicate(&inner_tokens)?;
+        return Ok(Some(EffectAst::ForEachPlayerDoesNot { effects, predicate }));
     }
     if inner_words.first().copied() == Some("who")
         && let Some(this_way_idx) = inner_words

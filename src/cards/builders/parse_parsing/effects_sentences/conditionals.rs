@@ -476,7 +476,11 @@ pub(crate) fn parse_for_each_opponent_doesnt(
     }
 
     let effects = parse_effect_chain(&effect_tokens)?;
-    Ok(Some(EffectAst::ForEachOpponentDoesNot { effects }))
+    let predicate = parse_negated_who_this_way_predicate(&inner_tokens)?;
+    Ok(Some(EffectAst::ForEachOpponentDoesNot {
+        effects,
+        predicate,
+    }))
 }
 
 pub(crate) fn parse_for_each_player_doesnt(
@@ -538,7 +542,8 @@ pub(crate) fn parse_for_each_player_doesnt(
     }
 
     let effects = parse_effect_chain(&effect_tokens)?;
-    Ok(Some(EffectAst::ForEachPlayerDoesNot { effects }))
+    let predicate = parse_negated_who_this_way_predicate(&inner_tokens)?;
+    Ok(Some(EffectAst::ForEachPlayerDoesNot { effects, predicate }))
 }
 
 pub(crate) fn negated_action_word_index(words: &[&str]) -> Option<(usize, usize)> {
@@ -554,6 +559,53 @@ pub(crate) fn negated_action_word_index(words: &[&str]) -> Option<(usize, usize)
         }
     }
     None
+}
+
+fn parse_negated_who_this_way_predicate(
+    inner_tokens: &[Token],
+) -> Result<Option<PredicateAst>, CardTextError> {
+    let inner_words = words(inner_tokens);
+    if inner_words.first().copied() != Some("who") {
+        return Ok(None);
+    }
+    let Some(this_way_idx) = inner_words
+        .windows(2)
+        .position(|window| window == ["this", "way"])
+    else {
+        return Ok(None);
+    };
+    let Some((negation_idx, negation_len)) = negated_action_word_index(&inner_words) else {
+        return Ok(None);
+    };
+    let verb_idx = negation_idx + negation_len;
+    let verb = inner_words.get(verb_idx).copied().unwrap_or("");
+    if !matches!(verb, "discard" | "discarded") || this_way_idx <= verb_idx + 1 {
+        return Ok(None);
+    }
+
+    let filter_start =
+        token_index_for_word_index(inner_tokens, verb_idx + 1).unwrap_or(inner_tokens.len());
+    let filter_end =
+        token_index_for_word_index(inner_tokens, this_way_idx).unwrap_or(inner_tokens.len());
+    if filter_start >= filter_end {
+        return Ok(None);
+    }
+
+    let filter_tokens = trim_commas(&inner_tokens[filter_start..filter_end]);
+    if filter_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let filter = match parse_object_filter(&filter_tokens, false) {
+        Ok(filter) => filter,
+        Err(_) => return Ok(None),
+    };
+
+    Ok(Some(PredicateAst::PlayerTaggedObjectMatches {
+        player: PlayerAst::That,
+        tag: TagKey::from(IT_TAG),
+        filter,
+    }))
 }
 
 pub(crate) fn parse_vote_start_sentence(

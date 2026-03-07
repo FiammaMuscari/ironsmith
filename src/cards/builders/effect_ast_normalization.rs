@@ -32,8 +32,8 @@ fn normalize_nested_effects(effect: &mut EffectAst) {
         | EffectAst::ForEachTargetPlayers { effects, .. }
         | EffectAst::ForEachObject { effects, .. }
         | EffectAst::ForEachTagged { effects, .. }
-        | EffectAst::ForEachOpponentDoesNot { effects }
-        | EffectAst::ForEachPlayerDoesNot { effects }
+        | EffectAst::ForEachOpponentDoesNot { effects, .. }
+        | EffectAst::ForEachPlayerDoesNot { effects, .. }
         | EffectAst::ForEachOpponentDid { effects, .. }
         | EffectAst::ForEachPlayerDid { effects, .. }
         | EffectAst::ForEachTaggedPlayer { effects, .. }

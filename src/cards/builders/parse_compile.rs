@@ -1809,6 +1809,34 @@ pub(crate) fn collect_tag_spans_from_target(
     }
 }
 
+fn tag_last_discard_in_effects(effects: &mut [EffectAst], tag: &TagKey) -> bool {
+    for effect in effects.iter_mut().rev() {
+        if let EffectAst::Discard {
+            tag: discard_tag, ..
+        } = effect
+        {
+            *discard_tag = Some(tag.clone());
+            return true;
+        }
+    }
+    false
+}
+
+fn bind_explicit_tag_to_player_tagged_predicate(
+    predicate: &PredicateAst,
+    tag: &TagKey,
+) -> PredicateAst {
+    let mut bound = predicate.clone();
+    if let PredicateAst::PlayerTaggedObjectMatches {
+        tag: predicate_tag, ..
+    } = &mut bound
+        && predicate_tag.as_str() == IT_TAG
+    {
+        *predicate_tag = tag.clone();
+    }
+    bound
+}
+
 pub(crate) fn compile_if_do_with_opponent_doesnt(
     first: &EffectAst,
     second: &EffectAst,
@@ -1816,6 +1844,7 @@ pub(crate) fn compile_if_do_with_opponent_doesnt(
 ) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
     let EffectAst::ForEachOpponentDoesNot {
         effects: second_effects,
+        predicate,
     } = second
     else {
         return Ok(None);
@@ -1825,6 +1854,35 @@ pub(crate) fn compile_if_do_with_opponent_doesnt(
         effects: opponent_effects,
     } = first
     {
+        if let Some(predicate) = predicate {
+            let explicit_tag = TagKey::from(ctx.next_tag("discarded").as_str());
+            let mut tagged_opponent_effects = opponent_effects.clone();
+            if !tag_last_discard_in_effects(&mut tagged_opponent_effects, &explicit_tag) {
+                return Err(CardTextError::ParseError(
+                    "missing discard antecedent for tagged opponent follow-up".to_string(),
+                ));
+            }
+            let first_ast = EffectAst::ForEachOpponent {
+                effects: tagged_opponent_effects,
+            };
+            let (mut first_effects, mut choices) = compile_effect(&first_ast, ctx)?;
+            let followup = EffectAst::ForEachOpponent {
+                effects: vec![EffectAst::Conditional {
+                    predicate: bind_explicit_tag_to_player_tagged_predicate(
+                        predicate,
+                        &explicit_tag,
+                    ),
+                    if_true: Vec::new(),
+                    if_false: second_effects.clone(),
+                }],
+            };
+            let (second_compiled, second_choices) = compile_effect(&followup, ctx)?;
+            first_effects.extend(second_compiled);
+            for choice in second_choices {
+                push_choice(&mut choices, choice);
+            }
+            return Ok(Some((first_effects, choices)));
+        }
         let mut merged_opponent_effects = opponent_effects.clone();
         merged_opponent_effects.push(EffectAst::IfResult {
             predicate: IfResultPredicate::DidNot,
@@ -1841,6 +1899,35 @@ pub(crate) fn compile_if_do_with_opponent_doesnt(
         effects: player_effects,
     } = first
     {
+        if let Some(predicate) = predicate {
+            let explicit_tag = TagKey::from(ctx.next_tag("discarded").as_str());
+            let mut tagged_player_effects = player_effects.clone();
+            if !tag_last_discard_in_effects(&mut tagged_player_effects, &explicit_tag) {
+                return Err(CardTextError::ParseError(
+                    "missing discard antecedent for tagged player follow-up".to_string(),
+                ));
+            }
+            let first_ast = EffectAst::ForEachPlayer {
+                effects: tagged_player_effects,
+            };
+            let (mut first_effects, mut choices) = compile_effect(&first_ast, ctx)?;
+            let followup = EffectAst::ForEachOpponent {
+                effects: vec![EffectAst::Conditional {
+                    predicate: bind_explicit_tag_to_player_tagged_predicate(
+                        predicate,
+                        &explicit_tag,
+                    ),
+                    if_true: Vec::new(),
+                    if_false: second_effects.clone(),
+                }],
+            };
+            let (second_compiled, second_choices) = compile_effect(&followup, ctx)?;
+            first_effects.extend(second_compiled);
+            for choice in second_choices {
+                push_choice(&mut choices, choice);
+            }
+            return Ok(Some((first_effects, choices)));
+        }
         let first_ast = EffectAst::ForEachPlayer {
             effects: player_effects.clone(),
         };
@@ -1877,6 +1964,48 @@ pub(crate) fn compile_if_do_with_opponent_doesnt(
         } => (Some(*condition), effects),
         _ => return Ok(None),
     };
+
+    if let Some(predicate) = predicate {
+        let explicit_tag = TagKey::from(ctx.next_tag("discarded").as_str());
+        let mut tagged_first_effects = first_effects.clone();
+        let Some(EffectAst::ForEachOpponent {
+            effects: tagged_opponent_effects,
+        }) = tagged_first_effects.first_mut()
+        else {
+            return Ok(None);
+        };
+        if !tag_last_discard_in_effects(tagged_opponent_effects, &explicit_tag) {
+            return Err(CardTextError::ParseError(
+                "missing discard antecedent for tagged opponent follow-up".to_string(),
+            ));
+        }
+        let tagged_first = if let Some(condition) = condition {
+            EffectAst::ResolvedIfResult {
+                condition,
+                predicate: IfResultPredicate::Did,
+                effects: tagged_first_effects,
+            }
+        } else {
+            EffectAst::IfResult {
+                predicate: IfResultPredicate::Did,
+                effects: tagged_first_effects,
+            }
+        };
+        let (mut first_compiled, mut choices) = compile_effect(&tagged_first, ctx)?;
+        let followup = EffectAst::ForEachOpponent {
+            effects: vec![EffectAst::Conditional {
+                predicate: bind_explicit_tag_to_player_tagged_predicate(predicate, &explicit_tag),
+                if_true: Vec::new(),
+                if_false: second_effects.clone(),
+            }],
+        };
+        let (second_compiled, second_choices) = compile_effect(&followup, ctx)?;
+        first_compiled.extend(second_compiled);
+        for choice in second_choices {
+            push_choice(&mut choices, choice);
+        }
+        return Ok(Some((first_compiled, choices)));
+    }
 
     let Some(EffectAst::ForEachOpponent {
         effects: opponent_effects,
@@ -1918,6 +2047,7 @@ pub(crate) fn compile_if_do_with_player_doesnt(
 ) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
     let EffectAst::ForEachPlayerDoesNot {
         effects: second_effects,
+        predicate,
     } = second
     else {
         return Ok(None);
@@ -1927,6 +2057,35 @@ pub(crate) fn compile_if_do_with_player_doesnt(
         effects: player_effects,
     } = first
     {
+        if let Some(predicate) = predicate {
+            let explicit_tag = TagKey::from(ctx.next_tag("discarded").as_str());
+            let mut tagged_player_effects = player_effects.clone();
+            if !tag_last_discard_in_effects(&mut tagged_player_effects, &explicit_tag) {
+                return Err(CardTextError::ParseError(
+                    "missing discard antecedent for tagged player follow-up".to_string(),
+                ));
+            }
+            let first_ast = EffectAst::ForEachPlayer {
+                effects: tagged_player_effects,
+            };
+            let (mut first_effects, mut choices) = compile_effect(&first_ast, ctx)?;
+            let followup = EffectAst::ForEachPlayer {
+                effects: vec![EffectAst::Conditional {
+                    predicate: bind_explicit_tag_to_player_tagged_predicate(
+                        predicate,
+                        &explicit_tag,
+                    ),
+                    if_true: Vec::new(),
+                    if_false: second_effects.clone(),
+                }],
+            };
+            let (second_compiled, second_choices) = compile_effect(&followup, ctx)?;
+            first_effects.extend(second_compiled);
+            for choice in second_choices {
+                push_choice(&mut choices, choice);
+            }
+            return Ok(Some((first_effects, choices)));
+        }
         let mut merged_player_effects = player_effects.clone();
         merged_player_effects.push(EffectAst::IfResult {
             predicate: IfResultPredicate::DidNot,
@@ -1952,6 +2111,48 @@ pub(crate) fn compile_if_do_with_player_doesnt(
         } => (Some(*condition), effects),
         _ => return Ok(None),
     };
+
+    if let Some(predicate) = predicate {
+        let explicit_tag = TagKey::from(ctx.next_tag("discarded").as_str());
+        let mut tagged_first_effects = first_effects.clone();
+        let Some(EffectAst::ForEachPlayer {
+            effects: tagged_player_effects,
+        }) = tagged_first_effects.first_mut()
+        else {
+            return Ok(None);
+        };
+        if !tag_last_discard_in_effects(tagged_player_effects, &explicit_tag) {
+            return Err(CardTextError::ParseError(
+                "missing discard antecedent for tagged player follow-up".to_string(),
+            ));
+        }
+        let tagged_first = if let Some(condition) = condition {
+            EffectAst::ResolvedIfResult {
+                condition,
+                predicate: IfResultPredicate::Did,
+                effects: tagged_first_effects,
+            }
+        } else {
+            EffectAst::IfResult {
+                predicate: IfResultPredicate::Did,
+                effects: tagged_first_effects,
+            }
+        };
+        let (mut first_compiled, mut choices) = compile_effect(&tagged_first, ctx)?;
+        let followup = EffectAst::ForEachPlayer {
+            effects: vec![EffectAst::Conditional {
+                predicate: bind_explicit_tag_to_player_tagged_predicate(predicate, &explicit_tag),
+                if_true: Vec::new(),
+                if_false: second_effects.clone(),
+            }],
+        };
+        let (second_compiled, second_choices) = compile_effect(&followup, ctx)?;
+        first_compiled.extend(second_compiled);
+        for choice in second_choices {
+            push_choice(&mut choices, choice);
+        }
+        return Ok(Some((first_compiled, choices)));
+    }
 
     let Some(EffectAst::ForEachPlayer {
         effects: player_effects,
@@ -4807,7 +5008,8 @@ fn try_compile_visibility_and_card_selection_effect(
                 )
             })?;
 
-            let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, false)?;
+            let (chooser, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, false)?;
 
             // Choose N from the looked-at cards (which are typically tagged by a prior LookAtTopCardsEffect).
             let mut choose_filter = ObjectFilter::tagged(looked_tag.clone());
@@ -4877,7 +5079,8 @@ fn try_compile_visibility_and_card_selection_effect(
                 )
             })?;
 
-            let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, false)?;
+            let (chooser, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, false)?;
 
             let mut choose_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             choose_filter.zone = Some(Zone::Library);
@@ -6265,6 +6468,7 @@ fn try_compile_object_zone_and_exchange_effect(
             player,
             random,
             filter,
+            tag,
         } => {
             let (resolved_player, choices) =
                 resolve_effect_player_filter(*player, ctx, true, true, true)?;
@@ -6280,11 +6484,18 @@ fn try_compile_object_zone_and_exchange_effect(
             } else {
                 None
             };
-            let effect = Effect::discard_player_filtered(
-                count.clone(),
-                resolved_player,
-                *random,
-                resolved_filter,
+            let tag = tag
+                .clone()
+                .unwrap_or_else(|| TagKey::from(ctx.next_tag("discarded").as_str()));
+            ctx.last_object_tag = Some(tag.as_str().to_string());
+            let effect = Effect::new(
+                crate::effects::DiscardEffect::new_with_filter(
+                    count.clone(),
+                    resolved_player,
+                    *random,
+                    resolved_filter,
+                )
+                .with_tag(tag),
             );
             (vec![effect], choices)
         }
