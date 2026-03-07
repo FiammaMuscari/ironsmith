@@ -911,8 +911,56 @@ pub(crate) fn parse_if_result_predicate(tokens: &[Token]) -> Option<IfResultPred
         let qualifiers = &words[2..words.len() - 2];
         matches!(qualifiers, [] | ["it"] | ["them"] | ["that"])
     };
+    let is_exact_negated_result = |subject: &str| {
+        (words.len() == 2
+            && words[0] == subject
+            && matches!(words[1], "dont" | "didnt" | "cant"))
+            || (words.len() == 3
+                && words[0] == subject
+                && ((matches!(words[1], "do" | "did" | "can") && words[2] == "not")))
+    };
+    let is_negated_this_way_result = |subject: &str| {
+        let action_idx = if words.len() >= 5
+            && words[0] == subject
+            && matches!(words[1], "dont" | "didnt")
+        {
+            2
+        } else if words.len() >= 6
+            && words[0] == subject
+            && matches!(words[1], "do" | "did")
+            && words[2] == "not"
+        {
+            3
+        } else {
+            return false;
+        };
 
-    if words.len() >= 2 && words[0] == "you" && words[1] == "do" {
+        if words[words.len() - 2] != "this" || words[words.len() - 1] != "way" {
+            return false;
+        }
+
+        matches!(
+            words[action_idx],
+            "create"
+                | "search"
+                | "searched"
+                | "remove"
+                | "removed"
+                | "sacrifice"
+                | "sacrificed"
+                | "discard"
+                | "discarded"
+                | "exile"
+                | "exiled"
+                | "counter"
+                | "countered"
+                | "pay"
+                | "paid"
+                | "cast"
+        )
+    };
+
+    if words.len() == 2 && words[0] == "you" && words[1] == "do" {
         return Some(IfResultPredicate::Did);
     }
     if words.len() >= 2
@@ -922,10 +970,10 @@ pub(crate) fn parse_if_result_predicate(tokens: &[Token]) -> Option<IfResultPred
     {
         return Some(IfResultPredicate::Did);
     }
-    if words.len() >= 2 && words[0] == "they" && words[1] == "do" {
+    if words.len() == 2 && words[0] == "they" && words[1] == "do" {
         return Some(IfResultPredicate::Did);
     }
-    if words.len() >= 2
+    if words.len() == 2
         && (words[0] == "player" || words[0] == "players")
         && (words[1] == "do" || words[1] == "does")
     {
@@ -966,38 +1014,10 @@ pub(crate) fn parse_if_result_predicate(tokens: &[Token]) -> Option<IfResultPred
         return Some(IfResultPredicate::DiesThisWay);
     }
 
-    if words.len() >= 2
-        && words[0] == "you"
-        && (words[1] == "dont" || words[1] == "didnt" || words[1] == "do" || words[1] == "did")
-    {
-        if words.len() >= 3 && words[2] == "not" {
-            return Some(IfResultPredicate::DidNot);
-        }
-        if words[1] == "dont" || words[1] == "didnt" {
-            return Some(IfResultPredicate::DidNot);
-        }
-    }
-    if words.len() >= 2 && words[0] == "you" && words[1] == "cant" {
+    if is_exact_negated_result("you") || is_negated_this_way_result("you") {
         return Some(IfResultPredicate::DidNot);
     }
-    if words.len() >= 3 && words[0] == "you" && words[1] == "can" && words[2] == "not" {
-        return Some(IfResultPredicate::DidNot);
-    }
-    if words.len() >= 2
-        && words[0] == "they"
-        && (words[1] == "dont" || words[1] == "didnt" || words[1] == "do" || words[1] == "did")
-    {
-        if words.len() >= 3 && words[2] == "not" {
-            return Some(IfResultPredicate::DidNot);
-        }
-        if words[1] == "dont" || words[1] == "didnt" {
-            return Some(IfResultPredicate::DidNot);
-        }
-    }
-    if words.len() >= 2 && words[0] == "they" && words[1] == "cant" {
-        return Some(IfResultPredicate::DidNot);
-    }
-    if words.len() >= 3 && words[0] == "they" && words[1] == "can" && words[2] == "not" {
+    if is_exact_negated_result("they") || is_negated_this_way_result("they") {
         return Some(IfResultPredicate::DidNot);
     }
 

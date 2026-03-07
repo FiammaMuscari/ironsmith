@@ -400,6 +400,34 @@ fn regression_semantic_mismatch_magebane_lizard_spell_history_count() {
 }
 
 #[test]
+fn regression_semantic_mismatch_dire_tactics_negative_control_predicate() {
+    let rendered = rendered_lines(
+        "Exile target creature. If you don't control a Human, you lose life equal to that creature's toughness.",
+        "Dire Tactics",
+        &[],
+    );
+
+    assert!(
+        rendered.contains("exile target creature"),
+        "expected exile clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("if you don't control a human")
+            || rendered.contains("if you control no human"),
+        "expected negative-control predicate to remain explicit, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("if that doesn't happen"),
+        "state predicate should not collapse into a result predicate, got {rendered}"
+    );
+    assert!(
+        rendered.contains("lose life equal to its toughness")
+            || rendered.contains("lose life equal to that creature's toughness"),
+        "expected toughness-based life loss to remain, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_dwarven_thaumaturgist_switch_pt() {
     let rendered = rendered_lines(
         "{T}: Switch target creature's power and toughness until end of turn.",
