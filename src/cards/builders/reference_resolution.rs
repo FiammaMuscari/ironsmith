@@ -592,6 +592,7 @@ fn advance_reference_frame_for_effect(
         | EffectAst::BecomeBasicLandTypeChoice { .. }
         | EffectAst::BecomeCreatureTypeChoice { .. }
         | EffectAst::BecomeColorChoice { .. }
+        | EffectAst::ExileUntilMatchCast { .. }
         | EffectAst::Cant { .. }
         | EffectAst::PlayFromGraveyardUntilEot { .. }
         | EffectAst::GrantPlayTaggedUntilEndOfTurn { .. }
@@ -1216,6 +1217,10 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             bind_unresolved_it_in_value(amount, seed_tag)
                 + bind_unresolved_it_in_filter(land_filter, seed_tag)
         }
+        EffectAst::ExileUntilMatchCast {
+            filter,
+            ..
+        } => bind_unresolved_it_in_filter(filter, seed_tag),
         EffectAst::Cant { restriction, .. } => {
             bind_unresolved_it_in_restriction(restriction, seed_tag)
         }

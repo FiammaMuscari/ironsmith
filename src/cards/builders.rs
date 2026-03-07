@@ -858,6 +858,12 @@ pub(crate) enum EffectAst {
         count: Value,
         player: PlayerAst,
     },
+    ExileUntilMatchCast {
+        player: PlayerAst,
+        filter: ObjectFilter,
+        caster: PlayerAst,
+        without_paying_mana_cost: bool,
+    },
     BecomeBasicLandTypeChoice {
         target: TargetAst,
         duration: Until,

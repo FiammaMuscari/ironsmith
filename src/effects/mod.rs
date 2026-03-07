@@ -115,11 +115,12 @@ pub use permanents::{
 };
 pub use player::{
     CascadeEffect, CastSourceEffect, CastTaggedEffect, ControlPlayerEffect, CreateEmblemEffect,
-    DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect, ExperienceCountersEffect,
-    ExtraTurnAfterNextTurnEffect, ExtraTurnEffect, GrantEffect, GrantPlayFromGraveyardEffect,
-    GrantPlayTaggedDuration, GrantPlayTaggedEffect, GrantTaggedSpellLifeCostByManaValueEffect,
-    LoseTheGameEffect, PayEnergyEffect, PoisonCountersEffect, SkipCombatPhasesEffect,
-    SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, WinTheGameEffect,
+    DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect,
+    ExileUntilMatchCastEffect, ExperienceCountersEffect, ExtraTurnAfterNextTurnEffect,
+    ExtraTurnEffect, GrantEffect, GrantPlayFromGraveyardEffect, GrantPlayTaggedDuration,
+    GrantPlayTaggedEffect, GrantTaggedSpellLifeCostByManaValueEffect, LoseTheGameEffect,
+    PayEnergyEffect, PoisonCountersEffect, SkipCombatPhasesEffect, SkipDrawStepEffect,
+    SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, WinTheGameEffect,
 };
 pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};
 pub use restrictions::CantEffect;

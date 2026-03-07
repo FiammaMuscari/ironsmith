@@ -3416,6 +3416,23 @@ impl Effect {
         Self::new(DiscoverEffect::new(count, player))
     }
 
+    /// Exile cards from the top of a library until one matches `filter`, let a
+    /// player cast it, then put the rest on the bottom in random order.
+    pub fn exile_until_match_cast(
+        player: PlayerFilter,
+        filter: ObjectFilter,
+        caster: PlayerFilter,
+        without_paying_mana_cost: bool,
+    ) -> Self {
+        use crate::effects::ExileUntilMatchCastEffect;
+        Self::new(ExileUntilMatchCastEffect::new(
+            player,
+            filter,
+            caster,
+            without_paying_mana_cost,
+        ))
+    }
+
     /// Create a "surveil" effect.
     pub fn surveil(count: impl Into<Value>) -> Self {
         use crate::effects::SurveilEffect;

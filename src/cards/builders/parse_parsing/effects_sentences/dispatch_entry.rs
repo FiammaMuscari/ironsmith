@@ -4,7 +4,8 @@ use crate::cards::builders::effect_ast_traversal::{
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, CarryContext, EffectAst, IT_TAG, IfResultPredicate, PlayerAst, TagKey,
-    TargetAst, TextSpan, Token, TokenCopyFollowup, append_token_reminder_to_last_create_effect,
+    SubjectAst, TargetAst, TextSpan, Token, TokenCopyFollowup,
+    append_token_reminder_to_last_create_effect,
     build_may_cast_tagged_effect, collapse_token_copy_end_of_combat_exile_followup,
     collapse_token_copy_next_end_step_exile_followup, effect_creates_any_token,
     effect_creates_eldrazi_spawn_or_scion, explicit_player_for_carry,
@@ -20,8 +21,8 @@ use crate::cards::builders::{
     parse_sentence_exile_that_token_when_source_leaves,
     parse_sentence_sacrifice_source_when_that_token_leaves,
     parse_target_player_chooses_then_other_cant_block, parse_token_copy_modifier_sentence,
-    parse_where_x_value_clause, parser_trace, replace_unbound_x_with_value, span_from_tokens,
-    split_on_period, strip_embedded_token_rules_text, target_ast_to_object_filter,
+    parse_where_x_value_clause, parse_subject, parser_trace, replace_unbound_x_with_value,
+    span_from_tokens, split_on_period, strip_embedded_token_rules_text, target_ast_to_object_filter,
     token_index_for_word_index, trim_commas, value_contains_unbound_x, words,
 };
 use crate::effect::{ChoiceCount, Until, Value};
@@ -336,6 +337,111 @@ fn parse_look_at_top_reveal_match_put_rest_bottom(
     Ok(Some(effects))
 }
 
+fn parse_exile_until_match_cast_rest_bottom(
+    first: &[Token],
+    second: &[Token],
+    third: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let first_tokens = trim_commas(first);
+    let Some(exile_idx) = first_tokens
+        .iter()
+        .position(|token| token.is_word("exile") || token.is_word("exiles"))
+    else {
+        return Ok(None);
+    };
+    if exile_idx == 0 {
+        return Ok(None);
+    }
+
+    let player = match parse_subject(&first_tokens[..exile_idx]) {
+        SubjectAst::Player(player) => player,
+        _ => return Ok(None),
+    };
+
+    let Some(until_idx) = first_tokens.iter().position(|token| token.is_word("until")) else {
+        return Ok(None);
+    };
+    if until_idx <= exile_idx + 1 {
+        return Ok(None);
+    }
+
+    let prefix_words: Vec<&str> = words(&first_tokens[exile_idx + 1..until_idx])
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    if !prefix_words.starts_with(&["cards", "from", "top", "of"])
+        || !prefix_words.ends_with(&["library"])
+    {
+        return Ok(None);
+    }
+
+    let until_tokens = trim_commas(&first_tokens[until_idx + 1..]);
+    let Some(match_verb_idx) = until_tokens
+        .iter()
+        .position(|token| token.is_word("exile") || token.is_word("exiles"))
+    else {
+        return Ok(None);
+    };
+    if match_verb_idx == 0 || match_verb_idx + 1 >= until_tokens.len() {
+        return Ok(None);
+    }
+    let filter_tokens = trim_commas(&until_tokens[match_verb_idx + 1..]);
+    if filter_tokens.is_empty() {
+        return Ok(None);
+    }
+    let filter = match parse_object_filter(&filter_tokens, false) {
+        Ok(filter) => filter,
+        Err(_) => return Ok(None),
+    };
+
+    let second_tokens = trim_commas(second);
+    let Some(may_idx) = second_tokens.iter().position(|token| token.is_word("may")) else {
+        return Ok(None);
+    };
+    if may_idx == 0 || may_idx + 1 >= second_tokens.len() {
+        return Ok(None);
+    }
+    let caster = match parse_subject(&second_tokens[..may_idx]) {
+        SubjectAst::Player(player) => player,
+        _ => return Ok(None),
+    };
+    let cast_words = words(&second_tokens[may_idx + 1..]);
+    let is_cast_clause = (cast_words.starts_with(&["cast", "that", "card"])
+        || cast_words.starts_with(&["cast", "it"]))
+        && cast_words.ends_with(&["without", "paying", "its", "mana", "cost"]);
+    if !is_cast_clause {
+        return Ok(None);
+    }
+
+    let mut third_words = words(third);
+    while third_words
+        .first()
+        .is_some_and(|word| *word == "then" || *word == "and")
+    {
+        third_words.remove(0);
+    }
+    let puts_rest_bottom_random = third_words.contains(&"exiled")
+        && third_words.contains(&"cards")
+        && third_words
+            .windows(4)
+            .any(|window| window == ["werent", "cast", "this", "way"])
+        && third_words.contains(&"bottom")
+        && third_words.contains(&"library")
+        && third_words
+            .windows(2)
+            .any(|window| window == ["random", "order"]);
+    if !puts_rest_bottom_random {
+        return Ok(None);
+    }
+
+    Ok(Some(vec![EffectAst::ExileUntilMatchCast {
+        player,
+        filter,
+        caster,
+        without_paying_mana_cost: true,
+    }]))
+}
+
 fn title_case_words(words: &[&str]) -> String {
     words
         .iter()
@@ -431,10 +537,16 @@ fn parse_triple_sentence_sequence(
     second: &[Token],
     third: &[Token],
 ) -> Result<Option<(&'static str, Vec<EffectAst>)>, CardTextError> {
-    const RULES: [(&str, TripleSentenceRule); 1] = [(
-        "look-at-top-reveal-match-put-rest-bottom",
-        parse_look_at_top_reveal_match_put_rest_bottom,
-    )];
+    const RULES: [(&str, TripleSentenceRule); 2] = [
+        (
+            "exile-until-match-cast-rest-bottom",
+            parse_exile_until_match_cast_rest_bottom,
+        ),
+        (
+            "look-at-top-reveal-match-put-rest-bottom",
+            parse_look_at_top_reveal_match_put_rest_bottom,
+        ),
+    ];
 
     for (name, rule) in RULES {
         if let Some(combined) = rule(first, second, third)? {

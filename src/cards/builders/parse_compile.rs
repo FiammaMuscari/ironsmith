@@ -3883,6 +3883,31 @@ fn try_compile_player_resource_and_choice_effect(
             || Effect::discover(count.clone()),
             |filter| Effect::discover_player(count.clone(), filter),
         )?,
+        EffectAst::ExileUntilMatchCast {
+            player,
+            filter,
+            caster,
+            without_paying_mana_cost,
+        } => {
+            let (library_player, mut choices) =
+                resolve_effect_player_filter(*player, ctx, true, true, true)?;
+            let (casting_player, casting_choices) =
+                resolve_effect_player_filter(*caster, ctx, true, true, true)?;
+            for choice in casting_choices {
+                push_choice(&mut choices, choice);
+            }
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
+            ctx.last_player_filter = Some(library_player.clone());
+            (
+                vec![Effect::exile_until_match_cast(
+                    library_player,
+                    resolved_filter,
+                    casting_player,
+                    *without_paying_mana_cost,
+                )],
+                choices,
+            )
+        }
         EffectAst::BecomeBasicLandTypeChoice { target, duration } => {
             compile_tagged_effect_for_target(target, ctx, "become_basic_land_type", |spec| {
                 Effect::new(crate::effects::BecomeBasicLandTypeChoiceEffect::new(

@@ -1,7 +1,10 @@
 use ironsmith::{
     cards::CardDefinitionBuilder, compiled_text::compiled_lines, ids::CardId, types::CardType,
 };
-use ironsmith::effects::{ChooseObjectsEffect, GrantPlayTaggedEffect, ScheduleDelayedTriggerEffect};
+use ironsmith::effects::{
+    ChooseObjectsEffect, ExileUntilMatchCastEffect, GrantPlayTaggedEffect,
+    ScheduleDelayedTriggerEffect,
+};
 
 fn rendered_lines(text: &str, name: &str, card_types: &[CardType]) -> String {
     let mut builder = CardDefinitionBuilder::new(CardId::new(), name);
@@ -252,6 +255,47 @@ fn regression_semantic_mismatch_end_blaze_epiphany_delayed_exile_choice_permissi
             .iter()
             .any(|effect| effect.downcast_ref::<GrantPlayTaggedEffect>().is_some()),
         "play permission should be nested inside the delayed trigger"
+    );
+}
+
+#[test]
+fn regression_semantic_mismatch_dazzling_sphinx_exile_until_instant_or_sorcery() {
+    let text = "Flying\nWhenever this creature deals combat damage to a player, that player exiles cards from the top of their library until they exile an instant or sorcery card. You may cast that card without paying its mana cost. Then that player puts the exiled cards that weren't cast this way on the bottom of their library in a random order.";
+    let def = CardDefinitionBuilder::new(CardId::new(), "Dazzling Sphinx")
+        .card_types(vec![CardType::Creature])
+        .parse_text(text)
+        .expect("Dazzling Sphinx should parse");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("until they exile an instant or sorcery card"),
+        "expected exile-until match clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("without paying its mana cost"),
+        "expected free-cast permission to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("weren't cast this way")
+            && rendered.contains("random order"),
+        "expected bottom-the-rest random-order clause to remain, got {rendered}"
+    );
+
+    let abilities_debug = format!("{:#?}", def.abilities);
+    assert!(
+        abilities_debug.contains("ExileUntilMatchCastEffect"),
+        "expected generic exile-until-match effect, got {abilities_debug}"
+    );
+    assert!(
+        !abilities_debug.contains("ChooseObjectsEffect"),
+        "top-card choose/exile fallback should not be used anymore, got {abilities_debug}"
+    );
+    assert!(
+        def.abilities.iter().any(|ability| {
+            matches!(&ability.kind, ironsmith::ability::AbilityKind::Triggered(triggered)
+                if triggered.effects.iter().any(|effect| effect.downcast_ref::<ExileUntilMatchCastEffect>().is_some()))
+        }),
+        "triggered ability should carry the generic exile-until-match runtime effect"
     );
 }
 
