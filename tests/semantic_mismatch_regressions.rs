@@ -272,6 +272,21 @@ fn regression_semantic_mismatch_locked_in_the_cemetery_graveyard_threshold() {
 }
 
 #[test]
+fn regression_semantic_mismatch_brighthearth_banneret_reinforce_discard_cost() {
+    let rendered = rendered_lines(
+        "Elemental spells and Warrior spells you cast cost {1} less to cast.\nReinforce 1—{1}{R}",
+        "Brighthearth Banneret",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("{1}{r}, discard this card")
+            && rendered.contains("put a +1/+1 counter on target creature"),
+        "expected reinforce to preserve its discard cost, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_uurg_power_only_cda() {
     let rendered = rendered_lines(
         "Uurg's power is equal to the number of land cards in your graveyard.\nAt the beginning of your upkeep, surveil 1.\n{B}{G}, Sacrifice a land: You gain 2 life.",

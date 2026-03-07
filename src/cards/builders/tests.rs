@@ -2180,7 +2180,7 @@ fn test_parse_reinforce_keyword_line_from_hand() {
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
         rendered.contains("{2}{w}")
-            && rendered.contains("put this creature into its owner's graveyard")
+            && rendered.contains("discard this card")
             && rendered.contains("put two +1/+1 counters on target creature"),
         "expected reinforce activation to include mana+discard cost and counter effect, got {rendered}"
     );
@@ -2189,7 +2189,7 @@ fn test_parse_reinforce_keyword_line_from_hand() {
     assert!(
         debug.contains("functional_zones: [hand]")
             && debug.contains("plusoneplusone")
-            && debug.contains("graveyard"),
+            && debug.contains("discardsourcecost"),
         "expected reinforce to be a hand ability with discard-to-graveyard counter effect, got {debug}"
     );
 }

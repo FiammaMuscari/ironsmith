@@ -787,13 +787,11 @@ pub(crate) fn parse_reinforce_line(
     }
 
     let cost_tokens = &tokens[cost_start..cost_end];
-    let (base_cost, mut cost_effects) = parse_activation_cost(cost_tokens)?;
-    cost_effects.push(Effect::move_to_zone(
-        ChooseSpec::Source,
-        Zone::Graveyard,
-        false,
-    ));
-    let mana_cost = crate::ability::merge_cost_effects(base_cost.clone(), cost_effects);
+    let (base_cost, cost_effects) = parse_activation_cost(cost_tokens)?;
+    let mut merged_costs = base_cost.costs().to_vec();
+    merged_costs.extend(cost_effects.into_iter().map(crate::costs::Cost::effect));
+    merged_costs.push(crate::costs::Cost::discard_source());
+    let mana_cost = crate::cost::TotalCost::from_costs(merged_costs);
 
     let mut creature_filter = ObjectFilter::default();
     creature_filter.zone = Some(Zone::Battlefield);
