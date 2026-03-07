@@ -6181,8 +6181,21 @@ fn describe_effect_impl(effect: &Effect) -> String {
                     "At the beginning of the end step of that player's next turn, {delayed_text}"
                 );
             }
+            if trigger_lower.contains("that player's upkeep")
+                || trigger_lower.contains("target player's upkeep")
+            {
+                return format!(
+                    "At the beginning of that player's next upkeep, {delayed_text}"
+                );
+            }
             if trigger_lower.contains("your end step") {
                 return format!("At the beginning of your next end step, {delayed_text}");
+            }
+            if trigger_lower.contains("your upkeep") {
+                return format!("At the beginning of your next upkeep, {delayed_text}");
+            }
+            if trigger_lower.contains("upkeep") {
+                return format!("At the beginning of the next turn's upkeep, {delayed_text}");
             }
             return format!("At the beginning of the next end step, {delayed_text}");
         }

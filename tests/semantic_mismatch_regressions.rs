@@ -371,6 +371,29 @@ fn regression_semantic_mismatch_deny_the_divine_countered_spell_exiled() {
 }
 
 #[test]
+fn regression_semantic_mismatch_heal_next_turns_upkeep() {
+    let rendered = rendered_lines(
+        "Prevent the next 1 damage that would be dealt to any target this turn.\nDraw a card at the beginning of the next turn's upkeep.",
+        "Heal",
+        &[CardType::Instant],
+    );
+
+    assert!(
+        rendered.contains("prevent the next 1 damage that would be dealt to any target this turn"),
+        "expected prevention clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("at the beginning of the next turn's upkeep")
+            || rendered.contains("at the beginning of the next turns upkeep"),
+        "expected the delayed draw to stay on the next turn's upkeep, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("at the beginning of the next end step"),
+        "next-turn upkeep trigger should not degrade into next end step, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_spider_ham_animal_may_ham_subtypes() {
     let rendered = rendered_lines(
         "When Spider-Ham enters, create a Food token.\nAnimal May-Ham — Other Spiders, Boars, Bats, Bears, Birds, Cats, Dogs, Frogs, Jackals, Lizards, Mice, Otters, Rabbits, Raccoons, Rats, Squirrels, Turtles, and Wolves you control get +1/+1.",
