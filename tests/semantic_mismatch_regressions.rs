@@ -295,6 +295,24 @@ fn regression_semantic_mismatch_phyrexian_dragon_engine_from_graveyard_trigger()
 }
 
 #[test]
+fn regression_semantic_mismatch_game_plan_shuffle_hand_and_graveyard() {
+    let rendered = rendered_lines(
+        "Assist\nEach player shuffles their hand and graveyard into their library, then draws seven cards. Exile Game Plan.",
+        "Game Plan",
+        &[CardType::Sorcery],
+    );
+
+    assert!(
+        rendered.contains("each player shuffles their hand and graveyard into their library, then draws seven cards"),
+        "expected combined hand-and-graveyard shuffle clause to remain, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("put a card from that player's hand"),
+        "renderer should not leak the hand-to-library implementation detail, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_corpse_augur_graveyard_owner_kept() {
     let rendered = rendered_lines(
         "When this creature dies, you draw X cards and you lose X life, where X is the number of creature cards in target player's graveyard.",

@@ -2462,6 +2462,11 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     ) {
         return format!("Each player shuffles their hand and graveyard into their library, then draws {tail}");
     }
+    if let Some(tail) = normalized.strip_prefix(
+        "For each player, Put a card from that player's hand on the bottom of that player's library. that player shuffles their graveyard into their library. For each player, that player draws ",
+    ) {
+        return format!("Each player shuffles their hand and graveyard into their library, then draws {tail}");
+    }
     if let Some(rest) = normalized.strip_prefix("For each player, that player sacrifices ")
         && let Some((lands, damage_tail)) =
             rest.split_once(" lands that player controls. For each creature, Deal ")
