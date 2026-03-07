@@ -1548,3 +1548,25 @@ fn regression_semantic_mismatch_cinderheart_giant_keeps_random_choice() {
         "expected lowered target count to keep random selection semantics, got {debug}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_visions_of_dominance_double_followup() {
+    let rendered = rendered_lines(
+        "Put a +1/+1 counter on target creature, then double the number of +1/+1 counters on it.\nFlashback {8}{G}{G}.\nThis spell costs {X} less to cast this way, where X is the greatest mana value of a commander you own on the battlefield or in the command zone.",
+        "Visions of Dominance",
+        &[CardType::Sorcery],
+    );
+
+    assert!(
+        rendered.contains("put a +1/+1 counter on target creature"),
+        "expected the first counter clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("double the number of +1/+1 counters"),
+        "expected the doubling follow-up clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("flashback") && rendered.contains("this spell costs {x} less to cast"),
+        "expected the flashback cost-reduction rider to remain, got {rendered}"
+    );
+}

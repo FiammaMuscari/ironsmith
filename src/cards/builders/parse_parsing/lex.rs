@@ -1175,7 +1175,9 @@ pub(crate) fn split_segments_on_comma_then(segments: Vec<Vec<Token>>) -> Vec<Vec
                     || parse_ability_line(after_then).is_some()
                     || has_nonverb_effect_head;
                 let allow_backref_split = has_back_ref
-                    && after_words.first().is_some_and(|word| *word == "put")
+                    && after_words
+                        .first()
+                        .is_some_and(|word| *word == "put" || *word == "double")
                     && after_words
                         .iter()
                         .any(|word| *word == "counter" || *word == "counters");
