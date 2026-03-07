@@ -6597,7 +6597,11 @@ fn describe_effect_impl(effect: &Effect) -> String {
         if schedule.one_shot && trigger_lower.contains("beginning of your end step") {
             return format!("At the beginning of your next end step, {delayed_text}");
         }
-        if schedule.one_shot && trigger_lower.contains("when this creature dies") {
+        if schedule.one_shot
+            && schedule.target_tag.is_some()
+            && (trigger_lower.contains("creature dies")
+                || trigger_lower.contains("creature is put into a graveyard"))
+        {
             if let Some(filter) = &schedule.target_filter {
                 let subject = with_indefinite_article(&describe_for_each_filter(filter));
                 return format!(

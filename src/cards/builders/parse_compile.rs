@@ -4282,23 +4282,67 @@ fn try_compile_timing_and_control_effect(
         }
         EffectAst::DelayedTriggerThisTurn { trigger, effects } => {
             let (delayed_effects, choices) = compile_trigger_effects(Some(trigger), effects)?;
-            if let TriggerSpec::IsDealtDamage(filter) = trigger {
-                let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
-                if let Some(watched_tag) = watch_tag_from_filter(&resolved_filter) {
-                    let delayed = crate::effects::ScheduleDelayedTriggerEffect::from_tag(
-                        Trigger::is_dealt_damage(ChooseSpec::Source),
-                        delayed_effects,
-                        false,
-                        watched_tag,
-                        PlayerFilter::You,
-                    )
-                    .with_target_filter(resolved_filter)
-                    .until_end_of_turn();
-                    (vec![Effect::new(delayed)], choices)
-                } else {
+            match trigger {
+                TriggerSpec::IsDealtDamage(filter) => {
+                    let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
+                    if let Some(watched_tag) = watch_tag_from_filter(&resolved_filter) {
+                        let delayed = crate::effects::ScheduleDelayedTriggerEffect::from_tag(
+                            Trigger::is_dealt_damage(ChooseSpec::Source),
+                            delayed_effects,
+                            false,
+                            watched_tag,
+                            PlayerFilter::You,
+                        )
+                        .with_target_filter(resolved_filter)
+                        .until_end_of_turn();
+                        (vec![Effect::new(delayed)], choices)
+                    } else {
+                        let effect = Effect::new(
+                            crate::effects::ScheduleDelayedTriggerEffect::new(
+                                compile_trigger_spec(TriggerSpec::IsDealtDamage(resolved_filter)),
+                                delayed_effects,
+                                false,
+                                Vec::new(),
+                                PlayerFilter::You,
+                            )
+                            .until_end_of_turn(),
+                        );
+                        (vec![effect], choices)
+                    }
+                }
+                TriggerSpec::PutIntoGraveyard(filter) => {
+                    let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
+                    if let Some(watched_tag) = watch_tag_from_filter(&resolved_filter) {
+                        let delayed = crate::effects::ScheduleDelayedTriggerEffect::from_tag(
+                            Trigger::this_dies(),
+                            delayed_effects,
+                            false,
+                            watched_tag,
+                            PlayerFilter::You,
+                        )
+                        .with_target_filter(resolved_filter)
+                        .until_end_of_turn();
+                        (vec![Effect::new(delayed)], choices)
+                    } else {
+                        let effect = Effect::new(
+                            crate::effects::ScheduleDelayedTriggerEffect::new(
+                                compile_trigger_spec(TriggerSpec::PutIntoGraveyard(
+                                    resolved_filter,
+                                )),
+                                delayed_effects,
+                                false,
+                                Vec::new(),
+                                PlayerFilter::You,
+                            )
+                            .until_end_of_turn(),
+                        );
+                        (vec![effect], choices)
+                    }
+                }
+                _ => {
                     let effect = Effect::new(
                         crate::effects::ScheduleDelayedTriggerEffect::new(
-                            compile_trigger_spec(TriggerSpec::IsDealtDamage(resolved_filter)),
+                            compile_trigger_spec(trigger.clone()),
                             delayed_effects,
                             false,
                             Vec::new(),
@@ -4308,18 +4352,6 @@ fn try_compile_timing_and_control_effect(
                     );
                     (vec![effect], choices)
                 }
-            } else {
-                let effect = Effect::new(
-                    crate::effects::ScheduleDelayedTriggerEffect::new(
-                        compile_trigger_spec(trigger.clone()),
-                        delayed_effects,
-                        false,
-                        Vec::new(),
-                        PlayerFilter::You,
-                    )
-                    .until_end_of_turn(),
-                );
-                (vec![effect], choices)
             }
         }
         EffectAst::DelayedWhenLastObjectDiesThisTurn { filter, effects } => {

@@ -302,6 +302,20 @@ fn regression_semantic_mismatch_territorial_bruntar_exile_until_nonland() {
 }
 
 #[test]
+fn regression_semantic_mismatch_blessed_defiance_delayed_targeted_death() {
+    let rendered = rendered_lines(
+        "Target creature you control gets +2/+0 and gains lifelink until end of turn. When that creature dies this turn, create a 1/1 white Spirit creature token with flying.",
+        "Blessed Defiance",
+        &[],
+    );
+
+    assert!(
+        rendered.contains("when that creature dies this turn"),
+        "expected delayed trigger to stay tied to the targeted creature, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_uurg_power_only_cda() {
     let rendered = rendered_lines(
         "Uurg's power is equal to the number of land cards in your graveyard.\nAt the beginning of your upkeep, surveil 1.\n{B}{G}, Sacrifice a land: You gain 2 life.",

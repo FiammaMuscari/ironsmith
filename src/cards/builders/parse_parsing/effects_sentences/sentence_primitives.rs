@@ -4293,12 +4293,12 @@ pub(crate) const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
         parser: parse_sentence_delayed_until_next_end_step,
     },
     SentencePrimitive {
-        name: "delayed-trigger-this-turn",
-        parser: parse_sentence_delayed_trigger_this_turn,
-    },
-    SentencePrimitive {
         name: "delayed-when-that-dies-this-turn",
         parser: parse_delayed_when_that_dies_this_turn_sentence,
+    },
+    SentencePrimitive {
+        name: "delayed-trigger-this-turn",
+        parser: parse_sentence_delayed_trigger_this_turn,
     },
     SentencePrimitive {
         name: "destroy-or-exile-all-split",
