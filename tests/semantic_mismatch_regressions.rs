@@ -454,6 +454,36 @@ fn regression_semantic_mismatch_apocalypse_runner_shared_target_followup() {
 }
 
 #[test]
+fn regression_semantic_mismatch_kill_switch_tapped_lock_clause() {
+    let rendered = rendered_lines(
+        "{2}, {T}: Tap all other artifacts. They don't untap during their controllers' untap steps for as long as this artifact remains tapped.",
+        "Kill Switch",
+        &[],
+    );
+
+    assert!(
+        rendered.contains("tap all other artifacts"),
+        "expected tap-all clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("don't untap during their controllers' untap steps")
+            || rendered.contains("cant untap during their controllers' untap steps")
+            || rendered.contains("doesn't untap during its controller's untap step")
+            || rendered.contains("doesnt untap during its controller's untap step"),
+        "expected untap-lock clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("while this source is tapped")
+            || rendered.contains("while this permanent is tapped"),
+        "expected tapped-duration clause to remain, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("untap a tapped artifact"),
+        "untap-lock clause should not invert into an untap effect, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_dwarven_thaumaturgist_switch_pt() {
     let rendered = rendered_lines(
         "{T}: Switch target creature's power and toughness until end of turn.",

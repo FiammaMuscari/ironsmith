@@ -1401,6 +1401,7 @@ pub(crate) fn parse_enchant_sentence(tokens: &[Token]) -> Result<Option<EffectAs
 pub(crate) fn parse_cant_effect_sentence(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let source_tapped_duration = has_source_remains_tapped_duration(tokens);
     let Some((duration, clause_tokens)) = parse_restriction_duration(tokens)? else {
         return Ok(None);
     };
@@ -1449,6 +1450,7 @@ pub(crate) fn parse_cant_effect_sentence(
         effects.push(EffectAst::Cant {
             restriction: parsed.restriction,
             duration: duration.clone(),
+            condition: source_tapped_duration.then_some(crate::ConditionExpr::SourceIsTapped),
         });
     }
     if let Some(target) = target {
@@ -1569,6 +1571,18 @@ pub(crate) fn parse_restriction_duration(
     });
     if let Some(idx) = suffix_idx {
         let suffix_words = words(&tokens[idx..]);
+        let remains_tapped_duration = suffix_words.contains(&"remains")
+            && suffix_words.contains(&"tapped")
+            && (suffix_words.contains(&"this")
+                || suffix_words.contains(&"thiss")
+                || suffix_words.contains(&"source")
+                || suffix_words.contains(&"artifact")
+                || suffix_words.contains(&"creature")
+                || suffix_words.contains(&"permanent"));
+        if remains_tapped_duration {
+            let remainder = trim_commas(&tokens[..idx]);
+            return Ok(Some((Until::ThisLeavesTheBattlefield, remainder)));
+        }
         let as_long_duration = suffix_words.contains(&"you")
             && suffix_words.contains(&"control")
             && (suffix_words.contains(&"this")
@@ -1607,6 +1621,19 @@ pub(crate) fn parse_restriction_duration(
     }
 
     Ok(None)
+}
+
+fn has_source_remains_tapped_duration(tokens: &[Token]) -> bool {
+    let words = words(tokens);
+    words.windows(4).any(|window| window == ["for", "as", "long", "as"])
+        && words.contains(&"remains")
+        && words.contains(&"tapped")
+        && (words.contains(&"this")
+            || words.contains(&"thiss")
+            || words.contains(&"source")
+            || words.contains(&"artifact")
+            || words.contains(&"creature")
+            || words.contains(&"permanent"))
 }
 
 pub(crate) fn parse_play_from_graveyard_sentence(

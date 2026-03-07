@@ -9557,6 +9557,7 @@ pub(crate) fn parse_target_player_chooses_then_other_cant_block(
         EffectAst::Cant {
             restriction: crate::effect::Restriction::block(restriction_filter),
             duration: Until::EndOfTurn,
+            condition: None,
         },
     ]))
 }

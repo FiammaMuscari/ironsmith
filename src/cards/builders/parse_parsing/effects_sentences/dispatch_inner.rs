@@ -922,10 +922,21 @@ fn sentence_has_unsupported_negated_untap_clause(words: &[&str], _: &[Token]) ->
     let has_supported_control_duration = words
         .windows(6)
         .any(|window| window == ["for", "as", "long", "as", "you", "control"]);
+    let has_supported_source_tapped_duration = words.windows(4).any(|window| {
+        window == ["for", "as", "long", "as"]
+    }) && words.contains(&"remains")
+        && words.contains(&"tapped")
+        && (words.contains(&"this")
+            || words.contains(&"thiss")
+            || words.contains(&"source")
+            || words.contains(&"artifact")
+            || words.contains(&"creature")
+            || words.contains(&"permanent"));
     is_negated_untap_clause(words)
         && !words.contains(&"and")
         && !words.contains(&"next")
         && !has_supported_control_duration
+        && !has_supported_source_tapped_duration
         && words.contains(&"during")
         && (words.contains(&"step") || words.contains(&"steps"))
 }

@@ -563,6 +563,7 @@ pub(crate) fn parse_gain_ability_sentence(
             effects.push(EffectAst::Cant {
                 restriction: crate::effect::Restriction::be_targeted_player(PlayerFilter::You),
                 duration: duration.clone(),
+                condition: None,
             });
             effects.push(EffectAst::PreventAllDamageToTarget {
                 target: player_target,

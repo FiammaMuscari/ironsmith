@@ -17,7 +17,7 @@ use crate::cards::builders::{
     normalize_search_library_filter, parse_choose_card_type_then_reveal_top_and_put_chosen_to_hand,
     parse_choose_creature_type_then_become_type, parse_choose_target_prelude_sentence,
     parse_effect_chain, parse_effect_clause_with_trailing_if, parse_effect_sentence,
-    parse_may_cast_it_sentence, parse_number, parse_object_filter,
+    parse_may_cast_it_sentence, parse_number, parse_object_filter, parse_restriction_duration,
     parse_search_library_disjunction_filter, parse_sentence_exile_that_token_when_source_leaves,
     parse_sentence_sacrifice_source_when_that_token_leaves, parse_subject,
     parse_target_player_chooses_then_other_cant_block, parse_token_copy_modifier_sentence,
@@ -214,7 +214,7 @@ fn parse_pair_sentence_sequence(
     first: &[Token],
     second: &[Token],
 ) -> Result<Option<(&'static str, Vec<EffectAst>)>, CardTextError> {
-    const RULES: [(&str, PairSentenceRule); 6] = [
+    const RULES: [(&str, PairSentenceRule); 7] = [
         (
             "delayed-dies-exile-top-power-choose-play",
             parse_delayed_dies_exile_top_power_choose_play,
@@ -226,6 +226,10 @@ fn parse_pair_sentence_sequence(
         (
             "target-chooses-other-cant-block",
             parse_target_player_chooses_then_other_cant_block,
+        ),
+        (
+            "tap-all-then-they-dont-untap-while-source-tapped",
+            parse_tap_all_then_they_dont_untap_while_source_tapped,
         ),
         (
             "choose-card-type-then-reveal-and-put",
@@ -248,6 +252,59 @@ fn parse_pair_sentence_sequence(
     }
 
     Ok(None)
+}
+
+fn parse_tap_all_then_they_dont_untap_while_source_tapped(
+    first: &[Token],
+    second: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let first_effects = parse_effect_sentence(first)?;
+    let [EffectAst::TapAll { filter }] = first_effects.as_slice() else {
+        return Ok(None);
+    };
+
+    let second_tokens = trim_commas(second);
+    let second_words = words(&second_tokens);
+    let starts_with_supported_pronoun_clause = second_words.starts_with(&[
+        "they",
+        "dont",
+        "untap",
+        "during",
+    ]) || second_words.starts_with(&["they", "do", "not", "untap", "during"]);
+    let has_source_tapped_duration = second_words.windows(4).any(|window| {
+        window == ["for", "as", "long", "as"]
+    }) && second_words.contains(&"remains")
+        && second_words.contains(&"tapped")
+        && (second_words.contains(&"this")
+            || second_words.contains(&"thiss")
+            || second_words.contains(&"source")
+            || second_words.contains(&"artifact")
+            || second_words.contains(&"creature")
+            || second_words.contains(&"permanent"));
+    if !starts_with_supported_pronoun_clause || !has_source_tapped_duration {
+        return Ok(None);
+    }
+
+    let Some((duration, clause_tokens)) = parse_restriction_duration(&second_tokens)? else {
+        return Ok(None);
+    };
+    let clause_words = words(&clause_tokens);
+    let valid_untap_clause = clause_words.starts_with(&["they", "dont", "untap", "during"])
+        || clause_words.starts_with(&["they", "do", "not", "untap", "during"]);
+    if !valid_untap_clause {
+        return Ok(None);
+    }
+
+    Ok(Some(vec![
+        EffectAst::TapAll {
+            filter: filter.clone(),
+        },
+        EffectAst::Cant {
+            restriction: crate::effect::Restriction::untap(filter.clone()),
+            duration,
+            condition: Some(crate::ConditionExpr::SourceIsTapped),
+        },
+    ]))
 }
 
 fn parse_exile_until_match_grant_play_this_turn(
@@ -1146,6 +1203,7 @@ pub(crate) fn apply_cant_be_regenerated_to_last_target_effect(
     effects.push(EffectAst::Cant {
         restriction: crate::effect::Restriction::be_regenerated(filter),
         duration: Until::EndOfTurn,
+        condition: None,
     });
     true
 }

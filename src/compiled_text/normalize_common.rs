@@ -6107,6 +6107,9 @@ fn describe_apply_continuous_clauses(
         crate::continuous::Modification::AddAbilityGeneric(ability) => {
             clauses.push(format!("{gains} {}", describe_inline_ability(ability)));
         }
+        crate::continuous::Modification::DoesntUntap => {
+            clauses.push("can't untap".to_string());
+        }
         _ => {}
     };
 
@@ -6147,6 +6150,47 @@ fn describe_apply_continuous_clauses(
     }
 
     clauses
+}
+
+fn describe_apply_continuous_tail(effect: &crate::effects::ApplyContinuousEffect) -> Option<String> {
+    if let Some(condition) = &effect.condition
+        && matches!(effect.until, Until::ThisLeavesTheBattlefield)
+    {
+        return Some(format!(
+            "while {}",
+            lowercase_first(&describe_condition(condition))
+        ));
+    }
+    if !matches!(effect.until, Until::Forever) {
+        return Some(describe_until(&effect.until));
+    }
+    None
+}
+
+fn describe_doesnt_untap_apply_continuous_effect(
+    effect: &crate::effects::ApplyContinuousEffect,
+    target: &str,
+    plural_target: bool,
+) -> Option<String> {
+    if !matches!(
+        effect.modification,
+        Some(crate::continuous::Modification::DoesntUntap)
+    ) || !effect.additional_modifications.is_empty()
+        || !effect.runtime_modifications.is_empty()
+    {
+        return None;
+    }
+
+    let mut text = if plural_target {
+        format!("{target} don't untap during their controllers' untap steps")
+    } else {
+        format!("{target} doesn't untap during its controller's untap step")
+    };
+    if let Some(tail) = describe_apply_continuous_tail(effect) {
+        text.push(' ');
+        text.push_str(&tail);
+    }
+    Some(text)
 }
 
 fn describe_apply_continuous_animation_effect(
@@ -6240,9 +6284,9 @@ fn describe_apply_continuous_animation_effect(
         text.push_str(" with ");
         text.push_str(&join_with_and(&ability_text));
     }
-    if !matches!(effect.until, Until::Forever) {
+    if let Some(tail) = describe_apply_continuous_tail(effect) {
         text.push(' ');
-        text.push_str(&describe_until(&effect.until));
+        text.push_str(&tail);
     }
     Some(text)
 }
@@ -6301,6 +6345,11 @@ fn describe_apply_continuous_effect(
     {
         return Some(text);
     }
+    if let Some(text) =
+        describe_doesnt_untap_apply_continuous_effect(effect, &target, plural_target)
+    {
+        return Some(text);
+    }
 
     let clauses = describe_apply_continuous_clauses(effect, plural_target);
     if clauses.is_empty() {
@@ -6308,9 +6357,9 @@ fn describe_apply_continuous_effect(
     }
 
     let mut text = format!("{target} {}", join_with_and(&clauses));
-    if !matches!(effect.until, Until::Forever) {
+    if let Some(tail) = describe_apply_continuous_tail(effect) {
         text.push(' ');
-        text.push_str(&describe_until(&effect.until));
+        text.push_str(&tail);
     }
     Some(text)
 }
@@ -6322,6 +6371,7 @@ fn describe_compact_apply_continuous_pair(
     if first.target != second.target
         || first.target_spec != second.target_spec
         || first.until != second.until
+        || first.condition != second.condition
     {
         return None;
     }
@@ -6334,9 +6384,9 @@ fn describe_compact_apply_continuous_pair(
     }
 
     let mut text = format!("{target} {}", join_with_and(&clauses));
-    if !matches!(first.until, Until::Forever) {
+    if let Some(tail) = describe_apply_continuous_tail(first) {
         text.push(' ');
-        text.push_str(&describe_until(&first.until));
+        text.push_str(&tail);
     }
     Some(text)
 }

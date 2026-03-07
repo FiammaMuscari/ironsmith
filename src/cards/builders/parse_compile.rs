@@ -4040,12 +4040,33 @@ fn try_compile_timing_and_control_effect(
         EffectAst::Cant {
             restriction,
             duration,
+            condition,
         } => {
             let restriction = resolve_restriction_it_tag(restriction, &current_reference_env(ctx))?;
-            (
-                vec![Effect::cant_until(restriction, duration.clone())],
-                Vec::new(),
-            )
+            if let Some(condition) = condition {
+                match &restriction {
+                    crate::effect::Restriction::Untap(filter) => {
+                        let apply = crate::effects::ApplyContinuousEffect::new(
+                            crate::continuous::EffectTarget::Filter(filter.clone()),
+                            crate::continuous::Modification::DoesntUntap,
+                            duration.clone(),
+                        )
+                        .with_condition(condition.clone())
+                        .lock_filter_at_resolution();
+                        (vec![Effect::new(apply)], Vec::new())
+                    }
+                    other => {
+                        return Err(CardTextError::ParseError(format!(
+                            "unsupported conditioned restriction: {other:?}"
+                        )));
+                    }
+                }
+            } else {
+                (
+                    vec![Effect::cant_until(restriction, duration.clone())],
+                    Vec::new(),
+                )
+            }
         }
         EffectAst::PlayFromGraveyardUntilEot { player } => {
             let player_filter =

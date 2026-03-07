@@ -913,6 +913,7 @@ pub(crate) enum EffectAst {
     Cant {
         restriction: crate::effect::Restriction,
         duration: crate::effect::Until,
+        condition: Option<crate::ConditionExpr>,
     },
     PlayFromGraveyardUntilEot {
         player: PlayerAst,
@@ -10215,17 +10216,25 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
-    fn reject_curly_apostrophe_negated_untap_clause() {
-        let err = CardDefinitionBuilder::new(CardId::new(), "Kill Switch Apostrophe Variant")
+    fn parse_curly_apostrophe_negated_untap_clause_with_tapped_duration() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Kill Switch Apostrophe Variant")
             .parse_text(
                 "{2}, {T}: Tap all other artifacts. They don’t untap during their controllers’ untap steps for as long as this artifact remains tapped.",
             )
-            .expect_err("negated untap clause should fail strictly");
+            .expect("negated untap clause with tapped duration should parse");
 
-        let message = format!("{err:?}");
+        let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
         assert!(
-            message.contains("unsupported negated untap clause"),
-            "expected strict negated-untap parse error, got {message}"
+            rendered.contains("don't untap during their controllers' untap steps")
+                || rendered.contains("cant untap during their controllers' untap steps")
+                || rendered.contains("doesn't untap during its controller's untap step")
+                || rendered.contains("doesnt untap during its controller's untap step"),
+            "expected untap-lock clause in compiled text, got {rendered}"
+        );
+        assert!(
+            rendered.contains("while this source is tapped")
+                || rendered.contains("while this permanent is tapped"),
+            "expected tapped-duration clause in compiled text, got {rendered}"
         );
     }
 

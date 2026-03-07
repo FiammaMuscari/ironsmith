@@ -1822,6 +1822,7 @@ pub(crate) fn parse_must_be_blocked_if_able_clause(
             attacker_filter,
         ),
         duration: Until::EndOfTurn,
+        condition: None,
     }))
 }
 
@@ -1911,6 +1912,7 @@ pub(crate) fn parse_must_block_if_able_clause(
                 attacker_filter,
             ),
             duration,
+            condition: None,
         }));
     }
 
@@ -1961,6 +1963,7 @@ pub(crate) fn parse_must_block_if_able_clause(
             attacker_filter,
         ),
         duration,
+        condition: None,
     }))
 }
 

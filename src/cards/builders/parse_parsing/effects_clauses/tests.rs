@@ -623,6 +623,7 @@ fn parse_tap_then_it_doesnt_untap_next_step_clause() {
             EffectAst::Cant {
                 restriction: crate::effect::Restriction::Untap(_),
                 duration: crate::effect::Until::ControllersNextUntapStep,
+                condition: None,
             }
         )
     }));
