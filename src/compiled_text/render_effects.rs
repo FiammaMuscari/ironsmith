@@ -286,6 +286,33 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             idx += 3;
             continue;
         }
+        if idx + 5 < filtered.len()
+            && let Some(look_at_top) =
+                filtered[idx].downcast_ref::<crate::effects::LookAtTopCardsEffect>()
+            && let Some(choose) =
+                filtered[idx + 1].downcast_ref::<crate::effects::ChooseObjectsEffect>()
+            && let Some(reveal) =
+                filtered[idx + 2].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+            && let Some((Some(move_to_hand_with_id), move_to_hand)) =
+                for_each_tagged_for_compaction(filtered[idx + 3])
+            && let Some(rest) =
+                filtered[idx + 4].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+            && let Some(if_effect) = filtered[idx + 5].downcast_ref::<crate::effects::IfEffect>()
+            && let Some(compact) =
+                describe_look_at_top_then_reveal_put_into_hand_rest_bottom_then_if_not_into_hand(
+                    look_at_top,
+                    choose,
+                    reveal,
+                    move_to_hand_with_id,
+                    move_to_hand,
+                    rest,
+                    if_effect,
+                )
+        {
+            parts.push(compact);
+            idx += 6;
+            continue;
+        }
         if idx + 4 < filtered.len()
             && let Some(look_at_top) =
                 filtered[idx].downcast_ref::<crate::effects::LookAtTopCardsEffect>()
@@ -293,8 +320,7 @@ fn describe_effect_list(effects: &[Effect]) -> String {
                 filtered[idx + 1].downcast_ref::<crate::effects::ChooseObjectsEffect>()
             && let Some(reveal) =
                 filtered[idx + 2].downcast_ref::<crate::effects::ForEachTaggedEffect>()
-            && let Some(move_to_hand) =
-                filtered[idx + 3].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+            && let Some((_, move_to_hand)) = for_each_tagged_for_compaction(filtered[idx + 3])
             && let Some(rest) =
                 filtered[idx + 4].downcast_ref::<crate::effects::ForEachTaggedEffect>()
             && let Some(compact) = describe_look_at_top_then_reveal_put_into_hand_rest_bottom(
@@ -2335,6 +2361,25 @@ fn for_each_reveals_tag(for_each: &crate::effects::ForEachTaggedEffect, tag: &st
     )
 }
 
+fn for_each_tagged_for_compaction<'a>(
+    effect: &'a Effect,
+) -> Option<(
+    Option<&'a crate::effects::WithIdEffect>,
+    &'a crate::effects::ForEachTaggedEffect,
+)> {
+    if let Some(for_each) = effect.downcast_ref::<crate::effects::ForEachTaggedEffect>() {
+        return Some((None, for_each));
+    }
+    if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>()
+        && let Some(for_each) = with_id
+            .effect
+            .downcast_ref::<crate::effects::ForEachTaggedEffect>()
+    {
+        return Some((Some(with_id), for_each));
+    }
+    None
+}
+
 fn for_each_moves_tag_to_hand(for_each: &crate::effects::ForEachTaggedEffect, tag: &str) -> bool {
     if for_each.tag.as_str() != tag || for_each.effects.len() != 1 {
         return false;
@@ -2488,6 +2533,58 @@ fn describe_look_at_top_then_reveal_put_into_hand_rest_bottom(
     Some(format!(
         "Look at the top {count_text} {noun} of {owner} library. {may_prefix} reveal {chosen} from among them and put it into {hand} hand. Put the rest on the bottom of {owner} library"
     ))
+}
+
+fn describe_if_didnt_put_card_into_hand_this_way(
+    chooser: &PlayerFilter,
+    move_to_hand_id: crate::effect::EffectId,
+    if_effect: &crate::effects::IfEffect,
+) -> Option<String> {
+    if if_effect.condition != move_to_hand_id
+        || if_effect.predicate != EffectPredicate::DidNotHappen
+        || !if_effect.else_.is_empty()
+    {
+        return None;
+    }
+
+    let then_text = describe_effect_list(&if_effect.then);
+    if then_text.is_empty() {
+        return None;
+    }
+
+    let condition = if *chooser == PlayerFilter::You {
+        "If you didn't put a card into your hand this way".to_string()
+    } else {
+        let who = describe_player_filter(chooser);
+        let hand = describe_possessive_player_filter(chooser);
+        format!("If {who} didn't put a card into {hand} hand this way")
+    };
+
+    Some(format!("{condition}, {then_text}"))
+}
+
+fn describe_look_at_top_then_reveal_put_into_hand_rest_bottom_then_if_not_into_hand(
+    look_at_top: &crate::effects::LookAtTopCardsEffect,
+    choose: &crate::effects::ChooseObjectsEffect,
+    reveal: &crate::effects::ForEachTaggedEffect,
+    move_to_hand_with_id: &crate::effects::WithIdEffect,
+    move_to_hand: &crate::effects::ForEachTaggedEffect,
+    rest: &crate::effects::ForEachTaggedEffect,
+    if_effect: &crate::effects::IfEffect,
+) -> Option<String> {
+    let base = describe_look_at_top_then_reveal_put_into_hand_rest_bottom(
+        look_at_top,
+        choose,
+        Some(reveal),
+        move_to_hand,
+        rest,
+    )?;
+    let follow_up = describe_if_didnt_put_card_into_hand_this_way(
+        &choose.chooser,
+        move_to_hand_with_id.id,
+        if_effect,
+    )?;
+    Some(format!("{base}. {follow_up}"))
 }
 
 fn for_each_moves_matching_to_hand_else_graveyard<'a>(

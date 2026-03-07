@@ -275,6 +275,24 @@ fn regression_semantic_mismatch_harald_mixed_filter_reveal_choice() {
 }
 
 #[test]
+fn regression_semantic_mismatch_harald_from_among_them_compacts() {
+    let rendered = rendered_lines(
+        "Menace\nWhen Harald enters, look at the top five cards of your library. You may reveal an Elf, Warrior, or Tyvar card from among them and put it into your hand. Put the rest on the bottom of your library in a random order.",
+        "Harald, King of Skemfar",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("reveal an elf or warrior or tyvar card from among them"),
+        "expected looked-at selection to stay limited to the top cards, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("choose up to one elf or warrior or tyvar in a library"),
+        "looked-at selection should not degrade into an unrestricted library choice, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_errand_rider_then_if_negative_control() {
     let rendered = rendered_lines(
         "When this creature enters, draw a card. Then if you don't control a legendary creature, put a card from your hand on the bottom of your library.",
