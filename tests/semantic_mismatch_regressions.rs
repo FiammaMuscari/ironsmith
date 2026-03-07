@@ -470,7 +470,7 @@ fn regression_semantic_mismatch_fear_of_falling_shared_duration() {
 #[test]
 fn regression_semantic_mismatch_campfire_commanders_from_public_zones() {
     let rendered = rendered_lines(
-        "{1}: You gain 2 life.\n{2}, {T}: Add one mana of any color.\n{4}, {T}, Exile this artifact: Choose all commanders you own from the battlefield and from your graveyard, reveal them, and put them into your hand. Then shuffle your graveyard into your library.",
+        "{1}, {T}: You gain 2 life.\n{2}, {T}, Exile this artifact: Put all commanders you own from the command zone and from your graveyard into your hand. Then shuffle your graveyard into your library.",
         "Campfire",
         &[CardType::Artifact],
     );
@@ -480,7 +480,7 @@ fn regression_semantic_mismatch_campfire_commanders_from_public_zones() {
         "expected commander selection to remain in the activated ability, got {rendered}"
     );
     assert!(
-        rendered.contains("battlefield") && rendered.contains("graveyard"),
+        rendered.contains("command zone") && rendered.contains("graveyard"),
         "expected both public zones to remain in the commander-return effect, got {rendered}"
     );
     assert!(

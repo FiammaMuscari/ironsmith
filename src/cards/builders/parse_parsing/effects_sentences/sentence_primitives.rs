@@ -2334,12 +2334,13 @@ pub(crate) fn parse_sentence_choose_all_from_battlefield_and_graveyard_to_hand(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     let clause_words = words(tokens);
-    if !clause_words.starts_with(&["choose", "all"]) {
+    let starts_choose_all = clause_words.starts_with(&["choose", "all"]);
+    let starts_put_all = clause_words.starts_with(&["put", "all"]);
+    if !starts_choose_all && !starts_put_all {
         return Ok(None);
     }
-    if !(clause_words.contains(&"battlefield")
+    if !((clause_words.contains(&"battlefield") || clause_words.contains(&"command"))
         && clause_words.contains(&"graveyard")
-        && clause_words.contains(&"put")
         && clause_words.contains(&"hand"))
     {
         return Ok(None);
@@ -2348,24 +2349,23 @@ pub(crate) fn parse_sentence_choose_all_from_battlefield_and_graveyard_to_hand(
     let Some(from_idx) = clause_words.iter().position(|word| *word == "from") else {
         return Ok(None);
     };
-    let Some(and_idx) = clause_words[from_idx..]
-        .windows(2)
-        .position(|window| window == ["and", "from"])
-        .map(|idx| from_idx + idx)
-    else {
+    let zone_pair = if clause_words[from_idx..]
+        .windows(7)
+        .any(|window| window == ["from", "the", "battlefield", "and", "from", "your", "graveyard"])
+    {
+        [Zone::Battlefield, Zone::Graveyard]
+    } else if clause_words[from_idx..].windows(8).any(|window| {
+        window == ["from", "the", "command", "zone", "and", "from", "your", "graveyard"]
+    }) {
+        [Zone::Command, Zone::Graveyard]
+    } else {
         return Ok(None);
     };
-    let Some(put_idx) = clause_words.iter().position(|word| *word == "put") else {
-        return Ok(None);
-    };
-    if from_idx <= 2 || and_idx <= from_idx || put_idx <= and_idx {
+    if from_idx <= 2 {
         return Ok(None);
     }
 
     let Some(from_token_idx) = token_index_for_word_index(tokens, from_idx) else {
-        return Ok(None);
-    };
-    let Some(put_token_idx) = token_index_for_word_index(tokens, put_idx) else {
         return Ok(None);
     };
 
@@ -2377,9 +2377,21 @@ pub(crate) fn parse_sentence_choose_all_from_battlefield_and_graveyard_to_hand(
         )));
     }
 
-    let tail_words = words(&tokens[put_token_idx..]);
-    if !tail_words.starts_with(&["put", "them", "into", "your", "hand"])
-        && !tail_words.starts_with(&["put", "them", "in", "your", "hand"])
+    if starts_choose_all {
+        let Some(put_idx) = clause_words.iter().position(|word| *word == "put") else {
+            return Ok(None);
+        };
+        let Some(put_token_idx) = token_index_for_word_index(tokens, put_idx) else {
+            return Ok(None);
+        };
+        let tail_words = words(&tokens[put_token_idx..]);
+        if !tail_words.starts_with(&["put", "them", "into", "your", "hand"])
+            && !tail_words.starts_with(&["put", "them", "in", "your", "hand"])
+        {
+            return Ok(None);
+        }
+    } else if !clause_words.ends_with(&["into", "your", "hand"])
+        && !clause_words.ends_with(&["in", "your", "hand"])
     {
         return Ok(None);
     }
@@ -2393,10 +2405,10 @@ pub(crate) fn parse_sentence_choose_all_from_battlefield_and_graveyard_to_hand(
     base_filter.controller = None;
 
     let mut battlefield_filter = base_filter.clone();
-    battlefield_filter.zone = Some(Zone::Battlefield);
+    battlefield_filter.zone = Some(zone_pair[0]);
 
     let mut graveyard_filter = base_filter;
-    graveyard_filter.zone = Some(Zone::Graveyard);
+    graveyard_filter.zone = Some(zone_pair[1]);
 
     Ok(Some(vec![
         EffectAst::ReturnAllToHand {
