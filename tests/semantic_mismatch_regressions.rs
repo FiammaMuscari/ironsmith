@@ -1419,3 +1419,17 @@ fn regression_semantic_mismatch_silas_renn_cast_not_play_from_graveyard() {
         "expected lowered permission to stay cast-only, got {debug}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_shambleshark_evolve_keyword_rendering() {
+    let rendered = rendered_lines("Flash\nEvolve", "Shambleshark", &[CardType::Creature]);
+
+    assert!(
+        rendered.contains("flash") && rendered.contains("evolve"),
+        "expected both keyword lines to render, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("whenever a creature you control enters"),
+        "evolve should render as the keyword, not as the overly broad trigger shell, got {rendered}"
+    );
+}

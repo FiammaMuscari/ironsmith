@@ -7417,6 +7417,9 @@ fn describe_ability(
                         .trim_end_matches('.')
                         .eq_ignore_ascii_case("haunt")
                     || normalized
+                        .trim_end_matches('.')
+                        .eq_ignore_ascii_case("evolve")
+                    || normalized
                         .to_ascii_lowercase()
                         .starts_with("cumulative upkeep")
                 {
