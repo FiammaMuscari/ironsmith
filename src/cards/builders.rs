@@ -1372,6 +1372,10 @@ pub(crate) enum EffectAst {
         power: Value,
         toughness: Value,
         target: TargetAst,
+        card_types: Vec<CardType>,
+        subtypes: Vec<Subtype>,
+        colors: Option<ColorSet>,
+        abilities: Vec<StaticAbility>,
         duration: Until,
     },
     AddCardTypes {

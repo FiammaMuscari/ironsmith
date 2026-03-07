@@ -6149,10 +6149,111 @@ fn describe_apply_continuous_clauses(
     clauses
 }
 
+fn describe_apply_continuous_animation_effect(
+    effect: &crate::effects::ApplyContinuousEffect,
+    target: &str,
+    plural_target: bool,
+) -> Option<String> {
+    let Some(crate::continuous::Modification::AddCardTypes(card_types)) = &effect.modification else {
+        return None;
+    };
+    if !card_types.contains(&CardType::Creature) || !effect.runtime_modifications.is_empty() {
+        return None;
+    }
+
+    let mut power = None;
+    let mut toughness = None;
+    let mut colors = None;
+    let mut subtypes = Vec::new();
+    let mut abilities = Vec::new();
+    for modification in &effect.additional_modifications {
+        match modification {
+            crate::continuous::Modification::SetPowerToughness {
+                power: candidate_power,
+                toughness: candidate_toughness,
+                sublayer,
+            } if *sublayer == crate::continuous::PtSublayer::Setting => {
+                power = Some(candidate_power);
+                toughness = Some(candidate_toughness);
+            }
+            crate::continuous::Modification::SetColors(candidate_colors) => {
+                colors = Some(*candidate_colors);
+            }
+            crate::continuous::Modification::AddSubtypes(candidate_subtypes) => {
+                subtypes.extend(candidate_subtypes.iter().copied());
+            }
+            crate::continuous::Modification::AddAbility(ability) => {
+                abilities.push(ability.clone());
+            }
+            _ => return None,
+        }
+    }
+
+    let (Some(power), Some(toughness)) = (power, toughness) else {
+        return None;
+    };
+
+    let mut descriptor = Vec::new();
+    if let Some(colors) = colors {
+        descriptor.push(describe_token_color_words(colors, false));
+    }
+    if !subtypes.is_empty() {
+        descriptor.push(
+            subtypes
+                .iter()
+                .map(|subtype| format!("{subtype:?}").to_ascii_lowercase())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+    }
+    let extra_card_types = card_types
+        .iter()
+        .copied()
+        .filter(|card_type| *card_type != CardType::Creature)
+        .map(|card_type| describe_card_type_word_local(card_type).to_string())
+        .collect::<Vec<_>>();
+    if !extra_card_types.is_empty() {
+        descriptor.push(extra_card_types.join(" "));
+    }
+    descriptor.push(if plural_target {
+        "creatures".to_string()
+    } else {
+        "creature".to_string()
+    });
+
+    let pt = format!("{}/{}", describe_value(power), describe_value(toughness));
+    let noun_phrase = descriptor
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut text = if plural_target {
+        format!("{target} become {pt} {noun_phrase}")
+    } else {
+        format!("{target} becomes a {pt} {noun_phrase}")
+    };
+    if !abilities.is_empty() {
+        let ability_text = abilities
+            .iter()
+            .map(|ability| lowercase_first(&ability.display()))
+            .collect::<Vec<_>>();
+        text.push_str(" with ");
+        text.push_str(&join_with_and(&ability_text));
+    }
+    if !matches!(effect.until, Until::Forever) {
+        text.push(' ');
+        text.push_str(&describe_until(&effect.until));
+    }
+    Some(text)
+}
+
 fn describe_apply_continuous_effect(
     effect: &crate::effects::ApplyContinuousEffect,
 ) -> Option<String> {
     let (target, plural_target) = describe_apply_continuous_target(effect);
+    if let Some(text) = describe_apply_continuous_animation_effect(effect, &target, plural_target) {
+        return Some(text);
+    }
     if effect.modification.is_none()
         && effect.additional_modifications.is_empty()
         && matches!(

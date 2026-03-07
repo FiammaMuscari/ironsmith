@@ -348,6 +348,20 @@ fn regression_semantic_mismatch_uurg_power_only_cda() {
 }
 
 #[test]
+fn regression_semantic_mismatch_faerie_conclave_animation_payload() {
+    let rendered = rendered_lines(
+        "This land enters tapped.\n{T}: Add {U}.\n{1}{U}: This land becomes a 2/1 blue Faerie creature with flying until end of turn. It's still a land.",
+        "Faerie Conclave",
+        &[],
+    );
+
+    assert!(
+        rendered.contains("becomes a 2/1 blue faerie creature with flying until end of turn"),
+        "expected land animation to keep color, subtype, and flying, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_dwarven_thaumaturgist_switch_pt() {
     let rendered = rendered_lines(
         "{T}: Switch target creature's power and toughness until end of turn.",

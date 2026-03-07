@@ -6030,21 +6030,38 @@ fn try_compile_continuous_and_modifier_effect(
             power,
             toughness,
             target,
+            card_types,
+            subtypes,
+            colors,
+            abilities,
             duration,
         } => compile_tagged_effect_for_target(target, ctx, "animated_creature", |spec| {
-            Effect::new(
-                crate::effects::ApplyContinuousEffect::with_spec(
-                    spec,
-                    crate::continuous::Modification::AddCardTypes(vec![CardType::Creature]),
-                    duration.clone(),
-                )
-                .with_additional_modification(crate::continuous::Modification::SetPowerToughness {
-                    power: power.clone(),
-                    toughness: toughness.clone(),
-                    sublayer: crate::continuous::PtSublayer::Setting,
-                })
-                .resolve_set_pt_values_at_resolution(),
+            let mut apply = crate::effects::ApplyContinuousEffect::with_spec(
+                spec,
+                crate::continuous::Modification::AddCardTypes(card_types.clone()),
+                duration.clone(),
             )
+            .with_additional_modification(crate::continuous::Modification::SetPowerToughness {
+                power: power.clone(),
+                toughness: toughness.clone(),
+                sublayer: crate::continuous::PtSublayer::Setting,
+            })
+            .resolve_set_pt_values_at_resolution();
+            if let Some(colors) = colors {
+                apply = apply
+                    .with_additional_modification(crate::continuous::Modification::SetColors(*colors));
+            }
+            if !subtypes.is_empty() {
+                apply = apply.with_additional_modification(
+                    crate::continuous::Modification::AddSubtypes(subtypes.clone()),
+                );
+            }
+            for ability in abilities {
+                apply = apply.with_additional_modification(
+                    crate::continuous::Modification::AddAbility(ability.clone()),
+                );
+            }
+            Effect::new(apply)
         })?,
         EffectAst::AddCardTypes {
             target,

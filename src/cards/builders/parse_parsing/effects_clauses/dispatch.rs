@@ -3,7 +3,8 @@ use crate::cards::builders::{
     contains_until_end_of_turn, extract_subject_player, find_negation_span, find_verb,
     has_demonstrative_object_reference, is_mana_replacement_clause_words,
     is_mana_trigger_additional_clause_words, is_target_player_dealt_damage_by_this_turn_subject,
-    parse_card_type, parse_color, parse_effect_chain_with_sentence_primitives,
+    keyword_action_to_static_ability, parse_ability_line, parse_card_type, parse_color,
+    parse_effect_chain_with_sentence_primitives,
     parse_effect_with_verb, parse_for_each_object_subject, parse_get_for_each_count_value,
     parse_get_modifier_values_with_tail, parse_has_base_power_clause,
     parse_has_base_power_toughness_clause, parse_leading_player_may, parse_object_filter,
@@ -12,7 +13,7 @@ use crate::cards::builders::{
     parse_subtype_word, parse_target_phrase, parse_target_player_choose_objects_clause,
     parse_value, parse_you_choose_objects_clause, parser_trace, parser_trace_stack,
     remove_first_word, remove_through_first_word, run_clause_primitives, span_from_tokens,
-    starts_with_until_end_of_turn, trim_commas, words,
+    starts_with_until_end_of_turn, token_index_for_word_index, trim_commas, words,
 };
 use crate::{ChooseSpec, ObjectFilter, TagKey, Until, Value};
 
@@ -422,15 +423,17 @@ pub(crate) fn parse_become_clause(
         } else {
             (Until::Forever, trim_commas(rest_tokens).to_vec())
         };
-    let become_words_vec = words(&become_tokens);
-    let become_words = if become_words_vec
+    let become_body_tokens = if become_tokens
         .first()
-        .is_some_and(|w| *w == "the" || *w == "a" || *w == "an")
+        .and_then(Token::as_word)
+        .is_some_and(|word| word == "the" || word == "a" || word == "an")
     {
-        &become_words_vec[1..]
+        &become_tokens[1..]
     } else {
-        &become_words_vec[..]
+        &become_tokens[..]
     };
+    let become_words_vec = words(become_body_tokens);
+    let become_words = &become_words_vec[..];
 
     // Player "life total becomes N"
     if let Some(player) = extract_subject_player(Some(subject)) {
@@ -510,14 +513,86 @@ pub(crate) fn parse_become_clause(
     // "<N>/<M> ... creature" animation-like clauses.
     if let Some(pt_word) = become_words.first().copied()
         && let Ok((power, toughness)) = parse_pt_modifier(pt_word)
-        && become_words
+        && let Some(creature_idx) = become_words
             .iter()
-            .any(|word| *word == "creature" || *word == "creatures")
+            .position(|word| *word == "creature" || *word == "creatures")
     {
+        let mut card_types = vec![crate::types::CardType::Creature];
+        let mut subtypes = Vec::new();
+        let mut colors = crate::color::ColorSet::new();
+        let mut all_prefix_words_supported = true;
+        for word in &become_words[1..creature_idx] {
+            if let Some(color) = parse_color(word) {
+                colors = colors.union(color);
+                continue;
+            }
+            if let Some(card_type) = parse_card_type(word) {
+                if card_type != crate::types::CardType::Creature && !card_types.contains(&card_type)
+                {
+                    card_types.push(card_type);
+                }
+                continue;
+            }
+            if let Some(subtype) =
+                parse_subtype_word(word).or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
+            {
+                if !subtypes.contains(&subtype) {
+                    subtypes.push(subtype);
+                }
+                continue;
+            }
+            all_prefix_words_supported = false;
+            break;
+        }
+
+        let mut abilities = Vec::new();
+        let suffix_tokens = if let Some(creature_token_idx) =
+            token_index_for_word_index(become_body_tokens, creature_idx)
+        {
+            trim_commas(&become_body_tokens[creature_token_idx + 1..]).to_vec()
+        } else {
+            Vec::new()
+        };
+        let suffix_supported = if suffix_tokens.is_empty() {
+            true
+        } else if suffix_tokens
+            .first()
+            .is_some_and(|token| token.is_word("with"))
+        {
+            parse_ability_line(&trim_commas(&suffix_tokens[1..]))
+                .map(|actions| {
+                    abilities = actions
+                        .into_iter()
+                        .filter_map(keyword_action_to_static_ability)
+                        .collect::<Vec<_>>();
+                    !abilities.is_empty()
+                })
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        let colors = if colors.is_empty() { None } else { Some(colors) };
+        if !all_prefix_words_supported || !suffix_supported {
+            return Ok(EffectAst::BecomeBasePtCreature {
+                power: Value::Fixed(power),
+                toughness: Value::Fixed(toughness),
+                target,
+                card_types: vec![crate::types::CardType::Creature],
+                subtypes: Vec::new(),
+                colors: None,
+                abilities: Vec::new(),
+                duration,
+            });
+        }
         return Ok(EffectAst::BecomeBasePtCreature {
             power: Value::Fixed(power),
             toughness: Value::Fixed(toughness),
             target,
+            card_types,
+            subtypes,
+            colors,
+            abilities,
             duration,
         });
     }
