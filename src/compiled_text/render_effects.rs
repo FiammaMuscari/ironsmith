@@ -2345,6 +2345,8 @@ fn describe_choose_filter_from_looked_cards(
             break;
         }
     }
+    card_desc = strip_leading_article(&card_desc).to_string();
+    card_desc = card_desc.replace("permanent named ", "card named ");
     if let Some(rest) = card_desc.strip_prefix("card ") {
         card_desc = format!("{rest} card");
     }
@@ -2352,7 +2354,7 @@ fn describe_choose_filter_from_looked_cards(
         card_desc = format!("{card_desc} card");
     }
 
-    Some(with_indefinite_article(strip_leading_article(&card_desc)))
+    Some(with_indefinite_article(&card_desc))
 }
 
 fn describe_look_at_top_then_reveal_put_into_hand_rest_bottom(

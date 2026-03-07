@@ -377,6 +377,7 @@ pub(crate) fn parse_subtype_word(word: &str) -> Option<Subtype> {
         "nissa" => Some(Subtype::Nissa),
         "sorin" => Some(Subtype::Sorin),
         "teferi" => Some(Subtype::Teferi),
+        "tyvar" => Some(Subtype::Tyvar),
         "ugin" => Some(Subtype::Ugin),
         "vraska" => Some(Subtype::Vraska),
         _ => None,

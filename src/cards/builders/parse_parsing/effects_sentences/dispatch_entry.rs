@@ -4,7 +4,7 @@ use crate::cards::builders::effect_ast_traversal::{
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, CarryContext, EffectAst, IT_TAG, IfResultPredicate, PlayerAst, TagKey,
-    TargetAst, Token, TokenCopyFollowup, append_token_reminder_to_last_create_effect,
+    TargetAst, TextSpan, Token, TokenCopyFollowup, append_token_reminder_to_last_create_effect,
     build_may_cast_tagged_effect, collapse_token_copy_end_of_combat_exile_followup,
     collapse_token_copy_next_end_step_exile_followup, effect_creates_any_token,
     effect_creates_eldrazi_spawn_or_scion, explicit_player_for_carry,
@@ -113,13 +113,10 @@ fn parse_look_at_top_reveal_match_put_rest_bottom(
     if filter_tokens.is_empty() {
         return Ok(None);
     }
-    let mut filter = if let Some(filter) = parse_search_library_disjunction_filter(&filter_tokens) {
+    let mut filter = if let Some(filter) = parse_looked_card_reveal_filter(&filter_tokens) {
         filter
     } else {
-        let Ok(filter) = parse_object_filter(&filter_tokens, false) else {
-            return Ok(None);
-        };
-        filter
+        return Ok(None);
     };
     normalize_search_library_filter(&mut filter);
     filter.zone = None;
@@ -162,6 +159,96 @@ fn parse_look_at_top_reveal_match_put_rest_bottom(
         },
     );
     Ok(Some(effects))
+}
+
+fn title_case_words(words: &[&str]) -> String {
+    words
+        .iter()
+        .map(|word| {
+            let mut chars = word.chars();
+            let Some(first) = chars.next() else {
+                return String::new();
+            };
+            let mut titled = String::new();
+            titled.extend(first.to_uppercase());
+            titled.push_str(chars.as_str());
+            titled
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn parse_named_card_filter_segment(tokens: &[Token]) -> Option<ObjectFilter> {
+    let mut segment_words = words(tokens);
+    while segment_words.first().is_some_and(|word| is_article(word)) {
+        segment_words.remove(0);
+    }
+    if matches!(segment_words.last().copied(), Some("card" | "cards")) {
+        segment_words.pop();
+    }
+    if segment_words.is_empty() {
+        return None;
+    }
+
+    let mut filter = ObjectFilter::default();
+    filter.name = Some(title_case_words(&segment_words));
+    Some(filter)
+}
+
+fn split_reveal_filter_segments(tokens: &[Token]) -> Vec<Vec<Token>> {
+    let mut segments = Vec::new();
+    let mut current = Vec::new();
+    for token in tokens {
+        if token.is_word("or") || matches!(token, Token::Comma(_)) {
+            let trimmed = trim_commas(&current);
+            if !trimmed.is_empty() {
+                segments.push(trimmed.to_vec());
+            }
+            current.clear();
+            continue;
+        }
+        current.push(token.clone());
+    }
+    let trimmed = trim_commas(&current);
+    if !trimmed.is_empty() {
+        segments.push(trimmed.to_vec());
+    }
+    segments
+}
+
+fn parse_looked_card_reveal_filter(tokens: &[Token]) -> Option<ObjectFilter> {
+    let words_all = words(tokens);
+    if words_all.contains(&"or") {
+        let shared_card_suffix = matches!(words_all.last().copied(), Some("card" | "cards"));
+        let segments = split_reveal_filter_segments(tokens);
+        if segments.len() >= 2 {
+            let mut branches = Vec::new();
+            for mut segment in segments {
+                if shared_card_suffix
+                    && !matches!(
+                        segment.last().and_then(Token::as_word),
+                        Some("card" | "cards")
+                    )
+                {
+                    segment.push(Token::Word("card".to_string(), TextSpan::synthetic()));
+                }
+                let parsed = parse_object_filter(&segment, false)
+                    .ok()
+                    .filter(|filter| *filter != ObjectFilter::default())
+                    .or_else(|| parse_named_card_filter_segment(&segment));
+                let Some(parsed) = parsed else {
+                    return None;
+                };
+                branches.push(parsed);
+            }
+            let mut filter = ObjectFilter::default();
+            filter.any_of = branches;
+            return Some(filter);
+        }
+    }
+
+    parse_search_library_disjunction_filter(tokens)
+        .or_else(|| parse_object_filter(tokens, false).ok())
 }
 
 fn parse_triple_sentence_sequence(

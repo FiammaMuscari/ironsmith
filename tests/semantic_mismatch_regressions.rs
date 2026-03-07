@@ -193,3 +193,25 @@ fn regression_semantic_mismatch_brawn_graveyard_and_forest_condition() {
         "static condition renderer should not leak debug formatting, got {rendered}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_harald_mixed_filter_reveal_choice() {
+    let rendered = rendered_lines(
+        "Menace\nWhen Harald enters, look at the top five cards of your library. You may reveal an Elf, Warrior, or Tyvar card from among them and put it into your hand. Put the rest on the bottom of your library in a random order.",
+        "Harald, King of Skemfar",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("elf") && rendered.contains("warrior") && rendered.contains("tyvar"),
+        "expected mixed subtype/name filter to remain in the reveal choice, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("named tyvar"),
+        "Tyvar should stay a subtype match, not a named-card filter, got {rendered}"
+    );
+    assert!(
+        rendered.contains("put the rest on the bottom of your library"),
+        "expected rest-on-bottom clause to remain, got {rendered}"
+    );
+}

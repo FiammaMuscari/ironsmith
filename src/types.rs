@@ -344,6 +344,7 @@ pub enum Subtype {
     Nissa,
     Sorin,
     Teferi,
+    Tyvar,
     Ugin,
     Vraska,
 }
