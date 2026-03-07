@@ -1049,6 +1049,9 @@ pub(crate) fn parse_equal_to_number_of_filter_value(tokens: &[Token]) -> Option<
     let filter_start_word_idx = number_word_idx + 2;
     let filter_start_token_idx = token_index_for_word_index(tokens, filter_start_word_idx)?;
     let filter_tokens = trim_edge_punctuation(&tokens[filter_start_token_idx..]);
+    if let Some(value) = parse_spells_cast_this_turn_matching_count_value(&filter_tokens) {
+        return Some(value);
+    }
     let filter = parse_object_filter(&filter_tokens, false).ok()?;
     Some(Value::Count(filter))
 }
@@ -1079,7 +1082,13 @@ pub(crate) fn parse_equal_to_number_of_filter_plus_or_minus_fixed_value(
     let filter_start_token_idx = token_index_for_word_index(tokens, filter_start_word_idx)?;
     let operator_token_idx = token_index_for_word_index(tokens, operator_word_idx)?;
     let filter_tokens = trim_commas(&tokens[filter_start_token_idx..operator_token_idx]);
-    let filter = parse_object_filter(&filter_tokens, false).ok()?;
+    let base_value = if let Some(value) =
+        parse_spells_cast_this_turn_matching_count_value(&filter_tokens)
+    {
+        value
+    } else {
+        Value::Count(parse_object_filter(&filter_tokens, false).ok()?)
+    };
 
     let offset_start_token_idx = token_index_for_word_index(tokens, operator_word_idx + 1)?;
     let offset_tokens = trim_commas(&tokens[offset_start_token_idx..]);
@@ -1095,9 +1104,53 @@ pub(crate) fn parse_equal_to_number_of_filter_plus_or_minus_fixed_value(
         offset_value as i32
     };
     Some(Value::Add(
-        Box::new(Value::Count(filter)),
+        Box::new(base_value),
         Box::new(Value::Fixed(signed_offset)),
     ))
+}
+
+fn parse_spells_cast_this_turn_matching_count_value(tokens: &[Token]) -> Option<Value> {
+    let filter_words = words(tokens);
+    if !(filter_words.contains(&"spell") || filter_words.contains(&"spells"))
+        || !(filter_words.contains(&"cast") || filter_words.contains(&"casts"))
+        || !filter_words.contains(&"this")
+        || !filter_words.contains(&"turn")
+    {
+        return None;
+    }
+
+    let suffix_patterns: &[(&[&str], PlayerFilter)] = &[
+        (&["theyve", "cast", "this", "turn"], PlayerFilter::IteratedPlayer),
+        (&["they", "cast", "this", "turn"], PlayerFilter::IteratedPlayer),
+        (
+            &["that", "player", "cast", "this", "turn"],
+            PlayerFilter::IteratedPlayer,
+        ),
+        (&["youve", "cast", "this", "turn"], PlayerFilter::You),
+        (&["you", "cast", "this", "turn"], PlayerFilter::You),
+        (&["an", "opponent", "has", "cast", "this", "turn"], PlayerFilter::Opponent),
+        (&["opponent", "has", "cast", "this", "turn"], PlayerFilter::Opponent),
+        (&["opponents", "have", "cast", "this", "turn"], PlayerFilter::Opponent),
+        (&["cast", "this", "turn"], PlayerFilter::Any),
+    ];
+
+    for (suffix, player) in suffix_patterns {
+        if !filter_words.ends_with(suffix) {
+            continue;
+        }
+        let filter_word_len = filter_words.len().saturating_sub(suffix.len());
+        let filter_token_end = token_index_for_word_index(tokens, filter_word_len).unwrap_or(tokens.len());
+        let filter_tokens = trim_commas(&tokens[..filter_token_end]);
+        let filter = parse_object_filter(&filter_tokens, false).ok()?;
+        let exclude_source = filter_tokens.iter().any(|token| token.is_word("other"));
+        return Some(Value::SpellsCastThisTurnMatching {
+            player: player.clone(),
+            filter,
+            exclude_source,
+        });
+    }
+
+    None
 }
 
 pub(crate) fn parse_equal_to_number_of_opponents_you_have_value(tokens: &[Token]) -> Option<Value> {

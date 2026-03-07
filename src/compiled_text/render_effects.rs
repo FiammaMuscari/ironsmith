@@ -4236,6 +4236,18 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 describe_choose_spec(&deal_damage.target)
             );
         }
+        if matches!(
+            &deal_damage.amount,
+            Value::SpellsCastThisTurn(_)
+                | Value::SpellsCastBeforeThisTurn(_)
+                | Value::SpellsCastThisTurnMatching { .. }
+        ) {
+            return format!(
+                "Deal damage to {} equal to {}",
+                describe_choose_spec(&deal_damage.target),
+                describe_value(&deal_damage.amount)
+            );
+        }
         return format!(
             "Deal {} damage to {}",
             describe_value(&deal_damage.amount),

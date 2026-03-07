@@ -384,6 +384,22 @@ fn regression_semantic_mismatch_chandra_flamecaller_loyalty_lines() {
 }
 
 #[test]
+fn regression_semantic_mismatch_magebane_lizard_spell_history_count() {
+    let rendered = rendered_lines(
+        "Whenever a player casts a noncreature spell, this creature deals damage to that player equal to the number of noncreature spells they've cast this turn.",
+        "Magebane Lizard",
+        &[],
+    );
+
+    assert!(
+        rendered.contains(
+            "deals damage to that player equal to the number of noncreature spells cast this turn by that player"
+        ),
+        "expected spell-history damage count, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_dwarven_thaumaturgist_switch_pt() {
     let rendered = rendered_lines(
         "{T}: Switch target creature's power and toughness until end of turn.",

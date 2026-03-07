@@ -469,6 +469,49 @@ fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usize)> {
     if filter_end <= filter_start {
         return None;
     }
+    let filter_words = &words[filter_start..filter_end];
+    if (filter_words.contains(&"spell") || filter_words.contains(&"spells"))
+        && (filter_words.contains(&"cast") || filter_words.contains(&"casts"))
+        && filter_words.contains(&"this")
+        && filter_words.contains(&"turn")
+    {
+        let suffix_patterns: &[(&[&str], PlayerFilter)] = &[
+            (&["theyve", "cast", "this", "turn"], PlayerFilter::IteratedPlayer),
+            (&["they", "cast", "this", "turn"], PlayerFilter::IteratedPlayer),
+            (
+                &["that", "player", "cast", "this", "turn"],
+                PlayerFilter::IteratedPlayer,
+            ),
+            (&["youve", "cast", "this", "turn"], PlayerFilter::You),
+            (&["you", "cast", "this", "turn"], PlayerFilter::You),
+            (&["an", "opponent", "has", "cast", "this", "turn"], PlayerFilter::Opponent),
+            (&["opponent", "has", "cast", "this", "turn"], PlayerFilter::Opponent),
+            (&["opponents", "have", "cast", "this", "turn"], PlayerFilter::Opponent),
+            (&["cast", "this", "turn"], PlayerFilter::Any),
+        ];
+        for (suffix, player) in suffix_patterns {
+            if !filter_words.ends_with(suffix) {
+                continue;
+            }
+            let count_filter_tokens = filter_words[..filter_words.len().saturating_sub(suffix.len())]
+                .iter()
+                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .collect::<Vec<_>>();
+            if let Ok(filter) = parse_object_filter(&count_filter_tokens, false) {
+                let exclude_source = count_filter_tokens
+                    .iter()
+                    .any(|token| token.is_word("other"));
+                return Some((
+                    Value::SpellsCastThisTurnMatching {
+                        player: player.clone(),
+                        filter,
+                        exclude_source,
+                    },
+                    filter_end,
+                ));
+            }
+        }
+    }
     let filter_tokens = words[filter_start..filter_end]
         .iter()
         .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
