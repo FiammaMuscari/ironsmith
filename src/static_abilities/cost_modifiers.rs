@@ -1125,12 +1125,17 @@ impl StaticAbilityKind for ThisSpellCostReduction {
     }
 
     fn display(&self) -> String {
-        let (amount_text, _tail) = describe_cost_modifier_amount(&self.reduction);
+        let (amount_text, tail) = describe_cost_modifier_amount(&self.reduction);
+        let mut line = format!("This spell costs {amount_text} less to cast");
+        if let Some(tail) = tail {
+            line.push(' ');
+            line.push_str(&tail);
+        }
         let Some(condition_text) = describe_this_spell_cost_condition(&self.condition) else {
-            return format!("This spell costs {amount_text} less to cast");
+            return line;
         };
 
-        format!("If {condition_text}, this spell costs {amount_text} less to cast")
+        format!("If {condition_text}, {line}")
     }
 
     fn modifies_costs(&self) -> bool {
@@ -1390,6 +1395,9 @@ impl StaticAbilityKind for CostIncreasePerAdditionalTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::effect::Value;
+    use crate::static_abilities::ThisSpellCostCondition::Always;
+    use crate::target::PlayerFilter;
 
     #[test]
     fn test_affinity() {
@@ -1410,5 +1418,16 @@ mod tests {
         let convoke = Convoke;
         assert_eq!(convoke.id(), StaticAbilityId::Convoke);
         assert!(convoke.modifies_costs());
+    }
+
+    #[test]
+    fn this_spell_cost_reduction_display_keeps_dynamic_tail() {
+        let reduction =
+            ThisSpellCostReduction::new(Value::CardTypesInGraveyard(PlayerFilter::You), Always);
+
+        assert_eq!(
+            reduction.display(),
+            "This spell costs {1} less to cast for each card type among cards in your graveyard"
+        );
     }
 }

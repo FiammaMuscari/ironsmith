@@ -35,7 +35,9 @@ pub(crate) fn find_last_exile_cost_choice_tag(mana_cost: &TotalCost) -> Option<T
     found
 }
 
-pub(crate) fn normalize_alternative_cast_cost_effects_runtime(cost_effects: Vec<Effect>) -> Vec<Effect> {
+pub(crate) fn normalize_alternative_cast_cost_effects_runtime(
+    cost_effects: Vec<Effect>,
+) -> Vec<Effect> {
     let mut out = Vec::new();
     let mut idx = 0usize;
     while idx < cost_effects.len() {

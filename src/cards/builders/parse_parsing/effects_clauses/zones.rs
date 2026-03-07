@@ -1,11 +1,5 @@
-#[allow(unused_imports)]
-use crate::cards::builders::{
-    CardTextError, EffectAst, IT_TAG, ObjectRefAst, PlayerAst, ReturnControllerAst,
-    PredicateAst, SharedTypeConstraintAst, SubjectAst, TagKey, TargetAst, Token, is_article,
-    parse_color, parse_counter_type_word, parse_object_filter, parse_predicate,
-    parse_target_phrase, parse_value, span_from_tokens, target_ast_to_object_filter,
-    token_index_for_word_index, trim_commas, words,
-};
+use super::super::effects_sentences::find_color_choice_phrase;
+use crate::cards::builders::parse_parsing::keyword_static::parse_add_mana_that_much_value;
 use crate::cards::builders::parse_parsing::{
     controller_filter_for_token_player, extract_subject_player, intern_counter_name,
     parse_add_mana_equal_amount_value, parse_devotion_value_from_add_clause,
@@ -15,12 +9,20 @@ use crate::cards::builders::parse_parsing::{
     parse_value_expr_words, parse_where_x_is_number_of_filter_value, parse_zone_word,
     parser_trace_stack, trim_edge_punctuation,
 };
-use crate::cards::builders::parse_parsing::keyword_static::parse_add_mana_that_much_value;
-use super::super::effects_sentences::find_color_choice_phrase;
+#[allow(unused_imports)]
+use crate::cards::builders::{
+    CardTextError, EffectAst, IT_TAG, ObjectRefAst, PlayerAst, PredicateAst, ReturnControllerAst,
+    SharedTypeConstraintAst, SubjectAst, TagKey, TargetAst, Token, is_article, parse_color,
+    parse_counter_type_word, parse_object_filter, parse_predicate, parse_target_phrase,
+    parse_value, span_from_tokens, target_ast_to_object_filter, token_index_for_word_index,
+    trim_commas, words,
+};
 use crate::effect::{Until, Value};
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::object::CounterType;
-use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation};
+use crate::target::{
+    ChooseSpec, ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation,
+};
 use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
 
@@ -910,6 +912,16 @@ pub(crate) fn parse_transform(tokens: &[Token]) -> Result<EffectAst, CardTextErr
     if tokens.is_empty() {
         return Ok(EffectAst::Transform {
             target: TargetAst::Source(None),
+        });
+    }
+    let target_words = words(tokens);
+    if target_words == ["it"]
+        || target_words == ["this"]
+        || target_words == ["this", "creature"]
+        || target_words == ["this", "permanent"]
+    {
+        return Ok(EffectAst::Transform {
+            target: TargetAst::Source(span_from_tokens(tokens)),
         });
     }
     let target = parse_target_phrase(tokens)?;

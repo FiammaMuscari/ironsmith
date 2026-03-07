@@ -1,6 +1,7 @@
 import { useGame } from "@/context/GameContext";
 import BattlefieldRow from "./BattlefieldRow";
 import ManaPool from "@/components/left-rail/ManaPool";
+import StackTimelineRail from "@/components/right-rail/StackTimelineRail";
 import { cn } from "@/lib/utils";
 
 const ZONE_ORDER = ["battlefield", "hand", "graveyard", "exile", "command"];
@@ -11,6 +12,7 @@ const ZONE_LABELS = {
   exile: "Exile",
   command: "Command",
 };
+const MY_ZONE_HEADER_HEIGHT = 44;
 
 function normalizeZoneViews(zoneViews) {
   const normalized = Array.isArray(zoneViews)
@@ -193,12 +195,12 @@ export default function MyZone({
 
   return (
     <section
-      className="board-zone-bg relative z-[2] p-2 min-h-[120px] overflow-visible grid gap-1"
-      style={{ gridTemplateRows: "auto minmax(0,1fr)", alignContent: "stretch" }}
+      className="board-zone-bg relative z-[2] min-h-[120px] overflow-visible grid px-2 pb-2 pt-0"
+      style={{ gridTemplateRows: `${MY_ZONE_HEADER_HEIGHT}px minmax(0,1fr)`, alignContent: "stretch" }}
       data-my-zone
     >
-      <div>
-        <div className="relative -top-[5px] flex items-center gap-2">
+      <div className="relative min-h-0 overflow-visible">
+        <div className="relative z-[1] flex h-full items-center gap-2 overflow-visible pr-2" data-my-zone-header-content>
           <span
             className={cn(
               "text-[23px] font-bold leading-none text-[#f5d08b] tabular-nums",
@@ -224,6 +226,10 @@ export default function MyZone({
           <ZoneCountInline player={player} />
           <ManaPool pool={player.mana_pool} />
         </div>
+        <StackTimelineRail
+          selectedObjectId={selectedObjectId}
+          onInspectObject={onInspect}
+        />
       </div>
       <div className="flex gap-1 min-h-0 h-full overflow-visible">
         {zoneEntries.map((entry) => {

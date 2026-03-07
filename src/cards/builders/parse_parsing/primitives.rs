@@ -1,8 +1,10 @@
+use std::ops::{Deref, DerefMut};
+
 use crate::cards::TextSpan;
 use crate::cards::builders::{
-    IT_TAG, KeywordAction, Token, keyword_action_to_static_ability, parse_ability_phrase,
-    parse_counter_type_from_tokens, parse_counter_type_word, parse_object_filter,
-    parse_subtype_word, parse_supertype_word, token_index_for_word_index,
+    IT_TAG, KeywordAction, ReferenceEnv, Token, keyword_action_to_static_ability,
+    parse_ability_phrase, parse_counter_type_from_tokens, parse_counter_type_word,
+    parse_object_filter, parse_subtype_word, parse_supertype_word, token_index_for_word_index,
 };
 use crate::effect::EffectId;
 use crate::filter::{AlternativeCastKind, ObjectFilter};
@@ -520,20 +522,6 @@ pub(crate) struct IdGenContext {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct LoweringReferenceFrame {
-    pub(crate) last_effect_id: Option<EffectId>,
-    pub(crate) last_object_tag: Option<String>,
-    pub(crate) last_player_filter: Option<PlayerFilter>,
-    pub(crate) iterated_player: bool,
-    pub(crate) allow_life_event_value: bool,
-    pub(crate) bind_unbound_x_to_last_effect: bool,
-}
-
-pub(crate) trait ReferenceFrameSource {
-    fn reference_frame(&self) -> LoweringReferenceFrame;
-}
-
-#[derive(Debug, Clone, Default)]
 pub(crate) struct LoweringFrame {
     pub(crate) last_effect_id: Option<EffectId>,
     pub(crate) last_object_tag: Option<String>,
@@ -549,14 +537,21 @@ pub(crate) struct LoweringFrame {
 pub(crate) struct CompileContext {
     pub(crate) next_effect_id: u32,
     pub(crate) next_tag_id: u32,
-    pub(crate) last_effect_id: Option<EffectId>,
-    pub(crate) last_object_tag: Option<String>,
-    pub(crate) last_player_filter: Option<PlayerFilter>,
-    pub(crate) iterated_player: bool,
-    pub(crate) auto_tag_object_targets: bool,
-    pub(crate) force_auto_tag_object_targets: bool,
-    pub(crate) allow_life_event_value: bool,
-    pub(crate) bind_unbound_x_to_last_effect: bool,
+    frame: LoweringFrame,
+}
+
+impl Deref for CompileContext {
+    type Target = LoweringFrame;
+
+    fn deref(&self) -> &Self::Target {
+        &self.frame
+    }
+}
+
+impl DerefMut for CompileContext {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.frame
+    }
 }
 
 impl CompileContext {
@@ -568,14 +563,7 @@ impl CompileContext {
         Self {
             next_effect_id: id_gen.next_effect_id,
             next_tag_id: id_gen.next_tag_id,
-            last_effect_id: frame.last_effect_id,
-            last_object_tag: frame.last_object_tag,
-            last_player_filter: frame.last_player_filter,
-            iterated_player: frame.iterated_player,
-            auto_tag_object_targets: frame.auto_tag_object_targets,
-            force_auto_tag_object_targets: frame.force_auto_tag_object_targets,
-            allow_life_event_value: frame.allow_life_event_value,
-            bind_unbound_x_to_last_effect: frame.bind_unbound_x_to_last_effect,
+            frame,
         }
     }
 
@@ -591,31 +579,19 @@ impl CompileContext {
         self.next_tag_id = id_gen.next_tag_id;
     }
 
-    pub(crate) fn reference_frame(&self) -> LoweringReferenceFrame {
-        LoweringReferenceFrame {
-            last_effect_id: self.last_effect_id,
-            last_object_tag: self.last_object_tag.clone(),
-            last_player_filter: self.last_player_filter.clone(),
-            iterated_player: self.iterated_player,
-            allow_life_event_value: self.allow_life_event_value,
-            bind_unbound_x_to_last_effect: self.bind_unbound_x_to_last_effect,
-        }
-    }
-
     pub(crate) fn lowering_frame(&self) -> LoweringFrame {
-        LoweringFrame {
-            last_effect_id: self.last_effect_id,
-            last_object_tag: self.last_object_tag.clone(),
-            last_player_filter: self.last_player_filter.clone(),
-            iterated_player: self.iterated_player,
-            auto_tag_object_targets: self.auto_tag_object_targets,
-            force_auto_tag_object_targets: self.force_auto_tag_object_targets,
-            allow_life_event_value: self.allow_life_event_value,
-            bind_unbound_x_to_last_effect: self.bind_unbound_x_to_last_effect,
-        }
+        self.frame.clone()
     }
 
-    pub(crate) fn apply_reference_frame(&mut self, frame: LoweringReferenceFrame) {
+    pub(crate) fn reference_env(&self) -> ReferenceEnv {
+        ReferenceEnv::from_lowering_frame(&self.frame)
+    }
+
+    pub(crate) fn apply_reference_env(&mut self, env: &ReferenceEnv) {
+        self.apply_reference_frame(env.to_lowering_frame(false, false));
+    }
+
+    pub(crate) fn apply_reference_frame(&mut self, frame: LoweringFrame) {
         self.last_effect_id = frame.last_effect_id;
         self.last_object_tag = frame.last_object_tag;
         self.last_player_filter = frame.last_player_filter;
@@ -625,14 +601,7 @@ impl CompileContext {
     }
 
     pub(crate) fn apply_lowering_frame(&mut self, frame: LoweringFrame) {
-        self.last_effect_id = frame.last_effect_id;
-        self.last_object_tag = frame.last_object_tag;
-        self.last_player_filter = frame.last_player_filter;
-        self.iterated_player = frame.iterated_player;
-        self.auto_tag_object_targets = frame.auto_tag_object_targets;
-        self.force_auto_tag_object_targets = frame.force_auto_tag_object_targets;
-        self.allow_life_event_value = frame.allow_life_event_value;
-        self.bind_unbound_x_to_last_effect = frame.bind_unbound_x_to_last_effect;
+        self.frame = frame;
     }
 
     pub(crate) fn next_effect_id(&mut self) -> EffectId {
@@ -645,17 +614,5 @@ impl CompileContext {
         let tag = format!("{prefix}_{}", self.next_tag_id);
         self.next_tag_id += 1;
         tag
-    }
-}
-
-impl ReferenceFrameSource for CompileContext {
-    fn reference_frame(&self) -> LoweringReferenceFrame {
-        CompileContext::reference_frame(self)
-    }
-}
-
-impl ReferenceFrameSource for LoweringReferenceFrame {
-    fn reference_frame(&self) -> LoweringReferenceFrame {
-        self.clone()
     }
 }

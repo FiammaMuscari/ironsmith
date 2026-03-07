@@ -328,11 +328,8 @@ export default function DecisionPanel({ inspectorOracleTextHeight = 0 }) {
               <Button
                 variant="ghost"
                 size="sm"
-                className="group w-full h-auto min-h-7 py-1.5 text-[15px] font-bold justify-start px-3 whitespace-normal text-left transition-all duration-200 shrink-0 pass-priority-btn"
+                className="decision-neon-button pass-priority-btn group h-auto min-h-7 w-full shrink-0 justify-start px-3 py-1.5 text-left text-[15px] font-bold uppercase whitespace-normal"
                 style={{
-                  color: passColors.text,
-                  border: `1px solid ${passColors.border}`,
-                  boxShadow: `0 0 8px 2px ${passColors.glow}, 0 0 18px 5px ${passColors.glowOuter}, inset 0 0 6px 2px ${passColors.glowInner}`,
                   "--pass-text": passColors.text,
                   "--pass-border": passColors.border,
                   "--pass-glow": passColors.glow,

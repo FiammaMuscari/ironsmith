@@ -3260,6 +3260,12 @@ impl Effect {
         Self::new(ExtraTurnEffect::new(player))
     }
 
+    /// Create an extra-turn effect that happens after the player's next turn.
+    pub fn extra_turn_after_next_turn_player(player: PlayerFilter) -> Self {
+        use crate::effects::ExtraTurnAfterNextTurnEffect;
+        Self::new(ExtraTurnAfterNextTurnEffect::new(player))
+    }
+
     /// Create a "skip turn" effect for the controller.
     pub fn skip_turn() -> Self {
         use crate::effects::SkipTurnEffect;

@@ -372,6 +372,7 @@ struct ZoneCardSnapshot {
 #[derive(Debug, Clone, Serialize)]
 struct StackObjectSnapshot {
     id: u64,
+    inspect_object_id: Option<u64>,
     stable_id: Option<u64>,
     name: String,
     mana_cost: Option<String>,
@@ -582,6 +583,23 @@ impl GameSnapshot {
             .rev()
             .map(|entry| {
                 let obj = game.object(entry.object_id);
+                let inspect_object_id = if entry.is_ability {
+                    entry
+                        .source_stable_id
+                        .and_then(|stable_id| game.find_object_by_stable_id(stable_id))
+                        .or_else(|| obj.map(|o| o.id))
+                        .map(|id| id.0)
+                } else {
+                    obj.map(|o| o.id.0)
+                };
+                let stable_id = if entry.is_ability {
+                    entry
+                        .source_stable_id
+                        .or_else(|| obj.map(|o| o.stable_id))
+                        .map(|stable_id| stable_id.0.0)
+                } else {
+                    obj.map(|o| o.stable_id.0.0)
+                };
                 let name = obj
                     .map(|o| o.name.clone())
                     .or_else(|| entry.source_name.clone())
@@ -599,7 +617,8 @@ impl GameSnapshot {
                         .filter(|s| !s.is_empty());
                     StackObjectSnapshot {
                         id: entry.object_id.0,
-                        stable_id: obj.map(|o| o.stable_id.0.0),
+                        inspect_object_id,
+                        stable_id,
                         name,
                         mana_cost: None,
                         effect_text: None,
@@ -619,7 +638,8 @@ impl GameSnapshot {
                     };
                     StackObjectSnapshot {
                         id: entry.object_id.0,
-                        stable_id: obj.map(|o| o.stable_id.0.0),
+                        inspect_object_id,
+                        stable_id,
                         name,
                         mana_cost: obj.and_then(|o| o.mana_cost.as_ref().map(|mc| mc.to_oracle())),
                         effect_text,
@@ -650,6 +670,7 @@ impl GameSnapshot {
                 0,
                 StackObjectSnapshot {
                     id: stack_id.0,
+                    inspect_object_id: Some(stack_id.0),
                     stable_id: Some(obj.stable_id.0.0),
                     name: obj.name.clone(),
                     mana_cost: obj.mana_cost.as_ref().map(|mc| mc.to_oracle()),
@@ -4710,9 +4731,12 @@ fn convert_and_validate_targets(
 #[cfg(test)]
 mod tests {
     use super::{
-        GameSnapshot, PendingReplayAction, ReplayRoot, WasmGame, build_object_details_snapshot,
+        GameSnapshot, PendingReplayAction, ReplayOutcome, ReplayRoot, WasmGame,
+        build_object_details_snapshot,
     };
-    use crate::cards::definitions::{basic_mountain, grizzly_bears, lightning_bolt, urzas_saga};
+    use crate::cards::definitions::{
+        basic_mountain, emrakul_the_promised_end, grizzly_bears, lightning_bolt, urzas_saga,
+    };
     use crate::continuous::ContinuousEffect;
     use crate::decision::LegalAction;
     use crate::decision::compute_legal_actions;
@@ -4720,11 +4744,13 @@ mod tests {
         BooleanContext, DecisionContext, PriorityContext, SelectObjectsContext, SelectableObject,
     };
     use crate::effect::Until;
+    use crate::events::spells::SpellCastEvent;
     use crate::game_loop::{PendingManaAbility, PriorityResponse};
-    use crate::game_state::{GameState, Phase, Step};
+    use crate::game_state::{GameState, Phase, StackEntry, Step};
     use crate::ids::{ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::CounterType;
+    use crate::triggers::{TriggerEvent, check_triggers};
     use crate::zone::Zone;
     use serde_json::json;
 
@@ -4837,7 +4863,9 @@ mod tests {
         let play_saga_index = priority_ctx
             .actions
             .iter()
-            .position(|action| matches!(action, LegalAction::PlayLand { land_id } if *land_id == saga_id))
+            .position(
+                |action| matches!(action, LegalAction::PlayLand { land_id } if *land_id == saga_id),
+            )
             .expect("expected play Urza's Saga action");
 
         wasm.dispatch(
@@ -4885,7 +4913,11 @@ mod tests {
             .find(|perm| perm.name == "Urza's Saga")
             .expect("snapshot should include Urza's Saga");
 
-        assert_eq!(saga.counters.len(), 1, "snapshot should surface Saga counters");
+        assert_eq!(
+            saga.counters.len(),
+            1,
+            "snapshot should surface Saga counters"
+        );
         assert_eq!(saga.counters[0].kind, "Lore");
         assert_eq!(saga.counters[0].amount, 1);
     }
@@ -5324,6 +5356,99 @@ mod tests {
         assert!(
             wasm.game.stack.is_empty(),
             "canceling the spell should remove it from the stack"
+        );
+    }
+
+    #[test]
+    fn emrakul_cast_trigger_needs_targets_in_four_player_game() {
+        let mut wasm = WasmGame::new();
+        wasm.initialize_empty_match(
+            vec![
+                "Alice".to_string(),
+                "Bob".to_string(),
+                "Charlie".to_string(),
+                "Dana".to_string(),
+            ],
+            20,
+            1,
+        );
+
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let charlie = PlayerId::from_index(2);
+        let dana = PlayerId::from_index(3);
+
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        let emrakul_id = wasm.game.create_object_from_definition(
+            &emrakul_the_promised_end(),
+            alice,
+            Zone::Stack,
+        );
+        let (emrakul_stable_id, emrakul_name) = wasm
+            .game
+            .object(emrakul_id)
+            .map(|object| (object.stable_id, object.name.clone()))
+            .expect("Emrakul spell object should exist");
+        wasm.game.push_to_stack(
+            StackEntry::new(emrakul_id, alice).with_source_info(emrakul_stable_id, emrakul_name),
+        );
+
+        let event = TriggerEvent::new_with_provenance(
+            SpellCastEvent::new(emrakul_id, alice, Zone::Hand),
+            crate::provenance::ProvNodeId::default(),
+        );
+        for trigger in check_triggers(&wasm.game, &event) {
+            wasm.trigger_queue.add(trigger);
+        }
+
+        assert_eq!(
+            wasm.trigger_queue.entries.len(),
+            1,
+            "Emrakul should queue its cast trigger from the stack"
+        );
+
+        let checkpoint = wasm.capture_replay_checkpoint();
+        let outcome = wasm
+            .execute_with_replay(&checkpoint, &ReplayRoot::Advance, &[])
+            .expect("auto-advance should reach Emrakul's trigger decision");
+
+        let targets_ctx = match outcome {
+            ReplayOutcome::NeedsDecision(DecisionContext::Targets(ctx)) => ctx,
+            other => panic!("expected Emrakul cast trigger target prompt, got {other:?}"),
+        };
+
+        assert_eq!(
+            targets_ctx.player, alice,
+            "the caster should choose Emrakul's target opponent"
+        );
+        assert_eq!(
+            targets_ctx.requirements.len(),
+            1,
+            "Emrakul should ask for exactly one target requirement"
+        );
+
+        let legal_targets = &targets_ctx.requirements[0].legal_targets;
+        let legal_players: Vec<PlayerId> = legal_targets
+            .iter()
+            .filter_map(|target| match target {
+                crate::game_state::Target::Player(player) => Some(*player),
+                crate::game_state::Target::Object(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            legal_players,
+            vec![bob, charlie, dana],
+            "all opponents should be legal Emrakul targets"
+        );
+
+        assert_eq!(
+            wasm.game.stack.len(),
+            1,
+            "replay should restore the checkpoint while waiting on the target decision"
         );
     }
 }

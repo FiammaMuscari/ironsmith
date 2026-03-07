@@ -822,21 +822,21 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     return (
       <div className="pointer-events-none absolute inset-0 z-[120] flex items-center px-2">
         <div
-          className="priority-inline-panel pointer-events-auto flex w-full items-center gap-2 rounded border border-[#305071] bg-[rgba(7,15,23,0.97)] px-2 py-1.5 shadow-[0_12px_28px_rgba(0,0,0,0.45)] backdrop-blur-[2px]"
+          className="priority-inline-panel pointer-events-auto flex min-h-[46px] w-full items-stretch gap-2 rounded bg-[rgba(7,15,23,0.97)] px-2 py-0 shadow-[0_12px_28px_rgba(0,0,0,0.45)] backdrop-blur-[2px]"
         >
           {isPriorityDecision ? (
             <>
-              <div className="shrink-0 flex min-w-[308px] min-h-[34px] items-stretch gap-2">
+              <div className="shrink-0 flex min-w-[308px] self-stretch items-stretch gap-2">
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[14px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
+                  className="decision-neon-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
                   disabled={!canAct}
                   onClick={() => triggerPriorityAction(passAction)}
                 >
                   {passLabel}
                 </Button>
-                <label className="flex items-center gap-1.5 shrink-0 px-1 text-[11px] uppercase tracking-wider cursor-pointer text-[#9db7d5] hover:text-[#d7e8fb] transition-colors">
+                <label className="flex h-full items-center gap-1.5 shrink-0 px-1 text-[11px] uppercase tracking-wider cursor-pointer text-[#9db7d5] hover:text-[#d7e8fb] transition-colors">
                   <Checkbox
                     checked={holdRule === "always"}
                     onCheckedChange={(v) => setHoldRule(v ? "always" : "never")}
@@ -844,7 +844,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                   />
                   Hold
                 </label>
-                <div className="min-w-[86px] flex flex-col justify-center">
+                <div className="min-w-[86px] self-stretch flex flex-col justify-center py-1.5">
                   <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
                     {canAct ? "Actions" : "Opponent Priority"}
                   </div>
@@ -868,11 +868,11 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
             </>
           ) : (
             <>
-              <div className="shrink-0 flex min-w-[308px] min-h-[34px] items-stretch gap-2">
+              <div className="shrink-0 flex min-w-[308px] self-stretch items-stretch gap-2">
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[14px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
+                  className="decision-neon-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
                   disabled={!canSubmitFocused}
                   onClick={() => {
                     if (!canSubmitFocused) return;
@@ -885,7 +885,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="w-[96px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(139,63,74,0.95)] bg-[rgba(120,35,46,0.86)] px-2 text-[13px] font-bold uppercase tracking-wide text-[#ffd8df] transition-colors hover:border-l-[rgba(188,90,104,0.98)] hover:bg-[rgba(163,50,64,0.9)]"
+                  className="decision-neon-button decision-neon-button--danger h-full w-[96px] shrink-0 self-stretch rounded-none px-2 text-[13px] font-bold uppercase tracking-wide"
                   disabled={!canAct}
                   onClick={() => {
                     if (!canAct) return;
@@ -894,7 +894,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 >
                   Cancel
                 </Button>
-                <div className="min-w-[86px] flex flex-col justify-center">
+                <div className="min-w-[86px] self-stretch flex flex-col justify-center py-1.5">
                   <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
                     {resolveDecisionTitle(decision)}
                   </div>
@@ -931,27 +931,27 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
   return (
     <div
       className={cn(
-        "pointer-events-auto z-[120] rounded border border-[#305071] bg-[rgba(7,15,23,0.97)] shadow-[0_16px_36px_rgba(0,0,0,0.55)] backdrop-blur-[2px]",
+        "pointer-events-auto z-[120] rounded bg-[rgba(7,15,23,0.97)] shadow-[0_16px_36px_rgba(0,0,0,0.55)] backdrop-blur-[2px]",
         anchoredStyle
           ? "fixed"
           : "fixed left-2 bottom-[148px] w-[min(92vw,348px)]"
       )}
       style={anchoredStyle || undefined}
     >
-      <div className="border-b border-[#2f4662]/85 bg-[rgba(10,22,34,0.88)] px-2 py-1.5">
-        <div className="flex min-h-[34px] items-stretch gap-2">
+      <div className="border-b border-[#2f4662]/85 bg-[rgba(10,22,34,0.88)] px-2 py-0">
+        <div className="flex min-h-[46px] items-stretch gap-2">
           {isPriorityDecision ? (
             <>
               <Button
                 variant="ghost"
                 size="sm"
-                className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[14px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
+                className="decision-neon-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
                 disabled={!canAct}
                 onClick={() => triggerPriorityAction(passAction)}
               >
                 {passLabel}
               </Button>
-              <label className="flex items-center gap-1.5 shrink-0 px-1 text-[11px] uppercase tracking-wider cursor-pointer text-[#9db7d5] hover:text-[#d7e8fb] transition-colors">
+              <label className="flex h-full items-center gap-1.5 shrink-0 px-1 text-[11px] uppercase tracking-wider cursor-pointer text-[#9db7d5] hover:text-[#d7e8fb] transition-colors">
                 <Checkbox
                   checked={holdRule === "always"}
                   onCheckedChange={(v) => setHoldRule(v ? "always" : "never")}
@@ -959,7 +959,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 />
                 Hold
               </label>
-              <div className="flex flex-col justify-center text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+              <div className="self-stretch flex flex-col justify-center py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
                 {canAct ? "Actions" : "Opponent Priority"}
               </div>
             </>
@@ -968,7 +968,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
               <Button
                 variant="ghost"
                 size="sm"
-                className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[14px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
+                className="decision-neon-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
                 disabled={!canSubmitFocused}
                 onClick={() => {
                   if (!canSubmitFocused) return;
@@ -981,7 +981,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="w-[96px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(139,63,74,0.95)] bg-[rgba(120,35,46,0.86)] px-2 text-[13px] font-bold uppercase tracking-wide text-[#ffd8df] transition-colors hover:border-l-[rgba(188,90,104,0.98)] hover:bg-[rgba(163,50,64,0.9)]"
+                className="decision-neon-button decision-neon-button--danger h-full w-[96px] shrink-0 self-stretch rounded-none px-2 text-[13px] font-bold uppercase tracking-wide"
                 disabled={!canAct}
                 onClick={() => {
                   if (!canAct) return;
@@ -990,7 +990,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
               >
                 Cancel
               </Button>
-              <div className="flex flex-col justify-center text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+              <div className="self-stretch flex flex-col justify-center py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
                 {resolveDecisionTitle(decision)}
               </div>
             </>

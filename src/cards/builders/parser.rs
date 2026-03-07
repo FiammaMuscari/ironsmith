@@ -10,14 +10,12 @@ use crate::cards::builders::parse_parsing::{
 use crate::cards::builders::{
     ActivationTiming, CardDefinitionBuilder, CardTextError, EffectAst, EffectPredicate,
     IfResultPredicate, LineAst, LineInfo, ParseAnnotations, ParsedCardAst, ParsedCardItem,
-    ParsedLevelAbilityAst, ParsedLevelAbilityItemAst, ParsedLineAst,
-    ParsedModalActivatedHeader, ParsedModalAst, ParsedModalGate, ParsedModalHeader,
-    ParsedModalModeAst, ParsedRestrictions, TextSpan, Token,
-    collect_tag_spans_from_effects_with_context, collect_tag_spans_from_line,
-    find_activation_cost_start, normalize_line_for_parse,
-    parse_if_result_predicate, parse_level_header, parse_line, parse_number,
-    parse_power_toughness, parse_where_x_value_clause, replace_unbound_x_with_value,
-    value_contains_unbound_x,
+    ParsedLevelAbilityAst, ParsedLevelAbilityItemAst, ParsedLineAst, ParsedModalActivatedHeader,
+    ParsedModalAst, ParsedModalGate, ParsedModalHeader, ParsedModalModeAst, ParsedRestrictions,
+    TextSpan, Token, collect_tag_spans_from_effects_with_context, collect_tag_spans_from_line,
+    find_activation_cost_start, normalize_line_for_parse, parse_if_result_predicate,
+    parse_level_header, parse_line, parse_number, parse_power_toughness,
+    parse_where_x_value_clause, replace_unbound_x_with_value, value_contains_unbound_x,
 };
 use crate::effect::Value;
 use crate::static_abilities::StaticAbility;
@@ -40,6 +38,24 @@ pub(super) fn parse_card_ast_with_annotations(
     let mut idx = 0usize;
     while idx < line_infos.len() {
         let info = &line_infos[idx];
+
+        if let Some(reason) = strict_unsupported_line_reason(
+            info.raw_line.as_str(),
+            info.normalized.normalized.as_str(),
+        ) {
+            let err =
+                CardTextError::ParseError(format!("{reason} (line: '{}')", info.raw_line.trim()));
+            if allow_unsupported {
+                items.push(ParsedCardItem::Line(ParsedLineAst {
+                    info: info.clone(),
+                    chunks: vec![unsupported_line_ast(info, reason.to_string())],
+                    restrictions: ParsedRestrictions::default(),
+                }));
+                idx += 1;
+                continue;
+            }
+            return Err(err);
+        }
 
         if !allow_unsupported
             && let Some((min_level, max_level)) = parse_level_header(&info.normalized.normalized)
@@ -231,6 +247,37 @@ pub(super) fn parse_card_ast_with_annotations(
         items,
         allow_unsupported,
     })
+}
+
+fn strict_unsupported_line_reason<'a>(
+    raw_line: &'a str,
+    normalized_line: &'a str,
+) -> Option<&'static str> {
+    let normalized_raw = raw_line
+        .trim()
+        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_ascii_lowercase()
+        .replace('\'', "")
+        .replace('’', "");
+
+    if raw_line.contains('’')
+        && normalized_raw.contains("dont untap during")
+        && normalized_raw.contains("untap step")
+    {
+        return Some("unsupported negated untap clause");
+    }
+
+    if normalized_line.contains("put one of them into your hand and the rest into your graveyard") {
+        return Some("unsupported multi-destination put clause");
+    }
+
+    if normalized_line.contains("destroy target face-down creature")
+        || normalized_line.contains("destroy target facedown creature")
+    {
+        return Some("unsupported face-down clause");
+    }
+
+    None
 }
 
 fn parse_level_ability_ast(

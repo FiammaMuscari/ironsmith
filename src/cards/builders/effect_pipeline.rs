@@ -3,18 +3,17 @@ use crate::cards::ParseAnnotations;
 use crate::cards::builders::{
     CardTextError, EffectAst, KeywordAction, LineAst, LineInfo, ParsedCardAst, ParsedCardItem,
     ParsedLevelAbilityAst, ParsedLevelAbilityItemAst, ParsedLineAst, ParsedModalAst,
-    ParsedModalHeader, ParsedRestrictions, ReferenceBindings, TriggerSpec,
-    apply_instead_followup_statement_to_last_ability, bind_unresolved_it_references_with_bindings,
-    combine_mana_activation_condition, collect_tag_spans_from_effects_with_context,
-    effects_reference_it_tag, effects_reference_its_controller, keyword_action_to_static_ability,
-    lower_additional_cost_choice_modes, lower_effects_with_trigger_context_and_seed,
-    lower_parsed_ability, lower_statement_effects, lower_statement_effects_with_seed,
-    lower_static_abilities_ast, lower_static_ability_ast, normalize_effects_ast,
-    parse_activate_only_timing, parse_activation_condition, parse_mana_output_options_for_line,
-    parse_triggered_times_each_turn_from_words, parsed_triggered_ability, tokenize_line, words,
+    ParsedModalHeader, ParsedRestrictions, ReferenceExports, ReferenceImports, TriggerSpec,
+    apply_instead_followup_statement_to_last_ability, collect_tag_spans_from_effects_with_context,
+    combine_mana_activation_condition, keyword_action_to_static_ability,
+    lower_additional_cost_choice_modes_with_exports,
+    lower_effects_with_trigger_context_and_imports, lower_parsed_ability, lower_statement_effects,
+    lower_statement_effects_with_imports, lower_static_abilities_ast, lower_static_ability_ast,
+    normalize_effects_ast, parse_activate_only_timing, parse_activation_condition,
+    parse_mana_output_options_for_line, parse_triggered_times_each_turn_from_words,
+    parsed_triggered_ability, tokenize_line, words,
 };
 use crate::color::ColorSet;
-use crate::cost::TotalCost;
 use crate::effect::{Condition, Effect, EffectId, EffectMode, EffectPredicate};
 use crate::static_abilities::StaticAbility;
 use crate::target::{ChooseSpec, PlayerFilter};
@@ -25,23 +24,34 @@ use crate::{CardDefinition, CardDefinitionBuilder};
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedEffectsForLowering {
     pub(crate) effects: Vec<EffectAst>,
-    pub(crate) bindings: ReferenceBindings,
+    pub(crate) imports: ReferenceImports,
 }
 
 #[derive(Debug, Clone, Default)]
 struct LoweredCardState {
     haunt_linkage: Option<(Vec<Effect>, Vec<ChooseSpec>)>,
+    latest_spell_exports: ReferenceExports,
+    latest_additional_cost_exports: ReferenceExports,
+}
+
+impl LoweredCardState {
+    fn statement_reference_imports(&self) -> ReferenceImports {
+        let additional_cost_imports = self.latest_additional_cost_exports.to_imports();
+        if !additional_cost_imports.is_empty() {
+            return additional_cost_imports;
+        }
+        self.latest_spell_exports.to_imports()
+    }
 }
 
 pub(crate) fn prepare_effects_for_lowering(
     effects: &[EffectAst],
-    seed_last_object_tag: Option<&str>,
+    imports: ReferenceImports,
 ) -> PreparedEffectsForLowering {
     let normalized = normalize_effects_ast(effects);
-    let bound = bind_unresolved_it_references_with_bindings(&normalized, seed_last_object_tag);
     PreparedEffectsForLowering {
-        effects: bound.effects,
-        bindings: bound.bindings,
+        effects: normalized,
+        imports,
     }
 }
 
@@ -162,10 +172,7 @@ fn lower_line_ast(
         && let Some(index) = *last_restrictable_ability
         && index < builder.abilities.len()
     {
-        apply_pending_restrictions_to_ability(
-            &mut builder.abilities[index],
-            &mut restrictions,
-        );
+        apply_pending_restrictions_to_ability(&mut builder.abilities[index], &mut restrictions);
     }
 
     Ok(())
@@ -278,7 +285,10 @@ fn normalize_spell_delayed_trigger_effects(
         return builder;
     }
 
-    builder.spell_effect.get_or_insert_with(Vec::new).extend(delayed);
+    builder
+        .spell_effect
+        .get_or_insert_with(Vec::new)
+        .extend(delayed);
     builder
 }
 
@@ -499,87 +509,14 @@ fn keyword_actions_line_text(actions: &[KeywordAction], separator: &str) -> Opti
     Some(parts.join(separator))
 }
 
-fn latest_choose_objects_tag_in_effect(effect: &Effect) -> Option<String> {
-    if let Some(choose) = effect.downcast_ref::<crate::effects::ChooseObjectsEffect>() {
-        return Some(choose.tag.as_str().to_string());
-    }
-
-    if let Some(modes) = effect.downcast_ref::<crate::effects::ChooseModeEffect>() {
-        for mode in modes.modes.iter().rev() {
-            for nested in mode.effects.iter().rev() {
-                if let Some(tag) = latest_choose_objects_tag_in_effect(nested) {
-                    return Some(tag);
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn latest_tagged_reference_tag_in_effect(effect: &Effect) -> Option<String> {
-    if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
-        return Some(tagged.tag.as_str().to_string());
-    }
-    if let Some(tagged_all) = effect.downcast_ref::<crate::effects::TagAllEffect>() {
-        return Some(tagged_all.tag.as_str().to_string());
-    }
-
-    if let Some(conditional) = effect.downcast_ref::<crate::effects::ConditionalEffect>() {
-        for nested in conditional.if_true.iter().rev() {
-            if let Some(tag) = latest_tagged_reference_tag_in_effect(nested)
-                .or_else(|| latest_choose_objects_tag_in_effect(nested))
-            {
-                return Some(tag);
-            }
-        }
-        for nested in conditional.if_false.iter().rev() {
-            if let Some(tag) = latest_tagged_reference_tag_in_effect(nested)
-                .or_else(|| latest_choose_objects_tag_in_effect(nested))
-            {
-                return Some(tag);
-            }
-        }
-    }
-
-    if let Some(may) = effect.downcast_ref::<crate::effects::MayEffect>() {
-        for nested in may.effects.iter().rev() {
-            if let Some(tag) = latest_tagged_reference_tag_in_effect(nested)
-                .or_else(|| latest_choose_objects_tag_in_effect(nested))
-            {
-                return Some(tag);
-            }
-        }
-    }
-
-    None
-}
-
-fn latest_cost_choice_tag(additional_cost: &TotalCost) -> Option<String> {
-    for effect in additional_cost
-        .costs()
-        .iter()
-        .rev()
-        .filter_map(|component| component.effect_ref())
-    {
-        if let Some(tag) = latest_choose_objects_tag_in_effect(effect)
-            .or_else(|| latest_tagged_reference_tag_in_effect(effect))
-        {
-            return Some(tag);
-        }
-    }
-    None
-}
-
-fn latest_spell_reference_tag(spell_effects: &[Effect]) -> Option<String> {
-    for effect in spell_effects.iter().rev() {
-        if let Some(tag) = latest_tagged_reference_tag_in_effect(effect)
-            .or_else(|| latest_choose_objects_tag_in_effect(effect))
-        {
-            return Some(tag);
-        }
-    }
-    None
+fn uses_spell_only_functional_zones(static_ability: &StaticAbility) -> bool {
+    matches!(
+        static_ability.id(),
+        crate::static_abilities::StaticAbilityId::ConditionalSpellKeyword
+            | crate::static_abilities::StaticAbilityId::ThisSpellCastRestriction
+            | crate::static_abilities::StaticAbilityId::ThisSpellCostReduction
+            | crate::static_abilities::StaticAbilityId::ThisSpellCostReductionManaCost
+    )
 }
 
 fn infer_static_ability_functional_zones(normalized_line: &str) -> Option<Vec<Zone>> {
@@ -672,11 +609,7 @@ fn apply_line_ast(
             };
             let mut compiled = Ability::static_ability(ability).with_text(info.raw_line.as_str());
             if let AbilityKind::Static(static_ability) = &compiled.kind
-                && matches!(
-                    static_ability.id(),
-                    crate::static_abilities::StaticAbilityId::ConditionalSpellKeyword
-                        | crate::static_abilities::StaticAbilityId::ThisSpellCastRestriction
-                )
+                && uses_spell_only_functional_zones(static_ability)
             {
                 compiled = compiled.in_zones(vec![
                     Zone::Hand,
@@ -710,11 +643,7 @@ fn apply_line_ast(
                 let mut compiled =
                     Ability::static_ability(ability).with_text(info.raw_line.as_str());
                 if let AbilityKind::Static(static_ability) = &compiled.kind
-                    && matches!(
-                        static_ability.id(),
-                        crate::static_abilities::StaticAbilityId::ConditionalSpellKeyword
-                            | crate::static_abilities::StaticAbilityId::ThisSpellCastRestriction
-                    )
+                    && uses_spell_only_functional_zones(static_ability)
                 {
                     compiled = compiled.in_zones(vec![
                         Zone::Hand,
@@ -793,23 +722,9 @@ fn apply_line_ast(
                 builder.aura_attach_filter = Some(enchant_filter);
             }
 
-            let seed_last_object_tag = if effects_reference_it_tag(&effects)
-                || effects_reference_its_controller(&effects)
-            {
-                latest_cost_choice_tag(&builder.additional_cost).or_else(|| {
-                    builder
-                        .spell_effect
-                        .as_ref()
-                        .and_then(|effects| latest_spell_reference_tag(effects))
-                })
-            } else {
-                None
-            };
-            let compiled = match lower_statement_effects_with_seed(
-                &effects,
-                seed_last_object_tag.as_deref(),
-            ) {
-                Ok(compiled) => compiled,
+            let reference_imports = state.statement_reference_imports();
+            let lowered = match lower_statement_effects_with_imports(&effects, &reference_imports) {
+                Ok(lowered) => lowered,
                 Err(err) if allow_unsupported => {
                     return Ok(push_unsupported_marker(
                         builder,
@@ -819,6 +734,8 @@ fn apply_line_ast(
                 }
                 Err(err) => return Err(err),
             };
+            let compiled = lowered.effects;
+            state.latest_spell_exports = lowered.exports;
 
             let normalized_line = info.normalized.normalized.as_str().to_ascii_lowercase();
             if normalized_line.contains(" instead")
@@ -872,8 +789,11 @@ fn apply_line_ast(
                 )));
             }
 
-            let compiled = match lower_statement_effects(&effects) {
-                Ok(compiled) => compiled,
+            let lowered = match lower_statement_effects_with_imports(
+                &effects,
+                &ReferenceImports::default(),
+            ) {
+                Ok(lowered) => lowered,
                 Err(err) if allow_unsupported => {
                     return Ok(push_unsupported_marker(
                         builder,
@@ -883,6 +803,8 @@ fn apply_line_ast(
                 }
                 Err(err) => return Err(err),
             };
+            let compiled = lowered.effects;
+            state.latest_additional_cost_exports = lowered.exports;
 
             builder.additional_cost =
                 crate::ability::merge_cost_effects(builder.additional_cost, compiled);
@@ -920,8 +842,8 @@ fn apply_line_ast(
                     )));
                 }
             }
-            let modes = match lower_additional_cost_choice_modes(&options) {
-                Ok(modes) => modes,
+            let (modes, exports) = match lower_additional_cost_choice_modes_with_exports(&options) {
+                Ok(outputs) => outputs,
                 Err(err) if allow_unsupported => {
                     return Ok(push_unsupported_marker(
                         builder,
@@ -931,6 +853,7 @@ fn apply_line_ast(
                 }
                 Err(err) => return Err(err),
             };
+            state.latest_additional_cost_exports = exports;
             builder.additional_cost = crate::ability::merge_cost_effects(
                 builder.additional_cost,
                 vec![Effect::choose_one(modes)],
@@ -947,17 +870,22 @@ fn apply_line_ast(
             let contains_haunted_creature_dies = matches!(
                 &trigger,
                 TriggerSpec::Either(_, right) if matches!(**right, TriggerSpec::HauntedCreatureDies)
-            ) || matches!(&trigger, TriggerSpec::HauntedCreatureDies);
+            ) || matches!(
+                &trigger,
+                TriggerSpec::HauntedCreatureDies
+            );
 
-            let functional_zones =
-                infer_triggered_ability_functional_zones(&trigger, info.normalized.normalized.as_str());
+            let functional_zones = infer_triggered_ability_functional_zones(
+                &trigger,
+                info.normalized.normalized.as_str(),
+            );
             let parsed = parsed_triggered_ability(
                 trigger,
                 effects,
                 functional_zones,
                 Some(info.raw_line.clone()),
                 max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
-                None,
+                ReferenceImports::default(),
             );
             let parsed = match lower_parsed_ability(parsed) {
                 Ok(parsed) => parsed,
@@ -974,8 +902,7 @@ fn apply_line_ast(
             if contains_haunted_creature_dies
                 && let AbilityKind::Triggered(triggered) = &parsed.ability.kind
             {
-                state.haunt_linkage =
-                    Some((triggered.effects.clone(), triggered.choices.clone()));
+                state.haunt_linkage = Some((triggered.effects.clone(), triggered.choices.clone()));
             }
             builder = builder.with_ability(parsed.ability);
         }
@@ -1098,9 +1025,12 @@ fn finalize_pending_modal(
     let (prefix_effects, prefix_choices) = if prefix_effects_ast.is_empty() {
         (Vec::new(), Vec::new())
     } else if trigger.is_some() || activated.is_some() {
-        match lower_effects_with_trigger_context_and_seed(trigger.as_ref(), &prefix_effects_ast, None)
-        {
-            Ok(compiled) => compiled,
+        match lower_effects_with_trigger_context_and_imports(
+            trigger.as_ref(),
+            &prefix_effects_ast,
+            &ReferenceImports::default(),
+        ) {
+            Ok(lowered) => (lowered.effects, lowered.choices),
             Err(err) if allow_unsupported => {
                 builder = push_unsupported_marker(builder, line_text.as_str(), format!("{err:?}"));
                 return Ok(builder);
@@ -1123,8 +1053,11 @@ fn finalize_pending_modal(
         let effects = match lower_statement_effects(&mode.effects_ast) {
             Ok(effects) => effects,
             Err(err) if allow_unsupported => {
-                builder =
-                    push_unsupported_marker(builder, mode.info.raw_line.as_str(), format!("{err:?}"));
+                builder = push_unsupported_marker(
+                    builder,
+                    mode.info.raw_line.as_str(),
+                    format!("{err:?}"),
+                );
                 continue;
             }
             Err(err) => return Err(err),
@@ -1215,7 +1148,7 @@ fn finalize_pending_modal(
             vec![Zone::Battlefield],
             Some(line_text),
             None,
-            None,
+            ReferenceImports::default(),
         )
         .ability;
         if let AbilityKind::Triggered(triggered) = &mut ability.kind {
@@ -1481,5 +1414,38 @@ fn merge_mana_activation_conditions(
         (Some(left), Some(right)) => {
             Some(crate::ConditionExpr::And(Box::new(left), Box::new(right)))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cards::builders::{IT_TAG, PlayerAst};
+    use crate::*;
+
+    #[test]
+    fn prepare_effects_for_lowering_preserves_unresolved_it_and_returns_reference_imports() {
+        let effects = vec![EffectAst::GrantPlayTaggedUntilEndOfTurn {
+            tag: TagKey::from(IT_TAG),
+            player: PlayerAst::You,
+        }];
+
+        let prepared = prepare_effects_for_lowering(
+            &effects,
+            ReferenceImports::with_last_object_tag("seeded_target"),
+        );
+
+        assert_eq!(
+            prepared
+                .imports
+                .last_object_tag
+                .as_ref()
+                .map(TagKey::as_str),
+            Some("seeded_target")
+        );
+        assert!(
+            format!("{:?}", prepared.effects).contains(IT_TAG),
+            "imports should not rewrite unresolved refs in the AST"
+        );
     }
 }

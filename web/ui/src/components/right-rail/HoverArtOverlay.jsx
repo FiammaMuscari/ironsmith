@@ -14,6 +14,40 @@ const METADATA_TEXT_STYLE = {
   textShadow: "0 1px 2px rgba(0, 0, 0, 0.96), 0 2px 10px rgba(0, 0, 0, 0.84)",
 };
 const INSPECTOR_ART_SWAP_MS = 240;
+const MIN_INSPECTOR_TEXT_SCALE = 0.74;
+const INSPECTOR_TITLE_FONT_SIZE = 22;
+const INSPECTOR_STATS_FONT_SIZE = 20;
+const INSPECTOR_METADATA_FONT_SIZE = 13;
+const INSPECTOR_RULES_FONT_SIZE = 17;
+const INSPECTOR_RULES_LINE_HEIGHT = INSPECTOR_RULES_FONT_SIZE * 1.34;
+const INSPECTOR_RULES_ROW_GAP = 2;
+const INSPECTOR_DEFAULT_HEIGHT = 248;
+const INSPECTOR_RULES_MIN_WIDTH = 220;
+const INSPECTOR_RULES_MAX_LINE_WIDTH = 920;
+const INSPECTOR_HEADER_HORIZONTAL_PADDING = 136;
+const INSPECTOR_ORACLE_TOP_PADDING = 92;
+const INSPECTOR_ORACLE_BOTTOM_PADDING = 10;
+const INSPECTOR_ORACLE_HORIZONTAL_PADDING = 28;
+
+function clampNumber(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function estimateInspectorRulesHeight(lineWidths, innerWidth) {
+  const width = Math.max(1, Number(innerWidth) || 0);
+  let totalHeight = 0;
+
+  for (const lineWidth of lineWidths) {
+    const wraps = Math.max(1, Math.ceil(lineWidth / width));
+    totalHeight += wraps * INSPECTOR_RULES_LINE_HEIGHT;
+  }
+
+  if (lineWidths.length > 1) {
+    totalHeight += (lineWidths.length - 1) * INSPECTOR_RULES_ROW_GAP;
+  }
+
+  return totalHeight;
+}
 
 function stripInspectorAbilityPrefixes(text = "") {
   const prefixPatterns = [
@@ -109,9 +143,11 @@ function buildObjectNameMap(state) {
   }
 
   for (const stackObject of state?.stack_objects || []) {
-    const cardId = Number(stackObject.id);
-    if (Number.isFinite(cardId)) {
-      map.set(cardId, stackObject.name);
+    for (const candidateId of [stackObject.id, stackObject.inspect_object_id]) {
+      const cardId = Number(candidateId);
+      if (Number.isFinite(cardId)) {
+        map.set(cardId, stackObject.name);
+      }
     }
   }
 
@@ -350,22 +386,32 @@ export default function HoverArtOverlay({
   stackTimelineHeight = 0,
   compact = false,
   displayMode = "inspector",
+  availableInspectorWidth = null,
+  availableInspectorHeight = null,
   onProtectedTopChange = null,
   onOracleTextHeightChange = null,
   onPreferredWidthChange = null,
+  onPreferredInspectorWidthChange = null,
 }) {
   const { state, game, inspectorDebug } = useGame();
   const objectNameById = useMemo(() => buildObjectNameMap(state), [state]);
   const objectIdNum = objectId != null ? Number(objectId) : null;
   const objectIdKey = Number.isFinite(objectIdNum) ? String(objectIdNum) : null;
   const topHeaderRef = useRef(null);
+  const topMetadataRef = useRef(null);
   const oracleBodyRef = useRef(null);
+  const oracleContainerRef = useRef(null);
   const oracleScrollRef = useRef(null);
   const ruleLineRefs = useRef(new Map());
 
   const [detailsCache, setDetailsCache] = useState({});
   const [failedImageUrl, setFailedImageUrl] = useState(null);
   const [copiedDebug, setCopiedDebug] = useState(false);
+  const [inspectorScaleSession, setInspectorScaleSession] = useState({ key: null, scale: 1 });
+  const [measuredPreferredInspectorWidth, setMeasuredPreferredInspectorWidth] = useState({
+    key: null,
+    width: null,
+  });
 
   useEffect(() => {
     if (!game || objectIdNum == null || !objectIdKey) return;
@@ -395,7 +441,10 @@ export default function HoverArtOverlay({
 
   const details = objectIdKey ? (detailsCache[objectIdKey] || null) : null;
   const hoveredStackObject = useMemo(
-    () => (state?.stack_objects || []).find((entry) => String(entry.id) === String(objectIdNum)),
+    () => (state?.stack_objects || []).find((entry) => (
+      String(entry.id) === String(objectIdNum)
+      || String(entry.inspect_object_id) === String(objectIdNum)
+    )),
     [state?.stack_objects, objectIdNum]
   );
   const isFullArtMode = displayMode === "full-art";
@@ -447,7 +496,9 @@ export default function HoverArtOverlay({
   const topStackObject = (state?.stack_objects || [])[0] || null;
   const detailAbilities = Array.isArray(details?.abilities) ? details.abilities : null;
   const detailStableId = details?.stable_id != null ? String(details.stable_id) : null;
-  const topStackId = topStackObject?.id != null ? String(topStackObject.id) : null;
+  const topStackId = topStackObject?.inspect_object_id != null
+    ? String(topStackObject.inspect_object_id)
+    : (topStackObject?.id != null ? String(topStackObject.id) : null);
   const topStackStableId = topStackObject?.stable_id != null ? String(topStackObject.stable_id) : null;
   const topStackName = topStackObject?.name != null ? String(topStackObject.name) : "";
   const hoveredStackAbilityText = String(hoveredStackObject?.ability_text || "");
@@ -486,6 +537,20 @@ export default function HoverArtOverlay({
       .filter(Boolean);
   }, [detailAbilities, hoveredStackAbilityText, hoveredStackEffectText, oracleText]);
   const displayRulesText = displayRulesLines.join("\n");
+  const inspectorScaleSessionKey = useMemo(
+    () => (
+      compact || displayMode !== "inspector"
+        ? null
+        : [
+          objectIdKey || "none",
+          displayMode,
+          statsText || "",
+          metadataText || "",
+          displayRulesText,
+        ].join("|")
+    ),
+    [compact, displayMode, displayRulesText, metadataText, objectIdKey, statsText]
+  );
   const preferredInlineWidth = useMemo(() => {
     if (!compact || typeof document === "undefined") return null;
     const canvas = document.createElement("canvas");
@@ -522,6 +587,115 @@ export default function HoverArtOverlay({
     const horizontalPadding = compact ? 56 : 90;
     return Math.ceil(maxTextWidth + horizontalPadding);
   }, [compact, displayRulesLines, groupedCardCount, manaCost, metadataText, objectName, statsText]);
+  const preferredInspectorWidth = useMemo(() => {
+    if (compact || displayMode !== "inspector" || typeof document === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+
+    let headerWidth = 0;
+    context.font = `700 ${INSPECTOR_TITLE_FONT_SIZE}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
+    headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, objectName || ""));
+    if (groupedCardCount > 1) {
+      headerWidth += 24;
+    }
+
+    context.font = `800 ${INSPECTOR_STATS_FONT_SIZE}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
+    headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, statsText || ""));
+
+    context.font = `600 ${INSPECTOR_METADATA_FONT_SIZE}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
+    headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, metadataText || ""));
+
+    const manaSymbols = String(manaCost || "").match(/\{[^}]+\}/g);
+    if (manaSymbols && manaSymbols.length > 0) {
+      headerWidth = Math.max(headerWidth, manaSymbols.length * 21);
+    }
+
+    const minimumHeaderWidth = Math.ceil(headerWidth + INSPECTOR_HEADER_HORIZONTAL_PADDING);
+    if (displayRulesLines.length === 0) {
+      return minimumHeaderWidth;
+    }
+
+    const targetInspectorHeight = Number.isFinite(availableInspectorHeight) && availableInspectorHeight > 0
+      ? availableInspectorHeight
+      : INSPECTOR_DEFAULT_HEIGHT;
+    const availableRulesHeight = Math.max(
+      0,
+      targetInspectorHeight - INSPECTOR_ORACLE_TOP_PADDING - INSPECTOR_ORACLE_BOTTOM_PADDING
+    );
+    if (availableRulesHeight <= 0) {
+      return minimumHeaderWidth;
+    }
+
+    context.font = `600 ${INSPECTOR_RULES_FONT_SIZE}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
+    const ruleLineWidths = displayRulesLines.map((line) => (
+      Math.min(INSPECTOR_RULES_MAX_LINE_WIDTH, measureInspectorTextWidth(context, line))
+    ));
+    const widestRuleLine = Math.max(...ruleLineWidths, 0);
+    const minRuleInnerWidth = Math.min(
+      Math.max(1, Math.ceil(widestRuleLine)),
+      INSPECTOR_RULES_MIN_WIDTH
+    );
+    const maxRuleInnerWidth = Math.max(
+      minRuleInnerWidth,
+      Math.ceil(widestRuleLine || INSPECTOR_RULES_MIN_WIDTH)
+    );
+
+    if (estimateInspectorRulesHeight(ruleLineWidths, minRuleInnerWidth) <= availableRulesHeight) {
+      return Math.ceil(Math.max(
+        minimumHeaderWidth,
+        minRuleInnerWidth + INSPECTOR_ORACLE_HORIZONTAL_PADDING
+      ));
+    }
+
+    if (estimateInspectorRulesHeight(ruleLineWidths, maxRuleInnerWidth) > availableRulesHeight) {
+      return Math.ceil(Math.max(
+        minimumHeaderWidth,
+        maxRuleInnerWidth + INSPECTOR_ORACLE_HORIZONTAL_PADDING
+      ));
+    }
+
+    let low = minRuleInnerWidth;
+    let high = maxRuleInnerWidth;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (estimateInspectorRulesHeight(ruleLineWidths, mid) <= availableRulesHeight) {
+        high = mid;
+      } else {
+        low = mid + 1;
+      }
+    }
+
+    return Math.ceil(Math.max(
+      minimumHeaderWidth,
+      low + INSPECTOR_ORACLE_HORIZONTAL_PADDING
+    ));
+  }, [
+    availableInspectorHeight,
+    compact,
+    displayMode,
+    displayRulesLines,
+    groupedCardCount,
+    manaCost,
+    metadataText,
+    objectName,
+    statsText,
+  ]);
+  const activeMeasuredPreferredInspectorWidth = (
+    measuredPreferredInspectorWidth.key === inspectorScaleSessionKey
+      ? measuredPreferredInspectorWidth.width
+      : null
+  );
+  const resolvedPreferredInspectorWidth = useMemo(() => {
+    const preferredWidth = Number(preferredInspectorWidth);
+    const measuredWidth = Number(activeMeasuredPreferredInspectorWidth);
+    const candidates = [preferredWidth, measuredWidth].filter((value) => Number.isFinite(value) && value > 0);
+    if (candidates.length === 0) return null;
+    return Math.max(...candidates);
+  }, [activeMeasuredPreferredInspectorWidth, preferredInspectorWidth]);
+  const activeInspectorTextScale = compact || displayMode !== "inspector"
+    ? 1
+    : (inspectorScaleSession.key === inspectorScaleSessionKey ? inspectorScaleSession.scale : 1);
   const topStackMatchesInspectorObject = useMemo(() => {
     if (!topStackObject) return false;
     if (objectIdNum != null && topStackId === String(objectIdNum)) return true;
@@ -636,22 +810,90 @@ export default function HoverArtOverlay({
   }, [copiedDebug]);
 
   useLayoutEffect(() => {
+    if (compact || displayMode !== "inspector") return undefined;
+    const scroller = oracleScrollRef.current;
+    if (!scroller) return undefined;
+
+    const currentWidth = Number(availableInspectorWidth);
+    const renderedWidth = scroller.clientWidth;
+    const clientHeight = scroller.clientHeight;
+    const scrollHeight = scroller.scrollHeight;
+    if (
+      Number.isFinite(activeMeasuredPreferredInspectorWidth)
+      || !Number.isFinite(currentWidth)
+      || !Number.isFinite(renderedWidth)
+      || currentWidth <= 0
+      || renderedWidth <= 0
+      || currentWidth - renderedWidth > 24
+      || clientHeight <= 0
+      || scrollHeight <= clientHeight + 1
+      || activeInspectorTextScale < 0.99
+    ) {
+      return undefined;
+    }
+
+    const nextWidth = Math.max(
+      Number.isFinite(preferredInspectorWidth) ? preferredInspectorWidth : 0,
+      Math.ceil((currentWidth * scrollHeight) / clientHeight) + 8
+    );
+    if (nextWidth <= currentWidth + 1) {
+      return undefined;
+    }
+
+    setMeasuredPreferredInspectorWidth((currentMeasuredState) => {
+      const currentMeasuredWidth = currentMeasuredState.key === inspectorScaleSessionKey
+        ? currentMeasuredState.width
+        : null;
+      if (Number.isFinite(currentMeasuredWidth) && nextWidth <= currentMeasuredWidth + 1) {
+        return currentMeasuredState;
+      }
+      return {
+        key: inspectorScaleSessionKey,
+        width: nextWidth,
+      };
+    });
+    setInspectorScaleSession((currentSession) => (
+      currentSession.key == null && Math.abs(currentSession.scale - 1) < 0.01
+        ? currentSession
+        : { key: null, scale: 1 }
+    ));
+
+    return undefined;
+  }, [
+    activeMeasuredPreferredInspectorWidth,
+    activeInspectorTextScale,
+    availableInspectorWidth,
+    compact,
+    displayMode,
+    displayRulesText,
+    inspectorScaleSessionKey,
+    metadataText,
+    objectIdKey,
+    preferredInspectorWidth,
+    statsText,
+  ]);
+
+  useLayoutEffect(() => {
     if (typeof onProtectedTopChange !== "function") return undefined;
-    const node = topHeaderRef.current;
-    if (!node) {
+    const leftNode = topHeaderRef.current;
+    const rightNode = topMetadataRef.current;
+    const overlayNode = leftNode?.parentElement || rightNode?.parentElement || null;
+    if (!overlayNode || (!leftNode && !rightNode)) {
       onProtectedTopChange(null);
       return undefined;
     }
 
     let rafId = null;
     const publishProtectedTop = () => {
-      const nodeRect = node.getBoundingClientRect();
-      const overlayRect = node.parentElement?.getBoundingClientRect();
+      const overlayRect = overlayNode.getBoundingClientRect();
       if (!overlayRect) {
         onProtectedTopChange(null);
         return;
       }
-      onProtectedTopChange(nodeRect.bottom - overlayRect.top);
+      const candidateBottoms = [leftNode, rightNode]
+        .filter(Boolean)
+        .map((node) => node.getBoundingClientRect().bottom - overlayRect.top);
+      onProtectedTopChange(candidateBottoms.length > 0 ? Math.max(...candidateBottoms) : null);
     };
 
     publishProtectedTop();
@@ -659,7 +901,8 @@ export default function HoverArtOverlay({
       if (rafId != null) cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(publishProtectedTop);
     });
-    observer.observe(node);
+    if (leftNode) observer.observe(leftNode);
+    if (rightNode) observer.observe(rightNode);
     window.addEventListener("resize", publishProtectedTop);
 
     return () => {
@@ -668,11 +911,11 @@ export default function HoverArtOverlay({
       window.removeEventListener("resize", publishProtectedTop);
       onProtectedTopChange(null);
     };
-  }, [onProtectedTopChange, objectName, manaCost]);
+  }, [activeInspectorTextScale, manaCost, metadataText, objectName, onProtectedTopChange, statsText]);
 
   useLayoutEffect(() => {
     if (typeof onOracleTextHeightChange !== "function") return undefined;
-    const node = oracleBodyRef.current;
+    const node = oracleContainerRef.current;
     if (!node) {
       onOracleTextHeightChange(0);
       return undefined;
@@ -697,12 +940,23 @@ export default function HoverArtOverlay({
       window.removeEventListener("resize", publishOracleHeight);
       onOracleTextHeightChange(0);
     };
-  }, [onOracleTextHeightChange, displayRulesText, highlightedRuleLineIndices, metadataText, statsText]);
+  }, [
+    displayRulesText,
+    highlightedRuleLineIndices,
+    activeInspectorTextScale,
+    metadataText,
+    onOracleTextHeightChange,
+    statsText,
+  ]);
 
   useLayoutEffect(() => {
     if (typeof onPreferredWidthChange !== "function") return;
     onPreferredWidthChange(preferredInlineWidth);
   }, [onPreferredWidthChange, preferredInlineWidth, objectIdKey]);
+  useLayoutEffect(() => {
+    if (typeof onPreferredInspectorWidthChange !== "function") return;
+    onPreferredInspectorWidthChange(resolvedPreferredInspectorWidth);
+  }, [objectIdKey, onPreferredInspectorWidthChange, resolvedPreferredInspectorWidth]);
 
   useEffect(
     () => () => {
@@ -712,6 +966,102 @@ export default function HoverArtOverlay({
     },
     [onPreferredWidthChange]
   );
+  useEffect(
+    () => () => {
+      if (typeof onPreferredInspectorWidthChange === "function") {
+        onPreferredInspectorWidthChange(null);
+      }
+    },
+    [onPreferredInspectorWidthChange]
+  );
+
+  useLayoutEffect(() => {
+    if (compact || displayMode !== "inspector") return undefined;
+
+    let rafId = null;
+    const scroller = oracleScrollRef.current;
+    const content = oracleContainerRef.current;
+    if (!scroller || !content) return undefined;
+
+    const publishScale = () => {
+      const previousSession = inspectorScaleSession;
+      const baseScale = previousSession.key === inspectorScaleSessionKey
+        ? previousSession.scale
+        : 1;
+      const preferredWidth = Number(resolvedPreferredInspectorWidth);
+      const availableWidth = Number(availableInspectorWidth);
+      let nextScale = baseScale;
+
+      if (
+        Number.isFinite(preferredWidth)
+        && preferredWidth > 0
+        && Number.isFinite(availableWidth)
+        && availableWidth > 0
+      ) {
+        nextScale = Math.min(
+          nextScale,
+          clampNumber(availableWidth / preferredWidth, MIN_INSPECTOR_TEXT_SCALE, 1)
+        );
+      }
+
+      const clientHeight = scroller.clientHeight;
+      const scrollHeight = scroller.scrollHeight;
+      if (clientHeight > 0 && scrollHeight > clientHeight + 1) {
+        nextScale = Math.min(nextScale, Math.max(
+          MIN_INSPECTOR_TEXT_SCALE,
+          baseScale * (clientHeight / scrollHeight)
+        ));
+      }
+
+      setInspectorScaleSession((currentSession) => {
+        const currentScale = currentSession.key === inspectorScaleSessionKey
+          ? currentSession.scale
+          : 1;
+        if (
+          currentSession.key === inspectorScaleSessionKey
+          && Math.abs(currentScale - nextScale) < 0.01
+        ) {
+          return currentSession;
+        }
+        return {
+          key: inspectorScaleSessionKey,
+          scale: nextScale,
+        };
+      });
+    };
+
+    const scheduleScale = () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        publishScale();
+      });
+    };
+
+    scheduleScale();
+    const observer = new ResizeObserver(scheduleScale);
+    observer.observe(scroller);
+    observer.observe(content);
+    window.addEventListener("resize", scheduleScale);
+
+    return () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleScale);
+    };
+  }, [
+    availableInspectorHeight,
+    availableInspectorWidth,
+    compact,
+    displayMode,
+    displayRulesText,
+    inspectorScaleSession,
+    inspectorScaleSessionKey,
+    metadataText,
+    objectIdKey,
+    resolvedPreferredInspectorWidth,
+    statsText,
+  ]);
 
   useLayoutEffect(() => {
     const scroller = oracleScrollRef.current;
@@ -743,16 +1093,43 @@ export default function HoverArtOverlay({
     }
   }, [objectIdKey, highlightedRuleLineIndices, displayRulesText]);
 
-  const oracleTopPaddingClass = compact ? "pt-[56px]" : "pt-[164px]";
+  const inspectorScale = activeInspectorTextScale;
+  const oracleTopPaddingClass = compact ? "pt-[56px]" : "";
   const oracleContainerClass = compact
     ? `relative z-10 px-2.5 ${oracleTopPaddingClass} pb-1.5`
-    : `relative z-10 min-h-full flex flex-col justify-end px-2.5 ${oracleTopPaddingClass} pb-2.5`;
+    : "relative z-10 min-h-full flex flex-col justify-end";
   const topMetadataTextClassName = compact
     ? "text-[11px] leading-snug text-[#d1e2f6] text-right"
-    : "text-[13px] leading-snug text-[#d1e2f6] text-right";
+    : "leading-snug text-[#d1e2f6] text-right";
   const rulesTextClassName = compact
     ? "text-[13px] leading-[1.28] text-white font-semibold text-right"
-    : "text-[17px] leading-[1.34] text-white font-semibold text-right";
+    : "text-white font-semibold text-right";
+  const inspectorTitleStyle = compact ? undefined : {
+    fontSize: `${INSPECTOR_TITLE_FONT_SIZE * inspectorScale}px`,
+    padding: `${6 * inspectorScale}px ${12 * inspectorScale}px`,
+  };
+  const inspectorTopMetaStyle = compact ? undefined : {
+    padding: `${4 * inspectorScale}px ${10 * inspectorScale}px`,
+    fontSize: `${INSPECTOR_METADATA_FONT_SIZE * inspectorScale}px`,
+  };
+  const inspectorStatsStyle = compact ? undefined : {
+    padding: `${4 * inspectorScale}px ${10 * inspectorScale}px`,
+    fontSize: `${INSPECTOR_STATS_FONT_SIZE * inspectorScale}px`,
+  };
+  const inspectorManaStyle = compact ? undefined : {
+    padding: `${4 * inspectorScale}px ${8 * inspectorScale}px`,
+  };
+  const inspectorOracleContainerStyle = compact ? undefined : {
+    paddingTop: `${INSPECTOR_ORACLE_TOP_PADDING * inspectorScale}px`,
+    paddingBottom: `${INSPECTOR_ORACLE_BOTTOM_PADDING * inspectorScale}px`,
+    paddingLeft: `${10 * inspectorScale}px`,
+    paddingRight: `${10 * inspectorScale}px`,
+  };
+  const rulesTextStyle = compact ? ORACLE_TEXT_STYLE : {
+    ...ORACLE_TEXT_STYLE,
+    fontSize: `${INSPECTOR_RULES_FONT_SIZE * inspectorScale}px`,
+    lineHeight: INSPECTOR_RULES_LINE_HEIGHT / INSPECTOR_RULES_FONT_SIZE,
+  };
 
   if (!imageUrl || imageErrored || suppressObject) return null;
 
@@ -842,7 +1219,7 @@ export default function HoverArtOverlay({
             <div className={cn(
               "rounded-r-sm bg-[linear-gradient(90deg,rgba(0,0,0,0.66)_0%,rgba(0,0,0,0.44)_82%,rgba(0,0,0,0.12)_100%)] px-3 py-1.5 font-extrabold leading-[1.02] tracking-[0.02em] text-[#f3f8ff] backdrop-blur-[2px]",
               compact ? "text-[17px]" : "text-[22px]"
-            )}>
+            )} style={inspectorTitleStyle}>
               <span className="inline-flex items-center gap-2">
                 {groupedCardCount > 1 && (
                   <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-sm border border-[#f5d08b]/70 bg-[rgba(0,0,0,0.45)] px-1 text-[12px] font-bold leading-none tracking-wide text-[#f5d08b]">
@@ -855,12 +1232,12 @@ export default function HoverArtOverlay({
           )}
         </div>
         {(manaCost || statsText || metadataText) && (
-          <div className="absolute top-0 right-0 z-10 flex max-w-[78%] flex-col items-end gap-0">
+          <div ref={topMetadataRef} className="absolute top-0 right-0 z-10 flex max-w-[78%] flex-col items-end gap-0">
             {(manaCost || statsText) && (
               <div className="flex items-center gap-1.5">
                 {manaCost && (
-                  <div className="rounded-sm bg-[rgba(0,0,0,0.52)] px-2 py-1 backdrop-blur-[1.8px]">
-                    <ManaCostIcons cost={manaCost} size={compact ? 14 : 18} />
+                  <div className="rounded-sm bg-[rgba(0,0,0,0.52)] px-2 py-1 backdrop-blur-[1.8px]" style={inspectorManaStyle}>
+                    <ManaCostIcons cost={manaCost} size={compact ? 14 : Math.max(13, Math.round(18 * inspectorScale))} />
                   </div>
                 )}
                 {statsText && (
@@ -869,7 +1246,7 @@ export default function HoverArtOverlay({
                       "rounded-sm bg-[rgba(0,0,0,0.52)] px-2.5 py-1 text-[#f8d98e] tracking-wide text-right backdrop-blur-[1.8px]",
                       compact ? "text-[15px] font-extrabold leading-none" : "text-[20px] font-extrabold leading-none"
                     )}
-                    style={METADATA_TEXT_STYLE}
+                    style={{ ...METADATA_TEXT_STYLE, ...inspectorStatsStyle }}
                   >
                     {statsText}
                   </div>
@@ -879,7 +1256,7 @@ export default function HoverArtOverlay({
             {metadataText && (
               <div
                 className={cn("rounded-sm bg-[rgba(0,0,0,0.48)] px-2.5 py-1 backdrop-blur-[1.8px]", topMetadataTextClassName)}
-                style={METADATA_TEXT_STYLE}
+                style={{ ...METADATA_TEXT_STYLE, ...inspectorTopMetaStyle }}
               >
                 {metadataText}
               </div>
@@ -925,7 +1302,7 @@ export default function HoverArtOverlay({
           className="inspector-oracle-scroll absolute inset-x-0 top-0 overflow-y-auto pointer-events-auto overscroll-contain touch-pan-y"
           style={{ bottom: `${Math.max(0, stackTimelineHeight - 4)}px` }}
         >
-          <div className={oracleContainerClass}>
+          <div ref={oracleContainerRef} className={oracleContainerClass} style={inspectorOracleContainerStyle}>
             <div ref={oracleBodyRef} className="space-y-1">
               {displayRulesLines.length > 0 && (
                 <div className="space-y-0.5">
@@ -951,7 +1328,7 @@ export default function HoverArtOverlay({
                             ? "inspector-rule-highlight border-y"
                             : ""
                         )}
-                        style={ORACLE_TEXT_STYLE}
+                        style={rulesTextStyle}
                       />
                     </div>
                   ))}

@@ -5311,6 +5311,15 @@ fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(goad) = effect.downcast_ref::<crate::effects::GoadEffect>() {
         return format!("Goad {}", describe_goad_target(&goad.target));
     }
+    if let Some(extra_turn) = effect.downcast_ref::<crate::effects::ExtraTurnAfterNextTurnEffect>()
+    {
+        let player = describe_player_filter(&extra_turn.player);
+        return format!(
+            "After that turn, {} {} an extra turn",
+            player,
+            player_verb(&player, "take", "takes")
+        );
+    }
     if let Some(extra_turn) = effect.downcast_ref::<crate::effects::ExtraTurnEffect>() {
         let player = describe_player_filter(&extra_turn.player);
         return format!(

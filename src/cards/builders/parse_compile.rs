@@ -1,48 +1,51 @@
-#[allow(unused_imports)]
-use crate::ability;
-#[allow(unused_imports)]
-use crate::ability::{
-    Ability, AbilityKind, ActivatedAbility, ActivationTiming, TriggeredAbility,
-};
-#[allow(unused_imports)]
-use crate::card::PowerToughness;
-#[allow(unused_imports)]
-use crate::cards::builders::ability_lowering::lower_parsed_ability;
-#[allow(unused_imports)]
-use crate::cards::builders::effect_pipeline::{
-    prepare_effects_for_lowering, PreparedEffectsForLowering,
-};
-#[allow(unused_imports)]
-use crate::cards::builders::reference_resolution::{
-    resolve_effect_sequence_references, EffectReferenceResolutionConfig,
-};
-#[allow(unused_imports)]
-use crate::cards::builders::{
-    CardDefinitionBuilder, CardTextError, ClashOpponentAst, ControlDurationAst, DamageBySpec,
-    EffectAst, GrantedAbilityAst, IfResultPredicate, LineAst, NewTargetRestrictionAst,
-    ObjectRefAst, ParseAnnotations, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
-    PreventNextTimeDamageTargetAst, RetargetModeAst, ReturnControllerAst,
-    SharedTypeConstraintAst, TagKey, TargetAst, TriggerSpec, IT_TAG,
-};
-#[allow(unused_imports)]
-use crate::cards::builders::parse_parsing::{
-    contains_until_end_of_turn, map_span_to_original, parse_card_type, parse_number_word_i32,
-    parse_subtype_word, CompileContext, IdGenContext, LoweringFrame, LoweringReferenceFrame,
-    NormalizedLine, ReferenceFrameSource,
-};
 use super::effect_ast_traversal::{
     assert_effect_ast_variant_coverage, for_each_nested_effects, for_each_nested_effects_mut,
 };
 #[allow(unused_imports)]
+use crate::ability;
+#[allow(unused_imports)]
+use crate::ability::{Ability, AbilityKind, ActivatedAbility, ActivationTiming, TriggeredAbility};
+#[allow(unused_imports)]
+use crate::card::PowerToughness;
+#[allow(unused_imports)]
 use crate::cards::CardDefinition;
+#[allow(unused_imports)]
+use crate::cards::builders::ability_lowering::lower_parsed_ability;
+#[allow(unused_imports)]
+use crate::cards::builders::effect_pipeline::{
+    PreparedEffectsForLowering, prepare_effects_for_lowering,
+};
+#[allow(unused_imports)]
+use crate::cards::builders::parse_parsing::{
+    CompileContext, IdGenContext, LoweringFrame, NormalizedLine, contains_until_end_of_turn,
+    map_span_to_original, parse_card_type, parse_number_word_i32, parse_subtype_word,
+};
+#[allow(unused_imports)]
+use crate::cards::builders::reference_resolution::{
+    EffectReferenceResolutionConfig, annotate_effect_sequence,
+};
+#[allow(unused_imports)]
+use crate::cards::builders::{
+    AnnotatedEffect, AnnotatedEffectSequence, CardDefinitionBuilder, CardTextError,
+    ClashOpponentAst, ControlDurationAst, DamageBySpec, EffectAst, ExtraTurnAnchorAst,
+    GrantedAbilityAst, IT_TAG, IfResultPredicate, LineAst, LoweredEffects, NewTargetRestrictionAst,
+    ObjectRefAst, ParseAnnotations, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
+    PreventNextTimeDamageTargetAst, ReferenceEnv, ReferenceExports, ReferenceImports,
+    RetargetModeAst, ReturnControllerAst, SharedTypeConstraintAst, TagKey, TargetAst, TriggerSpec,
+    choose_spec_targets_object, infer_player_filter_from_object_filter,
+    object_filter_as_tagged_reference, resolve_attach_object_spec, resolve_choose_spec_it_tag,
+    resolve_it_tag, resolve_it_tag_key, resolve_non_target_player_filter,
+    resolve_restriction_it_tag, resolve_target_spec_with_choices, resolve_unless_player_filter,
+    resolve_value_it_tag, watch_tag_from_filter,
+};
 #[allow(unused_imports)]
 use crate::color::ColorSet;
 #[allow(unused_imports)]
 use crate::cost::TotalCost;
 #[allow(unused_imports)]
 use crate::effect::{
-    ChoiceCount, Condition, Effect, EffectId, EffectMode, EffectPredicate, EventValueSpec,
-    Until, Value,
+    ChoiceCount, Condition, Effect, EffectId, EffectMode, EffectPredicate, EventValueSpec, Until,
+    Value,
 };
 #[allow(unused_imports)]
 use crate::effects::composition::VoteOption;
@@ -270,41 +273,36 @@ pub(crate) fn ensure_concrete_trigger_spec(trigger: &TriggerSpec) -> Result<(), 
 pub(crate) fn compile_statement_effects(
     effects: &[EffectAst],
 ) -> Result<Vec<Effect>, CardTextError> {
-    compile_statement_effects_with_seed(effects, None)
+    Ok(compile_statement_effects_with_imports(effects, &ReferenceImports::default())?.effects)
 }
 
-pub(crate) fn compile_statement_effects_with_seed(
+pub(crate) fn compile_statement_effects_with_imports(
     effects: &[EffectAst],
-    seed_last_object_tag: Option<&str>,
-) -> Result<Vec<Effect>, CardTextError> {
-    let prepared = prepare_effects_for_lowering(effects, seed_last_object_tag);
+    imports: &ReferenceImports,
+) -> Result<LoweredEffects, CardTextError> {
+    let prepared = prepare_effects_for_lowering(effects, imports.clone());
     compile_statement_effects_prepared(&prepared)
 }
 
 fn compile_statement_effects_prepared(
     prepared: &PreparedEffectsForLowering,
-) -> Result<Vec<Effect>, CardTextError> {
-    let resolved_effects = resolve_effect_sequence_references(
-        &prepared.effects,
-        EffectReferenceResolutionConfig {
-            allow_life_event_value: false,
-            ..Default::default()
-        },
-    )?;
+) -> Result<LoweredEffects, CardTextError> {
     let mut ctx = CompileContext::new();
     ctx.force_auto_tag_object_targets = true;
     ctx.allow_life_event_value = false;
-    if prepared.bindings.seed_tag.as_str() != IT_TAG {
-        ctx.last_object_tag = Some(prepared.bindings.seed_tag.as_str().to_string());
-    }
-    let prelude = seed_attached_source_tag_prelude(&mut ctx, &resolved_effects);
+    seed_reference_imports(&mut ctx, &prepared.imports);
+    let prelude = seed_attached_source_tag_prelude(&mut ctx, &prepared.effects);
     let mut id_gen = ctx.id_gen_context();
     let frame_in = ctx.lowering_frame();
     let (compiled, _, frame_out) =
-        compile_effects_with_explicit_frame(&resolved_effects, &mut id_gen, frame_in)?;
+        compile_effects_with_explicit_frame(&prepared.effects, &mut id_gen, frame_in)?;
     ctx.apply_id_gen_context(id_gen);
     ctx.apply_lowering_frame(frame_out);
-    Ok(prepend_effect_prelude(compiled, prelude))
+    Ok(LoweredEffects {
+        effects: prepend_effect_prelude(compiled, prelude),
+        choices: Vec::new(),
+        exports: ReferenceExports::from_lowering_frame(&ctx.lowering_frame()),
+    })
 }
 
 fn seed_attached_source_tag_prelude(
@@ -321,6 +319,20 @@ fn seed_attached_source_tag_prelude(
         }
     }
     prelude
+}
+
+fn seed_reference_imports(ctx: &mut CompileContext, imports: &ReferenceImports) {
+    if let Some(tag) = imports.last_object_tag.as_ref()
+        && tag.as_str() != IT_TAG
+    {
+        ctx.last_object_tag = Some(tag.as_str().to_string());
+    }
+    if let Some(player_filter) = imports.last_player_filter.as_ref() {
+        ctx.last_player_filter = Some(player_filter.clone());
+    }
+    if let Some(effect_id) = imports.last_effect_id {
+        ctx.last_effect_id = Some(effect_id);
+    }
 }
 
 fn maybe_seed_default_trigger_object_tag(
@@ -459,17 +471,23 @@ pub(crate) fn compile_trigger_effects(
     trigger: Option<&TriggerSpec>,
     effects: &[EffectAst],
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
-    compile_trigger_effects_with_seed(trigger, effects, None)
+    let lowered =
+        compile_trigger_effects_with_imports(trigger, effects, &ReferenceImports::default())?;
+    Ok((lowered.effects, lowered.choices))
 }
 
-pub(crate) fn compile_trigger_effects_with_seed(
+pub(crate) fn compile_trigger_effects_with_imports(
     trigger: Option<&TriggerSpec>,
     effects: &[EffectAst],
-    seed_last_object_tag: Option<&str>,
-) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
-    let (effects, choices, _) =
-        compile_trigger_effects_with_intervening_if_seed(trigger, effects, seed_last_object_tag)?;
-    Ok((effects, choices))
+    imports: &ReferenceImports,
+) -> Result<LoweredEffects, CardTextError> {
+    let (effects, choices, _, exports) =
+        compile_trigger_effects_with_intervening_if_imports_internal(trigger, effects, imports)?;
+    Ok(LoweredEffects {
+        effects,
+        choices,
+        exports,
+    })
 }
 
 pub(crate) fn compile_condition_from_predicate_ast(
@@ -477,6 +495,7 @@ pub(crate) fn compile_condition_from_predicate_ast(
     ctx: &mut CompileContext,
     saved_last_tag: &Option<String>,
 ) -> Result<Condition, CardTextError> {
+    let refs = current_reference_env(ctx);
     Ok(match predicate {
         PredicateAst::ItIsLandCard => {
             let mut filter = ObjectFilter {
@@ -503,7 +522,7 @@ pub(crate) fn compile_condition_from_predicate_ast(
         PredicateAst::TaggedMatches(tag, filter) => {
             let mut resolved = filter.clone();
             resolved.zone = None;
-            let resolved_tag = resolve_it_tag_key(tag, &ctx.reference_frame())?;
+            let resolved_tag = resolve_it_tag_key(tag, &refs)?;
             Condition::TaggedObjectMatches(resolved_tag, resolved)
         }
         PredicateAst::PlayerTaggedObjectMatches {
@@ -511,10 +530,10 @@ pub(crate) fn compile_condition_from_predicate_ast(
             tag,
             filter,
         } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
-            let mut resolved = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
+            let mut resolved = resolve_it_tag(filter, &refs)?;
             resolved.zone = None;
-            let resolved_tag = resolve_it_tag_key(tag, &ctx.reference_frame())?;
+            let resolved_tag = resolve_it_tag_key(tag, &refs)?;
             Condition::PlayerTaggedObjectMatches {
                 player,
                 tag: resolved_tag,
@@ -522,8 +541,8 @@ pub(crate) fn compile_condition_from_predicate_ast(
             }
         }
         PredicateAst::PlayerControls { player, filter } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
-            let mut resolved = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
+            let mut resolved = resolve_it_tag(filter, &refs)?;
             resolved.zone = None;
             Condition::PlayerControls {
                 player,
@@ -535,8 +554,8 @@ pub(crate) fn compile_condition_from_predicate_ast(
             filter,
             count,
         } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
-            let mut resolved = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
+            let mut resolved = resolve_it_tag(filter, &refs)?;
             resolved.zone = None;
             Condition::PlayerControlsAtLeast {
                 player,
@@ -549,8 +568,8 @@ pub(crate) fn compile_condition_from_predicate_ast(
             filter,
             count,
         } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
-            let mut resolved = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
+            let mut resolved = resolve_it_tag(filter, &refs)?;
             resolved.zone = None;
             Condition::PlayerControlsExactly {
                 player,
@@ -563,8 +582,8 @@ pub(crate) fn compile_condition_from_predicate_ast(
             filter,
             count,
         } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
-            let mut resolved = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
+            let mut resolved = resolve_it_tag(filter, &refs)?;
             resolved.zone = None;
             Condition::PlayerControlsAtLeastWithDifferentPowers {
                 player,
@@ -577,10 +596,10 @@ pub(crate) fn compile_condition_from_predicate_ast(
             control_filter,
             graveyard_filter,
         } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
-            let mut resolved_control = resolve_it_tag(control_filter, &ctx.reference_frame())?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
+            let mut resolved_control = resolve_it_tag(control_filter, &refs)?;
             resolved_control.zone = None;
-            let resolved_graveyard = resolve_it_tag(graveyard_filter, &ctx.reference_frame())?;
+            let resolved_graveyard = resolve_it_tag(graveyard_filter, &refs)?;
             Condition::Or(
                 Box::new(Condition::PlayerControls {
                     player: player.clone(),
@@ -597,7 +616,7 @@ pub(crate) fn compile_condition_from_predicate_ast(
             name,
             zones,
         } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
             Condition::PlayerOwnsCardNamedInZones {
                 player,
                 name: name.clone(),
@@ -605,8 +624,8 @@ pub(crate) fn compile_condition_from_predicate_ast(
             }
         }
         PredicateAst::PlayerControlsNo { player, filter } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
-            let mut resolved = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
+            let mut resolved = resolve_it_tag(filter, &refs)?;
             resolved.zone = None;
             Condition::Not(Box::new(Condition::PlayerControls {
                 player,
@@ -614,8 +633,8 @@ pub(crate) fn compile_condition_from_predicate_ast(
             }))
         }
         PredicateAst::PlayerControlsMost { player, filter } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
-            let mut resolved = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
+            let mut resolved = resolve_it_tag(filter, &refs)?;
             resolved.zone = None;
             Condition::PlayerControlsMost {
                 player,
@@ -623,44 +642,44 @@ pub(crate) fn compile_condition_from_predicate_ast(
             }
         }
         PredicateAst::PlayerHasLessLifeThanYou { player } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
             Condition::PlayerHasLessLifeThanYou { player }
         }
         PredicateAst::PlayerHasCitysBlessing { player } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
             Condition::PlayerHasCitysBlessing { player }
         }
         PredicateAst::PlayerTappedLandForManaThisTurn { player } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
             Condition::PlayerTappedLandForManaThisTurn { player }
         }
         PredicateAst::PlayerHadLandEnterBattlefieldThisTurn { player } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
             Condition::PlayerHadLandEnterBattlefieldThisTurn { player }
         }
         PredicateAst::PlayerControlsBasicLandTypesAmongLandsOrMore { player, count } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
             Condition::PlayerControlsBasicLandTypesAmongLandsOrMore {
                 player,
                 count: *count,
             }
         }
         PredicateAst::PlayerHasCardTypesInGraveyardOrMore { player, count } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
             Condition::PlayerHasCardTypesInGraveyardOrMore {
                 player,
                 count: *count,
             }
         }
         PredicateAst::PlayerCardsInHandOrMore { player, count } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
             Condition::PlayerCardsInHandOrMore {
                 player,
                 count: *count as i32,
             }
         }
         PredicateAst::PlayerCardsInHandOrFewer { player, count } => {
-            let player = resolve_non_target_player_filter(*player, ctx)?;
+            let player = resolve_non_target_player_filter(*player, &refs)?;
             Condition::PlayerCardsInHandOrFewer {
                 player,
                 count: *count as i32,
@@ -735,14 +754,36 @@ pub(crate) fn compile_trigger_effects_with_intervening_if(
     trigger: Option<&TriggerSpec>,
     effects: &[EffectAst],
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>, Option<Condition>), CardTextError> {
-    compile_trigger_effects_with_intervening_if_seed(trigger, effects, None)
+    compile_trigger_effects_with_intervening_if_imports(
+        trigger,
+        effects,
+        &ReferenceImports::default(),
+    )
 }
 
-pub(crate) fn compile_trigger_effects_with_intervening_if_seed(
+pub(crate) fn compile_trigger_effects_with_intervening_if_imports(
     trigger: Option<&TriggerSpec>,
     effects: &[EffectAst],
-    seed_last_object_tag: Option<&str>,
+    imports: &ReferenceImports,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>, Option<Condition>), CardTextError> {
+    let (effects, choices, intervening_if, _) =
+        compile_trigger_effects_with_intervening_if_imports_internal(trigger, effects, imports)?;
+    Ok((effects, choices, intervening_if))
+}
+
+fn compile_trigger_effects_with_intervening_if_imports_internal(
+    trigger: Option<&TriggerSpec>,
+    effects: &[EffectAst],
+    imports: &ReferenceImports,
+) -> Result<
+    (
+        Vec<Effect>,
+        Vec<ChooseSpec>,
+        Option<Condition>,
+        ReferenceExports,
+    ),
+    CardTextError,
+> {
     if let Some(trigger) = trigger {
         ensure_concrete_trigger_spec(trigger)?;
     }
@@ -751,28 +792,19 @@ pub(crate) fn compile_trigger_effects_with_intervening_if_seed(
     ctx.allow_life_event_value = trigger
         .map(|trigger| trigger_supports_event_value(trigger, &EventValueSpec::Amount))
         .unwrap_or(false);
-    let prepared = prepare_effects_for_lowering(effects, seed_last_object_tag);
-    let resolved_effects = resolve_effect_sequence_references(
-        &prepared.effects,
-        EffectReferenceResolutionConfig {
-            allow_life_event_value: ctx.allow_life_event_value,
-            ..Default::default()
-        },
-    )?;
-    if prepared.bindings.seed_tag.as_str() != IT_TAG {
-        ctx.last_object_tag = Some(prepared.bindings.seed_tag.as_str().to_string());
-    }
-    let prelude = seed_attached_source_tag_prelude(&mut ctx, &resolved_effects);
-    maybe_seed_default_trigger_object_tag(&mut ctx, trigger, &resolved_effects);
+    let prepared = prepare_effects_for_lowering(effects, imports.clone());
+    seed_reference_imports(&mut ctx, &prepared.imports);
+    let prelude = seed_attached_source_tag_prelude(&mut ctx, &prepared.effects);
+    maybe_seed_default_trigger_object_tag(&mut ctx, trigger, &prepared.effects);
     let mut intervening_if: Option<Condition> = None;
-    let mut effects_to_compile = resolved_effects.as_slice();
+    let mut effects_to_compile = prepared.effects.as_slice();
     let mut extracted_predicate: Option<&PredicateAst> = None;
-    if resolved_effects.len() == 1
+    if prepared.effects.len() == 1
         && let EffectAst::Conditional {
             predicate,
             if_true,
             if_false,
-        } = strip_resolved_effect_metadata(&resolved_effects[0])
+        } = &prepared.effects[0]
         && if_false.is_empty()
         && !if_true.is_empty()
     {
@@ -797,8 +829,13 @@ pub(crate) fn compile_trigger_effects_with_intervening_if_seed(
     ctx.apply_lowering_frame(frame_out);
     let compiled = prepend_effect_prelude(compiled, prelude);
     let compiled =
-        prepend_trigger_tag_effects(compiled, &resolved_effects, ctx.last_object_tag.as_deref());
-    Ok((compiled, choices, intervening_if))
+        prepend_trigger_tag_effects(compiled, &prepared.effects, ctx.last_object_tag.as_deref());
+    Ok((
+        compiled,
+        choices,
+        intervening_if,
+        ReferenceExports::from_lowering_frame(&ctx.lowering_frame()),
+    ))
 }
 
 pub(crate) fn effects_reference_tag(effects: &[EffectAst], tag: &str) -> bool {
@@ -969,7 +1006,6 @@ macro_rules! direct_target_effect_variants {
 }
 
 fn with_direct_effect_targets(effect: &EffectAst, mut visit: impl FnMut(&TargetAst)) {
-    let effect = strip_resolved_effect_metadata(effect);
     assert_effect_ast_variant_coverage(effect);
     match effect {
         EffectAst::Fight {
@@ -1021,7 +1057,6 @@ fn with_direct_effect_targets(effect: &EffectAst, mut visit: impl FnMut(&TargetA
 }
 
 fn direct_effect_targets_reference_tag(effect: &EffectAst, tag: &str) -> bool {
-    let effect = strip_resolved_effect_metadata(effect);
     let mut references = false;
     with_direct_effect_targets(effect, |target| {
         if !references {
@@ -1039,7 +1074,6 @@ fn filter_references_tag(filter: &ObjectFilter, tag: &str) -> bool {
 }
 
 fn effect_tagged_filter(effect: &EffectAst) -> Option<&ObjectFilter> {
-    let effect = strip_resolved_effect_metadata(effect);
     match effect {
         EffectAst::DealDamageEach { filter, .. }
         | EffectAst::PutCountersAll { filter, .. }
@@ -1071,7 +1105,6 @@ fn effect_tagged_filter(effect: &EffectAst) -> Option<&ObjectFilter> {
 }
 
 pub(crate) fn effect_references_tag(effect: &EffectAst, tag: &str) -> bool {
-    let effect = strip_resolved_effect_metadata(effect);
     assert_effect_ast_variant_coverage(effect);
     if direct_effect_targets_reference_tag(effect, tag) {
         return true;
@@ -1235,7 +1268,6 @@ pub(crate) fn value_references_event_derived_amount(value: &Value) -> bool {
 }
 
 pub(crate) fn effect_references_event_derived_amount(effect: &EffectAst) -> bool {
-    let effect = strip_resolved_effect_metadata(effect);
     assert_effect_ast_variant_coverage(effect);
     match effect {
         EffectAst::DealDamage { amount, .. }
@@ -1243,10 +1275,76 @@ pub(crate) fn effect_references_event_derived_amount(effect: &EffectAst) -> bool
         | EffectAst::Draw { count: amount, .. }
         | EffectAst::LoseLife { amount, .. }
         | EffectAst::GainLife { amount, .. }
+        | EffectAst::Mill { count: amount, .. }
+        | EffectAst::SetLifeTotal { amount, .. }
+        | EffectAst::PoisonCounters { count: amount, .. }
+        | EffectAst::EnergyCounters { count: amount, .. }
+        | EffectAst::PreventDamage { amount, .. }
+        | EffectAst::RedirectNextDamageFromSourceToTarget { amount, .. }
+        | EffectAst::PreventDamageEach { amount, .. }
+        | EffectAst::AddManaScaled { amount, .. }
+        | EffectAst::AddManaAnyColor { amount, .. }
+        | EffectAst::AddManaAnyOneColor { amount, .. }
+        | EffectAst::AddManaChosenColor { amount, .. }
+        | EffectAst::AddManaFromLandCouldProduce { amount, .. }
+        | EffectAst::AddManaCommanderIdentity { amount, .. }
+        | EffectAst::Scry { count: amount, .. }
+        | EffectAst::Discover { count: amount, .. }
+        | EffectAst::Surveil { count: amount, .. }
+        | EffectAst::PayEnergy { amount, .. }
+        | EffectAst::LookAtTopCards { count: amount, .. }
+        | EffectAst::CopySpell { count: amount, .. }
         | EffectAst::CreateToken { count: amount, .. }
-        | EffectAst::CreateTokenWithMods { count: amount, .. } => {
+        | EffectAst::Investigate { count: amount }
+        | EffectAst::CreateTokenCopy { count: amount, .. }
+        | EffectAst::CreateTokenCopyFromSource { count: amount, .. }
+        | EffectAst::CreateTokenWithMods { count: amount, .. }
+        | EffectAst::RemoveUpToAnyCounters { amount, .. } => {
             value_references_event_derived_amount(amount)
         }
+        EffectAst::PutCounters { count, .. } | EffectAst::PutCountersAll { count, .. } => {
+            value_references_event_derived_amount(count)
+        }
+        EffectAst::PutOrRemoveCounters {
+            put_count,
+            remove_count,
+            ..
+        } => {
+            value_references_event_derived_amount(put_count)
+                || value_references_event_derived_amount(remove_count)
+        }
+        EffectAst::RemoveCountersAll { amount, .. } => {
+            value_references_event_derived_amount(amount)
+        }
+        EffectAst::CounterUnlessPays {
+            life,
+            additional_generic,
+            ..
+        } => {
+            life.as_ref()
+                .is_some_and(value_references_event_derived_amount)
+                || additional_generic
+                    .as_ref()
+                    .is_some_and(value_references_event_derived_amount)
+        }
+        EffectAst::Discard { count, .. } => value_references_event_derived_amount(count),
+        EffectAst::Pump {
+            power, toughness, ..
+        }
+        | EffectAst::SetBasePowerToughness {
+            power, toughness, ..
+        }
+        | EffectAst::BecomeBasePtCreature {
+            power, toughness, ..
+        }
+        | EffectAst::PumpAll {
+            power, toughness, ..
+        } => {
+            value_references_event_derived_amount(power)
+                || value_references_event_derived_amount(toughness)
+        }
+        EffectAst::SetBasePower { power, .. } => value_references_event_derived_amount(power),
+        EffectAst::PumpForEach { count, .. } => value_references_event_derived_amount(count),
         _ => {
             let mut references = false;
             for_each_nested_effects(effect, true, |nested| {
@@ -1260,7 +1358,6 @@ pub(crate) fn effect_references_event_derived_amount(effect: &EffectAst) -> bool
 }
 
 pub(crate) fn effect_references_its_controller(effect: &EffectAst) -> bool {
-    let effect = strip_resolved_effect_metadata(effect);
     assert_effect_ast_variant_coverage(effect);
     match effect {
         EffectAst::Draw { player, .. }
@@ -1284,7 +1381,7 @@ pub(crate) fn effect_references_its_controller(effect: &EffectAst) -> bool {
             ..
         }
         | EffectAst::ExileInsteadOfGraveyardThisTurn { player }
-        | EffectAst::ExtraTurnAfterTurn { player }
+        | EffectAst::ExtraTurnAfterTurn { player, .. }
         | EffectAst::RevealTop { player }
         | EffectAst::LookAtTopCards { player, .. }
         | EffectAst::RevealHand { player }
@@ -1348,7 +1445,6 @@ pub(crate) fn effect_references_its_controller(effect: &EffectAst) -> bool {
 }
 
 pub(crate) fn effect_references_it_tag(effect: &EffectAst) -> bool {
-    let effect = strip_resolved_effect_metadata(effect);
     assert_effect_ast_variant_coverage(effect);
     if direct_effect_targets_reference_tag(effect, IT_TAG) {
         return true;
@@ -1509,26 +1605,51 @@ pub(crate) fn compile_effects(
     effects: &[EffectAst],
     ctx: &mut CompileContext,
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
+    let annotated = annotate_effect_sequence(
+        effects,
+        &ReferenceImports::from_lowering_frame(&ctx.lowering_frame()),
+        EffectReferenceResolutionConfig {
+            allow_life_event_value: ctx.allow_life_event_value,
+            bind_unbound_x_to_last_effect: ctx.bind_unbound_x_to_last_effect,
+            initial_last_effect_id: ctx.last_effect_id,
+            initial_iterated_player: ctx.iterated_player,
+            force_auto_tag_object_targets: ctx.force_auto_tag_object_targets,
+        },
+        ctx.id_gen_context(),
+    )?;
+    compile_annotated_effects_with_context(&annotated, ctx)
+}
+
+fn compile_annotated_effects_with_context(
+    annotated: &AnnotatedEffectSequence,
+    ctx: &mut CompileContext,
+) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
     let mut compiled = Vec::new();
     let mut choices = Vec::new();
     let mut idx = 0;
 
-    while idx < effects.len() {
+    while idx < annotated.effects.len() {
+        let current = &annotated.effects[idx];
+        ctx.apply_reference_env(&current.in_env);
+        ctx.auto_tag_object_targets =
+            ctx.force_auto_tag_object_targets || current.auto_tag_object_targets;
+
         if let Some((effect_sequence, effect_choices, consumed)) =
-            compile_vote_sequence(&effects[idx..], ctx)?
+            compile_vote_sequence(&annotated.effects[idx..], ctx)?
         {
             compiled.extend(effect_sequence);
             for choice in effect_choices {
                 push_choice(&mut choices, choice);
             }
+            ctx.apply_reference_env(&annotated.effects[idx + consumed - 1].out_env);
             idx += consumed;
             continue;
         }
 
-        if idx + 1 < effects.len()
+        if idx + 1 < annotated.effects.len()
             && let Some((effect_sequence, effect_choices)) = compile_if_do_with_opponent_doesnt(
-                strip_resolved_effect_metadata(&effects[idx]),
-                strip_resolved_effect_metadata(&effects[idx + 1]),
+                &current.effect,
+                &annotated.effects[idx + 1].effect,
                 ctx,
             )?
         {
@@ -1536,14 +1657,15 @@ pub(crate) fn compile_effects(
             for choice in effect_choices {
                 push_choice(&mut choices, choice);
             }
+            ctx.apply_reference_env(&annotated.effects[idx + 1].out_env);
             idx += 2;
             continue;
         }
 
-        if idx + 1 < effects.len()
+        if idx + 1 < annotated.effects.len()
             && let Some((effect_sequence, effect_choices)) = compile_if_do_with_player_doesnt(
-                strip_resolved_effect_metadata(&effects[idx]),
-                strip_resolved_effect_metadata(&effects[idx + 1]),
+                &current.effect,
+                &annotated.effects[idx + 1].effect,
                 ctx,
             )?
         {
@@ -1551,14 +1673,15 @@ pub(crate) fn compile_effects(
             for choice in effect_choices {
                 push_choice(&mut choices, choice);
             }
+            ctx.apply_reference_env(&annotated.effects[idx + 1].out_env);
             idx += 2;
             continue;
         }
 
-        if idx + 1 < effects.len()
+        if idx + 1 < annotated.effects.len()
             && let Some((effect_sequence, effect_choices)) = compile_if_do_with_opponent_did(
-                strip_resolved_effect_metadata(&effects[idx]),
-                strip_resolved_effect_metadata(&effects[idx + 1]),
+                &current.effect,
+                &annotated.effects[idx + 1].effect,
                 ctx,
             )?
         {
@@ -1566,14 +1689,15 @@ pub(crate) fn compile_effects(
             for choice in effect_choices {
                 push_choice(&mut choices, choice);
             }
+            ctx.apply_reference_env(&annotated.effects[idx + 1].out_env);
             idx += 2;
             continue;
         }
 
-        if idx + 1 < effects.len()
+        if idx + 1 < annotated.effects.len()
             && let Some((effect_sequence, effect_choices)) = compile_if_do_with_player_did(
-                strip_resolved_effect_metadata(&effects[idx]),
-                strip_resolved_effect_metadata(&effects[idx + 1]),
+                &current.effect,
+                &annotated.effects[idx + 1].effect,
                 ctx,
             )?
         {
@@ -1581,178 +1705,36 @@ pub(crate) fn compile_effects(
             for choice in effect_choices {
                 push_choice(&mut choices, choice);
             }
+            ctx.apply_reference_env(&annotated.effects[idx + 1].out_env);
             idx += 2;
             continue;
         }
 
-        let current_effect = strip_resolved_effect_metadata(&effects[idx]);
-        let current_hints = resolved_effect_lowering_hints(&effects[idx]);
-        if let Some(reference_frame) = current_hints.reference_frame.clone() {
-            ctx.apply_reference_frame(reference_frame);
-        }
-        let remaining = if idx + 1 < effects.len() {
-            &effects[idx + 1..]
-        } else {
-            &[]
-        };
-        let next_effect = effects.get(idx + 1).map(strip_resolved_effect_metadata);
-        let next_next_effect = effects.get(idx + 2).map(strip_resolved_effect_metadata);
-        let fallback_auto_tag = !current_hints.is_present
-            && (effects_reference_it_tag(remaining) || effects_reference_its_controller(remaining));
-        ctx.auto_tag_object_targets = ctx.force_auto_tag_object_targets
-            || current_hints.auto_tag_object_targets
-            || fallback_auto_tag;
-
-        let next_is_if_result =
-            next_effect.is_some_and(|effect| matches!(effect, EffectAst::IfResult { .. }));
-        let next_is_if_result_with_opponent_doesnt = next_is_if_result
-            && next_next_effect
-                .is_some_and(|effect| matches!(effect, EffectAst::ForEachOpponentDoesNot { .. }));
-        let next_is_if_result_with_player_doesnt = next_is_if_result
-            && next_next_effect
-                .is_some_and(|effect| matches!(effect, EffectAst::ForEachPlayerDoesNot { .. }));
-        let next_is_if_result_with_opponent_did = next_is_if_result
-            && next_next_effect
-                .is_some_and(|effect| matches!(effect, EffectAst::ForEachOpponentDid { .. }));
-        let next_is_if_result_with_player_did = next_is_if_result
-            && next_next_effect
-                .is_some_and(|effect| matches!(effect, EffectAst::ForEachPlayerDid { .. }));
-        if next_is_if_result_with_opponent_doesnt
-            || next_is_if_result_with_player_doesnt
-            || next_is_if_result_with_opponent_did
-            || next_is_if_result_with_player_did
-        {
-            let (mut effect_list, effect_choices) = compile_effect(current_effect, ctx)?;
-            if !effect_list.is_empty() {
-                let id = current_hints
-                    .assigned_effect_id
-                    .unwrap_or_else(|| ctx.next_effect_id());
-                assign_effect_result_id(
-                    &mut effect_list,
-                    id,
-                    "missing final effect while assigning event id (if-result with opponent/player did|didn't)",
-                )?;
-                ctx.last_effect_id = Some(id);
-            } else {
-                ctx.last_effect_id = None;
-            }
-
-            compiled.extend(effect_list);
-            for choice in effect_choices {
-                push_choice(&mut choices, choice);
-            }
-            idx += 1;
-            continue;
-        }
-
-        if next_is_if_result {
-            let (mut effect_list, effect_choices) = compile_effect(current_effect, ctx)?;
-            if !effect_list.is_empty() {
-                let id = current_hints
-                    .assigned_effect_id
-                    .unwrap_or_else(|| ctx.next_effect_id());
-                assign_effect_result_id(
-                    &mut effect_list,
-                    id,
-                    "missing final effect while assigning event id (if-result)",
-                )?;
-                ctx.last_effect_id = Some(id);
-            } else {
-                ctx.last_effect_id = None;
-            }
-
-            compiled.extend(effect_list);
-            for choice in effect_choices {
-                push_choice(&mut choices, choice);
-            }
-
-            let if_remaining = if idx + 2 < effects.len() {
-                &effects[idx + 2..]
-            } else {
-                &[]
-            };
-            ctx.auto_tag_object_targets = ctx.force_auto_tag_object_targets
-                || effects_reference_it_tag(if_remaining)
-                || effects_reference_its_controller(if_remaining);
-            let (if_effects, if_choices) =
-                compile_effect(strip_resolved_effect_metadata(&effects[idx + 1]), ctx)?;
-            compiled.extend(if_effects);
-            for choice in if_choices {
-                push_choice(&mut choices, choice);
-            }
-            idx += 2;
-            continue;
-        }
-
-        let next_needs_event_derived_amount = !current_hints.is_present
-            && idx + 1 < effects.len()
-            && effect_references_event_derived_amount(&effects[idx + 1]);
-        let (mut effect_list, effect_choices) = compile_effect(current_effect, ctx)?;
-        if let Some(id) = current_hints.assigned_effect_id {
+        let (mut effect_list, effect_choices) = compile_effect(&current.effect, ctx)?;
+        if let Some(id) = current.assigned_effect_id {
             if !effect_list.is_empty() {
                 assign_effect_result_id(
                     &mut effect_list,
                     id,
-                    "missing final effect while assigning event id (resolved metadata)",
+                    "missing final effect while assigning event id (annotated effect)",
                 )?;
-                ctx.last_effect_id = Some(id);
-            } else {
-                ctx.last_effect_id = None;
-            }
-        } else if next_needs_event_derived_amount {
-            if !effect_list.is_empty() {
-                let id = ctx.next_effect_id();
-                assign_effect_result_id(
-                    &mut effect_list,
-                    id,
-                    "missing final effect while assigning event id (event-derived amount)",
-                )?;
-                ctx.last_effect_id = Some(id);
-            } else {
-                ctx.last_effect_id = None;
             }
         }
+        let effect_list_is_empty = effect_list.is_empty();
         compiled.extend(effect_list);
         for choice in effect_choices {
             push_choice(&mut choices, choice);
         }
+        let mut frame_out = current.out_env.to_lowering_frame(false, false);
+        if current.assigned_effect_id.is_some() && effect_list_is_empty {
+            frame_out.last_effect_id = None;
+        }
+        ctx.apply_reference_frame(frame_out);
         idx += 1;
     }
 
     let compiled = prepend_missing_target_choice_prelude(compiled, &choices);
     Ok((compiled, choices))
-}
-
-#[derive(Debug, Clone, Default)]
-struct ResolvedEffectLoweringHints {
-    auto_tag_object_targets: bool,
-    assigned_effect_id: Option<EffectId>,
-    reference_frame: Option<LoweringReferenceFrame>,
-    is_present: bool,
-}
-
-fn resolved_effect_lowering_hints(effect: &EffectAst) -> ResolvedEffectLoweringHints {
-    match effect {
-        EffectAst::ResolvedMetadata {
-            auto_tag_object_targets,
-            assigned_effect_id,
-            reference_frame,
-            ..
-        } => ResolvedEffectLoweringHints {
-            auto_tag_object_targets: *auto_tag_object_targets,
-            assigned_effect_id: *assigned_effect_id,
-            reference_frame: reference_frame.clone(),
-            is_present: true,
-        },
-        _ => ResolvedEffectLoweringHints::default(),
-    }
-}
-
-fn strip_resolved_effect_metadata(effect: &EffectAst) -> &EffectAst {
-    match effect {
-        EffectAst::ResolvedMetadata { effect, .. } => strip_resolved_effect_metadata(effect),
-        other => other,
-    }
 }
 
 fn assign_effect_result_id(
@@ -1953,12 +1935,17 @@ pub(crate) fn compile_if_do_with_opponent_doesnt(
         return Ok(Some((first_effects, choices)));
     }
 
-    let EffectAst::IfResult {
-        predicate: IfResultPredicate::Did,
-        effects: first_effects,
-    } = first
-    else {
-        return Ok(None);
+    let (condition, first_effects) = match first {
+        EffectAst::IfResult {
+            predicate: IfResultPredicate::Did,
+            effects,
+        } => (None, effects),
+        EffectAst::ResolvedIfResult {
+            condition,
+            predicate: IfResultPredicate::Did,
+            effects,
+        } => (Some(*condition), effects),
+        _ => return Ok(None),
     };
 
     let Some(EffectAst::ForEachOpponent {
@@ -1974,11 +1961,20 @@ pub(crate) fn compile_if_do_with_opponent_doesnt(
         effects: second_effects.clone(),
     });
 
-    let merged = EffectAst::IfResult {
-        predicate: IfResultPredicate::Did,
-        effects: vec![EffectAst::ForEachOpponent {
-            effects: merged_opponent_effects,
-        }],
+    let merged_effects = vec![EffectAst::ForEachOpponent {
+        effects: merged_opponent_effects,
+    }];
+    let merged = if let Some(condition) = condition {
+        EffectAst::ResolvedIfResult {
+            condition,
+            predicate: IfResultPredicate::Did,
+            effects: merged_effects,
+        }
+    } else {
+        EffectAst::IfResult {
+            predicate: IfResultPredicate::Did,
+            effects: merged_effects,
+        }
     };
 
     let (effects, choices) = compile_effect(&merged, ctx)?;
@@ -2014,12 +2010,17 @@ pub(crate) fn compile_if_do_with_player_doesnt(
         return Ok(Some((effects, choices)));
     }
 
-    let EffectAst::IfResult {
-        predicate: IfResultPredicate::Did,
-        effects: first_effects,
-    } = first
-    else {
-        return Ok(None);
+    let (condition, first_effects) = match first {
+        EffectAst::IfResult {
+            predicate: IfResultPredicate::Did,
+            effects,
+        } => (None, effects),
+        EffectAst::ResolvedIfResult {
+            condition,
+            predicate: IfResultPredicate::Did,
+            effects,
+        } => (Some(*condition), effects),
+        _ => return Ok(None),
     };
 
     let Some(EffectAst::ForEachPlayer {
@@ -2035,11 +2036,20 @@ pub(crate) fn compile_if_do_with_player_doesnt(
         effects: second_effects.clone(),
     });
 
-    let merged = EffectAst::IfResult {
-        predicate: IfResultPredicate::Did,
-        effects: vec![EffectAst::ForEachPlayer {
-            effects: merged_player_effects,
-        }],
+    let merged_effects = vec![EffectAst::ForEachPlayer {
+        effects: merged_player_effects,
+    }];
+    let merged = if let Some(condition) = condition {
+        EffectAst::ResolvedIfResult {
+            condition,
+            predicate: IfResultPredicate::Did,
+            effects: merged_effects,
+        }
+    } else {
+        EffectAst::IfResult {
+            predicate: IfResultPredicate::Did,
+            effects: merged_effects,
+        }
     };
 
     let (effects, choices) = compile_effect(&merged, ctx)?;
@@ -2135,12 +2145,17 @@ pub(crate) fn compile_if_do_with_opponent_did(
         return Ok(Some((first_effects, choices)));
     }
 
-    let EffectAst::IfResult {
-        predicate: IfResultPredicate::Did,
-        effects: first_effects,
-    } = first
-    else {
-        return Ok(None);
+    let (condition, first_effects) = match first {
+        EffectAst::IfResult {
+            predicate: IfResultPredicate::Did,
+            effects,
+        } => (None, effects),
+        EffectAst::ResolvedIfResult {
+            condition,
+            predicate: IfResultPredicate::Did,
+            effects,
+        } => (Some(*condition), effects),
+        _ => return Ok(None),
     };
 
     if let Some(predicate) = predicate {
@@ -2173,11 +2188,20 @@ pub(crate) fn compile_if_do_with_opponent_did(
         effects: second_effects.clone(),
     });
 
-    let merged = EffectAst::IfResult {
-        predicate: IfResultPredicate::Did,
-        effects: vec![EffectAst::ForEachOpponent {
-            effects: merged_opponent_effects,
-        }],
+    let merged_effects = vec![EffectAst::ForEachOpponent {
+        effects: merged_opponent_effects,
+    }];
+    let merged = if let Some(condition) = condition {
+        EffectAst::ResolvedIfResult {
+            condition,
+            predicate: IfResultPredicate::Did,
+            effects: merged_effects,
+        }
+    } else {
+        EffectAst::IfResult {
+            predicate: IfResultPredicate::Did,
+            effects: merged_effects,
+        }
     };
 
     let (effects, choices) = compile_effect(&merged, ctx)?;
@@ -2230,12 +2254,17 @@ pub(crate) fn compile_if_do_with_player_did(
         return Ok(Some((effects, choices)));
     }
 
-    let EffectAst::IfResult {
-        predicate: IfResultPredicate::Did,
-        effects: first_effects,
-    } = first
-    else {
-        return Ok(None);
+    let (condition, first_effects) = match first {
+        EffectAst::IfResult {
+            predicate: IfResultPredicate::Did,
+            effects,
+        } => (None, effects),
+        EffectAst::ResolvedIfResult {
+            condition,
+            predicate: IfResultPredicate::Did,
+            effects,
+        } => (Some(*condition), effects),
+        _ => return Ok(None),
     };
 
     if let Some(predicate) = predicate {
@@ -2268,11 +2297,20 @@ pub(crate) fn compile_if_do_with_player_did(
         effects: second_effects.clone(),
     });
 
-    let merged = EffectAst::IfResult {
-        predicate: IfResultPredicate::Did,
-        effects: vec![EffectAst::ForEachPlayer {
-            effects: merged_player_effects,
-        }],
+    let merged_effects = vec![EffectAst::ForEachPlayer {
+        effects: merged_player_effects,
+    }];
+    let merged = if let Some(condition) = condition {
+        EffectAst::ResolvedIfResult {
+            condition,
+            predicate: IfResultPredicate::Did,
+            effects: merged_effects,
+        }
+    } else {
+        EffectAst::IfResult {
+            predicate: IfResultPredicate::Did,
+            effects: merged_effects,
+        }
     };
 
     let (effects, choices) = compile_effect(&merged, ctx)?;
@@ -2374,10 +2412,13 @@ pub(crate) fn force_implicit_vote_token_controller_you(effects: &mut [EffectAst]
 }
 
 pub(crate) fn compile_vote_sequence(
-    effects: &[EffectAst],
+    effects: &[AnnotatedEffect],
     ctx: &mut CompileContext,
 ) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>, usize)>, CardTextError> {
-    let Some(EffectAst::VoteStart { options }) = effects.first() else {
+    let Some(first) = effects.first() else {
+        return Ok(None);
+    };
+    let EffectAst::VoteStart { options } = &first.effect else {
         return Ok(None);
     };
 
@@ -2387,7 +2428,7 @@ pub(crate) fn compile_vote_sequence(
     let mut consumed = 1;
 
     while consumed < effects.len() {
-        match &effects[consumed] {
+        match &effects[consumed].effect {
             EffectAst::VoteOption { option, effects } => {
                 if option_effects
                     .insert(option.clone(), effects.clone())
@@ -2496,26 +2537,62 @@ pub(crate) fn target_context_prelude_for_filter(
     (effects, choices)
 }
 
-pub(crate) fn infer_player_filter_from_object_filter(
-    filter: &ObjectFilter,
-) -> Option<PlayerFilter> {
-    if let Some(owner) = &filter.owner {
-        return Some(owner.clone());
+fn preserve_chooser_relative_player_filters(
+    original: &ObjectFilter,
+    resolved: &mut ObjectFilter,
+    chooser: &PlayerFilter,
+) {
+    if !matches!(
+        chooser,
+        PlayerFilter::Target(_) | PlayerFilter::IteratedPlayer
+    ) {
+        return;
     }
-    if let Some(controller) = &filter.controller {
-        return Some(controller.clone());
+
+    if matches!(original.owner, Some(PlayerFilter::IteratedPlayer)) {
+        resolved.owner = Some(PlayerFilter::IteratedPlayer);
     }
-    for constraint in &filter.tagged_constraints {
-        if matches!(
-            constraint.relation,
-            crate::filter::TaggedOpbjectRelation::SameControllerAsTagged
-        ) {
-            return Some(PlayerFilter::ControllerOf(ObjectRef::tagged(
-                constraint.tag.as_str(),
-            )));
-        }
+    if matches!(original.controller, Some(PlayerFilter::IteratedPlayer)) {
+        resolved.controller = Some(PlayerFilter::IteratedPlayer);
     }
-    None
+    if matches!(original.targets_player, Some(PlayerFilter::IteratedPlayer)) {
+        resolved.targets_player = Some(PlayerFilter::IteratedPlayer);
+    }
+    if matches!(
+        original.targets_only_player,
+        Some(PlayerFilter::IteratedPlayer)
+    ) {
+        resolved.targets_only_player = Some(PlayerFilter::IteratedPlayer);
+    }
+    if matches!(
+        original.attacking_player_or_planeswalker_controlled_by,
+        Some(PlayerFilter::IteratedPlayer)
+    ) {
+        resolved.attacking_player_or_planeswalker_controlled_by =
+            Some(PlayerFilter::IteratedPlayer);
+    }
+    if matches!(
+        original.entered_battlefield_controller,
+        Some(PlayerFilter::IteratedPlayer)
+    ) {
+        resolved.entered_battlefield_controller = Some(PlayerFilter::IteratedPlayer);
+    }
+    if let (Some(original_targets), Some(resolved_targets)) = (
+        original.targets_object.as_deref(),
+        resolved.targets_object.as_deref_mut(),
+    ) {
+        preserve_chooser_relative_player_filters(original_targets, resolved_targets, chooser);
+    }
+    if let (Some(original_targets), Some(resolved_targets)) = (
+        original.targets_only_object.as_deref(),
+        resolved.targets_only_object.as_deref_mut(),
+    ) {
+        preserve_chooser_relative_player_filters(original_targets, resolved_targets, chooser);
+    }
+    for (original_any_of, resolved_any_of) in original.any_of.iter().zip(resolved.any_of.iter_mut())
+    {
+        preserve_chooser_relative_player_filters(original_any_of, resolved_any_of, chooser);
+    }
 }
 
 pub(crate) fn hand_exile_filter_and_count(
@@ -2531,7 +2608,7 @@ pub(crate) fn hand_exile_filter_and_count(
         _ => return Ok(None),
     };
 
-    let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+    let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
     if resolved_filter.zone != Some(Zone::Hand) {
         return Ok(None);
     }
@@ -2597,7 +2674,7 @@ pub(crate) fn lower_counted_non_target_exile_target(
         _ => return Ok(None),
     };
 
-    let mut resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+    let mut resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
     let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
     if choice_zone != Zone::Library {
         return Ok(None);
@@ -2664,7 +2741,7 @@ pub(crate) fn lower_single_non_target_exile_target(
         _ => return Ok(None),
     };
 
-    let mut resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+    let mut resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
     let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
     if choice_zone != Zone::Library {
         return Ok(None);
@@ -2741,7 +2818,7 @@ pub(crate) fn compile_effect(
 ) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
     // Keep dynamic stack growth for deeply nested recursive lowering paths.
     stacker::maybe_grow(1024 * 1024, 2 * 1024 * 1024, || {
-        compile_effect_inner(strip_resolved_effect_metadata(effect), ctx)
+        compile_effect_inner(effect, ctx)
     })
 }
 
@@ -2854,7 +2931,7 @@ pub(crate) fn resolve_effect_player_filter(
     allow_target_opponent: bool,
     track_last_player_filter: bool,
 ) -> Result<(PlayerFilter, Vec<ChooseSpec>), CardTextError> {
-    let refs = ctx.reference_frame();
+    let refs = current_reference_env(ctx);
     let (filter, choices) = match player {
         PlayerAst::Target if allow_target => (
             PlayerFilter::target_player(),
@@ -2933,84 +3010,8 @@ where
     Ok((effects, choices))
 }
 
-pub(crate) fn is_you_player_filter(filter: &PlayerFilter) -> bool {
-    match filter {
-        PlayerFilter::You => true,
-        PlayerFilter::Target(inner) => is_you_player_filter(inner),
-        _ => false,
-    }
-}
-
-pub(crate) fn resolve_unless_player_filter(
-    player: PlayerAst,
-    refs: &(impl ReferenceFrameSource + ?Sized),
-    previous_last_player_filter: Option<PlayerFilter>,
-) -> Result<PlayerFilter, CardTextError> {
-    let refs = refs.reference_frame();
-    if matches!(player, PlayerAst::That)
-        && !refs.iterated_player
-        && refs
-            .last_player_filter
-            .as_ref()
-            .is_some_and(is_you_player_filter)
-        && previous_last_player_filter
-            .as_ref()
-            .is_some_and(|filter| !is_you_player_filter(filter))
-    {
-        return previous_last_player_filter.ok_or_else(|| {
-            CardTextError::InvariantViolation(
-                "expected previous non-you player filter for unless-player resolution".to_string(),
-            )
-        });
-    }
-    resolve_non_target_player_filter(player, &refs)
-}
-
-pub(crate) fn resolve_non_target_player_filter(
-    player: PlayerAst,
-    refs: &(impl ReferenceFrameSource + ?Sized),
-) -> Result<PlayerFilter, CardTextError> {
-    let refs = refs.reference_frame();
-    match player {
-        PlayerAst::You => Ok(PlayerFilter::You),
-        PlayerAst::Any => Ok(PlayerFilter::Any),
-        PlayerAst::Defending => Ok(PlayerFilter::Defending),
-        PlayerAst::Attacking => Ok(PlayerFilter::Attacking),
-        PlayerAst::Target | PlayerAst::TargetOpponent => Err(CardTextError::ParseError(
-            "target player requires explicit targeting".to_string(),
-        )),
-        PlayerAst::Opponent => Ok(PlayerFilter::Opponent),
-        PlayerAst::That => {
-            if refs.iterated_player {
-                Ok(PlayerFilter::IteratedPlayer)
-            } else if let Some(filter) = &refs.last_player_filter {
-                Ok(filter.clone())
-            } else {
-                Ok(PlayerFilter::IteratedPlayer)
-            }
-        }
-        PlayerAst::ItsController => {
-            if let Some(tag) = refs.last_object_tag.as_ref() {
-                Ok(PlayerFilter::ControllerOf(ObjectRef::tagged(tag)))
-            } else {
-                Ok(PlayerFilter::ControllerOf(ObjectRef::Target))
-            }
-        }
-        PlayerAst::ItsOwner => {
-            if let Some(tag) = refs.last_object_tag.as_ref() {
-                Ok(PlayerFilter::OwnerOf(ObjectRef::tagged(tag)))
-            } else {
-                Ok(PlayerFilter::OwnerOf(ObjectRef::Target))
-            }
-        }
-        PlayerAst::Implicit => {
-            if refs.iterated_player {
-                Ok(PlayerFilter::IteratedPlayer)
-            } else {
-                Ok(PlayerFilter::You)
-            }
-        }
-    }
+fn current_reference_env(ctx: &CompileContext) -> ReferenceEnv {
+    ctx.reference_env()
 }
 
 fn try_compile_combat_and_damage_effect(
@@ -3019,7 +3020,7 @@ fn try_compile_combat_and_damage_effect(
 ) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
     let compiled = match effect {
         EffectAst::DealDamage { amount, target } => {
-            let resolved_amount = resolve_value_it_tag(amount, &ctx.reference_frame())?;
+            let resolved_amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
             let (effects, choices) =
                 compile_tagged_effect_for_target(target, ctx, "damaged", |spec| {
                     Effect::deal_damage(resolved_amount.clone(), spec)
@@ -3033,12 +3034,12 @@ fn try_compile_combat_and_damage_effect(
         }
         EffectAst::DealDamageEqualToPower { source, target } => {
             let (source_spec, mut choices) =
-                resolve_target_spec_with_choices(source, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(source, &current_reference_env(ctx))?;
             let mut damage_target_spec = if source == target {
                 source_spec.clone()
             } else {
                 let (target_spec, target_choices) =
-                    resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+                    resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
                 for choice in target_choices {
                     push_choice(&mut choices, choice);
                 }
@@ -3084,9 +3085,9 @@ fn try_compile_combat_and_damage_effect(
             creature2,
         } => {
             let (spec1, mut choices) =
-                resolve_target_spec_with_choices(creature1, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(creature1, &current_reference_env(ctx))?;
             let (spec2, other_choices) =
-                resolve_target_spec_with_choices(creature2, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(creature2, &current_reference_env(ctx))?;
             for choice in other_choices {
                 push_choice(&mut choices, choice);
             }
@@ -3095,7 +3096,7 @@ fn try_compile_combat_and_damage_effect(
         }
         EffectAst::FightIterated { creature2 } => {
             let (spec2, choices) =
-                resolve_target_spec_with_choices(creature2, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(creature2, &current_reference_env(ctx))?;
             let effect = Effect::fight(ChooseSpec::Iterated, spec2);
             (vec![effect], choices)
         }
@@ -3123,8 +3124,8 @@ fn try_compile_combat_and_damage_effect(
             ),
         },
         EffectAst::DealDamageEach { amount, filter } => {
-            let resolved_amount = resolve_value_it_tag(amount, &ctx.reference_frame())?;
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let tag = ctx.next_tag("damaged");
             ctx.last_object_tag = Some(tag.clone());
             let effect = Effect::for_each(
@@ -3153,7 +3154,8 @@ fn try_compile_board_state_effect(
             target_count,
             distributed,
         } => {
-            let (base_spec, _) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (base_spec, _) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let mut spec = base_spec;
             if let Some(target_count) = target_count {
                 spec = spec.with_count(*target_count);
@@ -3185,7 +3187,8 @@ fn try_compile_board_state_effect(
             target,
             target_count,
         } => {
-            let (base_spec, _) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (base_spec, _) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let mut spec = base_spec;
             if let Some(target_count) = target_count {
                 spec = spec.with_count(*target_count);
@@ -3216,7 +3219,8 @@ fn try_compile_board_state_effect(
             (vec![effect], choices)
         }
         EffectAst::ForEachCounterKindPutOrRemove { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             (
                 vec![Effect::new(
                     crate::effects::ForEachCounterKindPutOrRemoveEffect::new(spec),
@@ -3272,7 +3276,8 @@ fn try_compile_board_state_effect(
         }
         EffectAst::Proliferate => (vec![Effect::proliferate()], Vec::new()),
         EffectAst::Tap { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let base_effect = if spec.is_target() {
                 Effect::tap(spec.clone())
             } else {
@@ -3282,13 +3287,14 @@ fn try_compile_board_state_effect(
             (vec![effect], choices)
         }
         EffectAst::TapAll { filter } => {
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
             prelude.push(Effect::tap_all(resolved_filter));
             (prelude, choices)
         }
         EffectAst::Untap { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let base_effect = if spec.is_target() {
                 Effect::untap(spec.clone())
             } else {
@@ -3298,7 +3304,8 @@ fn try_compile_board_state_effect(
             (vec![effect], choices)
         }
         EffectAst::RemoveFromCombat { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let effect = tag_object_target_effect(
                 Effect::new(crate::effects::RemoveFromCombatEffect::with_spec(
                     spec.clone(),
@@ -3310,7 +3317,8 @@ fn try_compile_board_state_effect(
             (vec![effect], choices)
         }
         EffectAst::TapOrUntap { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let tap_effect = Effect::tap(spec.clone());
             let untap_effect = Effect::untap(spec.clone());
             let modes = vec![
@@ -3328,7 +3336,7 @@ fn try_compile_board_state_effect(
             (vec![effect], choices)
         }
         EffectAst::UntapAll { filter } => {
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
             prelude.push(Effect::untap_all(resolved_filter));
             (prelude, choices)
@@ -3337,7 +3345,8 @@ fn try_compile_board_state_effect(
             target,
             allow_colorless,
         } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let mut modes = Vec::new();
             if *allow_colorless {
                 let ability = StaticAbility::protection(crate::ability::ProtectionFrom::Colorless);
@@ -3395,7 +3404,8 @@ fn try_compile_board_state_effect(
             (vec![effect], vec![spec])
         }
         EffectAst::Explore { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let effect =
                 tag_object_target_effect(Effect::explore(spec.clone()), &spec, ctx, "explored");
             (vec![effect], choices)
@@ -3421,7 +3431,7 @@ fn try_compile_player_resource_and_choice_effect(
 ) -> Result<Option<(Vec<Effect>, Vec<ChooseSpec>)>, CardTextError> {
     let compiled = match effect {
         EffectAst::Draw { count, player } => {
-            let count = resolve_value_it_tag(count, &ctx.reference_frame())?;
+            let count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
             compile_player_effect(
                 *player,
                 ctx,
@@ -3441,7 +3451,7 @@ fn try_compile_player_resource_and_choice_effect(
         } => {
             let additional_generic = additional_generic
                 .as_ref()
-                .map(|value| resolve_value_it_tag(value, &ctx.reference_frame()))
+                .map(|value| resolve_value_it_tag(value, &current_reference_env(ctx)))
                 .transpose()?;
             compile_tagged_effect_for_target(target, ctx, "countered", |spec| {
                 Effect::counter_unless_pays_with_life_and_additional(
@@ -3453,7 +3463,7 @@ fn try_compile_player_resource_and_choice_effect(
             })?
         }
         EffectAst::LoseLife { amount, player } => {
-            let amount = resolve_value_it_tag(amount, &ctx.reference_frame())?;
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
             compile_player_effect(
                 *player,
                 ctx,
@@ -3463,7 +3473,7 @@ fn try_compile_player_resource_and_choice_effect(
             )?
         }
         EffectAst::GainLife { amount, player } => {
-            let amount = resolve_value_it_tag(amount, &ctx.reference_frame())?;
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
             compile_player_effect(
                 *player,
                 ctx,
@@ -3510,7 +3520,7 @@ fn try_compile_player_resource_and_choice_effect(
             target,
             duration,
         } => {
-            let amount = resolve_value_it_tag(amount, &ctx.reference_frame())?;
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
             compile_effect_for_target(target, ctx, |spec| {
                 Effect::prevent_damage(amount.clone(), spec, duration.clone())
             })?
@@ -3519,7 +3529,7 @@ fn try_compile_player_resource_and_choice_effect(
             if let TargetAst::Object(filter, explicit_target_span, _) = target
                 && explicit_target_span.is_none()
             {
-                let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+                let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
                 (
                     vec![Effect::prevent_all_damage_to(
                         resolved_filter,
@@ -3540,7 +3550,8 @@ fn try_compile_player_resource_and_choice_effect(
                 }
                 PreventNextTimeDamageSourceAst::Filter(filter) => {
                     crate::effects::PreventNextTimeDamageSource::Filter(resolve_it_tag(
-                        filter, ctx,
+                        filter,
+                        &current_reference_env(ctx),
                     )?)
                 }
             };
@@ -3560,7 +3571,7 @@ fn try_compile_player_resource_and_choice_effect(
             )
         }
         EffectAst::RedirectNextDamageFromSourceToTarget { amount, target } => {
-            let amount = resolve_value_it_tag(amount, &ctx.reference_frame())?;
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
             compile_effect_for_target(target, ctx, |spec| {
                 Effect::new(crate::effects::RedirectNextDamageToTargetEffect::new(
                     amount.clone(),
@@ -3575,7 +3586,8 @@ fn try_compile_player_resource_and_choice_effect(
                 }
                 PreventNextTimeDamageSourceAst::Filter(filter) => {
                     crate::effects::RedirectNextTimeDamageSource::Filter(resolve_it_tag(
-                        filter, ctx,
+                        filter,
+                        &current_reference_env(ctx),
                     )?)
                 }
             };
@@ -3591,8 +3603,8 @@ fn try_compile_player_resource_and_choice_effect(
             filter,
             duration,
         } => {
-            let amount = resolve_value_it_tag(amount, &ctx.reference_frame())?;
-            let filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            let filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let effect = Effect::for_each(
                 filter,
                 vec![Effect::prevent_damage(
@@ -3614,85 +3626,109 @@ fn try_compile_player_resource_and_choice_effect(
             mana,
             amount,
             player,
-        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
-            Effect::new(crate::effects::mana::AddScaledManaEffect::new(
-                mana.clone(),
-                amount.clone(),
-                filter,
-            ))
-        })?,
+        } => {
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            compile_player_effect_from_filter(*player, ctx, false, |filter| {
+                Effect::new(crate::effects::mana::AddScaledManaEffect::new(
+                    mana.clone(),
+                    amount.clone(),
+                    filter,
+                ))
+            })?
+        }
         EffectAst::AddManaAnyColor {
             amount,
             player,
             available_colors,
-        } => compile_player_effect(
-            *player,
-            ctx,
-            false,
-            || {
-                if let Some(colors) = available_colors.clone() {
-                    Effect::add_mana_of_any_color_restricted(amount.clone(), colors)
-                } else {
-                    Effect::add_mana_of_any_color(amount.clone())
-                }
-            },
-            |filter| {
-                if let Some(colors) = available_colors.clone() {
-                    Effect::add_mana_of_any_color_restricted_player(amount.clone(), filter, colors)
-                } else {
-                    Effect::add_mana_of_any_color_player(amount.clone(), filter)
-                }
-            },
-        )?,
-        EffectAst::AddManaAnyOneColor { amount, player } => compile_player_effect(
-            *player,
-            ctx,
-            false,
-            || Effect::add_mana_of_any_one_color(amount.clone()),
-            |filter| Effect::add_mana_of_any_one_color_player(amount.clone(), filter),
-        )?,
+        } => {
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            compile_player_effect(
+                *player,
+                ctx,
+                false,
+                || {
+                    if let Some(colors) = available_colors.clone() {
+                        Effect::add_mana_of_any_color_restricted(amount.clone(), colors)
+                    } else {
+                        Effect::add_mana_of_any_color(amount.clone())
+                    }
+                },
+                |filter| {
+                    if let Some(colors) = available_colors.clone() {
+                        Effect::add_mana_of_any_color_restricted_player(
+                            amount.clone(),
+                            filter,
+                            colors,
+                        )
+                    } else {
+                        Effect::add_mana_of_any_color_player(amount.clone(), filter)
+                    }
+                },
+            )?
+        }
+        EffectAst::AddManaAnyOneColor { amount, player } => {
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            compile_player_effect(
+                *player,
+                ctx,
+                false,
+                || Effect::add_mana_of_any_one_color(amount.clone()),
+                |filter| Effect::add_mana_of_any_one_color_player(amount.clone(), filter),
+            )?
+        }
         EffectAst::AddManaChosenColor {
             amount,
             player,
             fixed_option,
-        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
-            if let Some(fixed) = fixed_option {
-                Effect::new(
-                    crate::effects::mana::AddManaOfChosenColorEffect::with_fixed_option(
+        } => {
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            compile_player_effect_from_filter(*player, ctx, false, |filter| {
+                if let Some(fixed) = fixed_option {
+                    Effect::new(
+                        crate::effects::mana::AddManaOfChosenColorEffect::with_fixed_option(
+                            amount.clone(),
+                            filter,
+                            *fixed,
+                        ),
+                    )
+                } else {
+                    Effect::new(crate::effects::mana::AddManaOfChosenColorEffect::new(
                         amount.clone(),
                         filter,
-                        *fixed,
-                    ),
-                )
-            } else {
-                Effect::new(crate::effects::mana::AddManaOfChosenColorEffect::new(
-                    amount.clone(),
-                    filter,
-                ))
-            }
-        })?,
+                    ))
+                }
+            })?
+        }
         EffectAst::AddManaFromLandCouldProduce {
             amount,
             player,
             land_filter,
             allow_colorless,
             same_type,
-        } => compile_player_effect_from_filter(*player, ctx, false, |filter| {
-            Effect::add_mana_of_land_produced_types_player(
-                amount.clone(),
-                filter,
-                land_filter.clone(),
-                *allow_colorless,
-                *same_type,
-            )
-        })?,
-        EffectAst::AddManaCommanderIdentity { amount, player } => compile_player_effect(
-            *player,
-            ctx,
-            false,
-            || Effect::add_mana_from_commander_color_identity(amount.clone()),
-            |filter| Effect::add_mana_from_commander_color_identity_player(amount.clone(), filter),
-        )?,
+        } => {
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            compile_player_effect_from_filter(*player, ctx, false, |filter| {
+                Effect::add_mana_of_land_produced_types_player(
+                    amount.clone(),
+                    filter,
+                    land_filter.clone(),
+                    *allow_colorless,
+                    *same_type,
+                )
+            })?
+        }
+        EffectAst::AddManaCommanderIdentity { amount, player } => {
+            let amount = resolve_value_it_tag(amount, &current_reference_env(ctx))?;
+            compile_player_effect(
+                *player,
+                ctx,
+                false,
+                || Effect::add_mana_from_commander_color_identity(amount.clone()),
+                |filter| {
+                    Effect::add_mana_from_commander_color_identity_player(amount.clone(), filter)
+                },
+            )?
+        }
         EffectAst::AddManaImprintedColors => (
             vec![Effect::new(
                 crate::effects::mana::AddManaOfImprintedColorsEffect::new(),
@@ -3780,19 +3816,21 @@ fn try_compile_timing_and_control_effect(
             restriction,
             duration,
         } => {
-            let restriction = resolve_restriction_it_tag(restriction, &ctx.reference_frame())?;
+            let restriction = resolve_restriction_it_tag(restriction, &current_reference_env(ctx))?;
             (
                 vec![Effect::cant_until(restriction, duration.clone())],
                 Vec::new(),
             )
         }
         EffectAst::PlayFromGraveyardUntilEot { player } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let player_filter =
+                resolve_non_target_player_filter(*player, &current_reference_env(ctx))?;
             let effect = Effect::grant_play_from_graveyard_until_eot(player_filter);
             (vec![effect], Vec::new())
         }
         EffectAst::GrantPlayTaggedUntilEndOfTurn { tag, player } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let player_filter =
+                resolve_non_target_player_filter(*player, &current_reference_env(ctx))?;
             let resolved_tag = if tag.as_str() == IT_TAG {
                 TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
                     CardTextError::ParseError(
@@ -3815,7 +3853,8 @@ fn try_compile_timing_and_control_effect(
             tag,
             player,
         } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let player_filter =
+                resolve_non_target_player_filter(*player, &current_reference_env(ctx))?;
             let resolved_tag = if tag.as_str() == IT_TAG {
                 TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
                     CardTextError::ParseError(
@@ -3836,7 +3875,8 @@ fn try_compile_timing_and_control_effect(
             )
         }
         EffectAst::GrantPlayTaggedUntilYourNextTurn { tag, player } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let player_filter =
+                resolve_non_target_player_filter(*player, &current_reference_env(ctx))?;
             let resolved_tag = if tag.as_str() == IT_TAG {
                 TagKey::from(ctx.last_object_tag.clone().ok_or_else(|| {
                     CardTextError::ParseError(
@@ -3880,7 +3920,8 @@ fn try_compile_timing_and_control_effect(
             (vec![effect], Vec::new())
         }
         EffectAst::ExileInsteadOfGraveyardThisTurn { player } => {
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let player_filter =
+                resolve_non_target_player_filter(*player, &current_reference_env(ctx))?;
             let effect = Effect::exile_instead_of_graveyard_this_turn(player_filter);
             (vec![effect], Vec::new())
         }
@@ -3890,7 +3931,7 @@ fn try_compile_timing_and_control_effect(
             duration,
         } => {
             let (spec, mut choices) =
-                resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let (controller, mut controller_choices) =
                 resolve_effect_player_filter(*player, ctx, true, true, true)?;
             choices.append(&mut controller_choices);
@@ -3945,10 +3986,16 @@ fn try_compile_timing_and_control_effect(
             let effect = Effect::control_player(player.clone(), start, duration);
             (vec![effect], choices)
         }
-        EffectAst::ExtraTurnAfterTurn { player } => {
+        EffectAst::ExtraTurnAfterTurn { player, anchor } => {
             let (player_filter, choices) =
                 resolve_effect_player_filter(*player, ctx, true, true, true)?;
-            (vec![Effect::extra_turn_player(player_filter)], choices)
+            let effect = match anchor {
+                ExtraTurnAnchorAst::CurrentTurn => Effect::extra_turn_player(player_filter),
+                ExtraTurnAnchorAst::ReferencedTurn => {
+                    Effect::extra_turn_after_next_turn_player(player_filter)
+                }
+            };
+            (vec![effect], choices)
         }
         EffectAst::DelayedUntilNextEndStep { player, effects } => {
             let (delayed_effects, choices) = compile_effects_preserving_last_effect(effects, ctx)?;
@@ -4011,7 +4058,7 @@ fn try_compile_timing_and_control_effect(
         EffectAst::DelayedTriggerThisTurn { trigger, effects } => {
             let (delayed_effects, choices) = compile_trigger_effects(Some(trigger), effects)?;
             if let TriggerSpec::IsDealtDamage(filter) = trigger {
-                let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+                let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
                 if let Some(watched_tag) = watch_tag_from_filter(&resolved_filter) {
                     let delayed = crate::effects::ScheduleDelayedTriggerEffect::from_tag(
                         Trigger::is_dealt_damage(ChooseSpec::Source),
@@ -4070,8 +4117,8 @@ fn try_compile_timing_and_control_effect(
                 PlayerFilter::You,
             );
             if let Some(filter) = filter {
-                delayed =
-                    delayed.with_target_filter(resolve_it_tag(filter, &ctx.reference_frame())?);
+                delayed = delayed
+                    .with_target_filter(resolve_it_tag(filter, &current_reference_env(ctx))?);
             }
             let effect = Effect::new(delayed);
             (vec![effect], choices)
@@ -4155,8 +4202,11 @@ fn try_compile_flow_and_iteration_effect(
 
             let previous_last_player_filter = ctx.last_player_filter.clone();
             let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
-            let player_filter =
-                resolve_unless_player_filter(*player, ctx, previous_last_player_filter)?;
+            let player_filter = resolve_unless_player_filter(
+                *player,
+                &current_reference_env(ctx),
+                previous_last_player_filter,
+            )?;
             if !matches!(*player, PlayerAst::Implicit) {
                 ctx.last_player_filter = Some(player_filter.clone());
             }
@@ -4188,8 +4238,11 @@ fn try_compile_flow_and_iteration_effect(
             let previous_last_player_filter = ctx.last_player_filter.clone();
             let (inner_effects, inner_choices) = compile_effects(effects, ctx)?;
             let (alt_effects, alt_choices) = compile_effects(alternative, ctx)?;
-            let player_filter =
-                resolve_unless_player_filter(*player, ctx, previous_last_player_filter)?;
+            let player_filter = resolve_unless_player_filter(
+                *player,
+                &current_reference_env(ctx),
+                previous_last_player_filter,
+            )?;
             if !matches!(*player, PlayerAst::Implicit) {
                 ctx.last_player_filter = Some(player_filter.clone());
             }
@@ -4271,7 +4324,7 @@ fn try_compile_flow_and_iteration_effect(
             (vec![choose_targets, effect], choices)
         }
         EffectAst::ForEachObject { filter, effects } => {
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let (inner_effects, inner_choices) = with_preserved_compile_context(
                 ctx,
                 |ctx| {
@@ -4351,7 +4404,7 @@ fn try_compile_destroy_and_exile_effect(
         }
         EffectAst::DestroyAllAttachedTo { filter, target } => {
             let (target_spec, choices) =
-                resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let mut prelude = Vec::new();
             let mut choices = choices;
             let target_tag = if let ChooseSpec::Tagged(tag) = &target_spec {
@@ -4372,7 +4425,7 @@ fn try_compile_destroy_and_exile_effect(
             };
             ctx.last_object_tag = Some(target_tag.clone());
 
-            let mut resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let mut resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             resolved_filter
                 .tagged_constraints
                 .push(TaggedObjectConstraint {
@@ -4397,7 +4450,7 @@ fn try_compile_destroy_and_exile_effect(
             (prelude, choices)
         }
         EffectAst::DestroyAll { filter } => {
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
             let mut effect = Effect::destroy_all(resolved_filter);
             if ctx.auto_tag_object_targets {
@@ -4409,7 +4462,7 @@ fn try_compile_destroy_and_exile_effect(
             (prelude, choices)
         }
         EffectAst::DestroyAllNoRegeneration { filter } => {
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
             let mut effect = Effect::new(crate::effects::DestroyNoRegenerationEffect::all(
                 resolved_filter,
@@ -4424,7 +4477,7 @@ fn try_compile_destroy_and_exile_effect(
         }
         EffectAst::DestroyAllOfChosenColor { filter } => {
             use crate::effect::EffectMode;
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
             let mut modes = Vec::new();
             let colors = [
@@ -4464,7 +4517,7 @@ fn try_compile_destroy_and_exile_effect(
         }
         EffectAst::DestroyAllOfChosenColorNoRegeneration { filter } => {
             use crate::effect::EffectMode;
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
             let mut modes = Vec::new();
             let colors = [
@@ -4507,7 +4560,7 @@ fn try_compile_destroy_and_exile_effect(
             (prelude, choices)
         }
         EffectAst::ExileAll { filter, face_down } => {
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
             if let Some(player_filter) = infer_player_filter_from_object_filter(&resolved_filter) {
                 ctx.last_player_filter = Some(player_filter);
@@ -4541,7 +4594,8 @@ fn try_compile_destroy_and_exile_effect(
             if let Some(compiled) = lower_single_non_target_exile_target(target, *face_down, ctx)? {
                 return Ok(Some(compiled));
             }
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let mut effect = if spec.count().is_single() && !*face_down {
                 Effect::move_to_zone(spec.clone(), Zone::Exile, true)
             } else {
@@ -4557,7 +4611,8 @@ fn try_compile_destroy_and_exile_effect(
             (vec![effect], choices)
         }
         EffectAst::ExileWhenSourceLeaves { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let ChooseSpec::Tagged(tag) = spec.base() else {
                 return Err(CardTextError::ParseError(
                     "cannot compile 'exile ... when this source leaves' without tagged context"
@@ -4571,7 +4626,8 @@ fn try_compile_destroy_and_exile_effect(
             (vec![effect], choices)
         }
         EffectAst::SacrificeSourceWhenLeaves { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let ChooseSpec::Tagged(tag) = spec.base() else {
                 return Err(CardTextError::ParseError(
                     "cannot compile 'sacrifice this source when ... leaves' without tagged context"
@@ -4589,7 +4645,8 @@ fn try_compile_destroy_and_exile_effect(
             (vec![effect], choices)
         }
         EffectAst::ExileUntilSourceLeaves { target, face_down } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let mut effect = Effect::new(
                 crate::effects::ExileUntilEffect::source_leaves(spec.clone())
                     .with_face_down(*face_down),
@@ -4732,7 +4789,7 @@ fn try_compile_visibility_and_card_selection_effect(
         }
         EffectAst::PutIntoHand { player, object } => {
             let ObjectRefAst::Tagged(tag) = object;
-            let tag = resolve_it_tag_key(tag, &ctx.reference_frame())?;
+            let tag = resolve_it_tag_key(tag, &current_reference_env(ctx))?;
             let (_, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let effect = Effect::move_to_zone(ChooseSpec::Tagged(tag), Zone::Hand, false);
             (vec![effect], choices)
@@ -4936,8 +4993,10 @@ fn try_compile_stack_and_condition_effect(
             player,
             may_choose_new_targets,
         } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
-            let player_filter = resolve_non_target_player_filter(*player, ctx)?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
+            let player_filter =
+                resolve_non_target_player_filter(*player, &current_reference_env(ctx))?;
             if !matches!(*player, PlayerAst::Implicit) {
                 ctx.last_player_filter = Some(player_filter.clone());
             }
@@ -4973,7 +5032,7 @@ fn try_compile_stack_and_condition_effect(
             new_target_restriction,
         } => {
             let (spec, mut choices) =
-                resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let (chooser_filter, chooser_choices) =
                 resolve_effect_player_filter(*chooser, ctx, true, true, true)?;
             for choice in chooser_choices {
@@ -4995,7 +5054,7 @@ fn try_compile_stack_and_condition_effect(
                         crate::effects::NewTargetRestriction::Player(filter)
                     }
                     NewTargetRestrictionAst::Object(filter) => {
-                        let resolved = resolve_it_tag(filter, &ctx.reference_frame())?;
+                        let resolved = resolve_it_tag(filter, &current_reference_env(ctx))?;
                         crate::effects::NewTargetRestriction::Object(resolved)
                     }
                 };
@@ -5006,7 +5065,7 @@ fn try_compile_stack_and_condition_effect(
                 RetargetModeAst::All => crate::effects::RetargetMode::All,
                 RetargetModeAst::OneToFixed { target: fixed } => {
                     let (fixed_spec, fixed_choices) =
-                        resolve_target_spec_with_choices(fixed, &ctx.reference_frame())?;
+                        resolve_target_spec_with_choices(fixed, &current_reference_env(ctx))?;
                     for choice in fixed_choices {
                         push_choice(&mut choices, choice);
                     }
@@ -5113,9 +5172,9 @@ fn try_compile_attachment_and_setup_effect(
         }
         EffectAst::Attach { object, target } => {
             let (objects, object_choices) =
-                resolve_attach_object_spec(object, &ctx.reference_frame())?;
+                resolve_attach_object_spec(object, &current_reference_env(ctx))?;
             let (target, target_choices) =
-                resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let mut choices = Vec::new();
             for choice in object_choices {
                 push_choice(&mut choices, choice);
@@ -5126,7 +5185,7 @@ fn try_compile_attachment_and_setup_effect(
             (vec![Effect::attach_objects(objects, target)], choices)
         }
         EffectAst::Investigate { count } => {
-            let count = resolve_value_it_tag(count, &ctx.reference_frame())?;
+            let count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
             (vec![Effect::investigate(count)], Vec::new())
         }
         EffectAst::Amass { subtype, amount } => {
@@ -5157,7 +5216,7 @@ fn try_compile_token_generation_effect(
         } => {
             let token = token_definition_for(name.as_str())
                 .ok_or_else(|| CardTextError::ParseError(format!("unsupported token '{name}'")))?;
-            let count = resolve_value_it_tag(count, &ctx.reference_frame())?;
+            let count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
             let (player_filter, mut choices) =
                 resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let mut effect = if matches!(player_filter, PlayerFilter::You) {
@@ -5196,7 +5255,7 @@ fn try_compile_token_generation_effect(
             let mut compiled = vec![effect];
             if let Some(target) = attached_to {
                 let (target_spec, target_choices) =
-                    resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+                    resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
                 for choice in target_choices {
                     push_choice(&mut choices, choice);
                 }
@@ -5218,7 +5277,7 @@ fn try_compile_token_generation_effect(
         } => {
             let token = token_definition_for(name.as_str())
                 .ok_or_else(|| CardTextError::ParseError(format!("unsupported token '{name}'")))?;
-            let count = resolve_value_it_tag(count, &ctx.reference_frame())?;
+            let count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
             let (player_filter, choices) =
                 resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let effect = if matches!(player_filter, PlayerFilter::You) {
@@ -5256,8 +5315,8 @@ fn try_compile_token_generation_effect(
             granted_abilities,
         } => {
             let ObjectRefAst::Tagged(tag) = object;
-            let tag = resolve_it_tag_key(tag, &ctx.reference_frame())?;
-            let count = resolve_value_it_tag(count, &ctx.reference_frame())?;
+            let tag = resolve_it_tag_key(tag, &current_reference_env(ctx))?;
+            let count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
             let (player_filter, choices) =
                 resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let mut effect = crate::effects::CreateTokenCopyEffect::new(
@@ -5272,7 +5331,8 @@ fn try_compile_token_generation_effect(
                 effect = effect.attacking(true);
             }
             if let Some(attack_player) = attack_target_player_or_planeswalker_controlled_by {
-                let attack_player_filter = resolve_non_target_player_filter(*attack_player, ctx)?;
+                let attack_player_filter =
+                    resolve_non_target_player_filter(*attack_player, &current_reference_env(ctx))?;
                 effect =
                     effect.attacking_player_or_planeswalker_controlled_by(attack_player_filter);
             }
@@ -5344,11 +5404,11 @@ fn try_compile_token_generation_effect(
             set_base_power_toughness,
             granted_abilities,
         } => {
-            let count = resolve_value_it_tag(count, &ctx.reference_frame())?;
+            let count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
             let (player_filter, mut choices) =
                 resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let (mut source_spec, source_choices) =
-                resolve_target_spec_with_choices(source, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(source, &current_reference_env(ctx))?;
             for choice in source_choices {
                 push_choice(&mut choices, choice);
             }
@@ -5372,7 +5432,8 @@ fn try_compile_token_generation_effect(
                 effect = effect.attacking(true);
             }
             if let Some(attack_player) = attack_target_player_or_planeswalker_controlled_by {
-                let attack_player_filter = resolve_non_target_player_filter(*attack_player, ctx)?;
+                let attack_player_filter =
+                    resolve_non_target_player_filter(*attack_player, &current_reference_env(ctx))?;
                 effect =
                     effect.attacking_player_or_planeswalker_controlled_by(attack_player_filter);
             }
@@ -5461,9 +5522,9 @@ fn try_compile_continuous_and_modifier_effect(
         }
         EffectAst::MoveAllCounters { from, to } => {
             let (from_spec, mut choices) =
-                resolve_target_spec_with_choices(from, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(from, &current_reference_env(ctx))?;
             let (to_spec, to_choices) =
-                resolve_target_spec_with_choices(to, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(to, &current_reference_env(ctx))?;
             for choice in to_choices {
                 push_choice(&mut choices, choice);
             }
@@ -5487,8 +5548,8 @@ fn try_compile_continuous_and_modifier_effect(
             duration,
             condition,
         } => {
-            let resolved_power = resolve_value_it_tag(power, &ctx.reference_frame())?;
-            let resolved_toughness = resolve_value_it_tag(toughness, &ctx.reference_frame())?;
+            let resolved_power = resolve_value_it_tag(power, &current_reference_env(ctx))?;
+            let resolved_toughness = resolve_value_it_tag(toughness, &current_reference_env(ctx))?;
             compile_tagged_effect_for_target(target, ctx, "pumped", |spec| {
                 let mut apply = crate::effects::ApplyContinuousEffect::with_spec_runtime(
                     spec,
@@ -5624,7 +5685,7 @@ fn try_compile_continuous_and_modifier_effect(
             count,
             duration,
         } => {
-            let resolved_count = resolve_value_it_tag(count, &ctx.reference_frame())?;
+            let resolved_count = resolve_value_it_tag(count, &current_reference_env(ctx))?;
             compile_tagged_effect_for_target(target, ctx, "pumped", |spec| {
                 Effect::pump_for_each(
                     spec,
@@ -5641,7 +5702,7 @@ fn try_compile_continuous_and_modifier_effect(
             toughness,
             duration,
         } => {
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let tag = ctx.next_tag("pumped");
             let effect = Effect::new(
                 crate::effects::ApplyContinuousEffect::new_runtime(
@@ -5699,7 +5760,7 @@ fn try_compile_continuous_and_modifier_effect(
                 ));
             }
 
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let mut apply = crate::effects::ApplyContinuousEffect::new(
                 crate::continuous::EffectTarget::Filter(resolved_filter),
                 crate::continuous::Modification::AddAbility(abilities[0].clone()),
@@ -5728,7 +5789,7 @@ fn try_compile_continuous_and_modifier_effect(
                 ));
             }
 
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let mut apply = crate::effects::ApplyContinuousEffect::new(
                 crate::continuous::EffectTarget::Filter(resolved_filter),
                 crate::continuous::Modification::RemoveAbility(abilities[0].clone()),
@@ -5756,7 +5817,7 @@ fn try_compile_continuous_and_modifier_effect(
                         .to_string(),
                 ));
             }
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let modes = abilities
                 .iter()
                 .map(|ability| EffectMode {
@@ -6041,7 +6102,8 @@ fn try_compile_object_zone_and_exchange_effect(
             tag,
         } => {
             let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
-            let mut resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let mut resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
+            preserve_chooser_relative_player_filters(filter, &mut resolved_filter, &chooser);
             let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
             if choice_zone == Zone::Battlefield
                 && resolved_filter.controller.is_none()
@@ -6077,7 +6139,7 @@ fn try_compile_object_zone_and_exchange_effect(
                 .cloned()
                 .map(|spec| Effect::new(crate::effects::TargetOnlyEffect::new(spec)))
                 .collect();
-            let mut resolved_filter = match resolve_it_tag(filter, &ctx.reference_frame()) {
+            let mut resolved_filter = match resolve_it_tag(filter, &current_reference_env(ctx)) {
                 Ok(resolved) => resolved,
                 Err(_)
                     if filter.tagged_constraints.len() == 1
@@ -6136,7 +6198,7 @@ fn try_compile_object_zone_and_exchange_effect(
         }
         EffectAst::SacrificeAll { filter, player } => {
             let (chooser, choices) = resolve_effect_player_filter(*player, ctx, true, true, true)?;
-            let mut resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let mut resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             if resolved_filter.controller.is_none() {
                 resolved_filter.controller = Some(chooser.clone());
             }
@@ -6166,7 +6228,7 @@ fn try_compile_object_zone_and_exchange_effect(
             let (resolved_player, choices) =
                 resolve_effect_player_filter(*player, ctx, true, true, true)?;
             let resolved_filter = if let Some(filter) = filter {
-                let mut resolved = resolve_it_tag(filter, &ctx.reference_frame())?;
+                let mut resolved = resolve_it_tag(filter, &current_reference_env(ctx))?;
                 if resolved.zone.is_none() {
                     resolved.zone = Some(Zone::Hand);
                 }
@@ -6186,14 +6248,16 @@ fn try_compile_object_zone_and_exchange_effect(
             (vec![effect], choices)
         }
         EffectAst::Connive { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let effect =
                 tag_object_target_effect(Effect::connive(spec.clone()), &spec, ctx, "connived");
             (vec![effect], choices)
         }
         EffectAst::ConniveIterated => (vec![Effect::connive(ChooseSpec::Iterated)], Vec::new()),
         EffectAst::Goad { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let spec = if choices.is_empty() {
                 match spec {
                     ChooseSpec::Object(filter) => ChooseSpec::All(filter),
@@ -6206,7 +6270,8 @@ fn try_compile_object_zone_and_exchange_effect(
             (vec![effect], choices)
         }
         EffectAst::ReturnToHand { target, random } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let from_graveyard = target_mentions_graveyard(target);
             let effect = tag_object_target_effect(
                 if from_graveyard {
@@ -6225,7 +6290,8 @@ fn try_compile_object_zone_and_exchange_effect(
             tapped,
             controller,
         } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let from_exile_tag = choose_spec_references_exiled_tag(&spec);
             let use_move_to_zone =
                 from_exile_tag || !matches!(controller, ReturnControllerAst::Preserve);
@@ -6267,7 +6333,8 @@ fn try_compile_object_zone_and_exchange_effect(
             (vec![effect], choices)
         }
         EffectAst::MoveToLibrarySecondFromTop { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let mut effect = Effect::new(crate::effects::MoveToLibrarySecondFromTopEffect::new(
                 spec.clone(),
             ));
@@ -6287,7 +6354,7 @@ fn try_compile_object_zone_and_exchange_effect(
             attached_to,
         } => {
             let (spec, mut choices) =
-                resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let resolved_attach_spec = if let Some(attach_target) = attached_to {
                 if *zone != Zone::Battlefield {
                     return Err(CardTextError::ParseError(
@@ -6295,7 +6362,7 @@ fn try_compile_object_zone_and_exchange_effect(
                     ));
                 }
                 let (attach_spec, attach_choices) =
-                    resolve_target_spec_with_choices(attach_target, &ctx.reference_frame())?;
+                    resolve_target_spec_with_choices(attach_target, &current_reference_env(ctx))?;
                 for choice in attach_choices {
                     push_choice(&mut choices, choice);
                 }
@@ -6343,7 +6410,7 @@ fn try_compile_object_zone_and_exchange_effect(
             (vec![effect], choices)
         }
         EffectAst::ReturnAllToHand { filter } => {
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             (
                 vec![Effect::return_all_to_hand(resolved_filter)],
                 Vec::new(),
@@ -6351,7 +6418,7 @@ fn try_compile_object_zone_and_exchange_effect(
         }
         EffectAst::ReturnAllToHandOfChosenColor { filter } => {
             use crate::effect::EffectMode;
-            let resolved_filter = resolve_it_tag(filter, &ctx.reference_frame())?;
+            let resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
             let (mut prelude, choices) = target_context_prelude_for_filter(&resolved_filter);
             let mut modes = Vec::new();
             let colors = [
@@ -6383,7 +6450,7 @@ fn try_compile_object_zone_and_exchange_effect(
         }
         EffectAst::ReturnAllToBattlefield { filter, tapped } => {
             let mut effect = Effect::new(crate::effects::ReturnAllToBattlefieldEffect::new(
-                resolve_it_tag(filter, &ctx.reference_frame())?,
+                resolve_it_tag(filter, &current_reference_env(ctx))?,
                 *tapped,
             ));
             if ctx.auto_tag_object_targets {
@@ -6455,7 +6522,8 @@ fn try_compile_player_turn_and_counter_effect(
             compile_player_effect_from_filter(*player, ctx, true, Effect::skip_draw_step_player)?
         }
         EffectAst::Regenerate { target } => {
-            let (spec, choices) = resolve_target_spec_with_choices(target, &ctx.reference_frame())?;
+            let (spec, choices) =
+                resolve_target_spec_with_choices(target, &current_reference_env(ctx))?;
             let effect = tag_object_target_effect(
                 Effect::regenerate(spec.clone(), crate::effect::Until::EndOfTurn),
                 &spec,
@@ -6499,316 +6567,6 @@ fn try_compile_player_turn_and_counter_effect(
     Ok(Some(compiled))
 }
 
-pub(crate) fn resolve_it_tag(
-    filter: &ObjectFilter,
-    refs: &(impl ReferenceFrameSource + ?Sized),
-) -> Result<ObjectFilter, CardTextError> {
-    let refs = refs.reference_frame();
-    if !filter
-        .tagged_constraints
-        .iter()
-        .any(|constraint| constraint.tag.as_str() == IT_TAG)
-    {
-        return Ok(filter.clone());
-    }
-
-    let Some(tag) = refs.last_object_tag.as_ref() else {
-        let mut resolved = filter.clone();
-        let mut saw_it_constraint = false;
-        resolved.tagged_constraints.retain(|constraint| {
-            if constraint.tag.as_str() != IT_TAG {
-                return true;
-            }
-            saw_it_constraint = true;
-            false
-        });
-
-        // "from it"/"in it" after a hand/library reveal usually refers to the previously
-        // referenced player's hidden zone, not a tagged object.
-        if saw_it_constraint
-            && matches!(
-                resolved.zone,
-                Some(Zone::Hand | Zone::Library | Zone::Graveyard | Zone::Exile)
-            )
-            && let Some(player_filter) = refs.last_player_filter.clone()
-        {
-            if resolved.owner.is_none() {
-                resolved.owner = Some(player_filter);
-            }
-            return Ok(resolved);
-        }
-        if saw_it_constraint
-            && resolved == ObjectFilter::default()
-            && let Some(player_filter) = refs.last_player_filter.clone()
-        {
-            resolved.zone = Some(Zone::Hand);
-            resolved.owner = Some(player_filter);
-            return Ok(resolved);
-        }
-        if saw_it_constraint && resolved == ObjectFilter::default() {
-            // Bare "it" with no object/player context in spell text commonly means "this source".
-            // Example: "Exile CARDNAME."
-            resolved.source = true;
-            return Ok(resolved);
-        }
-        if saw_it_constraint {
-            // Last-resort fallback: keep the non-referential portion of the filter when
-            // no prior tag exists (e.g., "those creatures" on a later line).
-            return Ok(resolved);
-        }
-
-        return Err(CardTextError::ParseError(
-            "unable to resolve 'it' without prior reference".to_string(),
-        ));
-    };
-
-    let mut resolved = filter.clone();
-    for constraint in &mut resolved.tagged_constraints {
-        if constraint.tag.as_str() == IT_TAG {
-            constraint.tag = tag.into();
-        }
-    }
-    Ok(resolved)
-}
-
-pub(crate) fn resolve_it_tag_key(
-    tag: &TagKey,
-    refs: &(impl ReferenceFrameSource + ?Sized),
-) -> Result<TagKey, CardTextError> {
-    let refs = refs.reference_frame();
-    if tag.as_str() != IT_TAG {
-        return Ok(tag.clone());
-    }
-    let resolved = refs.last_object_tag.as_ref().ok_or_else(|| {
-        CardTextError::ParseError("unable to resolve 'it' without prior reference".to_string())
-    })?;
-    Ok(TagKey::from(resolved.as_str()))
-}
-
-pub(crate) fn object_filter_as_tagged_reference(filter: &ObjectFilter) -> Option<TagKey> {
-    if filter.tagged_constraints.len() != 1 {
-        return None;
-    }
-    let constraint = &filter.tagged_constraints[0];
-    if !matches!(constraint.relation, TaggedOpbjectRelation::IsTaggedObject) {
-        return None;
-    }
-
-    let mut bare = filter.clone();
-    bare.tagged_constraints.clear();
-    if bare == ObjectFilter::default() {
-        Some(constraint.tag.clone())
-    } else {
-        None
-    }
-}
-
-fn watch_tag_from_filter(filter: &ObjectFilter) -> Option<TagKey> {
-    let mut tag: Option<TagKey> = None;
-    for constraint in &filter.tagged_constraints {
-        if !matches!(constraint.relation, TaggedOpbjectRelation::IsTaggedObject) {
-            continue;
-        }
-        match &tag {
-            Some(existing) if existing.as_str() != constraint.tag.as_str() => return None,
-            Some(_) => {}
-            None => tag = Some(constraint.tag.clone()),
-        }
-    }
-    tag
-}
-
-pub(crate) fn resolve_restriction_it_tag(
-    restriction: &crate::effect::Restriction,
-    refs: &(impl ReferenceFrameSource + ?Sized),
-) -> Result<crate::effect::Restriction, CardTextError> {
-    let refs = refs.reference_frame();
-    use crate::effect::Restriction;
-
-    let resolved = match restriction {
-        Restriction::Attack(filter) => Restriction::attack(resolve_it_tag(filter, &refs)?),
-        Restriction::Block(filter) => Restriction::block(resolve_it_tag(filter, &refs)?),
-        Restriction::BlockSpecificAttacker { blockers, attacker } => {
-            Restriction::block_specific_attacker(
-                resolve_it_tag(blockers, &refs)?,
-                resolve_it_tag(attacker, &refs)?,
-            )
-        }
-        Restriction::MustBlockSpecificAttacker { blockers, attacker } => {
-            Restriction::must_block_specific_attacker(
-                resolve_it_tag(blockers, &refs)?,
-                resolve_it_tag(attacker, &refs)?,
-            )
-        }
-        Restriction::Untap(filter) => Restriction::untap(resolve_it_tag(filter, &refs)?),
-        Restriction::BeBlocked(filter) => Restriction::be_blocked(resolve_it_tag(filter, &refs)?),
-        Restriction::BeDestroyed(filter) => {
-            Restriction::be_destroyed(resolve_it_tag(filter, &refs)?)
-        }
-        Restriction::BeRegenerated(filter) => {
-            Restriction::be_regenerated(resolve_it_tag(filter, &refs)?)
-        }
-        Restriction::BeSacrificed(filter) => {
-            Restriction::be_sacrificed(resolve_it_tag(filter, &refs)?)
-        }
-        Restriction::HaveCountersPlaced(filter) => {
-            Restriction::have_counters_placed(resolve_it_tag(filter, &refs)?)
-        }
-        Restriction::BeTargeted(filter) => Restriction::be_targeted(resolve_it_tag(filter, &refs)?),
-        Restriction::BeCountered(filter) => {
-            Restriction::be_countered(resolve_it_tag(filter, &refs)?)
-        }
-        Restriction::Transform(filter) => Restriction::transform(resolve_it_tag(filter, &refs)?),
-        Restriction::AttackOrBlock(filter) => {
-            Restriction::attack_or_block(resolve_it_tag(filter, &refs)?)
-        }
-        Restriction::ActivateAbilitiesOf(filter) => {
-            Restriction::activate_abilities_of(resolve_it_tag(filter, &refs)?)
-        }
-        Restriction::ActivateTapAbilitiesOf(filter) => {
-            Restriction::activate_tap_abilities_of(resolve_it_tag(filter, &refs)?)
-        }
-        Restriction::ActivateNonManaAbilitiesOf(filter) => {
-            Restriction::activate_non_mana_abilities_of(resolve_it_tag(filter, &refs)?)
-        }
-        _ => restriction.clone(),
-    };
-    Ok(resolved)
-}
-
-pub(crate) fn resolve_choose_spec_it_tag(
-    spec: &ChooseSpec,
-    refs: &(impl ReferenceFrameSource + ?Sized),
-) -> Result<ChooseSpec, CardTextError> {
-    let refs = refs.reference_frame();
-    match spec {
-        ChooseSpec::Tagged(tag) if tag.as_str() == IT_TAG => {
-            if let Some(resolved) = refs.last_object_tag.as_ref() {
-                return Ok(ChooseSpec::Tagged(TagKey::from(resolved.as_str())));
-            }
-            if let Some(player_filter) = refs.last_player_filter.clone() {
-                let filter = ObjectFilter {
-                    zone: Some(Zone::Hand),
-                    owner: Some(player_filter),
-                    ..Default::default()
-                };
-                return Ok(ChooseSpec::Object(filter));
-            }
-            return Ok(ChooseSpec::Source);
-        }
-        ChooseSpec::Tagged(tag) => Ok(ChooseSpec::Tagged(tag.clone())),
-        ChooseSpec::Object(filter) => {
-            let resolved = resolve_it_tag(filter, &refs)?;
-            if let Some(tag) = object_filter_as_tagged_reference(&resolved) {
-                Ok(ChooseSpec::Tagged(tag))
-            } else {
-                Ok(ChooseSpec::Object(resolved))
-            }
-        }
-        ChooseSpec::Target(inner) => Ok(ChooseSpec::Target(Box::new(resolve_choose_spec_it_tag(
-            inner, &refs,
-        )?))),
-        ChooseSpec::WithCount(inner, count) => Ok(ChooseSpec::WithCount(
-            Box::new(resolve_choose_spec_it_tag(inner, &refs)?),
-            count.clone(),
-        )),
-        ChooseSpec::All(filter) => Ok(ChooseSpec::All(resolve_it_tag(filter, &refs)?)),
-        ChooseSpec::Player(filter) => Ok(ChooseSpec::Player(filter.clone())),
-        ChooseSpec::PlayerOrPlaneswalker(filter) => {
-            Ok(ChooseSpec::PlayerOrPlaneswalker(filter.clone()))
-        }
-        ChooseSpec::AttackedPlayerOrPlaneswalker => Ok(ChooseSpec::AttackedPlayerOrPlaneswalker),
-        ChooseSpec::SpecificObject(id) => Ok(ChooseSpec::SpecificObject(*id)),
-        ChooseSpec::SpecificPlayer(id) => Ok(ChooseSpec::SpecificPlayer(*id)),
-        ChooseSpec::AnyTarget => Ok(ChooseSpec::AnyTarget),
-        ChooseSpec::Source => Ok(ChooseSpec::Source),
-        ChooseSpec::SourceController => Ok(ChooseSpec::SourceController),
-        ChooseSpec::SourceOwner => Ok(ChooseSpec::SourceOwner),
-        ChooseSpec::EachPlayer(filter) => Ok(ChooseSpec::EachPlayer(filter.clone())),
-        ChooseSpec::Iterated => Ok(ChooseSpec::Iterated),
-    }
-}
-
-pub(crate) fn resolve_value_it_tag(
-    value: &Value,
-    refs: &(impl ReferenceFrameSource + ?Sized),
-) -> Result<Value, CardTextError> {
-    let refs = refs.reference_frame();
-    match value {
-        Value::X if refs.bind_unbound_x_to_last_effect => {
-            if let Some(id) = refs.last_effect_id {
-                Ok(Value::EffectValue(id))
-            } else {
-                Ok(Value::X)
-            }
-        }
-        Value::Add(left, right) => Ok(Value::Add(
-            Box::new(resolve_value_it_tag(left, &refs)?),
-            Box::new(resolve_value_it_tag(right, &refs)?),
-        )),
-        Value::Count(filter) => Ok(Value::Count(resolve_it_tag(filter, &refs)?)),
-        Value::CountScaled(filter, multiplier) => Ok(Value::CountScaled(
-            resolve_it_tag(filter, &refs)?,
-            *multiplier,
-        )),
-        Value::TotalPower(filter) => Ok(Value::TotalPower(resolve_it_tag(filter, &refs)?)),
-        Value::TotalToughness(filter) => Ok(Value::TotalToughness(resolve_it_tag(filter, &refs)?)),
-        Value::TotalManaValue(filter) => Ok(Value::TotalManaValue(resolve_it_tag(filter, &refs)?)),
-        Value::GreatestPower(filter) => Ok(Value::GreatestPower(resolve_it_tag(filter, &refs)?)),
-        Value::GreatestManaValue(filter) => {
-            Ok(Value::GreatestManaValue(resolve_it_tag(filter, &refs)?))
-        }
-        Value::BasicLandTypesAmong(filter) => {
-            Ok(Value::BasicLandTypesAmong(resolve_it_tag(filter, &refs)?))
-        }
-        Value::ColorsAmong(filter) => Ok(Value::ColorsAmong(resolve_it_tag(filter, &refs)?)),
-        Value::PowerOf(spec) => Ok(Value::PowerOf(Box::new(resolve_choose_spec_it_tag(
-            spec, &refs,
-        )?))),
-        Value::ToughnessOf(spec) => Ok(Value::ToughnessOf(Box::new(resolve_choose_spec_it_tag(
-            spec, &refs,
-        )?))),
-        Value::ManaValueOf(spec) => Ok(Value::ManaValueOf(Box::new(resolve_choose_spec_it_tag(
-            spec, &refs,
-        )?))),
-        Value::EventValue(EventValueSpec::Amount)
-        | Value::EventValue(EventValueSpec::LifeAmount) => {
-            if !refs.allow_life_event_value {
-                if let Some(id) = refs.last_effect_id {
-                    return Ok(Value::EffectValue(id));
-                }
-                return Err(CardTextError::ParseError(
-                    "event-derived amount requires a compatible trigger".to_string(),
-                ));
-            }
-            Ok(value.clone())
-        }
-        Value::EventValueOffset(EventValueSpec::Amount, offset)
-        | Value::EventValueOffset(EventValueSpec::LifeAmount, offset) => {
-            if !refs.allow_life_event_value {
-                if let Some(id) = refs.last_effect_id {
-                    return Ok(Value::EffectValueOffset(id, *offset));
-                }
-                return Err(CardTextError::ParseError(
-                    "event-derived amount requires a compatible trigger".to_string(),
-                ));
-            }
-            Ok(value.clone())
-        }
-        _ => Ok(value.clone()),
-    }
-}
-
-pub(crate) fn choose_spec_targets_object(spec: &ChooseSpec) -> bool {
-    match spec.base() {
-        ChooseSpec::Object(_)
-        | ChooseSpec::Tagged(_)
-        | ChooseSpec::SpecificObject(_)
-        | ChooseSpec::Source => true,
-        _ => false,
-    }
-}
-
 pub(crate) fn tagged_alias_for_choice(effects: &[Effect], choice: &ChooseSpec) -> Option<String> {
     for effect in effects {
         let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() else {
@@ -6829,7 +6587,7 @@ pub(crate) fn tag_object_target_effect(
     ctx: &mut CompileContext,
     prefix: &str,
 ) -> Effect {
-    if ctx.auto_tag_object_targets && spec.is_target() && choose_spec_targets_object(spec) {
+    if ctx.auto_tag_object_targets && choose_spec_targets_object(spec) {
         let tag = ctx.next_tag(prefix);
         ctx.last_object_tag = Some(tag.clone());
         effect.tag(tag)
@@ -7708,15 +7466,6 @@ pub(crate) fn token_dies_create_dragon_with_firebreathing_ability() -> Ability {
     }
 }
 
-fn role_token_definition(name: &str, rules_text: &str) -> Option<CardDefinition> {
-    CardDefinitionBuilder::new(CardId::new(), name)
-        .token()
-        .card_types(vec![CardType::Enchantment])
-        .subtypes(vec![Subtype::Aura, Subtype::Role])
-        .parse_text(rules_text)
-        .ok()
-}
-
 pub(crate) fn token_definition_for(name: &str) -> Option<CardDefinition> {
     let lower = name.trim().to_ascii_lowercase();
     let words: Vec<&str> = lower
@@ -7773,40 +7522,22 @@ pub(crate) fn token_definition_for(name: &str) -> Option<CardDefinition> {
         return Some(builder.build());
     }
     if has_word("wicked") && has_word("role") {
-        return role_token_definition(
-            "Wicked Role",
-            "Enchant creature\nEnchanted creature gets +1/+1.\nWhen this token is put into a graveyard from the battlefield, each opponent loses 1 life.",
-        );
+        return Some(crate::cards::tokens::wicked_role_token_definition());
     }
     if has_word("young") && has_word("hero") && has_word("role") {
-        return role_token_definition(
-            "Young Hero Role",
-            "Enchant creature\nEnchanted creature has \"Whenever this creature attacks, if its toughness is 3 or less, put a +1/+1 counter on it.\"",
-        );
+        return Some(crate::cards::tokens::young_hero_role_token_definition());
     }
     if has_word("monster") && has_word("role") {
-        return role_token_definition(
-            "Monster Role",
-            "Enchant creature\nEnchanted creature gets +1/+1 and has trample.",
-        );
+        return Some(crate::cards::tokens::monster_role_token_definition());
     }
     if has_word("sorcerer") && has_word("role") {
-        return role_token_definition(
-            "Sorcerer Role",
-            "Enchant creature\nEnchanted creature gets +1/+1 and has \"Whenever this creature attacks, scry 1.\"",
-        );
+        return Some(crate::cards::tokens::sorcerer_role_token_definition());
     }
     if has_word("royal") && has_word("role") {
-        return role_token_definition(
-            "Royal Role",
-            "Enchant creature\nEnchanted creature gets +1/+1 and has ward {1}.",
-        );
+        return Some(crate::cards::tokens::royal_role_token_definition());
     }
     if has_word("cursed") && has_word("role") {
-        return role_token_definition(
-            "Cursed Role",
-            "Enchant creature\nEnchanted creature has base power and toughness 1/1.",
-        );
+        return Some(crate::cards::tokens::cursed_role_token_definition());
     }
     if has_word("blood") && !words.contains(&"creature") {
         let builder = CardDefinitionBuilder::new(CardId::new(), "Blood")
@@ -8652,115 +8383,11 @@ pub(crate) fn parse_token_pt(word: &str) -> Option<(i32, i32)> {
     Some((power, toughness))
 }
 
-pub(crate) fn choose_spec_for_target(target: &TargetAst) -> ChooseSpec {
-    match target {
-        TargetAst::Source(_) => ChooseSpec::Source,
-        TargetAst::AnyTarget(_) => ChooseSpec::AnyTarget,
-        TargetAst::PlayerOrPlaneswalker(filter, _) => {
-            ChooseSpec::PlayerOrPlaneswalker(filter.clone())
-        }
-        TargetAst::AttackedPlayerOrPlaneswalker(_) => ChooseSpec::AttackedPlayerOrPlaneswalker,
-        TargetAst::Spell(_) => ChooseSpec::target_spell(),
-        TargetAst::Player(filter, explicit_target_span) => {
-            if *filter == PlayerFilter::You {
-                ChooseSpec::SourceController
-            } else if *filter == PlayerFilter::IteratedPlayer {
-                ChooseSpec::Player(filter.clone())
-            } else if explicit_target_span.is_some() {
-                ChooseSpec::target(ChooseSpec::Player(filter.clone()))
-            } else {
-                ChooseSpec::Player(filter.clone())
-            }
-        }
-        TargetAst::Object(filter, explicit_target_span, _) => {
-            if explicit_target_span.is_some() {
-                ChooseSpec::target(ChooseSpec::Object(filter.clone()))
-            } else {
-                ChooseSpec::Object(filter.clone())
-            }
-        }
-        TargetAst::Tagged(tag, _) => ChooseSpec::Tagged(tag.clone()),
-        TargetAst::WithCount(inner, count) => choose_spec_for_target(inner).with_count(*count),
-    }
-}
-
 pub(crate) fn target_mentions_graveyard(target: &TargetAst) -> bool {
     match target {
         TargetAst::Object(filter, _, _) => filter.zone == Some(Zone::Graveyard),
         TargetAst::WithCount(inner, _) => target_mentions_graveyard(inner),
         _ => false,
-    }
-}
-
-pub(crate) fn resolve_target_spec_with_choices(
-    target: &TargetAst,
-    refs: &(impl ReferenceFrameSource + ?Sized),
-) -> Result<(ChooseSpec, Vec<ChooseSpec>), CardTextError> {
-    let refs = refs.reference_frame();
-    let mut spec = choose_spec_for_target(target);
-    if let TargetAst::Player(filter, explicit_target_span) = target {
-        if explicit_target_span.is_none() && matches!(filter, PlayerFilter::Target(_)) {
-            if let Some(last_filter) = &refs.last_player_filter {
-                spec = ChooseSpec::Player(last_filter.clone());
-            } else if refs.iterated_player {
-                spec = ChooseSpec::Player(PlayerFilter::IteratedPlayer);
-            }
-        }
-    }
-    let spec = resolve_choose_spec_it_tag(&spec, &refs)?;
-    let choices = if spec.is_target() {
-        vec![spec.clone()]
-    } else {
-        Vec::new()
-    };
-    Ok((spec, choices))
-}
-
-pub(crate) fn resolve_attach_object_spec(
-    object: &TargetAst,
-    refs: &(impl ReferenceFrameSource + ?Sized),
-) -> Result<(ChooseSpec, Vec<ChooseSpec>), CardTextError> {
-    let refs = refs.reference_frame();
-    match object {
-        TargetAst::Source(_) => Ok((ChooseSpec::Source, Vec::new())),
-        TargetAst::Tagged(tag, _) => {
-            let resolved_tag = if tag.as_str() == IT_TAG {
-                refs.last_object_tag.clone().ok_or_else(|| {
-                    CardTextError::ParseError(
-                        "cannot resolve 'it/them' in attach object clause without prior tagged object"
-                            .to_string(),
-                    )
-                })?
-            } else {
-                tag.as_str().to_string()
-            };
-            Ok((
-                ChooseSpec::All(ObjectFilter::tagged(TagKey::from(resolved_tag.as_str()))),
-                Vec::new(),
-            ))
-        }
-        TargetAst::Object(filter, explicit_target_span, _) => {
-            let resolved = resolve_it_tag(filter, &refs)?;
-            if explicit_target_span.is_some() {
-                let spec = ChooseSpec::target(ChooseSpec::Object(resolved));
-                Ok((spec.clone(), vec![spec]))
-            } else {
-                Ok((ChooseSpec::All(resolved), Vec::new()))
-            }
-        }
-        TargetAst::WithCount(inner, count) => {
-            let (base, _) = resolve_attach_object_spec(inner, &refs)?;
-            let spec = base.with_count(*count);
-            let choices = if spec.is_target() {
-                vec![spec.clone()]
-            } else {
-                Vec::new()
-            };
-            Ok((spec, choices))
-        }
-        _ => Err(CardTextError::ParseError(
-            "unsupported attach object reference".to_string(),
-        )),
     }
 }
 
@@ -8772,7 +8399,7 @@ pub(crate) fn compile_effect_for_target<Builder>(
 where
     Builder: FnOnce(ChooseSpec) -> Effect,
 {
-    let refs = ctx.reference_frame();
+    let refs = current_reference_env(ctx);
     let (spec, choices) = resolve_target_spec_with_choices(target, &refs)?;
     let effect = tag_object_target_effect(build(spec.clone()), &spec, ctx, "targeted");
     Ok((vec![effect], choices))
@@ -8787,7 +8414,7 @@ pub(crate) fn compile_tagged_effect_for_target<Builder>(
 where
     Builder: FnOnce(ChooseSpec) -> Effect,
 {
-    let refs = ctx.reference_frame();
+    let refs = current_reference_env(ctx);
     let (spec, choices) = resolve_target_spec_with_choices(target, &refs)?;
     let effect = tag_object_target_effect(build(spec.clone()), &spec, ctx, tag_prefix);
     Ok((vec![effect], choices))
@@ -8802,8 +8429,10 @@ pub(crate) fn push_choice(choices: &mut Vec<ChooseSpec>, choice: ChooseSpec) {
 #[cfg(test)]
 mod parse_compile_tests {
     use super::*;
+    use crate::cards::TextSpan;
+    use crate::cards::builders::RefState;
     use crate::effect::Value;
-    use crate::effects::InvestigateEffect;
+    use crate::effects::{GrantPlayTaggedEffect, InvestigateEffect};
     use crate::ids::CardId;
     use crate::types::CardType;
 
@@ -8945,5 +8574,53 @@ mod parse_compile_tests {
         let compiled =
             compile_statement_effects(&effects).expect("normalization should remove empty grants");
         assert!(compiled.is_empty());
+    }
+
+    #[test]
+    fn compile_statement_effects_with_imports_returns_reference_exports() {
+        let effects = vec![EffectAst::Destroy {
+            target: TargetAst::Object(ObjectFilter::creature(), Some(TextSpan::synthetic()), None),
+        }];
+
+        let lowered =
+            compile_statement_effects_with_imports(&effects, &ReferenceImports::default())
+                .expect("compile statement with imports");
+
+        assert_eq!(lowered.effects.len(), 1);
+        assert_eq!(
+            lowered.exports.last_object_tag,
+            RefState::Known(TagKey::from("destroyed_0"))
+        );
+    }
+
+    #[test]
+    fn compile_effects_with_explicit_frame_uses_annotated_reference_frames() {
+        let effects = vec![
+            EffectAst::Destroy {
+                target: TargetAst::Object(
+                    ObjectFilter::creature(),
+                    Some(TextSpan::synthetic()),
+                    None,
+                ),
+            },
+            EffectAst::GrantPlayTaggedUntilEndOfTurn {
+                tag: TagKey::from(IT_TAG),
+                player: PlayerAst::You,
+            },
+        ];
+
+        let (compiled, _, frame_out) = compile_effects_with_explicit_frame(
+            &effects,
+            &mut IdGenContext::default(),
+            LoweringFrame::default(),
+        )
+        .expect("compile with explicit frame");
+
+        let grant = compiled
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<GrantPlayTaggedEffect>())
+            .expect("grant-play-tagged effect");
+        assert_eq!(grant.tag.as_str(), "destroyed_0");
+        assert_eq!(frame_out.last_object_tag.as_deref(), Some("destroyed_0"));
     }
 }

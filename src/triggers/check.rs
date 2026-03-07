@@ -382,6 +382,18 @@ pub fn check_triggers(
         check_triggers_in_zone(game, obj_id, trigger_event, &mut triggered);
     }
 
+    // Check spell objects on the stack for abilities like
+    // "When you cast this spell".
+    for entry in &game.stack {
+        let Some(obj) = game.object(entry.object_id) else {
+            continue;
+        };
+        if obj.zone != Zone::Stack {
+            continue;
+        }
+        check_triggers_in_zone(game, obj.id, trigger_event, &mut triggered);
+    }
+
     // Note: Undying/Persist/Miracle triggers are handled through the normal trigger system.
     // They function from the graveyard/hand (where the object is after the event) and use
     // the triggering_event to get stable_id and other context at execution time.

@@ -148,10 +148,20 @@ impl CardDefinition {
 
     /// Returns non-mana additional cost components represented as effects.
     pub fn additional_cost_effects(&self) -> Vec<Effect> {
+        fn presentation_effect(effect: &Effect) -> Effect {
+            if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
+                return presentation_effect(&tagged.effect);
+            }
+            if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
+                return presentation_effect(&with_id.effect);
+            }
+            effect.clone()
+        }
+
         self.additional_cost
             .costs()
             .iter()
-            .filter_map(|component| component.effect_ref().cloned())
+            .filter_map(|component| component.effect_ref().map(presentation_effect))
             .collect()
     }
 }

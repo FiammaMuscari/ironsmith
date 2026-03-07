@@ -318,6 +318,62 @@
   transition: border-color 140ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 
+@keyframes stack-active-hum {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px rgba(215, 238, 255, 0.08),
+      0 0 12px 1px rgba(91, 191, 255, 0.34),
+      0 0 28px 8px rgba(91, 191, 255, 0.16),
+      inset 0 0 16px rgba(155, 220, 255, 0.12);
+  }
+  48% {
+    box-shadow:
+      0 0 0 1px rgba(215, 238, 255, 0.12),
+      0 0 16px 2px rgba(91, 191, 255, 0.46),
+      0 0 38px 12px rgba(91, 191, 255, 0.22),
+      inset 0 0 20px rgba(155, 220, 255, 0.18);
+  }
+}
+
+.game-card.stack-card.stack-card-active {
+  background:
+    linear-gradient(180deg, rgba(12, 22, 36, 0.98), rgba(8, 14, 25, 0.98));
+  box-shadow:
+    0 0 0 1px rgba(215, 238, 255, 0.08),
+    0 0 12px 1px rgba(91, 191, 255, 0.34),
+    0 0 28px 8px rgba(91, 191, 255, 0.16),
+    inset 0 0 16px rgba(155, 220, 255, 0.12);
+  animation: stack-active-hum 3.2s linear infinite;
+}
+
+.stack-timeline-item-active {
+  position: relative;
+  isolation: isolate;
+  box-shadow:
+    0 0 0 1px rgba(215, 238, 255, 0.08),
+    0 0 12px 1px rgba(91, 191, 255, 0.34),
+    0 0 28px 8px rgba(91, 191, 255, 0.16),
+    inset 0 0 16px rgba(155, 220, 255, 0.12) !important;
+  animation: stack-active-hum 3.2s linear infinite;
+}
+
+.stack-timeline-item-active::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px rgba(130, 210, 255, 0.92),
+    inset 0 0 22px rgba(130, 210, 255, 0.16);
+}
+
+.stack-timeline-item-active .stack-card-title,
+.game-card.stack-card.stack-card-active .stack-card-title {
+  text-shadow:
+    0 0 8px rgba(166, 223, 255, 0.78),
+    0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
 .game-card.stack-card::before,
 .game-card.stack-card::after,
 .game-card.stack-card .game-card-surface::before {
@@ -330,6 +386,14 @@
   box-shadow:
     0 12px 26px rgba(0, 0, 0, 0.38),
     inset 0 0 0 1px rgba(170, 205, 242, 0.18);
+}
+
+.game-card.stack-card.stack-card-active:hover {
+  box-shadow:
+    0 0 0 1px rgba(215, 238, 255, 0.08),
+    0 0 12px 1px rgba(91, 191, 255, 0.34),
+    0 0 28px 8px rgba(91, 191, 255, 0.16),
+    inset 0 0 16px rgba(155, 220, 255, 0.12);
 }
 
 .stack-card-art::after {
@@ -1621,29 +1685,240 @@
   color: #64a9ff !important;
 }
 
-/* ---- Pass Priority Button ---- */
-.pass-priority-btn {
-  animation: glow-pulse-pass 2.5s ease-in-out infinite;
-}
-
-.pass-priority-btn:hover {
-  animation: none !important;
-  color: #0b1017 !important;
-  background: var(--pass-text) !important;
-  border-color: var(--pass-text) !important;
-  box-shadow:
-    0 0 16px 5px var(--pass-glow),
-    0 0 32px 10px var(--pass-glow-outer) !important;
-  transform: scale(1.02);
-}
-
-@keyframes glow-pulse-pass {
+/* ---- Decision Neon Buttons ---- */
+@keyframes decision-neon-hum {
   0%, 100% {
-    filter: brightness(1);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.05),
+      0 0 12px 1px var(--decision-neon-glow),
+      0 0 28px 8px var(--decision-neon-glow-outer),
+      inset 0 0 16px var(--decision-neon-glow-inner);
+    text-shadow:
+      0 0 5px var(--decision-neon-text),
+      0 0 13px var(--decision-neon-glow);
+    opacity: 0.98;
+  }
+  47% {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 0 14px 2px var(--decision-neon-glow),
+      0 0 34px 10px var(--decision-neon-glow-outer),
+      inset 0 0 18px var(--decision-neon-glow-inner);
+    text-shadow:
+      0 0 7px var(--decision-neon-text),
+      0 0 18px var(--decision-neon-glow);
+    opacity: 1;
   }
   50% {
-    filter: brightness(1.15);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.04),
+      0 0 9px 1px var(--decision-neon-glow),
+      0 0 18px 5px var(--decision-neon-glow-outer),
+      inset 0 0 12px var(--decision-neon-glow-inner);
+    text-shadow:
+      0 0 4px var(--decision-neon-text),
+      0 0 10px var(--decision-neon-glow);
+    opacity: 0.92;
   }
+}
+
+@keyframes decision-tron-frame {
+  0% {
+    background-position: -220% 0, 0 0;
+    opacity: 0.84;
+  }
+  45% {
+    background-position: 32% 0, 0 0;
+    opacity: 1;
+  }
+  100% {
+    background-position: 240% 0, 0 0;
+    opacity: 0.84;
+  }
+}
+
+.decision-neon-button,
+.pass-priority-btn {
+  --decision-chamfer: 8px;
+  --decision-neon-text: #ffd27f;
+  --decision-neon-border: rgba(255, 180, 76, 0.84);
+  --decision-neon-glow: rgba(255, 165, 64, 0.42);
+  --decision-neon-glow-outer: rgba(255, 165, 64, 0.2);
+  --decision-neon-glow-inner: rgba(255, 212, 130, 0.16);
+  --decision-neon-bg-top: rgba(42, 18, 6, 0.96);
+  --decision-neon-bg-bottom: rgba(16, 9, 4, 0.94);
+  --decision-hover-text: #05080d;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  clip-path: polygon(
+    var(--decision-chamfer) 0,
+    calc(100% - var(--decision-chamfer)) 0,
+    100% var(--decision-chamfer),
+    100% calc(100% - var(--decision-chamfer)),
+    calc(100% - var(--decision-chamfer)) 100%,
+    var(--decision-chamfer) 100%,
+    0 calc(100% - var(--decision-chamfer)),
+    0 var(--decision-chamfer)
+  );
+  border: 0 !important;
+  color: var(--decision-neon-text) !important;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 16px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, transparent 26%),
+    linear-gradient(180deg, var(--decision-neon-bg-top) 0%, var(--decision-neon-bg-bottom) 100%) !important;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 0 12px 1px var(--decision-neon-glow),
+    0 0 28px 8px var(--decision-neon-glow-outer),
+    inset 0 0 16px var(--decision-neon-glow-inner);
+  text-shadow:
+    0 0 5px var(--decision-neon-text),
+    0 0 13px var(--decision-neon-glow);
+  letter-spacing: 0.05em;
+  -webkit-text-stroke: 0.9px transparent;
+  animation: decision-neon-hum 3.2s linear infinite;
+  transform: translateZ(0);
+  transition:
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 240ms ease,
+    text-shadow 220ms ease,
+    color 220ms ease,
+    -webkit-text-stroke-color 220ms ease,
+    background 240ms ease;
+}
+
+.decision-neon-button::before,
+.pass-priority-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  clip-path: inherit;
+  background:
+    linear-gradient(120deg, transparent 20%, rgba(255, 255, 255, 0.9) 50%, transparent 80%) 0 0 / 240% 100% no-repeat,
+    linear-gradient(135deg, rgba(255, 255, 255, 0.24) 0%, var(--decision-neon-border) 24%, rgba(255, 255, 255, 0.72) 50%, var(--decision-neon-border) 76%, rgba(255, 255, 255, 0.2) 100%);
+  opacity: 0.96;
+  pointer-events: none;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: decision-tron-frame 4.8s linear infinite;
+}
+
+.decision-neon-button::after,
+.pass-priority-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  clip-path: inherit;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.04) 16%, var(--decision-neon-border) 58%, var(--decision-neon-text) 100%);
+  opacity: 0.18;
+  pointer-events: none;
+  transform: scaleX(0.1);
+  transform-origin: left center;
+  transition:
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease,
+    filter 220ms ease;
+}
+
+.decision-neon-button > *,
+.pass-priority-btn > * {
+  position: relative;
+  z-index: 1;
+  transition:
+    color 220ms ease,
+    text-shadow 220ms ease,
+    -webkit-text-stroke-color 220ms ease,
+    -webkit-text-fill-color 220ms ease,
+    transform 220ms ease;
+}
+
+.decision-neon-button:hover:not(:disabled),
+.pass-priority-btn:hover:not(:disabled) {
+  color: var(--decision-hover-text) !important;
+  -webkit-text-fill-color: var(--decision-hover-text);
+  -webkit-text-stroke-color: transparent;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 18px 2px var(--decision-neon-glow),
+    0 0 40px 12px var(--decision-neon-glow-outer),
+    inset 0 0 24px rgba(255, 255, 255, 0.08),
+    inset 0 0 18px var(--decision-neon-glow-inner) !important;
+  text-shadow: none;
+  transform: translateY(-1px) scale(1.01);
+}
+
+.decision-neon-button:hover:not(:disabled)::after,
+.pass-priority-btn:hover:not(:disabled)::after {
+  opacity: 0.96;
+  transform: scaleX(1);
+  filter: saturate(1.15) brightness(1.08);
+}
+
+.decision-neon-button:hover:not(:disabled) > *,
+.pass-priority-btn:hover:not(:disabled) > * {
+  color: var(--decision-hover-text) !important;
+  -webkit-text-fill-color: var(--decision-hover-text);
+  -webkit-text-stroke-color: transparent;
+  text-shadow: none;
+}
+
+.decision-neon-button:focus-visible,
+.pass-priority-btn:focus-visible {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 0 0 3px rgba(255, 223, 165, 0.18),
+    0 0 20px 3px var(--decision-neon-glow),
+    0 0 46px 14px var(--decision-neon-glow-outer),
+    inset 0 0 18px rgba(255, 255, 255, 0.08),
+    inset 0 0 18px var(--decision-neon-glow-inner) !important;
+}
+
+.decision-neon-button:disabled,
+.pass-priority-btn:disabled {
+  animation: none;
+  color: rgba(210, 192, 170, 0.56) !important;
+  background: linear-gradient(180deg, rgba(24, 18, 14, 0.94) 0%, rgba(13, 10, 8, 0.96) 100%) !important;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    inset 0 0 10px rgba(255, 255, 255, 0.04) !important;
+  text-shadow: none;
+  transform: none;
+}
+
+.decision-neon-button:disabled::before,
+.pass-priority-btn:disabled::before,
+.decision-neon-button:disabled::after,
+.pass-priority-btn:disabled::after {
+  display: none;
+}
+
+.decision-neon-button--danger {
+  --decision-neon-text: #ffc1c8;
+  --decision-neon-border: rgba(255, 92, 116, 0.84);
+  --decision-neon-glow: rgba(255, 92, 116, 0.42);
+  --decision-neon-glow-outer: rgba(255, 92, 116, 0.2);
+  --decision-neon-glow-inner: rgba(255, 177, 191, 0.16);
+  --decision-neon-bg-top: rgba(53, 10, 19, 0.96);
+  --decision-neon-bg-bottom: rgba(20, 5, 9, 0.94);
+  --decision-hover-text: #05080d;
+}
+
+/* ---- Pass Priority Button ---- */
+.pass-priority-btn {
+  --decision-neon-text: var(--pass-text, #ffd27f);
+  --decision-neon-border: var(--pass-border, rgba(255, 180, 76, 0.84));
+  --decision-neon-glow: var(--pass-glow, rgba(255, 165, 64, 0.42));
+  --decision-neon-glow-outer: var(--pass-glow-outer, rgba(255, 165, 64, 0.2));
+  --decision-neon-glow-inner: var(--pass-glow-inner, rgba(255, 212, 130, 0.16));
 }
 
 @keyframes action-pill-carousel {

@@ -2,22 +2,21 @@ use crate::ability::{Ability, AbilityKind, TriggeredAbility};
 use crate::cards::ParseAnnotations;
 use crate::cards::builders::{
     AdditionalCostChoiceOptionAst, CardDefinitionBuilder, CardTextError, EffectAst, LineInfo,
-    ParsedAbility, StaticAbilityAst, TriggerSpec, collect_tag_spans_from_effects_with_context,
-    compile_statement_effects, compile_statement_effects_with_seed,
+    LoweredEffects, ParsedAbility, ReferenceExports, ReferenceImports, StaticAbilityAst,
+    TriggerSpec, collect_tag_spans_from_effects_with_context, compile_statement_effects,
+    compile_statement_effects_with_imports, compile_trigger_effects_with_imports,
     compile_trigger_effects_with_intervening_if,
-    compile_trigger_effects_with_intervening_if_seed, compile_trigger_effects_with_seed,
-    compile_trigger_spec,
+    compile_trigger_effects_with_intervening_if_imports, compile_trigger_spec,
 };
 use crate::effect::{Effect, EffectMode};
 use crate::static_abilities::StaticAbility;
-use crate::target::ChooseSpec;
 use crate::zone::Zone;
 
-pub(crate) fn lower_statement_effects_with_seed(
+pub(crate) fn lower_statement_effects_with_imports(
     effects_ast: &[EffectAst],
-    seed_last_object_tag: Option<&str>,
-) -> Result<Vec<Effect>, CardTextError> {
-    compile_statement_effects_with_seed(effects_ast, seed_last_object_tag)
+    imports: &ReferenceImports,
+) -> Result<LoweredEffects, CardTextError> {
+    compile_statement_effects_with_imports(effects_ast, imports)
 }
 
 pub(crate) fn lower_statement_effects(
@@ -26,34 +25,42 @@ pub(crate) fn lower_statement_effects(
     compile_statement_effects(effects_ast)
 }
 
-pub(crate) fn lower_effects_with_trigger_context_and_seed(
+pub(crate) fn lower_effects_with_trigger_context_and_imports(
     trigger: Option<&TriggerSpec>,
     effects_ast: &[EffectAst],
-    seed_last_object_tag: Option<&str>,
-) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
-    compile_trigger_effects_with_seed(trigger, effects_ast, seed_last_object_tag)
+    imports: &ReferenceImports,
+) -> Result<LoweredEffects, CardTextError> {
+    compile_trigger_effects_with_imports(trigger, effects_ast, imports)
 }
 
-pub(crate) fn lower_activated_ability_effects_with_seed(
+pub(crate) fn lower_activated_ability_effects_with_imports(
     effects_ast: &[EffectAst],
-    seed_last_object_tag: Option<&str>,
-) -> Result<(Vec<Effect>, Vec<ChooseSpec>), CardTextError> {
-    lower_effects_with_trigger_context_and_seed(None, effects_ast, seed_last_object_tag)
+    imports: &ReferenceImports,
+) -> Result<LoweredEffects, CardTextError> {
+    lower_effects_with_trigger_context_and_imports(None, effects_ast, imports)
 }
 
-pub(crate) fn lower_additional_cost_choice_modes(
+pub(crate) fn lower_additional_cost_choice_modes_with_exports(
     options: &[AdditionalCostChoiceOptionAst],
-) -> Result<Vec<EffectMode>, CardTextError> {
-    options
-        .iter()
-        .map(|option| {
-            let effects = lower_statement_effects(&option.effects)?;
-            Ok(EffectMode {
-                description: option.description.trim().to_string(),
-                effects,
-            })
-        })
-        .collect()
+) -> Result<(Vec<EffectMode>, ReferenceExports), CardTextError> {
+    let mut exports = ReferenceExports::default();
+    let mut first = true;
+    let mut modes = Vec::with_capacity(options.len());
+    for option in options {
+        let lowered =
+            lower_statement_effects_with_imports(&option.effects, &ReferenceImports::default())?;
+        if first {
+            exports = lowered.exports.clone();
+            first = false;
+        } else {
+            exports = ReferenceExports::join(&exports, &lowered.exports);
+        }
+        modes.push(EffectMode {
+            description: option.description.trim().to_string(),
+            effects: lowered.effects,
+        });
+    }
+    Ok((modes, exports))
 }
 
 pub(crate) fn materialize_static_abilities_ast(
@@ -131,7 +138,7 @@ pub(crate) fn parsed_triggered_ability(
     functional_zones: Vec<Zone>,
     text: Option<String>,
     intervening_if: Option<crate::ConditionExpr>,
-    seed_last_object_tag: Option<String>,
+    reference_imports: ReferenceImports,
 ) -> ParsedAbility {
     ParsedAbility {
         ability: Ability {
@@ -145,7 +152,7 @@ pub(crate) fn parsed_triggered_ability(
             text,
         },
         effects_ast: Some(effects_ast),
-        seed_last_object_tag,
+        reference_imports,
         trigger_spec: Some(trigger),
     }
 }
@@ -165,16 +172,15 @@ pub(crate) fn lower_parsed_ability(
             let Some(trigger_spec) = parsed.trigger_spec.as_ref() else {
                 return Ok(parsed);
             };
-            let (effects, choices, parsed_intervening_if) =
-                if let Some(seed_last_object_tag) = parsed.seed_last_object_tag.as_deref() {
-                    compile_trigger_effects_with_intervening_if_seed(
-                        Some(trigger_spec),
-                        effects_ast,
-                        Some(seed_last_object_tag),
-                    )?
-                } else {
-                    compile_trigger_effects_with_intervening_if(Some(trigger_spec), effects_ast)?
-                };
+            let (effects, choices, parsed_intervening_if) = if parsed.reference_imports.is_empty() {
+                compile_trigger_effects_with_intervening_if(Some(trigger_spec), effects_ast)?
+            } else {
+                compile_trigger_effects_with_intervening_if_imports(
+                    Some(trigger_spec),
+                    effects_ast,
+                    &parsed.reference_imports,
+                )?
+            };
             triggered.trigger = compile_trigger_spec(trigger_spec.clone());
             triggered.effects = effects;
             triggered.choices = choices;
@@ -195,12 +201,10 @@ pub(crate) fn lower_parsed_ability(
         return Ok(parsed);
     }
 
-    let (effects, choices) = lower_activated_ability_effects_with_seed(
-        effects_ast,
-        parsed.seed_last_object_tag.as_deref(),
-    )?;
-    activated.effects = effects;
-    activated.choices = choices;
+    let lowered =
+        lower_activated_ability_effects_with_imports(effects_ast, &parsed.reference_imports)?;
+    activated.effects = lowered.effects;
+    activated.choices = lowered.choices;
     Ok(parsed)
 }
 

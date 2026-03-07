@@ -9,12 +9,21 @@ const INSPECTOR_OVERLAY_WIDTH = "clamp(240px, 24vw, 360px)";
 const INSPECTOR_INLINE_MIN_WIDTH = 220;
 const INSPECTOR_INLINE_FALLBACK_WIDTH = 300;
 const INSPECTOR_INLINE_MAX_WIDTH = "min(32vw, 420px)";
+const INSPECTOR_INLINE_MAX_WIDTH_PX = 420;
+const INLINE_EXPANDED_MIN_WIDTH = 360;
+const INLINE_EXPANDED_FALLBACK_WIDTH = 960;
+const INLINE_EXPANDED_MAX_WIDTH_PX = 1200;
+const INLINE_EXPANDED_MIN_HAND_WIDTH = 168;
 const DEFAULT_INSPECTOR_BOTTOM_OFFSET = 8;
-const INLINE_EXPANDED_DEFAULT_HEIGHT = 306;
-const INLINE_EXPANDED_MIN_HEIGHT = 212;
+const INLINE_EXPANDED_DEFAULT_HEIGHT = 248;
+const INLINE_EXPANDED_MIN_HEIGHT = 152;
 const INLINE_EXPANDED_SAFE_GAP = 12;
 const INLINE_EXPANDED_BOTTOM_GAP = 4;
-const INLINE_EXPANDED_RIGHT_BLEED = 18;
+const INLINE_EXPANDED_RIGHT_BLEED = 8;
+
+function clampNumber(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
 
 function objectExistsInState(state, objectId) {
   if (objectId == null) return false;
@@ -44,6 +53,49 @@ function objectExistsInState(state, objectId) {
   }
 
   return false;
+}
+
+function locateObjectInState(state, objectId) {
+  if (objectId == null) return null;
+  const needle = String(objectId);
+  const perspective = state?.perspective;
+  const players = state?.players || [];
+  const zonesByPlayer = [
+    ["battlefield", (player) => player?.battlefield || []],
+    ["hand", (player) => player?.hand_cards || []],
+    ["graveyard", (player) => player?.graveyard_cards || []],
+    ["exile", (player) => player?.exile_cards || []],
+    ["command", (player) => player?.command_cards || []],
+  ];
+
+  for (const player of players) {
+    const side = player?.id === perspective ? "self" : "opponent";
+    for (const [zone, readCards] of zonesByPlayer) {
+      for (const card of readCards(player)) {
+        if (String(card?.id) === needle) {
+          return { side, zone };
+        }
+        if (Array.isArray(card?.member_ids) && card.member_ids.some((id) => String(id) === needle)) {
+          return { side, zone };
+        }
+      }
+    }
+  }
+
+  for (const entry of state?.stack_objects || []) {
+    if (String(entry?.id) === needle || String(entry?.inspect_object_id) === needle) {
+      return { side: "stack", zone: "stack" };
+    }
+  }
+
+  return null;
+}
+
+function shouldUseTopInlineDock(location) {
+  return (
+    location?.side === "self"
+    && location?.zone !== "stack"
+  );
 }
 
 function isFocusedDecision(decision) {
@@ -83,11 +135,16 @@ export default function RightRail({
   inspectorBottomOffset = DEFAULT_INSPECTOR_BOTTOM_OFFSET,
   inline = false,
   inlineExpanded = false,
+  inlineDockPlacement = "bottom",
+  inlineExpandedSide = "right",
+  allowTopInlinePlacement = false,
   forceInlineExpanded = false,
   fullArtInlineExpanded = false,
 }) {
   const { state } = useGame();
   const [preferredInlineWidth, setPreferredInlineWidth] = useState(null);
+  const [preferredExpandedInlineWidth, setPreferredExpandedInlineWidth] = useState(null);
+  const [maxExpandedInlineWidth, setMaxExpandedInlineWidth] = useState(INLINE_EXPANDED_MAX_WIDTH_PX);
   const railRef = useRef(null);
   const compactInspectorRef = useRef(null);
   const expandedInspectorRef = useRef(null);
@@ -100,9 +157,11 @@ export default function RightRail({
   const stackObjects = state?.stack_objects || [];
   const hasStackEntries = stackObjects.length > 0 || (state?.stack_preview || []).length > 0;
   const topStackObject = stackObjects[0];
-  const topStackObjectId = topStackObject ? String(topStackObject.id) : null;
+  const topStackObjectId = topStackObject
+    ? String(topStackObject.inspect_object_id ?? topStackObject.id)
+    : null;
   const resolvingCastObjectId = state?.stack_size > 0 && topStackObject && !topStackObject.ability_kind
-    ? String(topStackObject.id)
+    ? String(topStackObject.inspect_object_id ?? topStackObject.id)
     : null;
   const resolvingCastStableId = resolvingCastObjectId && topStackObject?.stable_id != null
     ? Number(topStackObject.stable_id)
@@ -116,7 +175,7 @@ export default function RightRail({
   // During non-priority decision steps (targeting, choose number/options, etc),
   // keep inspector focus on the spell being cast/resolved instead of hover.
   const decisionLockedObjectId = focusedDecision
-    ? (relevantPinnedObjectId ?? resolvingCastObjectId ?? hoveredObjectId ?? topStackObjectId)
+    ? (resolvingCastObjectId ?? relevantPinnedObjectId ?? hoveredObjectId ?? topStackObjectId)
     : null;
 
   const selectedObjectId = focusedDecision
@@ -125,6 +184,27 @@ export default function RightRail({
   const validSelectedObjectId = objectExistsInState(state, selectedObjectId)
     ? selectedObjectId
     : null;
+  const selectedObjectLocation = useMemo(() => {
+    const isCastingSpellFocus = (
+      focusedDecision
+      && validSelectedObjectId != null
+      && resolvingCastObjectId != null
+      && String(validSelectedObjectId) === String(resolvingCastObjectId)
+      && decision?.player != null
+    );
+    if (isCastingSpellFocus) {
+      return {
+        side: Number(decision.player) === Number(state?.perspective) ? "self" : "opponent",
+        zone: "casting",
+      };
+    }
+    return locateObjectInState(state, validSelectedObjectId);
+  }, [decision?.player, focusedDecision, resolvingCastObjectId, state, validSelectedObjectId]);
+  const prefersTopInlineDock = (
+    inline
+    && allowTopInlinePlacement
+    && shouldUseTopInlineDock(selectedObjectLocation)
+  );
   const suppressDirectResolvingCastInspector =
     !hasStackEntries
     &&
@@ -136,7 +216,14 @@ export default function RightRail({
     && resolvingCastObjectId != null
     && String(validSelectedObjectId) === String(resolvingCastObjectId);
   const shouldShowInspector = validSelectedObjectId != null && !suppressDirectResolvingCastInspector;
-  const shouldShowRail = shouldShowInspector;
+  const shouldShowRail = shouldShowInspector && (
+    !inline
+    || (
+      prefersTopInlineDock
+        ? inlineDockPlacement === "top"
+        : inlineDockPlacement === "bottom"
+    )
+  );
   const shouldRenderExpandedInlineInspector =
     inline
     && shouldShowRail
@@ -161,6 +248,20 @@ export default function RightRail({
       : INSPECTOR_INLINE_FALLBACK_WIDTH;
     return `clamp(${INSPECTOR_INLINE_MIN_WIDTH}px, ${preferred}px, ${INSPECTOR_INLINE_MAX_WIDTH})`;
   }, [preferredInlineWidth]);
+  const compactInlineWidthPx = useMemo(() => {
+    const preferred = Number.isFinite(preferredInlineWidth)
+      ? Math.round(preferredInlineWidth)
+      : INSPECTOR_INLINE_FALLBACK_WIDTH;
+    return clampNumber(preferred, INSPECTOR_INLINE_MIN_WIDTH, INSPECTOR_INLINE_MAX_WIDTH_PX);
+  }, [preferredInlineWidth]);
+  const expandedInlineWidth = useMemo(() => {
+    const preferred = Number.isFinite(preferredExpandedInlineWidth)
+      ? Math.round(preferredExpandedInlineWidth)
+      : INLINE_EXPANDED_FALLBACK_WIDTH;
+    const minWidth = Math.max(compactInlineWidthPx, INLINE_EXPANDED_MIN_WIDTH);
+    const maxWidth = Math.max(minWidth, Math.round(maxExpandedInlineWidth || INLINE_EXPANDED_MAX_WIDTH_PX));
+    return clampNumber(preferred, minWidth, maxWidth);
+  }, [compactInlineWidthPx, maxExpandedInlineWidth, preferredExpandedInlineWidth]);
 
   useLayoutEffect(() => {
     const railEl = railRef.current;
@@ -225,25 +326,56 @@ export default function RightRail({
     const railEl = railRef.current;
     if (!railEl) return undefined;
 
-    const workspaceEl = railEl.closest("section");
+    const workspaceEl = railEl.closest("[data-workspace-shell]") ?? railEl.closest("section");
+    const dockEl = railEl.closest("[data-inspector-dock]");
+    const handDockEl = dockEl?.querySelector("[data-hand-dock-lane]");
     const stripEl = workspaceEl?.querySelector(".priority-inline-panel");
+    const stackEl = workspaceEl?.querySelector("[data-my-zone] [data-inspector-stack-timeline]");
     let rafId = null;
 
-    const measureExpandedHeight = () => {
+    const measureExpandedLayout = () => {
       const hostRect = (workspaceEl || railEl).getBoundingClientRect();
+      const dockRect = dockEl?.getBoundingClientRect?.() || null;
       const stripRect = stripEl?.getBoundingClientRect?.() || null;
-      const safeTop = stripRect
-        ? stripRect.bottom + INLINE_EXPANDED_SAFE_GAP
-        : hostRect.top + INLINE_EXPANDED_SAFE_GAP;
-      const safeBottom = hostRect.bottom - INLINE_EXPANDED_BOTTOM_GAP;
-      const availableHeight = Math.floor(safeBottom - safeTop);
+      const stackRect = stackEl?.getBoundingClientRect?.() || null;
+      const safeTop = inlineDockPlacement === "top"
+        ? hostRect.top + INLINE_EXPANDED_SAFE_GAP
+        : Math.max(
+          stripRect ? stripRect.bottom + INLINE_EXPANDED_SAFE_GAP : hostRect.top + INLINE_EXPANDED_SAFE_GAP,
+          stackRect && stackRect.height > 0
+            ? stackRect.bottom + INLINE_EXPANDED_SAFE_GAP
+            : hostRect.top + INLINE_EXPANDED_SAFE_GAP
+        );
+      const safeBottom = inlineDockPlacement === "top"
+        ? ((dockEl?.getBoundingClientRect?.() || railEl.getBoundingClientRect()).bottom - INLINE_EXPANDED_BOTTOM_GAP)
+        : hostRect.bottom - INLINE_EXPANDED_BOTTOM_GAP;
+      const availableHeight = Math.max(0, Math.floor(safeBottom - safeTop));
+      const minimumHeight = Math.min(INLINE_EXPANDED_MIN_HEIGHT, availableHeight);
       const nextHeight = Math.max(
-        INLINE_EXPANDED_MIN_HEIGHT,
+        minimumHeight,
         Math.min(INLINE_EXPANDED_DEFAULT_HEIGHT, availableHeight)
       );
 
       setExpandedInlineHeight((currentHeight) => (
         Math.abs(currentHeight - nextHeight) >= 1 ? nextHeight : currentHeight
+      ));
+
+      const dockGap = dockEl
+        ? parseFloat(getComputedStyle(dockEl).columnGap || getComputedStyle(dockEl).gap || "0")
+        : 0;
+      const availableWidth = dockRect
+        ? (
+          inlineDockPlacement === "top"
+            ? dockRect.width
+            : dockRect.width - INLINE_EXPANDED_MIN_HAND_WIDTH - dockGap
+        )
+        : INLINE_EXPANDED_MAX_WIDTH_PX;
+      const nextMaxWidth = Math.max(
+        Math.max(compactInlineWidthPx, INLINE_EXPANDED_MIN_WIDTH),
+        Math.min(Math.floor(availableWidth), INLINE_EXPANDED_MAX_WIDTH_PX)
+      );
+      setMaxExpandedInlineWidth((currentWidth) => (
+        Math.abs(currentWidth - nextMaxWidth) >= 1 ? nextMaxWidth : currentWidth
       ));
     };
 
@@ -251,7 +383,7 @@ export default function RightRail({
       if (rafId != null) cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
         rafId = null;
-        measureExpandedHeight();
+        measureExpandedLayout();
       });
     };
 
@@ -260,7 +392,10 @@ export default function RightRail({
     const observer = new ResizeObserver(scheduleMeasure);
     observer.observe(railEl);
     if (workspaceEl) observer.observe(workspaceEl);
+    if (dockEl) observer.observe(dockEl);
+    if (handDockEl) observer.observe(handDockEl);
     if (stripEl) observer.observe(stripEl);
+    if (stackEl) observer.observe(stackEl);
     window.addEventListener("resize", scheduleMeasure);
 
     return () => {
@@ -268,20 +403,32 @@ export default function RightRail({
       observer.disconnect();
       window.removeEventListener("resize", scheduleMeasure);
     };
-  }, [inline, shouldRenderExpandedInlineInspector, shouldShowRail]);
+  }, [compactInlineWidthPx, inline, inlineDockPlacement, shouldRenderExpandedInlineInspector, shouldShowRail]);
 
   const containerStyle = useMemo(
     () => (inline
       ? {
-        width: shouldShowRail ? inlineWidth : "0px",
+        width: shouldShowRail
+          ? (useExpandedInlineInspector ? `${expandedInlineWidth}px` : inlineWidth)
+          : "0px",
       }
       : {
         width: INSPECTOR_OVERLAY_WIDTH,
         top: 8,
         bottom: inspectorBottomOffset,
       }),
-    [inline, inlineWidth, inspectorBottomOffset, shouldShowRail]
+    [
+      expandedInlineWidth,
+      inline,
+      inlineWidth,
+      inspectorBottomOffset,
+      shouldShowRail,
+      useExpandedInlineInspector,
+    ]
   );
+  const expandedInlineShellOffset = inlineExpandedSide === "left"
+    ? { left: `-${INLINE_EXPANDED_RIGHT_BLEED}px`, right: "auto", transformOrigin: "bottom left" }
+    : { left: "auto", right: `-${INLINE_EXPANDED_RIGHT_BLEED}px`, transformOrigin: "bottom right" };
 
   return (
     <aside
@@ -299,13 +446,15 @@ export default function RightRail({
           ref={compactInspectorRef}
           className={cn(
             "h-full overflow-hidden border border-[#2a3647]/70 bg-transparent shadow-[0_18px_42px_rgba(0,0,0,0.24)]",
-            inline ? "rounded-r rounded-l-sm" : "rounded",
+            inline
+              ? (inlineExpandedSide === "left" ? "rounded-l rounded-r-sm" : "rounded-r rounded-l-sm")
+              : "rounded",
             shouldShowRail ? "pointer-events-auto" : "pointer-events-none"
           )}
         >
           <div className="relative h-full min-h-0 overflow-hidden">
             <HoverArtOverlay
-              objectId={validSelectedObjectId}
+              objectId={shouldShowRail ? validSelectedObjectId : null}
               suppressStableId={inspectorSuppressStableId}
               compact={inline}
               onPreferredWidthChange={inline ? setPreferredInlineWidth : null}
@@ -321,15 +470,19 @@ export default function RightRail({
             )}
             style={{
               width: "100%",
-              right: `-${INLINE_EXPANDED_RIGHT_BLEED}px`,
               height: `${expandedInlineHeight}px`,
-              transformOrigin: "bottom right",
+              ...expandedInlineShellOffset,
             }}
           >
             <HoverArtOverlay
-              objectId={validSelectedObjectId}
+              objectId={shouldShowRail ? validSelectedObjectId : null}
               suppressStableId={inspectorSuppressStableId}
               displayMode={fullArtInlineExpanded ? "full-art" : "inspector"}
+              availableInspectorWidth={expandedInlineWidth}
+              availableInspectorHeight={expandedInlineHeight}
+              onPreferredInspectorWidthChange={
+                fullArtInlineExpanded ? null : setPreferredExpandedInlineWidth
+              }
             />
           </div>
         )}

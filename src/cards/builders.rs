@@ -244,7 +244,7 @@ pub(crate) struct AdditionalCostChoiceOptionAst {
 pub(crate) struct ParsedAbility {
     ability: Ability,
     effects_ast: Option<Vec<EffectAst>>,
-    seed_last_object_tag: Option<String>,
+    reference_imports: ReferenceImports,
     trigger_spec: Option<TriggerSpec>,
 }
 
@@ -601,6 +601,12 @@ pub(crate) enum ControlDurationAst {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExtraTurnAnchorAst {
+    CurrentTurn,
+    ReferencedTurn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SharedTypeConstraintAst {
     CardType,
     PermanentType,
@@ -916,6 +922,7 @@ pub(crate) enum EffectAst {
     },
     ExtraTurnAfterTurn {
         player: PlayerAst,
+        anchor: ExtraTurnAnchorAst,
     },
     DelayedUntilNextEndStep {
         player: PlayerFilter,
@@ -1094,12 +1101,6 @@ pub(crate) enum EffectAst {
     EnergyCounters {
         count: Value,
         player: PlayerAst,
-    },
-    ResolvedMetadata {
-        effect: Box<EffectAst>,
-        auto_tag_object_targets: bool,
-        assigned_effect_id: Option<EffectId>,
-        reference_frame: Option<parse_parsing::LoweringReferenceFrame>,
     },
     May {
         effects: Vec<EffectAst>,
@@ -1482,6 +1483,12 @@ pub(crate) use cost_effects::*;
 mod parse_parsing;
 pub(crate) use parse_parsing::*;
 
+mod reference_model;
+pub(crate) use reference_model::*;
+
+mod reference_lowering;
+pub(crate) use reference_lowering::*;
+
 mod card_ast;
 pub(crate) use card_ast::*;
 
@@ -1520,7 +1527,6 @@ pub struct CardDefinitionBuilder {
 
     /// For Auras: what this card can enchant (used for non-target attachments)
     aura_attach_filter: Option<ObjectFilter>,
-
 }
 
 impl CardDefinitionBuilder {
@@ -1652,6 +1658,15 @@ impl CardDefinitionBuilder {
     /// Set the oracle text.
     pub fn oracle_text(mut self, text: impl Into<String>) -> Self {
         self.card_builder = self.card_builder.oracle_text(text);
+        self
+    }
+
+    /// Mark this card as an Aura that enchants objects matching the given filter.
+    pub fn enchants(mut self, filter: ObjectFilter) -> Self {
+        self.aura_attach_filter = Some(filter.clone());
+        self.spell_effect = Some(vec![Effect::attach_to(ChooseSpec::target(
+            ChooseSpec::Object(filter),
+        ))]);
         self
     }
 
@@ -2582,7 +2597,10 @@ impl CardDefinitionBuilder {
             kind: AbilityKind::Triggered(TriggeredAbility {
                 trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
                 effects: vec![
-                    Effect::remove_counters(CounterType::Echo, 1, ChooseSpec::Source),
+                    Effect::with_id(
+                        0,
+                        Effect::remove_counters(CounterType::Echo, 1, ChooseSpec::Source),
+                    ),
                     Effect::if_then(
                         EffectId(0),
                         EffectPredicate::Happened,
@@ -8374,11 +8392,10 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .expect("parse transform");
 
         let effects = def.spell_effect.expect("spell effect");
+        let debug = format!("{effects:?}");
         assert!(
-            effects
-                .iter()
-                .any(|e| e.downcast_ref::<TransformEffect>().is_some()),
-            "should include transform effect"
+            debug.contains("TransformEffect"),
+            "should include transform effect, got {debug}"
         );
     }
 
@@ -8728,6 +8745,31 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
                     && display.contains("has Vigilance")
             }),
             "expected untapped-gated vigilance grant, got: {displays:?}"
+        );
+    }
+
+    #[test]
+    fn parse_static_condition_you_own_card_exiled_with_counter() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Rex Condition Variant")
+            .parse_text(
+                "As long as you own a card exiled with a brain counter, this creature has vigilance.",
+            )
+            .expect("ownership-based exile counter condition should parse");
+
+        let displays: Vec<String> = def
+            .abilities
+            .iter()
+            .filter_map(|ability| match &ability.kind {
+                AbilityKind::Static(static_ability) => Some(static_ability.display()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            displays.iter().any(|display| {
+                display.contains("as long as you own a card exiled with a brain counter")
+                    && display.contains("has Vigilance")
+            }),
+            "expected ownership-gated vigilance grant, got: {displays:?}"
         );
     }
 

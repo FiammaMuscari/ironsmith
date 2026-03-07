@@ -1,27 +1,18 @@
 #[allow(unused_imports)]
 use crate::ability::{Ability, AbilityKind, ActivatedAbility, ActivationTiming};
 use crate::alternative_cast::AlternativeCastingMethod;
-use crate::cards::builders::{
-    CardTextError, DamageBySpec, EffectAst, IT_TAG, KeywordAction, LineAst, ParsedAbility,
-    PlayerAst, PredicateAst, ReturnControllerAst, SubjectAst, TagKey, TargetAst, TextSpan, Token,
-    TriggerSpec, ends_with_until_end_of_turn, find_activation_cost_start, is_article,
-    is_source_reference_words, keyword_action_to_static_ability, parse_ability_line,
-    parse_card_type, parse_color, parse_counter_type_word, parse_effect_chain,
-    parse_effect_clause, parse_effect_sentences, parse_keyword_mechanic_clause,
-    parse_object_filter, parse_predicate, parse_static_ability_ast_line, parse_subject,
-    parse_target_phrase, parse_value, parse_where_x_value_clause, span_from_tokens, split_on_or,
-    split_on_period, starts_with_until_end_of_turn, tokenize_line, token_index_for_word_index,
-    trim_commas, words,
+use crate::cards::builders::effect_ast_traversal::{
+    for_each_nested_effects, for_each_nested_effects_mut,
 };
 use crate::cards::builders::parse_parsing::effects_clauses::{
-    find_verb, parse_add_mana, parse_counter_type_from_tokens, parse_filter_comparison_tokens,
-    looks_like_pt_word, parse_next_end_step_token_delay_flags,
+    find_verb, looks_like_pt_word, parse_add_mana, parse_counter_type_from_tokens,
+    parse_filter_comparison_tokens, parse_next_end_step_token_delay_flags,
 };
 use crate::cards::builders::parse_parsing::effects_sentences::{
-    is_negated_untap_clause, parse_effect_sentence, parse_restriction_duration,
-    strip_leading_articles, trim_edge_punctuation, is_beginning_of_end_step_words,
-    is_end_of_combat_words, parse_mana_symbol, parse_mana_symbol_group,
-    parse_scryfall_mana_cost, parse_subtype_word, parse_supertype_word,
+    is_beginning_of_end_step_words, is_end_of_combat_words, is_negated_untap_clause,
+    parse_effect_sentence, parse_mana_symbol, parse_mana_symbol_group, parse_restriction_duration,
+    parse_scryfall_mana_cost, parse_subtype_word, parse_supertype_word, strip_leading_articles,
+    trim_edge_punctuation,
 };
 use crate::cards::builders::parse_parsing::keyword_static::{
     parse_add_mana_equal_amount_value, parse_cost_modifier_amount,
@@ -40,6 +31,17 @@ use crate::cards::builders::parse_parsing::targets::{
     contains_source_from_your_hand_phrase, is_source_from_your_graveyard_words,
     parse_target_count_range_prefix,
 };
+use crate::cards::builders::{
+    CardTextError, DamageBySpec, EffectAst, IT_TAG, KeywordAction, LineAst, ParsedAbility,
+    PlayerAst, PredicateAst, ReferenceImports, ReturnControllerAst, SubjectAst, TagKey, TargetAst,
+    TextSpan, Token, TriggerSpec, ends_with_until_end_of_turn, find_activation_cost_start,
+    is_article, is_source_reference_words, keyword_action_to_static_ability, parse_ability_line,
+    parse_card_type, parse_color, parse_counter_type_word, parse_effect_chain, parse_effect_clause,
+    parse_effect_sentences, parse_keyword_mechanic_clause, parse_object_filter, parse_predicate,
+    parse_static_ability_ast_line, parse_subject, parse_target_phrase, parse_value,
+    parse_where_x_value_clause, span_from_tokens, split_on_or, split_on_period,
+    starts_with_until_end_of_turn, token_index_for_word_index, tokenize_line, trim_commas, words,
+};
 use crate::color::ColorSet;
 use crate::cost::{OptionalCost, TotalCost};
 use crate::effect::{ChoiceCount, Effect, Until, Value};
@@ -50,9 +52,6 @@ use crate::static_abilities::StaticAbility;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::types::{CardType, Subtype, Supertype};
 use crate::zone::Zone;
-use crate::cards::builders::effect_ast_traversal::{
-    for_each_nested_effects, for_each_nested_effects_mut,
-};
 
 pub(crate) fn parse_activated_line(
     tokens: &[Token],
@@ -142,9 +141,10 @@ pub(crate) fn parse_activated_line(
         if is_primary_add_clause {
             let (mana_cost, cost_effects) = parse_activation_cost(cost_tokens)?;
             let mana_cost = crate::ability::merge_cost_effects(mana_cost, cost_effects);
-            let seed_last_object_tag = first_sacrifice_cost_choice_tag(&mana_cost)
+            let reference_imports = first_sacrifice_cost_choice_tag(&mana_cost)
                 .or_else(|| last_exile_cost_choice_tag(&mana_cost))
-                .map(|tag| tag.as_str().to_string());
+                .map(ReferenceImports::with_last_object_tag)
+                .unwrap_or_default();
 
             let mut extra_effects_ast = Vec::new();
             if effect_sentences.len() > 1 {
@@ -224,7 +224,7 @@ pub(crate) fn parse_activated_line(
                 return Ok(Some(ParsedAbility {
                     ability,
                     effects_ast: Some(effects_ast),
-                    seed_last_object_tag,
+                    reference_imports: reference_imports.clone(),
                     trigger_spec: None,
                 }));
             }
@@ -251,7 +251,7 @@ pub(crate) fn parse_activated_line(
                 return Ok(Some(ParsedAbility {
                     ability,
                     effects_ast: Some(effects_ast),
-                    seed_last_object_tag,
+                    reference_imports: reference_imports.clone(),
                     trigger_spec: None,
                 }));
             }
@@ -289,7 +289,7 @@ pub(crate) fn parse_activated_line(
                     return Ok(Some(ParsedAbility {
                         ability,
                         effects_ast: None,
-                        seed_last_object_tag: None,
+                        reference_imports: ReferenceImports::default(),
                         trigger_spec: None,
                     }));
                 }
@@ -314,7 +314,7 @@ pub(crate) fn parse_activated_line(
                 return Ok(Some(ParsedAbility {
                     ability,
                     effects_ast: Some(effects_ast),
-                    seed_last_object_tag,
+                    reference_imports: reference_imports,
                     trigger_spec: None,
                 }));
             }
@@ -328,9 +328,10 @@ pub(crate) fn parse_activated_line(
     if effects_ast.is_empty() {
         return Ok(None);
     }
-    let seed_tag = first_sacrifice_cost_choice_tag(&mana_cost)
+    let reference_imports = first_sacrifice_cost_choice_tag(&mana_cost)
         .or_else(|| last_exile_cost_choice_tag(&mana_cost))
-        .map(|tag| tag.as_str().to_string());
+        .map(ReferenceImports::with_last_object_tag)
+        .unwrap_or_default();
     let mana_cost = crate::ability::merge_cost_effects(mana_cost, cost_effects);
 
     Ok(Some(ParsedAbility {
@@ -353,7 +354,7 @@ pub(crate) fn parse_activated_line(
             ability
         },
         effects_ast: Some(effects_ast),
-        seed_last_object_tag: seed_tag,
+        reference_imports,
         trigger_spec: None,
     }))
 }
@@ -620,7 +621,7 @@ pub(crate) fn parse_level_up_line(
             text: Some(level_up_text),
         },
         effects_ast: None,
-        seed_last_object_tag: None,
+        reference_imports: ReferenceImports::default(),
         trigger_spec: None,
     }))
 }
@@ -729,7 +730,7 @@ pub(crate) fn parse_cycling_line(tokens: &[Token]) -> Result<Option<ParsedAbilit
             text: Some(render_text),
         },
         effects_ast: None,
-        seed_last_object_tag: None,
+        reference_imports: ReferenceImports::default(),
         trigger_spec: None,
     }))
 }
@@ -823,7 +824,7 @@ pub(crate) fn parse_reinforce_line(
             text: Some(render_text),
         },
         effects_ast: None,
-        seed_last_object_tag: None,
+        reference_imports: ReferenceImports::default(),
         trigger_spec: None,
     }))
 }
@@ -1170,7 +1171,7 @@ pub(crate) fn parse_morph_keyword_line(
     Ok(Some(ParsedAbility {
         ability: Ability::static_ability(static_ability).with_text(&text),
         effects_ast: None,
-        seed_last_object_tag: None,
+        reference_imports: ReferenceImports::default(),
         trigger_spec: None,
     }))
 }
@@ -1381,6 +1382,24 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
     }
 
     if saw_non_symbol {
+        let looks_like_cost_prefix = clause_words.get(1).is_some_and(|word| {
+            parse_mana_symbol(word).is_ok()
+                || matches!(
+                    *word,
+                    "tap"
+                        | "t"
+                        | "pay"
+                        | "discard"
+                        | "sacrifice"
+                        | "exile"
+                        | "return"
+                        | "remove"
+                        | "behold"
+                )
+        });
+        if !looks_like_cost_prefix {
+            return Ok(None);
+        }
         let cost_tokens = trim_commas(&tokens[1..]);
         if cost_tokens.is_empty() {
             return Err(CardTextError::ParseError(
@@ -1414,7 +1433,7 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
                 text: Some(equip_text),
             },
             effects_ast: None,
-            seed_last_object_tag: None,
+            reference_imports: ReferenceImports::default(),
             trigger_spec: None,
         }));
     }
@@ -1461,7 +1480,7 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
             text: Some(equip_text),
         },
         effects_ast: None,
-        seed_last_object_tag: None,
+        reference_imports: ReferenceImports::default(),
         trigger_spec: None,
     }))
 }

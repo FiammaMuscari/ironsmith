@@ -528,25 +528,27 @@ mod tests {
                 // Actions (from debug output):
                 //   [0] Pass
                 //   [1] Mana: Accursed Duneyard
-                //   [2] Ability: Selfless Spirit (sacrifice!)
-                //   [3] Mana: Swamp
+                //   [2] Ability: Accursed Duneyard (regenerate)
+                //   [3] Ability: Selfless Spirit (sacrifice!)
                 //   [4] Mana: Swamp
-                "3", // Tap first Swamp for mana (adds {B})
+                //   [5] Mana: Swamp
+                "4", // Tap first Swamp for mana (adds {B})
                 // Actions now:
                 //   [0] Pass
                 //   [1] Mana: Accursed Duneyard
-                //   [2] Ability: Selfless Spirit
+                //   [2] Ability: Accursed Duneyard (regenerate)
                 //   [3] Mana: Swamp
-                "3", // Tap second Swamp for mana (adds {B}, now have {B}{B} = 2 black)
+                //   [4] Mana: Swamp
+                "4", // Tap second Swamp for mana (adds {B}, now have {B}{B} = 2 black)
                 // Now with {B}{B} in pool, Duneyard regenerate becomes available
                 // Actions now (from debug output):
                 //   [0] Pass
                 //   [1] Mana: Accursed Duneyard
                 //   [2] Ability: Accursed Duneyard (regenerate!)
-                //   [3] Ability: Selfless Spirit (sacrifice)
+                //   [3] Mana: Swamp
                 "2", // Activate Accursed Duneyard's regenerate ability
                 "0", // Target Selfless Spirit (the Spirit creature)
-                     // Mana is paid from pool, ability goes on stack and resolves via auto-pass
+                "",  // Pass priority so the regenerate ability resolves
             ],
             ReplayTestConfig::new().p1_battlefield(vec![
                 "Accursed Duneyard",

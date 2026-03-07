@@ -1,14 +1,17 @@
+use crate::cards::builders::effect_ast_traversal::{
+    for_each_nested_effects, for_each_nested_effects_mut, try_for_each_nested_effects_mut,
+};
 #[allow(unused_imports)]
 use crate::cards::builders::{
-    CarryContext, CardTextError, EffectAst, IfResultPredicate, IT_TAG, PlayerAst, TagKey,
+    CardTextError, CarryContext, EffectAst, IT_TAG, IfResultPredicate, PlayerAst, TagKey,
     TargetAst, Token, TokenCopyFollowup, append_token_reminder_to_last_create_effect,
     build_may_cast_tagged_effect, collapse_token_copy_end_of_combat_exile_followup,
     collapse_token_copy_next_end_step_exile_followup, effect_creates_any_token,
-    effect_creates_eldrazi_spawn_or_scion, explicit_player_for_carry, is_activate_only_restriction_sentence,
-    is_exile_that_token_at_end_of_combat, is_generic_token_reminder_sentence,
-    is_round_up_each_time_sentence, is_sacrifice_that_token_at_end_of_combat,
-    is_simple_copy_reference_sentence, is_spawn_scion_token_mana_reminder,
-    is_trigger_only_restriction_sentence, is_article,
+    effect_creates_eldrazi_spawn_or_scion, explicit_player_for_carry,
+    is_activate_only_restriction_sentence, is_article, is_exile_that_token_at_end_of_combat,
+    is_generic_token_reminder_sentence, is_round_up_each_time_sentence,
+    is_sacrifice_that_token_at_end_of_combat, is_simple_copy_reference_sentence,
+    is_spawn_scion_token_mana_reminder, is_trigger_only_restriction_sentence,
     maybe_apply_carried_player, maybe_apply_carried_player_with_clause, normalize_cant_words,
     parse_choose_card_type_then_reveal_top_and_put_chosen_to_hand,
     parse_choose_creature_type_then_become_type, parse_choose_target_prelude_sentence,
@@ -19,9 +22,6 @@ use crate::cards::builders::{
     parse_where_x_value_clause, parser_trace, replace_unbound_x_with_value, span_from_tokens,
     split_on_period, strip_embedded_token_rules_text, target_ast_to_object_filter,
     token_index_for_word_index, trim_commas, value_contains_unbound_x, words,
-};
-use crate::cards::builders::effect_ast_traversal::{
-    for_each_nested_effects, for_each_nested_effects_mut, try_for_each_nested_effects_mut,
 };
 use crate::effect::{Until, Value};
 use crate::static_abilities::StaticAbility;
@@ -959,7 +959,7 @@ pub(crate) fn is_that_turn_end_step_sentence(tokens: &[Token]) -> bool {
 
 pub(crate) fn most_recent_extra_turn_player(effects: &[EffectAst]) -> Option<PlayerAst> {
     effects.iter().rev().find_map(|effect| {
-        if let EffectAst::ExtraTurnAfterTurn { player } = effect {
+        if let EffectAst::ExtraTurnAfterTurn { player, .. } = effect {
             Some(*player)
         } else {
             None
@@ -1101,7 +1101,7 @@ fn parse_token_copy_followup_sentence(tokens: &[Token]) -> Option<TokenCopyFollo
 
 fn apply_unapplied_token_copy_followup(
     sentence: &[Token],
-    sentence_tokens: &[Token],
+    _sentence_tokens: &[Token],
     followup: TokenCopyFollowup,
 ) -> Result<Vec<EffectAst>, CardTextError> {
     let span = span_from_tokens(sentence);
@@ -1131,12 +1131,19 @@ fn apply_unapplied_token_copy_followup(
                 face_down: false,
             }],
         }],
-        TokenCopyFollowup::ExileAtEndOfCombat | TokenCopyFollowup::SacrificeAtEndOfCombat => {
-            return Err(CardTextError::ParseError(format!(
-                "token followup requires preceding token creation effect (clause: '{}')",
-                words(sentence_tokens).join(" ")
-            )));
-        }
+        TokenCopyFollowup::ExileAtEndOfCombat => vec![EffectAst::DelayedUntilEndOfCombat {
+            effects: vec![EffectAst::Exile {
+                target: TargetAst::Object(ObjectFilter::tagged(TagKey::from(IT_TAG)), span, None),
+                face_down: false,
+            }],
+        }],
+        TokenCopyFollowup::SacrificeAtEndOfCombat => vec![EffectAst::DelayedUntilEndOfCombat {
+            effects: vec![EffectAst::Sacrifice {
+                filter: ObjectFilter::tagged(TagKey::from(IT_TAG)),
+                player: PlayerAst::Implicit,
+                count: 1,
+            }],
+        }],
     };
     Ok(effects)
 }

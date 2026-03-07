@@ -1,4 +1,8 @@
 pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
+    stacker::maybe_grow(1024 * 1024, 8 * 1024 * 1024, || compiled_lines_inner(def))
+}
+
+fn compiled_lines_inner(def: &CardDefinition) -> Vec<String> {
     let mut out = Vec::new();
     let subject = subject_for_card(&def.card);
     let rewrite_it_deals = def.card.card_types.contains(&CardType::Creature)

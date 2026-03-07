@@ -4,10 +4,12 @@ mod tests {
     use crate::ability::Ability;
     use crate::ability::AbilityKind;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::cards::definitions::emrakul_the_promised_end;
     use crate::combat_state::AttackTarget;
-    use crate::decision::AutoPassDecisionMaker;
+    use crate::decision::{AutoPassDecisionMaker, DecisionMaker};
     use crate::effect::{Effect, EventValueSpec, Until, Value};
     use crate::events::EventKind;
+    use crate::events::spells::SpellCastEvent;
     use crate::game_state::Phase;
     use crate::ids::CardId;
     use crate::static_abilities::StaticAbility;
@@ -214,6 +216,106 @@ mod tests {
             game.stack.len(),
             1,
             "non-mana tap-for-mana trigger should use stack"
+        );
+    }
+
+    #[test]
+    fn emrakul_cast_trigger_prompts_for_opponent_in_four_player_game() {
+        #[derive(Debug, Default)]
+        struct RecordingTargetDecisionMaker {
+            targets_ctx: Option<crate::decisions::context::TargetsContext>,
+        }
+
+        impl DecisionMaker for RecordingTargetDecisionMaker {
+            fn decide_targets(
+                &mut self,
+                _game: &GameState,
+                ctx: &crate::decisions::context::TargetsContext,
+            ) -> Vec<Target> {
+                self.targets_ctx = Some(ctx.clone());
+                ctx.requirements
+                    .iter()
+                    .filter_map(|requirement| requirement.legal_targets.first().copied())
+                    .collect()
+            }
+        }
+
+        let mut game = GameState::new(
+            vec![
+                "Alice".to_string(),
+                "Bob".to_string(),
+                "Charlie".to_string(),
+                "Dana".to_string(),
+            ],
+            20,
+        );
+        let mut trigger_queue = TriggerQueue::new();
+        let mut dm = RecordingTargetDecisionMaker::default();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let charlie = PlayerId::from_index(2);
+        let dana = PlayerId::from_index(3);
+
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+
+        let emrakul_id =
+            game.create_object_from_definition(&emrakul_the_promised_end(), alice, Zone::Stack);
+        let (emrakul_stable_id, emrakul_name) = game
+            .object(emrakul_id)
+            .map(|object| (object.stable_id, object.name.clone()))
+            .expect("Emrakul spell object should exist");
+        game.push_to_stack(
+            StackEntry::new(emrakul_id, alice).with_source_info(emrakul_stable_id, emrakul_name),
+        );
+
+        let event = TriggerEvent::new_with_provenance(
+            SpellCastEvent::new(emrakul_id, alice, Zone::Hand),
+            crate::provenance::ProvNodeId::default(),
+        );
+        queue_triggers_from_event(&mut game, &mut trigger_queue, event, false);
+
+        assert_eq!(
+            trigger_queue.entries.len(),
+            1,
+            "Emrakul should queue its cast trigger from the stack"
+        );
+
+        put_triggers_on_stack_with_dm(&mut game, &mut trigger_queue, &mut dm)
+            .expect("Emrakul trigger should go on the stack");
+
+        let targets_ctx = dm
+            .targets_ctx
+            .expect("Emrakul trigger should request target selection");
+        assert_eq!(
+            targets_ctx.player, alice,
+            "the caster should choose Emrakul's target opponent"
+        );
+        assert_eq!(
+            targets_ctx.requirements.len(),
+            1,
+            "Emrakul should ask for exactly one target requirement"
+        );
+
+        let legal_players: Vec<PlayerId> = targets_ctx.requirements[0]
+            .legal_targets
+            .iter()
+            .filter_map(|target| match target {
+                Target::Player(player) => Some(*player),
+                Target::Object(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            legal_players,
+            vec![bob, charlie, dana],
+            "all opponents should be legal Emrakul targets"
+        );
+        assert_eq!(
+            game.stack.len(),
+            2,
+            "Emrakul's trigger should be pushed on top of the spell"
         );
     }
 

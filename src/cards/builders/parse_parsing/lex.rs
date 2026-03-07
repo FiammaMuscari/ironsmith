@@ -2,10 +2,9 @@ use crate::cards::TextSpan;
 use crate::cards::builders::{
     CardTextError, Token, find_verb, parse_ability_line,
     parse_attack_or_block_this_turn_if_able_clause, parse_attack_this_turn_if_able_clause,
-    parse_can_attack_as_though_no_defender_clause, parse_mana_symbol,
-    parse_mana_symbol_group, parse_must_block_if_able_clause,
-    parse_prevent_all_damage_clause, parse_prevent_next_damage_clause,
-    parse_single_word_keyword_action, trim_commas,
+    parse_can_attack_as_though_no_defender_clause, parse_mana_symbol, parse_mana_symbol_group,
+    parse_must_block_if_able_clause, parse_prevent_all_damage_clause,
+    parse_prevent_next_damage_clause, parse_single_word_keyword_action, trim_commas,
 };
 use crate::{Effect, ManaCost, ManaSymbol, ObjectFilter, PlayerFilter, Value};
 

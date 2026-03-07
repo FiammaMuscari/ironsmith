@@ -1,25 +1,28 @@
+use crate::cards::builders::parse_parsing::effects_sentences::TokenCopyFollowup;
+use crate::cards::builders::parse_parsing::{
+    ClauseView, POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, POST_CONDITIONAL_SENTENCE_PRIMITIVES,
+    PRE_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, PRE_CONDITIONAL_SENTENCE_PRIMITIVES,
+    RULE_SHAPE_STARTS_IF, RuleDef, RuleIndex, UnsupportedDiagnoser, UnsupportedRuleDef,
+    apply_where_x_to_damage_amounts, find_verb, is_activate_only_restriction_sentence,
+    is_trigger_only_restriction_sentence, is_until_end_of_turn, parse_conditional_sentence,
+    parse_effect_chain, parse_effect_chain_inner, parse_number,
+    parse_prevent_next_time_damage_sentence, parse_pt_modifier,
+    parse_redirect_next_damage_sentence, parse_search_library_sentence,
+    parse_simple_gain_ability_clause, parse_trigger_clause, parse_where_x_value_clause,
+    parser_trace, replace_unbound_x_in_effects_anywhere, run_sentence_primitives, split_on_and,
+    split_on_comma, split_until_source_leaves_tail, target_object_filter_mut,
+};
 #[allow(unused_imports)]
 use crate::cards::builders::{
-    CardTextError, EffectAst, IT_TAG, LineAst, PlayerAst, SubjectAst, TagKey, TargetAst,
-    TextSpan, Token, TriggerSpec, Verb, is_article, is_source_reference_words, parse_card_type,
-    parse_object_filter, parse_subject, parse_target_phrase, parse_value,
+    CardTextError, EffectAst, ExtraTurnAnchorAst, IT_TAG, LineAst, PlayerAst, SubjectAst, TagKey,
+    TargetAst, TextSpan, Token, TriggerSpec, Verb, is_article, is_source_reference_words,
+    parse_card_type, parse_object_filter, parse_subject, parse_target_phrase, parse_value,
     target_ast_to_object_filter, token_index_for_word_index, words,
 };
-use crate::cards::builders::parse_parsing::{
-    parse_conditional_sentence, parse_effect_chain, parse_number, parse_prevent_next_time_damage_sentence,
-    parse_pt_modifier, parse_redirect_next_damage_sentence, parse_simple_gain_ability_clause,
-    parse_trigger_clause, parse_where_x_value_clause, parser_trace, find_verb, split_on_and,
-    split_on_comma, is_until_end_of_turn, RULE_SHAPE_STARTS_IF, UnsupportedDiagnoser,
-    is_activate_only_restriction_sentence, is_trigger_only_restriction_sentence,
-    apply_where_x_to_damage_amounts, parse_effect_chain_inner, replace_unbound_x_in_effects_anywhere,
-    run_sentence_primitives, split_until_source_leaves_tail, target_object_filter_mut,
-    ClauseView, RuleDef, RuleIndex, UnsupportedRuleDef,
-    POST_CONDITIONAL_SENTENCE_PRIMITIVES, POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX,
-    PRE_CONDITIONAL_SENTENCE_PRIMITIVES, PRE_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX,
-};
-use crate::cards::builders::parse_parsing::effects_sentences::TokenCopyFollowup;
 use crate::effect::{ChoiceCount, EventValueSpec, Until, Value};
-use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation};
+use crate::target::{
+    ChooseSpec, ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation,
+};
 use crate::types::CardType;
 use crate::zone::Zone;
 
@@ -81,6 +84,10 @@ sentence_unsupported_adapters!(
     (
         sentence_has_each_player_exile_sacrifice_return_exiled_clause_rule,
         sentence_has_each_player_exile_sacrifice_return_exiled_clause
+    ),
+    (
+        sentence_has_put_one_of_them_into_hand_rest_clause_rule,
+        sentence_has_put_one_of_them_into_hand_rest_clause
     ),
     (
         sentence_has_loses_all_abilities_with_becomes_clause_rule,
@@ -200,7 +207,7 @@ sentence_unsupported_adapters!(
     ),
 );
 
-const SENTENCE_UNSUPPORTED_RULES: [UnsupportedRuleDef; 33] = [
+const SENTENCE_UNSUPPORTED_RULES: [UnsupportedRuleDef; 34] = [
     UnsupportedRuleDef {
         id: "ring-tempts",
         priority: 10,
@@ -232,6 +239,14 @@ const SENTENCE_UNSUPPORTED_RULES: [UnsupportedRuleDef; 33] = [
         shape_mask: 0,
         message: "unsupported each-player exile/sacrifice/return-this-way clause",
         predicate: sentence_has_each_player_exile_sacrifice_return_exiled_clause_rule,
+    },
+    UnsupportedRuleDef {
+        id: "put-one-into-hand-rest-zone",
+        priority: 115,
+        heads: &["put", "then"],
+        shape_mask: 0,
+        message: "unsupported put-into-hand with rest clause",
+        predicate: sentence_has_put_one_of_them_into_hand_rest_clause_rule,
     },
     UnsupportedRuleDef {
         id: "lose-all-abilities-with-becomes",
@@ -643,6 +658,14 @@ fn sentence_has_each_player_exile_sacrifice_return_exiled_clause(
         && words.contains(&"way")
 }
 
+fn sentence_has_put_one_of_them_into_hand_rest_clause(words: &[&str], _: &[Token]) -> bool {
+    words
+        .windows(5)
+        .any(|window| window == ["one", "of", "them", "into", "your"])
+        && words.contains(&"rest")
+        && (words.contains(&"graveyard") || words.contains(&"graveyards"))
+}
+
 fn sentence_has_loses_all_abilities_with_becomes_clause(words: &[&str], _: &[Token]) -> bool {
     let has_loses_all_abilities = (words.contains(&"lose") || words.contains(&"loses"))
         && words
@@ -859,6 +882,8 @@ fn sentence_has_spent_to_cast_clause(words: &[&str], _: &[Token]) -> bool {
 
 fn sentence_has_face_down_clause(words: &[&str], _: &[Token]) -> bool {
     words.windows(2).any(|window| window == ["face", "down"])
+        || words.contains(&"face-down")
+        || words.contains(&"facedown")
 }
 
 fn sentence_has_copy_spell_legendary_exception_clause(words: &[&str], _: &[Token]) -> bool {
@@ -874,7 +899,15 @@ fn sentence_has_return_each_creature_that_isnt_list_clause(words: &[&str], _: &[
 }
 
 fn sentence_has_unsupported_negated_untap_clause(words: &[&str], _: &[Token]) -> bool {
-    is_negated_untap_clause(words) && !words.contains(&"and")
+    let has_supported_control_duration = words
+        .windows(6)
+        .any(|window| window == ["for", "as", "long", "as", "you", "control"]);
+    is_negated_untap_clause(words)
+        && !words.contains(&"and")
+        && !words.contains(&"next")
+        && !has_supported_control_duration
+        && words.contains(&"during")
+        && (words.contains(&"step") || words.contains(&"steps"))
 }
 
 pub(crate) fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, CardTextError> {
@@ -997,6 +1030,18 @@ pub(crate) fn parse_effect_sentence_inner(
     if tokens.first().is_some_and(|token| token.is_word("then")) && tokens.len() > 1 {
         parser_trace("parse_effect_sentence:leading-then", &tokens[1..]);
         return parse_effect_sentence(&tokens[1..]);
+    }
+    if let Some(diag) = diagnose_sentence_unsupported(tokens, &sentence_words) {
+        return Err(diag);
+    }
+    if tokens
+        .iter()
+        .any(|token| token.is_word("search") || token.is_word("searches"))
+        && let Some(mut effects) = parse_search_library_sentence(tokens)?
+    {
+        parser_trace("parse_effect_sentence:search-library", tokens);
+        apply_where_x_to_damage_amounts(tokens, &mut effects)?;
+        return Ok(effects);
     }
     let (rule_id, mut effects) = match run_sentence_parse_rules(tokens) {
         Ok(result) => result,
@@ -1961,6 +2006,7 @@ pub(crate) fn parse_take_extra_turn_sentence(
     if words.as_slice() == ["take", "an", "extra", "turn", "after", "this", "one"] {
         return Ok(Some(EffectAst::ExtraTurnAfterTurn {
             player: PlayerAst::You,
+            anchor: ExtraTurnAnchorAst::CurrentTurn,
         }));
     }
     Ok(None)

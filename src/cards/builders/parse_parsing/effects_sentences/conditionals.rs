@@ -1,12 +1,12 @@
+use crate::card::{PowerToughness, PtValue};
 #[allow(unused_imports)]
 use crate::cards::builders::{
-    CardTextError, EffectAst, IT_TAG, IfResultPredicate, PlayerAst, PredicateAst, TagKey,
-    TargetAst, TextSpan, Token, contains_word_sequence, is_article, parse_card_type,
-    parse_counter_type_word, parse_effect_chain, parse_filter_comparison_tokens,
+    CardTextError, EffectAst, ExtraTurnAnchorAst, IT_TAG, IfResultPredicate, PlayerAst,
+    PredicateAst, TagKey, TargetAst, TextSpan, Token, contains_word_sequence, is_article,
+    parse_card_type, parse_counter_type_word, parse_effect_chain, parse_filter_comparison_tokens,
     parse_mana_symbol_word_flexible, parse_named_number, parse_number, parse_object_filter,
     parse_target_phrase, span_from_tokens, token_index_for_word_index, trim_commas, words,
 };
-use crate::card::{PowerToughness, PtValue};
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::target::{ObjectFilter, PlayerFilter, TaggedOpbjectRelation};
 use crate::types::{CardType, Subtype, Supertype};
@@ -720,7 +720,10 @@ pub(crate) fn parse_after_turn_sentence(
     };
 
     if remaining_words.contains(&"extra") && remaining_words.contains(&"turn") {
-        return Ok(Some(EffectAst::ExtraTurnAfterTurn { player }));
+        return Ok(Some(EffectAst::ExtraTurnAfterTurn {
+            player,
+            anchor: ExtraTurnAnchorAst::ReferencedTurn,
+        }));
     }
 
     Err(CardTextError::ParseError(

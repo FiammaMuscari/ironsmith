@@ -6363,21 +6363,30 @@ fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
             )
         }
         crate::effect::Restriction::ActivateAbilitiesOf(filter) => {
-            format!(
-                "activated abilities of {} can't be activated",
-                filter.description()
-            )
+            let description = filter.description();
+            let subject = description
+                .strip_prefix("target ")
+                .unwrap_or(description.as_str());
+            format!("activated abilities of {} can't be activated", subject)
         }
         crate::effect::Restriction::ActivateTapAbilitiesOf(filter) => {
+            let description = filter.description();
+            let subject = description
+                .strip_prefix("target ")
+                .unwrap_or(description.as_str());
             format!(
                 "activated abilities with {{T}} in their costs of {} can't be activated",
-                filter.description()
+                subject
             )
         }
         crate::effect::Restriction::ActivateNonManaAbilitiesOf(filter) => {
+            let description = filter.description();
+            let subject = description
+                .strip_prefix("target ")
+                .unwrap_or(description.as_str());
             format!(
                 "non-mana activated abilities of {} can't be activated",
-                filter.description()
+                subject
             )
         }
         crate::effect::Restriction::CastMoreThanOneSpellEachTurn(filter, spell_filter) => format!(

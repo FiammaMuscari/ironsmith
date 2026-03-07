@@ -4,8 +4,6 @@ import OpponentZone from "./OpponentZone";
 import MyZone from "./MyZone";
 import DeckLoadingView from "./DeckLoadingView";
 import DecisionPopupLayer from "@/components/overlays/DecisionPopupLayer";
-import StackTimelineRail from "@/components/right-rail/StackTimelineRail";
-
 export default function TableCore({
   selectedObjectId,
   onInspect,
@@ -85,12 +83,6 @@ export default function TableCore({
         zoneViews={zoneViews}
         legalTargetPlayerIds={legalTargetPlayerIds}
         legalTargetObjectIds={legalTargetObjectIds}
-      />
-      <StackTimelineRail
-        floating
-        anchorRef={tableRef}
-        selectedObjectId={selectedObjectId}
-        onInspectObject={onInspect}
       />
     </main>
   );

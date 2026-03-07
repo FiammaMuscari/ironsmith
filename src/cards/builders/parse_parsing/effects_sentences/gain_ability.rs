@@ -1,11 +1,10 @@
 #[allow(unused_imports)]
 use crate::cards::builders::{
-    CardTextError, EffectAst, GrantedAbilityAst, IT_TAG, KeywordAction, LineAst, TagKey,
-    TargetAst, Token, Verb, find_verb, is_article, is_source_reference_words,
-    is_until_end_of_turn,
-    keyword_action_to_static_ability, parse_ability_line, parse_ability_phrase,
-    parse_activated_line, parse_effect_chain, parse_object_filter, parse_pt_modifier_values,
-    parse_target_phrase, parse_triggered_line, parsed_triggered_ability,
+    CardTextError, EffectAst, GrantedAbilityAst, IT_TAG, KeywordAction, LineAst, ReferenceImports,
+    TagKey, TargetAst, Token, Verb, find_verb, is_article, is_source_reference_words,
+    is_until_end_of_turn, keyword_action_to_static_ability, parse_ability_line,
+    parse_ability_phrase, parse_activated_line, parse_effect_chain, parse_object_filter,
+    parse_pt_modifier_values, parse_target_phrase, parse_triggered_line, parsed_triggered_ability,
     reject_unimplemented_keyword_actions, span_from_tokens, split_on_or,
     starts_with_until_end_of_turn, token_index_for_word_index, trim_commas, try_build_unless,
     words,
@@ -631,7 +630,7 @@ pub(crate) fn parse_granted_activated_or_triggered_ability_for_gain(
                 vec![Zone::Battlefield],
                 Some(display.clone()),
                 max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
-                None,
+                ReferenceImports::default(),
             ),
             _ => {
                 return Err(CardTextError::ParseError(format!(
@@ -744,6 +743,7 @@ pub(crate) fn parse_gain_ability_to_source_sentence(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cards::builders::tokenize_line;
 
     #[test]
     fn gain_ability_to_source_keeps_parsed_ability_until_lowering() {

@@ -97,8 +97,8 @@ export default function NumberDecision({
             variant="ghost"
             size="sm"
             className={cn(
-              "h-7 text-[14px] text-muted-foreground transition-all hover:text-foreground hover:bg-[rgba(100,169,255,0.1)] hover:shadow-[0_0_8px_rgba(100,169,255,0.15)]",
-              stripLayout && "rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[13px] font-semibold text-[#8ec4ff] hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
+              "decision-neon-button h-7 rounded-sm px-3 text-[13px] font-semibold uppercase",
+              stripLayout ? "w-auto" : "w-full"
             )}
             disabled={!canAct}
             onClick={handleSubmit}

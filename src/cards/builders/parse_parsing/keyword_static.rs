@@ -5,11 +5,6 @@ use crate::cards::builders::ability_lowering::{
     materialize_static_abilities_ast, parsed_triggered_ability,
 };
 #[allow(unused_imports)]
-use crate::cards::builders::{
-    CardTextError, GrantedAbilityAst, IT_TAG, KeywordAction, LineAst, ParsedAbility, TagKey,
-    StaticAbilityAst, TextSpan, Token,
-};
-#[allow(unused_imports)]
 use crate::cards::builders::parse_parsing::{
     color_from_color_set, contains_until_end_of_turn, is_article, is_at_trigger_intro,
     is_land_subtype, is_negated_untap_clause, is_source_reference_words,
@@ -28,8 +23,13 @@ use crate::cards::builders::parse_parsing::{
     parse_subtype_word, parse_triggered_line, parse_value, parse_zone_word, parser_trace,
     parser_trace_stack, replace_unbound_x_with_value, scale_dynamic_cost_modifier_value,
     spell_filter_has_identity, split_on_and, split_on_comma, split_on_comma_or_semicolon,
-    starts_with_until_end_of_turn, trim_commas, trim_edge_punctuation,
-    value_contains_unbound_x, words,
+    starts_with_until_end_of_turn, trim_commas, trim_edge_punctuation, value_contains_unbound_x,
+    words,
+};
+#[allow(unused_imports)]
+use crate::cards::builders::{
+    CardTextError, GrantedAbilityAst, IT_TAG, KeywordAction, LineAst, ParsedAbility,
+    ReferenceImports, StaticAbilityAst, TagKey, TextSpan, Token,
 };
 #[allow(unused_imports)]
 use crate::color::ColorSet;
@@ -4985,6 +4985,14 @@ pub(crate) fn parse_static_condition_clause(
     {
         return Ok(crate::ConditionExpr::SourceIsUntapped);
     }
+    if clause_words == ["this", "creature", "is", "tapped"]
+        || clause_words == ["this", "permanent", "is", "tapped"]
+        || clause_words == ["this", "is", "tapped"]
+        || clause_words == ["it", "is", "tapped"]
+        || clause_words == ["its", "tapped"]
+    {
+        return Ok(crate::ConditionExpr::SourceIsTapped);
+    }
     if clause_words == ["this", "is", "paired", "with", "another", "creature"]
         || clause_words
             == [
@@ -5124,6 +5132,41 @@ pub(crate) fn parse_static_condition_clause(
         let filter = parse_object_filter(&filter_tokens, false).map_err(|_| {
             CardTextError::ParseError(format!(
                 "unsupported control condition filter (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
+        return Ok(crate::ConditionExpr::CountComparison {
+            count: AnthemCountExpression::MatchingFilter(filter),
+            comparison,
+            display: Some(clause_words.join(" ")),
+        });
+    }
+
+    let own_prefix_len = if clause_words.starts_with(&["you", "own"])
+        || clause_words.starts_with(&["you", "owns"])
+        || clause_words.starts_with(&["opponent", "own"])
+        || clause_words.starts_with(&["opponent", "owns"])
+        || clause_words.starts_with(&["opponents", "own"])
+        || clause_words.starts_with(&["opponents", "owns"])
+    {
+        2
+    } else if clause_words.starts_with(&["an", "opponent", "own"])
+        || clause_words.starts_with(&["an", "opponent", "owns"])
+        || clause_words.starts_with(&["your", "opponents", "own"])
+        || clause_words.starts_with(&["your", "opponents", "owns"])
+    {
+        3
+    } else {
+        0
+    };
+    if own_prefix_len > 0 {
+        let quantified = &tokens[own_prefix_len..];
+        let (comparison, used) = parse_static_quantity_prefix(quantified, true)?;
+        let mut filter_tokens: Vec<Token> = tokens[..own_prefix_len].to_vec();
+        filter_tokens.extend_from_slice(&quantified[used..]);
+        let filter = parse_object_filter(&filter_tokens, false).map_err(|_| {
+            CardTextError::ParseError(format!(
+                "unsupported ownership condition filter (clause: '{}')",
                 clause_words.join(" ")
             ))
         })?;
@@ -6126,20 +6169,29 @@ fn parse_triggered_granted_ability(
             vec![Zone::Battlefield],
             Some(words(&trigger_tokens).join(" ")),
             max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
-            None,
+            ReferenceImports::default(),
         ),
         _ => return Ok(None),
     };
-    if matches!(
-        &ability.ability.kind,
-        AbilityKind::Triggered(triggered) if triggered.effects.is_empty()
-    ) {
+    if parsed_triggered_ability_is_empty(&ability) {
         return Err(CardTextError::ParseError(format!(
             "unsupported empty triggered granted ability clause (clause: '{}')",
             words(&trigger_tokens).join(" ")
         )));
     }
     Ok(Some(ability))
+}
+
+fn parsed_triggered_ability_is_empty(ability: &ParsedAbility) -> bool {
+    matches!(
+        &ability.ability.kind,
+        AbilityKind::Triggered(triggered)
+            if triggered.effects.is_empty()
+                && ability
+                    .effects_ast
+                    .as_ref()
+                    .is_none_or(|effects| effects.is_empty())
+    )
 }
 
 pub(crate) fn parse_anthem_with_trailing_segments_line(
@@ -9062,7 +9114,7 @@ pub(crate) fn parse_attached_has_keywords_and_triggered_ability_line(
             vec![Zone::Battlefield],
             Some(words(&trigger_tokens).join(" ")),
             max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
-            None,
+            ReferenceImports::default(),
         ),
         _ => {
             return Err(CardTextError::ParseError(format!(
@@ -9071,10 +9123,7 @@ pub(crate) fn parse_attached_has_keywords_and_triggered_ability_line(
             )));
         }
     };
-    if matches!(
-        &triggered.ability.kind,
-        AbilityKind::Triggered(triggered) if triggered.effects.is_empty()
-    ) {
+    if parsed_triggered_ability_is_empty(&triggered) {
         return Err(CardTextError::ParseError(format!(
             "unsupported empty attached triggered grant clause (clause: '{}')",
             clause_text
@@ -9279,12 +9328,9 @@ pub(crate) fn parse_attached_gets_and_has_ability_line(
             vec![Zone::Battlefield],
             Some(words(&ability_tokens).join(" ")),
             max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
-            None,
+            ReferenceImports::default(),
         );
-        if matches!(
-            &parsed.ability.kind,
-            AbilityKind::Triggered(inner) if inner.effects.is_empty()
-        ) {
+        if parsed_triggered_ability_is_empty(&parsed) {
             return Err(CardTextError::ParseError(format!(
                 "unsupported empty attached triggered grant clause (clause: '{}')",
                 line_words.join(" ")
@@ -10713,12 +10759,9 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                     vec![Zone::Battlefield],
                     None,
                     max_triggers_per_turn.map(crate::ConditionExpr::MaxTimesEachTurn),
-                    None,
+                    ReferenceImports::default(),
                 );
-                if matches!(
-                    &parsed.ability.kind,
-                    AbilityKind::Triggered(inner) if inner.effects.is_empty()
-                ) {
+                if parsed_triggered_ability_is_empty(&parsed) {
                     return Err(CardTextError::ParseError(format!(
                         "unsupported empty granted triggered ability clause (clause: '{}')",
                         clause_words.join(" ")
@@ -10751,7 +10794,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                 text.clone(),
             ),
             effects_ast: None,
-            seed_last_object_tag: None,
+            reference_imports: ReferenceImports::default(),
             trigger_spec: None,
         });
     } else if let Some(abilities) = parse_static_ability_line(ability_tokens)? {

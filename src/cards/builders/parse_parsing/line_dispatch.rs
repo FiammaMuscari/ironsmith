@@ -1,15 +1,13 @@
 use crate::cards::builders::{
     AdditionalCostChoiceOptionAst, CardTextError, ClauseView, KeywordAction, LineAst,
-    ParsedAbility, RuleDef, RuleIndex, StaticAbilityAst, Token, TriggerSpec,
-    UnsupportedDiagnoser, UnsupportedRuleDef, RULE_SHAPE_HAS_COLON,
-    dash_labeled_remainder_starts_with_trigger, find_verb,
+    ParsedAbility, RuleDef, RuleIndex, StaticAbilityAst, Token, TriggerSpec, UnsupportedDiagnoser,
+    UnsupportedRuleDef, dash_labeled_remainder_starts_with_trigger, find_verb,
     is_non_mana_additional_cost_modifier_line, is_untap_during_each_other_players_untap_step_words,
     leading_mana_symbols_to_oracle, parse_ability_line, parse_activated_line,
-    parse_activation_cost, parse_buyback_line, parse_cast_this_spell_only_line,
-    parse_cycling_line, parse_effect_sentences, parse_enters_with_counters_line,
-    parse_entwine_line, parse_escape_line, parse_equip_line,
-    parse_if_this_spell_costs_less_to_cast_line, parse_kicker_line, parse_level_up_line,
-    parse_madness_line, parse_mana_symbol, parse_mana_symbol_group,
+    parse_activation_cost, parse_buyback_line, parse_cast_this_spell_only_line, parse_cycling_line,
+    parse_effect_sentences, parse_enters_with_counters_line, parse_entwine_line, parse_equip_line,
+    parse_escape_line, parse_if_this_spell_costs_less_to_cast_line, parse_kicker_line,
+    parse_level_up_line, parse_madness_line, parse_mana_symbol, parse_mana_symbol_group,
     parse_morph_keyword_line, parse_multikicker_line, parse_reinforce_line,
     parse_saga_chapter_prefix, parse_scryfall_mana_cost, parse_static_ability_ast_line,
     parse_this_spell_cost_condition, parse_triggered_line, parser_trace, parser_trace_line,
@@ -17,7 +15,7 @@ use crate::cards::builders::{
 };
 use crate::{AlternativeCastingMethod, OptionalCost, TotalCost};
 
-const PRE_TOKEN_DIAGNOSTIC_RULES: [UnsupportedRuleDef; 10] = [
+const PRE_TOKEN_DIAGNOSTIC_RULES: [UnsupportedRuleDef; 20] = [
     UnsupportedRuleDef {
         id: "commander-cast-count",
         priority: 100,
@@ -85,7 +83,7 @@ const PRE_TOKEN_DIAGNOSTIC_RULES: [UnsupportedRuleDef; 10] = [
     UnsupportedRuleDef {
         id: "defending-players-choice",
         priority: 180,
-        heads: &["of", "target"],
+        heads: &[],
         shape_mask: 0,
         message: "unsupported defending-players-choice clause",
         predicate: line_has_defending_players_choice_clause,
@@ -97,6 +95,86 @@ const PRE_TOKEN_DIAGNOSTIC_RULES: [UnsupportedRuleDef; 10] = [
         shape_mask: 0,
         message: "unsupported first-spell cost modifier mechanic",
         predicate: line_has_first_spell_cost_modifier_clause,
+    },
+    UnsupportedRuleDef {
+        id: "spent-to-cast-conditional",
+        priority: 200,
+        heads: &[],
+        shape_mask: 0,
+        message: "unsupported spent-to-cast conditional clause",
+        predicate: line_has_spent_to_cast_conditional_clause,
+    },
+    UnsupportedRuleDef {
+        id: "different-mana-value-target",
+        priority: 210,
+        heads: &[],
+        shape_mask: 0,
+        message: "unsupported different-mana-value target clause",
+        predicate: line_has_different_mana_value_target_clause,
+    },
+    UnsupportedRuleDef {
+        id: "most-common-color",
+        priority: 220,
+        heads: &[],
+        shape_mask: 0,
+        message: "unsupported most-common-color clause",
+        predicate: line_has_most_common_color_clause,
+    },
+    UnsupportedRuleDef {
+        id: "power-vs-count-conditional",
+        priority: 230,
+        heads: &[],
+        shape_mask: 0,
+        message: "unsupported power-vs-count conditional clause",
+        predicate: line_has_power_vs_count_conditional_clause,
+    },
+    UnsupportedRuleDef {
+        id: "graveyards-from-battlefield-count",
+        priority: 240,
+        heads: &[],
+        shape_mask: 0,
+        message: "unsupported graveyards-from-battlefield count clause",
+        predicate: line_has_put_into_graveyards_from_battlefield_count_clause,
+    },
+    UnsupportedRuleDef {
+        id: "phase-out-until-leaves",
+        priority: 250,
+        heads: &[],
+        shape_mask: 0,
+        message: "unsupported phase-out-until-leaves clause",
+        predicate: line_has_phase_out_until_leaves_clause,
+    },
+    UnsupportedRuleDef {
+        id: "same-name-as-another-in-hand",
+        priority: 260,
+        heads: &[],
+        shape_mask: 0,
+        message: "unsupported same-name-as-another-in-hand clause",
+        predicate: line_has_same_name_as_another_in_hand_clause,
+    },
+    UnsupportedRuleDef {
+        id: "for-each-mana-from-spent",
+        priority: 270,
+        heads: &[],
+        shape_mask: 0,
+        message: "unsupported for-each-mana-from-spent clause",
+        predicate: line_has_for_each_mana_from_spent_clause,
+    },
+    UnsupportedRuleDef {
+        id: "enters-as-copy-except-ability",
+        priority: 280,
+        heads: &[],
+        shape_mask: 0,
+        message: "unsupported enters-as-copy except-ability clause",
+        predicate: line_has_enters_as_copy_except_ability_clause,
+    },
+    UnsupportedRuleDef {
+        id: "creature-token-player-planeswalker-target",
+        priority: 290,
+        heads: &[],
+        shape_mask: 0,
+        message: "unsupported creature-token/player/planeswalker target clause",
+        predicate: line_has_creature_token_player_planeswalker_target_clause,
     },
 ];
 
@@ -235,6 +313,61 @@ fn line_has_multi_destination_put_clause(view: &ClauseView<'_>) -> bool {
     normalized.contains("put one of them into your hand and the rest into your graveyard")
 }
 
+fn line_has_spent_to_cast_conditional_clause(view: &ClauseView<'_>) -> bool {
+    let normalized = normalized_line(view);
+    normalized.contains(" was spent to cast this spell")
+        && normalized.contains(" if ")
+        && normalized.contains(" and ")
+}
+
+fn line_has_different_mana_value_target_clause(view: &ClauseView<'_>) -> bool {
+    let normalized = normalized_line(view);
+    normalized.contains("different mana value") && normalized.contains("target creature cards")
+}
+
+fn line_has_most_common_color_clause(view: &ClauseView<'_>) -> bool {
+    let normalized = normalized_line(view);
+    normalized.contains("most common color among all permanents")
+        || normalized.contains("tied for most common")
+}
+
+fn line_has_power_vs_count_conditional_clause(view: &ClauseView<'_>) -> bool {
+    let normalized = normalized_line(view);
+    normalized.contains("power is less than or equal to the number of")
+}
+
+fn line_has_put_into_graveyards_from_battlefield_count_clause(view: &ClauseView<'_>) -> bool {
+    normalized_line(view).contains("were put into graveyards from the battlefield this turn")
+}
+
+fn line_has_phase_out_until_leaves_clause(view: &ClauseView<'_>) -> bool {
+    let normalized = normalized_line(view);
+    normalized.contains("phases out until") && normalized.contains("leaves the battlefield")
+}
+
+fn line_has_same_name_as_another_in_hand_clause(view: &ClauseView<'_>) -> bool {
+    let normalized = normalized_line(view);
+    normalized.contains("same name as another card in their hand")
+        || normalized.contains("same name as another card in your hand")
+}
+
+fn line_has_for_each_mana_from_spent_clause(view: &ClauseView<'_>) -> bool {
+    let normalized = normalized_line(view);
+    normalized.starts_with("for each mana from") && normalized.contains("spent to cast this spell")
+}
+
+fn line_has_enters_as_copy_except_ability_clause(view: &ClauseView<'_>) -> bool {
+    let normalized = normalized_line(view);
+    normalized.contains("enter as a copy of") && normalized.contains("except it has")
+}
+
+fn line_has_creature_token_player_planeswalker_target_clause(view: &ClauseView<'_>) -> bool {
+    let normalized = normalized_line(view);
+    normalized.contains("target creature token")
+        && normalized.contains("player")
+        && normalized.contains("planeswalker")
+}
+
 fn line_has_marker_keyword_tail_clause(view: &ClauseView<'_>) -> bool {
     let normalized = normalized_line(view);
     normalized.starts_with("ninjutsu abilities you activate cost")
@@ -248,6 +381,8 @@ fn line_has_aura_copy_attachment_fanout_clause(view: &ClauseView<'_>) -> bool {
 fn line_has_defending_players_choice_clause(view: &ClauseView<'_>) -> bool {
     let normalized = normalized_line(view);
     normalized.contains("of defending players choice")
+        || normalized.contains("of defending player s choice")
+        || (normalized.contains("defending player") && normalized.contains("choice"))
 }
 
 fn line_has_first_spell_cost_modifier_clause(view: &ClauseView<'_>) -> bool {
@@ -362,7 +497,7 @@ fn parse_first_parsed_ability_rule(
             id: "equip",
             priority: 100,
             heads: &["equip"],
-            shape_mask: RULE_SHAPE_HAS_COLON,
+            shape_mask: 0,
             run: parse_equip_rule,
         },
         RuleDef {
@@ -576,6 +711,15 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         .trim()
         .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
         .to_ascii_lowercase();
+    if line.contains('’')
+        && normalized.contains("dont untap during")
+        && normalized.contains("untap step")
+    {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported negated untap clause (line: '{}')",
+            line.trim()
+        )));
+    }
     let normalized = normalized.replace('\'', "").replace('’', "");
     let normalized_without_braces = normalized.replace('{', "").replace('}', "");
     let normalized_without_braces = normalized_without_braces.trim_end_matches('.');
@@ -621,6 +765,9 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
             is_fixed_attack_tax_per_attacker,
         )
     };
+    if let Some(diag) = PRE_TOKEN_DIAGNOSER.diagnose(&line_view, "line") {
+        return Err(diag);
+    }
 
     let is_this_cant_attack_unless_clause = normalized
         .starts_with("this creature cant attack unless")
@@ -858,6 +1005,9 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
     {
         match parse_effect_sentences(&tokens) {
             Ok(effects) if !effects.is_empty() => {
+                if let Some(diag) = unsupported_diagnostic() {
+                    return Err(diag);
+                }
                 parser_trace("parse_line:branch=statement-verb-leading", &tokens);
                 return Ok(LineAst::Statement { effects });
             }
@@ -901,6 +1051,9 @@ pub(crate) fn parse_line(line: &str, line_index: usize) -> Result<LineAst, CardT
         return Err(CardTextError::ParseError(format!(
             "unsupported line (no-line-rule-match, head='{head}'): {line}"
         )));
+    }
+    if let Some(diag) = unsupported_diagnostic() {
+        return Err(diag);
     }
 
     Ok(LineAst::Statement { effects })

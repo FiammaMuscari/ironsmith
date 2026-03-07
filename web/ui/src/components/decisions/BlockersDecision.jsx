@@ -151,7 +151,7 @@ export default function BlockersDecision({ decision, canAct, compact = false }) 
           <Button
             variant="ghost"
             size="sm"
-            className="w-[176px] shrink-0 self-stretch rounded-none border-0 border-l-2 border-l-[rgba(215,157,82,0.95)] bg-[#f7b869] px-3 text-[13px] font-bold text-[#0d1420] transition-colors hover:border-l-[rgba(255,224,173,0.98)] hover:bg-[#ffd8a5] hover:text-[rgba(7,15,23,0.97)]"
+            className="decision-neon-button w-[176px] shrink-0 self-stretch rounded-none px-3 text-[13px] font-bold uppercase"
             disabled={!canAct}
             onClick={() =>
               dispatch(
@@ -250,7 +250,7 @@ export default function BlockersDecision({ decision, canAct, compact = false }) 
         <Button
           variant="ghost"
           size="sm"
-          className="w-full h-10 rounded-sm border border-[#315274] bg-[rgba(15,27,40,0.88)] px-3 text-[16px] font-bold text-[#8ec4ff] transition-all hover:border-[#4f7cad] hover:bg-[rgba(24,43,64,0.95)] hover:text-[#d7ebff]"
+          className="decision-neon-button h-10 w-full rounded-sm px-3 text-[16px] font-bold uppercase"
           disabled={!canAct}
           onClick={() =>
             dispatch(

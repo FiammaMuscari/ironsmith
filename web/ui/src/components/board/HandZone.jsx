@@ -273,9 +273,9 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
 
     return (
       <section
-        className="hand-zone-surface w-max max-w-full bg-transparent px-2 py-1 h-full min-h-0 overflow-hidden"
+        className="hand-zone-surface w-full min-w-0 max-w-full bg-transparent px-2 py-1 h-full min-h-0 overflow-hidden"
       >
-        <div className="hand-zone-scroll min-h-0 h-full -mx-2 px-2 overflow-x-auto overflow-y-hidden pb-0.5">
+        <div className="hand-zone-scroll min-h-0 h-full w-full min-w-0 -mx-2 px-2 overflow-x-auto overflow-y-hidden pb-0.5 overscroll-x-contain">
           <div ref={handListRef} className="hand-zone-row flex gap-1.5 flex-nowrap items-start h-full w-max pl-1 pr-2">
             {/* Regular hand cards */}
             {handCards.map((card, i) => {

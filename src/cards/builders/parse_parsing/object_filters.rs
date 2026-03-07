@@ -1,17 +1,16 @@
 use crate::cards::builders::{
-    CardTextError, IT_TAG, Token, apply_filter_keyword_constraint,
-    is_demonstrative_object_head, is_non_outlaw_word, is_outlaw_word,
-    is_permanent_type, is_source_reference_words, parse_alternative_cast_words,
-    parse_card_type, parse_color, parse_counter_type_word,
-    parse_filter_comparison_tokens, parse_filter_counter_constraint_words,
-    parse_filter_keyword_constraint_words, parse_non_color, parse_non_subtype,
-    parse_non_supertype, parse_non_type, parse_pt_modifier, parse_subtype_flexible,
-    parse_subtype_word, parse_supertype_word, parse_unsigned_pt_word, parse_zone_word,
-    push_outlaw_subtypes, token_index_for_word_index, trim_commas, words, is_article,
+    CardTextError, IT_TAG, Token, apply_filter_keyword_constraint, is_article,
+    is_demonstrative_object_head, is_non_outlaw_word, is_outlaw_word, is_permanent_type,
+    is_source_reference_words, parse_alternative_cast_words, parse_card_type, parse_color,
+    parse_counter_type_word, parse_filter_comparison_tokens, parse_filter_counter_constraint_words,
+    parse_filter_keyword_constraint_words, parse_non_color, parse_non_subtype, parse_non_supertype,
+    parse_non_type, parse_pt_modifier, parse_subtype_flexible, parse_subtype_word,
+    parse_supertype_word, parse_unsigned_pt_word, parse_zone_word, push_outlaw_subtypes,
+    split_on_and, token_index_for_word_index, trim_commas, words,
 };
 use crate::{
-    CardType, ColorSet, ObjectFilter, PlayerFilter, Supertype, TagKey,
-    TaggedObjectConstraint, TaggedOpbjectRelation, Zone,
+    CardType, ColorSet, ObjectFilter, PlayerFilter, Supertype, TagKey, TaggedObjectConstraint,
+    TaggedOpbjectRelation, Zone,
 };
 
 pub(crate) fn parse_object_filter(
@@ -2082,6 +2081,17 @@ pub(crate) fn parse_object_filter(
         CardType::Planeswalker,
         CardType::Battle,
     ];
+    let and_segments = split_on_and(&segment_tokens);
+    let and_segment_words_lists: Vec<Vec<String>> = and_segments
+        .iter()
+        .map(|segment| {
+            words(segment)
+                .into_iter()
+                .filter(|word| !is_article(word))
+                .map(ToString::to_string)
+                .collect()
+        })
+        .collect();
 
     let segment_has_standalone_spell = |segment: &[String]| {
         let contains_spell = segment
@@ -2113,12 +2123,24 @@ pub(crate) fn parse_object_filter(
                 || parse_subtype_flexible(word).is_some()
         })
     };
+    let segment_has_permanent_spell_head = |segment: &[String]| {
+        segment
+            .windows(2)
+            .any(|window| matches!(window, [permanent, spell] if (permanent == "permanent" || permanent == "permanents") && (spell == "spell" || spell == "spells")))
+    };
     let has_standalone_spell_segment = segment_words_lists
         .iter()
         .any(|segment| segment_has_standalone_spell(segment));
     let has_nonspell_permanent_segment = segment_words_lists
         .iter()
         .any(|segment| segment_has_nonspell_permanent_head(segment));
+    let has_split_permanent_spell_segments = and_segment_words_lists.len() > 1
+        && and_segment_words_lists
+            .iter()
+            .any(|segment| segment_has_permanent_spell_head(segment))
+        && and_segment_words_lists
+            .iter()
+            .any(|segment| segment_has_nonspell_permanent_head(segment));
 
     if saw_spell && has_standalone_spell_segment && has_nonspell_permanent_segment {
         let mut spell_filter = filter.clone();
@@ -2128,6 +2150,32 @@ pub(crate) fn parse_object_filter(
         spell_filter.all_card_types.clear();
         spell_filter.subtypes.clear();
         spell_filter.type_or_subtype_union = false;
+
+        let mut permanent_filter = filter.clone();
+        permanent_filter.any_of.clear();
+        permanent_filter.zone = Some(Zone::Battlefield);
+        permanent_filter.has_mana_cost = false;
+        if permanent_filter.card_types.is_empty()
+            && permanent_filter.all_card_types.is_empty()
+            && permanent_filter.subtypes.is_empty()
+        {
+            permanent_filter.card_types = permanent_type_defaults.clone();
+        }
+
+        let mut combined_filter = ObjectFilter::default();
+        combined_filter.any_of = vec![spell_filter, permanent_filter];
+        filter = combined_filter;
+    } else if saw_spell && saw_permanent && has_split_permanent_spell_segments {
+        let mut spell_filter = filter.clone();
+        spell_filter.any_of.clear();
+        spell_filter.zone = Some(Zone::Stack);
+        spell_filter.has_mana_cost = false;
+        if spell_filter.card_types.is_empty()
+            && spell_filter.all_card_types.is_empty()
+            && spell_filter.subtypes.is_empty()
+        {
+            spell_filter.card_types = permanent_type_defaults.clone();
+        }
 
         let mut permanent_filter = filter.clone();
         permanent_filter.any_of.clear();

@@ -78,6 +78,8 @@ export default function Workspace({
   const [pinnedInspectorObjectId, setPinnedInspectorObjectId] = useState(null);
   const [expandedInspectorObjectId, setExpandedInspectorObjectId] = useState(null);
   const [handLaneHovered, setHandLaneHovered] = useState(false);
+  const [opponentsInspectorDockTop, setOpponentsInspectorDockTop] = useState(null);
+  const workspaceRef = useRef(null);
   const previousStackIdsRef = useRef([]);
   const handRevealShellRef = useRef(null);
   const handRevealMotionRef = useRef(null);
@@ -182,6 +184,52 @@ export default function Workspace({
       handRevealMotionRef.current = null;
     };
   }, [handLaneOpen]);
+
+  useLayoutEffect(() => {
+    const root = workspaceRef.current;
+    if (!root || deckLoadingMode) return undefined;
+
+    let rafId = null;
+    let resizeObserver = null;
+
+    const measureDockTop = () => {
+      const opponentsEl = root.querySelector("[data-opponents-zones]");
+      if (!opponentsEl) {
+        setOpponentsInspectorDockTop(null);
+        return;
+      }
+
+      const opponentsRect = opponentsEl.getBoundingClientRect();
+      const nextTop = Math.max(0, Math.round(opponentsRect.bottom - HAND_PEEK_HEIGHT));
+      setOpponentsInspectorDockTop((currentTop) => (
+        currentTop == null || Math.abs(currentTop - nextTop) >= 1 ? nextTop : currentTop
+      ));
+    };
+
+    const scheduleMeasure = () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        measureDockTop();
+      });
+    };
+
+    scheduleMeasure();
+
+    resizeObserver = new ResizeObserver(scheduleMeasure);
+    resizeObserver.observe(root);
+    const tableEl = root.querySelector("[data-drop-zone]");
+    const opponentsEl = root.querySelector("[data-opponents-zones]");
+    if (tableEl) resizeObserver.observe(tableEl);
+    if (opponentsEl) resizeObserver.observe(opponentsEl);
+    window.addEventListener("resize", scheduleMeasure);
+
+    return () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+    };
+  }, [deckLoadingMode, players.length, zoneViews]);
 
   const handleInspectObject = useCallback(
     (objectId) => {
@@ -325,7 +373,9 @@ export default function Workspace({
 
   return (
     <section
-      className="relative min-h-0 h-full overflow-visible"
+      ref={workspaceRef}
+      className="relative min-h-0 h-full w-full min-w-0 overflow-visible"
+      data-workspace-shell
     >
       <DragOverlay />
       <CastParticles />
@@ -351,16 +401,39 @@ export default function Workspace({
           onCancelDeckLoading={onCancelDeckLoading}
         />
       </div>
+      {!deckLoadingMode && opponentsInspectorDockTop != null && (
+        <div
+          className="pointer-events-none fixed inset-x-0 z-30 flex items-end justify-end overflow-visible px-2"
+          style={{ top: `${opponentsInspectorDockTop}px`, height: `${HAND_PEEK_HEIGHT}px` }}
+          data-inspector-dock="top"
+          data-opponents-inspector-dock
+        >
+          <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
+            <RightRail
+              pinnedObjectId={selectedObjectId}
+              inline
+              inlineDockPlacement="top"
+              allowTopInlinePlacement
+              inlineExpanded={inlineInspectorExpanded}
+              forceInlineExpanded={forceInlineInspectorExpanded}
+              fullArtInlineExpanded={forceInlineInspectorFullArt}
+            />
+          </div>
+        </div>
+      )}
       <div
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex items-end gap-1.5 overflow-visible"
+        className="pointer-events-none fixed inset-x-0 bottom-2 z-30 flex items-end gap-1.5 overflow-visible px-2"
         style={{ height: `${HAND_PEEK_HEIGHT}px` }}
+        data-bottom-dock
+        data-inspector-dock="bottom"
       >
         <div
           className="pointer-events-none relative min-w-0 flex-1 h-full overflow-visible"
+          data-hand-dock-lane
         >
           <div
             ref={handRevealShellRef}
-            className="hand-reveal-shell pointer-events-auto absolute left-0 bottom-0 max-w-full overflow-hidden"
+            className="hand-reveal-shell pointer-events-auto absolute inset-x-0 bottom-0 overflow-hidden"
             data-open={handLaneOpen ? "true" : "false"}
             aria-expanded={handLaneOpen}
             style={{ height: `${handLaneOpen ? HAND_REVEAL_HEIGHT : HAND_COLLAPSED_SHELL_HEIGHT}px` }}
@@ -384,13 +457,16 @@ export default function Workspace({
             </div>
           </div>
         </div>
-        <RightRail
-          pinnedObjectId={selectedObjectId}
-          inline
-          inlineExpanded={inlineInspectorExpanded}
-          forceInlineExpanded={forceInlineInspectorExpanded}
-          fullArtInlineExpanded={forceInlineInspectorFullArt}
-        />
+        <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
+          <RightRail
+            pinnedObjectId={selectedObjectId}
+            inline
+            allowTopInlinePlacement={opponentsInspectorDockTop != null}
+            inlineExpanded={inlineInspectorExpanded}
+            forceInlineExpanded={forceInlineInspectorExpanded}
+            fullArtInlineExpanded={forceInlineInspectorFullArt}
+          />
+        </div>
       </div>
     </section>
   );

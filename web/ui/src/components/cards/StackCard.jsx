@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
-import { animate, cancelMotion, uiSpring } from "@/lib/motion/anime";
+import { cancelMotion, createTimeline, uiSpring } from "@/lib/motion/anime";
 import { scryfallImageUrl } from "@/lib/scryfall";
 import { ManaCostIcons } from "@/lib/mana-symbols";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,9 @@ export default function StackCard({
   const artUrl = scryfallImageUrl(name, "art_crop");
   const scryfallUrl = scryfallImageUrl(name);
   const isCastEntry = !entry.ability_kind;
+  const kindLabel = isCastEntry
+    ? "Spell"
+    : `${entry.ability_kind || "Ability"} ability`;
   const pt = entry.power_toughness
     || (entry.power != null && entry.toughness != null
       ? `${entry.power}/${entry.toughness}`
@@ -29,9 +32,11 @@ export default function StackCard({
 
     cancelMotion(motionRef.current);
     motionRef.current = null;
+    node.style.opacity = "";
+    node.style.transform = "";
 
     if (isLeaving) {
-      motionRef.current = animate(node, {
+      motionRef.current = createTimeline({ autoplay: true }).add(node, {
         opacity: [1, 0],
         y: [0, -14],
         scale: [1, 0.97],
@@ -39,12 +44,16 @@ export default function StackCard({
         ease: "out(2)",
       });
     } else if (isNew) {
-      motionRef.current = animate(node, {
+      motionRef.current = createTimeline({ autoplay: true }).add(node, {
         opacity: [0, 1],
         y: [18, 0],
         scale: [0.92, 1],
         duration: 380,
         ease: uiSpring({ duration: 380, bounce: 0.18 }),
+        onComplete: () => {
+          node.style.opacity = "";
+          node.style.transform = "";
+        },
       });
     }
   }, [isLeaving, isNew]);
@@ -59,13 +68,13 @@ export default function StackCard({
       ref={rootRef}
       className={cn(
         "game-card stack-card w-full min-w-0 min-h-[96px] cursor-pointer overflow-hidden",
-        isActive && "ring-1 ring-[#8ec4ff] shadow-[0_0_0_1px_rgba(142,196,255,0.5),0_10px_22px_rgba(0,0,0,0.46)]",
+        isActive && "stack-card-active",
         isLeaving && "pointer-events-none",
         className
       )}
       data-object-id={entry.id}
       data-card-name={name}
-      onClick={() => onClick?.(entry.id)}
+      onClick={() => onClick?.(entry.inspect_object_id ?? entry.id)}
     >
       {artUrl && (
         <div className="stack-card-art absolute inset-y-0 left-0 z-0 w-[102px] overflow-hidden pointer-events-none">
@@ -98,12 +107,7 @@ export default function StackCard({
               {name}
             </div>
             <div className="mt-1 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-[#8ec4ff]">
-              <span>{isCastEntry ? "Spell" : "Ability"}</span>
-              {entry.ability_kind && (
-                <span className="text-[#c6dbf2]/80 normal-case tracking-normal">
-                  {entry.ability_kind}
-                </span>
-              )}
+              <span>{kindLabel}</span>
             </div>
           </div>
           {isCastEntry && entry.mana_cost && (
@@ -112,36 +116,13 @@ export default function StackCard({
             </span>
           )}
         </div>
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-auto flex items-center gap-2 pt-2">
           {pt && (
             <span className="shrink-0 rounded-sm border border-[#f5d08b]/35 bg-[rgba(245,208,139,0.08)] px-1.5 py-0.5 text-[12px] font-bold leading-none tracking-wide text-[#f5d08b]">
               {pt}
             </span>
           )}
-          {entry.effect_text && !entry.ability_kind && (
-            <span className="text-[11px] uppercase tracking-[0.12em] text-[#7fa8d2]">
-              Effect
-            </span>
-          )}
         </div>
-
-        {entry.ability_kind ? (
-          <span className="stack-card-effect mt-2 block text-[12px] leading-[1.32] text-[#d4e5f7]">
-            {entry.effect_text || `${entry.ability_kind} ability`}
-          </span>
-        ) : entry.effect_text ? (
-          <span className="stack-card-effect mt-2 block text-[12px] leading-[1.32] text-[#d4e5f7]">
-            {entry.effect_text}
-          </span>
-        ) : (
-          <div className="mt-auto" />
-        )}
-
-        {!entry.effect_text && isCastEntry && (
-          <div className="mt-auto pt-2 text-[11px] uppercase tracking-[0.12em] text-[#7fa8d2]">
-            Waiting to resolve
-          </div>
-        )}
       </div>
     </div>
   );

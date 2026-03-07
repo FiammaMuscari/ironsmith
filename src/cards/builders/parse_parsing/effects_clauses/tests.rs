@@ -1,4 +1,8 @@
 use super::*;
+use crate::cards::builders::*;
+use crate::effect::EventValueSpec;
+use crate::static_abilities::StaticAbilityId;
+use crate::*;
 
 fn extract_single_static_ability_ast(abilities: Vec<StaticAbilityAst>) -> StaticAbilityAst {
     match abilities.as_slice() {
