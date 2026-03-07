@@ -1,4 +1,5 @@
 cards.json
+.playwright-screens
 /replays
 /target
 .idea
