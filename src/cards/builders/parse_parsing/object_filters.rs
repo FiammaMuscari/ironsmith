@@ -13,6 +13,48 @@ use crate::{
     TaggedOpbjectRelation, Zone,
 };
 
+fn parse_attached_reference_or_another_disjunction(
+    tokens: &[Token],
+) -> Result<Option<ObjectFilter>, CardTextError> {
+    let segments = split_on_or(tokens);
+    if segments.len() != 2 {
+        return Ok(None);
+    }
+
+    let first_words: Vec<&str> = words(&segments[0])
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    let second_words: Vec<&str> = words(&segments[1])
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+
+    let first_is_attached_reference = first_words
+        .first()
+        .is_some_and(|word| matches!(*word, "enchanted" | "equipped"));
+    let second_starts_with_other = second_words
+        .first()
+        .is_some_and(|word| matches!(*word, "another" | "other"));
+    if !first_is_attached_reference || !second_starts_with_other {
+        return Ok(None);
+    }
+
+    let first_other = first_words
+        .first()
+        .is_some_and(|word| matches!(*word, "another" | "other"));
+    let second_other = second_words
+        .first()
+        .is_some_and(|word| matches!(*word, "another" | "other"));
+
+    let first_filter = parse_object_filter(&segments[0], first_other)?;
+    let second_filter = parse_object_filter(&segments[1], second_other)?;
+
+    let mut disjunction = ObjectFilter::default();
+    disjunction.any_of = vec![first_filter, second_filter];
+    Ok(Some(disjunction))
+}
+
 pub(crate) fn parse_object_filter(
     tokens: &[Token],
     other: bool,
@@ -147,6 +189,12 @@ pub(crate) fn parse_object_filter(
         }
 
         base_tokens.drain(idx + 1..end);
+    }
+    if let Some(mut disjunction) = parse_attached_reference_or_another_disjunction(&base_tokens)? {
+        if target_player.is_some() || target_object.is_some() {
+            disjunction = disjunction.targeting(target_player.take(), target_object.take());
+        }
+        return Ok(disjunction);
     }
     let mut segment_tokens = base_tokens.clone();
 

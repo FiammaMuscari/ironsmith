@@ -264,3 +264,29 @@ fn regression_semantic_mismatch_spider_ham_animal_may_ham_subtypes() {
         "expected ETB Food token clause to remain, got {rendered}"
     );
 }
+
+#[test]
+fn regression_semantic_mismatch_one_with_the_kami_trigger_disjunction() {
+    let rendered = rendered_lines(
+        "Flash\nEnchant creature you control\nWhenever enchanted creature or another modified creature you control dies, create X 1/1 colorless Spirit creature tokens, where X is that creature's power.",
+        "One with the Kami",
+        &[CardType::Enchantment],
+    );
+
+    assert!(
+        rendered.contains("enchanted creature"),
+        "expected enchanted-creature trigger branch to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("another modified creature you control"),
+        "expected modified-creature trigger branch to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("power"),
+        "expected token count to stay tied to the dying creature's power, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("target permanent's power"),
+        "dying-creature power should not degrade into an unrelated target reference, got {rendered}"
+    );
+}

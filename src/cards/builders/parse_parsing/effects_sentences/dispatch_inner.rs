@@ -992,19 +992,31 @@ pub(crate) fn parse_effect_sentence(tokens: &[Token]) -> Result<Vec<EffectAst>, 
             Value::ManaValueOf(Box::new(crate::target::ChooseSpec::Source))
         }
         Some(["that", "creatures", "power"]) => {
-            Value::PowerOf(Box::new(crate::target::ChooseSpec::target(
-                crate::target::ChooseSpec::Object(ObjectFilter::default()),
-            )))
+            Value::PowerOf(Box::new(if stripped_words.iter().any(|w| *w == "target") {
+                crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
+                    ObjectFilter::default(),
+                ))
+            } else {
+                crate::target::ChooseSpec::Tagged(TagKey::from(IT_TAG))
+            }))
         }
         Some(["that", "creatures", "toughness"]) => {
-            Value::ToughnessOf(Box::new(crate::target::ChooseSpec::target(
-                crate::target::ChooseSpec::Object(ObjectFilter::default()),
-            )))
+            Value::ToughnessOf(Box::new(if stripped_words.iter().any(|w| *w == "target") {
+                crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
+                    ObjectFilter::default(),
+                ))
+            } else {
+                crate::target::ChooseSpec::Tagged(TagKey::from(IT_TAG))
+            }))
         }
         Some(["that", "creatures", "mana", "value"]) => {
-            Value::ManaValueOf(Box::new(crate::target::ChooseSpec::target(
-                crate::target::ChooseSpec::Object(ObjectFilter::default()),
-            )))
+            Value::ManaValueOf(Box::new(if stripped_words.iter().any(|w| *w == "target") {
+                crate::target::ChooseSpec::target(crate::target::ChooseSpec::Object(
+                    ObjectFilter::default(),
+                ))
+            } else {
+                crate::target::ChooseSpec::Tagged(TagKey::from(IT_TAG))
+            }))
         }
         _ => parse_where_x_value_clause(where_tokens).ok_or_else(|| {
             CardTextError::ParseError(format!(
