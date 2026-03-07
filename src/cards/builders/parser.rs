@@ -2,7 +2,8 @@ use crate::cards::builders::effect_ast_traversal::try_for_each_nested_effects_mu
 use crate::cards::builders::parse_parsing::{
     infer_activated_functional_zones, is_activate_only_restriction_sentence, is_at_trigger_intro,
     is_ignorable_unparsed_line, is_trigger_only_restriction_sentence, parse_ability_line,
-    parse_activation_cost, parse_effect_sentences, parse_metadata_line,
+    parse_activation_cost, parse_effect_sentences, parse_loyalty_shorthand_activation_cost,
+    parse_metadata_line,
     parse_static_ability_ast_line, parse_trigger_clause, parser_allow_unsupported_enabled,
     reject_unimplemented_keyword_actions, split_on_period, starts_with_activation_cost,
     token_index_for_word_index, tokenize_line, trim_commas, words,
@@ -565,10 +566,20 @@ fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextEr
         .filter(|idx| *idx < choose_idx)
     {
         let cost_region = &tokens[..colon_idx];
-        if let Some(cost_start) = find_activation_cost_start(cost_region) {
+        let loyalty_shorthand_cost =
+            parse_loyalty_shorthand_activation_cost(cost_region, Some(info.raw_line.as_str()));
+        if let Some(cost_start) = find_activation_cost_start(cost_region)
+            .or_else(|| loyalty_shorthand_cost.as_ref().map(|_| 0))
+        {
             let cost_tokens = &cost_region[cost_start..];
-            if !cost_tokens.is_empty() && starts_with_activation_cost(cost_tokens) {
-                let (mana_cost, cost_effects) = parse_activation_cost(cost_tokens)?;
+            if !cost_tokens.is_empty()
+                && (starts_with_activation_cost(cost_tokens) || loyalty_shorthand_cost.is_some())
+            {
+                let (mana_cost, cost_effects) = if let Some(cost) = &loyalty_shorthand_cost {
+                    (cost.clone(), Vec::new())
+                } else {
+                    parse_activation_cost(cost_tokens)?
+                };
                 let mana_cost = crate::ability::merge_cost_effects(mana_cost, cost_effects);
 
                 let prechoose_tokens = trim_commas(&tokens[colon_idx + 1..choose_idx]).to_vec();
@@ -583,8 +594,16 @@ fn parse_modal_header(info: &LineInfo) -> Result<Option<ModalHeader>, CardTextEr
                 activated = Some(ModalActivatedHeader {
                     mana_cost,
                     functional_zones,
-                    timing: ActivationTiming::AnyTime,
-                    additional_restrictions: Vec::new(),
+                    timing: if loyalty_shorthand_cost.is_some() {
+                        ActivationTiming::SorcerySpeed
+                    } else {
+                        ActivationTiming::AnyTime
+                    },
+                    additional_restrictions: if loyalty_shorthand_cost.is_some() {
+                        vec!["Activate only once each turn.".to_string()]
+                    } else {
+                        Vec::new()
+                    },
                     activation_restrictions: Vec::new(),
                 });
                 effect_start_idx = colon_idx + 1;

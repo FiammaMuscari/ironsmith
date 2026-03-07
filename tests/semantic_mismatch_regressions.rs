@@ -362,6 +362,28 @@ fn regression_semantic_mismatch_faerie_conclave_animation_payload() {
 }
 
 #[test]
+fn regression_semantic_mismatch_chandra_flamecaller_loyalty_lines() {
+    let rendered = rendered_lines(
+        "+1: Create two 3/1 red Elemental creature tokens with haste. Exile them at the beginning of the next end step.\n0: Discard all the cards in your hand, then draw that many cards plus one.\n−X: Chandra deals X damage to each creature.",
+        "Chandra, Flamecaller",
+        &[],
+    );
+
+    assert!(
+        rendered.contains("+1: Create two 3/1 red Elemental creature tokens with haste."),
+        "expected +1 loyalty ability to remain an activated line, got {rendered}"
+    );
+    assert!(
+        rendered.contains("0: Discard all the cards in your hand, then draw that many cards plus one."),
+        "expected 0 loyalty ability to remain an activated line, got {rendered}"
+    );
+    assert!(
+        rendered.contains("−X: Chandra deals X damage to each creature."),
+        "expected -X loyalty ability to remain an activated line, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_dwarven_thaumaturgist_switch_pt() {
     let rendered = rendered_lines(
         "{T}: Switch target creature's power and toughness until end of turn.",

@@ -56,6 +56,13 @@ use crate::zone::Zone;
 pub(crate) fn parse_activated_line(
     tokens: &[Token],
 ) -> Result<Option<ParsedAbility>, CardTextError> {
+    parse_activated_line_with_raw(tokens, None)
+}
+
+pub(crate) fn parse_activated_line_with_raw(
+    tokens: &[Token],
+    raw_line: Option<&str>,
+) -> Result<Option<ParsedAbility>, CardTextError> {
     let Some(colon_idx) = tokens
         .iter()
         .position(|token| matches!(token, Token::Colon(_)))
@@ -69,6 +76,7 @@ pub(crate) fn parse_activated_line(
     if cost_tokens.is_empty() || effect_tokens.is_empty() {
         return Ok(None);
     }
+    let loyalty_shorthand_cost = parse_loyalty_shorthand_activation_cost(cost_tokens, raw_line);
     let ability_label = if cost_start > 0 {
         let prefix = words(&tokens[..cost_start]);
         if prefix == ["boast"] || prefix.last() == Some(&"boast") {
@@ -139,7 +147,11 @@ pub(crate) fn parse_activated_line(
                 | ["target", "player", "adds", ..]
         );
         if is_primary_add_clause {
-            let (mana_cost, cost_effects) = parse_activation_cost(cost_tokens)?;
+            let (mana_cost, cost_effects) = if let Some(cost) = &loyalty_shorthand_cost {
+                (cost.clone(), Vec::new())
+            } else {
+                parse_activation_cost(cost_tokens)?
+            };
             let mana_cost = crate::ability::merge_cost_effects(mana_cost, cost_effects);
             let reference_imports = first_sacrifice_cost_choice_tag(&mana_cost)
                 .or_else(|| last_exile_cost_choice_tag(&mana_cost))
@@ -198,6 +210,12 @@ pub(crate) fn parse_activated_line(
                 .iter()
                 .any(|word| *word == "commander" || *word == "commanders")
                 && mana_words.contains(&"identity");
+            let loyalty_timing = if loyalty_shorthand_cost.is_some() {
+                ActivationTiming::SorcerySpeed
+            } else {
+                ActivationTiming::AnyTime
+            };
+            let loyalty_restrictions = loyalty_additional_restrictions(loyalty_shorthand_cost.is_some());
             if has_imprinted_colors
                 || has_any_choice_mana
                 || uses_commander_identity
@@ -209,8 +227,8 @@ pub(crate) fn parse_activated_line(
                         mana_cost,
                         effects: vec![],
                         choices: vec![],
-                        timing: ActivationTiming::AnyTime,
-                        additional_restrictions: vec![],
+                        timing: loyalty_timing.clone(),
+                        additional_restrictions: loyalty_restrictions.clone(),
                         activation_restrictions: vec![],
                         mana_output: Some(vec![]),
                         activation_condition: mana_activation_condition.clone(),
@@ -236,8 +254,8 @@ pub(crate) fn parse_activated_line(
                         mana_cost,
                         effects: vec![],
                         choices: vec![],
-                        timing: ActivationTiming::AnyTime,
-                        additional_restrictions: vec![],
+                        timing: loyalty_timing.clone(),
+                        additional_restrictions: loyalty_restrictions.clone(),
                         activation_restrictions: vec![],
                         mana_output: Some(vec![]),
                         activation_condition: mana_activation_condition.clone(),
@@ -276,8 +294,8 @@ pub(crate) fn parse_activated_line(
                             mana_cost,
                             effects: vec![],
                             choices: vec![],
-                            timing: ActivationTiming::AnyTime,
-                            additional_restrictions: vec![],
+                            timing: loyalty_timing.clone(),
+                            additional_restrictions: loyalty_restrictions.clone(),
                             activation_restrictions: vec![],
                             mana_output: Some(mana),
                             activation_condition: mana_activation_condition.clone(),
@@ -299,8 +317,8 @@ pub(crate) fn parse_activated_line(
                         mana_cost,
                         effects: vec![],
                         choices: vec![],
-                        timing: ActivationTiming::AnyTime,
-                        additional_restrictions: vec![],
+                        timing: loyalty_timing,
+                        additional_restrictions: loyalty_restrictions,
                         activation_restrictions: vec![],
                         mana_output: Some(vec![]),
                         activation_condition: mana_activation_condition.clone(),
@@ -322,7 +340,11 @@ pub(crate) fn parse_activated_line(
     }
 
     // Generic activated ability: parse costs and effects from "<costs>: <effects>"
-    let (mana_cost, cost_effects) = parse_activation_cost(cost_tokens)?;
+    let (mana_cost, cost_effects) = if let Some(cost) = &loyalty_shorthand_cost {
+        (cost.clone(), Vec::new())
+    } else {
+        parse_activation_cost(cost_tokens)?
+    };
     let effect_tokens_joined = join_sentences_with_period(&effect_sentences);
     let effects_ast = parse_effect_sentences(&effect_tokens_joined)?;
     if effects_ast.is_empty() {
@@ -333,6 +355,19 @@ pub(crate) fn parse_activated_line(
         .map(ReferenceImports::with_last_object_tag)
         .unwrap_or_default();
     let mana_cost = crate::ability::merge_cost_effects(mana_cost, cost_effects);
+    if loyalty_shorthand_cost.is_some() {
+        timing = ActivationTiming::SorcerySpeed;
+        for restriction in loyalty_additional_restrictions(true) {
+            let already_present = additional_activation_restrictions.iter().any(|existing| {
+                existing.eq_ignore_ascii_case(restriction.as_str())
+                    || (existing.to_ascii_lowercase().contains("once each turn")
+                        && restriction.to_ascii_lowercase().contains("once each turn"))
+            });
+            if !already_present {
+                additional_activation_restrictions.push(restriction);
+            }
+        }
+    }
 
     Ok(Some(ParsedAbility {
         ability: {
@@ -357,6 +392,55 @@ pub(crate) fn parse_activated_line(
         reference_imports,
         trigger_spec: None,
     }))
+}
+
+pub(crate) fn parse_loyalty_shorthand_activation_cost(
+    cost_tokens: &[Token],
+    raw_line: Option<&str>,
+) -> Option<TotalCost> {
+    let [token] = cost_tokens else {
+        return None;
+    };
+    let word = token.as_word()?;
+    if let Some(rest) = word.strip_prefix('+')
+        && let Ok(amount) = rest.parse::<u32>()
+    {
+        return Some(if amount == 0 {
+            TotalCost::free()
+        } else {
+            TotalCost::from_cost(crate::costs::Cost::add_counters(CounterType::Loyalty, amount))
+        });
+    }
+    if let Some(rest) = word.strip_prefix('-') {
+        if rest.eq_ignore_ascii_case("x") {
+            return Some(TotalCost::from_cost(crate::costs::Cost::new(
+                crate::costs::RemoveAnyCountersFromSourceCost::x(Some(CounterType::Loyalty)),
+            )));
+        }
+        if let Ok(amount) = rest.parse::<u32>() {
+            return Some(TotalCost::from_cost(crate::costs::Cost::remove_counters(
+                CounterType::Loyalty,
+                amount,
+            )));
+        }
+    }
+    if word == "0"
+        && raw_line
+            .and_then(|line| line.trim().split_once(':'))
+            .is_some_and(|(prefix, _)| prefix.trim().replace('−', "-") == "0")
+    {
+        return Some(TotalCost::free());
+    }
+    None
+}
+
+pub(crate) fn loyalty_additional_restrictions(
+    is_loyalty_shorthand: bool,
+) -> Vec<String> {
+    if !is_loyalty_shorthand {
+        return Vec::new();
+    }
+    vec!["Activate only once each turn.".to_string()]
 }
 
 pub(crate) fn first_sacrifice_cost_choice_tag(

@@ -7510,6 +7510,13 @@ fn describe_ability(
         AbilityKind::Activated(activated) => {
             if let Some(text) = ability.text.as_deref() {
                 let normalized = normalize_sentence_surface_style(text.trim());
+                if matches!(
+                    normalized.chars().next(),
+                    Some('+') | Some('-') | Some('−') | Some('0')
+                ) && normalized.contains(':')
+                {
+                    return vec![normalized];
+                }
                 if normalized.to_ascii_lowercase().starts_with("crew ") {
                     return vec![format!("Keyword ability {index}: {normalized}")];
                 }
