@@ -209,6 +209,20 @@ fn regression_semantic_mismatch_uurg_power_only_cda() {
 }
 
 #[test]
+fn regression_semantic_mismatch_dwarven_thaumaturgist_switch_pt() {
+    let rendered = rendered_lines(
+        "{T}: Switch target creature's power and toughness until end of turn.",
+        "Dwarven Thaumaturgist",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("switches power and toughness until end of turn"),
+        "expected power/toughness switch effect to remain, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_corpse_augur_graveyard_owner_kept() {
     let rendered = rendered_lines(
         "When this creature dies, you draw X cards and you lose X life, where X is the number of creature cards in target player's graveyard.",

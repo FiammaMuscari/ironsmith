@@ -6018,6 +6018,9 @@ fn describe_apply_continuous_clauses(
         crate::continuous::Modification::ModifyToughness(value) => {
             clauses.push(format!("{gets} {} toughness", describe_signed_i32(*value)));
         }
+        crate::continuous::Modification::SwitchPowerToughness => {
+            clauses.push("switches power and toughness".to_string());
+        }
         crate::continuous::Modification::SetPowerToughness {
             power,
             toughness,
