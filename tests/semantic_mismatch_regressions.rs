@@ -137,6 +137,32 @@ fn regression_semantic_mismatch_asmira_graveyard_battlefield_clause() {
 }
 
 #[test]
+fn regression_semantic_mismatch_harald_top_five_pick_and_bottom_rest() {
+    let rendered = rendered_lines(
+        "Menace\nWhen Harald enters, look at the top five cards of your library. You may reveal an Elf, Warrior, or Tyvar card from among them and put it into your hand. Put the rest on the bottom of your library in a random order.",
+        "Harald, King of Skemfar",
+        &[CardType::Creature],
+    );
+
+    assert!(
+        rendered.contains("look at the top five cards of your library"),
+        "expected look-at-top-five clause to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("you may reveal an elf, warrior, or tyvar card from among them and put it into your hand"),
+        "expected chosen-card reveal and hand move to remain, got {rendered}"
+    );
+    assert!(
+        rendered.contains("put the rest on the bottom of your library"),
+        "expected remainder move to bottom of library to remain, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("return it to its owner's hand"),
+        "look-at-top remainder clause should not collapse into a bounce sequence, got {rendered}"
+    );
+}
+
+#[test]
 fn regression_semantic_mismatch_entered_battlefield_under_control_this_turn() {
     let rendered = rendered_lines(
         "Flying, vigilance\n{T}: Put a +1/+1 counter on each creature that entered the battlefield under your control this turn.",

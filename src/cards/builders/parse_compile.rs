@@ -5111,11 +5111,7 @@ fn try_compile_visibility_and_card_selection_effect(
                     tag: TagKey::from("__it__"),
                     relation: TaggedOpbjectRelation::SameStableId,
                 });
-            let in_chosen = Condition::PlayerTaggedObjectMatches {
-                player: PlayerFilter::IteratedPlayer,
-                tag: chosen_tag_key,
-                filter: membership_filter,
-            };
+            let in_chosen = Condition::TaggedObjectMatches(chosen_tag_key, membership_filter);
             let move_rest = Effect::for_each_tagged(
                 looked_tag,
                 vec![Effect::conditional(
@@ -5177,11 +5173,7 @@ fn try_compile_visibility_and_card_selection_effect(
                     tag: TagKey::from("__it__"),
                     relation: TaggedOpbjectRelation::SameStableId,
                 });
-            let in_chosen = Condition::PlayerTaggedObjectMatches {
-                player: PlayerFilter::IteratedPlayer,
-                tag: chosen_tag_key,
-                filter: membership_filter,
-            };
+            let in_chosen = Condition::TaggedObjectMatches(chosen_tag_key, membership_filter);
             let move_rest = Effect::for_each_tagged(
                 looked_tag,
                 vec![Effect::conditional(
@@ -5265,11 +5257,7 @@ fn try_compile_visibility_and_card_selection_effect(
                     tag: TagKey::from("__it__"),
                     relation: TaggedOpbjectRelation::SameStableId,
                 });
-            let in_chosen = Condition::PlayerTaggedObjectMatches {
-                player: PlayerFilter::IteratedPlayer,
-                tag: chosen_tag_key,
-                filter: membership_filter,
-            };
+            let in_chosen = Condition::TaggedObjectMatches(chosen_tag_key, membership_filter);
             compiled.push(Effect::for_each_tagged(
                 looked_tag,
                 vec![Effect::conditional(
@@ -5318,11 +5306,7 @@ fn try_compile_visibility_and_card_selection_effect(
                     tag: TagKey::from("__it__"),
                     relation: TaggedOpbjectRelation::SameStableId,
                 });
-            let in_it = Condition::PlayerTaggedObjectMatches {
-                player: PlayerFilter::IteratedPlayer,
-                tag: TagKey::from(IT_TAG),
-                filter: membership_filter,
-            };
+            let in_it = Condition::TaggedObjectMatches(TagKey::from(IT_TAG), membership_filter);
             let move_rest = Effect::for_each_tagged(
                 looked_tag,
                 vec![Effect::conditional(
