@@ -8,6 +8,7 @@ DEFAULT_FRONTEND_SCORES_FILE="$ROOT_DIR/web/ui/public/ironsmith_semantic_scores.
 
 DIMS="${IRONSMITH_WASM_SEMANTIC_DIMS:-384}"
 FEATURES="wasm,generated-registry"
+BUILD_PROFILE="release"
 THRESHOLD="${IRONSMITH_WASM_SEMANTIC_THRESHOLD:-}"
 FRONTEND_SCORES_FILE="${IRONSMITH_FRONTEND_SEMANTIC_SCORES_FILE:-$DEFAULT_FRONTEND_SCORES_FILE}"
 FRONTEND_SCORES_FILE_EXPLICIT=0
@@ -30,9 +31,10 @@ require_cmd() {
 
 usage() {
   cat <<USAGE
-Usage: ./rebuild-wasm.sh [--threshold <float>] [--dims <int>] [--features <csv>] [--scores-file <path>] [--frontend-scores-file <path>]
+Usage: ./rebuild-wasm.sh [--dev|--release] [--threshold <float>] [--dims <int>] [--features <csv>] [--scores-file <path>] [--frontend-scores-file <path>]
 
 Examples:
+  ./rebuild-wasm.sh --dev
   ./rebuild-wasm.sh --threshold 0.99
   ./rebuild-wasm.sh --dims 384
   ./rebuild-wasm.sh --scores-file /tmp/ironsmith_semantic_scores.json
@@ -63,6 +65,14 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "missing value for --threshold" >&2; exit 1; }
       THRESHOLD="$2"
       shift 2
+      ;;
+    --dev)
+      BUILD_PROFILE="dev"
+      shift
+      ;;
+    --release)
+      BUILD_PROFILE="release"
+      shift
       ;;
     --scores-file)
       [[ $# -ge 2 ]] || { echo "missing value for --scores-file" >&2; exit 1; }
@@ -142,8 +152,17 @@ fi
 
 export IRONSMITH_GENERATED_REGISTRY_SCORES_FILE="$SCORES_FILE"
 echo "[INFO] semantic scores source: $IRONSMITH_GENERATED_REGISTRY_SCORES_FILE"
+echo "[INFO] wasm build profile: $BUILD_PROFILE"
 
-wasm-pack build --release --target web --features "$FEATURES"
+WASM_PACK_ARGS=(build --target web)
+if [[ "$BUILD_PROFILE" == "release" ]]; then
+  WASM_PACK_ARGS+=(--release)
+else
+  WASM_PACK_ARGS+=(--dev)
+fi
+WASM_PACK_ARGS+=(--features "$FEATURES")
+
+wasm-pack "${WASM_PACK_ARGS[@]}"
 
 mkdir -p "$DEMO_PKG_DIR"
 cp -f \

@@ -127,7 +127,7 @@ impl GameEventType for MarkersChangedEvent {
             MarkerChangeType::Added => "added to",
             MarkerChangeType::Removed => "removed from",
         };
-        format!("{} {:?} {}", self.amount, self.marker, action)
+        format!("{} {} {}", self.amount, self.marker.description(), action)
     }
 
     fn as_any(&self) -> &dyn Any {

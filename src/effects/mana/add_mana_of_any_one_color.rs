@@ -9,7 +9,7 @@ use crate::game_state::GameState;
 use crate::mana::ManaSymbol;
 use crate::target::PlayerFilter;
 
-use super::choice_helpers::{choose_mana_colors, credit_repeated_mana_symbol};
+use super::choice_helpers::{choose_mana_colors, credit_repeated_mana_symbol_from_context};
 
 /// Effect that adds mana of any ONE color to a player's mana pool.
 ///
@@ -69,7 +69,13 @@ impl EffectExecutor for AddManaOfAnyOneColorEffect {
             .next()
             .unwrap_or(Color::Green);
 
-        credit_repeated_mana_symbol(game, player_id, ManaSymbol::from_color(color), amount);
+        credit_repeated_mana_symbol_from_context(
+            game,
+            player_id,
+            ManaSymbol::from_color(color),
+            amount,
+            ctx,
+        );
 
         Ok(EffectOutcome::count(amount as i32))
     }

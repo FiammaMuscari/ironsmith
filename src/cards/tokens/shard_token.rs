@@ -27,6 +27,7 @@ pub fn shard_token_definition() -> CardDefinition {
             activation_restrictions: vec![],
             mana_output: None,
             activation_condition: None,
+            mana_usage_restrictions: vec![],
         }),
         functional_zones: vec![Zone::Battlefield],
         text: Some("{2}, Sacrifice this token: Scry 1, then draw a card.".to_string()),

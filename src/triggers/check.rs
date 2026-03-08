@@ -232,6 +232,90 @@ fn suppresses_creature_etb_triggers_with_effects(
     )
 }
 
+fn monarch_designation_source() -> (ObjectId, StableId, String) {
+    let source = ObjectId::from_raw(0);
+    (source, StableId::from(source), "The Monarch".to_string())
+}
+
+fn push_monarch_trigger(
+    triggered: &mut Vec<TriggeredAbilityEntry>,
+    controller: PlayerId,
+    ability: TriggeredAbility,
+    trigger_event: &TriggerEvent,
+) {
+    let (source, source_stable_id, source_name) = monarch_designation_source();
+    let trigger_identity = compute_trigger_identity(&ability);
+    triggered.push(TriggeredAbilityEntry {
+        source,
+        controller,
+        x_value: None,
+        ability,
+        triggering_event: trigger_event.clone(),
+        source_stable_id,
+        source_name,
+        tagged_objects: std::collections::HashMap::new(),
+        trigger_identity,
+    });
+}
+
+fn add_monarch_designation_triggers(
+    game: &GameState,
+    trigger_event: &TriggerEvent,
+    triggered: &mut Vec<TriggeredAbilityEntry>,
+) {
+    let Some(monarch) = game.monarch else {
+        return;
+    };
+
+    if trigger_event.kind() == crate::events::traits::EventKind::BeginningOfEndStep
+        && let Some(end_step) =
+            trigger_event.downcast::<crate::events::phase::BeginningOfEndStepEvent>()
+        && end_step.player == monarch
+    {
+        push_monarch_trigger(
+            triggered,
+            monarch,
+            TriggeredAbility {
+                trigger: Trigger::custom(
+                    "monarch_end_step",
+                    "At the beginning of the monarch's end step".to_string(),
+                ),
+                effects: vec![Effect::target_draws(1, PlayerFilter::Specific(monarch))],
+                choices: vec![],
+                intervening_if: None,
+            },
+            trigger_event,
+        );
+    }
+
+    if trigger_event.kind() == crate::events::traits::EventKind::Damage
+        && let Some(damage_event) = trigger_event.downcast::<crate::events::damage::DamageEvent>()
+        && damage_event.is_combat
+        && damage_event.amount > 0
+        && let crate::game_event::DamageTarget::Player(player_id) = damage_event.target
+        && player_id == monarch
+        && let Some(source_obj) = game.object(damage_event.source)
+        && game.object_has_card_type(source_obj.id, CardType::Creature)
+    {
+        push_monarch_trigger(
+            triggered,
+            monarch,
+            TriggeredAbility {
+                trigger: Trigger::custom(
+                    "monarch_combat_damage",
+                    "Whenever a creature deals combat damage to the monarch".to_string(),
+                ),
+                effects: vec![Effect::become_monarch_player(PlayerFilter::Specific(
+                    source_obj.controller,
+                ))],
+                choices: vec![],
+                intervening_if: None,
+            },
+            trigger_event,
+        );
+    }
+}
+
 /// Check all permanents for triggered abilities that match the given event.
 ///
 /// Returns a list of triggered abilities that should go on the stack.
@@ -511,6 +595,8 @@ pub(crate) fn check_triggers_with_view(
             });
         }
     }
+
+    add_monarch_designation_triggers(game, trigger_event, &mut triggered);
 
     triggered
 }

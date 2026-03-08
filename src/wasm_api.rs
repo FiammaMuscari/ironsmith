@@ -93,7 +93,7 @@ fn counter_signature_for_group(obj: &crate::object::Object) -> String {
     let mut parts: Vec<(String, u32)> = obj
         .counters
         .iter()
-        .map(|(counter_type, amount)| (format!("{counter_type:?}"), *amount))
+        .map(|(counter_type, amount)| (counter_type.description().into_owned(), *amount))
         .collect();
     parts.sort_unstable_by(|left, right| left.0.cmp(&right.0));
     if parts.is_empty() {
@@ -118,7 +118,7 @@ fn counter_snapshots_for_object(obj: &crate::object::Object) -> Vec<CounterSnaps
         .counters
         .iter()
         .map(|(kind, amount)| CounterSnapshot {
-            kind: split_camel_case(&format!("{kind:?}")),
+            kind: kind.description().into_owned(),
             amount: *amount,
         })
         .collect();
@@ -263,6 +263,7 @@ fn grouped_battlefield_for_player(
                 id,
                 stable_id,
                 name,
+                token: key.token,
                 tapped: key.tapped,
                 count: member_ids.len().max(1),
                 member_ids,
@@ -270,6 +271,7 @@ fn grouped_battlefield_for_player(
                 lane: key.lane.as_str().to_string(),
                 mana_cost,
                 power_toughness,
+                counter_signature: key.counter_signature.clone(),
                 counters,
             }
         })
@@ -324,6 +326,7 @@ struct PermanentSnapshot {
     id: u64,
     stable_id: u64,
     name: String,
+    token: bool,
     tapped: bool,
     count: usize,
     member_ids: Vec<u64>,
@@ -331,6 +334,7 @@ struct PermanentSnapshot {
     lane: String,
     mana_cost: Option<String>,
     power_toughness: Option<String>,
+    counter_signature: String,
     counters: Vec<CounterSnapshot>,
 }
 
@@ -366,12 +370,25 @@ struct PlayerSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct ViewedCardsSnapshot {
+    viewer: u8,
+    subject: u8,
+    zone: String,
+    visibility: String,
+    card_ids: Vec<u64>,
+    source: Option<u64>,
+    description: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct HandCardSnapshot {
     id: u64,
     stable_id: u64,
     name: String,
     mana_cost: Option<String>,
     power_toughness: Option<String>,
+    loyalty: Option<u32>,
+    defense: Option<u32>,
     card_types: Vec<String>,
 }
 
@@ -389,6 +406,7 @@ struct StackObjectSnapshot {
     inspect_object_id: Option<u64>,
     stable_id: Option<u64>,
     source_stable_id: Option<u64>,
+    controller: u8,
     name: String,
     mana_cost: Option<String>,
     effect_text: Option<String>,
@@ -396,6 +414,7 @@ struct StackObjectSnapshot {
     ability_kind: Option<String>,
     /// Compiled text of the specific ability effects (for inspector display).
     ability_text: Option<String>,
+    targets: Vec<TargetChoiceView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -457,6 +476,7 @@ struct GameSnapshot {
     exile_size: usize,
     players: Vec<PlayerSnapshot>,
     battlefield_transitions: Vec<BattlefieldTransitionSnapshot>,
+    viewed_cards: Option<ViewedCardsSnapshot>,
     decision: Option<DecisionView>,
     game_over: Option<GameOverView>,
     /// True when the current decision chain can be cancelled (user-initiated
@@ -468,6 +488,110 @@ struct GameSnapshot {
     undo_land_stable_id: Option<u64>,
 }
 
+#[derive(Debug, Clone)]
+struct ActiveViewedCards {
+    viewer: PlayerId,
+    subject: PlayerId,
+    zone: Zone,
+    cards: Vec<ObjectId>,
+    public: bool,
+    source: Option<ObjectId>,
+    description: String,
+}
+
+fn normalize_stack_display_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn is_trigger_display_line(line: &str) -> bool {
+    let normalized = line.trim().to_ascii_lowercase();
+    normalized.starts_with("when ")
+        || normalized.starts_with("whenever ")
+        || normalized.starts_with("at the beginning ")
+}
+
+fn is_activated_display_line(line: &str) -> bool {
+    line.contains(':')
+}
+
+fn first_matching_stack_line(lines: &[String], wants_triggered: bool) -> Option<String> {
+    let matcher = if wants_triggered {
+        is_trigger_display_line as fn(&str) -> bool
+    } else {
+        is_activated_display_line as fn(&str) -> bool
+    };
+    lines
+        .iter()
+        .find(|line| matcher(line))
+        .and_then(|line| normalize_stack_display_text(line))
+}
+
+fn fallback_stack_entry_ability_text(
+    entry: &crate::game_state::StackEntry,
+    obj: Option<&crate::object::Object>,
+) -> Option<String> {
+    let wants_triggered = entry.triggering_event.is_some();
+
+    if let Some(source_obj) = obj {
+        let ability_texts: Vec<String> = source_obj
+            .abilities
+            .iter()
+            .filter_map(|ability| match (&ability.kind, wants_triggered) {
+                (crate::ability::AbilityKind::Triggered(_), true) => ability.text.clone(),
+                (crate::ability::AbilityKind::Activated(_), false) => ability.text.clone(),
+                _ => None,
+            })
+            .collect();
+        if let Some(text) = first_matching_stack_line(&ability_texts, wants_triggered) {
+            return Some(text);
+        }
+
+        let oracle_lines: Vec<String> = source_obj
+            .oracle_text
+            .lines()
+            .filter_map(normalize_stack_display_text)
+            .collect();
+        if let Some(text) = first_matching_stack_line(&oracle_lines, wants_triggered) {
+            return Some(text);
+        }
+
+        let compiled_lines = crate::compiled_text::compiled_lines(&source_obj.to_card_definition());
+        if let Some(text) = first_matching_stack_line(&compiled_lines, wants_triggered) {
+            return Some(text);
+        }
+    }
+
+    let snapshot_ability_texts: Vec<String> = entry
+        .source_snapshot
+        .as_ref()
+        .into_iter()
+        .flat_map(|snapshot| snapshot.abilities.iter())
+        .filter_map(|ability| match (&ability.kind, wants_triggered) {
+            (crate::ability::AbilityKind::Triggered(_), true) => ability.text.clone(),
+            (crate::ability::AbilityKind::Activated(_), false) => ability.text.clone(),
+            _ => None,
+        })
+        .collect();
+    first_matching_stack_line(&snapshot_ability_texts, wants_triggered)
+}
+
+fn stack_entry_ability_text(
+    entry: &crate::game_state::StackEntry,
+    obj: Option<&crate::object::Object>,
+) -> Option<String> {
+    entry
+        .ability_effects
+        .as_ref()
+        .map(|effects| crate::compiled_text::compile_effect_list(effects))
+        .and_then(|text| normalize_stack_display_text(&text))
+        .or_else(|| fallback_stack_entry_ability_text(entry, obj))
+}
+
 impl GameSnapshot {
     fn from_game(
         game: &GameState,
@@ -476,6 +600,7 @@ impl GameSnapshot {
         game_over: Option<&GameResult>,
         pending_cast_stack_id: Option<ObjectId>,
         battlefield_transitions: Vec<BattlefieldTransitionSnapshot>,
+        viewed_cards: Option<&ActiveViewedCards>,
         cancelable: bool,
         undo_land_stable_id: Option<u64>,
         snapshot_id: u64,
@@ -488,9 +613,15 @@ impl GameSnapshot {
                 let (battlefield, battlefield_total) =
                     grouped_battlefield_for_player(game, p.id, &protected_ids);
                 let is_perspective_player = p.id == perspective;
+                let visible_hand_view = viewed_cards.filter(|view| {
+                    view.zone == Zone::Hand
+                        && view.subject == p.id
+                        && (view.public || view.viewer == perspective)
+                });
+                let can_view_hand = is_perspective_player || visible_hand_view.is_some();
                 PlayerSnapshot {
-                    can_view_hand: is_perspective_player,
-                    hand_cards: if is_perspective_player {
+                    can_view_hand,
+                    hand_cards: if can_view_hand {
                         p.hand
                             .iter()
                             .rev()
@@ -507,6 +638,8 @@ impl GameSnapshot {
                                     name: o.name.clone(),
                                     mana_cost,
                                     power_toughness,
+                                    loyalty: o.loyalty(),
+                                    defense: o.defense(),
                                     card_types: o
                                         .card_types
                                         .iter()
@@ -645,27 +778,30 @@ impl GameSnapshot {
                     .map(|o| o.name.clone())
                     .or_else(|| entry.source_name.clone())
                     .unwrap_or_else(|| format!("Object#{}", entry.object_id.0));
+                let targets = entry
+                    .targets
+                    .iter()
+                    .map(|target| target_choice_view(game, target))
+                    .collect();
                 if entry.is_ability {
                     let ability_kind = if entry.triggering_event.is_some() {
                         "Triggered"
                     } else {
                         "Activated"
                     };
-                    let ability_text = entry
-                        .ability_effects
-                        .as_ref()
-                        .map(|effects| crate::compiled_text::compile_effect_list(effects))
-                        .filter(|s| !s.is_empty());
+                    let ability_text = stack_entry_ability_text(entry, obj);
                     StackObjectSnapshot {
                         id: entry.object_id.0,
                         inspect_object_id,
                         stable_id,
                         source_stable_id,
+                        controller: entry.controller.0,
                         name,
                         mana_cost: None,
                         effect_text: None,
                         ability_kind: Some(ability_kind.to_string()),
                         ability_text,
+                        targets,
                     }
                 } else {
                     let effect_text = if let Some(o) = obj {
@@ -683,11 +819,13 @@ impl GameSnapshot {
                         inspect_object_id,
                         stable_id,
                         source_stable_id,
+                        controller: entry.controller.0,
                         name,
                         mana_cost: obj.and_then(|o| o.mana_cost.as_ref().map(|mc| mc.to_oracle())),
                         effect_text,
                         ability_kind: None,
                         ability_text: None,
+                        targets,
                     }
                 }
             })
@@ -716,11 +854,13 @@ impl GameSnapshot {
                     inspect_object_id: Some(stack_id.0),
                     stable_id: Some(obj.stable_id.0.0),
                     source_stable_id: None,
+                    controller: obj.controller.0,
                     name: obj.name.clone(),
                     mana_cost: obj.mana_cost.as_ref().map(|mc| mc.to_oracle()),
                     effect_text: pending_effect_text,
                     ability_kind: None,
                     ability_text: None,
+                    targets: Vec::new(),
                 },
             );
             stack_size += 1;
@@ -731,8 +871,8 @@ impl GameSnapshot {
             turn_number: game.turn.turn_number,
             active_player: game.turn.active_player.0,
             priority_player: game.turn.priority_player.map(|p| p.0),
-            phase: format!("{:?}", game.turn.phase),
-            step: game.turn.step.map(|step| format!("{:?}", step)),
+            phase: game.turn.phase.to_string(),
+            step: game.turn.step.map(|step| step.to_string()),
             stack_size,
             stack_preview,
             stack_objects,
@@ -740,6 +880,21 @@ impl GameSnapshot {
             exile_size: game.exile.len(),
             players,
             battlefield_transitions,
+            viewed_cards: viewed_cards
+                .filter(|view| view.public || view.viewer == perspective)
+                .map(|view| ViewedCardsSnapshot {
+                    viewer: view.viewer.0,
+                    subject: view.subject.0,
+                    zone: view.zone.to_string(),
+                    visibility: if view.public {
+                        "public".to_string()
+                    } else {
+                        "private".to_string()
+                    },
+                    card_ids: view.cards.iter().map(|id| id.0).collect(),
+                    source: view.source.map(|id| id.0),
+                    description: view.description.clone(),
+                }),
             decision: decision.map(|ctx| DecisionView::from_context(game, ctx)),
             game_over: game_over.map(|r| GameOverView::from_result(game, r)),
             cancelable,
@@ -831,7 +986,10 @@ enum DecisionView {
         min: u32,
         max: u32,
         is_x_value: bool,
+        source_id: Option<u64>,
         source_name: Option<String>,
+        context_text: Option<String>,
+        consequence_text: Option<String>,
         reason: Option<String>,
     },
     SelectOptions {
@@ -840,7 +998,10 @@ enum DecisionView {
         min: usize,
         max: usize,
         options: Vec<OptionView>,
+        source_id: Option<u64>,
         source_name: Option<String>,
+        context_text: Option<String>,
+        consequence_text: Option<String>,
         reason: Option<String>,
     },
     SelectObjects {
@@ -849,14 +1010,20 @@ enum DecisionView {
         min: usize,
         max: Option<usize>,
         candidates: Vec<ObjectChoiceView>,
+        source_id: Option<u64>,
         source_name: Option<String>,
+        context_text: Option<String>,
+        consequence_text: Option<String>,
         reason: Option<String>,
     },
     Targets {
         player: u8,
         context: String,
         requirements: Vec<TargetRequirementView>,
+        source_id: Option<u64>,
         source_name: Option<String>,
+        context_text: Option<String>,
+        consequence_text: Option<String>,
         reason: Option<String>,
     },
     Attackers {
@@ -871,11 +1038,16 @@ enum DecisionView {
 
 impl DecisionView {
     fn from_context(game: &GameState, ctx: &DecisionContext) -> Self {
+        let enriched_ctx = crate::decisions::context::enrich_display_hints(game, ctx.clone());
+        let ctx = &enriched_ctx;
         let resolve_source_name = |source: Option<ObjectId>| -> Option<String> {
             source
                 .and_then(|id| game.object(id))
                 .map(|o| o.name.clone())
         };
+        let resolve_source_id = |source: Option<ObjectId>| -> Option<u64> { source.map(|id| id.0) };
+        let context_text = || ctx.context_text().map(str::to_string);
+        let consequence_text = || ctx.consequence_text().map(str::to_string);
         let reason = decision_reason(ctx);
 
         match ctx {
@@ -900,7 +1072,10 @@ impl DecisionView {
                         max_count: Some(1),
                     },
                 ],
+                source_id: resolve_source_id(boolean.source),
                 source_name: resolve_source_name(boolean.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::Priority(priority) => DecisionView::Priority {
@@ -918,7 +1093,10 @@ impl DecisionView {
                 min: number.min,
                 max: number.max,
                 is_x_value: number.is_x_value,
+                source_id: resolve_source_id(number.source),
                 source_name: resolve_source_name(number.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::SelectOptions(options) => DecisionView::SelectOptions {
@@ -950,7 +1128,10 @@ impl DecisionView {
                         })
                         .collect()
                 },
+                source_id: resolve_source_id(options.source),
                 source_name: resolve_source_name(options.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::Modes(modes) => DecisionView::SelectOptions {
@@ -970,7 +1151,10 @@ impl DecisionView {
                         max_count: Some(1),
                     })
                     .collect(),
+                source_id: resolve_source_id(modes.source),
                 source_name: resolve_source_name(modes.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::HybridChoice(hybrid) => DecisionView::SelectOptions {
@@ -992,7 +1176,10 @@ impl DecisionView {
                         max_count: Some(1),
                     })
                     .collect(),
+                source_id: resolve_source_id(hybrid.source),
                 source_name: resolve_source_name(hybrid.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::Order(order) => DecisionView::SelectOptions {
@@ -1012,7 +1199,10 @@ impl DecisionView {
                         max_count: Some(1),
                     })
                     .collect(),
+                source_id: resolve_source_id(order.source),
                 source_name: resolve_source_name(order.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::Distribute(distribute) => DecisionView::SelectOptions {
@@ -1035,7 +1225,10 @@ impl DecisionView {
                         max_count: Some(distribute.total),
                     })
                     .collect(),
+                source_id: resolve_source_id(distribute.source),
                 source_name: resolve_source_name(distribute.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::Colors(colors) => {
@@ -1061,7 +1254,10 @@ impl DecisionView {
                             max_count: Some(if repeatable_colors { colors.count } else { 1 }),
                         })
                         .collect(),
+                    source_id: resolve_source_id(colors.source),
                     source_name: resolve_source_name(colors.source),
+                    context_text: context_text(),
+                    consequence_text: consequence_text(),
                     reason: reason.clone(),
                 }
             }
@@ -1081,14 +1277,17 @@ impl DecisionView {
                         index,
                         description: format!(
                             "{} ({available} available)",
-                            split_camel_case(&format!("{counter_type:?}"))
+                            counter_type.description()
                         ),
                         legal: *available > 0,
                         repeatable: *available > 1,
                         max_count: Some(*available),
                     })
                     .collect(),
+                source_id: resolve_source_id(counters.source),
                 source_name: resolve_source_name(counters.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::Partition(partition) => DecisionView::SelectObjects {
@@ -1108,7 +1307,10 @@ impl DecisionView {
                         legal: true,
                     })
                     .collect(),
+                source_id: resolve_source_id(partition.source),
                 source_name: resolve_source_name(partition.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::Proliferate(proliferate) => DecisionView::SelectOptions {
@@ -1137,7 +1339,10 @@ impl DecisionView {
                         },
                     ))
                     .collect(),
+                source_id: resolve_source_id(proliferate.source),
                 source_name: resolve_source_name(proliferate.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::SelectObjects(objects) => DecisionView::SelectObjects {
@@ -1154,7 +1359,10 @@ impl DecisionView {
                         legal: obj.legal,
                     })
                     .collect(),
+                source_id: resolve_source_id(objects.source),
                 source_name: resolve_source_name(objects.source),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason: reason.clone(),
             },
             DecisionContext::Targets(targets) => DecisionView::Targets {
@@ -1174,7 +1382,10 @@ impl DecisionView {
                             .collect(),
                     })
                     .collect(),
+                source_id: Some(targets.source.0),
                 source_name: resolve_source_name(Some(targets.source)),
+                context_text: context_text(),
+                consequence_text: consequence_text(),
                 reason,
             },
             DecisionContext::Attackers(attackers) => DecisionView::Attackers {
@@ -1349,6 +1560,7 @@ enum ReplayOutcome {
 struct WasmReplayDecisionMaker {
     answers: VecDeque<ReplayDecisionAnswer>,
     pending_context: Option<DecisionContext>,
+    viewed_cards: Option<ActiveViewedCards>,
 }
 
 impl WasmReplayDecisionMaker {
@@ -1356,6 +1568,7 @@ impl WasmReplayDecisionMaker {
         Self {
             answers: answers.iter().cloned().collect(),
             pending_context: None,
+            viewed_cards: None,
         }
     }
 
@@ -1365,15 +1578,19 @@ impl WasmReplayDecisionMaker {
         }
     }
 
-    fn take_pending_context(self) -> Option<DecisionContext> {
-        self.pending_context
+    fn capture_once_for_game(&mut self, game: &GameState, ctx: DecisionContext) {
+        self.capture_once(crate::decisions::context::enrich_display_hints(game, ctx));
+    }
+
+    fn finish(self) -> (Option<DecisionContext>, Option<ActiveViewedCards>) {
+        (self.pending_context, self.viewed_cards)
     }
 }
 
 impl DecisionMaker for WasmReplayDecisionMaker {
     fn decide_boolean(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::BooleanContext,
     ) -> bool {
         match self.answers.front() {
@@ -1383,7 +1600,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 value
             }
             _ => {
-                self.capture_once(DecisionContext::Boolean(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::Boolean(ctx.clone()));
                 false
             }
         }
@@ -1391,7 +1608,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 
     fn decide_number(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::NumberContext,
     ) -> u32 {
         match self.answers.front() {
@@ -1401,7 +1618,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 value
             }
             _ => {
-                self.capture_once(DecisionContext::Number(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::Number(ctx.clone()));
                 ctx.min
             }
         }
@@ -1409,7 +1626,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 
     fn decide_objects(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::SelectObjectsContext,
     ) -> Vec<ObjectId> {
         match self.answers.front() {
@@ -1419,7 +1636,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 ids
             }
             _ => {
-                self.capture_once(DecisionContext::SelectObjects(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::SelectObjects(ctx.clone()));
                 ctx.candidates
                     .iter()
                     .filter(|candidate| candidate.legal)
@@ -1432,7 +1649,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 
     fn decide_options(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::SelectOptionsContext,
     ) -> Vec<usize> {
         match self.answers.front() {
@@ -1442,7 +1659,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 indices
             }
             _ => {
-                self.capture_once(DecisionContext::SelectOptions(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::SelectOptions(ctx.clone()));
                 ctx.options
                     .iter()
                     .filter(|option| option.legal)
@@ -1480,7 +1697,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 
     fn decide_targets(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::TargetsContext,
     ) -> Vec<Target> {
         match self.answers.front() {
@@ -1490,7 +1707,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 targets
             }
             _ => {
-                self.capture_once(DecisionContext::Targets(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::Targets(ctx.clone()));
                 ctx.requirements
                     .iter()
                     .filter(|requirement| requirement.min_targets > 0)
@@ -1544,7 +1761,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 
     fn decide_order(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::OrderContext,
     ) -> Vec<ObjectId> {
         match self.answers.front() {
@@ -1554,7 +1771,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 order
             }
             _ => {
-                self.capture_once(DecisionContext::Order(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::Order(ctx.clone()));
                 ctx.items.iter().map(|(id, _)| *id).collect()
             }
         }
@@ -1562,7 +1779,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 
     fn decide_distribute(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::DistributeContext,
     ) -> Vec<(Target, u32)> {
         match self.answers.front() {
@@ -1572,7 +1789,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 distribution
             }
             _ => {
-                self.capture_once(DecisionContext::Distribute(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::Distribute(ctx.clone()));
                 Vec::new()
             }
         }
@@ -1580,7 +1797,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 
     fn decide_colors(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::ColorsContext,
     ) -> Vec<crate::color::Color> {
         match self.answers.front() {
@@ -1590,7 +1807,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 colors
             }
             _ => {
-                self.capture_once(DecisionContext::Colors(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::Colors(ctx.clone()));
                 vec![crate::color::Color::Green; ctx.count as usize]
             }
         }
@@ -1598,7 +1815,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 
     fn decide_counters(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::CountersContext,
     ) -> Vec<(crate::object::CounterType, u32)> {
         match self.answers.front() {
@@ -1608,7 +1825,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 counters
             }
             _ => {
-                self.capture_once(DecisionContext::Counters(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::Counters(ctx.clone()));
                 Vec::new()
             }
         }
@@ -1616,7 +1833,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 
     fn decide_partition(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::PartitionContext,
     ) -> Vec<ObjectId> {
         match self.answers.front() {
@@ -1626,7 +1843,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 partition
             }
             _ => {
-                self.capture_once(DecisionContext::Partition(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::Partition(ctx.clone()));
                 Vec::new()
             }
         }
@@ -1634,7 +1851,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
 
     fn decide_proliferate(
         &mut self,
-        _game: &GameState,
+        game: &GameState,
         ctx: &crate::decisions::context::ProliferateContext,
     ) -> crate::decisions::specs::ProliferateResponse {
         match self.answers.front() {
@@ -1644,10 +1861,28 @@ impl DecisionMaker for WasmReplayDecisionMaker {
                 response
             }
             _ => {
-                self.capture_once(DecisionContext::Proliferate(ctx.clone()));
+                self.capture_once_for_game(game, DecisionContext::Proliferate(ctx.clone()));
                 crate::decisions::specs::ProliferateResponse::default()
             }
         }
+    }
+
+    fn view_cards(
+        &mut self,
+        _game: &GameState,
+        viewer: PlayerId,
+        cards: &[ObjectId],
+        ctx: &crate::decisions::context::ViewCardsContext,
+    ) {
+        self.viewed_cards = Some(ActiveViewedCards {
+            viewer,
+            subject: ctx.subject,
+            zone: ctx.zone,
+            cards: cards.to_vec(),
+            public: ctx.description.to_ascii_lowercase().contains("reveal"),
+            source: ctx.source,
+            description: ctx.description.clone(),
+        });
     }
 }
 
@@ -1695,6 +1930,8 @@ pub struct WasmGame {
     semantic_threshold: f32,
     /// Monotonic UI snapshot sequence so the frontend can process one-shot batches once.
     snapshot_serial: u64,
+    /// Most recent transient card-view event visible to the current perspective.
+    active_viewed_cards: Option<ActiveViewedCards>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1703,6 +1940,27 @@ struct RegistryPreloadStatus {
     cursor: usize,
     total: usize,
     done: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeckLoadResult {
+    loaded: u32,
+    failed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CardLoadDiagnostics {
+    query: String,
+    canonical_name: Option<String>,
+    error: Option<String>,
+    parse_error: Option<String>,
+    oracle_text: Option<String>,
+    compiled_text: Vec<String>,
+    compiled_abilities: Vec<String>,
+    semantic_score: Option<f32>,
+    threshold_percent: Option<f32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1761,6 +2019,7 @@ impl WasmGame {
             priority_epoch_undo_land_stable_id: None,
             semantic_threshold: 0.0,
             snapshot_serial: 0,
+            active_viewed_cards: None,
         }
     }
 
@@ -1876,6 +2135,7 @@ impl WasmGame {
             self.game_over.as_ref(),
             pending_cast_stack_id,
             battlefield_transitions,
+            self.active_viewed_cards.as_ref(),
             cancelable,
             undo_land_stable_id,
             snapshot_id,
@@ -1968,6 +2228,7 @@ impl WasmGame {
             self.game_over.as_ref(),
             pending_cast_stack_id,
             battlefield_transitions,
+            self.active_viewed_cards.as_ref(),
             cancelable,
             undo_land_stable_id,
             snapshot_id,
@@ -2236,6 +2497,13 @@ impl WasmGame {
 
             for name in deck {
                 if let Some(definition) = self.find_card_definition(name).cloned() {
+                    if self.semantic_threshold > 0.0
+                        && let Some(score) = Self::semantic_score_for_name(definition.name())
+                        && score < self.semantic_threshold
+                    {
+                        failed.push(name.clone());
+                        continue;
+                    }
                     self.game.create_object_from_definition(
                         &definition,
                         player_id,
@@ -2252,20 +2520,19 @@ impl WasmGame {
 
         self.finish_match_setup(7)?;
 
-        // Return { loaded, failed } to JS
-        let result = js_sys::Object::new();
-        js_sys::Reflect::set(
-            &result,
-            &JsValue::from_str("loaded"),
-            &JsValue::from(loaded),
-        )
-        .ok();
-        let failed_arr = js_sys::Array::new();
-        for name in &failed {
-            failed_arr.push(&JsValue::from_str(name));
-        }
-        js_sys::Reflect::set(&result, &JsValue::from_str("failed"), &failed_arr).ok();
-        Ok(result.into())
+        serde_wasm_bindgen::to_value(&DeckLoadResult { loaded, failed })
+            .map_err(|e| JsValue::from_str(&format!("failed to serialize deck load result: {e}")))
+    }
+
+    #[wasm_bindgen(js_name = cardLoadDiagnostics)]
+    pub fn card_load_diagnostics(
+        &mut self,
+        card_name: String,
+        error_message: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let diagnostics = self.build_card_load_diagnostics(&card_name, error_message.as_deref());
+        serde_wasm_bindgen::to_value(&diagnostics)
+            .map_err(|e| JsValue::from_str(&format!("failed to serialize card diagnostics: {e}")))
     }
 
     /// Advance to next phase (or next turn if ending phase).
@@ -2371,6 +2638,7 @@ impl WasmGame {
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
         self.priority_epoch_undo_land_stable_id = None;
+        self.active_viewed_cards = None;
         self.recompute_ui_decision()?;
         self.snapshot()
     }
@@ -3094,6 +3362,171 @@ impl WasmGame {
         })
     }
 
+    fn generated_parse_source_for_name(query: &str) -> Option<(String, String)> {
+        CardRegistry::generated_parser_card_parse_source(query)
+    }
+
+    fn extract_oracle_text_from_parse_block(block: &str) -> Option<String> {
+        let oracle_lines: Vec<&str> = block
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.starts_with("Mana cost:")
+                    && !trimmed.starts_with("Type:")
+                    && !trimmed.starts_with("Power/Toughness:")
+                    && !trimmed.starts_with("Loyalty:")
+                    && !trimmed.starts_with("Defense:")
+            })
+            .collect();
+        let oracle_text = oracle_lines.join("\n").trim().to_string();
+        if oracle_text.is_empty() {
+            None
+        } else {
+            Some(oracle_text)
+        }
+    }
+
+    fn compile_definition_from_parse_source(
+        source_name: &str,
+        parse_block: &str,
+    ) -> Result<CardDefinition, String> {
+        crate::cards::CardDefinitionBuilder::new(crate::ids::CardId::new(), source_name)
+            .parse_text(parse_block.to_string())
+            .map_err(|err| format!("{err:?}"))
+    }
+
+    fn compiled_ability_lines(definition: &CardDefinition) -> Vec<String> {
+        definition
+            .abilities
+            .iter()
+            .enumerate()
+            .map(|(index, ability)| {
+                let text = match &ability.kind {
+                    crate::ability::AbilityKind::Static(static_ability) => static_ability.display(),
+                    crate::ability::AbilityKind::Triggered(triggered) => {
+                        let trigger = triggered.trigger.display();
+                        let effects = if triggered.effects.is_empty() {
+                            String::new()
+                        } else {
+                            crate::compiled_text::compile_effect_list(&triggered.effects)
+                        };
+                        if effects.trim().is_empty() {
+                            trigger
+                        } else {
+                            format!("{trigger} -> {effects}")
+                        }
+                    }
+                    crate::ability::AbilityKind::Activated(activated) => {
+                        let cost = activated.mana_cost.display();
+                        let resolution = if let Some(mana) = &activated.mana_output {
+                            if mana.is_empty() {
+                                crate::compiled_text::compile_effect_list(&activated.effects)
+                            } else {
+                                format!(
+                                    "Add {}",
+                                    crate::mana::ManaCost::from_symbols(mana.clone()).to_oracle()
+                                )
+                            }
+                        } else {
+                            crate::compiled_text::compile_effect_list(&activated.effects)
+                        };
+
+                        match (cost.trim().is_empty(), resolution.trim().is_empty()) {
+                            (true, true) => "Activated ability".to_string(),
+                            (false, true) => cost,
+                            (true, false) => resolution,
+                            (false, false) => format!("{cost} -> {resolution}"),
+                        }
+                    }
+                };
+                format!("Ability {}: {}", index + 1, text)
+            })
+            .collect()
+    }
+
+    fn build_card_load_diagnostics(
+        &mut self,
+        card_name: &str,
+        explicit_error: Option<&str>,
+    ) -> CardLoadDiagnostics {
+        let query = card_name.trim();
+        let parse_source = if query.is_empty() {
+            None
+        } else {
+            Self::generated_parse_source_for_name(query)
+        };
+        let source_compile_result = parse_source.as_ref().map(|(source_name, parse_block)| {
+            Self::compile_definition_from_parse_source(source_name, parse_block)
+        });
+
+        if !query.is_empty() {
+            self.registry.ensure_cards_loaded([query]);
+        }
+        let registry_definition = self.find_card_definition(query).cloned();
+        let compiled_definition = registry_definition.or_else(|| {
+            source_compile_result
+                .as_ref()
+                .and_then(|result| result.as_ref().ok().cloned())
+        });
+        let canonical_name = compiled_definition
+            .as_ref()
+            .map(|definition| definition.name().to_string())
+            .or_else(|| {
+                parse_source
+                    .as_ref()
+                    .map(|(source_name, _)| source_name.clone())
+            });
+        let oracle_text = compiled_definition
+            .as_ref()
+            .map(|definition| definition.card.oracle_text.clone())
+            .or_else(|| {
+                parse_source.as_ref().and_then(|(_, parse_block)| {
+                    Self::extract_oracle_text_from_parse_block(parse_block)
+                })
+            });
+        let compiled_text = compiled_definition
+            .as_ref()
+            .map(crate::compiled_text::compiled_lines)
+            .unwrap_or_default();
+        let compiled_abilities = compiled_definition
+            .as_ref()
+            .map(Self::compiled_ability_lines)
+            .unwrap_or_default();
+        let semantic_score = canonical_name
+            .as_deref()
+            .and_then(Self::semantic_score_for_name)
+            .or_else(|| Self::semantic_score_for_name(query));
+        let threshold_percent =
+            (self.semantic_threshold > 0.0).then_some(self.semantic_threshold * 100.0);
+        let parse_error = if query.is_empty() {
+            Some("card name cannot be empty".to_string())
+        } else if let Some(result) = source_compile_result.as_ref() {
+            result
+                .clone()
+                .err()
+                .or_else(|| CardRegistry::try_compile_card(query).err())
+        } else {
+            CardRegistry::try_compile_card(query).err()
+        };
+        let error = explicit_error
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| parse_error.clone());
+
+        CardLoadDiagnostics {
+            query: query.to_string(),
+            canonical_name,
+            error,
+            parse_error,
+            oracle_text,
+            compiled_text,
+            compiled_abilities,
+            semantic_score,
+            threshold_percent,
+        }
+    }
+
     fn initialize_empty_match(&mut self, player_names: Vec<String>, starting_life: i32, seed: u64) {
         reset_runtime_id_counters();
         self.game = GameState::new(player_names, starting_life);
@@ -3203,6 +3636,7 @@ impl WasmGame {
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
         self.priority_epoch_undo_land_stable_id = None;
+        self.active_viewed_cards = None;
         self.game_over = None;
         self.runner = None;
         self.runner_awaiting_priority = false;
@@ -3222,6 +3656,7 @@ impl WasmGame {
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
         self.priority_epoch_undo_land_stable_id = None;
+        self.active_viewed_cards = None;
         if self.game_over.is_some() {
             return Ok(());
         }
@@ -3516,6 +3951,7 @@ impl WasmGame {
         nested_answers: &[ReplayDecisionAnswer],
     ) -> Result<ReplayOutcome, JsValue> {
         self.restore_replay_checkpoint(checkpoint);
+        self.active_viewed_cards = None;
 
         let mut replay_dm = WasmReplayDecisionMaker::new(nested_answers);
 
@@ -3534,7 +3970,10 @@ impl WasmGame {
             }
         };
 
-        if let Some(next_ctx) = replay_dm.take_pending_context() {
+        let (pending_context, viewed_cards) = replay_dm.finish();
+        self.active_viewed_cards = viewed_cards;
+
+        if let Some(next_ctx) = pending_context {
             self.restore_replay_checkpoint(checkpoint);
             return Ok(ReplayOutcome::NeedsDecision(next_ctx));
         }
@@ -3542,6 +3981,7 @@ impl WasmGame {
         match result {
             Ok(progress) => Ok(ReplayOutcome::Complete(progress)),
             Err(e) => {
+                self.active_viewed_cards = None;
                 self.restore_replay_checkpoint(checkpoint);
                 Err(JsValue::from_str(&format!("dispatch failed: {e}")))
             }
@@ -3767,7 +4207,7 @@ impl WasmGame {
                         return Err(JsValue::from_str(&format!(
                             "cannot remove {} of counter {} (only {} available)",
                             chosen,
-                            split_camel_case(&format!("{counter_type:?}")),
+                            counter_type.description(),
                             available
                         )));
                     }
@@ -3977,15 +4417,17 @@ impl WasmGame {
                         .priority_state
                         .pending_cast
                         .as_ref()
-                        .map(|p| format!("{:?}", p.stage));
+                        .map(|p| p.stage.to_string());
                     let act_stage = self
                         .priority_state
                         .pending_activation
                         .as_ref()
-                        .map(|p| format!("{:?}", p.stage));
+                        .map(|p| p.stage.to_string());
                     Err(JsValue::from_str(&format!(
                         "unsupported SelectObjects context in priority flow \
-                         (pending_cast={cast_stage:?}, pending_activation={act_stage:?})"
+                         (pending_cast={}, pending_activation={})",
+                        cast_stage.as_deref().unwrap_or("none"),
+                        act_stage.as_deref().unwrap_or("none"),
                     )))
                 }
             }
@@ -4132,16 +4574,18 @@ impl WasmGame {
             .priority_state
             .pending_cast
             .as_ref()
-            .map(|p| format!("{:?}", p.stage));
+            .map(|p| p.stage.to_string());
         let act_stage = self
             .priority_state
             .pending_activation
             .as_ref()
-            .map(|p| format!("{:?}", p.stage));
+            .map(|p| p.stage.to_string());
         Err(JsValue::from_str(&format!(
             "unsupported SelectOptions context in priority flow \
-             (pending_cast={cast_stage:?}, pending_activation={act_stage:?}, \
+             (pending_cast={}, pending_activation={}, \
              pending_mana_ability={}, pending_method={}, replacement={})",
+            cast_stage.as_deref().unwrap_or("none"),
+            act_stage.as_deref().unwrap_or("none"),
             self.priority_state.pending_mana_ability.is_some(),
             self.priority_state.pending_method_selection.is_some(),
             self.game.pending_replacement_choice.is_some(),
@@ -4171,7 +4615,7 @@ fn build_object_details_snapshot(game: &GameState, id: ObjectId) -> Option<Objec
         id: obj.id.0,
         stable_id: obj.stable_id.0.0,
         name: obj.name.clone(),
-        kind: format!("{:?}", obj.kind),
+        kind: obj.kind.to_string(),
         zone: zone_name(obj.zone),
         owner: obj.owner.0,
         controller: obj.controller.0,
@@ -4222,19 +4666,6 @@ fn format_type_line(obj: &crate::object::Object) -> String {
     } else {
         type_line
     }
-}
-
-fn split_camel_case(value: &str) -> String {
-    let mut output = String::with_capacity(value.len() + 8);
-    let mut previous_lower = false;
-    for ch in value.chars() {
-        if ch.is_ascii_uppercase() && previous_lower {
-            output.push(' ');
-        }
-        previous_lower = ch.is_ascii_lowercase() || ch.is_ascii_digit();
-        output.push(ch);
-    }
-    output
 }
 
 fn build_action_view(game: &GameState, index: usize, action: &LegalAction) -> ActionView {
@@ -4347,7 +4778,15 @@ fn describe_action(game: &GameState, action: &LegalAction) -> String {
                     if let Some(index) = use_alternative {
                         let alt = game
                             .object(*spell_id)
-                            .and_then(|obj| obj.alternative_casts.get(*index))
+                            .and_then(|obj| {
+                                crate::decision::resolve_play_from_alternative_method(
+                                    game,
+                                    game.turn.priority_player.unwrap_or(obj.owner),
+                                    obj,
+                                    *zone,
+                                    *index,
+                                )
+                            })
                             .map(|m| m.name().to_ascii_lowercase())
                             .unwrap_or_else(|| format!("alternative #{index}"));
                         qualifiers.push(alt);
@@ -4400,13 +4839,24 @@ fn describe_action(game: &GameState, action: &LegalAction) -> String {
             format!("Turn face up {}", object_name(game, *creature_id))
         }
         LegalAction::SpecialAction(action) => match action {
+            crate::special_actions::SpecialAction::PlayLand { card_id } => {
+                format!("Play {}", object_name(game, *card_id))
+            }
+            crate::special_actions::SpecialAction::TurnFaceUp { permanent_id } => {
+                format!("Turn face up {}", object_name(game, *permanent_id))
+            }
             crate::special_actions::SpecialAction::Suspend { card_id } => {
                 format!("Suspend {}", object_name(game, *card_id))
             }
             crate::special_actions::SpecialAction::Foretell { card_id } => {
                 format!("Foretell {}", object_name(game, *card_id))
             }
-            _ => format!("Special action: {:?}", action),
+            crate::special_actions::SpecialAction::ActivateManaAbility { permanent_id, .. } => {
+                format!(
+                    "Activate mana ability on {}",
+                    object_name(game, *permanent_id)
+                )
+            }
         },
     }
 }
@@ -4975,6 +5425,32 @@ mod tests {
     }
 
     #[test]
+    fn card_load_diagnostics_include_compilation_context_for_builtin_cards() {
+        let mut wasm = WasmGame::new();
+        let diagnostics =
+            wasm.build_card_load_diagnostics("Urza's Saga", Some("synthetic failure"));
+
+        assert_eq!(diagnostics.query, "Urza's Saga");
+        assert_eq!(diagnostics.canonical_name.as_deref(), Some("Urza's Saga"));
+        assert_eq!(diagnostics.error.as_deref(), Some("synthetic failure"));
+        assert!(
+            diagnostics
+                .oracle_text
+                .as_deref()
+                .is_some_and(|oracle| oracle.contains("chapter")),
+            "expected oracle text in diagnostics"
+        );
+        assert!(
+            !diagnostics.compiled_text.is_empty(),
+            "expected compiled text lines in diagnostics"
+        );
+        assert!(
+            !diagnostics.compiled_abilities.is_empty(),
+            "expected compiled abilities in diagnostics"
+        );
+    }
+
+    #[test]
     fn add_card_to_zone_battlefield_applies_etb_replacement_effects() {
         let mut wasm = WasmGame::new();
 
@@ -5104,6 +5580,7 @@ mod tests {
             None,
             None,
             Vec::new(),
+            None,
             false,
             None,
             0,
@@ -5475,6 +5952,7 @@ mod tests {
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
             Vec::new(),
+            None,
             cancelable,
             wasm.visible_undo_land_stable_id(cancelable),
             0,
@@ -5589,6 +6067,7 @@ mod tests {
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
             Vec::new(),
+            None,
             wasm.is_cancelable(),
             None,
             0,
@@ -5637,6 +6116,7 @@ mod tests {
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
             Vec::new(),
+            None,
             wasm.is_cancelable(),
             None,
             0,
@@ -5677,6 +6157,7 @@ mod tests {
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
             Vec::new(),
+            None,
             wasm.is_cancelable(),
             None,
             0,
@@ -5801,6 +6282,125 @@ mod tests {
             wasm.game.stack.is_empty(),
             "canceling the spell should remove it from the stack"
         );
+    }
+
+    #[test]
+    fn stack_snapshot_includes_controller_and_targets() {
+        let mut wasm = WasmGame::new();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        let mountain_id =
+            wasm.game
+                .create_object_from_definition(&basic_mountain(), alice, Zone::Hand);
+        let bolt_id = wasm
+            .game
+            .create_object_from_definition(&lightning_bolt(), alice, Zone::Hand);
+
+        wasm.priority_epoch_checkpoint = Some(wasm.capture_replay_checkpoint());
+        wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(
+            alice,
+            compute_legal_actions(&wasm.game, alice),
+        )));
+
+        let priority_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => ctx,
+            other => panic!("expected priority decision, got {other:?}"),
+        };
+        let play_mountain_index = priority_ctx
+            .actions
+            .iter()
+            .position(
+                |action| matches!(action, LegalAction::PlayLand { land_id } if *land_id == mountain_id),
+            )
+            .expect("expected play mountain action");
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "priority_action",
+                "action_index": play_mountain_index,
+            }))
+            .expect("priority action command should serialize"),
+        )
+        .expect("playing mountain should succeed");
+
+        let priority_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => ctx,
+            other => panic!("expected priority decision after land play, got {other:?}"),
+        };
+        let cast_bolt_index = priority_ctx
+            .actions
+            .iter()
+            .position(|action| {
+                matches!(
+                    action,
+                    LegalAction::CastSpell { spell_id, .. } if *spell_id == bolt_id
+                )
+            })
+            .expect("expected cast lightning bolt action");
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "priority_action",
+                "action_index": cast_bolt_index,
+            }))
+            .expect("cast spell command should serialize"),
+        )
+        .expect("casting lightning bolt should enter its decision chain");
+
+        assert!(
+            matches!(wasm.pending_decision, Some(DecisionContext::Targets(_))),
+            "lightning bolt cast should be waiting on targets"
+        );
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_targets",
+                "targets": [
+                    { "kind": "player", "player": bob.0 }
+                ],
+            }))
+            .expect("target selection command should serialize"),
+        )
+        .expect("choosing the lightning bolt target should succeed");
+
+        let pending_cast_stack_id = wasm
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
+        let snapshot = GameSnapshot::from_game(
+            &wasm.game,
+            wasm.perspective,
+            wasm.pending_decision.as_ref(),
+            wasm.game_over.as_ref(),
+            pending_cast_stack_id,
+            Vec::new(),
+            None,
+            wasm.is_cancelable(),
+            None,
+            0,
+        );
+        let stack_entry = snapshot
+            .stack_objects
+            .first()
+            .expect("snapshot should include the cast lightning bolt on the stack");
+
+        assert_eq!(stack_entry.name, "Lightning Bolt");
+        assert_eq!(stack_entry.controller, alice.0);
+        assert_eq!(stack_entry.targets.len(), 1);
+        match &stack_entry.targets[0] {
+            TargetChoiceView::Player { player, name } => {
+                assert_eq!(*player, bob.0);
+                assert_eq!(name, "Bob");
+            }
+            other => panic!("expected player target on stack snapshot, got {other:?}"),
+        }
     }
 
     #[test]

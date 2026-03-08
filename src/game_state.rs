@@ -819,6 +819,24 @@ pub enum Phase {
     Ending,
 }
 
+impl Phase {
+    pub fn name(self) -> &'static str {
+        match self {
+            Phase::Beginning => "beginning phase",
+            Phase::FirstMain => "first main phase",
+            Phase::Combat => "combat phase",
+            Phase::NextMain => "second main phase",
+            Phase::Ending => "ending phase",
+        }
+    }
+}
+
+impl std::fmt::Display for Phase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// Steps within phases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
@@ -835,6 +853,29 @@ pub enum Step {
     // Ending phase
     End,
     Cleanup,
+}
+
+impl Step {
+    pub fn name(self) -> &'static str {
+        match self {
+            Step::Untap => "untap step",
+            Step::Upkeep => "upkeep step",
+            Step::Draw => "draw step",
+            Step::BeginCombat => "begin combat step",
+            Step::DeclareAttackers => "declare attackers step",
+            Step::DeclareBlockers => "declare blockers step",
+            Step::CombatDamage => "combat damage step",
+            Step::EndCombat => "end combat step",
+            Step::End => "end step",
+            Step::Cleanup => "cleanup step",
+        }
+    }
+}
+
+impl std::fmt::Display for Step {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 /// Turn state tracking.
@@ -1395,6 +1436,9 @@ pub struct GameState {
     /// Chosen basic land types for permanents ("as this Aura enters, choose a basic land type").
     pub chosen_basic_land_types: HashMap<ObjectId, crate::types::Subtype>,
 
+    /// Chosen creature types for permanents ("as this enters, choose a creature type").
+    pub chosen_creature_types: HashMap<ObjectId, crate::types::Subtype>,
+
     /// Regeneration shields on permanents (expires at end of turn).
     pub regeneration_shields: HashMap<ObjectId, u32>,
 
@@ -1541,6 +1585,7 @@ impl GameState {
             damage_persists: HashSet::new(),
             chosen_colors: HashMap::new(),
             chosen_basic_land_types: HashMap::new(),
+            chosen_creature_types: HashMap::new(),
             regeneration_shields: HashMap::new(),
             monstrous: HashSet::new(),
             renowned: HashSet::new(),
@@ -2244,6 +2289,15 @@ impl GameState {
                 new_obj.copy_copiable_values_from(&source_obj);
             }
         }
+        if !result.added_subtypes.is_empty()
+            && let Some(new_obj) = self.object_mut(new_id)
+        {
+            for subtype in &result.added_subtypes {
+                if !new_obj.subtypes.contains(subtype) {
+                    new_obj.subtypes.push(*subtype);
+                }
+            }
+        }
 
         // Apply enters tapped
         if result.enters_tapped {
@@ -2306,10 +2360,7 @@ impl GameState {
                             .iter()
                             .enumerate()
                             .map(|(idx, subtype)| {
-                                crate::decisions::spec::DisplayOption::new(
-                                    idx,
-                                    format!("{subtype:?}"),
-                                )
+                                crate::decisions::spec::DisplayOption::new(idx, subtype.to_string())
                             })
                             .collect::<Vec<_>>();
                         let choice_spec =
@@ -2324,6 +2375,29 @@ impl GameState {
                         let chosen_idx =
                             chosen.pop().filter(|idx| *idx < options.len()).unwrap_or(0);
                         self.set_chosen_basic_land_type(new_id, options[chosen_idx]);
+                    }
+                    if static_ability.creature_type_choice_as_enters().is_some() {
+                        let options =
+                            crate::effects::BecomeCreatureTypeChoiceEffect::all_creature_types();
+                        let display_options = options
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, subtype)| {
+                                crate::decisions::spec::DisplayOption::new(idx, subtype.to_string())
+                            })
+                            .collect::<Vec<_>>();
+                        let choice_spec =
+                            crate::decisions::specs::ChoiceSpec::single(new_id, display_options);
+                        let mut chosen = crate::decisions::make_decision(
+                            self,
+                            decision_maker,
+                            controller,
+                            Some(new_id),
+                            choice_spec,
+                        );
+                        let chosen_idx =
+                            chosen.pop().filter(|idx| *idx < options.len()).unwrap_or(0);
+                        self.set_chosen_creature_type(new_id, options[chosen_idx]);
                     }
                 }
             }
@@ -2440,7 +2514,7 @@ impl GameState {
         // Check battlefield
         for &id in &self.battlefield {
             if seen_ids.contains(&id) {
-                return Err(format!("Object {:?} appears in multiple zone indexes", id));
+                return Err(format!("Object #{} appears in multiple zone indexes", id.0));
             }
             seen_ids.insert(id);
 
@@ -2448,14 +2522,14 @@ impl GameState {
                 Some(obj) if obj.zone == Zone::Battlefield => {}
                 Some(obj) => {
                     return Err(format!(
-                        "Object {:?} in battlefield index has zone {:?}",
-                        id, obj.zone
+                        "Object #{} in battlefield index has zone {}",
+                        id.0, obj.zone
                     ));
                 }
                 None => {
                     return Err(format!(
-                        "Object {:?} in battlefield index doesn't exist in objects",
-                        id
+                        "Object #{} in battlefield index doesn't exist in objects",
+                        id.0
                     ));
                 }
             }
@@ -2464,7 +2538,7 @@ impl GameState {
         // Check exile
         for &id in &self.exile {
             if seen_ids.contains(&id) {
-                return Err(format!("Object {:?} appears in multiple zone indexes", id));
+                return Err(format!("Object #{} appears in multiple zone indexes", id.0));
             }
             seen_ids.insert(id);
 
@@ -2472,14 +2546,14 @@ impl GameState {
                 Some(obj) if obj.zone == Zone::Exile => {}
                 Some(obj) => {
                     return Err(format!(
-                        "Object {:?} in exile index has zone {:?}",
-                        id, obj.zone
+                        "Object #{} in exile index has zone {}",
+                        id.0, obj.zone
                     ));
                 }
                 None => {
                     return Err(format!(
-                        "Object {:?} in exile index doesn't exist in objects",
-                        id
+                        "Object #{} in exile index doesn't exist in objects",
+                        id.0
                     ));
                 }
             }
@@ -2488,7 +2562,7 @@ impl GameState {
         // Check command zone
         for &id in &self.command_zone {
             if seen_ids.contains(&id) {
-                return Err(format!("Object {:?} appears in multiple zone indexes", id));
+                return Err(format!("Object #{} appears in multiple zone indexes", id.0));
             }
             seen_ids.insert(id);
 
@@ -2496,14 +2570,14 @@ impl GameState {
                 Some(obj) if obj.zone == Zone::Command => {}
                 Some(obj) => {
                     return Err(format!(
-                        "Object {:?} in command zone index has zone {:?}",
-                        id, obj.zone
+                        "Object #{} in command zone index has zone {}",
+                        id.0, obj.zone
                     ));
                 }
                 None => {
                     return Err(format!(
-                        "Object {:?} in command zone index doesn't exist in objects",
-                        id
+                        "Object #{} in command zone index doesn't exist in objects",
+                        id.0
                     ));
                 }
             }
@@ -2514,7 +2588,7 @@ impl GameState {
             // Library
             for &id in &player.library {
                 if seen_ids.contains(&id) {
-                    return Err(format!("Object {:?} appears in multiple zone indexes", id));
+                    return Err(format!("Object #{} appears in multiple zone indexes", id.0));
                 }
                 seen_ids.insert(id);
 
@@ -2522,14 +2596,14 @@ impl GameState {
                     Some(obj) if obj.zone == Zone::Library => {}
                     Some(obj) => {
                         return Err(format!(
-                            "Object {:?} in {}'s library has zone {:?}",
-                            id, player.name, obj.zone
+                            "Object #{} in {}'s library has zone {}",
+                            id.0, player.name, obj.zone
                         ));
                     }
                     None => {
                         return Err(format!(
-                            "Object {:?} in {}'s library doesn't exist in objects",
-                            id, player.name
+                            "Object #{} in {}'s library doesn't exist in objects",
+                            id.0, player.name
                         ));
                     }
                 }
@@ -2538,7 +2612,7 @@ impl GameState {
             // Hand
             for &id in &player.hand {
                 if seen_ids.contains(&id) {
-                    return Err(format!("Object {:?} appears in multiple zone indexes", id));
+                    return Err(format!("Object #{} appears in multiple zone indexes", id.0));
                 }
                 seen_ids.insert(id);
 
@@ -2546,14 +2620,14 @@ impl GameState {
                     Some(obj) if obj.zone == Zone::Hand => {}
                     Some(obj) => {
                         return Err(format!(
-                            "Object {:?} in {}'s hand has zone {:?}",
-                            id, player.name, obj.zone
+                            "Object #{} in {}'s hand has zone {}",
+                            id.0, player.name, obj.zone
                         ));
                     }
                     None => {
                         return Err(format!(
-                            "Object {:?} in {}'s hand doesn't exist in objects",
-                            id, player.name
+                            "Object #{} in {}'s hand doesn't exist in objects",
+                            id.0, player.name
                         ));
                     }
                 }
@@ -2562,7 +2636,7 @@ impl GameState {
             // Graveyard
             for &id in &player.graveyard {
                 if seen_ids.contains(&id) {
-                    return Err(format!("Object {:?} appears in multiple zone indexes", id));
+                    return Err(format!("Object #{} appears in multiple zone indexes", id.0));
                 }
                 seen_ids.insert(id);
 
@@ -2570,14 +2644,14 @@ impl GameState {
                     Some(obj) if obj.zone == Zone::Graveyard => {}
                     Some(obj) => {
                         return Err(format!(
-                            "Object {:?} in {}'s graveyard has zone {:?}",
-                            id, player.name, obj.zone
+                            "Object #{} in {}'s graveyard has zone {}",
+                            id.0, player.name, obj.zone
                         ));
                     }
                     None => {
                         return Err(format!(
-                            "Object {:?} in {}'s graveyard doesn't exist in objects",
-                            id, player.name
+                            "Object #{} in {}'s graveyard doesn't exist in objects",
+                            id.0, player.name
                         ));
                     }
                 }
@@ -2592,8 +2666,8 @@ impl GameState {
             }
             if !seen_ids.contains(&id) {
                 return Err(format!(
-                    "Object {:?} with zone {:?} is not in any zone index",
-                    id, obj.zone
+                    "Object #{} with zone {} is not in any zone index",
+                    id.0, obj.zone
                 ));
             }
         }
@@ -2959,6 +3033,7 @@ impl GameState {
         self.damage_persists.clear();
         for player in &mut self.players {
             player.max_hand_size = 7;
+            player.land_plays_per_turn = 1;
         }
 
         // First, collect static abilities from objects in zones where they function
@@ -3020,12 +3095,38 @@ impl GameState {
 
         let mut restriction_tracker = CantEffectTracker::default();
         for effect in active_restrictions {
-            effect.restriction.apply(
-                self,
-                &mut restriction_tracker,
-                effect.controller,
-                Some(effect.source),
-            );
+            match effect.restriction {
+                crate::effect::Restriction::AdditionalLandPlays(player_filter, count) => {
+                    let combat = self.combat.as_ref();
+                    let affected_players: Vec<_> = self
+                        .players
+                        .iter()
+                        .filter(|player| {
+                            player.is_in_game()
+                                && crate::game_loop::player_matches_filter_with_combat(
+                                    player.id,
+                                    &player_filter,
+                                    self,
+                                    effect.controller,
+                                    combat,
+                                )
+                        })
+                        .map(|player| player.id)
+                        .collect();
+                    for player_id in affected_players {
+                        if let Some(player) = self.player_mut(player_id) {
+                            player.land_plays_per_turn =
+                                player.land_plays_per_turn.saturating_add(count);
+                        }
+                    }
+                }
+                _ => effect.restriction.apply(
+                    self,
+                    &mut restriction_tracker,
+                    effect.controller,
+                    Some(effect.source),
+                ),
+            }
         }
         self.cant_effects.merge(restriction_tracker);
 
@@ -3634,6 +3735,7 @@ impl GameState {
     pub fn empty_mana_pools(&mut self) {
         for player in &mut self.players {
             player.mana_pool.empty();
+            player.restricted_mana.clear();
         }
     }
 
@@ -3993,6 +4095,7 @@ impl GameState {
             your_commanders,
             iterated_player: None,
             target_players: Vec::new(),
+            target_objects: Vec::new(),
             tagged_objects,
         }
     }
@@ -4287,6 +4390,7 @@ impl GameState {
         self.imprinted_cards.remove(&id);
         self.chosen_colors.remove(&id);
         self.chosen_basic_land_types.remove(&id);
+        self.chosen_creature_types.remove(&id);
         self.chosen_modes_by_ability
             .retain(|(source, _), _| *source != id);
         self.chosen_modes_by_ability_this_turn
@@ -4379,6 +4483,22 @@ impl GameState {
     /// Get a chosen basic land type for a permanent, if any.
     pub fn chosen_basic_land_type(&self, permanent_id: ObjectId) -> Option<crate::types::Subtype> {
         self.chosen_basic_land_types.get(&permanent_id).copied()
+    }
+
+    // === Chosen creature type helpers ===
+
+    /// Record a chosen creature type for a permanent.
+    pub fn set_chosen_creature_type(
+        &mut self,
+        permanent_id: ObjectId,
+        subtype: crate::types::Subtype,
+    ) {
+        self.chosen_creature_types.insert(permanent_id, subtype);
+    }
+
+    /// Get a chosen creature type for a permanent, if any.
+    pub fn chosen_creature_type(&self, permanent_id: ObjectId) -> Option<crate::types::Subtype> {
+        self.chosen_creature_types.get(&permanent_id).copied()
     }
 
     // === Imprint helpers ===

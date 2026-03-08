@@ -3,10 +3,9 @@ use crate::cards::builders::parse_parsing::{
     infer_activated_functional_zones, is_activate_only_restriction_sentence, is_at_trigger_intro,
     is_ignorable_unparsed_line, is_trigger_only_restriction_sentence, parse_ability_line,
     parse_activation_cost, parse_effect_sentences, parse_loyalty_shorthand_activation_cost,
-    parse_metadata_line,
-    parse_static_ability_ast_line, parse_trigger_clause, parser_allow_unsupported_enabled,
-    reject_unimplemented_keyword_actions, split_on_period, starts_with_activation_cost,
-    token_index_for_word_index, tokenize_line, trim_commas, words,
+    parse_metadata_line, parse_single_word_keyword_action, parse_static_ability_ast_line,
+    parse_trigger_clause, reject_unimplemented_keyword_actions, split_on_period,
+    starts_with_activation_cost, token_index_for_word_index, tokenize_line, trim_commas, words,
 };
 use crate::cards::builders::{
     ActivationTiming, CardDefinitionBuilder, CardTextError, EffectAst, EffectPredicate,
@@ -30,9 +29,9 @@ type PendingRestrictions = ParsedRestrictions;
 pub(super) fn parse_card_ast_with_annotations(
     builder: CardDefinitionBuilder,
     text: String,
+    allow_unsupported: bool,
 ) -> Result<ParsedCardAst, CardTextError> {
     let (builder, mut annotations, line_infos) = collect_line_infos(builder, text.as_str())?;
-    let allow_unsupported = parser_allow_unsupported_enabled();
     let mut items = Vec::new();
     let mut pending_modal: Option<ParsedModalAst> = None;
 
@@ -254,19 +253,7 @@ fn strict_unsupported_line_reason<'a>(
     raw_line: &'a str,
     normalized_line: &'a str,
 ) -> Option<&'static str> {
-    let normalized_raw = raw_line
-        .trim()
-        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
-        .to_ascii_lowercase()
-        .replace('\'', "")
-        .replace('’', "");
-
-    if raw_line.contains('’')
-        && normalized_raw.contains("dont untap during")
-        && normalized_raw.contains("untap step")
-    {
-        return Some("unsupported negated untap clause");
-    }
+    let raw_lower = raw_line.to_ascii_lowercase();
 
     if normalized_line.contains("put one of them into your hand and the rest into your graveyard") {
         return Some("unsupported multi-destination put clause");
@@ -276,6 +263,35 @@ fn strict_unsupported_line_reason<'a>(
         || normalized_line.contains("destroy target facedown creature")
     {
         return Some("unsupported face-down clause");
+    }
+
+    if normalized_line.contains("defending player's choice")
+        || normalized_line.contains("defending players choice")
+        || normalized_line.contains("defending player s choice")
+    {
+        return Some("unsupported defending-players-choice clause");
+    }
+
+    if normalized_line.contains("isn't saddled this turn")
+        || normalized_line.contains("isnt saddled this turn")
+    {
+        return Some("unsupported saddled-state tail");
+    }
+
+    if normalized_line.contains("into your hand this turn") {
+        return Some("unsupported looked-card fallback timing tail");
+    }
+
+    if normalized_line.contains("was a hamster this turn") {
+        return Some("unsupported sacrificed-creature predicate tail");
+    }
+
+    if normalized_line.contains("it's not a creature")
+        || normalized_line.contains("its not a creature")
+        || raw_lower.contains("(it's not a creature.)")
+        || raw_lower.contains("(its not a creature.)")
+    {
+        return Some("unsupported type-removal clause");
     }
 
     None
@@ -357,6 +373,122 @@ fn collect_line_infos(
         }
     }
 
+    fn short_name_for_self_reference(name: &str) -> String {
+        fn is_reserved_short_alias(alias_lower: &str) -> bool {
+            matches!(
+                alias_lower,
+                "a" | "an"
+                    | "the"
+                    | "one"
+                    | "two"
+                    | "three"
+                    | "four"
+                    | "five"
+                    | "six"
+                    | "seven"
+                    | "eight"
+                    | "nine"
+                    | "ten"
+                    | "x"
+                    | "this"
+                    | "that"
+                    | "these"
+                    | "those"
+                    | "you"
+                    | "your"
+                    | "when"
+                    | "whenever"
+                    | "if"
+                    | "at"
+                    | "add"
+                    | "move"
+                    | "deal"
+                    | "draw"
+                    | "counter"
+                    | "destroy"
+                    | "exile"
+                    | "untap"
+                    | "scry"
+                    | "discard"
+                    | "transform"
+                    | "regenerate"
+                    | "mill"
+                    | "get"
+                    | "reveal"
+                    | "look"
+                    | "lose"
+                    | "gain"
+                    | "put"
+                    | "sacrifice"
+                    | "create"
+                    | "investigate"
+                    | "attach"
+                    | "remove"
+                    | "return"
+                    | "exchange"
+                    | "become"
+                    | "switch"
+                    | "skip"
+                    | "surveil"
+                    | "shuffle"
+                    | "reorder"
+                    | "pay"
+                    | "goad"
+                    | "power"
+                    | "toughness"
+                    | "mana"
+                    | "life"
+                    | "commander"
+                    | "player"
+                    | "opponent"
+                    | "creature"
+                    | "artifact"
+                    | "enchantment"
+                    | "land"
+                    | "spell"
+                    | "card"
+                    | "token"
+                    | "permanent"
+                    | "library"
+                    | "graveyard"
+                    | "hand"
+                    | "battlefield"
+                    | "controller"
+                    | "owner"
+                    | "planeswalker"
+                    | "battle"
+                    | "equipment"
+                    | "aura"
+            ) || parse_single_word_keyword_action(alias_lower).is_some()
+        }
+
+        let trimmed = name.trim();
+        let comma_short = trimmed.split(',').next().unwrap_or(trimmed).trim();
+        if comma_short != trimmed {
+            return comma_short.to_string();
+        }
+
+        let mut words = trimmed.split_whitespace();
+        let Some(first_word) = words.next() else {
+            return trimmed.to_string();
+        };
+        if words.next().is_none() {
+            return trimmed.to_string();
+        }
+
+        let alias = first_word.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-');
+        if alias.len() <= 2 {
+            return trimmed.to_string();
+        }
+
+        let alias_lower = alias.to_ascii_lowercase();
+        if is_reserved_short_alias(alias_lower.as_str()) {
+            return trimmed.to_string();
+        }
+
+        alias.to_string()
+    }
+
     let card_name = builder.card_builder.name_ref().to_string();
     let front_face_name = card_name
         .split("//")
@@ -364,12 +496,7 @@ fn collect_line_infos(
         .unwrap_or(card_name.as_str())
         .trim()
         .to_string();
-    let short_name = front_face_name
-        .split(',')
-        .next()
-        .unwrap_or(front_face_name.as_str())
-        .trim()
-        .to_string();
+    let short_name = short_name_for_self_reference(front_face_name.as_str());
     let full_lower = normalize_card_name_for_self_reference(front_face_name.as_str());
     let short_lower = normalize_card_name_for_self_reference(short_name.as_str());
 
@@ -451,6 +578,8 @@ fn split_parse_line_variants(line: &str) -> Vec<String> {
     for marker in [
         ". this cost is reduced by ",
         ".this cost is reduced by ",
+        ". this ability costs ",
+        ".this ability costs ",
         ". this spell costs ",
         ".this spell costs ",
     ] {
@@ -753,9 +882,19 @@ fn replace_modal_header_x_in_effect_ast(
         | EffectAst::CreateToken { count: amount, .. }
         | EffectAst::CreateTokenCopy { count: amount, .. }
         | EffectAst::CreateTokenCopyFromSource { count: amount, .. }
-        | EffectAst::CreateTokenWithMods { count: amount, .. }
         | EffectAst::Monstrosity { amount, .. } => {
             replace_modal_header_x_in_value(amount, replacement, clause)?;
+        }
+        EffectAst::CreateTokenWithMods {
+            count: amount,
+            dynamic_power_toughness,
+            ..
+        } => {
+            replace_modal_header_x_in_value(amount, replacement, clause)?;
+            if let Some((power, toughness)) = dynamic_power_toughness {
+                replace_modal_header_x_in_value(power, replacement, clause)?;
+                replace_modal_header_x_in_value(toughness, replacement, clause)?;
+            }
         }
         EffectAst::Pump {
             power, toughness, ..
@@ -917,10 +1056,12 @@ fn split_sentences_for_parse(line: &str, _line_index: usize) -> Vec<String> {
 
 fn sentence_starts_with_trigger_intro(sentence: &str, line_index: usize) -> bool {
     let tokens = tokenize_line(sentence, line_index);
-    // "At the beginning of the next end step, ..." is almost always a delayed trigger created
-    // by a prior effect clause, not a new printed triggered ability. Avoid splitting such
-    // sentences into their own parse chunk so they can be parsed as delayed effects.
-    if looks_like_delayed_next_end_step_intro(&tokens) {
+    // "At the beginning of the next end step, ..." and
+    // "At the beginning of your next upkeep, ..." are almost always delayed
+    // triggers created by a prior effect clause, not new printed triggered
+    // abilities. Avoid splitting such sentences into their own parse chunk so
+    // they can be parsed as delayed effects.
+    if looks_like_delayed_next_turn_intro(&tokens) {
         return false;
     }
     // "When one or more ... this way, ..." is usually a follow-up gate tied to the
@@ -939,7 +1080,7 @@ fn sentence_starts_with_trigger_intro(sentence: &str, line_index: usize) -> bool
         || is_at_trigger_intro(&tokens, 0)
 }
 
-fn looks_like_delayed_next_end_step_intro(tokens: &[Token]) -> bool {
+fn looks_like_delayed_next_turn_intro(tokens: &[Token]) -> bool {
     let mut idx = 0usize;
     if !tokens.get(idx).is_some_and(|token| token.is_word("at")) {
         return false;
@@ -971,12 +1112,20 @@ fn looks_like_delayed_next_end_step_intro(tokens: &[Token]) -> bool {
     if !tokens.get(idx).is_some_and(|token| token.is_word("next")) {
         return false;
     }
-    tokens
+
+    if tokens
         .get(idx + 1)
         .is_some_and(|token| token.is_word("end"))
         && tokens
             .get(idx + 2)
             .is_some_and(|token| token.is_word("step"))
+    {
+        return true;
+    }
+
+    tokens
+        .get(idx + 1)
+        .is_some_and(|token| token.is_word("upkeep"))
 }
 
 fn looks_like_when_one_or_more_this_way_followup(tokens: &[Token]) -> bool {

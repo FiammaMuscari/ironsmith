@@ -11,6 +11,18 @@ use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
 use crate::zone::Zone;
 
+fn zone_description(zone: Zone) -> &'static str {
+    match zone {
+        Zone::Battlefield => "Battlefield",
+        Zone::Hand => "Hand",
+        Zone::Library => "Library",
+        Zone::Graveyard => "Graveyard",
+        Zone::Exile => "Exile",
+        Zone::Stack => "Stack",
+        Zone::Command => "Command Zone",
+    }
+}
+
 // ============================================================================
 // ModesSpec - Modal spell mode selection
 // ============================================================================
@@ -639,14 +651,14 @@ impl DecisionSpec for PrioritySpec {
         &self,
         player: PlayerId,
         _source: Option<ObjectId>,
-        _game: &GameState,
+        game: &GameState,
     ) -> DecisionContext {
         let options: Vec<SelectableOption> = self
             .actions
             .iter()
             .enumerate()
             .map(|(i, action)| {
-                let description = format!("{:?}", action);
+                let description = crate::decision::format_action_short(game, action);
                 SelectableOption::new(i, description)
             })
             .collect();
@@ -718,7 +730,7 @@ impl DecisionSpec for DiscardDestinationSpec {
             .options
             .iter()
             .enumerate()
-            .map(|(i, zone)| SelectableOption::new(i, format!("{:?}", zone)))
+            .map(|(i, zone)| SelectableOption::new(i, zone_description(*zone)))
             .collect();
 
         DecisionContext::SelectOptions(SelectOptionsContext::new(

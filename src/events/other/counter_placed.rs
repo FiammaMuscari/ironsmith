@@ -49,8 +49,9 @@ impl GameEventType for CounterPlacedEvent {
 
     fn display(&self) -> String {
         format!(
-            "{} {:?} counter(s) placed on permanent",
-            self.amount, self.counter_type
+            "{} {} counter(s) placed on permanent",
+            self.amount,
+            self.counter_type.description()
         )
     }
 

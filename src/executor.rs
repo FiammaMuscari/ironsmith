@@ -18,6 +18,7 @@ use crate::provenance::{ProvNodeId, ProvenanceNodeKind};
 use crate::snapshot::ObjectSnapshot;
 use crate::tag::{SOURCE_EXILED_TAG, TagKey};
 use crate::target::{ChooseSpec, FilterContext};
+use crate::types::Subtype;
 
 // ============================================================================
 // Error Types
@@ -147,6 +148,10 @@ pub struct ExecutionContext<'a> {
     pub provenance: ProvNodeId,
     /// Optional color restriction for mana-choice decisions in this execution.
     pub mana_color_restriction: Option<Vec<Color>>,
+    /// Optional spending restrictions for mana produced during this execution.
+    pub mana_usage_restrictions: Vec<crate::ability::ManaUsageRestriction>,
+    /// Chosen creature type snapshot for mana produced by the source.
+    pub mana_source_chosen_creature_type: Option<Subtype>,
 }
 
 impl std::fmt::Debug for ExecutionContext<'_> {
@@ -176,6 +181,11 @@ impl std::fmt::Debug for ExecutionContext<'_> {
             .field("cause", &self.cause)
             .field("provenance", &self.provenance)
             .field("mana_color_restriction", &self.mana_color_restriction)
+            .field("mana_usage_restrictions", &self.mana_usage_restrictions)
+            .field(
+                "mana_source_chosen_creature_type",
+                &self.mana_source_chosen_creature_type,
+            )
             .finish()
     }
 }
@@ -208,6 +218,8 @@ impl<'a> ExecutionContext<'a> {
             cause: EventCause::default(),
             provenance: ProvNodeId::default(),
             mana_color_restriction: None,
+            mana_usage_restrictions: Vec::new(),
+            mana_source_chosen_creature_type: None,
         }
     }
 
@@ -245,6 +257,8 @@ impl<'a> ExecutionContext<'a> {
             cause: EventCause::default(),
             provenance: ProvNodeId::default(),
             mana_color_restriction: None,
+            mana_usage_restrictions: Vec::new(),
+            mana_source_chosen_creature_type: None,
         }
     }
 
@@ -272,12 +286,29 @@ impl<'a> ExecutionContext<'a> {
             cause: self.cause,
             provenance: self.provenance,
             mana_color_restriction: self.mana_color_restriction,
+            mana_usage_restrictions: self.mana_usage_restrictions,
+            mana_source_chosen_creature_type: self.mana_source_chosen_creature_type,
         }
     }
 
     /// Restrict mana color choices for effects executed in this context.
     pub fn with_mana_color_restriction(mut self, restriction: Option<Vec<Color>>) -> Self {
         self.mana_color_restriction = restriction;
+        self
+    }
+
+    /// Restrict how mana produced during this execution may be spent.
+    pub fn with_mana_usage_restrictions(
+        mut self,
+        restrictions: Vec<crate::ability::ManaUsageRestriction>,
+    ) -> Self {
+        self.mana_usage_restrictions = restrictions;
+        self
+    }
+
+    /// Snapshot the source's chosen creature type for later mana spending checks.
+    pub fn with_mana_source_chosen_creature_type(mut self, subtype: Option<Subtype>) -> Self {
+        self.mana_source_chosen_creature_type = subtype;
         self
     }
 
@@ -622,6 +653,19 @@ impl<'a> ExecutionContext<'a> {
                 _ => None,
             })
             .collect::<Vec<_>>();
+        let target_objects = self
+            .targets
+            .iter()
+            .filter_map(|target| match target {
+                ResolvedTarget::Object(id) => game
+                    .object(*id)
+                    .map(|obj| {
+                        ObjectSnapshot::from_object_with_calculated_characteristics(obj, game)
+                    })
+                    .or_else(|| self.target_snapshots.get(id).cloned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         let mut tagged_objects = self.tagged_objects.clone();
         let source_exiled = game
             .get_exiled_with_source_links(self.source)
@@ -639,6 +683,7 @@ impl<'a> ExecutionContext<'a> {
             .filter_context_for(self.controller, Some(self.source))
             .with_iterated_player(self.iterated_player)
             .with_target_players(target_players)
+            .with_target_objects(target_objects)
             .with_tagged_objects(&tagged_objects);
         if self.defending_player.is_some() {
             filter_ctx.defending_player = self.defending_player;

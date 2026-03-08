@@ -485,6 +485,7 @@ mod tests {
             base_power: Some(PtValue::Fixed(power)),
             base_toughness: Some(PtValue::Fixed(toughness)),
             base_loyalty: None,
+            base_defense: None,
             abilities: vec![],
             counters: HashMap::new(),
             attached_to: None,

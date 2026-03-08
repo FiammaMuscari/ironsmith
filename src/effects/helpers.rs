@@ -477,6 +477,20 @@ pub fn resolve_value(
                 .ok_or(ExecutionError::PlayerNotFound(player_id))?;
             Ok(player.life.div_euclid(2))
         }
+        Value::HalfStartingLifeTotalRoundedUp(player_spec) => {
+            let player_id = resolve_player_filter(game, player_spec, ctx)?;
+            let player = game
+                .player(player_id)
+                .ok_or(ExecutionError::PlayerNotFound(player_id))?;
+            Ok((player.starting_life + 1).div_euclid(2))
+        }
+        Value::HalfStartingLifeTotalRoundedDown(player_spec) => {
+            let player_id = resolve_player_filter(game, player_spec, ctx)?;
+            let player = game
+                .player(player_id)
+                .ok_or(ExecutionError::PlayerNotFound(player_id))?;
+            Ok(player.starting_life.div_euclid(2))
+        }
 
         Value::CardsInHand(player_spec) => {
             let player_id = resolve_player_filter(game, player_spec, ctx)?;
@@ -1828,13 +1842,11 @@ fn resolve_player_filter_to_list(
             .iterated_player
             .map(|id| vec![id])
             .ok_or_else(|| ExecutionError::UnresolvableValue("IteratedPlayer not set".to_string())),
-        PlayerFilter::TargetPlayerOrControllerOfTarget => {
-            Ok(vec![resolve_player_filter(
-                game,
-                &PlayerFilter::TargetPlayerOrControllerOfTarget,
-                ctx,
-            )?])
-        }
+        PlayerFilter::TargetPlayerOrControllerOfTarget => Ok(vec![resolve_player_filter(
+            game,
+            &PlayerFilter::TargetPlayerOrControllerOfTarget,
+            ctx,
+        )?]),
         PlayerFilter::Excluding { base, excluded } => {
             let mut base_players = resolve_player_filter_to_list(game, base, _filter_ctx, ctx)?;
             let excluded_players = resolve_player_filter_to_list(game, excluded, _filter_ctx, ctx)?;

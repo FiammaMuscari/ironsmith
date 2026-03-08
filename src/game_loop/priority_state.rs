@@ -39,6 +39,28 @@ pub enum CastStage {
     ReadyToFinalize,
 }
 
+impl CastStage {
+    pub fn name(&self) -> &'static str {
+        match self {
+            CastStage::Proposing => "proposing",
+            CastStage::ChoosingModes => "choosing modes",
+            CastStage::ChoosingX => "choosing X",
+            CastStage::ChoosingOptionalCosts => "choosing optional costs",
+            CastStage::AnnouncingCost => "announcing costs",
+            CastStage::ChoosingTargets => "choosing targets",
+            CastStage::ChoosingCardCost => "choosing card costs",
+            CastStage::PayingMana => "paying mana",
+            CastStage::ReadyToFinalize => "ready to finalize",
+        }
+    }
+}
+
+impl std::fmt::Display for CastStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// Pending casting method selection for a spell with multiple available methods.
 #[derive(Debug, Clone)]
 pub struct PendingMethodSelection {
@@ -170,6 +192,27 @@ pub enum ActivationStage {
     PayingMana,
     /// Ready to finalize (costs paid, ability goes on stack).
     ReadyToFinalize,
+}
+
+impl ActivationStage {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ActivationStage::ChoosingX => "choosing X",
+            ActivationStage::AnnouncingCost => "announcing costs",
+            ActivationStage::ChoosingTargets => "choosing targets",
+            ActivationStage::ProcessingCosts => "processing costs",
+            ActivationStage::ChoosingSacrifice => "choosing sacrifices",
+            ActivationStage::ChoosingCardCost => "choosing card costs",
+            ActivationStage::PayingMana => "paying mana",
+            ActivationStage::ReadyToFinalize => "ready to finalize",
+        }
+    }
+}
+
+impl std::fmt::Display for ActivationStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 /// Pending card-in-hand choice required by an activated ability cost.

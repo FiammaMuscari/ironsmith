@@ -297,17 +297,6 @@ pub(crate) fn compute_legal_targets_with_tagged_objects_with_view(
     }
 }
 
-/// Compute legal targets for "target player or planeswalker" style specs.
-fn compute_player_or_planeswalker_targets(
-    game: &GameState,
-    player_filter: &PlayerFilter,
-    caster: PlayerId,
-    source_id: Option<ObjectId>,
-) -> Vec<Target> {
-    let view = crate::derived_view::DerivedGameView::new(game);
-    compute_player_or_planeswalker_targets_with_view(game, player_filter, caster, source_id, &view)
-}
-
 fn compute_player_or_planeswalker_targets_with_view(
     game: &GameState,
     player_filter: &PlayerFilter,
@@ -340,16 +329,6 @@ fn compute_player_or_planeswalker_targets_with_view(
     }
 
     targets
-}
-
-/// Compute legal targets for "any target" (player or creature/planeswalker).
-fn compute_any_targets(
-    game: &GameState,
-    caster: PlayerId,
-    source_id: Option<ObjectId>,
-) -> Vec<Target> {
-    let view = crate::derived_view::DerivedGameView::new(game);
-    compute_any_targets_with_view(game, caster, source_id, &view)
 }
 
 fn compute_any_targets_with_view(
@@ -426,20 +405,6 @@ fn compute_player_targets(
         .filter(|p| filter.matches_player(p.id, &filter_ctx))
         .map(|p| Target::Player(p.id))
         .collect()
-}
-
-/// Compute legal object targets.
-fn compute_object_targets(
-    game: &GameState,
-    filter: &ObjectFilter,
-    caster: PlayerId,
-    source_id: Option<ObjectId>,
-    tagged_objects: Option<
-        &std::collections::HashMap<TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
-    >,
-) -> Vec<Target> {
-    let view = crate::derived_view::DerivedGameView::new(game);
-    compute_object_targets_with_view(game, filter, caster, source_id, tagged_objects, &view)
 }
 
 fn compute_object_targets_with_view(

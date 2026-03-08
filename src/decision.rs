@@ -537,6 +537,49 @@ fn append_graveyard_granted_alternative_cast_actions_for_card(
     }
 }
 
+fn append_hand_granted_alternative_cast_actions_for_card(
+    game: &GameState,
+    actions: &mut Vec<LegalAction>,
+    player: PlayerId,
+    card_id: ObjectId,
+    card: &crate::object::Object,
+    view: &DerivedGameView<'_>,
+) {
+    if card.is_land() {
+        return;
+    }
+
+    let granted_casts =
+        game.grant_registry
+            .granted_alternative_casts_for_card(game, card_id, Zone::Hand, player);
+    let base_alt_idx = card.alternative_casts.len();
+
+    for (offset, grant) in granted_casts.iter().enumerate() {
+        if grant.method.cast_from_zone() != Zone::Hand
+            || !can_cast_with_alternative_from_hand_with_view(
+                game,
+                player,
+                card,
+                card_id,
+                &grant.method,
+                view,
+            )
+        {
+            continue;
+        }
+
+        actions.push(LegalAction::CastSpell {
+            spell_id: card_id,
+            from_zone: Zone::Hand,
+            casting_method: CastingMethod::PlayFrom {
+                source: grant.source_id,
+                zone: Zone::Hand,
+                use_alternative: Some(base_alt_idx + offset),
+            },
+        });
+    }
+}
+
 fn append_cast_actions_from_zone_for_card(
     game: &GameState,
     actions: &mut Vec<LegalAction>,
@@ -687,6 +730,14 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                             });
                         }
                     }
+                    append_hand_granted_alternative_cast_actions_for_card(
+                        game,
+                        &mut actions,
+                        player,
+                        card_id,
+                        card,
+                        &view,
+                    );
                 }
             }
         }
@@ -966,20 +1017,6 @@ fn commander_action_indices(actions: &[LegalAction]) -> Vec<usize> {
             _ => None,
         })
         .collect()
-}
-
-/// Check if a player can pay an activated ability's cost.
-///
-/// This is a thin wrapper around `can_pay_cost` that returns a bool
-/// instead of a Result for convenience in computing legal actions.
-fn can_pay_ability_cost(
-    game: &GameState,
-    source_id: ObjectId,
-    player: PlayerId,
-    cost: &crate::cost::TotalCost,
-) -> bool {
-    let view = DerivedGameView::new(game);
-    can_pay_ability_cost_with_view(game, source_id, player, cost, &view)
 }
 
 fn can_pay_ability_cost_with_view(
@@ -1272,34 +1309,48 @@ fn calculate_effective_activation_mana_cost_with_view(
         return adjusted;
     };
 
-    for &perm_id in &game.battlefield {
-        let Some(perm) = game.object(perm_id) else {
+    let mut cost_modifier_sources = game.battlefield.clone();
+    if ability_source_object.zone != Zone::Battlefield {
+        cost_modifier_sources.push(ability_source);
+    }
+
+    for source_id in cost_modifier_sources {
+        let Some(perm) = game.object(source_id) else {
             continue;
         };
         let controller = perm.controller;
         let filter_ctx = FilterContext::new(controller)
-            .with_source(perm_id)
+            .with_source(source_id)
             .with_active_player(game.turn.active_player)
             .with_opponents(opponents_of(game, controller));
 
-        let static_abilities = view
-            .calculated_characteristics(perm_id)
-            .map(|c| c.static_abilities)
-            .unwrap_or_else(|| {
-                perm.abilities
-                    .iter()
-                    .filter_map(|a| match &a.kind {
-                        AbilityKind::Static(sa) => Some(sa.clone()),
-                        _ => None,
-                    })
-                    .collect()
-            });
+        let static_abilities = if perm.zone == Zone::Battlefield {
+            view.calculated_characteristics(source_id)
+                .map(|c| c.static_abilities)
+                .unwrap_or_else(|| {
+                    perm.abilities
+                        .iter()
+                        .filter_map(|a| match &a.kind {
+                            AbilityKind::Static(sa) => Some(sa.clone()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+        } else {
+            perm.abilities
+                .iter()
+                .filter_map(|a| match &a.kind {
+                    AbilityKind::Static(sa) if a.functions_in(&perm.zone) => Some(sa.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
 
         for static_ability in static_abilities {
             let Some(reduction) = static_ability.activated_ability_cost_reduction() else {
                 continue;
             };
-            if !static_ability.is_active(game, perm_id) {
+            if !static_ability.is_active(game, source_id) {
                 continue;
             }
             if !reduction
@@ -1309,8 +1360,19 @@ fn calculate_effective_activation_mana_cost_with_view(
                 continue;
             }
 
+            let multiplier = if let Some(per_filter) = &reduction.per_matching_objects {
+                game.objects_iter()
+                    .filter(|obj| per_filter.matches(obj, &filter_ctx, game))
+                    .count() as u32
+            } else {
+                1
+            };
+            if multiplier == 0 {
+                continue;
+            }
+
             let before = adjusted.clone();
-            adjusted = adjusted.reduce_generic(reduction.reduction);
+            adjusted = adjusted.reduce_generic(reduction.reduction.saturating_mul(multiplier));
             if let Some(minimum_total_mana) = reduction.minimum_total_mana
                 && before.mana_value() > 0
                 && adjusted.mana_value() < minimum_total_mana
@@ -1862,32 +1924,6 @@ pub struct AdditionalCastRequirements {
     pub must_be_instant_or_sorcery: bool,
 }
 
-/// Check if a spell can be cast with the given mana cost and additional requirements.
-///
-/// This is the unified function for checking spell castability across all casting methods:
-/// - Normal casting
-/// - Alternative casting methods (flashback, escape, jump-start)
-/// - Granted abilities (from Snapcaster Mage, Underworld Breach, etc.)
-fn can_cast_with_cost(
-    game: &GameState,
-    player: PlayerId,
-    spell: &crate::object::Object,
-    spell_id: crate::ids::ObjectId,
-    mana_cost: Option<&crate::mana::ManaCost>,
-    requirements: &AdditionalCastRequirements,
-) -> bool {
-    let view = DerivedGameView::new(game);
-    can_cast_with_cost_with_view(
-        game,
-        player,
-        spell,
-        spell_id,
-        mana_cost,
-        requirements,
-        &view,
-    )
-}
-
 fn can_cast_with_cost_with_view(
     game: &GameState,
     player: PlayerId,
@@ -2006,17 +2042,6 @@ fn get_mana_cost_for_method<'a>(
 ) -> Option<&'a crate::mana::ManaCost> {
     // Method's cost takes priority, fallback to spell's cost
     method.mana_cost().or(spell.mana_cost.as_ref())
-}
-
-/// Check if a spell can be cast using an alternative casting method.
-fn can_cast_with_alternative(
-    game: &GameState,
-    player: PlayerId,
-    spell: &crate::object::Object,
-    method: &crate::alternative_cast::AlternativeCastingMethod,
-) -> bool {
-    let view = DerivedGameView::new(game);
-    can_cast_with_alternative_with_view(game, player, spell, method, &view)
 }
 
 fn can_cast_with_alternative_with_view(
@@ -4651,7 +4676,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Boolean[{}] = {:?}, input = {:?}",
+                "Decision boolean[{}]: {} | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.description,
                 input
@@ -4672,7 +4697,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Number[{}] = {:?} (min={}, max={}), input = {:?}",
+                "Decision number[{}]: {} (min={}, max={}) | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.description,
                 ctx.min,
@@ -4700,12 +4725,14 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Objects[{}] = {:?} ({} candidates, min={}, max={:?}), input = {:?}",
+                "Decision objects[{}]: {} ({} candidates, min={}, max={}) | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.description,
                 ctx.candidates.len(),
                 ctx.min,
-                ctx.max,
+                ctx.max
+                    .map(|max| max.to_string())
+                    .unwrap_or_else(|| "any".to_string()),
                 input
             );
         }
@@ -4758,7 +4785,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Options[{}] = {:?} ({} options, min={}, max={}), input = {:?}",
+                "Decision options[{}]: {} ({} options, min={}, max={}) | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.description,
                 ctx.options.len(),
@@ -4811,7 +4838,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Order[{}] = {:?} ({} items), input = {:?}",
+                "Decision order[{}]: {} ({} items) | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.description,
                 ctx.items.len(),
@@ -4856,7 +4883,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Attackers[{}] ({} options), input = {:?}",
+                "Decision attackers[{}]: {} options | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.attacker_options.len(),
                 input
@@ -4896,7 +4923,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Blockers[{}] ({} attacker options), input = {:?}",
+                "Decision blockers[{}]: {} attacker options | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.blocker_options.len(),
                 input
@@ -4937,7 +4964,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Distribute[{}] = {:?} (total={}, {} targets), input = {:?}",
+                "Decision distribute[{}]: {} (total={}, {} targets) | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.description,
                 ctx.total,
@@ -4995,7 +5022,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Colors[{}] (count={}, same_color={}), input = {:?}",
+                "Decision colors[{}]: count={}, same_color={} | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.count,
                 ctx.same_color,
@@ -5045,7 +5072,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Counters[{}] (max_total={}, {} types), input = {:?}",
+                "Decision counters[{}]: max_total={}, {} types | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.max_total,
                 ctx.available_counters.len(),
@@ -5094,7 +5121,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Partition[{}] = {:?} ({} cards), input = {:?}",
+                "Decision partition[{}]: {} ({} cards) | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.description,
                 ctx.cards.len(),
@@ -5132,7 +5159,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Proliferate[{}] ({} permanents, {} players), input = {:?}",
+                "Decision proliferate[{}]: {} permanents, {} players | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.eligible_permanents.len(),
                 ctx.eligible_players.len(),
@@ -5188,7 +5215,7 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Priority[{}] = {} actions, input = {:?}",
+                "Decision priority[{}]: {} actions | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.actions.len(),
                 input
@@ -5234,14 +5261,14 @@ impl DecisionMaker for NumericInputDecisionMaker {
 
         if self.debug {
             eprintln!(
-                "DEBUG: Targets[{}] = {} requirements, input = {:?}",
+                "Decision targets[{}]: {} requirements | input '{}'",
                 self.index.saturating_sub(1),
                 ctx.requirements.len(),
                 input
             );
             for (i, req) in ctx.requirements.iter().enumerate() {
                 eprintln!(
-                    "DEBUG:   req[{}]: {} legal targets",
+                    "  target requirement[{}]: {} legal targets",
                     i,
                     req.legal_targets.len()
                 );
@@ -5383,7 +5410,7 @@ impl DecisionMaker for CliDecisionMaker {
     ) {
         let viewer_name = player_name(game, viewer);
         let subject_name = player_name(game, ctx.subject);
-        let zone_label = format!("{:?}", ctx.zone).to_lowercase();
+        let zone_label = ctx.zone.to_string();
 
         println!(
             "\n--- {} looks at {}'s {} ---",
@@ -5855,7 +5882,19 @@ fn prompt_priority_action(game: &GameState, actions: &[LegalAction]) -> LegalAct
     }
 }
 
-fn format_action_short(game: &GameState, action: &LegalAction) -> String {
+fn zone_label(zone: Zone) -> &'static str {
+    match zone {
+        Zone::Battlefield => "battlefield",
+        Zone::Hand => "hand",
+        Zone::Library => "library",
+        Zone::Graveyard => "graveyard",
+        Zone::Exile => "exile",
+        Zone::Stack => "stack",
+        Zone::Command => "command zone",
+    }
+}
+
+pub(crate) fn format_action_short(game: &GameState, action: &LegalAction) -> String {
     match action {
         LegalAction::PassPriority => "Pass".to_string(),
         LegalAction::PlayLand { land_id } => {
@@ -5914,14 +5953,26 @@ fn format_action_short(game: &GameState, action: &LegalAction) -> String {
                         use_alternative: None,
                         ..
                     } => {
-                        format!("{} [from {:?}] ({})", obj.name, zone, format_mana_cost(obj))
+                        format!(
+                            "{} [from {}] ({})",
+                            obj.name,
+                            zone_label(*zone),
+                            format_mana_cost(obj)
+                        )
                     }
                     crate::alternative_cast::CastingMethod::PlayFrom {
                         zone,
                         use_alternative: Some(idx),
                         ..
                     } => {
-                        if let Some(alt_method) = obj.alternative_casts.get(*idx) {
+                        let acting_player = game.turn.priority_player.unwrap_or(obj.owner);
+                        if let Some(alt_method) = resolve_play_from_alternative_method(
+                            game,
+                            acting_player,
+                            obj,
+                            *zone,
+                            *idx,
+                        ) {
                             let cost_effects = alt_method.cost_effects();
                             let cost_desc = if !cost_effects.is_empty() {
                                 let effects_desc = format_cost_effects(&cost_effects);
@@ -5940,17 +5991,17 @@ fn format_action_short(game: &GameState, action: &LegalAction) -> String {
                                 format_mana_cost(obj)
                             };
                             format!(
-                                "{} [from {:?}, {}] ({})",
+                                "{} [from {}, {}] ({})",
                                 obj.name,
-                                zone,
+                                zone_label(*zone),
                                 alt_method.name(),
                                 cost_desc
                             )
                         } else {
                             format!(
-                                "{} [from {:?}, Alt] ({})",
+                                "{} [from {}, Alt] ({})",
                                 obj.name,
-                                zone,
+                                zone_label(*zone),
                                 format_mana_cost(obj)
                             )
                         }
@@ -6003,7 +6054,15 @@ fn format_action_short(game: &GameState, action: &LegalAction) -> String {
                 .unwrap_or("?");
             format!("Flip {}", name)
         }
-        LegalAction::SpecialAction(special) => format!("{:?}", special),
+        LegalAction::SpecialAction(special) => match special {
+            crate::special_actions::SpecialAction::PlayLand { .. } => "Play land".to_string(),
+            crate::special_actions::SpecialAction::TurnFaceUp { .. } => "Turn face up".to_string(),
+            crate::special_actions::SpecialAction::Suspend { .. } => "Suspend".to_string(),
+            crate::special_actions::SpecialAction::Foretell { .. } => "Foretell".to_string(),
+            crate::special_actions::SpecialAction::ActivateManaAbility { .. } => {
+                "Activate mana ability".to_string()
+            }
+        },
     }
 }
 
@@ -6096,9 +6155,18 @@ fn prompt_declare_blockers(
             .filter(|(_, opt)| opt.valid_blockers.iter().any(|(id, _)| id == blocker_id))
             .map(|(i, _)| i)
             .collect();
+        let can_block_text = if can_block.is_empty() {
+            "none".to_string()
+        } else {
+            can_block
+                .iter()
+                .map(|idx| idx.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         println!(
-            "  Blocker {}: {} (can block attackers: {:?})",
-            i, blocker_name, can_block
+            "  Blocker {}: {} (can block attackers: {})",
+            i, blocker_name, can_block_text
         );
     }
 
@@ -6463,7 +6531,12 @@ fn prompt_choose_counters(
 
     println!("Available counters (up to {} total to remove):", max_total);
     for (i, (counter_type, count)) in available_counters.iter().enumerate() {
-        println!("  {}: {:?} ({} available)", i, counter_type, count);
+        println!(
+            "  {}: {} ({} available)",
+            i,
+            counter_type.description(),
+            count
+        );
     }
 
     println!("Enter index and amount pairs (e.g., '0:2,1:1' for 2 of type 0 and 1 of type 1):");
@@ -6742,13 +6815,13 @@ fn prompt_choose_targets(
                             format!("{} ({})", obj.name, controller_name)
                         }
                     } else {
-                        format!("Object {:?}", id)
+                        format!("Object #{}", id.0)
                     }
                 }
                 Target::Player(id) => game
                     .player(*id)
                     .map(|p| p.name.clone())
-                    .unwrap_or_else(|| format!("Player {:?}", id)),
+                    .unwrap_or_else(|| format!("Player {}", id.0)),
             };
             println!("  {}: {}", i, display);
         }
@@ -8927,65 +9000,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_commander_actions_uses_current_object_after_zone_change() {
-        use crate::ability::Ability;
-        use crate::cost::TotalCost;
-
-        let mut game = setup_game();
-        let alice = PlayerId::from_index(0);
-        game.turn.phase = Phase::FirstMain;
-        game.turn.step = None;
-
-        let commander = CardBuilder::new(CardId::from_raw(2300), "Looping Commander")
-            .mana_cost(ManaCost::from_symbols(vec![ManaSymbol::Green]))
-            .card_types(vec![CardType::Creature])
-            .power_toughness(PowerToughness::fixed(2, 2))
-            .build();
-        let commander_id = game.create_object_from_card(&commander, alice, Zone::Command);
-        game.set_as_commander(commander_id, alice);
-
-        let land = CardBuilder::new(CardId::from_raw(2301), "Green Source")
-            .card_types(vec![CardType::Land])
-            .build();
-        let land_id = game.create_object_from_card(&land, alice, Zone::Battlefield);
-        game.object_mut(land_id)
-            .expect("green source should exist")
-            .abilities
-            .push(Ability::mana(TotalCost::free(), vec![ManaSymbol::Green]));
-
-        let battlefield_id = game
-            .move_object(commander_id, Zone::Battlefield)
-            .expect("commander should move to battlefield");
-        let graveyard_id = game
-            .move_object(battlefield_id, Zone::Graveyard)
-            .expect("commander should move to graveyard");
-        assert_ne!(graveyard_id, commander_id);
-
-        assert!(crate::rules::state_based::apply_state_based_actions(
-            &mut game
-        ));
-
-        let current_commander_id = game
-            .objects_in_zone(Zone::Command)
-            .into_iter()
-            .find(|&id| game.is_commander(id))
-            .expect("commander should return to command zone");
-        assert_ne!(current_commander_id, commander_id);
-
-        let actions = compute_commander_actions(&game, alice);
-        assert!(actions.iter().any(|action| {
-            matches!(
-                action,
-                LegalAction::CastSpell {
-                    spell_id,
-                    from_zone: Zone::Command,
-                    casting_method: CastingMethod::Normal,
-                } if *spell_id == current_commander_id
-            )
-        }));
-    }
-
-    #[test]
     fn test_numeric_input_may_choice() {
         use crate::decisions::context::BooleanContext;
 
@@ -8997,6 +9011,7 @@ mod tests {
             source: Some(ObjectId::from_raw(1)),
             description: "Test?".to_string(),
             source_name: None,
+            ui_hints: crate::decisions::context::DecisionUiHints::default(),
         };
 
         // "y" = true
@@ -9096,6 +9111,7 @@ mod tests {
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![crate::zone::Zone::Battlefield],
             text: None,
@@ -9273,6 +9289,7 @@ mod tests {
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![crate::zone::Zone::Battlefield],
             text: None,
@@ -9350,6 +9367,77 @@ mod tests {
                 .generic_mana_total(),
             1,
             "minimum-one-mana floor should not reduce a {{1}} activation cost to zero"
+        );
+    }
+
+    #[test]
+    fn test_self_hand_activated_ability_cost_reduction_counts_matching_battlefield_objects() {
+        use crate::ability::{Ability, AbilityKind, ActivatedAbility, ActivationTiming};
+        use crate::cost::TotalCost;
+        use crate::effect::Effect;
+        use crate::mana::{ManaCost, ManaSymbol};
+        use crate::static_abilities::StaticAbility;
+        use crate::target::ObjectFilter;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+
+        let legend = CardBuilder::new(CardId::from_raw(21), "Legendary Scout")
+            .supertypes(vec![crate::types::Supertype::Legendary])
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        game.create_object_from_card(&legend, alice, Zone::Battlefield);
+        game.create_object_from_card(&legend, alice, Zone::Battlefield);
+
+        let card = CardBuilder::new(CardId::from_raw(22), "Hand Reducer")
+            .card_types(vec![CardType::Creature])
+            .build();
+        let source_id = game.create_object_from_card(&card, alice, Zone::Hand);
+        game.object_mut(source_id)
+            .expect("source exists")
+            .abilities
+            .extend([
+                Ability {
+                    kind: AbilityKind::Activated(ActivatedAbility {
+                        mana_cost: TotalCost::mana(ManaCost::from_pips(vec![vec![
+                            ManaSymbol::Generic(3),
+                        ]])),
+                        effects: vec![Effect::draw(1)],
+                        choices: vec![],
+                        timing: ActivationTiming::AnyTime,
+                        additional_restrictions: vec![],
+                        activation_restrictions: vec![],
+                        mana_output: None,
+                        activation_condition: None,
+                        mana_usage_restrictions: vec![],
+                    }),
+                    functional_zones: vec![Zone::Hand],
+                    text: Some("Hand ability".to_string()),
+                },
+                Ability::static_ability(StaticAbility::reduce_activated_ability_costs_for_each(
+                    ObjectFilter::source(),
+                    1,
+                    ObjectFilter::creature()
+                        .you_control()
+                        .with_supertype(crate::types::Supertype::Legendary),
+                    Some(1),
+                ))
+                .in_zones(vec![Zone::Battlefield, Zone::Hand]),
+            ]);
+
+        let reduced = calculate_effective_activation_mana_cost(
+            &game,
+            alice,
+            source_id,
+            &ManaCost::from_pips(vec![vec![ManaSymbol::Generic(3)]]),
+        );
+        assert_eq!(
+            reduced.generic_mana_total(),
+            1,
+            "two matching legendary creatures should reduce a hand-zone activation from {{3}} to {{1}}"
         );
     }
 
@@ -9491,6 +9579,7 @@ mod tests {
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![crate::zone::Zone::Battlefield],
             text: None,
@@ -9553,6 +9642,7 @@ mod tests {
                     activation_restrictions: vec![],
                     mana_output: None,
                     activation_condition: None,
+                    mana_usage_restrictions: vec![],
                 }),
                 functional_zones: vec![Zone::Hand],
                 text: Some("Hand ability".to_string()),

@@ -2,6 +2,29 @@
 // Pip-by-Pip Mana Payment Helpers
 // ============================================================================
 
+fn decision_context_name(ctx: &crate::decisions::context::DecisionContext) -> &'static str {
+    use crate::decisions::context::DecisionContext;
+
+    match ctx {
+        DecisionContext::Boolean(_) => "boolean",
+        DecisionContext::SelectObjects(_) => "select objects",
+        DecisionContext::SelectOptions(_) => "select options",
+        DecisionContext::Targets(_) => "targets",
+        DecisionContext::Number(_) => "number",
+        DecisionContext::Priority(_) => "priority",
+        DecisionContext::Attackers(_) => "attackers",
+        DecisionContext::Blockers(_) => "blockers",
+        DecisionContext::Order(_) => "order",
+        DecisionContext::Modes(_) => "modes",
+        DecisionContext::HybridChoice(_) => "hybrid choice",
+        DecisionContext::Distribute(_) => "distribute",
+        DecisionContext::Colors(_) => "colors",
+        DecisionContext::Counters(_) => "counters",
+        DecisionContext::Partition(_) => "partition",
+        DecisionContext::Proliferate(_) => "proliferate",
+    }
+}
+
 /// Expand a ManaCost into individual pips, expanding X pips by the chosen value.
 /// Also applies hybrid_choices to replace multi-symbol pips with the chosen symbol.
 fn expand_mana_cost_to_pips(
@@ -104,11 +127,23 @@ fn build_pip_payment_options(
         match symbol {
             ManaSymbol::White => {
                 if allow_any_color {
-                    if !added_any_color_options && let Some(p) = pool {
-                        add_any_color_pool_options(&mut options, &mut index, p);
+                    if !added_any_color_options {
+                        add_any_color_pool_options(
+                            game,
+                            player,
+                            source_for_pip_alternatives,
+                            &mut options,
+                            &mut index,
+                        );
                         added_any_color_options = true;
                     }
-                } else if pool.map(|p| p.white > 0).unwrap_or(false) {
+                } else if pool_symbol_count(
+                    game,
+                    player,
+                    ManaSymbol::White,
+                    source_for_pip_alternatives,
+                ) > 0
+                {
                     options.push(ManaPipPaymentOption {
                         index,
                         description: "Use {W} from mana pool".to_string(),
@@ -119,11 +154,23 @@ fn build_pip_payment_options(
             }
             ManaSymbol::Blue => {
                 if allow_any_color {
-                    if !added_any_color_options && let Some(p) = pool {
-                        add_any_color_pool_options(&mut options, &mut index, p);
+                    if !added_any_color_options {
+                        add_any_color_pool_options(
+                            game,
+                            player,
+                            source_for_pip_alternatives,
+                            &mut options,
+                            &mut index,
+                        );
                         added_any_color_options = true;
                     }
-                } else if pool.map(|p| p.blue > 0).unwrap_or(false) {
+                } else if pool_symbol_count(
+                    game,
+                    player,
+                    ManaSymbol::Blue,
+                    source_for_pip_alternatives,
+                ) > 0
+                {
                     options.push(ManaPipPaymentOption {
                         index,
                         description: "Use {U} from mana pool".to_string(),
@@ -134,11 +181,23 @@ fn build_pip_payment_options(
             }
             ManaSymbol::Black => {
                 if allow_any_color {
-                    if !added_any_color_options && let Some(p) = pool {
-                        add_any_color_pool_options(&mut options, &mut index, p);
+                    if !added_any_color_options {
+                        add_any_color_pool_options(
+                            game,
+                            player,
+                            source_for_pip_alternatives,
+                            &mut options,
+                            &mut index,
+                        );
                         added_any_color_options = true;
                     }
-                } else if pool.map(|p| p.black > 0).unwrap_or(false) {
+                } else if pool_symbol_count(
+                    game,
+                    player,
+                    ManaSymbol::Black,
+                    source_for_pip_alternatives,
+                ) > 0
+                {
                     options.push(ManaPipPaymentOption {
                         index,
                         description: "Use {B} from mana pool".to_string(),
@@ -149,11 +208,23 @@ fn build_pip_payment_options(
             }
             ManaSymbol::Red => {
                 if allow_any_color {
-                    if !added_any_color_options && let Some(p) = pool {
-                        add_any_color_pool_options(&mut options, &mut index, p);
+                    if !added_any_color_options {
+                        add_any_color_pool_options(
+                            game,
+                            player,
+                            source_for_pip_alternatives,
+                            &mut options,
+                            &mut index,
+                        );
                         added_any_color_options = true;
                     }
-                } else if pool.map(|p| p.red > 0).unwrap_or(false) {
+                } else if pool_symbol_count(
+                    game,
+                    player,
+                    ManaSymbol::Red,
+                    source_for_pip_alternatives,
+                ) > 0
+                {
                     options.push(ManaPipPaymentOption {
                         index,
                         description: "Use {R} from mana pool".to_string(),
@@ -164,11 +235,23 @@ fn build_pip_payment_options(
             }
             ManaSymbol::Green => {
                 if allow_any_color {
-                    if !added_any_color_options && let Some(p) = pool {
-                        add_any_color_pool_options(&mut options, &mut index, p);
+                    if !added_any_color_options {
+                        add_any_color_pool_options(
+                            game,
+                            player,
+                            source_for_pip_alternatives,
+                            &mut options,
+                            &mut index,
+                        );
                         added_any_color_options = true;
                     }
-                } else if pool.map(|p| p.green > 0).unwrap_or(false) {
+                } else if pool_symbol_count(
+                    game,
+                    player,
+                    ManaSymbol::Green,
+                    source_for_pip_alternatives,
+                ) > 0
+                {
                     options.push(ManaPipPaymentOption {
                         index,
                         description: "Use {G} from mana pool".to_string(),
@@ -178,7 +261,13 @@ fn build_pip_payment_options(
                 }
             }
             ManaSymbol::Colorless => {
-                if pool.map(|p| p.colorless > 0).unwrap_or(false) {
+                if pool_symbol_count(
+                    game,
+                    player,
+                    ManaSymbol::Colorless,
+                    source_for_pip_alternatives,
+                ) > 0
+                {
                     options.push(ManaPipPaymentOption {
                         index,
                         description: "Use {C} from mana pool".to_string(),
@@ -189,9 +278,13 @@ fn build_pip_payment_options(
             }
             ManaSymbol::Generic(_) => {
                 // Generic can be paid with any mana in the pool
-                if let Some(p) = pool {
-                    add_any_color_pool_options(&mut options, &mut index, p);
-                }
+                add_any_color_pool_options(
+                    game,
+                    player,
+                    source_for_pip_alternatives,
+                    &mut options,
+                    &mut index,
+                );
             }
             ManaSymbol::Life(amount) => {
                 // Can always pay life (if player has enough)
@@ -254,7 +347,14 @@ fn build_pip_payment_options(
         let mana_abilities = get_available_mana_abilities(game, player, decision_maker);
         for (perm_id, ability_index, description) in mana_abilities {
             // Check if this ability produces mana that can pay this pip
-            if mana_ability_can_pay_pip(game, perm_id, ability_index, pip, allow_any_color) {
+            if mana_ability_can_pay_pip(
+                game,
+                perm_id,
+                ability_index,
+                source_for_pip_alternatives,
+                pip,
+                allow_any_color,
+            ) {
                 options.push(ManaPipPaymentOption {
                     index,
                     description: format!(
@@ -348,13 +448,15 @@ fn improvise_can_pay_pip(pip: &[crate::mana::ManaSymbol]) -> bool {
 }
 
 fn add_any_color_pool_options(
+    game: &GameState,
+    player: PlayerId,
+    payment_source: Option<ObjectId>,
     options: &mut Vec<ManaPipPaymentOption>,
     index: &mut usize,
-    pool: &crate::player::ManaPool,
 ) {
     use crate::mana::ManaSymbol;
 
-    if pool.white > 0 {
+    if pool_symbol_count(game, player, ManaSymbol::White, payment_source) > 0 {
         options.push(ManaPipPaymentOption {
             index: *index,
             description: "Use {W} from mana pool".to_string(),
@@ -362,7 +464,7 @@ fn add_any_color_pool_options(
         });
         *index += 1;
     }
-    if pool.blue > 0 {
+    if pool_symbol_count(game, player, ManaSymbol::Blue, payment_source) > 0 {
         options.push(ManaPipPaymentOption {
             index: *index,
             description: "Use {U} from mana pool".to_string(),
@@ -370,7 +472,7 @@ fn add_any_color_pool_options(
         });
         *index += 1;
     }
-    if pool.black > 0 {
+    if pool_symbol_count(game, player, ManaSymbol::Black, payment_source) > 0 {
         options.push(ManaPipPaymentOption {
             index: *index,
             description: "Use {B} from mana pool".to_string(),
@@ -378,7 +480,7 @@ fn add_any_color_pool_options(
         });
         *index += 1;
     }
-    if pool.red > 0 {
+    if pool_symbol_count(game, player, ManaSymbol::Red, payment_source) > 0 {
         options.push(ManaPipPaymentOption {
             index: *index,
             description: "Use {R} from mana pool".to_string(),
@@ -386,7 +488,7 @@ fn add_any_color_pool_options(
         });
         *index += 1;
     }
-    if pool.green > 0 {
+    if pool_symbol_count(game, player, ManaSymbol::Green, payment_source) > 0 {
         options.push(ManaPipPaymentOption {
             index: *index,
             description: "Use {G} from mana pool".to_string(),
@@ -394,7 +496,7 @@ fn add_any_color_pool_options(
         });
         *index += 1;
     }
-    if pool.colorless > 0 {
+    if pool_symbol_count(game, player, ManaSymbol::Colorless, payment_source) > 0 {
         options.push(ManaPipPaymentOption {
             index: *index,
             description: "Use {C} from mana pool".to_string(),
@@ -404,11 +506,188 @@ fn add_any_color_pool_options(
     }
 }
 
+#[derive(Clone)]
+struct SpentManaInfo {
+    symbol: crate::mana::ManaSymbol,
+    restrictions: Vec<crate::ability::ManaUsageRestriction>,
+}
+
+fn payment_source_matches_restriction(
+    game: &GameState,
+    unit: &crate::ability::RestrictedManaUnit,
+    restriction: &crate::ability::ManaUsageRestriction,
+    payment_source: Option<ObjectId>,
+) -> bool {
+    let Some(source_id) = payment_source else {
+        return false;
+    };
+    let Some(source_obj) = game.object(source_id) else {
+        return false;
+    };
+
+    match restriction {
+        crate::ability::ManaUsageRestriction::CastSpell {
+            card_types,
+            subtype_requirement,
+            ..
+        } => {
+            if source_obj.zone != Zone::Stack {
+                return false;
+            }
+            if !card_types
+                .iter()
+                .all(|card_type| source_obj.card_types.contains(card_type))
+            {
+                return false;
+            }
+
+            let required_subtype = match subtype_requirement {
+                Some(crate::ability::ManaUsageSubtypeRequirement::Exact(subtype)) => Some(*subtype),
+                Some(crate::ability::ManaUsageSubtypeRequirement::ChosenTypeOfSource) => {
+                    unit.source_chosen_creature_type
+                }
+                None => None,
+            };
+            required_subtype.is_none_or(|subtype| source_obj.subtypes.contains(&subtype))
+        }
+    }
+}
+
+fn restricted_unit_is_payable(
+    game: &GameState,
+    unit: &crate::ability::RestrictedManaUnit,
+    payment_source: Option<ObjectId>,
+) -> bool {
+    unit.restrictions.iter().all(|restriction| {
+        payment_source_matches_restriction(game, unit, restriction, payment_source)
+    })
+}
+
+fn pool_symbol_count(
+    game: &GameState,
+    player: PlayerId,
+    symbol: crate::mana::ManaSymbol,
+    payment_source: Option<ObjectId>,
+) -> u32 {
+    let Some(player_obj) = game.player(player) else {
+        return 0;
+    };
+
+    let total = player_obj.mana_pool.amount(symbol);
+    if total == 0 {
+        return 0;
+    }
+
+    let restricted_total = player_obj
+        .restricted_mana
+        .iter()
+        .filter(|unit| unit.symbol == symbol)
+        .count() as u32;
+    let restricted_payable = player_obj
+        .restricted_mana
+        .iter()
+        .filter(|unit| unit.symbol == symbol)
+        .filter(|unit| restricted_unit_is_payable(game, unit, payment_source))
+        .count() as u32;
+
+    total
+        .saturating_sub(restricted_total)
+        .saturating_add(restricted_payable)
+}
+
+fn spend_pool_symbol(
+    game: &mut GameState,
+    player: PlayerId,
+    symbol: crate::mana::ManaSymbol,
+    payment_source: Option<ObjectId>,
+) -> Option<SpentManaInfo> {
+    let payable_restricted_index = game.player(player).and_then(|player_obj| {
+        player_obj
+            .restricted_mana
+            .iter()
+            .enumerate()
+            .find(|(_, unit)| {
+                unit.symbol == symbol && restricted_unit_is_payable(game, unit, payment_source)
+            })
+            .map(|(idx, _)| idx)
+    });
+
+    let unrestricted_available = game.player(player).is_some_and(|player_obj| {
+        let total = player_obj.mana_pool.amount(symbol);
+        let restricted_total = player_obj
+            .restricted_mana
+            .iter()
+            .filter(|unit| unit.symbol == symbol)
+            .count() as u32;
+        total > restricted_total
+    });
+
+    let player_obj = game.player_mut(player)?;
+    if let Some(idx) = payable_restricted_index {
+        if !player_obj.mana_pool.remove(symbol, 1) {
+            return None;
+        }
+        let unit = player_obj.restricted_mana.remove(idx);
+        return Some(SpentManaInfo {
+            symbol,
+            restrictions: unit.restrictions,
+        });
+    }
+
+    if unrestricted_available && player_obj.mana_pool.remove(symbol, 1) {
+        return Some(SpentManaInfo {
+            symbol,
+            restrictions: Vec::new(),
+        });
+    }
+
+    None
+}
+
+fn apply_spent_mana_bonuses(
+    game: &mut GameState,
+    payment_source: Option<ObjectId>,
+    restrictions: &[crate::ability::ManaUsageRestriction],
+) {
+    let Some(source_id) = payment_source else {
+        return;
+    };
+    let Some(source_obj) = game.object_mut(source_id) else {
+        return;
+    };
+
+    for restriction in restrictions {
+        match restriction {
+            crate::ability::ManaUsageRestriction::CastSpell {
+                grant_uncounterable: true,
+                ..
+            } => {
+                let already_uncounterable = source_obj.abilities.iter().any(|ability| {
+                    matches!(
+                        &ability.kind,
+                        crate::ability::AbilityKind::Static(static_ability)
+                            if static_ability.cant_be_countered()
+                    )
+                });
+                if !already_uncounterable {
+                    source_obj
+                        .abilities
+                        .push(crate::ability::Ability::static_ability(
+                            crate::static_abilities::StaticAbility::uncounterable(),
+                        ));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Check if a mana ability can produce mana that pays the given pip.
 fn mana_ability_can_pay_pip(
     game: &GameState,
     perm_id: ObjectId,
     ability_index: usize,
+    payment_source: Option<ObjectId>,
     pip: &[crate::mana::ManaSymbol],
     allow_any_color: bool,
 ) -> bool {
@@ -428,6 +707,17 @@ fn mana_ability_can_pay_pip(
     };
     if !mana_ability.is_mana_ability() {
         return false;
+    }
+    if !mana_ability.mana_usage_restrictions.is_empty() {
+        let unit = crate::ability::RestrictedManaUnit {
+            symbol: ManaSymbol::Colorless,
+            source: perm_id,
+            source_chosen_creature_type: game.chosen_creature_type(perm_id),
+            restrictions: mana_ability.mana_usage_restrictions.clone(),
+        };
+        if !restricted_unit_is_payable(game, &unit, payment_source) {
+            return false;
+        }
     }
 
     // Check what mana this ability can produce.
@@ -698,21 +988,19 @@ fn execute_pip_payment_action(
     decision_maker: &mut impl DecisionMaker,
     payment_trace: &mut Vec<CostStep>,
     mut mana_spent_to_cast: Option<&mut ManaPool>,
-) -> Result<bool, GameLoopError> {
+    ) -> Result<bool, GameLoopError> {
     match action {
         ManaPipPaymentAction::UseFromPool(symbol) => {
-            if let Some(player_obj) = game.player_mut(player) {
-                let success = player_obj.mana_pool.remove(*symbol, 1);
-                if !success {
-                    return Err(GameLoopError::InvalidState(format!(
-                        "Not enough {:?} mana in pool",
-                        symbol
-                    )));
-                }
-            }
+            let spent_info = spend_pool_symbol(game, player, *symbol, source).ok_or_else(|| {
+                GameLoopError::InvalidState(format!(
+                    "Not enough {} mana in the pool",
+                    crate::mana::ManaCost::from_symbols(vec![*symbol]).to_oracle()
+                ))
+            })?;
             if let Some(spent) = mana_spent_to_cast.as_deref_mut() {
-                track_spent_mana_symbol(spent, *symbol);
+                track_spent_mana_symbol(spent, spent_info.symbol);
             }
+            apply_spent_mana_bonuses(game, source, &spent_info.restrictions);
             record_pip_payment_action(payment_trace, action);
             Ok(true) // Pip was paid
         }
@@ -742,15 +1030,22 @@ fn execute_pip_payment_action(
                 })
                 .unwrap_or_default();
 
-            if let Some(symbol) =
-                spend_pool_mana_for_pip(game, player, pip, allow_any_color, &produced_symbols)
+            if let Some(spent_info) = spend_pool_mana_for_pip(
+                game,
+                player,
+                source,
+                pip,
+                allow_any_color,
+                &produced_symbols,
+            )
             {
                 if let Some(spent) = mana_spent_to_cast.as_deref_mut() {
-                    track_spent_mana_symbol(spent, symbol);
+                    track_spent_mana_symbol(spent, spent_info.symbol);
                 }
+                apply_spent_mana_bonuses(game, source, &spent_info.restrictions);
                 record_pip_payment_action(
                     payment_trace,
-                    &ManaPipPaymentAction::UseFromPool(symbol),
+                    &ManaPipPaymentAction::UseFromPool(spent_info.symbol),
                 );
                 return Ok(true);
             }
@@ -815,10 +1110,11 @@ fn mana_pool_delta_symbols(before: &ManaPool, after: &ManaPool) -> Vec<crate::ma
 fn spend_pool_mana_for_pip(
     game: &mut GameState,
     player: PlayerId,
+    payment_source: Option<ObjectId>,
     pip: &[crate::mana::ManaSymbol],
     allow_any_color: bool,
     preferred_symbols: &[crate::mana::ManaSymbol],
-) -> Option<crate::mana::ManaSymbol> {
+) -> Option<SpentManaInfo> {
     use crate::mana::ManaSymbol;
 
     let mut candidates = Vec::new();
@@ -853,10 +1149,9 @@ fn spend_pool_mana_for_pip(
         }
     }
 
-    let player_obj = game.player_mut(player)?;
     for symbol in candidates {
-        if player_obj.mana_pool.remove(symbol, 1) {
-            return Some(symbol);
+        if let Some(spent_info) = spend_pool_symbol(game, player, symbol, payment_source) {
+            return Some(spent_info);
         }
     }
 
@@ -1146,8 +1441,7 @@ fn apply_mana_payment_response(
         // Perform the mana ability
         if let Err(e) = perform(action, game, pending.caster, &mut *decision_maker) {
             return Err(GameLoopError::InvalidState(format!(
-                "Failed to activate mana ability: {:?}",
-                e
+                "Failed to activate mana ability: {e}"
             )));
         }
         drain_pending_trigger_events(game, trigger_queue);
@@ -1239,8 +1533,7 @@ fn apply_mana_payment_response_mana_ability(
         // Perform the mana ability
         if let Err(e) = perform(action, game, pending.activator, decision_maker) {
             return Err(GameLoopError::InvalidState(format!(
-                "Failed to activate mana ability: {:?}",
-                e
+                "Failed to activate mana ability: {e}"
             )));
         }
         drain_pending_trigger_events(game, trigger_queue);
@@ -1352,7 +1645,7 @@ fn execute_pending_mana_ability(
         .with_provenance(pending.provenance);
     for c in &pending.other_costs {
         crate::special_actions::pay_cost_component_with_choice(game, c, &mut cost_ctx)
-            .map_err(|e| GameLoopError::InvalidState(format!("Failed to pay cost: {:?}", e)))?;
+            .map_err(|e| GameLoopError::InvalidState(format!("Failed to pay cost: {e}")))?;
     }
     drain_pending_trigger_events(game, trigger_queue);
 
@@ -1423,8 +1716,7 @@ fn apply_mana_payment_response_activation(
         // Perform the mana ability
         if let Err(e) = perform(action, game, pending.activator, &mut *decision_maker) {
             return Err(GameLoopError::InvalidState(format!(
-                "Failed to activate mana ability: {:?}",
-                e
+                "Failed to activate mana ability: {e}"
             )));
         }
         drain_pending_trigger_events(game, trigger_queue);
@@ -2735,8 +3027,8 @@ fn apply_decision_context_with_dm<D: DecisionMaker>(
         | DecisionContext::Counters(_)
         | DecisionContext::Partition(_)
         | DecisionContext::Proliferate(_) => Err(GameLoopError::InvalidState(format!(
-            "Unsupported decision context in priority loop: {:?}",
-            std::mem::discriminant(ctx)
+            "Unsupported decision context in priority loop: {}",
+            decision_context_name(ctx)
         ))),
     }
 }
@@ -2804,13 +3096,22 @@ fn get_priority_player_from_ctx(
 #[cfg(test)]
 mod priority_mana_tests {
     use super::*;
+    use crate::ability::{
+        Ability, AbilityKind, ActivatedAbility, ManaUsageRestriction,
+        ManaUsageSubtypeRequirement, RestrictedManaUnit,
+    };
     use crate::cards::definitions::{
         basic_mountain, blood_celebrant, command_tower, wall_of_roots,
     };
+    use crate::cards::CardDefinitionBuilder;
     use crate::cards::tokens::treasure_token_definition;
     use crate::color::Color;
+    use crate::cost::TotalCost;
     use crate::decision::DecisionMaker;
+    use crate::ids::CardId;
     use crate::mana::ManaSymbol;
+    use crate::static_abilities::StaticAbilityId;
+    use crate::types::{CardType, Subtype};
     use crate::zone::Zone;
 
     fn setup_game() -> GameState {
@@ -2826,8 +3127,105 @@ mod priority_mana_tests {
         let treasure_id = game.create_object_from_definition(&treasure, alice, Zone::Battlefield);
 
         assert!(
-            mana_ability_can_pay_pip(&game, treasure_id, 0, &[ManaSymbol::Black], false),
+            mana_ability_can_pay_pip(&game, treasure_id, 0, None, &[ManaSymbol::Black], false),
             "Treasure should be considered able to pay a colored pip"
+        );
+    }
+
+    #[test]
+    fn test_restricted_mana_for_chosen_type_creature_spell_grants_uncounterable() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let cavern = CardDefinitionBuilder::new(CardId::new(), "Cavern Test")
+            .card_types(vec![CardType::Land])
+            .build();
+        let cavern_id = game.create_object_from_definition(&cavern, alice, Zone::Battlefield);
+
+        let restriction = ManaUsageRestriction::CastSpell {
+            card_types: vec![CardType::Creature],
+            subtype_requirement: Some(ManaUsageSubtypeRequirement::ChosenTypeOfSource),
+            grant_uncounterable: true,
+        };
+        game.object_mut(cavern_id)
+            .expect("cavern test land should exist")
+            .abilities
+            .push(Ability {
+                kind: AbilityKind::Activated(ActivatedAbility {
+                    mana_cost: TotalCost::free(),
+                    effects: vec![],
+                    choices: vec![],
+                    timing: crate::ability::ActivationTiming::AnyTime,
+                    additional_restrictions: vec![],
+                    activation_restrictions: vec![],
+                    mana_output: Some(vec![ManaSymbol::Green]),
+                    activation_condition: None,
+                    mana_usage_restrictions: vec![restriction.clone()],
+                }),
+                functional_zones: vec![Zone::Battlefield],
+                text: None,
+            });
+        game.set_chosen_creature_type(cavern_id, Subtype::Giant);
+
+        let matching_spell = CardDefinitionBuilder::new(CardId::new(), "Matching Giant")
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Giant])
+            .build();
+        let matching_spell_id =
+            game.create_object_from_definition(&matching_spell, alice, Zone::Stack);
+        assert!(
+            mana_ability_can_pay_pip(
+                &game,
+                cavern_id,
+                0,
+                Some(matching_spell_id),
+                &[ManaSymbol::Green],
+                false,
+            ),
+            "restricted mana ability should pay for a creature spell of the chosen type"
+        );
+
+        let nonmatching_spell = CardDefinitionBuilder::new(CardId::new(), "Wrong Type")
+            .card_types(vec![CardType::Creature])
+            .subtypes(vec![Subtype::Elf])
+            .build();
+        let nonmatching_spell_id =
+            game.create_object_from_definition(&nonmatching_spell, alice, Zone::Stack);
+        assert!(
+            !mana_ability_can_pay_pip(
+                &game,
+                cavern_id,
+                0,
+                Some(nonmatching_spell_id),
+                &[ManaSymbol::Green],
+                false,
+            ),
+            "restricted mana ability should reject creature spells of the wrong subtype"
+        );
+
+        game.player_mut(alice)
+            .expect("alice should exist")
+            .add_restricted_mana(RestrictedManaUnit {
+                symbol: ManaSymbol::Green,
+                source: cavern_id,
+                source_chosen_creature_type: Some(Subtype::Giant),
+                restrictions: vec![restriction.clone()],
+            });
+        let spent = spend_pool_symbol(&mut game, alice, ManaSymbol::Green, Some(matching_spell_id))
+            .expect("restricted mana should be spendable on matching spell");
+        apply_spent_mana_bonuses(&mut game, Some(matching_spell_id), &spent.restrictions);
+
+        assert!(
+            game.object(matching_spell_id)
+                .expect("matching spell should still be on stack")
+                .abilities
+                .iter()
+                .any(|ability| matches!(
+                    &ability.kind,
+                    AbilityKind::Static(static_ability)
+                        if static_ability.id() == StaticAbilityId::CantBeCountered
+                )),
+            "spending restricted Cavern-style mana should make the matching spell uncounterable"
         );
     }
 

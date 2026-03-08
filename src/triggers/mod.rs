@@ -82,6 +82,52 @@ use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::zone::Zone;
 use std::sync::Arc;
 
+pub(crate) fn describe_player_filter_subject(filter: &PlayerFilter) -> String {
+    match filter {
+        PlayerFilter::You => "you".to_string(),
+        PlayerFilter::NotYou => "a player other than you".to_string(),
+        PlayerFilter::Opponent => "an opponent".to_string(),
+        PlayerFilter::Any => "a player".to_string(),
+        PlayerFilter::Teammate => "a teammate".to_string(),
+        PlayerFilter::Active => "the active player".to_string(),
+        PlayerFilter::Defending => "the defending player".to_string(),
+        PlayerFilter::Attacking => "the attacking player".to_string(),
+        PlayerFilter::DamagedPlayer
+        | PlayerFilter::Specific(_)
+        | PlayerFilter::IteratedPlayer
+        | PlayerFilter::Target(_)
+        | PlayerFilter::Excluding { .. } => "that player".to_string(),
+        PlayerFilter::TargetPlayerOrControllerOfTarget => {
+            "that player or that object's controller".to_string()
+        }
+        PlayerFilter::ControllerOf(_) => "that object's controller".to_string(),
+        PlayerFilter::OwnerOf(_) => "that object's owner".to_string(),
+    }
+}
+
+pub(crate) fn describe_player_filter_possessive(filter: &PlayerFilter) -> String {
+    match filter {
+        PlayerFilter::You => "your".to_string(),
+        PlayerFilter::NotYou => "another player's".to_string(),
+        PlayerFilter::Opponent => "each opponent's".to_string(),
+        PlayerFilter::Any => "each player's".to_string(),
+        PlayerFilter::Teammate => "a teammate's".to_string(),
+        PlayerFilter::Active => "the active player's".to_string(),
+        PlayerFilter::Defending => "the defending player's".to_string(),
+        PlayerFilter::Attacking => "the attacking player's".to_string(),
+        PlayerFilter::DamagedPlayer
+        | PlayerFilter::Specific(_)
+        | PlayerFilter::IteratedPlayer
+        | PlayerFilter::Target(_)
+        | PlayerFilter::Excluding { .. } => "that player's".to_string(),
+        PlayerFilter::TargetPlayerOrControllerOfTarget => {
+            "that player's or that object's controller's".to_string()
+        }
+        PlayerFilter::ControllerOf(_) => "that object's controller's".to_string(),
+        PlayerFilter::OwnerOf(_) => "that object's owner's".to_string(),
+    }
+}
+
 /// Wrapper around a boxed TriggerMatcher for ergonomic usage.
 ///
 /// This struct provides factory methods for creating common trigger types

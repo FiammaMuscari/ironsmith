@@ -262,7 +262,7 @@ fn describe_cost_modifier_condition_prefix(condition: &crate::ConditionExpr) -> 
         crate::ConditionExpr::SourceIsEnchanted => {
             "As long as this permanent is enchanted".to_string()
         }
-        other => format!("As long as {other:?}"),
+        _ => "As long as the stated condition is true".to_string(),
     }
 }
 
@@ -321,7 +321,7 @@ fn describe_spell_filter(filter: &ObjectFilter) -> String {
         let subtypes = filter
             .subtypes
             .iter()
-            .map(|subtype| format!("{subtype:?}"))
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>();
         qualifiers.push(join_with_and(&subtypes));
     }
@@ -552,6 +552,7 @@ pub struct ActivatedAbilityCostReduction {
     pub filter: ObjectFilter,
     pub reduction: u32,
     pub minimum_total_mana: Option<u32>,
+    pub per_matching_objects: Option<ObjectFilter>,
 }
 
 impl ActivatedAbilityCostReduction {
@@ -560,11 +561,17 @@ impl ActivatedAbilityCostReduction {
             filter,
             reduction,
             minimum_total_mana: None,
+            per_matching_objects: None,
         }
     }
 
     pub fn with_minimum_total_mana(mut self, minimum_total_mana: u32) -> Self {
         self.minimum_total_mana = Some(minimum_total_mana);
+        self
+    }
+
+    pub fn with_per_matching_objects(mut self, filter: ObjectFilter) -> Self {
+        self.per_matching_objects = Some(filter);
         self
     }
 }
@@ -580,6 +587,9 @@ impl StaticAbilityKind for ActivatedAbilityCostReduction {
             self.filter.description(),
             self.reduction
         );
+        if let Some(filter) = &self.per_matching_objects {
+            line.push_str(&format!(" for each {}", filter.description()));
+        }
         if let Some(minimum) = self.minimum_total_mana
             && minimum == 1
         {

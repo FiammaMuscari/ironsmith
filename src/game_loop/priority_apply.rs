@@ -241,7 +241,7 @@ pub fn apply_priority_response_with_dm(
 
             // Validate that the player can play the land
             crate::special_actions::can_perform(&action, game, player, &mut *decision_maker)
-                .map_err(|e| GameLoopError::InvalidState(format!("Cannot play land: {:?}", e)))?;
+                .map_err(|e| GameLoopError::InvalidState(format!("Cannot play land: {e}")))?;
 
             let old_zone = game.object(*land_id).map(|o| o.zone).unwrap_or(Zone::Hand);
             let result = game
@@ -731,7 +731,7 @@ pub fn apply_priority_response_with_dm(
                             &mut cost_ctx,
                         )
                         .map_err(|e| {
-                            GameLoopError::InvalidState(format!("Failed to pay cost: {:?}", e))
+                            GameLoopError::InvalidState(format!("Failed to pay cost: {e}"))
                         })?;
                     }
                     drain_pending_trigger_events(game, trigger_queue);
@@ -845,10 +845,10 @@ pub fn apply_priority_response_with_dm(
             };
             crate::special_actions::can_perform(&action, game, player, &mut *decision_maker)
                 .map_err(|e| {
-                    GameLoopError::InvalidState(format!("Cannot turn face up: {:?}", e))
+                    GameLoopError::InvalidState(format!("Cannot turn face up: {e}"))
                 })?;
             crate::special_actions::perform(action, game, player, &mut *decision_maker).map_err(
-                |e| GameLoopError::InvalidState(format!("Failed to turn face up: {:?}", e)),
+                |e| GameLoopError::InvalidState(format!("Failed to turn face up: {e}")),
             )?;
             drain_pending_trigger_events(game, trigger_queue);
 
@@ -871,7 +871,7 @@ pub fn apply_priority_response_with_dm(
                     &mut *decision_maker,
                 )
                 .map_err(|e| {
-                    GameLoopError::InvalidState(format!("Failed special action: {:?}", e))
+                    GameLoopError::InvalidState(format!("Failed special action: {e}"))
                 })?;
                 if let crate::special_actions::SpecialAction::ActivateManaAbility {
                     permanent_id,
@@ -974,7 +974,12 @@ fn apply_replacement_choice_response(
                         crate::decision::ReplacementOption {
                             index: i,
                             source: e.source,
-                            description: format!("{:?}", e.replacement),
+                            description: game
+                                .object(e.source)
+                                .map(|obj| {
+                                    format!("Apply replacement effect from {}", obj.name)
+                                })
+                                .unwrap_or_else(|| "Apply replacement effect".to_string()),
                         }
                     })
                 })

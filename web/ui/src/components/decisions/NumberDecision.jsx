@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { normalizeDecisionText } from "./decisionText";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import DecisionSummary from "./DecisionSummary";
 
 export default function NumberDecision({
   decision,
@@ -35,22 +35,12 @@ export default function NumberDecision({
     <div className={cn(
       stripLayout ? "flex min-w-max items-center gap-2 px-1" : "flex flex-col gap-2 pr-1"
     )}>
-      {!hideDescription && decision.description && (
-        <div className={cn(
-          "text-muted-foreground",
-          stripLayout ? "text-[13px] whitespace-nowrap" : "text-[16px]"
-        )}>
-          {normalizeDecisionText(decision.description)}
-        </div>
-      )}
-      {decision.source_name && (
-        <div className={cn(
-          "italic text-[#c0a060]",
-          stripLayout ? "text-[12px] whitespace-nowrap" : "text-[14px]"
-        )}>
-          {decision.source_name}
-        </div>
-      )}
+      <DecisionSummary
+        decision={decision}
+        hideDescription={hideDescription}
+        layout={layout}
+        className={stripLayout ? "min-w-[220px]" : ""}
+      />
       <div className="flex items-center gap-2">
         <Input
           type="number"

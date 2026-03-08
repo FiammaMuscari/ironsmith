@@ -98,14 +98,6 @@ impl ReferenceImports {
         }
     }
 
-    pub(crate) fn from_env(env: &ReferenceEnv) -> Self {
-        Self {
-            last_object_tag: env.last_object_tag.clone().into_option(),
-            last_player_filter: env.last_player_filter.clone().into_option(),
-            last_effect_id: env.last_effect_id.clone().into_option(),
-        }
-    }
-
     pub(crate) fn from_frame(frame: &ReferenceFrame) -> Self {
         Self {
             last_object_tag: frame.last_object_tag.as_ref().map(TagKey::from),
@@ -255,14 +247,6 @@ impl ReferenceExports {
             last_player_filter: env.last_player_filter.clone(),
             last_effect_id: env.last_effect_id.clone(),
         }
-    }
-
-    pub(crate) fn from_frame(frame: &ReferenceFrame) -> Self {
-        Self::from_env(&ReferenceEnv::from_frame(frame))
-    }
-
-    pub(crate) fn from_lowering_frame(frame: &LoweringFrame) -> Self {
-        Self::from_frame(&ReferenceFrame::from_lowering_frame(frame))
     }
 
     pub(crate) fn join(left: &Self, right: &Self) -> Self {

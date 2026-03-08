@@ -15,8 +15,8 @@ use crate::cards::builders::{
     lower_prepared_effects_with_trigger_context, lower_prepared_statement_effects,
     lower_static_abilities_ast, lower_static_ability_ast, normalize_effects_ast,
     parse_activate_only_timing, parse_activation_condition, parse_mana_output_options_for_line,
-    parse_triggered_times_each_turn_from_words, parsed_triggered_ability, tokenize_line,
-    trigger_supports_event_value, words,
+    parse_mana_usage_restriction_sentence, parse_triggered_times_each_turn_from_words,
+    parsed_triggered_ability, tokenize_line, trigger_supports_event_value, words,
 };
 use crate::color::ColorSet;
 use crate::cost::OptionalCost;
@@ -59,15 +59,7 @@ struct LoweredCardState {
     latest_additional_cost_exports: ReferenceExports,
 }
 
-impl LoweredCardState {
-    fn statement_reference_imports(&self) -> ReferenceImports {
-        let additional_cost_imports = self.latest_additional_cost_exports.to_imports();
-        if !additional_cost_imports.is_empty() {
-            return additional_cost_imports;
-        }
-        self.latest_spell_exports.to_imports()
-    }
-}
+impl LoweredCardState {}
 
 #[derive(Debug, Clone, Default)]
 struct CardNormalizationState {
@@ -117,7 +109,6 @@ pub(crate) struct NormalizedAdditionalCostChoiceOptionAst {
 pub(crate) struct NormalizedModalModeAst {
     pub(crate) info: LineInfo,
     pub(crate) description: String,
-    pub(crate) effects_ast: Vec<EffectAst>,
     pub(crate) prepared: PreparedEffectsForLowering,
 }
 
@@ -136,7 +127,6 @@ pub(crate) enum NormalizedLineChunk {
     Ability(NormalizedParsedAbility),
     Triggered {
         trigger: TriggerSpec,
-        effects_ast: Vec<EffectAst>,
         prepared: PreparedTriggeredEffectsForLowering,
         max_triggers_per_turn: Option<u32>,
     },
@@ -201,29 +191,27 @@ fn prepare_effects_from_normalized(
     }
 
     if imports.last_object_tag.is_none()
-        && let Some(tag) = default_last_object_tag
+        && let Some(tag) = default_last_object_tag.as_ref()
     {
-        imports.last_object_tag = Some(tag);
+        imports.last_object_tag = Some(tag.clone());
     }
 
     if include_trigger_prelude {
-        if effects_reference_tag(reference_effects, "triggering")
-            || imports
-                .last_object_tag
-                .as_ref()
-                .is_some_and(|tag| tag.as_str() == "triggering")
-        {
+        let needs_triggering_prelude = default_last_object_tag
+            .as_ref()
+            .is_some_and(|tag| tag.as_str() == "triggering")
+            || effects_reference_tag(reference_effects, "triggering");
+        if needs_triggering_prelude {
             prelude.insert(
                 0,
                 EffectPreludeTag::TriggeringObject(TagKey::from("triggering")),
             );
         }
-        if effects_reference_tag(reference_effects, "damaged")
-            || imports
-                .last_object_tag
-                .as_ref()
-                .is_some_and(|tag| tag.as_str() == "damaged")
-        {
+        let needs_damaged_prelude = default_last_object_tag
+            .as_ref()
+            .is_some_and(|tag| tag.as_str() == "damaged")
+            || effects_reference_tag(reference_effects, "damaged");
+        if needs_damaged_prelude {
             prelude.insert(
                 0,
                 EffectPreludeTag::TriggeringDamageTarget(TagKey::from("damaged")),
@@ -381,8 +369,9 @@ pub(crate) fn prepare_triggered_effects_for_lowering(
 pub(crate) fn parse_text_with_annotations(
     builder: CardDefinitionBuilder,
     text: String,
+    allow_unsupported: bool,
 ) -> Result<(CardDefinition, ParseAnnotations), CardTextError> {
-    let ast = super::parser::parse_card_ast_with_annotations(builder, text)?;
+    let ast = super::parser::parse_card_ast_with_annotations(builder, text, allow_unsupported)?;
     let ast = normalize_card_ast(ast)?;
     lower_card_ast(ast)
 }
@@ -493,7 +482,6 @@ fn normalize_line_ast(
                 )?;
                 NormalizedLineChunk::Triggered {
                     trigger,
-                    effects_ast: effects,
                     prepared,
                     max_triggers_per_turn,
                 }
@@ -624,7 +612,6 @@ fn normalize_modal_ast(modal: ParsedModalAst) -> Result<NormalizedModalAst, Card
         modes.push(NormalizedModalModeAst {
             info: mode.info,
             description: mode.description,
-            effects_ast: mode.effects_ast,
             prepared,
         });
     }
@@ -972,7 +959,7 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         KeywordAction::Horsemanship => "Horsemanship".to_string(),
         KeywordAction::Flanking => "Flanking".to_string(),
         KeywordAction::Landwalk(subtype) => {
-            let mut subtype = format!("{subtype:?}").to_ascii_lowercase();
+            let mut subtype = subtype.to_string().to_ascii_lowercase();
             subtype.push_str("walk");
             title_case_words(&subtype)
         }
@@ -990,10 +977,13 @@ fn keyword_action_line_text(action: &KeywordAction) -> String {
         KeywordAction::ProtectionFromColorless => "Protection from colorless".to_string(),
         KeywordAction::ProtectionFromEverything => "Protection from everything".to_string(),
         KeywordAction::ProtectionFromCardType(card_type) => {
-            format!("Protection from {:?}", card_type).to_ascii_lowercase()
+            format!("Protection from {}", card_type.name()).to_ascii_lowercase()
         }
         KeywordAction::ProtectionFromSubtype(subtype) => {
-            format!("Protection from {:?}", subtype).to_ascii_lowercase()
+            format!(
+                "Protection from {}",
+                subtype.to_string().to_ascii_lowercase()
+            )
         }
         KeywordAction::Unblockable => "This creature can't be blocked".to_string(),
         KeywordAction::Devoid => "Devoid".to_string(),
@@ -1037,6 +1027,14 @@ fn uses_spell_only_functional_zones(static_ability: &StaticAbility) -> bool {
             | crate::static_abilities::StaticAbilityId::ThisSpellCostReduction
             | crate::static_abilities::StaticAbilityId::ThisSpellCostReductionManaCost
     )
+}
+
+fn uses_referenced_ability_functional_zones(
+    static_ability: &StaticAbility,
+    normalized_line: &str,
+) -> bool {
+    static_ability.id() == crate::static_abilities::StaticAbilityId::ActivatedAbilityCostReduction
+        && normalized_line.starts_with("this ability costs")
 }
 
 fn infer_static_ability_functional_zones(normalized_line: &str) -> Option<Vec<Zone>> {
@@ -1140,6 +1138,22 @@ fn apply_line_ast(
                     Zone::Command,
                 ]);
             }
+            if let AbilityKind::Static(static_ability) = &compiled.kind
+                && uses_referenced_ability_functional_zones(
+                    static_ability,
+                    info.normalized.normalized.as_str(),
+                )
+            {
+                compiled = compiled.in_zones(vec![
+                    Zone::Battlefield,
+                    Zone::Hand,
+                    Zone::Stack,
+                    Zone::Graveyard,
+                    Zone::Exile,
+                    Zone::Library,
+                    Zone::Command,
+                ]);
+            }
             if let Some(zones) =
                 infer_static_ability_functional_zones(info.normalized.normalized.as_str())
             {
@@ -1166,6 +1180,22 @@ fn apply_line_ast(
                     && uses_spell_only_functional_zones(static_ability)
                 {
                     compiled = compiled.in_zones(vec![
+                        Zone::Hand,
+                        Zone::Stack,
+                        Zone::Graveyard,
+                        Zone::Exile,
+                        Zone::Library,
+                        Zone::Command,
+                    ]);
+                }
+                if let AbilityKind::Static(static_ability) = &compiled.kind
+                    && uses_referenced_ability_functional_zones(
+                        static_ability,
+                        info.normalized.normalized.as_str(),
+                    )
+                {
+                    compiled = compiled.in_zones(vec![
+                        Zone::Battlefield,
                         Zone::Hand,
                         Zone::Stack,
                         Zone::Graveyard,
@@ -1387,7 +1417,6 @@ fn apply_line_ast(
         }
         NormalizedLineChunk::Triggered {
             trigger,
-            effects_ast: _,
             prepared,
             max_triggers_per_turn,
         } => {
@@ -1702,6 +1731,7 @@ fn finalize_pending_modal(
                 activation_restrictions: activated.activation_restrictions,
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: activated.functional_zones,
             text: Some(line_text),
@@ -1871,8 +1901,10 @@ fn apply_pending_mana_restriction(
     }
     let tokens = tokenize_line(&normalized_restriction, 0);
     let parsed_timing = parse_activate_only_timing(&tokens).unwrap_or_default();
+    let parsed_usage_restriction = parse_mana_usage_restriction_sentence(&tokens);
+    let has_usage_restriction = parsed_usage_restriction.is_some();
     let parsed_condition = parse_activation_condition(&tokens).or_else(|| {
-        if parsed_timing == ActivationTiming::AnyTime {
+        if parsed_timing == ActivationTiming::AnyTime && !has_usage_restriction {
             Some(crate::ConditionExpr::Unmodeled(
                 normalized_restriction.clone(),
             ))
@@ -1880,6 +1912,17 @@ fn apply_pending_mana_restriction(
             None
         }
     });
+
+    if let Some(restriction) = parsed_usage_restriction {
+        ability.mana_usage_restrictions.push(restriction);
+    }
+
+    if parsed_condition.is_none()
+        && parsed_timing == ActivationTiming::AnyTime
+        && !has_usage_restriction
+    {
+        return;
+    }
 
     if parsed_condition.is_none() && parsed_timing == ActivationTiming::AnyTime {
         return;

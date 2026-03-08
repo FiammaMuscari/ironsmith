@@ -12,7 +12,7 @@ use crate::mana::ManaSymbol;
 use crate::static_abilities::StaticAbility as NewStaticAbility;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::triggers::Trigger;
-use crate::types::CardType;
+use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
 
 /// Merge effect-backed costs into a `TotalCost`.
@@ -105,6 +105,7 @@ impl Ability {
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Battlefield],
             text: None,
@@ -127,6 +128,7 @@ impl Ability {
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Battlefield],
             text: None,
@@ -150,6 +152,7 @@ impl Ability {
                 activation_restrictions: vec![],
                 mana_output: Some(mana),
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Battlefield],
             text: None,
@@ -170,6 +173,7 @@ impl Ability {
                 activation_restrictions: vec![],
                 mana_output: Some(vec![]),
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Battlefield],
             text: None,
@@ -360,6 +364,32 @@ pub struct ActivatedAbility {
 
     /// Condition that must be true to activate (e.g. conditional lands like Bleachbone Verge).
     pub activation_condition: Option<crate::ConditionExpr>,
+
+    /// Restrictions on how mana produced by this ability may be spent.
+    pub mana_usage_restrictions: Vec<ManaUsageRestriction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManaUsageSubtypeRequirement {
+    Exact(Subtype),
+    ChosenTypeOfSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManaUsageRestriction {
+    CastSpell {
+        card_types: Vec<CardType>,
+        subtype_requirement: Option<ManaUsageSubtypeRequirement>,
+        grant_uncounterable: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestrictedManaUnit {
+    pub symbol: ManaSymbol,
+    pub source: ObjectId,
+    pub source_chosen_creature_type: Option<Subtype>,
+    pub restrictions: Vec<ManaUsageRestriction>,
 }
 
 impl ActivatedAbility {
@@ -601,6 +631,7 @@ impl ActivatedAbility {
             activation_restrictions: vec![],
             mana_output: Some(vec![mana]),
             activation_condition: None,
+            mana_usage_restrictions: vec![],
         }
     }
 
@@ -619,6 +650,7 @@ impl ActivatedAbility {
             activation_restrictions: vec![],
             mana_output: Some(mana),
             activation_condition: None,
+            mana_usage_restrictions: vec![],
         }
     }
 
@@ -649,6 +681,7 @@ impl ActivatedAbility {
             activation_restrictions: vec![],
             mana_output: Some(vec![mana]),
             activation_condition: condition,
+            mana_usage_restrictions: vec![],
         }
     }
 }
@@ -981,6 +1014,7 @@ mod tests {
             activation_restrictions: vec![],
             mana_output: None,
             activation_condition: None,
+            mana_usage_restrictions: vec![],
         };
 
         assert_eq!(ability.max_activations_per_turn(), Some(2));

@@ -68,6 +68,7 @@ fn make_decision_from_context<R: FromPrimitiveResponse>(
     ctx: DecisionContext,
     fallback: R,
 ) -> R {
+    let ctx = super::context::enrich_display_hints(game, ctx);
     match ctx {
         DecisionContext::Boolean(ctx) => {
             let result = dm.decide_boolean(game, &ctx);
@@ -149,6 +150,11 @@ fn make_decision_from_context<R: FromPrimitiveResponse>(
                 ctx.spec.min_modes,
                 ctx.spec.max_modes,
             );
+            let select_ctx = super::context::enrich_display_hints(
+                game,
+                DecisionContext::SelectOptions(select_ctx),
+            )
+            .into_options();
             let result = dm.decide_options(game, &select_ctx);
             R::from_options(result, fallback)
         }
@@ -170,6 +176,11 @@ fn make_decision_from_context<R: FromPrimitiveResponse>(
                 1, // Exactly 1 choice required
                 1,
             );
+            let select_ctx = super::context::enrich_display_hints(
+                game,
+                DecisionContext::SelectOptions(select_ctx),
+            )
+            .into_options();
             let result = dm.decide_options(game, &select_ctx);
             R::from_options(result, fallback)
         }

@@ -3,8 +3,8 @@
 use crate::events::EventKind;
 use crate::ids::PlayerId;
 use crate::target::PlayerFilter;
-use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
+use crate::triggers::{TriggerEvent, describe_player_filter_possessive};
 
 /// Trigger that fires at the beginning of a player's draw step.
 ///
@@ -42,7 +42,10 @@ impl TriggerMatcher for BeginningOfDrawStepTrigger {
         match &self.player {
             PlayerFilter::You => "At the beginning of your draw step".to_string(),
             PlayerFilter::Any => "At the beginning of each player's draw step".to_string(),
-            _ => format!("At the beginning of {:?}'s draw step", self.player),
+            _ => format!(
+                "At the beginning of {} draw step",
+                describe_player_filter_possessive(&self.player)
+            ),
         }
     }
 }

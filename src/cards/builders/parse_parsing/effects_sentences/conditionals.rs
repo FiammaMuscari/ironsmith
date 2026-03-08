@@ -1,4 +1,5 @@
 use crate::card::{PowerToughness, PtValue};
+use crate::cards::builders::parse_parsing::primitives::is_permanent_type;
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, EffectAst, ExtraTurnAnchorAst, IT_TAG, IfResultPredicate, PlayerAst,
@@ -187,6 +188,7 @@ pub(crate) fn parse_subtype_word(word: &str) -> Option<Subtype> {
         "dwarf" => Some(Subtype::Dwarf),
         "elder" => Some(Subtype::Elder),
         "eldrazi" => Some(Subtype::Eldrazi),
+        "hamster" | "hamsters" => Some(Subtype::Hamster),
         "spawn" | "spawns" => Some(Subtype::Spawn),
         "scion" | "scions" => Some(Subtype::Scion),
         "elemental" => Some(Subtype::Elemental),
@@ -912,28 +914,24 @@ pub(crate) fn parse_if_result_predicate(tokens: &[Token]) -> Option<IfResultPred
         matches!(qualifiers, [] | ["it"] | ["them"] | ["that"])
     };
     let is_exact_negated_result = |subject: &str| {
-        (words.len() == 2
-            && words[0] == subject
-            && matches!(words[1], "dont" | "didnt" | "cant"))
+        (words.len() == 2 && words[0] == subject && matches!(words[1], "dont" | "didnt" | "cant"))
             || (words.len() == 3
                 && words[0] == subject
-                && ((matches!(words[1], "do" | "did" | "can") && words[2] == "not")))
+                && (matches!(words[1], "do" | "did" | "can") && words[2] == "not"))
     };
     let is_negated_this_way_result = |subject: &str| {
-        let action_idx = if words.len() >= 5
-            && words[0] == subject
-            && matches!(words[1], "dont" | "didnt")
-        {
-            2
-        } else if words.len() >= 6
-            && words[0] == subject
-            && matches!(words[1], "do" | "did")
-            && words[2] == "not"
-        {
-            3
-        } else {
-            return false;
-        };
+        let action_idx =
+            if words.len() >= 5 && words[0] == subject && matches!(words[1], "dont" | "didnt") {
+                2
+            } else if words.len() >= 6
+                && words[0] == subject
+                && matches!(words[1], "do" | "did")
+                && words[2] == "not"
+            {
+                3
+            } else {
+                return false;
+            };
 
         if words[words.len() - 2] != "this" || words[words.len() - 1] != "way" {
             return false;
@@ -1063,20 +1061,12 @@ pub(crate) fn split_leading_result_prefix(
     Some((kind, predicate, trailing_tokens))
 }
 
-pub(crate) fn split_leading_if_result_prefix(
-    tokens: &[Token],
-) -> Option<(IfResultPredicate, Vec<Token>)> {
-    let (kind, predicate, trailing_tokens) = split_leading_result_prefix(tokens)?;
-    if !matches!(kind, LeadingResultPrefixKind::If) {
-        return None;
-    }
-    Some((predicate, trailing_tokens))
-}
-
 pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardTextError> {
-    let mut filtered: Vec<&str> = words(tokens)
-        .into_iter()
-        .filter(|word| !is_article(word) && *word != "is")
+    let raw_words = words(tokens);
+    let mut filtered: Vec<&str> = raw_words
+        .iter()
+        .copied()
+        .filter(|word| !is_article(word))
         .collect();
 
     if filtered.is_empty() {
@@ -1125,6 +1115,34 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         return Ok(PredicateAst::SourceIsTapped);
     }
 
+    if filtered.as_slice() == ["this", "untapped"]
+        || filtered.as_slice() == ["thiss", "untapped"]
+        || filtered.as_slice() == ["this", "is", "untapped"]
+        || filtered.as_slice() == ["this", "creature", "is", "untapped"]
+        || filtered.as_slice() == ["this", "permanent", "is", "untapped"]
+        || ((filtered.first().copied() == Some("this")
+            || filtered.first().copied() == Some("thiss"))
+            && filtered.last().copied() == Some("untapped"))
+    {
+        return Ok(PredicateAst::Not(Box::new(PredicateAst::SourceIsTapped)));
+    }
+
+    if filtered.as_slice() == ["this", "creature", "isnt", "saddled"]
+        || filtered.as_slice() == ["this", "permanent", "isnt", "saddled"]
+        || filtered.as_slice() == ["this", "isnt", "saddled"]
+        || filtered.as_slice() == ["it", "isnt", "saddled"]
+    {
+        return Ok(PredicateAst::Not(Box::new(PredicateAst::SourceIsSaddled)));
+    }
+
+    if filtered.as_slice() == ["this", "creature", "is", "saddled"]
+        || filtered.as_slice() == ["this", "permanent", "is", "saddled"]
+        || filtered.as_slice() == ["this", "is", "saddled"]
+        || filtered.as_slice() == ["it", "is", "saddled"]
+    {
+        return Ok(PredicateAst::SourceIsSaddled);
+    }
+
     if filtered.starts_with(&["there", "are", "no"])
         && filtered.contains(&"counters")
         && filtered.windows(2).any(|window| window == ["on", "this"])
@@ -1135,7 +1153,6 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         return Ok(PredicateAst::SourceHasNoCounter(counter_type));
     }
 
-    let raw_words = words(tokens);
     let triggering_object_had_no_counter_prefix_len = if raw_words.starts_with(&["it", "had", "no"])
     {
         Some(3)
@@ -1284,7 +1301,7 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         }
     }
 
-    let parse_cards_in_hand_subject = |words: &[&str]| -> Option<(PlayerAst, usize)> {
+    let parse_comparison_player_subject = |words: &[&str]| -> Option<(PlayerAst, usize)> {
         match words {
             [first, second, ..] if *first == "that" && *second == "player" => {
                 Some((PlayerAst::That, 2))
@@ -1298,6 +1315,12 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
             [first, second, ..] if *first == "each" && *second == "opponent" => {
                 Some((PlayerAst::Opponent, 2))
             }
+            [first, second, ..] if *first == "defending" && *second == "player" => {
+                Some((PlayerAst::Defending, 2))
+            }
+            [first, second, ..] if *first == "attacking" && *second == "player" => {
+                Some((PlayerAst::Attacking, 2))
+            }
             [first, ..] if *first == "you" => Some((PlayerAst::You, 1)),
             [first, ..] if *first == "opponent" || *first == "opponents" => {
                 Some((PlayerAst::Opponent, 1))
@@ -1308,7 +1331,103 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
             _ => None,
         }
     };
-    if let Some((player, subject_len)) = parse_cards_in_hand_subject(&filtered)
+    let parse_life_total_subject = |words: &[&str]| -> Option<(PlayerAst, usize)> {
+        match words {
+            ["your", "life", "total", ..] => Some((PlayerAst::You, 3)),
+            ["their", "life", "total", ..] => Some((PlayerAst::That, 3)),
+            ["that", "players", "life", "total", ..] => Some((PlayerAst::That, 4)),
+            ["target", "players", "life", "total", ..] => Some((PlayerAst::Target, 4)),
+            ["target", "opponents", "life", "total", ..] => Some((PlayerAst::TargetOpponent, 4)),
+            ["opponents", "life", "total", ..] | ["opponent", "life", "total", ..] => {
+                Some((PlayerAst::Opponent, 3))
+            }
+            ["defending", "players", "life", "total", ..] => Some((PlayerAst::Defending, 4)),
+            ["attacking", "players", "life", "total", ..] => Some((PlayerAst::Attacking, 4)),
+            _ => None,
+        }
+    };
+    let half_starting_tail_matches = |tail: &[&str]| {
+        matches!(
+            tail,
+            ["half", "your", "starting", "life", "total"]
+                | ["half", "their", "starting", "life", "total"]
+                | ["half", "that", "players", "starting", "life", "total"]
+                | ["half", "target", "players", "starting", "life", "total"]
+                | ["half", "target", "opponents", "starting", "life", "total"]
+                | ["half", "opponents", "starting", "life", "total"]
+                | ["half", "defending", "players", "starting", "life", "total"]
+                | ["half", "attacking", "players", "starting", "life", "total"]
+        )
+    };
+    if let Some((player, subject_len)) = parse_life_total_subject(&filtered)
+        && filtered.get(subject_len).copied() == Some("is")
+    {
+        let tail = &filtered[subject_len + 1..];
+        if let Some(rest) = tail.strip_prefix(&["less", "than", "or", "equal", "to"])
+            && half_starting_tail_matches(rest)
+        {
+            return Ok(PredicateAst::PlayerLifeAtMostHalfStartingLifeTotal { player });
+        }
+        if let Some(rest) = tail.strip_prefix(&["less", "than"])
+            && half_starting_tail_matches(rest)
+        {
+            return Ok(PredicateAst::PlayerLifeLessThanHalfStartingLifeTotal { player });
+        }
+    }
+    if let Some((player, subject_len)) = parse_comparison_player_subject(&filtered)
+        && matches!(
+            filtered.get(subject_len).copied(),
+            Some("control" | "controls")
+        )
+        && filtered.get(subject_len + 1).copied() == Some("more")
+        && let Some(than_offset) = filtered[subject_len + 2..]
+            .iter()
+            .position(|word| *word == "than")
+    {
+        let than_idx = subject_len + 2 + than_offset;
+        let tail = &filtered[than_idx..];
+        if matches!(tail, ["than", "you"] | ["than", "you", "do"]) {
+            let filter_tokens = filtered[subject_len + 2..than_idx]
+                .iter()
+                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .collect::<Vec<_>>();
+            if !filter_tokens.is_empty() {
+                let other = filter_tokens
+                    .first()
+                    .is_some_and(|token| token.is_word("another") || token.is_word("other"));
+                if let Ok(filter) = parse_object_filter(&filter_tokens, other)
+                    && filter != ObjectFilter::default()
+                {
+                    return Ok(PredicateAst::PlayerControlsMoreThanYou { player, filter });
+                }
+            }
+        }
+    }
+
+    if let Some((player, subject_len)) = parse_comparison_player_subject(&filtered)
+        && filtered.get(subject_len).copied() == Some("has")
+        && matches!(
+            &filtered[subject_len + 1..],
+            ["more", "life", "than", "you"] | ["more", "life", "than", "you", "do"]
+        )
+    {
+        return Ok(PredicateAst::PlayerHasMoreLifeThanYou { player });
+    }
+
+    if let Some((player, subject_len)) = parse_comparison_player_subject(&filtered)
+        && filtered.get(subject_len).copied() == Some("has")
+        && matches!(
+            &filtered[subject_len + 1..],
+            ["more", "card", "in", "hand", "than", "you"]
+                | ["more", "cards", "in", "hand", "than", "you"]
+                | ["more", "card", "in", "hand", "than", "you", "do"]
+                | ["more", "cards", "in", "hand", "than", "you", "do"]
+        )
+    {
+        return Ok(PredicateAst::PlayerHasMoreCardsInHandThanYou { player });
+    }
+
+    if let Some((player, subject_len)) = parse_comparison_player_subject(&filtered)
         && filtered.get(subject_len).copied() == Some("has")
         && let Some(count_word) = filtered.get(subject_len + 1).copied()
         && let Some(count) = parse_named_number(count_word)
@@ -1510,9 +1629,16 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
             filtered.as_slice(),
             ["this", "permanent", "attached", "to", ..]
                 | ["that", "permanent", "attached", "to", ..]
+                | ["this", "permanent", "is", "attached", "to", ..]
+                | ["that", "permanent", "is", "attached", "to", ..]
         )
     {
-        let attached_tokens = filtered[4..]
+        let attached_start = if filtered.get(2).copied() == Some("is") {
+            5
+        } else {
+            4
+        };
+        let attached_tokens = filtered[attached_start..]
             .iter()
             .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
             .collect::<Vec<_>>();
@@ -1526,9 +1652,62 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         ));
     }
 
+    if filtered.len() >= 4 && filtered[0] == "sacrificed" && filtered[2] == "was" {
+        let sacrificed_head = filtered[1];
+        let subject_card_type =
+            parse_card_type(sacrificed_head).filter(|card_type| is_permanent_type(*card_type));
+        let subject_is_permanent = sacrificed_head == "permanent" || subject_card_type.is_some();
+
+        if subject_is_permanent {
+            let descriptor_tokens = filtered[3..]
+                .iter()
+                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .collect::<Vec<_>>();
+            let mut filter = parse_object_filter(&descriptor_tokens, false)?;
+            if filter.card_types.is_empty() {
+                if let Some(card_type) = subject_card_type {
+                    filter.card_types.push(card_type);
+                }
+            }
+            if filter.zone.is_none() && sacrificed_head == "permanent" {
+                filter.zone = Some(Zone::Battlefield);
+            }
+            return Ok(PredicateAst::ItMatches(filter));
+        }
+    }
+
+    if filtered.as_slice()
+        == [
+            "this", "is", "fourth", "time", "this", "ability", "has", "resolved", "this", "turn",
+        ]
+    {
+        return Ok(PredicateAst::Unmodeled(filtered.join(" ")));
+    }
+
     if filtered[0] == "its" {
         filtered[0] = "it";
     }
+
+    let demonstrative_reference_len = if filtered.first().copied() == Some("it") {
+        Some(1usize)
+    } else if filtered.len() >= 2
+        && filtered[0] == "that"
+        && matches!(
+            filtered[1],
+            "artifact"
+                | "card"
+                | "creature"
+                | "object"
+                | "permanent"
+                | "source"
+                | "spell"
+                | "token"
+        )
+    {
+        Some(2usize)
+    } else {
+        None
+    };
 
     let is_it_soulbond_paired = matches!(
         filtered.as_slice(),
@@ -1563,8 +1742,40 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         }
     }
 
-    let is_it = filtered.first().is_some_and(|word| *word == "it");
-    let has_card = filtered.contains(&"card");
+    let onto_battlefield_idx = filtered
+        .windows(2)
+        .position(|window| window == ["onto", "battlefield"])
+        .or_else(|| {
+            filtered
+                .windows(3)
+                .position(|window| window == ["onto", "the", "battlefield"])
+        });
+    if filtered.len() >= 7
+        && filtered[0] == "you"
+        && filtered[1] == "put"
+        && filtered.ends_with(&["this", "way"])
+        && let Some(onto_idx) = onto_battlefield_idx
+    {
+        let filter_words = &filtered[2..onto_idx];
+        let filter_tokens = filter_words
+            .iter()
+            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .collect::<Vec<_>>();
+        let mut filter = parse_object_filter(&filter_tokens, false)?;
+        if filter.zone.is_none() {
+            filter.zone = Some(Zone::Battlefield);
+        }
+        return Ok(PredicateAst::PlayerTaggedObjectMatches {
+            player: PlayerAst::You,
+            tag: TagKey::from(IT_TAG),
+            filter,
+        });
+    }
+
+    let is_it = demonstrative_reference_len == Some(1);
+    let has_card = demonstrative_reference_len
+        .map(|reference_len| filtered[reference_len..].contains(&"card"))
+        .unwrap_or(false);
 
     if is_it {
         if filtered
@@ -1574,7 +1785,14 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
             filtered.remove(1);
         }
         if filtered.len() >= 3 && filtered[1] == "mana" && filtered[2] == "value" {
-            let mana_value_tail = &filtered[3..];
+            let mana_value_tail = if filtered
+                .get(3)
+                .is_some_and(|word| *word == "is" || *word == "are")
+            {
+                &filtered[4..]
+            } else {
+                &filtered[3..]
+            };
             let compares_to_colors_spent = mana_value_tail
                 == [
                     "less", "than", "or", "equal", "to", "number", "of", "colors", "of", "mana",
@@ -1614,33 +1832,33 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
                 return Ok(PredicateAst::ItMatches(filter));
             }
         }
+    }
 
-        let mut card_types = Vec::new();
-        for word in &filtered {
-            if let Some(card_type) = parse_card_type(word)
-                && !card_types.contains(&card_type)
-            {
-                card_types.push(card_type);
-            }
+    if let Some(reference_len) = demonstrative_reference_len {
+        let mut descriptor_words = filtered[reference_len..].to_vec();
+        if descriptor_words.starts_with(&["not", "token"]) {
+            descriptor_words.drain(0..2);
+            descriptor_words.insert(0, "nontoken");
         }
-        let mut subtypes = Vec::new();
-        for word in &filtered {
-            if let Some(subtype) = parse_subtype_word(word)
-                .or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
-                && !subtypes.contains(&subtype)
+        if !descriptor_words.is_empty() {
+            let descriptor_tokens = descriptor_words
+                .iter()
+                .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+                .collect::<Vec<_>>();
+            if let Ok(filter) = parse_object_filter(&descriptor_tokens, false)
+                && filter != ObjectFilter::default()
             {
-                subtypes.push(subtype);
+                if has_card
+                    && filter.card_types.len() == 1
+                    && filter.card_types[0] == CardType::Land
+                    && filter.subtypes.is_empty()
+                    && !filter.nontoken
+                    && filter.excluded_card_types.is_empty()
+                {
+                    return Ok(PredicateAst::ItIsLandCard);
+                }
+                return Ok(PredicateAst::ItMatches(filter));
             }
-        }
-        if !card_types.is_empty() || !subtypes.is_empty() {
-            if has_card && card_types.len() == 1 && card_types[0] == CardType::Land {
-                return Ok(PredicateAst::ItIsLandCard);
-            }
-            return Ok(PredicateAst::ItMatches(ObjectFilter {
-                card_types,
-                subtypes,
-                ..Default::default()
-            }));
         }
     }
 
@@ -1885,6 +2103,34 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         });
     }
 
+    if filtered.as_slice() == ["it", "entered", "under", "your", "control"]
+        || filtered.as_slice() == ["that", "card", "entered", "under", "your", "control"]
+        || filtered.as_slice() == ["that", "permanent", "entered", "under", "your", "control"]
+    {
+        return Ok(PredicateAst::PlayerTaggedObjectEnteredBattlefieldThisTurn {
+            player: PlayerAst::You,
+            tag: TagKey::from(IT_TAG),
+        });
+    }
+
+    if filtered.len() >= 8
+        && filtered[0] == "you"
+        && filtered[1] == "put"
+        && filtered.ends_with(&["onto", "the", "battlefield", "this", "way"])
+    {
+        let filter_words = &filtered[2..filtered.len() - 5];
+        let filter_tokens = filter_words
+            .iter()
+            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .collect::<Vec<_>>();
+        let filter = parse_object_filter(&filter_tokens, false)?;
+        return Ok(PredicateAst::PlayerTaggedObjectMatches {
+            player: PlayerAst::You,
+            tag: TagKey::from(IT_TAG),
+            filter,
+        });
+    }
+
     if filtered.as_slice() == ["it", "wasnt", "blocking"]
         || filtered.as_slice() == ["it", "was", "not", "blocking"]
         || filtered.as_slice() == ["that", "creature", "wasnt", "blocking"]
@@ -1912,6 +2158,26 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
     {
         return Ok(PredicateAst::PlayerHasCitysBlessing {
             player: PlayerAst::You,
+        });
+    }
+
+    if filtered.as_slice() == ["youre", "the", "monarch"]
+        || filtered.as_slice() == ["youre", "monarch"]
+        || filtered.as_slice() == ["you", "are", "the", "monarch"]
+        || filtered.as_slice() == ["you", "are", "monarch"]
+    {
+        return Ok(PredicateAst::PlayerIsMonarch {
+            player: PlayerAst::You,
+        });
+    }
+
+    if filtered.as_slice() == ["youve", "cast", "another", "spell", "this", "turn"]
+        || filtered.as_slice() == ["you", "have", "cast", "another", "spell", "this", "turn"]
+        || filtered.as_slice() == ["you", "cast", "another", "spell", "this", "turn"]
+    {
+        return Ok(PredicateAst::PlayerCastSpellsThisTurnOrMore {
+            player: PlayerAst::You,
+            count: 2,
         });
     }
 
@@ -1959,6 +2225,12 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
                 "turn",
             ]
         || filtered.as_slice() == ["it", "first", "combat", "phase", "of", "turn"]
+        || filtered.as_slice()
+            == [
+                "you", "would", "begin", "your", "turn", "while", "this", "artifact", "is",
+                "tapped",
+            ]
+        || filtered.as_slice() == ["player", "is", "dealt", "damage", "this", "way"]
         || filtered.as_slice()
             == [
                 "two",

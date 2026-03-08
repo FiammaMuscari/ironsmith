@@ -17,13 +17,13 @@ use crate::cards::builders::{
     parse_value, span_from_tokens, target_ast_to_object_filter, token_index_for_word_index,
     trim_commas, words,
 };
-use crate::effect::{Until, Value};
+use crate::effect::{EventValueSpec, Until, Value};
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::object::CounterType;
 use crate::target::{
     ChooseSpec, ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation,
 };
-use crate::types::{CardType, Subtype};
+use crate::types::Subtype;
 use crate::zone::Zone;
 
 pub(crate) fn parse_tap(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
@@ -55,30 +55,39 @@ pub(crate) fn parse_sacrifice(
     tokens: &[Token],
     subject: Option<SubjectAst>,
 ) -> Result<EffectAst, CardTextError> {
+    let mut tokens = tokens;
     let clause_words = words(tokens);
-    if clause_words.contains(&"unless") {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported sacrifice-unless clause (clause: '{}')",
-            clause_words.join(" ")
-        )));
+    let mut normalized_words = clause_words.as_slice();
+    if let Some(unless_idx) = normalized_words.iter().position(|word| *word == "unless") {
+        let tail = &normalized_words[unless_idx..];
+        if tail == ["unless", "it", "escaped"] {
+            let cut_idx = token_index_for_word_index(tokens, unless_idx).unwrap_or(tokens.len());
+            tokens = &tokens[..cut_idx];
+            normalized_words = &normalized_words[..unless_idx];
+        } else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported sacrifice-unless clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
     }
-    let has_greatest_mana_value = clause_words.contains(&"greatest")
-        && clause_words.contains(&"mana")
-        && clause_words.contains(&"value");
+    let has_greatest_mana_value = normalized_words.contains(&"greatest")
+        && normalized_words.contains(&"mana")
+        && normalized_words.contains(&"value");
     if has_greatest_mana_value {
         return Err(CardTextError::ParseError(format!(
             "unsupported greatest-mana-value sacrifice clause (clause: '{}')",
-            clause_words.join(" ")
+            normalized_words.join(" ")
         )));
     }
-    let has_for_each_graveyard_history = clause_words.contains(&"for")
-        && clause_words.contains(&"each")
-        && clause_words.contains(&"graveyard")
-        && clause_words.contains(&"turn");
+    let has_for_each_graveyard_history = normalized_words.contains(&"for")
+        && normalized_words.contains(&"each")
+        && normalized_words.contains(&"graveyard")
+        && normalized_words.contains(&"turn");
     if has_for_each_graveyard_history {
         return Err(CardTextError::ParseError(format!(
             "unsupported graveyard-history sacrifice clause (clause: '{}')",
-            clause_words.join(" ")
+            normalized_words.join(" ")
         )));
     }
 
@@ -215,12 +224,19 @@ pub(crate) fn parse_discard(
         });
     }
 
-    let (count, used) = parse_value(tokens).ok_or_else(|| {
+    let count_tokens = if clause_words.starts_with(&["up", "to"]) {
+        &tokens[2..]
+    } else {
+        tokens
+    };
+    let count_offset = tokens.len().saturating_sub(count_tokens.len());
+    let (count, used_relative) = parse_value(count_tokens).ok_or_else(|| {
         CardTextError::ParseError(format!(
             "missing discard count (clause: '{}')",
             clause_words.join(" ")
         ))
     })?;
+    let used = count_offset + used_relative;
 
     let rest = &tokens[used..];
     let rest_words = words(rest);
@@ -786,13 +802,167 @@ pub(crate) fn parse_become(
         )));
     };
 
-    let amount = parse_value(tokens).map(|(value, _)| value).ok_or_else(|| {
-        CardTextError::ParseError(format!(
-            "missing life total amount (clause: '{}')",
-            words(tokens).join(" ")
-        ))
-    })?;
+    let clause_words = words(tokens);
+    if clause_words.as_slice() == ["the", "monarch"] || clause_words.as_slice() == ["monarch"] {
+        return Ok(EffectAst::BecomeMonarch { player });
+    }
+
+    let amount = parse_value(tokens)
+        .map(|(value, _)| value)
+        .or_else(|| parse_half_starting_life_total_value(tokens, player))
+        .ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "missing life total amount (clause: '{}')",
+                clause_words.join(" ")
+            ))
+        })?;
     Ok(EffectAst::SetLifeTotal { amount, player })
+}
+
+fn player_filter_for_set_life_total_reference(player: PlayerAst) -> Option<PlayerFilter> {
+    match player {
+        PlayerAst::You | PlayerAst::Implicit => Some(PlayerFilter::You),
+        PlayerAst::Any => Some(PlayerFilter::Any),
+        PlayerAst::Opponent => Some(PlayerFilter::Opponent),
+        PlayerAst::Target => Some(PlayerFilter::target_player()),
+        PlayerAst::TargetOpponent => Some(PlayerFilter::target_opponent()),
+        PlayerAst::That => Some(PlayerFilter::IteratedPlayer),
+        PlayerAst::Defending => Some(PlayerFilter::Defending),
+        PlayerAst::Attacking => Some(PlayerFilter::Attacking),
+        PlayerAst::ThatPlayerOrTargetController
+        | PlayerAst::ItsController
+        | PlayerAst::ItsOwner => None,
+    }
+}
+
+pub(crate) fn parse_half_starting_life_total_value(
+    tokens: &[Token],
+    player: PlayerAst,
+) -> Option<Value> {
+    let clause_words = words(tokens);
+    let inferred_player_filter = || match clause_words.as_slice() {
+        ["half", "your", "starting", "life", "total"]
+        | ["half", "your", "starting", "life", "total", "rounded", "up"]
+        | ["half", "your", "starting", "life", "total", "rounded", "down"] => {
+            Some(PlayerFilter::You)
+        }
+        ["half", "target", "players", "starting", "life", "total"]
+        | [
+            "half",
+            "target",
+            "players",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "up",
+        ]
+        | [
+            "half",
+            "target",
+            "players",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => Some(PlayerFilter::target_player()),
+        ["half", "an", "opponents", "starting", "life", "total"]
+        | [
+            "half",
+            "an",
+            "opponents",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "up",
+        ]
+        | [
+            "half",
+            "an",
+            "opponents",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => Some(PlayerFilter::Opponent),
+        _ => None,
+    };
+    let player_filter = player_filter_for_set_life_total_reference(player)
+        .or_else(inferred_player_filter)?;
+
+    let rounded_up = match clause_words.as_slice() {
+        ["half", "your", "starting", "life", "total"]
+        | ["half", "your", "starting", "life", "total", "rounded", "up"] => {
+            player_filter == PlayerFilter::You
+        }
+        ["half", "target", "players", "starting", "life", "total"]
+        | [
+            "half",
+            "target",
+            "players",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "up",
+        ] => player_filter == PlayerFilter::target_player(),
+        ["half", "an", "opponents", "starting", "life", "total"]
+        | [
+            "half",
+            "an",
+            "opponents",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "up",
+        ] => player_filter == PlayerFilter::Opponent,
+        _ => false,
+    };
+    if rounded_up {
+        return Some(Value::HalfStartingLifeTotalRoundedUp(player_filter));
+    }
+
+    let rounded_down = match clause_words.as_slice() {
+        [
+            "half",
+            "your",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => player_filter == PlayerFilter::You,
+        [
+            "half",
+            "target",
+            "players",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => player_filter == PlayerFilter::target_player(),
+        [
+            "half",
+            "an",
+            "opponents",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => player_filter == PlayerFilter::Opponent,
+        _ => false,
+    };
+    if rounded_down {
+        return Some(Value::HalfStartingLifeTotalRoundedDown(player_filter));
+    }
+
+    None
 }
 
 pub(crate) fn parse_switch(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
@@ -874,6 +1044,10 @@ pub(crate) fn parse_skip(
                 || clause_words.starts_with(&["target", "opponents"])
             {
                 (PlayerAst::TargetOpponent, clause_words[2..].to_vec())
+            } else if clause_words.starts_with(&["that", "turn"])
+                || clause_words.starts_with(&["turn"])
+            {
+                (PlayerAst::Implicit, clause_words)
             } else {
                 return Err(CardTextError::ParseError(format!(
                     "unsupported skip clause (clause: '{}')",
@@ -978,7 +1152,9 @@ pub(crate) fn parse_mill(
         .and_then(Token::as_word)
         .is_some_and(|word| word == "card" || word == "cards");
 
-    let (count, used) = if starts_with_card_keyword {
+    let (count, used) = if clause_words.starts_with(&["that", "many"]) {
+        (Value::EventValue(EventValueSpec::Amount), 2usize)
+    } else if starts_with_card_keyword {
         if let Some((count, used_after_cards)) = parse_value(&tokens[1..]) {
             (count, 1 + used_after_cards)
         } else if let Some(count) = parse_add_mana_equal_amount_value(&tokens[1..]) {
@@ -1082,13 +1258,12 @@ pub(crate) fn parse_equal_to_number_of_filter_plus_or_minus_fixed_value(
     let filter_start_token_idx = token_index_for_word_index(tokens, filter_start_word_idx)?;
     let operator_token_idx = token_index_for_word_index(tokens, operator_word_idx)?;
     let filter_tokens = trim_commas(&tokens[filter_start_token_idx..operator_token_idx]);
-    let base_value = if let Some(value) =
-        parse_spells_cast_this_turn_matching_count_value(&filter_tokens)
-    {
-        value
-    } else {
-        Value::Count(parse_object_filter(&filter_tokens, false).ok()?)
-    };
+    let base_value =
+        if let Some(value) = parse_spells_cast_this_turn_matching_count_value(&filter_tokens) {
+            value
+        } else {
+            Value::Count(parse_object_filter(&filter_tokens, false).ok()?)
+        };
 
     let offset_start_token_idx = token_index_for_word_index(tokens, operator_word_idx + 1)?;
     let offset_tokens = trim_commas(&tokens[offset_start_token_idx..]);
@@ -1120,17 +1295,32 @@ fn parse_spells_cast_this_turn_matching_count_value(tokens: &[Token]) -> Option<
     }
 
     let suffix_patterns: &[(&[&str], PlayerFilter)] = &[
-        (&["theyve", "cast", "this", "turn"], PlayerFilter::IteratedPlayer),
-        (&["they", "cast", "this", "turn"], PlayerFilter::IteratedPlayer),
+        (
+            &["theyve", "cast", "this", "turn"],
+            PlayerFilter::IteratedPlayer,
+        ),
+        (
+            &["they", "cast", "this", "turn"],
+            PlayerFilter::IteratedPlayer,
+        ),
         (
             &["that", "player", "cast", "this", "turn"],
             PlayerFilter::IteratedPlayer,
         ),
         (&["youve", "cast", "this", "turn"], PlayerFilter::You),
         (&["you", "cast", "this", "turn"], PlayerFilter::You),
-        (&["an", "opponent", "has", "cast", "this", "turn"], PlayerFilter::Opponent),
-        (&["opponent", "has", "cast", "this", "turn"], PlayerFilter::Opponent),
-        (&["opponents", "have", "cast", "this", "turn"], PlayerFilter::Opponent),
+        (
+            &["an", "opponent", "has", "cast", "this", "turn"],
+            PlayerFilter::Opponent,
+        ),
+        (
+            &["opponent", "has", "cast", "this", "turn"],
+            PlayerFilter::Opponent,
+        ),
+        (
+            &["opponents", "have", "cast", "this", "turn"],
+            PlayerFilter::Opponent,
+        ),
         (&["cast", "this", "turn"], PlayerFilter::Any),
     ];
 
@@ -1139,7 +1329,8 @@ fn parse_spells_cast_this_turn_matching_count_value(tokens: &[Token]) -> Option<
             continue;
         }
         let filter_word_len = filter_words.len().saturating_sub(suffix.len());
-        let filter_token_end = token_index_for_word_index(tokens, filter_word_len).unwrap_or(tokens.len());
+        let filter_token_end =
+            token_index_for_word_index(tokens, filter_word_len).unwrap_or(tokens.len());
         let filter_tokens = trim_commas(&tokens[..filter_token_end]);
         let filter = parse_object_filter(&filter_tokens, false).ok()?;
         let exclude_source = filter_tokens.iter().any(|token| token.is_word("other"));
@@ -1606,6 +1797,27 @@ pub(crate) fn parse_add_mana(
         }
 
         let tail_words = words(tail_tokens);
+        if tail_words.starts_with(&["for", "each"])
+            && tail_words.ends_with(&["removed", "this", "way"])
+            && let Some(dynamic_amount) = parse_dynamic_cost_modifier_value(tail_tokens)?
+        {
+            amount = dynamic_amount;
+            if any_type {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported any-type mana clause without producer filter (clause: '{}')",
+                    clause_words.join(" ")
+                )));
+            }
+            if any_one {
+                return Ok(EffectAst::AddManaAnyOneColor { amount, player });
+            }
+            return Ok(EffectAst::AddManaAnyColor {
+                amount,
+                player,
+                available_colors: None,
+            });
+        }
+
         if tail_words.first().copied() == Some("among") {
             if any_type {
                 return Err(CardTextError::ParseError(format!(

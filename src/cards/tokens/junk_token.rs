@@ -52,6 +52,7 @@ pub fn junk_token_definition() -> CardDefinition {
             activation_restrictions: vec![],
             mana_output: None,
             activation_condition: None,
+            mana_usage_restrictions: vec![],
         }),
         functional_zones: vec![Zone::Battlefield],
         text: Some(

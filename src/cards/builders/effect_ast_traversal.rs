@@ -70,6 +70,10 @@ macro_rules! nested_effects_variants {
                 effects: $effects,
                 ..
             }
+            | EffectAst::RepeatProcess {
+                effects: $effects,
+                ..
+            }
             | EffectAst::DelayedUntilNextEndStep {
                 effects: $effects,
                 ..
@@ -107,6 +111,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::Clash { .. } => {}
         EffectAst::DealDamageEach { .. } => {}
         EffectAst::Draw { .. } => {}
+        EffectAst::DrawForEachTaggedMatching { .. } => {}
         EffectAst::Counter { .. } => {}
         EffectAst::CounterUnlessPays { .. } => {}
         EffectAst::UnlessPays { .. } => {}
@@ -162,11 +167,13 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::BecomeBasicLandTypeChoice { .. } => {}
         EffectAst::BecomeCreatureTypeChoice { .. } => {}
         EffectAst::BecomeColorChoice { .. } => {}
+        EffectAst::BecomeCopy { .. } => {}
         EffectAst::Surveil { .. } => {}
         EffectAst::PayMana { .. } => {}
         EffectAst::PayEnergy { .. } => {}
         EffectAst::Cant { .. } => {}
         EffectAst::PlayFromGraveyardUntilEot { .. } => {}
+        EffectAst::AdditionalLandPlays { .. } => {}
         EffectAst::GrantPlayTaggedUntilEndOfTurn { .. } => {}
         EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn { .. } => {}
         EffectAst::GrantPlayTaggedUntilYourNextTurn { .. } => {}
@@ -192,11 +199,15 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::PutSomeIntoHandRestOnBottomOfLibrary { .. } => {}
         EffectAst::ChooseFromLookedCardsIntoHandRestIntoGraveyard { .. } => {}
         EffectAst::ChooseFromLookedCardsIntoHandRestOnBottomOfLibrary { .. } => {}
+        EffectAst::ChooseFromLookedCardsOntoBattlefieldOrIntoHandRestOnBottomOfLibrary {
+            ..
+        } => {}
         EffectAst::PutRestOnBottomOfLibrary => {}
         EffectAst::CopySpell { .. } => {}
         EffectAst::RetargetStackObject { .. } => {}
         EffectAst::Conditional { .. } => {}
         EffectAst::ChooseObjects { .. } => {}
+        EffectAst::ChooseObjectsAcrossZones { .. } => {}
         EffectAst::Sacrifice { .. } => {}
         EffectAst::SacrificeAll { .. } => {}
         EffectAst::DiscardHand { .. } => {}
@@ -212,11 +223,13 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::ReturnToHand { .. } => {}
         EffectAst::ReturnToBattlefield { .. } => {}
         EffectAst::MoveToZone { .. } => {}
+        EffectAst::MoveToLibraryNthFromTop { .. } => {}
         EffectAst::MoveToLibrarySecondFromTop { .. } => {}
         EffectAst::ReturnAllToHand { .. } => {}
         EffectAst::ReturnAllToHandOfChosenColor { .. } => {}
         EffectAst::ReturnAllToBattlefield { .. } => {}
         EffectAst::ExchangeControl { .. } => {}
+        EffectAst::BecomeMonarch { .. } => {}
         EffectAst::SetLifeTotal { .. } => {}
         EffectAst::SkipTurn { .. } => {}
         EffectAst::SkipCombatPhases { .. } => {}
@@ -224,6 +237,8 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::SkipDrawStep { .. } => {}
         EffectAst::PoisonCounters { .. } => {}
         EffectAst::EnergyCounters { .. } => {}
+        EffectAst::ChooseCardName { .. } => {}
+        EffectAst::RepeatThisProcess => {}
         EffectAst::May { .. } => {}
         EffectAst::MayByPlayer { .. } => {}
         EffectAst::MayByTaggedController { .. } => {}
@@ -242,6 +257,7 @@ pub(super) fn assert_effect_ast_variant_coverage(effect: &EffectAst) {
         EffectAst::ForEachOpponentDid { .. } => {}
         EffectAst::ForEachPlayerDid { .. } => {}
         EffectAst::ForEachTaggedPlayer { .. } => {}
+        EffectAst::RepeatProcess { .. } => {}
         EffectAst::Enchant { .. } => {}
         EffectAst::Attach { .. } => {}
         EffectAst::Investigate { .. } => {}

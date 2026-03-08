@@ -7,7 +7,6 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaCost;
 use crate::object_query::candidate_ids_for_zone;
 use crate::player::ManaPool;
-use crate::static_abilities::StaticAbility;
 use crate::target::ObjectFilter;
 use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
@@ -49,10 +48,6 @@ impl<'a> DerivedGameView<'a> {
         }
     }
 
-    pub(crate) fn game(&self) -> &'a GameState {
-        self.game
-    }
-
     pub(crate) fn effects(&self) -> &[ContinuousEffect] {
         &self.all_effects
     }
@@ -74,31 +69,14 @@ impl<'a> DerivedGameView<'a> {
         calculated
     }
 
-    pub(crate) fn calculated_power(&self, object_id: ObjectId) -> Option<i32> {
-        self.calculated_characteristics(object_id)
-            .and_then(|chars| chars.power)
-    }
-
     pub(crate) fn calculated_toughness(&self, object_id: ObjectId) -> Option<i32> {
         self.calculated_characteristics(object_id)
             .and_then(|chars| chars.toughness)
     }
 
-    pub(crate) fn calculated_card_types(&self, object_id: ObjectId) -> Vec<CardType> {
-        self.calculated_characteristics(object_id)
-            .map(|chars| chars.card_types)
-            .unwrap_or_default()
-    }
-
     pub(crate) fn calculated_subtypes(&self, object_id: ObjectId) -> Vec<Subtype> {
         self.calculated_characteristics(object_id)
             .map(|chars| chars.subtypes)
-            .unwrap_or_default()
-    }
-
-    pub(crate) fn static_abilities(&self, object_id: ObjectId) -> Vec<StaticAbility> {
-        self.calculated_characteristics(object_id)
-            .map(|chars| chars.static_abilities)
             .unwrap_or_default()
     }
 

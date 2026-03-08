@@ -34,6 +34,7 @@ pub(crate) fn parse_counter_type_word(word: &str) -> Option<CounterType> {
         "loyalty" => Some(CounterType::Loyalty),
         "charge" => Some(CounterType::Charge),
         "stun" => Some(CounterType::Stun),
+        "void" => Some(CounterType::Void),
         "depletion" => Some(CounterType::Depletion),
         "storage" => Some(CounterType::Storage),
         "ki" => Some(CounterType::Ki),

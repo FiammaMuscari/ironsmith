@@ -84,7 +84,7 @@ fn describe_effect_list(effects: &[Effect]) -> String {
         }
 
         // Compact Chaotic Transformation-style prefix:
-        // Exile up to one target [type] ... and/or ... then ForEachTagged exiled_0 reveal-until.
+        // Exile up to one target [type] ... and/or ... then ForEachTagged helper-tag reveal-until.
         if idx + 5 < filtered.len()
             && is_exile_up_to_one_target_type(filtered[idx], crate::types::CardType::Artifact)
             && is_exile_up_to_one_target_type(filtered[idx + 1], crate::types::CardType::Creature)
@@ -99,7 +99,7 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             && is_exile_up_to_one_target_type(filtered[idx + 4], crate::types::CardType::Land)
             && let Some(for_each) =
                 filtered[idx + 5].downcast_ref::<crate::effects::ForEachTaggedEffect>()
-            && for_each.tag.as_str() == "exiled_0"
+            && crate::cards::builders::is_sentence_helper_tag(for_each.tag.as_str(), "exiled")
             && for_each.effects.len() == 1
             && for_each.effects[0]
                 .downcast_ref::<crate::effects::SequenceEffect>()
@@ -165,8 +165,7 @@ fn describe_effect_list(effects: &[Effect]) -> String {
             && let Some(with_id) = filtered[idx].downcast_ref::<crate::effects::WithIdEffect>()
             && let Some(reflexive) =
                 filtered[idx + 1].downcast_ref::<crate::effects::ReflexiveTriggerEffect>()
-            && let Some(compact) =
-                describe_with_id_then_reflexive_trigger(with_id, reflexive)
+            && let Some(compact) = describe_with_id_then_reflexive_trigger(with_id, reflexive)
         {
             parts.push(compact);
             idx += 2;
@@ -1983,7 +1982,7 @@ fn describe_each_controlled_by_iterated(filter: &ObjectFilter) -> Option<String>
         let words = filter
             .card_types
             .iter()
-            .map(|card_type| format!("{:?}", card_type).to_ascii_lowercase())
+            .map(|card_type| card_type.name().to_string())
             .collect::<Vec<_>>();
         let list = match words.len() {
             0 => String::new(),
@@ -2023,8 +2022,7 @@ fn describe_for_players_damage_and_controlled_damage(
         for_each.effects[0].downcast_ref::<crate::effects::DealDamageEffect>()
     {
         deal
-    } else if let Some(tagged) =
-        for_each.effects[0].downcast_ref::<crate::effects::TaggedEffect>()
+    } else if let Some(tagged) = for_each.effects[0].downcast_ref::<crate::effects::TaggedEffect>()
     {
         tagged
             .effect
@@ -2040,7 +2038,10 @@ fn describe_for_players_damage_and_controlled_damage(
     }
     let objects = describe_each_controlled_by_iterated(&for_each.filter)?;
     if for_players.filter == PlayerFilter::Any
-        && matches!(for_each.filter.controller, Some(PlayerFilter::IteratedPlayer))
+        && matches!(
+            for_each.filter.controller,
+            Some(PlayerFilter::IteratedPlayer)
+        )
         && for_each.filter.other
         && for_each.filter.card_types == vec![CardType::Creature]
     {
@@ -2581,11 +2582,7 @@ fn describe_look_at_top_then_choose_exile_text(
     ))
 }
 
-fn describe_exile_top_of_library(
-    player: &PlayerFilter,
-    count: &Value,
-    face_down: bool,
-) -> String {
+fn describe_exile_top_of_library(player: &PlayerFilter, count: &Value, face_down: bool) -> String {
     let owner = describe_possessive_player_filter(player);
     let face_down_suffix = if face_down { " face down" } else { "" };
     if let Value::Fixed(n) = count
@@ -2848,7 +2845,11 @@ fn describe_look_at_top_then_put_into_hand_rest_graveyard(
             capitalize_first(&describe_player_filter(&choose.chooser))
         )
     };
-    let opener = if reveal_top.is_some() { "Reveal" } else { "Look at" };
+    let opener = if reveal_top.is_some() {
+        "Reveal"
+    } else {
+        "Look at"
+    };
     let choice_clause = if reveal.is_some() {
         format!("{may_prefix} reveal {chosen} from among them and put it into {hand} hand")
     } else {
@@ -2950,10 +2951,12 @@ fn describe_look_at_top_then_reveal_put_matching_into_hand_rest_graveyard(
     if reveal_tagged.tag.as_str() != look_at_top.tag.as_str() {
         return None;
     }
-    let filter = for_each_moves_matching_to_hand_else_graveyard(distribute, look_at_top.tag.as_str())?;
+    let filter =
+        for_each_moves_matching_to_hand_else_graveyard(distribute, look_at_top.tag.as_str())?;
     let owner = describe_possessive_player_filter(&look_at_top.player);
     let (count_text, noun, _) = describe_look_count_and_noun(&look_at_top.count);
-    let matching = pluralize_noun_phrase(&describe_search_selection_with_cards(&filter.description()));
+    let matching =
+        pluralize_noun_phrase(&describe_search_selection_with_cards(&filter.description()));
 
     Some(format!(
         "Reveal the top {count_text} {noun} of {owner} library. Put all {matching} revealed this way into {owner} hand and the rest into {owner} graveyard"
@@ -4256,6 +4259,32 @@ fn describe_effect_impl(effect: &Effect) -> String {
             Zone::Command => format!("Move {target} to the command zone"),
         };
     }
+    let describe_library_top_position = |position: &crate::effect::Value| match position {
+        crate::effect::Value::Fixed(2) => "second from the top".to_string(),
+        crate::effect::Value::Fixed(3) => "third from the top".to_string(),
+        crate::effect::Value::Fixed(4) => "fourth from the top".to_string(),
+        crate::effect::Value::Fixed(5) => "fifth from the top".to_string(),
+        crate::effect::Value::Add(left, right)
+            if matches!(
+                (left.as_ref(), right.as_ref()),
+                (crate::effect::Value::X, crate::effect::Value::Fixed(1))
+                    | (crate::effect::Value::Fixed(1), crate::effect::Value::X)
+            ) =>
+        {
+            "just beneath the top X cards".to_string()
+        }
+        _ => format!("{} from the top", describe_value(position)),
+    };
+    if let Some(move_to_nth) =
+        effect.downcast_ref::<crate::effects::MoveToLibraryNthFromTopEffect>()
+    {
+        let target = describe_choose_spec(&move_to_nth.target);
+        return format!(
+            "Put {target} into {} {}",
+            owner_library_phrase_for_spec(&move_to_nth.target),
+            describe_library_top_position(&move_to_nth.position)
+        );
+    }
     if let Some(move_to_second) =
         effect.downcast_ref::<crate::effects::MoveToLibrarySecondFromTopEffect>()
     {
@@ -4713,6 +4742,14 @@ fn describe_effect_impl(effect: &Effect) -> String {
             describe_card_count(&draw.count)
         );
     }
+    if let Some(draw) = effect.downcast_ref::<crate::effects::DrawForEachTaggedMatchingEffect>() {
+        let player = describe_player_filter(&draw.player);
+        return format!(
+            "{player} {} a card for each {}",
+            player_verb(&player, "draw", "draws"),
+            describe_for_each_count_filter(&draw.filter)
+        );
+    }
     if let Some(gain) = effect.downcast_ref::<crate::effects::GainLifeEffect>() {
         let player = describe_choose_spec(&gain.player);
         if let Value::CountersOnSource(counter_type) = &gain.amount {
@@ -5076,7 +5113,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
             );
         }
         if let Value::Devotion { player, color } = &add_scaled.amount {
-            let color_name = format!("{color:?}").to_ascii_lowercase();
+            let color_name = color.name().to_string();
             return format!(
                 "Add an amount of {} equal to {} devotion to {}",
                 mana_text,
@@ -5956,7 +5993,10 @@ fn describe_effect_impl(effect: &Effect) -> String {
         };
         text = append_token_entry_flags(text, singular_count);
         if use_where_x {
-            text.push_str(&format!(", where X is {}", describe_value(&create_token.count)));
+            text.push_str(&format!(
+                ", where X is {}",
+                describe_value(&create_token.count)
+            ));
         }
         return append_token_cleanup_sentences(text, singular_count);
     }
@@ -6051,14 +6091,14 @@ fn describe_effect_impl(effect: &Effect) -> String {
                 words.extend(
                     subtypes
                         .iter()
-                        .map(|subtype| format!("{subtype:?}").to_ascii_lowercase()),
+                        .map(|subtype| subtype.to_string().to_ascii_lowercase()),
                 );
             }
             if let Some(card_types) = &create_copy.set_card_types {
                 words.extend(
                     card_types
                         .iter()
-                        .map(|card_type| format!("{card_type:?}").to_ascii_lowercase()),
+                        .map(|card_type| card_type.name().to_string()),
                 );
             }
             if !words.is_empty() {
@@ -6070,13 +6110,13 @@ fn describe_effect_impl(effect: &Effect) -> String {
             let mut type_words: Vec<String> = create_copy
                 .added_card_types
                 .iter()
-                .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
+                .map(|card_type| card_type.name().to_string())
                 .collect();
             type_words.extend(
                 create_copy
                     .added_subtypes
                     .iter()
-                    .map(|subtype| format!("{subtype:?}").to_ascii_lowercase()),
+                    .map(|subtype| subtype.to_string().to_ascii_lowercase()),
             );
             if !type_words.is_empty() {
                 text.push_str(", and it's ");
@@ -6120,7 +6160,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
         return format!("{subject} explores");
     }
     if let Some(behold) = effect.downcast_ref::<crate::effects::BeholdEffect>() {
-        let subtype_name = format!("{:?}", behold.subtype);
+        let subtype_name = behold.subtype.to_string().to_ascii_lowercase();
         if behold.count == 1 {
             return format!("Behold {}", with_indefinite_article(&subtype_name));
         }
@@ -6281,7 +6321,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
     }
     if let Some(amass) = effect.downcast_ref::<crate::effects::AmassEffect>() {
         if let Some(subtype) = amass.subtype {
-            let subtype_name = format!("{subtype:?}");
+            let subtype_name = subtype.to_string().to_ascii_lowercase();
             return format!("Amass {} {}", pluralize_word(&subtype_name), amass.amount);
         }
         return format!("Amass {}", amass.amount);
@@ -6786,9 +6826,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
             if trigger_lower.contains("that player's upkeep")
                 || trigger_lower.contains("target player's upkeep")
             {
-                return format!(
-                    "At the beginning of that player's next upkeep, {delayed_text}"
-                );
+                return format!("At the beginning of that player's next upkeep, {delayed_text}");
             }
             if trigger_lower.contains("your end step") {
                 return format!("At the beginning of your next end step, {delayed_text}");
@@ -6907,7 +6945,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
         let excluded = become_type
             .excluded_subtypes
             .iter()
-            .map(|subtype| format!("{subtype:?}").to_ascii_lowercase())
+            .map(|subtype| subtype.to_string().to_ascii_lowercase())
             .collect::<Vec<_>>();
         return format!(
             "{} becomes the creature type of {} choice (other than {}) {}",
@@ -7985,10 +8023,10 @@ fn describe_mana_activation_condition(condition: &crate::ConditionExpr) -> Strin
         } => {
             let mut descriptors: Vec<String> = Vec::new();
             for subtype in subtypes {
-                descriptors.push(format!("{subtype:?}"));
+                descriptors.push(subtype.to_string().to_ascii_lowercase());
             }
             for card_type in card_types {
-                descriptors.push(format!("{card_type:?}").to_ascii_lowercase());
+                descriptors.push(card_type.name().to_string());
             }
             descriptors.retain(|entry| !entry.is_empty());
             descriptors.dedup();

@@ -3,8 +3,8 @@
 use crate::events::EventKind;
 use crate::ids::PlayerId;
 use crate::target::PlayerFilter;
-use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
+use crate::triggers::{TriggerEvent, describe_player_filter_possessive};
 
 /// Trigger that fires at the beginning of a player's end step.
 ///
@@ -61,7 +61,10 @@ impl TriggerMatcher for BeginningOfEndStepTrigger {
             PlayerFilter::Target(_) | PlayerFilter::IteratedPlayer => {
                 "At the beginning of that player's end step".to_string()
             }
-            _ => format!("At the beginning of {:?}'s end step", self.player),
+            _ => format!(
+                "At the beginning of {} end step",
+                describe_player_filter_possessive(&self.player)
+            ),
         }
     }
 }

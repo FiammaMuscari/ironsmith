@@ -80,10 +80,22 @@ impl StaticAbilityKind for Protection {
             ProtectionFrom::AllColors => "Protection from all colors".to_string(),
             ProtectionFrom::Colorless => "Protection from colorless".to_string(),
             ProtectionFrom::Everything => "Protection from everything".to_string(),
-            ProtectionFrom::CardType(ct) => format!("Protection from {:?}s", ct).to_lowercase(),
+            ProtectionFrom::CardType(ct) => format!("Protection from {}", ct.plural_name()),
             ProtectionFrom::Creatures => "Protection from creatures".to_string(),
             ProtectionFrom::Permanents(filter) => {
-                format!("Protection from {}", filter.description())
+                let description = filter.description();
+                let description = if matches!(filter.zone, Some(crate::zone::Zone::Stack))
+                    && filter.stack_kind == Some(crate::filter::StackObjectKind::Spell)
+                    && !description.ends_with("spells")
+                {
+                    description
+                        .strip_suffix(" spell")
+                        .map(|prefix| format!("{prefix} spells"))
+                        .unwrap_or(description)
+                } else {
+                    description
+                };
+                format!("Protection from {description}")
             }
         }
     }

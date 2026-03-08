@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import DecisionRouter from "@/components/decisions/DecisionRouter";
 import { normalizeDecisionText } from "@/components/decisions/decisionText";
+import DecisionMiniInspector from "@/components/overlays/DecisionMiniInspector";
 import { animate, cancelMotion, snappySpring, stagger } from "@/lib/motion/anime";
 import { SymbolText } from "@/lib/mana-symbols";
+import { nextPriorityAdvanceLabel } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 function clamp(value, min, max) {
@@ -21,29 +23,6 @@ function priorityAnchorStyle(anchor) {
   const left = clamp(anchor.x - (width * 0.5), 8, viewportWidth - width - 8);
   const top = clamp(anchor.y - 124, 74, viewportHeight - 102);
   return { left: `${left}px`, top: `${top}px`, width: `${width}px` };
-}
-
-function nextStepLabel(phase, step, stackSize) {
-  if (stackSize > 0) return "Resolve";
-  switch (step) {
-    case "Untap": return "Upkeep";
-    case "Upkeep": return "Draw";
-    case "Draw": return "Main Phase";
-    case "BeginCombat": return "Attackers";
-    case "DeclareAttackers": return "Blockers";
-    case "DeclareBlockers": return "Damage";
-    case "CombatDamage": return "End Combat";
-    case "EndCombat": return "Main 2";
-    case "End": return "Cleanup";
-    case "Cleanup": return "Next Turn";
-    default: break;
-  }
-  switch (phase) {
-    case "FirstMain": return "Combat";
-    case "NextMain": return "End Step";
-    case "Ending": return "Cleanup";
-    default: return "Next";
-  }
 }
 
 function formatPriorityInlineActionLabel(action) {
@@ -595,6 +574,23 @@ function PriorityActionStrip({
     };
   }, [hoveredGroupKeys, selectedGroupKeys, groupKeysSignature, isPointerInStrip, middleLoopIndex]);
 
+  const handleViewportWheel = useCallback((event) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    if (viewport.scrollWidth <= viewport.clientWidth + 1) return;
+
+    const primaryDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+      ? event.deltaX
+      : event.deltaY;
+    if (Math.abs(primaryDelta) < 0.5) return;
+
+    event.preventDefault();
+    viewport.scrollBy({
+      left: primaryDelta,
+      behavior: "auto",
+    });
+  }, []);
+
   if (!canAct) {
     return (
       <span className="text-[12px] text-[#b8d2ef] whitespace-nowrap">
@@ -614,9 +610,10 @@ function PriorityActionStrip({
   return (
     <div
       ref={viewportRef}
-      className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden whitespace-nowrap"
+      className="action-strip-scroll min-w-0 flex-1 overflow-x-auto overflow-y-hidden whitespace-nowrap"
       onMouseEnter={() => setIsPointerInStrip(true)}
       onMouseLeave={() => setIsPointerInStrip(false)}
+      onWheel={handleViewportWheel}
     >
       <div className="flex w-max min-w-full min-h-[32px] items-stretch gap-1.5 pr-2">
         {displayGroups.map(({ key, cycle, group }) => {
@@ -681,7 +678,18 @@ function PriorityActionStrip({
               ref={setNodeRef}
               className={pillClassName}
               style={{ textOverflow: "clip" }}
-              onClick={() => onActionClick(group.firstAction)}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return;
+                // Match decision option buttons so a pointer sequence that
+                // started on a mana pip cannot finish as a click on a newly
+                // rendered priority action under the cursor.
+                event.preventDefault();
+                onActionClick(group.firstAction);
+              }}
+              onClick={(event) => {
+                if (event.detail !== 0) return;
+                onActionClick(group.firstAction);
+              }}
               onMouseEnter={() => onActionHoverStart(group)}
               onMouseLeave={onActionHoverEnd}
             >
@@ -696,6 +704,7 @@ function PriorityActionStrip({
 
 function resolveDecisionTitle(decision) {
   if (!decision) return "Decision";
+  if (decision.reason) return decision.reason;
   switch (decision.kind) {
     case "targets":
       return "Choose Targets";
@@ -710,12 +719,38 @@ function resolveDecisionTitle(decision) {
   }
 }
 
+function resolveDecisionMiniInspectorStackObject(stackObjects = [], selectedObjectId = null) {
+  if (!Array.isArray(stackObjects) || stackObjects.length === 0) return null;
+  const selectedKey = selectedObjectId == null ? null : String(selectedObjectId);
+  if (selectedKey != null) {
+    const selectedEntry = stackObjects.find((entry) => (
+      String(entry?.inspect_object_id ?? entry?.id) === selectedKey
+      || String(entry?.id) === selectedKey
+    ));
+    if (selectedEntry) return selectedEntry;
+  }
+  return stackObjects[0] || null;
+}
+
+function shouldShowDecisionMiniInspector(decision, stackObject) {
+  if (!decision && !stackObject) return false;
+  if (stackObject) return true;
+  return Boolean(
+    decision.source_id != null
+    || String(decision.source_name || "").trim()
+    || String(decision.context_text || "").trim()
+    || String(decision.consequence_text || "").trim()
+    || String(decision.description || "").trim()
+  );
+}
+
 function PriorityControlStack({
   actionCount = 0,
   holdEnabled = false,
   confirmEnabled = false,
   onHoldChange,
   onConfirmChange,
+  showActionCount = true,
   className = "",
 }) {
   const checkboxLabelClass =
@@ -723,9 +758,11 @@ function PriorityControlStack({
 
   return (
     <div className={cn("flex shrink-0 flex-col items-start justify-center py-1.5", className)}>
-      <div className="pointer-events-none pl-[18px] text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
-          {actionCount} actions
-      </div>
+      {showActionCount && (
+        <div className="pointer-events-none pl-[18px] text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+            {actionCount} actions
+        </div>
+      )}
       <div className="flex items-center gap-3">
         <label className={checkboxLabelClass}>
           <Checkbox
@@ -770,6 +807,10 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
   const isPriorityDecision = decision?.kind === "priority";
   const isCombatDecision = decision?.kind === "attackers" || decision?.kind === "blockers";
   const decisionActions = useMemo(() => decision?.actions || [], [decision]);
+  const displayedStackObject = useMemo(
+    () => resolveDecisionMiniInspectorStackObject(state?.stack_objects || [], selectedObjectId),
+    [selectedObjectId, state?.stack_objects]
+  );
   const passAction = useMemo(
     () => decisionActions.find((action) => action.kind === "pass_priority"),
     [decisionActions]
@@ -781,9 +822,11 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
 
   const anchoredStyle = inline ? null : priorityAnchorStyle(anchor);
   const stackSize = Number(state?.stack_size || 0);
+  const showPriorityAdvanceButton = !!passAction;
+  const showDecisionMiniInspector = shouldShowDecisionMiniInspector(decision, displayedStackObject);
   const passLabel = holdRule === "always"
     ? (passAction?.label || "Pass priority")
-    : `→ ${nextStepLabel(state?.phase, state?.step, stackSize)}`;
+    : `→ ${nextPriorityAdvanceLabel(state?.phase, state?.step, stackSize)}`;
   const battlefieldFamilies = useMemo(
     () => buildBattlefieldFamilies(state?.players),
     [state?.players]
@@ -848,7 +891,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     clearHoverLinkedObjects();
     clearHover();
   }, [canAct, clearHoverLinkedObjects, clearHover]);
-  const decisionIdentity = `${decision?.kind || ""}|${decision?.source_name || ""}|${decision?.description || ""}`;
+  const decisionIdentity = `${decision?.kind || ""}|${decision?.source_name || ""}|${decision?.description || ""}|${decision?.context_text || ""}|${decision?.consequence_text || ""}`;
   const [submitState, setSubmitState] = useState({ key: "", action: null });
   const handleSubmitActionChange = useCallback(
     (nextAction) => {
@@ -869,20 +912,34 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     return (
       <div className="pointer-events-none absolute inset-0 z-[120] flex items-center px-2">
         <div
-          className="priority-inline-panel pointer-events-auto flex min-h-[46px] w-full items-stretch gap-2 rounded bg-[rgba(7,15,23,0.97)] px-2 py-0 shadow-[0_12px_28px_rgba(0,0,0,0.45)] backdrop-blur-[2px]"
+          className="priority-inline-panel pointer-events-auto relative flex w-full flex-col rounded bg-[rgba(7,15,23,0.97)] px-2 py-0 shadow-[0_12px_28px_rgba(0,0,0,0.45)] backdrop-blur-[2px]"
         >
+          {showDecisionMiniInspector && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-full mb-1">
+              <DecisionMiniInspector
+                decision={decision}
+                stackObject={displayedStackObject}
+                className="h-auto max-h-[132px] rounded-t border-l-0 border-b border-[#2f4662]/70 shadow-[0_10px_24px_rgba(0,0,0,0.34)]"
+              />
+            </div>
+          )}
           {isPriorityDecision ? (
-            <>
-              <div className="shrink-0 flex min-w-[308px] self-stretch items-stretch gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="decision-neon-button decision-submit-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
-                  disabled={!canAct}
-                  onClick={() => triggerPriorityAction(passAction)}
-                >
-                  {passLabel}
-                </Button>
+            <div className="flex min-h-[46px] items-stretch gap-2">
+              <div className={cn(
+                "shrink-0 flex self-stretch items-stretch gap-2",
+                showPriorityAdvanceButton ? "min-w-[308px]" : "min-w-[112px]"
+              )}>
+                {showPriorityAdvanceButton && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="decision-neon-button decision-submit-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
+                    disabled={!canAct}
+                    onClick={() => triggerPriorityAction(passAction)}
+                  >
+                    {passLabel}
+                  </Button>
+                )}
                 <PriorityControlStack
                   actionCount={priorityActionCount}
                   holdEnabled={holdRule === "always"}
@@ -902,61 +959,76 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 onActionHoverStart={handleActionHoverStart}
                 onActionHoverEnd={handleActionHoverEnd}
               />
-            </>
+            </div>
           ) : (
             <>
-              <div className="shrink-0 flex min-w-[308px] self-stretch items-stretch gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="decision-neon-button decision-submit-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
-                  disabled={!canSubmitFocused}
-                  onClick={() => {
-                    if (!canSubmitFocused) return;
-                    submitAction.onSubmit();
-                  }}
-                >
-                  {submitAction?.label || "Submit"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="decision-neon-button decision-neon-button--danger decision-cancel-button h-full w-[96px] shrink-0 self-stretch rounded-none px-2 text-[13px] font-bold uppercase tracking-wide"
-                  disabled={!canAct}
-                  onClick={() => {
-                    if (!canAct) return;
-                    cancelDecision();
-                  }}
-                >
-                  Cancel
-                </Button>
-                <div className="min-w-[86px] self-stretch flex flex-col justify-center py-1.5">
-                  <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
-                    {resolveDecisionTitle(decision)}
-                  </div>
-                  {decision?.source_name && (
-                    <div className="mt-0.5 text-[11px] text-[#d2e5fb]">
-                      {normalizeDecisionText(decision.source_name)}
+              <div className="flex min-h-[46px] items-stretch gap-2">
+                <div className={cn(
+                  "shrink-0 flex self-stretch items-stretch gap-2",
+                  showDecisionMiniInspector ? "min-w-[396px]" : "min-w-[420px]"
+                )}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="decision-neon-button decision-submit-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
+                    disabled={!canSubmitFocused}
+                    onClick={() => {
+                      if (!canSubmitFocused) return;
+                      submitAction.onSubmit();
+                    }}
+                  >
+                    {submitAction?.label || "Submit"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="decision-neon-button decision-neon-button--danger decision-cancel-button h-full w-[96px] shrink-0 self-stretch rounded-none px-2 text-[13px] font-bold uppercase tracking-wide"
+                    disabled={!canAct}
+                    onClick={() => {
+                      if (!canAct) return;
+                      cancelDecision();
+                    }}
+                    >
+                      Cancel
+                    </Button>
+                  <PriorityControlStack
+                    holdEnabled={holdRule === "always"}
+                    confirmEnabled={confirmEnabled}
+                    onHoldChange={(value) => setHoldRule(value ? "always" : "never")}
+                    onConfirmChange={setConfirmEnabled}
+                    showActionCount={false}
+                    className="min-w-[104px]"
+                  />
+                  {!showDecisionMiniInspector && (
+                    <div className="min-w-[86px] self-stretch flex flex-col justify-center py-1.5">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+                        {resolveDecisionTitle(decision)}
+                      </div>
+                      {decision?.source_name && (
+                        <div className="mt-0.5 text-[11px] text-[#d2e5fb]">
+                          {normalizeDecisionText(decision.source_name)}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              </div>
-              <div className="min-w-0 flex-1 overflow-hidden">
-                {canAct ? (
-                  <DecisionRouter
-                    decision={decision}
-                    canAct={canAct}
-                    inlineSubmit={false}
-                    onSubmitActionChange={handleSubmitActionChange}
-                    hideDescription
-                    layout="strip"
-                  />
-                ) : (
-                  <span className="text-[12px] text-[#b8d2ef] whitespace-nowrap">
-                    Waiting for opponent
-                  </span>
-                )}
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  {canAct ? (
+                    <DecisionRouter
+                      decision={decision}
+                      canAct={canAct}
+                      inlineSubmit={false}
+                      onSubmitActionChange={handleSubmitActionChange}
+                      hideDescription={showDecisionMiniInspector}
+                      layout="strip"
+                    />
+                  ) : (
+                    <span className="text-[12px] text-[#b8d2ef] whitespace-nowrap">
+                      Waiting for opponent
+                    </span>
+                  )}
+                </div>
               </div>
             </>
           )}
@@ -979,15 +1051,17 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
         <div className="flex min-h-[46px] items-stretch gap-2">
           {isPriorityDecision ? (
             <>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="decision-neon-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
-                disabled={!canAct}
-                onClick={() => triggerPriorityAction(passAction)}
-              >
-                {passLabel}
-              </Button>
+              {showPriorityAdvanceButton && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="decision-neon-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
+                  disabled={!canAct}
+                  onClick={() => triggerPriorityAction(passAction)}
+                >
+                  {passLabel}
+                </Button>
+              )}
               <PriorityControlStack
                 actionCount={priorityActionCount}
                 holdEnabled={holdRule === "always"}
@@ -1024,8 +1098,23 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
               >
                 Cancel
               </Button>
-              <div className="self-stretch flex flex-col justify-center py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
-                {resolveDecisionTitle(decision)}
+              <PriorityControlStack
+                holdEnabled={holdRule === "always"}
+                confirmEnabled={confirmEnabled}
+                onHoldChange={(value) => setHoldRule(value ? "always" : "never")}
+                onConfirmChange={setConfirmEnabled}
+                showActionCount={false}
+                className="min-w-[104px]"
+              />
+              <div className="self-stretch flex flex-col justify-center py-1.5">
+                <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+                  {resolveDecisionTitle(decision)}
+                </div>
+                {decision?.source_name && (
+                  <div className="mt-0.5 text-[11px] text-[#d2e5fb]">
+                    {normalizeDecisionText(decision.source_name)}
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -1050,7 +1139,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
               canAct={canAct}
               inlineSubmit={false}
               onSubmitActionChange={handleSubmitActionChange}
-              hideDescription
+              hideDescription={false}
               layout="strip"
             />
           </div>
@@ -1061,6 +1150,12 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
 }
 
 function CombatBar({ anchor = null, inline = false, decision, canAct }) {
+  const {
+    holdRule,
+    setHoldRule,
+    confirmEnabled,
+    setConfirmEnabled,
+  } = useGame();
   if (!decision || (decision.kind !== "attackers" && decision.kind !== "blockers")) return null;
 
   const anchoredStyle = inline ? null : priorityAnchorStyle(anchor);
@@ -1076,10 +1171,20 @@ function CombatBar({ anchor = null, inline = false, decision, canAct }) {
   return (
     <div className={panelClass}>
       <div className={innerClass} style={anchoredStyle || undefined}>
-        <DecisionRouter
-          decision={decision}
-          canAct={canAct}
-          combatInline
+        <div className="min-w-0 flex-1">
+          <DecisionRouter
+            decision={decision}
+            canAct={canAct}
+            combatInline
+          />
+        </div>
+        <PriorityControlStack
+          holdEnabled={holdRule === "always"}
+          confirmEnabled={confirmEnabled}
+          onHoldChange={(value) => setHoldRule(value ? "always" : "never")}
+          onConfirmChange={setConfirmEnabled}
+          showActionCount={false}
+          className="min-w-[104px]"
         />
       </div>
     </div>

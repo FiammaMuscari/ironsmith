@@ -963,7 +963,7 @@ mod tests {
         let bob = PlayerId::from_index(1);
 
         // Find Grizzly Bears on battlefield
-        let bears = game
+        let _bears = game
             .battlefield
             .iter()
             .filter_map(|&id| game.object(id))

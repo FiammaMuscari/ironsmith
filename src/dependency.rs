@@ -463,6 +463,7 @@ fn evaluate_value(
                 your_commanders: Vec::new(),
                 iterated_player: None,
                 target_players: Vec::new(),
+                target_objects: Vec::new(),
                 tagged_objects: std::collections::HashMap::new(),
             };
             let mut total = 0i32;
@@ -1064,6 +1065,8 @@ fn value_references_pt(value: &Value) -> bool {
         | Value::LifeTotal(_)
         | Value::HalfLifeTotalRoundedUp(_)
         | Value::HalfLifeTotalRoundedDown(_)
+        | Value::HalfStartingLifeTotalRoundedUp(_)
+        | Value::HalfStartingLifeTotalRoundedDown(_)
         | Value::CardsInHand(_)
         | Value::LifeGainedThisTurn(_)
         | Value::LifeLostThisTurn(_)
@@ -1820,6 +1823,7 @@ mod tests {
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Battlefield],
             text: None,

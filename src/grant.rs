@@ -142,13 +142,39 @@ impl GrantSpec {
 
     /// Get a display string for this grant specification.
     pub fn display(&self) -> String {
+        fn zone_name(zone: Zone) -> &'static str {
+            match zone {
+                Zone::Battlefield => "battlefield",
+                Zone::Hand => "hand",
+                Zone::Library => "library",
+                Zone::Graveyard => "graveyard",
+                Zone::Exile => "exile",
+                Zone::Stack => "stack",
+                Zone::Command => "command zone",
+            }
+        }
+
         if matches!(self.grantable, Grantable::PlayFrom)
             && self.zone == Zone::Graveyard
             && self.filter.card_types.as_slice() == [CardType::Land]
         {
             return "You may play lands from your graveyard".to_string();
         }
-        format!("Cards in {:?} have {}", self.zone, self.grantable.display())
+        if let Grantable::AlternativeCast(method) = &self.grantable
+            && self.zone == Zone::Hand
+            && self.filter == ObjectFilter::nonland()
+            && method.cast_from_zone() == Zone::Hand
+            && method.mana_cost().is_none()
+            && method.cost_effects().is_empty()
+        {
+            return "You may cast spells from your hand without paying their mana costs"
+                .to_string();
+        }
+        format!(
+            "Cards in {} have {}",
+            zone_name(self.zone),
+            self.grantable.display()
+        )
     }
 }
 

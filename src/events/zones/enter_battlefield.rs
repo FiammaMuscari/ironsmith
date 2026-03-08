@@ -6,6 +6,7 @@ use crate::events::traits::{EventKind, GameEventType};
 use crate::game_state::{GameState, Target};
 use crate::ids::{ObjectId, PlayerId};
 use crate::object::CounterType;
+use crate::types::Subtype;
 use crate::zone::Zone;
 
 /// An enter battlefield event with ETB-specific modifiers.
@@ -25,6 +26,8 @@ pub struct EnterBattlefieldEvent {
     pub enters_with_counters: Vec<(CounterType, u32)>,
     /// If set, the object enters as a copy of this source object.
     pub enters_as_copy_of: Option<ObjectId>,
+    /// Additional subtypes granted by the copy-as-enters replacement.
+    pub added_subtypes: Vec<Subtype>,
 }
 
 impl EnterBattlefieldEvent {
@@ -36,6 +39,7 @@ impl EnterBattlefieldEvent {
             enters_tapped: false,
             enters_with_counters: Vec::new(),
             enters_as_copy_of: None,
+            added_subtypes: Vec::new(),
         }
     }
 
@@ -47,6 +51,7 @@ impl EnterBattlefieldEvent {
             enters_tapped: true,
             enters_with_counters: Vec::new(),
             enters_as_copy_of: None,
+            added_subtypes: Vec::new(),
         }
     }
 
@@ -79,6 +84,20 @@ impl EnterBattlefieldEvent {
     pub fn with_copy_of(&self, source_id: ObjectId) -> Self {
         Self {
             enters_as_copy_of: Some(source_id),
+            ..self.clone()
+        }
+    }
+
+    /// Return a new event with additional subtypes granted as it enters.
+    pub fn with_added_subtypes(&self, subtypes: &[Subtype]) -> Self {
+        let mut added_subtypes = self.added_subtypes.clone();
+        for subtype in subtypes {
+            if !added_subtypes.contains(subtype) {
+                added_subtypes.push(*subtype);
+            }
+        }
+        Self {
+            added_subtypes,
             ..self.clone()
         }
     }
@@ -119,6 +138,9 @@ impl GameEventType for EnterBattlefieldEvent {
         }
         if !self.enters_with_counters.is_empty() {
             desc.push_str(" with counters");
+        }
+        if self.enters_as_copy_of.is_some() {
+            desc.push_str(" as copy");
         }
         desc
     }

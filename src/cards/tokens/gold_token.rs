@@ -26,6 +26,7 @@ pub fn gold_token_definition() -> CardDefinition {
             activation_restrictions: vec![],
             mana_output: Some(vec![]),
             activation_condition: None,
+            mana_usage_restrictions: vec![],
         }),
         functional_zones: vec![Zone::Battlefield],
         text: Some("Sacrifice this token: Add one mana of any color.".to_string()),

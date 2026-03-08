@@ -144,10 +144,10 @@ impl GameEventType for ZoneChangeEvent {
 
     fn display(&self) -> String {
         if self.objects.len() == 1 {
-            format!("Move object from {:?} to {:?}", self.from, self.to)
+            format!("Move object from {} to {}", self.from, self.to)
         } else {
             format!(
-                "Move {} objects from {:?} to {:?}",
+                "Move {} objects from {} to {}",
                 self.objects.len(),
                 self.from,
                 self.to

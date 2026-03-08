@@ -31,6 +31,7 @@ pub fn ur_golems_eye() -> CardDefinition {
                 activation_restrictions: vec![],
                 mana_output: Some(vec![ManaSymbol::Colorless, ManaSymbol::Colorless]),
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Battlefield],
             text: Some("{T}: Add {C}{C}.".to_string()),

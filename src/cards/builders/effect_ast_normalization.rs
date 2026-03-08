@@ -10,6 +10,9 @@ fn normalize_effects_vec(effects: &mut Vec<EffectAst>) {
     for effect in effects.iter_mut() {
         normalize_nested_effects(effect);
     }
+    if let Some(rewritten) = rewrite_repeat_process(effects) {
+        *effects = rewritten;
+    }
     effects.retain(|effect| !is_noop_effect(effect));
 }
 
@@ -40,6 +43,7 @@ fn normalize_nested_effects(effect: &mut EffectAst) {
         | EffectAst::ForEachOpponentDid { effects, .. }
         | EffectAst::ForEachPlayerDid { effects, .. }
         | EffectAst::ForEachTaggedPlayer { effects, .. }
+        | EffectAst::RepeatProcess { effects, .. }
         | EffectAst::DelayedUntilNextEndStep { effects, .. }
         | EffectAst::DelayedUntilNextUpkeep { effects, .. }
         | EffectAst::DelayedUntilEndStepOfExtraTurn { effects, .. }
@@ -59,6 +63,37 @@ fn normalize_nested_effects(effect: &mut EffectAst) {
     }
 }
 
+fn rewrite_repeat_process(effects: &[EffectAst]) -> Option<Vec<EffectAst>> {
+    if effects.len() < 2 {
+        return None;
+    }
+
+    let last_index = effects.len() - 1;
+    let EffectAst::IfResult {
+        predicate,
+        effects: tail_effects,
+    } = &effects[last_index]
+    else {
+        return None;
+    };
+    if !matches!(tail_effects.last(), Some(EffectAst::RepeatThisProcess)) {
+        return None;
+    }
+
+    let continue_effect_index = last_index.saturating_sub(1);
+    let mut body = effects.to_vec();
+    let EffectAst::IfResult { effects, .. } = &mut body[last_index] else {
+        return None;
+    };
+    effects.pop();
+
+    Some(vec![EffectAst::RepeatProcess {
+        effects: body,
+        continue_effect_index,
+        continue_predicate: *predicate,
+    }])
+}
+
 fn is_noop_effect(effect: &EffectAst) -> bool {
     match effect {
         EffectAst::GrantAbilitiesAll { abilities, .. }
@@ -70,6 +105,7 @@ fn is_noop_effect(effect: &EffectAst) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::cards::builders::IfResultPredicate;
     use crate::cards::builders::{EffectAst, PlayerAst, normalize_effects_ast};
     use crate::effect::{Until, Value};
     use crate::filter::ObjectFilter;
@@ -108,5 +144,37 @@ mod tests {
         };
         assert_eq!(effects.len(), 1);
         assert!(matches!(effects[0], EffectAst::Draw { .. }));
+    }
+
+    #[test]
+    fn normalize_rewrites_repeat_this_process_tail_into_loop_effect() {
+        let effects = vec![
+            EffectAst::May {
+                effects: vec![EffectAst::Draw {
+                    count: Value::Fixed(1),
+                    player: PlayerAst::You,
+                }],
+            },
+            EffectAst::IfResult {
+                predicate: IfResultPredicate::Did,
+                effects: vec![
+                    EffectAst::GainLife {
+                        amount: Value::Fixed(1),
+                        player: PlayerAst::You,
+                    },
+                    EffectAst::RepeatThisProcess,
+                ],
+            },
+        ];
+
+        let normalized = normalize_effects_ast(&effects);
+        assert!(matches!(
+            normalized.as_slice(),
+            [EffectAst::RepeatProcess {
+                continue_effect_index: 0,
+                continue_predicate: IfResultPredicate::Did,
+                ..
+            }]
+        ));
     }
 }

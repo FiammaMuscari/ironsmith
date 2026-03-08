@@ -1,7 +1,11 @@
+import { useGame } from "@/context/GameContext";
+import { getPlayerAccent } from "@/lib/player-colors";
 import { cn } from "@/lib/utils";
 import ManaPool from "./ManaPool";
 
 export default function PlayerCard({ player, isActive, isPerspective }) {
+  const { state } = useGame();
+  const playerAccent = getPlayerAccent(state?.players || [], player?.id);
   const exileCards = Array.isArray(player.exile_cards) ? player.exile_cards : [];
   const commandCards = Array.isArray(player.command_cards) ? player.command_cards : [];
 
@@ -21,7 +25,9 @@ export default function PlayerCard({ player, isActive, isPerspective }) {
       data-player-id={player.id}
     >
       <div className="flex items-center gap-2 min-w-0">
-        <h2 className="text-[15px] font-bold m-0 truncate">{player.name}</h2>
+        <h2 className="text-[15px] font-bold m-0 truncate" style={{ color: playerAccent?.hex }}>
+          {player.name}
+        </h2>
         <ManaPool pool={player.mana_pool} />
       </div>
 

@@ -226,6 +226,30 @@ impl CardRegistry {
             requested_name_keys.contains(&normalize_card_lookup_name(name))
         });
 
+        for requested in &requested_names {
+            let normalized = requested.trim();
+            if normalized.is_empty() || self.get(normalized).is_some() {
+                continue;
+            }
+
+            let Some((resolved_name, parse_block)) =
+                generated_registry::generated_parser_card_parse_source(normalized)
+            else {
+                continue;
+            };
+
+            let Ok(definition) =
+                compile_generated_parser_card_allow_unsupported(&resolved_name, &parse_block)
+            else {
+                continue;
+            };
+
+            self.register(definition);
+            if !resolved_name.eq_ignore_ascii_case(normalized) {
+                self.register_alias(normalized, &resolved_name);
+            }
+        }
+
         #[cfg(test)]
         {
             // In test builds, prefer handwritten definitions for overlapping cards.
@@ -265,6 +289,11 @@ impl CardRegistry {
     /// Semantic fidelity score for a generated parser card name.
     pub fn generated_parser_semantic_score(name: &str) -> Option<f32> {
         generated_registry::generated_parser_semantic_score(name)
+    }
+
+    /// Source parse block for a generated parser card name.
+    pub fn generated_parser_card_parse_source(name: &str) -> Option<(String, String)> {
+        generated_registry::generated_parser_card_parse_source(name)
     }
 
     /// Precomputed counts of cards meeting each integer threshold from 1%..=100%.
@@ -508,6 +537,16 @@ impl CardRegistry {
     pub fn lands(&self) -> impl Iterator<Item = &CardDefinition> {
         self.cards.values().filter(|c| c.card.is_land())
     }
+}
+
+fn compile_generated_parser_card_allow_unsupported(
+    name: &str,
+    parse_block: &str,
+) -> Result<CardDefinition, String> {
+    let builder = CardDefinitionBuilder::new(CardId::new(), name);
+    builder
+        .parse_text_allow_unsupported(parse_block.to_string())
+        .map_err(|err| format!("{err:?}"))
 }
 
 #[cfg(test)]
@@ -831,6 +870,21 @@ mod tests {
         let mut registry = CardRegistry::new();
         registry.ensure_cards_loaded(["Conclave Evangelist"]);
         assert!(registry.get("Conclave Evangelist").is_some());
+    }
+
+    #[cfg(feature = "generated-registry")]
+    #[test]
+    fn generated_registry_includes_transform_and_adventure_front_faces() {
+        assert!(CardRegistry::generated_parser_card_parse_source("Jace, Vryn's Prodigy").is_some());
+        assert!(CardRegistry::generated_parser_card_parse_source("Brazen Borrower").is_some());
+    }
+
+    #[cfg(feature = "generated-registry")]
+    #[test]
+    fn ensure_cards_loaded_falls_back_to_allow_unsupported_generated_parse() {
+        let mut registry = CardRegistry::new();
+        registry.ensure_cards_loaded(["Sicarian Infiltrator"]);
+        assert!(registry.get("Sicarian Infiltrator").is_some());
     }
 
     #[test]

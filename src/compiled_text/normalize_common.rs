@@ -364,7 +364,7 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
         let supertypes = card
             .supertypes
             .iter()
-            .map(|supertype| format!("{supertype:?}").to_ascii_lowercase())
+            .map(|supertype| supertype.name().to_string())
             .collect::<Vec<_>>()
             .join(" ");
         if !supertypes.is_empty() {
@@ -416,12 +416,12 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
         let subtype_words_lower = card
             .subtypes
             .iter()
-            .map(|subtype| format!("{subtype:?}").to_ascii_lowercase())
+            .map(|subtype| subtype.to_string().to_ascii_lowercase())
             .collect::<Vec<_>>();
         let subtype_text = card
             .subtypes
             .iter()
-            .map(|subtype| format!("{subtype:?}"))
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>()
             .join(" ");
         let name_matches_any_subtype = subtype_words_lower.iter().any(|word| *word == name_lower);
@@ -453,7 +453,7 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
         parts.push(
             card.card_types
                 .iter()
-                .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
+                .map(|card_type| card_type.name().to_string())
                 .collect::<Vec<_>>()
                 .join(" "),
         );
@@ -1338,7 +1338,8 @@ fn normalize_singular_tagged_play_permission(line: &str) -> Option<String> {
                 "{prefix}you may {verb} that card until end of turn{remaining}"
             ));
         }
-        if let Some(remaining) = strip_prefix_ascii_ci(tail, " cards until the end of your next turn")
+        if let Some(remaining) =
+            strip_prefix_ascii_ci(tail, " cards until the end of your next turn")
         {
             return Some(format!(
                 "{prefix}you may {verb} that card until the end of your next turn{remaining}"
@@ -4808,9 +4809,15 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
                             }
                         }
                         (1, Some(2)) => format!("one or two target {plural}{random_suffix}"),
-                        (1, Some(3)) => format!("one, two, or three target {plural}{random_suffix}"),
+                        (1, Some(3)) => {
+                            format!("one, two, or three target {plural}{random_suffix}")
+                        }
                         (min, Some(max)) => {
-                            format!("{} to {} target {plural}{random_suffix}", count_text(min), count_text(max))
+                            format!(
+                                "{} to {} target {plural}{random_suffix}",
+                                count_text(min),
+                                count_text(max)
+                            )
                         }
                     }
                 } else {
@@ -4848,7 +4855,11 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
                             }
                         }
                         (min, Some(max)) => {
-                            format!("{} to {} {plural}{random_suffix}", count_text(min), count_text(max))
+                            format!(
+                                "{} to {} {plural}{random_suffix}",
+                                count_text(min),
+                                count_text(max)
+                            )
                         }
                     }
                 }
@@ -5169,11 +5180,11 @@ fn describe_choice_count(count: &ChoiceCount) -> String {
         "X".to_string()
     } else {
         match (count.min, count.max) {
-        (0, None) => "any number".to_string(),
-        (min, None) => format!("at least {min}"),
-        (0, Some(max)) => format!("up to {max}"),
-        (min, Some(max)) if min == max => format!("exactly {min}"),
-        (min, Some(max)) => format!("{min} to {max}"),
+            (0, None) => "any number".to_string(),
+            (min, None) => format!("at least {min}"),
+            (0, Some(max)) => format!("up to {max}"),
+            (min, Some(max)) if min == max => format!("exactly {min}"),
+            (min, Some(max)) => format!("{min} to {max}"),
         }
     };
     if count.is_random() {
@@ -5718,6 +5729,14 @@ pub(crate) fn describe_value(value: &Value) -> String {
             "half {} life total, rounded down",
             describe_possessive_player_filter(filter)
         ),
+        Value::HalfStartingLifeTotalRoundedUp(filter) => format!(
+            "half {} starting life total, rounded up",
+            describe_possessive_player_filter(filter)
+        ),
+        Value::HalfStartingLifeTotalRoundedDown(filter) => format!(
+            "half {} starting life total, rounded down",
+            describe_possessive_player_filter(filter)
+        ),
         Value::CardsInHand(filter) => format!(
             "the number of cards in {} hand",
             describe_possessive_player_filter(filter)
@@ -5815,7 +5834,7 @@ pub(crate) fn describe_value(value: &Value) -> String {
         Value::Devotion { player, color } => format!(
             "{} devotion to {}",
             describe_possessive_player_filter(player),
-            format!("{color:?}").to_ascii_lowercase()
+            color.name().to_string()
         ),
         Value::ColorsOfManaSpentToCastThisSpell => {
             "the number of colors of mana spent to cast this spell".to_string()
@@ -6188,6 +6207,9 @@ fn describe_apply_continuous_clauses(
     }
     for runtime in &effect.runtime_modifications {
         match runtime {
+            crate::effects::continuous::RuntimeModification::CopyOf(spec) => {
+                clauses.push(format!("becomes a copy of {}", describe_choose_spec(spec)));
+            }
             crate::effects::continuous::RuntimeModification::ModifyPowerToughness {
                 power,
                 toughness,
@@ -6219,7 +6241,9 @@ fn describe_apply_continuous_clauses(
     clauses
 }
 
-fn describe_apply_continuous_tail(effect: &crate::effects::ApplyContinuousEffect) -> Option<String> {
+fn describe_apply_continuous_tail(
+    effect: &crate::effects::ApplyContinuousEffect,
+) -> Option<String> {
     if let Some(condition) = &effect.condition
         && matches!(effect.until, Until::ThisLeavesTheBattlefield)
     {
@@ -6265,7 +6289,8 @@ fn describe_apply_continuous_animation_effect(
     target: &str,
     plural_target: bool,
 ) -> Option<String> {
-    let Some(crate::continuous::Modification::AddCardTypes(card_types)) = &effect.modification else {
+    let Some(crate::continuous::Modification::AddCardTypes(card_types)) = &effect.modification
+    else {
         return None;
     };
     if !card_types.contains(&CardType::Creature) || !effect.runtime_modifications.is_empty() {
@@ -6308,7 +6333,7 @@ fn describe_apply_continuous_animation_effect(
         descriptor.push(
             subtypes
                 .iter()
-                .map(|subtype| format!("{subtype:?}").to_ascii_lowercase())
+                .map(|subtype| subtype.to_string().to_ascii_lowercase())
                 .collect::<Vec<_>>()
                 .join(" "),
         );
@@ -6574,7 +6599,7 @@ fn describe_damage_filter(filter: &crate::prevention::DamageFilter) -> String {
     {
         let text = source_types
             .iter()
-            .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
+            .map(|card_type| card_type.name().to_string())
             .collect::<Vec<_>>()
             .join(" or ");
         parts.push(format!("from {text} sources"));
@@ -6584,7 +6609,7 @@ fn describe_damage_filter(filter: &crate::prevention::DamageFilter) -> String {
     {
         let text = source_colors
             .iter()
-            .map(|color| format!("{color:?}").to_ascii_lowercase())
+            .map(|color| color.name().to_string())
             .collect::<Vec<_>>()
             .join(" or ");
         parts.push(format!("from {text} sources"));
@@ -6612,6 +6637,20 @@ fn describe_prevention_target(target: &crate::prevention::PreventionTarget) -> &
 
 fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
     match restriction {
+        crate::effect::Restriction::AdditionalLandPlays(filter, count) => {
+            if *count == 1 {
+                format!(
+                    "{} may play an additional land",
+                    describe_player_set_filter(filter)
+                )
+            } else {
+                format!(
+                    "{} may play {} additional lands",
+                    describe_player_set_filter(filter),
+                    count
+                )
+            }
+        }
         crate::effect::Restriction::GainLife(filter) => {
             format!("{} can't gain life", describe_player_set_filter(filter))
         }
@@ -6901,6 +6940,13 @@ fn describe_player_relative_condition(condition: &Condition) -> Option<String> {
             let object_text = with_indefinite_article(&filter.description());
             Some(format!("{action} {object_text} this way"))
         }
+        Condition::PlayerTaggedObjectEnteredBattlefieldThisTurn { player, tag } => {
+            if *player != PlayerFilter::IteratedPlayer {
+                return None;
+            }
+            let action = tag_action_from_name(tag.as_str())?;
+            Some(format!("{action} it this way"))
+        }
         _ => None,
     }
 }
@@ -7120,8 +7166,57 @@ fn describe_condition(condition: &Condition) -> String {
                 subject
             )
         }
+        Condition::PlayerControlsMoreThanYou { player, filter } => {
+            let controller = describe_player_filter(player);
+            let mut described_filter = filter.clone();
+            if described_filter
+                .controller
+                .as_ref()
+                .is_some_and(|filter_controller| filter_controller == player)
+            {
+                described_filter.controller = None;
+            }
+            let mut subject = strip_indefinite_article(&described_filter.description()).to_string();
+            if !subject.ends_with('s') {
+                subject.push('s');
+            }
+            format!(
+                "{} {} more {} than you",
+                controller,
+                player_verb(&controller, "control", "controls"),
+                subject
+            )
+        }
+        Condition::PlayerLifeAtMostHalfStartingLifeTotal { player } => {
+            let subject = if *player == PlayerFilter::You {
+                "your".to_string()
+            } else {
+                format!("{}'s", describe_player_filter(player))
+            };
+            format!(
+                "{subject} life total is less than or equal to half {} starting life total",
+                describe_possessive_player_filter(player)
+            )
+        }
+        Condition::PlayerLifeLessThanHalfStartingLifeTotal { player } => {
+            let subject = if *player == PlayerFilter::You {
+                "your".to_string()
+            } else {
+                format!("{}'s", describe_player_filter(player))
+            };
+            format!(
+                "{subject} life total is less than half {} starting life total",
+                describe_possessive_player_filter(player)
+            )
+        }
         Condition::PlayerHasLessLifeThanYou { player } => {
             format!("{} has less life than you", describe_player_filter(player))
+        }
+        Condition::PlayerHasMoreLifeThanYou { player } => {
+            format!("{} has more life than you", describe_player_filter(player))
+        }
+        Condition::PlayerIsMonarch { player } => {
+            format!("{} is the monarch", describe_player_filter(player))
         }
         Condition::PlayerHasCitysBlessing { player } => {
             format!("{} has the city's blessing", describe_player_filter(player))
@@ -7137,6 +7232,12 @@ fn describe_condition(condition: &Condition) -> String {
                 "{} has {} or fewer cards in hand",
                 describe_player_filter(player),
                 count
+            )
+        }
+        Condition::PlayerHasMoreCardsInHandThanYou { player } => {
+            format!(
+                "{} has more cards in hand than you",
+                describe_player_filter(player)
             )
         }
         Condition::YouHaveCardInHandMatching(filter) => {
@@ -7221,6 +7322,7 @@ fn describe_condition(condition: &Condition) -> String {
             "enchanted creature attacked this turn".to_string()
         }
         Condition::SourceIsTapped => "this source is tapped".to_string(),
+        Condition::SourceIsSaddled => "this source is saddled".to_string(),
         Condition::SourceIsFaceDown => "this source is transformed".to_string(),
         Condition::SourceHasNoCounter(counter_type) => format!(
             "there are no {} counters on this source",
@@ -7396,6 +7498,17 @@ fn describe_condition(condition: &Condition) -> String {
                     describe_player_filter(player),
                     tag.as_str(),
                     filter.description()
+                )
+            }
+        }
+        Condition::PlayerTaggedObjectEnteredBattlefieldThisTurn { player, tag } => {
+            if let Some(action) = tag_action_from_name(tag.as_str()) {
+                format!("{} {} it this way", describe_player_filter(player), action)
+            } else {
+                format!(
+                    "{} had the tagged object '{}' enter the battlefield under their control this turn",
+                    describe_player_filter(player),
+                    tag.as_str()
                 )
             }
         }

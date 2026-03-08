@@ -111,7 +111,7 @@ impl TriggerMatcher for CounterPutOnTrigger {
                 CounterType::PlusOnePlusOne => "+1/+1".to_string(),
                 CounterType::MinusOneMinusOne => "-1/-1".to_string(),
                 CounterType::Named(name) => name.to_string(),
-                other => format!("{other:?}").to_ascii_lowercase(),
+                other => other.description().into_owned(),
             }
         }
 

@@ -331,6 +331,7 @@ impl TurnRunner {
 
                 // Sync game.combat
                 game.combat = Some(self.combat.clone());
+                game.turn.priority_player = Some(game.turn.active_player);
 
                 self.state = TurnState::DeclareBlockersPriority;
                 Ok(TurnAction::RunPriority)
@@ -404,7 +405,6 @@ impl TurnRunner {
                 game.turn.step = Some(Step::EndCombat);
                 game.turn.priority_player = Some(game.turn.active_player);
                 generate_and_queue_step_triggers(game, tq);
-                crate::combat_state::end_combat(&mut self.combat);
                 game.combat = Some(self.combat.clone());
 
                 self.state = TurnState::EndCombatPriority;
@@ -413,6 +413,8 @@ impl TurnRunner {
 
             TurnState::EndCombatPriority => {
                 game.empty_mana_pools();
+                crate::combat_state::end_combat(&mut self.combat);
+                game.combat = Some(self.combat.clone());
                 self.state = TurnState::NextMain;
                 Ok(TurnAction::Continue)
             }
@@ -803,11 +805,28 @@ fn check_first_strike(game: &GameState, combat: &CombatState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::card::{CardBuilder, PowerToughness};
+    use crate::combat_state::{AttackTarget, AttackerInfo};
     use crate::game_state::GameState;
+    use crate::ids::{CardId, PlayerId};
+    use crate::object::Object;
     use crate::triggers::TriggerQueue;
+    use crate::types::CardType;
+    use crate::zone::Zone;
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    fn create_battlefield_creature(game: &mut GameState, owner: PlayerId, name: &str) -> ObjectId {
+        let object_id = game.new_object_id();
+        let card = CardBuilder::new(CardId::from_raw(object_id.0 as u32), name)
+            .card_types(vec![CardType::Creature])
+            .power_toughness(PowerToughness::fixed(2, 2))
+            .build();
+        let object = Object::from_card(object_id, &card, owner, Zone::Battlefield);
+        game.add_object(object);
+        object_id
     }
 
     #[test]
@@ -876,6 +895,85 @@ mod tests {
         let action = runner.advance(&mut game, &mut tq).unwrap();
         assert!(matches!(action, TurnAction::RunPriority));
         assert!(matches!(runner.state(), TurnState::UpkeepPriority));
+    }
+
+    #[test]
+    fn test_declare_blockers_priority_starts_with_active_player() {
+        let mut game = setup_game();
+        let mut tq = TriggerQueue::new();
+        let mut runner = TurnRunner::new();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let attacker = create_battlefield_creature(&mut game, alice, "Priority Probe");
+
+        game.turn.phase = Phase::Combat;
+        game.turn.step = Some(Step::DeclareBlockers);
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(bob);
+
+        runner.state = TurnState::DeclareBlockersApply;
+        runner.combat.attackers.push(AttackerInfo {
+            creature: attacker,
+            target: AttackTarget::Player(bob),
+        });
+        runner.pending_blockers = Some((Vec::new(), bob));
+        runner.defending_player = Some(bob);
+        game.combat = Some(runner.combat.clone());
+
+        let action = runner.advance(&mut game, &mut tq).unwrap();
+
+        assert!(matches!(action, TurnAction::RunPriority));
+        assert!(matches!(runner.state(), TurnState::DeclareBlockersPriority));
+        assert_eq!(game.turn.priority_player, Some(alice));
+    }
+
+    #[test]
+    fn test_end_combat_keeps_attackers_through_priority_window() {
+        let mut game = setup_game();
+        let mut tq = TriggerQueue::new();
+        let mut runner = TurnRunner::new();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let attacker = create_battlefield_creature(&mut game, alice, "End Combat Probe");
+
+        game.turn.phase = Phase::Combat;
+        game.turn.step = Some(Step::CombatDamage);
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        runner.state = TurnState::EndCombat;
+        runner.combat.attackers.push(AttackerInfo {
+            creature: attacker,
+            target: AttackTarget::Player(bob),
+        });
+        game.combat = Some(runner.combat.clone());
+
+        let action = runner.advance(&mut game, &mut tq).unwrap();
+
+        assert!(matches!(action, TurnAction::RunPriority));
+        assert!(matches!(runner.state(), TurnState::EndCombatPriority));
+        assert_eq!(game.turn.step, Some(Step::EndCombat));
+        assert_eq!(
+            game.combat
+                .as_ref()
+                .expect("combat should remain active through end combat priority")
+                .attackers
+                .len(),
+            1
+        );
+
+        runner.priority_done();
+        let follow_up = runner.advance(&mut game, &mut tq).unwrap();
+
+        assert!(matches!(follow_up, TurnAction::Continue));
+        assert!(matches!(runner.state(), TurnState::NextMain));
+        assert!(
+            game.combat
+                .as_ref()
+                .expect("combat should still exist")
+                .attackers
+                .is_empty()
+        );
     }
 
     #[test]

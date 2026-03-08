@@ -45,10 +45,7 @@ impl StaticAbilityKind for CharacteristicDefiningPT {
                 describe_value(&self.power)
             )
         } else if matches!(self.toughness, Value::SourceToughness) {
-            format!(
-                "This creature's power is {}",
-                describe_value(&self.power)
-            )
+            format!("This creature's power is {}", describe_value(&self.power))
         } else {
             format!(
                 "This creature's power is {}, and its toughness is {}",
@@ -137,10 +134,7 @@ mod tests {
         let mut filter = ObjectFilter::land();
         filter.zone = Some(crate::zone::Zone::Graveyard);
         filter.owner = Some(PlayerFilter::You);
-        let ability = CharacteristicDefiningPT::new(
-            Value::Count(filter),
-            Value::SourceToughness,
-        );
+        let ability = CharacteristicDefiningPT::new(Value::Count(filter), Value::SourceToughness);
         assert_eq!(
             ability.display(),
             "This creature's power is the number of land cards in your graveyard"

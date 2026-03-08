@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn prevent_next_time_damage_matcher_does_not_match_unpreventable_damage() {
-        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
         let alice = PlayerId::from_index(0);
         let source = ObjectId::from_raw(10);
 

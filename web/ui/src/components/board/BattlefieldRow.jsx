@@ -1,7 +1,7 @@
 import { useRef, useLayoutEffect, useEffect, useCallback, useMemo, useState } from "react";
 import { Undo2 } from "lucide-react";
 import { useHover } from "@/context/HoverContext";
-import { useCombatArrows } from "@/context/CombatArrowContext";
+import { useCombatArrows } from "@/context/useCombatArrows";
 import { useGame } from "@/context/GameContext";
 import useNewCards from "@/hooks/useNewCards";
 import useLayoutReflow from "@/lib/motion/useLayoutReflow";
@@ -23,6 +23,8 @@ const ALL_PAPER_LANES = PAPER_ROW_GROUPS.flatMap((row) => row.lanes);
 const BOTTOM_BATTLEFIELD_SAFE_INSET = 60;
 const LIVE_DAMAGE_ANIMATION_MS = 300;
 const GHOST_BASE_ANIMATION_MS = 520;
+const MAX_BATTLEFIELD_CARD_ZONE_WIDTH_RATIO = 0.15;
+const BATTLEFIELD_GRID_GAP_PX = 8;
 
 function normalizeBattlefieldLane(lane) {
   const normalized = String(lane || "").toLowerCase();
@@ -426,7 +428,7 @@ export default function BattlefieldRow({
     if (width <= 0 || height <= 0) return;
 
     const aspect = 124 / 96;
-    const gap = 6;
+    const gap = BATTLEFIELD_GRID_GAP_PX;
     const minWidth = compact ? 30 : 44;
     const minHeight = compact ? 42 : 34;
     const effectiveHeight = Math.max(
@@ -488,6 +490,13 @@ export default function BattlefieldRow({
         best = { rows, cols, cardWidth, cardHeight };
       }
     }
+
+    const maxCardWidth = Math.max(22, Math.floor(width * MAX_BATTLEFIELD_CARD_ZONE_WIDTH_RATIO));
+    best = {
+      ...best,
+      cardWidth: Math.min(best.cardWidth, maxCardWidth),
+      cardHeight: Math.max(minHeight, Math.floor(Math.min(best.cardWidth, maxCardWidth) / aspect)),
+    };
 
     row.style.setProperty("--bf-cols", String(best.cols));
     row.style.setProperty("--bf-rows", String(best.rows));
@@ -727,6 +736,7 @@ export default function BattlefieldRow({
       ref={rowRef}
       className="battlefield-row relative grid gap-1.5 content-start justify-center min-h-0 h-full"
       style={{
+        gap: `${BATTLEFIELD_GRID_GAP_PX}px`,
         gridTemplateColumns: `repeat(var(--bf-cols, 1), minmax(0, calc(var(--bf-card-width, 124px) - var(--bf-card-overlap, 0px))))`,
         gridTemplateRows: isPaperBattlefieldLayout
           ? `repeat(var(--bf-rows, 1), var(--bf-card-height, 96px))`
@@ -817,7 +827,7 @@ export default function BattlefieldRow({
             card={card}
             compact={compact}
             className="battlefield-row-card"
-            isInspected={isInteractable && selectedObjectId === card.id}
+            isInspected={selectedObjectId != null && cardObjectIds.some((id) => String(id) === String(selectedObjectId))}
             isPlayable={isInteractable}
             glowKind={appliedGlowKind}
             isHovered={isAttackHoverTarget || isActionLinkedHover}

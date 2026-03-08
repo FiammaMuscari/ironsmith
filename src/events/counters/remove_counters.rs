@@ -81,7 +81,11 @@ impl GameEventType for RemoveCountersEvent {
     }
 
     fn display(&self) -> String {
-        format!("Remove {} {:?} counter(s)", self.count, self.counter_type)
+        format!(
+            "Remove {} {} counter(s)",
+            self.count,
+            self.counter_type.description()
+        )
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -110,6 +114,6 @@ mod tests {
     #[test]
     fn test_remove_counters_display() {
         let event = RemoveCountersEvent::new(ObjectId::from_raw(1), CounterType::Loyalty, 3);
-        assert_eq!(event.display(), "Remove 3 Loyalty counter(s)");
+        assert_eq!(event.display(), "Remove 3 loyalty counter(s)");
     }
 }

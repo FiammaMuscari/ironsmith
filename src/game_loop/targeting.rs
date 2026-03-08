@@ -408,16 +408,6 @@ fn resolve_modal_mode_counts(choose_mode: &crate::effects::ChooseModeEffect) -> 
     (min_modes, max_modes)
 }
 
-fn effect_mode_has_legal_targets(
-    game: &GameState,
-    mode: &crate::effect::EffectMode,
-    caster: PlayerId,
-    source_id: Option<ObjectId>,
-) -> bool {
-    let view = crate::derived_view::DerivedGameView::new(game);
-    effect_mode_has_legal_targets_with_view(game, mode, caster, source_id, &view)
-}
-
 fn effect_mode_has_legal_targets_with_view(
     game: &GameState,
     mode: &crate::effect::EffectMode,
@@ -437,24 +427,6 @@ fn effect_mode_has_legal_targets_with_view(
                 view,
             )
         })
-}
-
-fn choose_mode_has_legal_targets(
-    game: &GameState,
-    choose_mode: &crate::effects::ChooseModeEffect,
-    caster: PlayerId,
-    source_id: Option<ObjectId>,
-    chosen_modes: Option<&[usize]>,
-) -> bool {
-    let view = crate::derived_view::DerivedGameView::new(game);
-    choose_mode_has_legal_targets_with_view(
-        game,
-        choose_mode,
-        caster,
-        source_id,
-        chosen_modes,
-        &view,
-    )
 }
 
 fn choose_mode_has_legal_targets_with_view(
@@ -512,17 +484,6 @@ fn choose_mode_has_legal_targets_with_view(
     }
 }
 
-fn spell_effect_has_legal_targets(
-    game: &GameState,
-    effect: &Effect,
-    caster: PlayerId,
-    source_id: Option<ObjectId>,
-    chosen_modes: Option<&[usize]>,
-) -> bool {
-    let view = crate::derived_view::DerivedGameView::new(game);
-    spell_effect_has_legal_targets_with_view(game, effect, caster, source_id, chosen_modes, &view)
-}
-
 fn spell_effect_has_legal_targets_with_view(
     game: &GameState,
     effect: &Effect,
@@ -540,26 +501,6 @@ fn spell_effect_has_legal_targets_with_view(
         chosen_modes,
         &mut consumed_modal_selection,
         view,
-    )
-}
-
-fn spell_effect_has_legal_targets_internal(
-    game: &GameState,
-    effect: &Effect,
-    caster: PlayerId,
-    source_id: Option<ObjectId>,
-    chosen_modes: Option<&[usize]>,
-    consumed_modal_selection: &mut bool,
-) -> bool {
-    let view = crate::derived_view::DerivedGameView::new(game);
-    spell_effect_has_legal_targets_internal_with_view(
-        game,
-        effect,
-        caster,
-        source_id,
-        chosen_modes,
-        consumed_modal_selection,
-        &view,
     )
 }
 

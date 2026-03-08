@@ -96,7 +96,7 @@ impl EffectExecutor for BeholdEffect {
         if available < self.count {
             return Err(CostValidationError::Other(format!(
                 "Not enough {}s to behold ({} needed, {} available)",
-                format!("{:?}", self.subtype).to_ascii_lowercase(),
+                self.subtype.to_string().to_ascii_lowercase(),
                 self.count,
                 available
             )));
@@ -132,7 +132,7 @@ impl EffectExecutor for BeholdEffect {
         let chosen = if pool.len() == required {
             pool.clone()
         } else {
-            let subtype_name = format!("{:?}", self.subtype);
+            let subtype_name = self.subtype.to_string().to_ascii_lowercase();
             let spec = ChooseObjectsSpec::new(
                 ctx.source,
                 format!("Choose {} {} to behold", required, subtype_name),
@@ -147,7 +147,7 @@ impl EffectExecutor for BeholdEffect {
     }
 
     fn cost_description(&self) -> Option<String> {
-        let subtype_name = format!("{:?}", self.subtype);
+        let subtype_name = self.subtype.to_string().to_ascii_lowercase();
         if self.count == 1 {
             return Some(format!("Behold a {}", subtype_name));
         }

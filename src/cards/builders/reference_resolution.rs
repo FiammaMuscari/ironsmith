@@ -1,17 +1,24 @@
-use crate::cards::builders::effect_ast_traversal::{
-    for_each_nested_effects_mut, try_for_each_nested_effects_mut,
-};
+use crate::cards::builders::effect_ast_traversal::try_for_each_nested_effects_mut;
 use crate::cards::builders::{
     AnnotatedEffect, AnnotatedEffectSequence, CardTextError, EffectAst, IT_TAG, IdGenContext,
-    NewTargetRestrictionAst, ObjectRefAst, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
-    RefState, ReferenceEnv, ReferenceFrame, ReferenceImports, RetargetModeAst, TargetAst,
+    PlayerAst, RefState, ReferenceEnv, ReferenceFrame, ReferenceImports, TargetAst,
     choose_spec_targets_object, effect_references_event_derived_amount, effects_reference_it_tag,
     effects_reference_its_controller, infer_player_filter_from_object_filter, resolve_it_tag,
     resolve_non_target_player_filter, resolve_target_spec_with_choices,
 };
 use crate::effect::{EffectId, EventValueSpec};
 use crate::target::ObjectRef;
-use crate::{ChooseSpec, ObjectFilter, PlayerFilter, TagKey, Value};
+use crate::{ObjectFilter, PlayerFilter, Value};
+
+#[cfg(test)]
+use crate::cards::builders::effect_ast_traversal::for_each_nested_effects_mut;
+#[cfg(test)]
+use crate::cards::builders::{
+    NewTargetRestrictionAst, ObjectRefAst, PredicateAst, PreventNextTimeDamageSourceAst,
+    RetargetModeAst,
+};
+#[cfg(test)]
+use crate::{ChooseSpec, TagKey};
 
 #[cfg(test)]
 #[derive(Debug, Clone)]
@@ -82,16 +89,6 @@ pub(crate) fn annotate_effect_sequence(
     annotate_effect_sequence_with_env_internal(effects, env, config, &mut id_gen)
 }
 
-pub(crate) fn annotate_effect_sequence_from_env(
-    effects: &[EffectAst],
-    env: ReferenceEnv,
-    config: EffectReferenceResolutionConfig,
-    id_gen: IdGenContext,
-) -> Result<AnnotatedEffectSequence, CardTextError> {
-    let mut id_gen = id_gen;
-    annotate_effect_sequence_with_env_internal(effects, env, config, &mut id_gen)
-}
-
 fn lowering_reference_frame(frame: &ReferenceFrame) -> ReferenceEnv {
     ReferenceEnv::from_frame(frame)
 }
@@ -100,6 +97,26 @@ fn next_reference_tag(id_gen: &mut IdGenContext, prefix: &str) -> String {
     let tag = format!("{prefix}_{}", id_gen.next_tag_id);
     id_gen.next_tag_id += 1;
     tag
+}
+
+fn generated_object_result_tag_prefix(effect: &EffectAst) -> Option<&'static str> {
+    match effect {
+        EffectAst::Mill { .. } => Some("milled"),
+        EffectAst::Discover { .. } => Some("discovered"),
+        _ => None,
+    }
+}
+
+fn maybe_tag_generated_object_results(
+    effect: &EffectAst,
+    frame: &mut ReferenceFrame,
+    id_gen: &mut IdGenContext,
+) {
+    if frame.auto_tag_object_targets
+        && let Some(prefix) = generated_object_result_tag_prefix(effect)
+    {
+        frame.last_object_tag = Some(next_reference_tag(id_gen, prefix));
+    }
 }
 
 fn track_effect_player(
@@ -223,12 +240,11 @@ fn advance_reference_frame_for_effect(
         EffectAst::Draw { player, .. }
         | EffectAst::LoseLife { player, .. }
         | EffectAst::GainLife { player, .. }
-        | EffectAst::Mill { player, .. }
         | EffectAst::SetLifeTotal { player, .. }
+        | EffectAst::BecomeMonarch { player }
         | EffectAst::PoisonCounters { player, .. }
         | EffectAst::EnergyCounters { player, .. }
         | EffectAst::Scry { player, .. }
-        | EffectAst::Discover { player, .. }
         | EffectAst::Surveil { player, .. }
         | EffectAst::PayMana { player, .. }
         | EffectAst::PayEnergy { player, .. }
@@ -255,8 +271,16 @@ fn advance_reference_frame_for_effect(
         | EffectAst::ShuffleLibrary { player } => {
             track_effect_player(player.clone(), frame, true, true)?;
         }
+        EffectAst::Mill { player, .. } | EffectAst::Discover { player, .. } => {
+            track_effect_player(*player, frame, true, true)?;
+            maybe_tag_generated_object_results(effect, frame, id_gen);
+        }
         EffectAst::ChooseFromLookedCardsIntoHandRestIntoGraveyard { player, .. }
-        | EffectAst::ChooseFromLookedCardsIntoHandRestOnBottomOfLibrary { player, .. } => {
+        | EffectAst::ChooseFromLookedCardsIntoHandRestOnBottomOfLibrary { player, .. }
+        | EffectAst::ChooseFromLookedCardsOntoBattlefieldOrIntoHandRestOnBottomOfLibrary {
+            player,
+            ..
+        } => {
             track_effect_player(player.clone(), frame, true, true)?;
             frame.last_object_tag = Some(next_reference_tag(id_gen, "chosen"));
         }
@@ -344,7 +368,9 @@ fn advance_reference_frame_for_effect(
                 frame.last_object_tag = Some(next_reference_tag(id_gen, "returned"));
             }
         }
-        EffectAst::MoveToLibrarySecondFromTop { target } | EffectAst::MoveToZone { target, .. } => {
+        EffectAst::MoveToLibraryNthFromTop { target, .. }
+        | EffectAst::MoveToLibrarySecondFromTop { target }
+        | EffectAst::MoveToZone { target, .. } => {
             let refs = lowering_reference_frame(frame);
             let (spec, _) = resolve_target_spec_with_choices(&target, &refs)?;
             if frame.auto_tag_object_targets && choose_spec_targets_object(&spec) {
@@ -403,8 +429,8 @@ fn advance_reference_frame_for_effect(
             }
             .or_else(|| {
                 resolve_it_tag(filter, &refs)
-                .ok()
-                .and_then(|resolved| infer_player_filter_from_object_filter(&resolved))
+                    .ok()
+                    .and_then(|resolved| infer_player_filter_from_object_filter(&resolved))
             })
             .or_else(|| infer_player_filter_from_object_filter(filter))
             .or(chooser_filter)
@@ -412,6 +438,58 @@ fn advance_reference_frame_for_effect(
                 frame.last_player_filter = Some(player_filter);
             }
             frame.last_object_tag = Some(tag.as_str().to_string());
+        }
+        EffectAst::ChooseObjectsAcrossZones {
+            filter,
+            tag,
+            player,
+            ..
+        } => {
+            let references_revealed_hand = filter.zone == Some(crate::zone::Zone::Hand)
+                && filter.owner.is_none()
+                && filter.controller.is_none()
+                && filter.tagged_constraints.iter().any(|constraint| {
+                    constraint.tag.as_str() == IT_TAG
+                        && matches!(
+                            constraint.relation,
+                            crate::filter::TaggedOpbjectRelation::IsTaggedObject
+                        )
+                });
+            let refs = lowering_reference_frame(frame);
+            let chooser_filter = if matches!(player, PlayerAst::Implicit) {
+                None
+            } else {
+                Some(match player {
+                    PlayerAst::Target => PlayerFilter::target_player(),
+                    PlayerAst::TargetOpponent => {
+                        PlayerFilter::Target(Box::new(PlayerFilter::Opponent))
+                    }
+                    other => resolve_non_target_player_filter(*other, &refs)?,
+                })
+            };
+            if let Some(player_filter) = if references_revealed_hand {
+                frame.last_player_filter.clone()
+            } else {
+                None
+            }
+            .or_else(|| {
+                resolve_it_tag(filter, &refs)
+                    .ok()
+                    .and_then(|resolved| infer_player_filter_from_object_filter(&resolved))
+            })
+            .or_else(|| infer_player_filter_from_object_filter(filter))
+            .or(chooser_filter)
+            {
+                frame.last_player_filter = Some(player_filter);
+            }
+            frame.last_object_tag = Some(tag.as_str().to_string());
+        }
+        EffectAst::ChooseCardName { player, tag } => {
+            track_effect_player(*player, frame, true, true)?;
+            frame.last_object_tag = Some(tag.as_str().to_string());
+        }
+        EffectAst::DrawForEachTaggedMatching { player, .. } => {
+            track_effect_player(*player, frame, true, true)?;
         }
         EffectAst::SearchLibrary { player, .. } => {
             track_effect_player(player.clone(), frame, true, true)?;
@@ -440,10 +518,14 @@ fn advance_reference_frame_for_effect(
         EffectAst::CreateTokenWithMods {
             player,
             attached_to,
+            dynamic_power_toughness,
             ..
         } => {
             track_effect_player(player.clone(), frame, true, true)?;
-            if frame.auto_tag_object_targets || attached_to.is_some() {
+            if frame.auto_tag_object_targets
+                || attached_to.is_some()
+                || dynamic_power_toughness.is_some()
+            {
                 frame.last_object_tag = Some(next_reference_tag(id_gen, "created"));
             }
         }
@@ -596,6 +678,9 @@ fn advance_reference_frame_for_effect(
             };
             advance_effects_in_iterated_player_context(&effects, id_gen, frame, tagged_object)?;
         }
+        EffectAst::RepeatProcess { effects, .. } => {
+            advance_effects_preserving_last_effect(&effects, id_gen, frame)?;
+        }
         EffectAst::Fight { .. }
         | EffectAst::FightIterated { .. }
         | EffectAst::Clash { .. }
@@ -624,15 +709,18 @@ fn advance_reference_frame_for_effect(
         | EffectAst::BecomeBasicLandTypeChoice { .. }
         | EffectAst::BecomeCreatureTypeChoice { .. }
         | EffectAst::BecomeColorChoice { .. }
+        | EffectAst::BecomeCopy { .. }
         | EffectAst::ExileUntilMatchGrantPlayUntilEndOfTurn { .. }
         | EffectAst::ExileUntilMatchCast { .. }
         | EffectAst::Cant { .. }
         | EffectAst::PlayFromGraveyardUntilEot { .. }
+        | EffectAst::AdditionalLandPlays { .. }
         | EffectAst::GrantPlayTaggedUntilEndOfTurn { .. }
         | EffectAst::GrantTaggedSpellAlternativeCostPayLifeByManaValueUntilEndOfTurn { .. }
         | EffectAst::GrantPlayTaggedUntilYourNextTurn { .. }
         | EffectAst::CastTagged { .. }
         | EffectAst::ExileInsteadOfGraveyardThisTurn { .. }
+        | EffectAst::RepeatThisProcess
         | EffectAst::RevealTopChooseCardTypePutToHandRestBottom { .. }
         | EffectAst::PutRestOnBottomOfLibrary
         | EffectAst::UnlessPays { .. }
@@ -1205,6 +1293,7 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
         | EffectAst::Regenerate { target }
         | EffectAst::ReturnToHand { target, .. }
         | EffectAst::ReturnToBattlefield { target, .. }
+        | EffectAst::MoveToLibraryNthFromTop { target, .. }
         | EffectAst::MoveToLibrarySecondFromTop { target }
         | EffectAst::LookAtHand { target }
         | EffectAst::TargetOnly { target }
@@ -1306,6 +1395,10 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
         | EffectAst::MayByTaggedController { tag, .. }
         | EffectAst::ForEachTagged { tag, .. }
         | EffectAst::ForEachTaggedPlayer { tag, .. } => bind_unresolved_it_in_tag(tag, seed_tag),
+        EffectAst::DrawForEachTaggedMatching { tag, filter, .. } => {
+            bind_unresolved_it_in_tag(tag, seed_tag)
+                + bind_unresolved_it_in_filter(filter, seed_tag)
+        }
         EffectAst::ControlPlayer { player, .. }
         | EffectAst::ForEachPlayersFiltered { filter: player, .. } => {
             bind_unresolved_it_in_player_filter(player, seed_tag)
@@ -1349,11 +1442,20 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             bind_unresolved_it_in_filter(filter, seed_tag)
                 + bind_unresolved_it_in_tag(tag, seed_tag)
         }
+        EffectAst::ChooseObjectsAcrossZones { filter, tag, .. } => {
+            bind_unresolved_it_in_filter(filter, seed_tag)
+                + bind_unresolved_it_in_tag(tag, seed_tag)
+        }
+        EffectAst::ChooseCardName { tag, .. } => bind_unresolved_it_in_tag(tag, seed_tag),
         EffectAst::Sacrifice { filter, .. }
         | EffectAst::SacrificeAll { filter, .. }
         | EffectAst::ExchangeControl { filter, .. }
         | EffectAst::DestroyAllAttachedTo { filter, .. }
         | EffectAst::SearchLibrary { filter, .. } => bind_unresolved_it_in_filter(filter, seed_tag),
+        EffectAst::BecomeCopy { target, source, .. } => {
+            bind_unresolved_it_in_target(target, seed_tag)
+                + bind_unresolved_it_in_target(source, seed_tag)
+        }
         EffectAst::Discard { count, filter, .. } => {
             let mut replacements = bind_unresolved_it_in_value(count, seed_tag);
             if let Some(filter) = filter.as_mut() {
@@ -1383,10 +1485,18 @@ fn bind_unresolved_it_in_effect_fields(effect: &mut EffectAst, seed_tag: &TagKey
             bind_unresolved_it_in_target(source, seed_tag)
                 + bind_unresolved_it_in_value(count, seed_tag)
         }
+        EffectAst::RepeatThisProcess => 0,
         EffectAst::CreateTokenWithMods {
-            count, attached_to, ..
+            count,
+            dynamic_power_toughness,
+            attached_to,
+            ..
         } => {
             let mut replacements = bind_unresolved_it_in_value(count, seed_tag);
+            if let Some((power, toughness)) = dynamic_power_toughness.as_mut() {
+                replacements += bind_unresolved_it_in_value(power, seed_tag);
+                replacements += bind_unresolved_it_in_value(toughness, seed_tag);
+            }
             if let Some(target) = attached_to.as_mut() {
                 replacements += bind_unresolved_it_in_target(target, seed_tag);
             }

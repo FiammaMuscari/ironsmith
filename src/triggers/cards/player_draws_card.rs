@@ -3,8 +3,8 @@
 use crate::events::EventKind;
 use crate::events::other::CardsDrawnEvent;
 use crate::target::PlayerFilter;
-use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
+use crate::triggers::{TriggerEvent, describe_player_filter_subject};
 
 /// Trigger for "Whenever [player] draws a card" or "Whenever [player] draws one or more cards".
 ///
@@ -75,12 +75,11 @@ impl TriggerMatcher for PlayerDrawsCardTrigger {
         };
         match &self.player {
             PlayerFilter::You => format!("Whenever you {}", action),
-            PlayerFilter::Any => format!("Whenever a player {}", action),
-            PlayerFilter::Opponent => format!("Whenever an opponent {}", action),
-            PlayerFilter::Specific(_) | PlayerFilter::IteratedPlayer => {
-                format!("Whenever that player {}", action)
-            }
-            _ => format!("Whenever {:?} {}", self.player, action),
+            _ => format!(
+                "Whenever {} {}",
+                describe_player_filter_subject(&self.player),
+                action
+            ),
         }
     }
 }

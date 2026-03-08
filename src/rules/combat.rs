@@ -295,17 +295,6 @@ pub(crate) fn can_block_with_view(
     true
 }
 
-/// Check if protection prevents a creature from blocking.
-fn protection_prevents_blocking(
-    protection: &ProtectionFrom,
-    blocker: &Object,
-    attacker: &Object,
-    game: &crate::game_state::GameState,
-) -> bool {
-    let view = DerivedGameView::new(game);
-    protection_prevents_blocking_with_view(protection, blocker, attacker, game, &view)
-}
-
 fn protection_prevents_blocking_with_view(
     protection: &ProtectionFrom,
     blocker: &Object,
@@ -627,6 +616,7 @@ mod tests {
             base_power: Some(PtValue::Fixed(power)),
             base_toughness: Some(PtValue::Fixed(toughness)),
             base_loyalty: None,
+            base_defense: None,
             abilities: vec![],
             counters: HashMap::new(),
             attached_to: None,

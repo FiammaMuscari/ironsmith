@@ -354,7 +354,8 @@ fn regression_semantic_mismatch_drag_the_canal_conditional_branch_scope() {
     );
 
     assert!(
-        rendered.contains("if a creature died this turn, you gain 2 life, surveil 2, then investigate"),
+        rendered
+            .contains("if a creature died this turn, you gain 2 life, surveil 2, then investigate"),
         "expected the conditional to cover gain life, surveil, and investigate, got {rendered}"
     );
 }
@@ -404,7 +405,8 @@ fn regression_semantic_mismatch_chandra_flamecaller_loyalty_lines() {
         "expected +1 loyalty ability to remain an activated line, got {rendered}"
     );
     assert!(
-        rendered.contains("0: Discard all the cards in your hand, then draw that many cards plus one."),
+        rendered
+            .contains("0: Discard all the cards in your hand, then draw that many cards plus one."),
         "expected 0 loyalty ability to remain an activated line, got {rendered}"
     );
     assert!(
@@ -575,7 +577,10 @@ fn regression_semantic_mismatch_grief_reveal_choose_discard_chain() {
         &[CardType::Creature],
     );
 
-    assert!(rendered.contains("menace"), "expected menace to remain, got {rendered}");
+    assert!(
+        rendered.contains("menace"),
+        "expected menace to remain, got {rendered}"
+    );
     assert!(
         rendered.contains("target opponent reveals their hand"),
         "expected opponent hand reveal to remain, got {rendered}"
@@ -681,7 +686,8 @@ fn regression_semantic_mismatch_eight_and_a_half_tails_set_white() {
     );
 
     assert!(
-        rendered.contains("target permanent you control gains protection from white until end of turn"),
+        rendered
+            .contains("target permanent you control gains protection from white until end of turn"),
         "expected protection ability to remain, got {rendered}"
     );
     assert!(
@@ -699,7 +705,9 @@ fn regression_semantic_mismatch_vraskas_scorn_library_and_or_graveyard() {
     );
 
     assert!(
-        rendered.contains("search your library and/or graveyard for a card named vraska scheming gorgon"),
+        rendered.contains(
+            "search your library and/or graveyard for a card named vraska scheming gorgon"
+        ),
         "expected combined library/graveyard search clause to remain, got {rendered}"
     );
     assert!(
@@ -1408,8 +1416,7 @@ fn regression_semantic_mismatch_glinting_creeper_converge_multiplier() {
     );
 
     assert!(
-        rendered.contains("twice the number of")
-            && rendered.contains("+1/+1 counters on it"),
+        rendered.contains("twice the number of") && rendered.contains("+1/+1 counters on it"),
         "expected converge multiplier to preserve the printed two-per-color scaling, got {rendered}"
     );
     assert!(
@@ -1438,8 +1445,7 @@ fn regression_semantic_mismatch_silas_renn_cast_not_play_from_graveyard() {
         "expected graveyard permission to remain a cast-only permission on the chosen card, got {rendered}"
     );
     assert!(
-        !rendered.contains("may play")
-            && !rendered.contains("tagged 'targeted_0'"),
+        !rendered.contains("may play") && !rendered.contains("tagged 'targeted_0'"),
         "graveyard cast permission should not degrade into play-or-tag scaffolding, got {rendered}"
     );
 
@@ -1484,8 +1490,7 @@ fn regression_semantic_mismatch_brandywine_farmer_enters_or_leaves() {
 
 #[test]
 fn regression_semantic_mismatch_joint_assault_paired_condition() {
-    let text =
-        "Target creature gets +2/+2 until end of turn. If it's paired with a creature, that creature also gets +2/+2 until end of turn.";
+    let text = "Target creature gets +2/+2 until end of turn. If it's paired with a creature, that creature also gets +2/+2 until end of turn.";
     let def = CardDefinitionBuilder::new(CardId::new(), "Joint Assault")
         .parse_text(text)
         .expect("Joint Assault should parse");
@@ -1503,8 +1508,7 @@ fn regression_semantic_mismatch_joint_assault_paired_condition() {
 
     let debug = format!("{def:#?}").to_ascii_lowercase();
     assert!(
-        debug.contains("taggedobjectissoulbondpaired")
-            || debug.contains("targetissoulbondpaired"),
+        debug.contains("taggedobjectissoulbondpaired") || debug.contains("targetissoulbondpaired"),
         "expected lowered predicate to use a soulbond-paired condition, got {debug}"
     );
 }
@@ -1560,8 +1564,7 @@ fn regression_semantic_mismatch_flare_of_faith_human_branch_targets_creature() {
 
 #[test]
 fn regression_semantic_mismatch_cinderheart_giant_keeps_random_choice() {
-    let text =
-        "Trample\nWhen this creature dies, it deals 7 damage to a creature an opponent controls chosen at random.";
+    let text = "Trample\nWhen this creature dies, it deals 7 damage to a creature an opponent controls chosen at random.";
     let def = CardDefinitionBuilder::new(CardId::new(), "Cinderheart Giant")
         .parse_text(text)
         .expect("Cinderheart Giant should parse");

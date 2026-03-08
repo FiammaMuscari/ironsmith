@@ -3,8 +3,8 @@
 use crate::events::EventKind;
 use crate::ids::PlayerId;
 use crate::target::PlayerFilter;
-use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
+use crate::triggers::{TriggerEvent, describe_player_filter_possessive};
 
 /// Trigger that fires at the beginning of a player's upkeep step.
 ///
@@ -58,7 +58,10 @@ impl TriggerMatcher for BeginningOfUpkeepTrigger {
             {
                 "At the beginning of the upkeep of equipped creature's controller".to_string()
             }
-            _ => format!("At the beginning of {:?}'s upkeep", self.player),
+            _ => format!(
+                "At the beginning of {} upkeep",
+                describe_player_filter_possessive(&self.player)
+            ),
         }
     }
 }

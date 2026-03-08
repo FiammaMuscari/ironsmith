@@ -14,6 +14,42 @@ use crate::{
     Zone,
 };
 
+const SENTENCE_HELPER_TAG_PREFIX: &str = "__sentence_helper_";
+
+pub(crate) fn helper_tag_for_tokens(tokens: &[Token], prefix: &str) -> TagKey {
+    let span = match (tokens.first(), tokens.last()) {
+        (Some(first), Some(last)) => {
+            let first_span = first.span();
+            let last_span = last.span();
+            TextSpan {
+                line: first_span.line,
+                start: first_span.start,
+                end: last_span.end,
+            }
+        }
+        _ => TextSpan {
+            line: 0,
+            start: 0,
+            end: 0,
+        },
+    };
+
+    TagKey::from(format!(
+        "{SENTENCE_HELPER_TAG_PREFIX}{prefix}_l{}_s{}_e{}",
+        span.line, span.start, span.end
+    ))
+}
+
+pub(crate) fn is_sentence_helper_tag(tag: &str, prefix: &str) -> bool {
+    let Some(rest) = tag.strip_prefix(SENTENCE_HELPER_TAG_PREFIX) else {
+        return tag
+            .strip_prefix(&format!("{prefix}_"))
+            .is_some_and(|suffix| suffix.chars().all(|ch| ch.is_ascii_digit()));
+    };
+    rest.strip_prefix(prefix)
+        .is_some_and(|suffix| suffix.starts_with("_l"))
+}
+
 pub(crate) fn parse_card_type(word: &str) -> Option<CardType> {
     match word {
         "creature" | "creatures" => Some(CardType::Creature),
@@ -50,7 +86,16 @@ pub(crate) fn parse_non_subtype(word: &str) -> Option<Subtype> {
 }
 
 pub(crate) fn parse_subtype_flexible(word: &str) -> Option<Subtype> {
-    parse_subtype_word(word).or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
+    parse_subtype_word(word)
+        .or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
+        .or_else(|| {
+            word.strip_suffix("ves")
+                .and_then(|stem| parse_subtype_word(&format!("{stem}f")))
+        })
+        .or_else(|| {
+            word.strip_suffix("ves")
+                .and_then(|stem| parse_subtype_word(&format!("{stem}fe")))
+        })
 }
 
 pub(crate) fn is_outlaw_word(word: &str) -> bool {
@@ -291,7 +336,11 @@ pub(crate) fn parse_filter_counter_constraint_words(
         .iter()
         .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
         .collect::<Vec<_>>();
-    let counter_type = parse_counter_type_from_tokens(&descriptor_tokens)?;
+    let counter_type = if descriptor_tokens.len() == 1 {
+        parse_counter_type_word(descriptor_words[0])?
+    } else {
+        parse_counter_type_from_tokens(&descriptor_tokens)?
+    };
     Some((
         crate::filter::CounterConstraint::Typed(counter_type),
         consumed,
@@ -476,24 +525,40 @@ fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usize)> {
         && filter_words.contains(&"turn")
     {
         let suffix_patterns: &[(&[&str], PlayerFilter)] = &[
-            (&["theyve", "cast", "this", "turn"], PlayerFilter::IteratedPlayer),
-            (&["they", "cast", "this", "turn"], PlayerFilter::IteratedPlayer),
+            (
+                &["theyve", "cast", "this", "turn"],
+                PlayerFilter::IteratedPlayer,
+            ),
+            (
+                &["they", "cast", "this", "turn"],
+                PlayerFilter::IteratedPlayer,
+            ),
             (
                 &["that", "player", "cast", "this", "turn"],
                 PlayerFilter::IteratedPlayer,
             ),
             (&["youve", "cast", "this", "turn"], PlayerFilter::You),
             (&["you", "cast", "this", "turn"], PlayerFilter::You),
-            (&["an", "opponent", "has", "cast", "this", "turn"], PlayerFilter::Opponent),
-            (&["opponent", "has", "cast", "this", "turn"], PlayerFilter::Opponent),
-            (&["opponents", "have", "cast", "this", "turn"], PlayerFilter::Opponent),
+            (
+                &["an", "opponent", "has", "cast", "this", "turn"],
+                PlayerFilter::Opponent,
+            ),
+            (
+                &["opponent", "has", "cast", "this", "turn"],
+                PlayerFilter::Opponent,
+            ),
+            (
+                &["opponents", "have", "cast", "this", "turn"],
+                PlayerFilter::Opponent,
+            ),
             (&["cast", "this", "turn"], PlayerFilter::Any),
         ];
         for (suffix, player) in suffix_patterns {
             if !filter_words.ends_with(suffix) {
                 continue;
             }
-            let count_filter_tokens = filter_words[..filter_words.len().saturating_sub(suffix.len())]
+            let count_filter_tokens = filter_words
+                [..filter_words.len().saturating_sub(suffix.len())]
                 .iter()
                 .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
                 .collect::<Vec<_>>();

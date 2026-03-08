@@ -7,12 +7,13 @@ use crate::cards::builders::effect_ast_traversal::{
 use crate::cards::builders::parse_parsing::effects_clauses::{
     find_verb, looks_like_pt_word, parse_add_mana, parse_counter_type_from_tokens,
     parse_filter_comparison_tokens, parse_next_end_step_token_delay_flags,
+    value_contains_unbound_x,
 };
 use crate::cards::builders::parse_parsing::effects_sentences::{
     is_beginning_of_end_step_words, is_end_of_combat_words, is_negated_untap_clause,
     parse_effect_sentence, parse_mana_symbol, parse_mana_symbol_group, parse_restriction_duration,
-    parse_scryfall_mana_cost, parse_subtype_word, parse_supertype_word, strip_leading_articles,
-    trim_edge_punctuation,
+    parse_scryfall_mana_cost, parse_subtype_word, parse_supertype_word,
+    replace_unbound_x_in_effect_anywhere, strip_leading_articles, trim_edge_punctuation,
 };
 use crate::cards::builders::parse_parsing::keyword_static::{
     parse_add_mana_equal_amount_value, parse_cost_modifier_amount,
@@ -33,14 +34,11 @@ use crate::cards::builders::parse_parsing::targets::{
 };
 use crate::cards::builders::{
     CardTextError, DamageBySpec, EffectAst, IT_TAG, KeywordAction, LineAst, ParsedAbility,
-    PlayerAst, PredicateAst, ReferenceImports, ReturnControllerAst, SubjectAst, TagKey, TargetAst,
-    TextSpan, Token, TriggerSpec, ends_with_until_end_of_turn, find_activation_cost_start,
-    is_article, is_source_reference_words, keyword_action_to_static_ability, parse_ability_line,
-    parse_card_type, parse_color, parse_counter_type_word, parse_effect_chain, parse_effect_clause,
-    parse_effect_sentences, parse_keyword_mechanic_clause, parse_object_filter, parse_predicate,
-    parse_static_ability_ast_line, parse_subject, parse_target_phrase, parse_value,
-    parse_where_x_value_clause, span_from_tokens, split_on_or, split_on_period,
-    starts_with_until_end_of_turn, token_index_for_word_index, tokenize_line, trim_commas, words,
+    PlayerAst, ReferenceImports, ReturnControllerAst, TagKey, TargetAst, TextSpan, Token,
+    TriggerSpec, find_activation_cost_start, is_article, is_source_reference_words,
+    parse_card_type, parse_color, parse_effect_sentences, parse_object_filter, parse_target_phrase,
+    parse_where_x_value_clause, span_from_tokens, split_on_period, token_index_for_word_index,
+    trim_commas, words,
 };
 use crate::color::ColorSet;
 use crate::cost::{OptionalCost, TotalCost};
@@ -50,7 +48,7 @@ use crate::mana::{ManaCost, ManaSymbol};
 use crate::object::CounterType;
 use crate::static_abilities::StaticAbility;
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
-use crate::types::{CardType, Subtype, Supertype};
+use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
 
 pub(crate) fn parse_activated_line(
@@ -102,6 +100,7 @@ pub(crate) fn parse_activated_line_with_raw(
     let mut timing = ActivationTiming::AnyTime;
     let mut mana_activation_condition: Option<crate::ConditionExpr> = None;
     let mut additional_activation_restrictions: Vec<String> = Vec::new();
+    let mut mana_usage_restrictions = Vec::new();
     effect_sentences.retain(|sentence| {
         if is_activate_only_restriction_sentence(sentence) {
             if let Some(parsed_timing) = parse_activate_only_timing(sentence) {
@@ -119,7 +118,11 @@ pub(crate) fn parse_activated_line_with_raw(
             return false;
         }
         if is_spend_mana_restriction_sentence(sentence) {
-            additional_activation_restrictions.push(words(sentence).join(" "));
+            if let Some(restriction) = parse_mana_usage_restriction_sentence(sentence) {
+                mana_usage_restrictions.push(restriction);
+            } else {
+                additional_activation_restrictions.push(words(sentence).join(" "));
+            }
             return false;
         }
         if is_any_player_may_activate_sentence(sentence) {
@@ -135,6 +138,7 @@ pub(crate) fn parse_activated_line_with_raw(
         combine_mana_activation_condition(mana_activation_condition, timing.clone());
     if !effect_sentences.is_empty() {
         let primary_sentence = &effect_sentences[0];
+        let x_defined_by_cost = activation_cost_mentions_x(cost_tokens);
         let effect_words = words(primary_sentence);
         let is_primary_add_clause = matches!(
             effect_words.as_slice(),
@@ -215,23 +219,35 @@ pub(crate) fn parse_activated_line_with_raw(
             } else {
                 ActivationTiming::AnyTime
             };
-            let loyalty_restrictions = loyalty_additional_restrictions(loyalty_shorthand_cost.is_some());
+            let loyalty_restrictions =
+                loyalty_additional_restrictions(loyalty_shorthand_cost.is_some());
+            let build_additional_restrictions = || {
+                let mut restrictions = loyalty_restrictions.clone();
+                restrictions.extend(additional_activation_restrictions.clone());
+                restrictions
+            };
             if has_imprinted_colors
                 || has_any_choice_mana
                 || uses_commander_identity
                 || has_chosen_color
             {
-                let mana_ast = parse_add_mana(mana_tokens, None)?;
+                let mut mana_ast = parse_add_mana(mana_tokens, None)?;
+                resolve_activated_mana_x_requirements(
+                    &mut mana_ast,
+                    primary_sentence,
+                    x_defined_by_cost,
+                )?;
                 let mut ability = Ability {
                     kind: AbilityKind::Activated(ActivatedAbility {
                         mana_cost,
                         effects: vec![],
                         choices: vec![],
                         timing: loyalty_timing.clone(),
-                        additional_restrictions: loyalty_restrictions.clone(),
+                        additional_restrictions: build_additional_restrictions(),
                         activation_restrictions: vec![],
                         mana_output: Some(vec![]),
                         activation_condition: mana_activation_condition.clone(),
+                        mana_usage_restrictions: mana_usage_restrictions.clone(),
                     }),
                     functional_zones: functional_zones.clone(),
                     text: None,
@@ -248,17 +264,23 @@ pub(crate) fn parse_activated_line_with_raw(
             }
 
             if has_or_choice_mana && !extra_effects_ast.is_empty() {
-                let mana_ast = parse_add_mana(mana_tokens, None)?;
+                let mut mana_ast = parse_add_mana(mana_tokens, None)?;
+                resolve_activated_mana_x_requirements(
+                    &mut mana_ast,
+                    primary_sentence,
+                    x_defined_by_cost,
+                )?;
                 let mut ability = Ability {
                     kind: AbilityKind::Activated(ActivatedAbility {
                         mana_cost,
                         effects: vec![],
                         choices: vec![],
                         timing: loyalty_timing.clone(),
-                        additional_restrictions: loyalty_restrictions.clone(),
+                        additional_restrictions: build_additional_restrictions(),
                         activation_restrictions: vec![],
                         mana_output: Some(vec![]),
                         activation_condition: mana_activation_condition.clone(),
+                        mana_usage_restrictions: mana_usage_restrictions.clone(),
                     }),
                     functional_zones: functional_zones.clone(),
                     text: None,
@@ -295,10 +317,11 @@ pub(crate) fn parse_activated_line_with_raw(
                             effects: vec![],
                             choices: vec![],
                             timing: loyalty_timing.clone(),
-                            additional_restrictions: loyalty_restrictions.clone(),
+                            additional_restrictions: build_additional_restrictions(),
                             activation_restrictions: vec![],
                             mana_output: Some(mana),
                             activation_condition: mana_activation_condition.clone(),
+                            mana_usage_restrictions: mana_usage_restrictions.clone(),
                         }),
                         functional_zones: functional_zones.clone(),
                         text: None,
@@ -311,17 +334,23 @@ pub(crate) fn parse_activated_line_with_raw(
                         trigger_spec: None,
                     }));
                 }
-                let mana_ast = parse_add_mana(mana_tokens, None)?;
+                let mut mana_ast = parse_add_mana(mana_tokens, None)?;
+                resolve_activated_mana_x_requirements(
+                    &mut mana_ast,
+                    primary_sentence,
+                    x_defined_by_cost,
+                )?;
                 let mut ability = Ability {
                     kind: AbilityKind::Activated(ActivatedAbility {
                         mana_cost,
                         effects: vec![],
                         choices: vec![],
                         timing: loyalty_timing,
-                        additional_restrictions: loyalty_restrictions,
+                        additional_restrictions: build_additional_restrictions(),
                         activation_restrictions: vec![],
                         mana_output: Some(vec![]),
                         activation_condition: mana_activation_condition.clone(),
+                        mana_usage_restrictions: mana_usage_restrictions.clone(),
                     }),
                     functional_zones: functional_zones.clone(),
                     text: None,
@@ -381,6 +410,7 @@ pub(crate) fn parse_activated_line_with_raw(
                     activation_restrictions: vec![],
                     mana_output: None,
                     activation_condition: None,
+                    mana_usage_restrictions,
                 }),
                 functional_zones,
                 text: None,
@@ -392,6 +422,82 @@ pub(crate) fn parse_activated_line_with_raw(
         reference_imports,
         trigger_spec: None,
     }))
+}
+
+fn activation_cost_mentions_x(tokens: &[Token]) -> bool {
+    tokens.iter().filter_map(Token::as_word).any(|word| {
+        matches!(word, "x" | "+x" | "-x")
+            || word
+                .split('/')
+                .any(|part| matches!(part, "x" | "+x" | "-x"))
+    })
+}
+
+fn resolve_activated_mana_x_requirements(
+    effect: &mut EffectAst,
+    sentence_tokens: &[Token],
+    x_defined_by_cost: bool,
+) -> Result<(), CardTextError> {
+    let clause_words = words(sentence_tokens);
+    if let Some(where_idx) = clause_words
+        .windows(3)
+        .position(|window| window == ["where", "x", "is"])
+    {
+        let clause = clause_words.join(" ");
+        let where_token_idx =
+            token_index_for_word_index(sentence_tokens, where_idx).ok_or_else(|| {
+                CardTextError::ParseError(format!(
+                    "unable to map where-x clause in mana ability (clause: '{clause}')"
+                ))
+            })?;
+        let where_tokens = &sentence_tokens[where_token_idx..];
+        let where_value = parse_where_x_value_clause(where_tokens).ok_or_else(|| {
+            CardTextError::ParseError(format!(
+                "unsupported where-x clause in mana ability (clause: '{clause}')"
+            ))
+        })?;
+        replace_unbound_x_in_effect_anywhere(effect, &where_value, &clause)?;
+    }
+
+    let x_defined_by_removed_this_way = clause_words
+        .windows(2)
+        .any(|window| window == ["this", "way"])
+        && clause_words.contains(&"removed")
+        && clause_words
+            .iter()
+            .any(|word| matches!(*word, "counter" | "counters"));
+
+    if mana_effect_contains_unbound_x(effect)
+        && !x_defined_by_cost
+        && !x_defined_by_removed_this_way
+    {
+        return Err(CardTextError::ParseError(format!(
+            "unresolved X in mana ability without an X activation cost or where-x definition (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
+
+    Ok(())
+}
+
+fn mana_effect_contains_unbound_x(effect: &EffectAst) -> bool {
+    match effect {
+        EffectAst::AddManaScaled { amount, .. }
+        | EffectAst::AddManaAnyColor { amount, .. }
+        | EffectAst::AddManaAnyOneColor { amount, .. }
+        | EffectAst::AddManaChosenColor { amount, .. }
+        | EffectAst::AddManaFromLandCouldProduce { amount, .. }
+        | EffectAst::AddManaCommanderIdentity { amount, .. } => value_contains_unbound_x(amount),
+        _ => {
+            let mut contains_unbound_x = false;
+            for_each_nested_effects(effect, true, |nested| {
+                if nested.iter().any(mana_effect_contains_unbound_x) {
+                    contains_unbound_x = true;
+                }
+            });
+            contains_unbound_x
+        }
+    }
 }
 
 pub(crate) fn parse_loyalty_shorthand_activation_cost(
@@ -408,7 +514,10 @@ pub(crate) fn parse_loyalty_shorthand_activation_cost(
         return Some(if amount == 0 {
             TotalCost::free()
         } else {
-            TotalCost::from_cost(crate::costs::Cost::add_counters(CounterType::Loyalty, amount))
+            TotalCost::from_cost(crate::costs::Cost::add_counters(
+                CounterType::Loyalty,
+                amount,
+            ))
         });
     }
     if let Some(rest) = word.strip_prefix('-') {
@@ -434,9 +543,7 @@ pub(crate) fn parse_loyalty_shorthand_activation_cost(
     None
 }
 
-pub(crate) fn loyalty_additional_restrictions(
-    is_loyalty_shorthand: bool,
-) -> Vec<String> {
+pub(crate) fn loyalty_additional_restrictions(is_loyalty_shorthand: bool) -> Vec<String> {
     if !is_loyalty_shorthand {
         return Vec::new();
     }
@@ -618,6 +725,67 @@ pub(crate) fn is_spend_mana_restriction_sentence(tokens: &[Token]) -> bool {
         || words.starts_with(&["spend", "that", "mana", "only"])
 }
 
+pub(crate) fn parse_mana_usage_restriction_sentence(
+    tokens: &[Token],
+) -> Option<crate::ability::ManaUsageRestriction> {
+    let words = words(tokens);
+    if !(words.starts_with(&["spend", "this", "mana", "only", "to", "cast"])
+        || words.starts_with(&["spend", "that", "mana", "only", "to", "cast"]))
+    {
+        return None;
+    }
+
+    let spell_idx = words
+        .iter()
+        .position(|word| matches!(*word, "spell" | "spells"))?;
+    let spec_words = &words[6..spell_idx];
+    if spec_words.is_empty() {
+        return None;
+    }
+
+    let mut idx = 0usize;
+    if matches!(spec_words.first().copied(), Some("a" | "an")) {
+        idx += 1;
+    }
+
+    let card_type = match spec_words.get(idx).copied()? {
+        "artifact" => crate::types::CardType::Artifact,
+        "battle" => crate::types::CardType::Battle,
+        "creature" => crate::types::CardType::Creature,
+        "enchantment" => crate::types::CardType::Enchantment,
+        "instant" => crate::types::CardType::Instant,
+        "land" => crate::types::CardType::Land,
+        "planeswalker" => crate::types::CardType::Planeswalker,
+        "sorcery" => crate::types::CardType::Sorcery,
+        _ => return None,
+    };
+    idx += 1;
+
+    if idx != spec_words.len() {
+        return None;
+    }
+
+    let mut tail = words.get(spell_idx + 1..).unwrap_or_default();
+    let subtype_requirement = if tail.starts_with(&["of", "the", "chosen", "type"]) {
+        tail = &tail[4..];
+        Some(crate::ability::ManaUsageSubtypeRequirement::ChosenTypeOfSource)
+    } else {
+        None
+    };
+
+    let grant_uncounterable = tail == ["and", "that", "spell", "can't", "be", "countered"]
+        || tail == ["and", "that", "spell", "cant", "be", "countered"];
+    if !grant_uncounterable && !tail.is_empty() {
+        return None;
+    }
+
+    Some(crate::ability::ManaUsageRestriction::CastSpell {
+        card_types: vec![card_type],
+        subtype_requirement,
+        grant_uncounterable,
+    })
+}
+
 pub(crate) fn is_any_player_may_activate_sentence(tokens: &[Token]) -> bool {
     let words = words(tokens);
     words.as_slice() == ["any", "player", "may", "activate", "this", "ability"]
@@ -700,6 +868,7 @@ pub(crate) fn parse_level_up_line(
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Battlefield],
             text: Some(level_up_text),
@@ -809,6 +978,7 @@ pub(crate) fn parse_cycling_line(tokens: &[Token]) -> Result<Option<ParsedAbilit
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Hand],
             text: Some(render_text),
@@ -817,6 +987,121 @@ pub(crate) fn parse_cycling_line(tokens: &[Token]) -> Result<Option<ParsedAbilit
         reference_imports: ReferenceImports::default(),
         trigger_spec: None,
     }))
+}
+
+pub(crate) fn parse_transmute_line(
+    tokens: &[Token],
+) -> Result<Option<ParsedAbility>, CardTextError> {
+    let words_all = words(tokens);
+    if words_all.first().copied() != Some("transmute") {
+        return Ok(None);
+    }
+    if words_all
+        .iter()
+        .any(|word| *word == "has" || *word == "have")
+    {
+        return Ok(None);
+    }
+
+    let mut consumed = 1usize;
+    while consumed < tokens.len() {
+        let Some(word) = tokens[consumed].as_word() else {
+            break;
+        };
+        if parse_mana_symbol(word).is_ok() {
+            consumed += 1;
+        } else {
+            break;
+        }
+    }
+    if consumed <= 1 {
+        return Err(CardTextError::ParseError(format!(
+            "transmute keyword missing mana cost (clause: '{}')",
+            words_all.join(" ")
+        )));
+    }
+
+    let cost_tokens = &tokens[1..consumed];
+    let (base_cost, cost_effects) = parse_activation_cost(cost_tokens)?;
+    let mut full_cost_effects = cost_effects;
+    full_cost_effects.push(Effect::move_to_zone(
+        ChooseSpec::Source,
+        Zone::Graveyard,
+        false,
+    ));
+    let mana_cost = crate::ability::merge_cost_effects(base_cost.clone(), full_cost_effects);
+
+    let mana_value_idx = words_all
+        .windows(2)
+        .position(|window| window == ["mana", "value"])
+        .map(|idx| idx + 2);
+    let filter = if let Some(mana_value) = mana_value_idx
+        .and_then(|idx| words_all.get(idx).copied())
+        .and_then(parse_cardinal_u32)
+    {
+        ObjectFilter::default().with_mana_value(crate::filter::Comparison::Equal(mana_value as i32))
+    } else {
+        ObjectFilter::default().with_mana_value(crate::filter::Comparison::EqualExpr(Box::new(
+            crate::effect::Value::ManaValueOf(Box::new(crate::target::ChooseSpec::Source)),
+        )))
+    };
+    let text = format!(
+        "Transmute {}",
+        base_cost
+            .mana_cost()
+            .map(|cost| cost.to_oracle())
+            .unwrap_or_else(|| words(cost_tokens).join(" "))
+    );
+
+    Ok(Some(ParsedAbility {
+        ability: Ability {
+            kind: AbilityKind::Activated(crate::ability::ActivatedAbility {
+                mana_cost,
+                effects: vec![Effect::search_library_to_hand(filter, true)],
+                choices: Vec::new(),
+                timing: ActivationTiming::SorcerySpeed,
+                additional_restrictions: Vec::new(),
+                activation_restrictions: Vec::new(),
+                mana_output: None,
+                activation_condition: None,
+                mana_usage_restrictions: vec![],
+            }),
+            functional_zones: vec![Zone::Hand],
+            text: Some(text),
+        },
+        effects_ast: None,
+        reference_imports: ReferenceImports::default(),
+        trigger_spec: None,
+    }))
+}
+
+pub(crate) fn parse_channel_line(tokens: &[Token]) -> Result<Option<ParsedAbility>, CardTextError> {
+    let words_all = words(tokens);
+    if words_all.first().copied() != Some("channel") {
+        return Ok(None);
+    }
+    if words_all
+        .iter()
+        .any(|word| *word == "has" || *word == "have")
+    {
+        return Ok(None);
+    }
+    if tokens.len() <= 1 {
+        return Err(CardTextError::ParseError(format!(
+            "channel line missing activated ability body (clause: '{}')",
+            words_all.join(" ")
+        )));
+    }
+
+    let ability_tokens = trim_commas(&tokens[1..]).to_vec();
+    let Some(mut parsed) = parse_activated_line_with_raw(&ability_tokens, None)? else {
+        return Ok(None);
+    };
+    parsed.ability.text = Some("Channel".to_string());
+    if !parsed.ability.functional_zones.contains(&Zone::Hand) {
+        parsed.ability.functional_zones.push(Zone::Hand);
+    }
+    Ok(Some(parsed))
 }
 
 pub(crate) fn parse_reinforce_line(
@@ -901,6 +1186,7 @@ pub(crate) fn parse_reinforce_line(
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Hand],
             text: Some(render_text),
@@ -1510,6 +1796,7 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
                     activation_restrictions: vec![],
                     mana_output: None,
                     activation_condition: None,
+                    mana_usage_restrictions: vec![],
                 }),
                 functional_zones: vec![Zone::Battlefield],
                 text: Some(equip_text),
@@ -1557,6 +1844,7 @@ pub(crate) fn parse_equip_line(tokens: &[Token]) -> Result<Option<ParsedAbility>
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Battlefield],
             text: Some(equip_text),
@@ -3066,6 +3354,50 @@ pub(crate) fn parse_cost_reduction_line(
         )));
     }
 
+    if line_words.starts_with(&["this", "ability", "costs"]) {
+        let amount_tokens = trim_commas(&tokens[3..]);
+        let Some((amount_value, used)) = parse_cost_modifier_amount(&amount_tokens) else {
+            return Ok(None);
+        };
+        let reduction = match amount_value {
+            Value::Fixed(value) if value > 0 => value as u32,
+            _ => {
+                return Err(CardTextError::ParseError(format!(
+                    "unsupported activated-ability cost reduction amount (clause: '{}')",
+                    line_words.join(" ")
+                )));
+            }
+        };
+        let tail_tokens = trim_commas(&amount_tokens[used..]);
+        let tail_words = words(&tail_tokens);
+        if tail_words == ["less", "to", "activate"] {
+            return Ok(Some(StaticAbility::reduce_activated_ability_costs(
+                ObjectFilter::source(),
+                reduction,
+                Some(1),
+            )));
+        }
+        if tail_words.starts_with(&["less", "to", "activate", "for", "each"]) {
+            let mut per_filter = parse_object_filter(&tail_tokens[5..], false).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported activated-ability cost reduction tail (clause: '{}')",
+                    line_words.join(" ")
+                ))
+            })?;
+            if per_filter.zone.is_none() {
+                per_filter.zone = Some(Zone::Battlefield);
+            }
+            return Ok(Some(
+                StaticAbility::reduce_activated_ability_costs_for_each(
+                    ObjectFilter::source(),
+                    reduction,
+                    per_filter,
+                    Some(1),
+                ),
+            ));
+        }
+    }
+
     if !line_words.starts_with(&["this", "spell", "costs"]) {
         return Ok(None);
     }
@@ -3196,6 +3528,15 @@ pub(crate) fn parse_source_must_be_blocked_if_able_line(
 pub(crate) fn parse_cant_clauses(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+    if tokens.iter().any(|token| token.is_word("and"))
+        && let Some((neg_start, _)) = find_negation_span(tokens)
+        && tokens[..neg_start]
+            .iter()
+            .any(|token| token.is_word("get") || token.is_word("gets"))
+    {
+        return Ok(None);
+    }
+
     if find_negation_span(tokens).is_none() {
         return Ok(None);
     }
@@ -4400,11 +4741,26 @@ pub(crate) fn parse_cant_restriction_clause(
                 "each",
                 "turn",
             ] => Restriction::draw_extra_cards(PlayerFilter::Opponent),
+            [
+                "each",
+                "opponent",
+                "cant",
+                "draw",
+                "more",
+                "than",
+                "one",
+                "card",
+                "each",
+                "turn",
+            ] => Restriction::draw_extra_cards(PlayerFilter::Opponent),
             ["you", "cant", "gain", "life"] => Restriction::gain_life(PlayerFilter::You),
             ["you", "cant", "search", "libraries"] => {
                 Restriction::search_libraries(PlayerFilter::You)
             }
             ["you", "cant", "draw", "cards"] => Restriction::draw_cards(PlayerFilter::You),
+            ["they", "cant", "gain", "life"] | ["that", "player", "cant", "gain", "life"] => {
+                Restriction::gain_life(PlayerFilter::IteratedPlayer)
+            }
             ["opponents", "cant", "gain", "life"] => Restriction::gain_life(PlayerFilter::Opponent),
             _ => return parse_negated_object_restriction_clause(tokens),
         }
@@ -4915,6 +5271,30 @@ pub(crate) fn parse_subject_object_filter(
         return Ok(None);
     }
 
+    let normalized_words = normalize_cant_words(tokens);
+    if matches!(
+        normalized_words.as_slice(),
+        ["it"] | ["they"] | ["them"] | ["itself"] | ["themselves"]
+    ) {
+        return Ok(Some(ObjectFilter::tagged(TagKey::from(IT_TAG))));
+    }
+
+    let words_all = words(tokens);
+    if words_all.windows(3).any(|window| {
+        window == ["power", "or", "toughness"] || window == ["toughness", "or", "power"]
+    }) {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported subject object filter (clause: '{}')",
+            words_all.join(" ")
+        )));
+    }
+
+    if let Ok(filter) = parse_object_filter(tokens, false)
+        && filter != ObjectFilter::default()
+    {
+        return Ok(Some(filter));
+    }
+
     let target = parse_target_phrase(tokens).map_err(|_| {
         CardTextError::ParseError(format!(
             "unsupported subject target phrase (clause: '{}')",
@@ -5108,6 +5488,16 @@ pub(crate) fn marker_keyword_display(words: &[&str]) -> Option<String> {
     }
 }
 
+fn marker_text_from_words(words: &[&str]) -> Option<String> {
+    let first = words.first().copied()?;
+    let mut text = keyword_title(first);
+    if words.len() > 1 {
+        text.push(' ');
+        text.push_str(&words[1..].join(" "));
+    }
+    Some(text)
+}
+
 pub(crate) fn parse_single_word_keyword_action(word: &str) -> Option<KeywordAction> {
     match word {
         "flying" => Some(KeywordAction::Flying),
@@ -5158,6 +5548,7 @@ pub(crate) fn parse_single_word_keyword_action(word: &str) -> Option<KeywordActi
         "storm" => Some(KeywordAction::Storm),
         "rebound" => Some(KeywordAction::Rebound),
         "ascend" => Some(KeywordAction::Ascend),
+        "compleated" => Some(KeywordAction::Marker("compleated")),
         "daybound" => Some(KeywordAction::Daybound),
         "nightbound" => Some(KeywordAction::Nightbound),
         "islandwalk" => Some(KeywordAction::Landwalk(Subtype::Island)),
@@ -5467,6 +5858,57 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
             return Some(KeywordAction::MarkerText(display));
         }
         return Some(KeywordAction::Marker("foretell"));
+    }
+
+    if words.first().copied() == Some("companion") {
+        if words.len() == 1 {
+            return Some(KeywordAction::Marker("companion"));
+        }
+        return marker_text_from_words(&words).map(KeywordAction::MarkerText);
+    }
+
+    if words.first().copied() == Some("hideaway") {
+        if words.len() == 1 {
+            return Some(KeywordAction::MarkerText("Hideaway".to_string()));
+        }
+        return marker_text_from_words(&words).map(KeywordAction::MarkerText);
+    }
+
+    if words.first().copied() == Some("mobilize") {
+        if words.len() == 1 {
+            return Some(KeywordAction::MarkerText("Mobilize".to_string()));
+        }
+        return marker_text_from_words(&words).map(KeywordAction::MarkerText);
+    }
+
+    if words.first().copied() == Some("impending") {
+        if words.len() == 1 {
+            return Some(KeywordAction::MarkerText("Impending".to_string()));
+        }
+        return marker_text_from_words(&words).map(KeywordAction::MarkerText);
+    }
+
+    if words.first().copied() == Some("eternalize") {
+        if words.len() == 1 {
+            return Some(KeywordAction::MarkerText("Eternalize".to_string()));
+        }
+        return marker_text_from_words(&words).map(KeywordAction::MarkerText);
+    }
+
+    if words.starts_with(&["emerge", "from"]) {
+        return marker_text_from_words(&words).map(KeywordAction::MarkerText);
+    }
+
+    if words.starts_with(&["job", "select"]) {
+        return Some(KeywordAction::MarkerText("Job select".to_string()));
+    }
+
+    if words.first().copied() == Some("exert") {
+        return marker_text_from_words(&words).map(KeywordAction::MarkerText);
+    }
+
+    if words.first().copied() == Some("airbend") {
+        return marker_text_from_words(&words).map(KeywordAction::MarkerText);
     }
 
     if words.first().copied() == Some("overload") {
@@ -6482,6 +6924,29 @@ pub(crate) fn parse_trigger_clause(tokens: &[Token]) -> Result<TriggerSpec, Card
                 filter.nontoken = true;
             }
             return Ok(TriggerSpec::PutIntoGraveyard(filter));
+        }
+    }
+
+    for tail in [
+        ["is", "put", "into", "a", "graveyard", "from", "anywhere"].as_slice(),
+        ["are", "put", "into", "a", "graveyard", "from", "anywhere"].as_slice(),
+    ] {
+        if words.ends_with(tail) {
+            let subject_word_len = words.len().saturating_sub(tail.len());
+            let subject_tokens = token_index_for_word_index(tokens, subject_word_len)
+                .map(|idx| &tokens[..idx])
+                .unwrap_or_default();
+            let subject_words = self::words(subject_tokens);
+            if is_source_reference_words(&subject_words) {
+                return Ok(TriggerSpec::PutIntoGraveyard(ObjectFilter::source()));
+            }
+            if let Ok(filter) = parse_object_filter(subject_tokens, false) {
+                return Ok(TriggerSpec::PutIntoGraveyard(filter));
+            }
+            return Err(CardTextError::ParseError(format!(
+                "unsupported filter in put-into-graveyard-from-anywhere trigger clause (clause: '{}')",
+                words.join(" ")
+            )));
         }
     }
 

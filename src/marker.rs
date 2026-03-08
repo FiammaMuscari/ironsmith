@@ -42,6 +42,14 @@ impl Marker {
             Marker::Counter(ct) => Some(*ct),
         }
     }
+
+    pub fn description(&self) -> String {
+        match self {
+            Marker::Counter(counter_type) => {
+                format!("{} counter(s)", counter_type.description())
+            }
+        }
+    }
 }
 
 impl From<CounterType> for Marker {

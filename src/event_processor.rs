@@ -132,8 +132,9 @@ fn process_event_direct(
         .map(|(effect, _)| effect)
         .collect();
 
-    // Per Rule 616.1e: If multiple effects at "Other" priority, player chooses
-    if at_highest.len() > 1 && highest_priority == ReplacementPriority::Other {
+    // When multiple replacement effects are tied at the highest priority,
+    // the affected player/controller chooses which one to apply next.
+    if at_highest.len() > 1 {
         let affected_player = event.inner().affected_player(game);
         let effect_ids: Vec<_> = at_highest.iter().map(|e| e.id).collect();
 
@@ -782,6 +783,14 @@ fn apply_trait_replacement(
             }
         }
 
+        ReplacementAction::EnterUntapped => {
+            let modified = apply_trait_enter_untapped(&event);
+            match modified {
+                Some(e) => TraitApplyResult::Modified(e),
+                None => TraitApplyResult::Unchanged(event),
+            }
+        }
+
         ReplacementAction::EnterWithCounters {
             counter_type,
             count,
@@ -849,8 +858,13 @@ fn apply_trait_replacement(
             TraitApplyResult::Modified(event)
         }
 
-        ReplacementAction::EnterAsCopy(_source_id) => {
-            let modified = apply_trait_enter_as_copy(&event, *_source_id);
+        ReplacementAction::EnterAsCopy {
+            source,
+            enters_tapped,
+            added_subtypes,
+        } => {
+            let modified =
+                apply_trait_enter_as_copy(&event, *source, *enters_tapped, added_subtypes);
             match modified {
                 Some(e) => TraitApplyResult::Modified(e),
                 None => TraitApplyResult::Unchanged(event),
@@ -1218,6 +1232,32 @@ fn apply_trait_enter_tapped(event: &Event) -> Option<Event> {
     }
 }
 
+/// Apply "enters untapped" to an ETB event.
+fn apply_trait_enter_untapped(event: &Event) -> Option<Event> {
+    use crate::events::{EnterBattlefieldEvent, ZoneChangeEvent, downcast_event};
+
+    match event.kind() {
+        EventKind::EnterBattlefield => {
+            let etb = downcast_event::<EnterBattlefieldEvent>(event.inner())?;
+            let mut untapped = etb.clone();
+            untapped.enters_tapped = false;
+            Some(event.rewrap(untapped))
+        }
+        EventKind::ZoneChange => {
+            let zone_change = downcast_event::<ZoneChangeEvent>(event.inner())?;
+            if zone_change.to == Zone::Battlefield {
+                Some(event.rewrap(EnterBattlefieldEvent::new(
+                    *zone_change.objects.first()?,
+                    zone_change.from,
+                )))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Apply "enters with counters" to an ETB event.
 fn apply_trait_enter_with_counters(
     event: &Event,
@@ -1249,20 +1289,36 @@ fn apply_trait_enter_with_counters(
 }
 
 /// Apply "enters as a copy" to an ETB event.
-fn apply_trait_enter_as_copy(event: &Event, source_id: crate::ids::ObjectId) -> Option<Event> {
+fn apply_trait_enter_as_copy(
+    event: &Event,
+    source_id: crate::ids::ObjectId,
+    enters_tapped: bool,
+    added_subtypes: &[crate::types::Subtype],
+) -> Option<Event> {
     use crate::events::{EnterBattlefieldEvent, ZoneChangeEvent, downcast_event};
 
     match event.kind() {
         EventKind::EnterBattlefield => {
             let etb = downcast_event::<EnterBattlefieldEvent>(event.inner())?;
-            Some(event.rewrap(etb.with_copy_of(source_id)))
+            let mut copied = etb
+                .with_copy_of(source_id)
+                .with_added_subtypes(added_subtypes);
+            if enters_tapped {
+                copied = copied.with_tapped();
+            }
+            Some(event.rewrap(copied))
         }
         EventKind::ZoneChange => {
             let zone_change = downcast_event::<ZoneChangeEvent>(event.inner())?;
             if zone_change.to == Zone::Battlefield {
                 let mut etb =
                     EnterBattlefieldEvent::new(*zone_change.objects.first()?, zone_change.from);
-                etb = etb.with_copy_of(source_id);
+                etb = etb
+                    .with_copy_of(source_id)
+                    .with_added_subtypes(added_subtypes);
+                if enters_tapped {
+                    etb = etb.with_tapped();
+                }
                 Some(event.rewrap(etb))
             } else {
                 None
@@ -1929,6 +1985,8 @@ pub struct EtbEventResult {
     pub new_destination: Option<Zone>,
     /// If set, the object enters as a copy of this source object.
     pub enters_as_copy_of: Option<crate::ids::ObjectId>,
+    /// Additional subtypes granted by an ETB copy choice.
+    pub added_subtypes: Vec<crate::types::Subtype>,
     /// An interactive replacement that requires player input.
     ///
     /// If present, the caller must:
@@ -2386,6 +2444,44 @@ pub fn process_etb_with_event_and_dm(
                 if let Some(effect) = s.generate_replacement_effect(object, controller) {
                     self_replacement_effects.push(effect);
                 }
+                if let Some(spec) = s.enter_as_copy_as_enters() {
+                    let filter_ctx = game.filter_context_for(controller, Some(object));
+                    let mut candidates = game
+                        .objects_iter()
+                        .filter(|candidate| candidate.id != object)
+                        .filter(|candidate| spec.filter.matches(candidate, &filter_ctx, game))
+                        .map(|candidate| candidate.id)
+                        .collect::<Vec<_>>();
+                    candidates.sort_by_key(|id| id.0);
+
+                    if spec.may {
+                        self_replacement_effects.push(
+                            ReplacementEffect::with_matcher(
+                                object,
+                                controller,
+                                crate::events::zones::matchers::ThisWouldEnterBattlefieldMatcher,
+                                ReplacementAction::Additionally(Vec::new()),
+                            )
+                            .self_replacing(),
+                        );
+                    }
+
+                    for candidate in candidates {
+                        self_replacement_effects.push(
+                            ReplacementEffect::with_matcher(
+                                object,
+                                controller,
+                                crate::events::zones::matchers::ThisWouldEnterBattlefieldMatcher,
+                                ReplacementAction::EnterAsCopy {
+                                    source: candidate,
+                                    enters_tapped: spec.enters_tapped_if_chosen,
+                                    added_subtypes: spec.added_subtypes.clone(),
+                                },
+                            )
+                            .self_replacing(),
+                        );
+                    }
+                }
             }
         }
     }
@@ -2401,6 +2497,7 @@ pub fn process_etb_with_event_and_dm(
             enters_tapped,
             enters_with_counters,
             enters_as_copy_of: None,
+            added_subtypes: Vec::new(),
         },
         etb_event_provenance,
     );
@@ -2429,6 +2526,7 @@ pub fn process_etb_with_event_and_dm(
                         prevented: false,
                         new_destination: None,
                         enters_as_copy_of: etb.enters_as_copy_of,
+                        added_subtypes: etb.added_subtypes.clone(),
                         interactive_replacement: None,
                     };
                 }

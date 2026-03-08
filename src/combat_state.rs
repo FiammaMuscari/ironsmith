@@ -46,6 +46,15 @@ pub enum AttackTarget {
     Planeswalker(ObjectId),
 }
 
+impl std::fmt::Display for AttackTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AttackTarget::Player(id) => write!(f, "player {}", id.0),
+            AttackTarget::Planeswalker(id) => write!(f, "planeswalker #{}", id.0),
+        }
+    }
+}
+
 /// Errors that can occur during combat.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CombatError {
@@ -110,12 +119,25 @@ pub enum CombatError {
 
 impl std::fmt::Display for CombatError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn object_label(id: &ObjectId) -> String {
+            format!("#{}", id.0)
+        }
+
+        fn object_list(ids: &[ObjectId]) -> String {
+            ids.iter().map(object_label).collect::<Vec<_>>().join(", ")
+        }
+
         match self {
             CombatError::CreatureCannotAttack(id) => {
-                write!(f, "Creature {:?} cannot attack", id)
+                write!(f, "Creature {} cannot attack", object_label(id))
             }
             CombatError::CreatureCannotBlock { blocker, attacker } => {
-                write!(f, "Creature {:?} cannot block {:?}", blocker, attacker)
+                write!(
+                    f,
+                    "Creature {} cannot block {}",
+                    object_label(blocker),
+                    object_label(attacker)
+                )
             }
             CombatError::NotEnoughBlockers {
                 attacker,
@@ -124,8 +146,10 @@ impl std::fmt::Display for CombatError {
             } => {
                 write!(
                     f,
-                    "Attacker {:?} requires {} blockers but only {} provided",
-                    attacker, required, provided
+                    "Attacker {} requires {} blockers but only {} were declared",
+                    object_label(attacker),
+                    required,
+                    provided
                 )
             }
             CombatError::TooManyBlockers {
@@ -135,8 +159,10 @@ impl std::fmt::Display for CombatError {
             } => {
                 write!(
                     f,
-                    "Attacker {:?} allows at most {} blockers but {} provided",
-                    attacker, maximum, provided
+                    "Attacker {} allows at most {} blockers but {} were declared",
+                    object_label(attacker),
+                    maximum,
+                    provided
                 )
             }
             CombatError::TooManyAttackers { maximum, provided } => {
@@ -154,25 +180,26 @@ impl std::fmt::Display for CombatError {
                 )
             }
             CombatError::InvalidAttackTarget(target) => {
-                write!(f, "Invalid attack target: {:?}", target)
+                write!(f, "Invalid attack target: {target}")
             }
             CombatError::CreatureTapped(id) => {
-                write!(f, "Creature {:?} is tapped", id)
+                write!(f, "Creature {} is tapped", object_label(id))
             }
             CombatError::NotInCombat(id) => {
-                write!(f, "Creature {:?} is not in combat", id)
+                write!(f, "Creature {} is not in combat", object_label(id))
             }
             CombatError::NotOnBattlefield(id) => {
-                write!(f, "Creature {:?} is not on the battlefield", id)
+                write!(f, "Creature {} is not on the battlefield", object_label(id))
             }
             CombatError::NotACreature(id) => {
-                write!(f, "Object {:?} is not a creature", id)
+                write!(f, "Object {} is not a creature", object_label(id))
             }
             CombatError::NotControlledBy { creature, expected } => {
                 write!(
                     f,
-                    "Creature {:?} is not controlled by player {:?}",
-                    creature, expected
+                    "Creature {} is not controlled by player {}",
+                    object_label(creature),
+                    expected.0
                 )
             }
             CombatError::InvalidBlockerOrder {
@@ -182,39 +209,42 @@ impl std::fmt::Display for CombatError {
             } => {
                 write!(
                     f,
-                    "Invalid blocker order for attacker {:?}: expected {:?}, got {:?}",
-                    attacker, expected_blockers, provided_blockers
+                    "Invalid blocker order for attacker {}: expected [{}], got [{}]",
+                    object_label(attacker),
+                    object_list(expected_blockers),
+                    object_list(provided_blockers)
                 )
             }
             CombatError::DuplicateAttacker(id) => {
                 write!(
                     f,
-                    "Creature {:?} was declared as an attacker multiple times",
-                    id
+                    "Creature {} was declared as an attacker multiple times",
+                    object_label(id)
                 )
             }
             CombatError::DuplicateBlocker(id) => {
                 write!(
                     f,
-                    "Creature {:?} was declared as blocking multiple attackers",
-                    id
+                    "Creature {} was declared as blocking multiple attackers",
+                    object_label(id)
                 )
             }
             CombatError::AttackerNotFound(id) => {
-                write!(f, "Attacker {:?} not found", id)
+                write!(f, "Attacker {} not found", object_label(id))
             }
             CombatError::MustAttackNotDeclared(id) => {
                 write!(
                     f,
-                    "Creature {:?} must attack this combat if able but was not declared",
-                    id
+                    "Creature {} must attack this combat if able but was not declared",
+                    object_label(id)
                 )
             }
             CombatError::MustBlockRequirementNotMet { blocker, attacker } => {
                 write!(
                     f,
-                    "Creature {:?} must block {:?} this combat if able but was not declared",
-                    blocker, attacker
+                    "Creature {} must block {} this combat if able but was not declared",
+                    object_label(blocker),
+                    object_label(attacker)
                 )
             }
         }

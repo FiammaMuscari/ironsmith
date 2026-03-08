@@ -3,8 +3,8 @@
 use crate::events::EventKind;
 use crate::events::life::LifeLossEvent;
 use crate::target::PlayerFilter;
-use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
+use crate::triggers::{TriggerEvent, describe_player_filter_subject};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayerLosesLifeTrigger {
@@ -62,9 +62,10 @@ impl TriggerMatcher for PlayerLosesLifeTrigger {
     fn display(&self) -> String {
         let base = match &self.player {
             PlayerFilter::You => "Whenever you lose life".to_string(),
-            PlayerFilter::Opponent => "Whenever an opponent loses life".to_string(),
-            PlayerFilter::Any => "Whenever a player loses life".to_string(),
-            _ => format!("Whenever {:?} loses life", self.player),
+            _ => format!(
+                "Whenever {} loses life",
+                describe_player_filter_subject(&self.player)
+            ),
         };
         if let Some(during_turn) = &self.during_turn {
             let suffix = match during_turn {

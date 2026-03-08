@@ -58,7 +58,7 @@ fn army_creature_candidates(game: &GameState, controller: PlayerId) -> Vec<Objec
 }
 
 fn army_token_definition(subtype: Subtype) -> CardDefinition {
-    let name = format!("{subtype:?} Army");
+    let name = format!("{subtype} Army");
     CardDefinitionBuilder::new(CardId::new(), &name)
         .token()
         .card_types(vec![CardType::Creature])

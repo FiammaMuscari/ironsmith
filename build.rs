@@ -43,6 +43,7 @@ pub fn register_generated_parser_cards_if_name<F>(
 pub fn generated_parser_semantic_score(_name: &str) -> Option<f32> { None }
 pub fn generated_parser_semantic_threshold_counts() -> [usize; 100] { [0; 100] }
 pub fn generated_parser_semantic_scored_count() -> usize { 0 }
+pub fn generated_parser_card_parse_source(_name: &str) -> Option<(String, String)> { None }
 pub fn try_compile_card_by_name(_name: &str) -> Result<crate::cards::CardDefinition, String> {
     Err("generated registry not available".to_string())
 }

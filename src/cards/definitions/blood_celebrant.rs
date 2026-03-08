@@ -43,6 +43,7 @@ pub fn blood_celebrant() -> CardDefinition {
             activation_restrictions: vec![],
             mana_output: Some(vec![]),
             activation_condition: None,
+            mana_usage_restrictions: vec![],
         }),
         functional_zones: vec![Zone::Battlefield],
         text: Some("{B}, Pay 1 life: Add one mana of any color.".to_string()),

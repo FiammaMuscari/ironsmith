@@ -184,10 +184,6 @@ pub(crate) fn parser_trace_enabled() -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn parser_allow_unsupported_enabled() -> bool {
-    false
-}
-
 pub(crate) fn parser_trace(stage: &str, tokens: &[Token]) {
     if !parser_trace_enabled() {
         return;
@@ -332,6 +328,17 @@ pub(crate) fn replace_names_with_map(
         (idx < end).then_some(&bytes[idx..end])
     }
 
+    fn next_word(bytes: &[u8], mut idx: usize) -> Option<&[u8]> {
+        while idx < bytes.len() && !bytes[idx].is_ascii_alphanumeric() {
+            idx += 1;
+        }
+        let start = idx;
+        while idx < bytes.len() && bytes[idx].is_ascii_alphanumeric() {
+            idx += 1;
+        }
+        (start < idx).then_some(&bytes[start..idx])
+    }
+
     fn preceded_by_ability_grant_word(bytes: &[u8], idx: usize) -> bool {
         previous_word(bytes, idx)
             .is_some_and(|word| matches!(word, b"has" | b"have" | b"gain" | b"gains"))
@@ -382,6 +389,69 @@ pub(crate) fn replace_names_with_map(
         !slice.iter().any(|byte| byte.is_ascii_uppercase())
     }
 
+    fn is_short_name_self_reference_context(bytes: &[u8], idx: usize, len: usize) -> bool {
+        let prev = previous_word(bytes, idx);
+        let next = next_word(bytes, idx + len);
+        let next_char = bytes.get(idx + len).copied();
+        let apostrophe_s = matches!(next_char, Some(b'\''))
+            && bytes
+                .get(idx + len + 1)
+                .is_some_and(|byte| matches!(*byte, b's' | b'S'));
+
+        prev.is_some_and(|word| {
+            matches!(
+                word,
+                b"when"
+                    | b"whenever"
+                    | b"if"
+                    | b"as"
+                    | b"until"
+                    | b"during"
+                    | b"at"
+                    | b"after"
+                    | b"before"
+                    | b"transform"
+                    | b"transformed"
+                    | b"exile"
+                    | b"return"
+                    | b"on"
+                    | b"to"
+            )
+        }) || next.is_some_and(|word| {
+            matches!(
+                word,
+                b"enter"
+                    | b"enters"
+                    | b"leave"
+                    | b"leaves"
+                    | b"die"
+                    | b"dies"
+                    | b"attack"
+                    | b"attacks"
+                    | b"block"
+                    | b"blocks"
+                    | b"become"
+                    | b"becomes"
+                    | b"becoming"
+                    | b"is"
+                    | b"has"
+                    | b"have"
+                    | b"get"
+                    | b"gets"
+                    | b"deal"
+                    | b"deals"
+                    | b"dealt"
+                    | b"can"
+                    | b"cant"
+                    | b"would"
+                    | b"remains"
+                    | b"power"
+                    | b"toughness"
+                    | b"s"
+            )
+        }) || apostrophe_s
+    }
+
     let lower = line.to_ascii_lowercase();
     let bytes = lower.as_bytes();
     let full_bytes = full_name.as_bytes();
@@ -422,6 +492,7 @@ pub(crate) fn replace_names_with_map(
             && !(is_keyword_ability_name(short_name) && preceded_by_ability_grant_word(bytes, idx))
             && !preceded_by_named_keyword(bytes, idx)
             && !appears_to_be_created_token_name(bytes, idx, short_bytes.len())
+            && is_short_name_self_reference_context(bytes, idx, short_bytes.len())
             && !should_preserve_single_word_keyword_verb_usage(
                 line,
                 idx,
@@ -1083,6 +1154,14 @@ pub(crate) fn split_effect_chain_on_and(tokens: &[Token]) -> Vec<Vec<Token>> {
 }
 
 pub(crate) fn has_effect_head_without_verb(tokens: &[Token]) -> bool {
+    let token_words = words(tokens);
+    if matches!(
+        token_words.as_slice(),
+        ["repeat", "this", "process"] | ["and", "repeat", "this", "process"]
+    ) {
+        return true;
+    }
+
     parse_prevent_next_damage_clause(tokens)
         .ok()
         .flatten()

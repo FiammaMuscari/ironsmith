@@ -252,6 +252,7 @@ fn unsupported_rule_matches_view(rule: &UnsupportedRuleDef, view: &ClauseView<'_
     (view.key.shape & rule.shape_mask) == rule.shape_mask
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub(crate) struct KeyedRuleDef<K, V> {
     pub(crate) id: &'static str,
@@ -260,11 +261,13 @@ pub(crate) struct KeyedRuleDef<K, V> {
     pub(crate) value: V,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub(crate) struct KeyedRuleIndex<K: Copy + Eq + 'static, V: Copy + 'static> {
     rules: &'static [KeyedRuleDef<K, V>],
 }
 
+#[allow(dead_code)]
 impl<K: Copy + Eq + 'static, V: Copy + 'static> KeyedRuleIndex<K, V> {
     pub(crate) const fn new(rules: &'static [KeyedRuleDef<K, V>]) -> Self {
         Self { rules }

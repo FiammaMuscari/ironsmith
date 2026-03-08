@@ -387,6 +387,12 @@ pub struct FilterContext {
     /// Resolved player targets from the current execution context.
     pub target_players: Vec<PlayerId>,
 
+    /// Resolved object targets from the current execution context.
+    ///
+    /// Stored as snapshots so target-dependent controller/owner filters continue
+    /// to work after the target has changed zones.
+    pub target_objects: Vec<crate::snapshot::ObjectSnapshot>,
+
     /// Tagged objects from prior effects in the same spell/ability.
     /// Used by tag-aware object filter constraints.
     pub tagged_objects: std::collections::HashMap<TagKey, Vec<crate::snapshot::ObjectSnapshot>>,
@@ -440,6 +446,12 @@ impl FilterContext {
     /// Set resolved player targets from the execution context.
     pub fn with_target_players(mut self, players: Vec<PlayerId>) -> Self {
         self.target_players = players;
+        self
+    }
+
+    /// Set resolved object targets from the execution context.
+    pub fn with_target_objects(mut self, objects: Vec<crate::snapshot::ObjectSnapshot>) -> Self {
+        self.target_objects = objects;
         self
     }
 
@@ -678,6 +690,30 @@ pub enum PlayerFilter {
 }
 
 impl PlayerFilter {
+    fn resolve_object_ref<'a>(
+        &self,
+        object_ref: &ObjectRef,
+        ctx: &'a FilterContext,
+    ) -> Option<&'a ObjectSnapshot> {
+        match object_ref {
+            ObjectRef::Target => ctx.target_objects.first(),
+            ObjectRef::Specific(object_id) => ctx
+                .target_objects
+                .iter()
+                .find(|snapshot| snapshot.object_id == *object_id)
+                .or_else(|| {
+                    ctx.tagged_objects
+                        .values()
+                        .flat_map(|snapshots| snapshots.iter())
+                        .find(|snapshot| snapshot.object_id == *object_id)
+                }),
+            ObjectRef::Tagged(tag) => ctx
+                .tagged_objects
+                .get(tag)
+                .and_then(|snapshots| snapshots.first()),
+        }
+    }
+
     /// Create a filter for targeting any player.
     pub fn target_player() -> Self {
         Self::Target(Box::new(PlayerFilter::Any))
@@ -725,7 +761,13 @@ impl PlayerFilter {
 
             // These are resolved at runtime during effect execution
             PlayerFilter::IteratedPlayer => ctx.iterated_player.is_some_and(|p| p == player),
-            PlayerFilter::TargetPlayerOrControllerOfTarget => false,
+            PlayerFilter::TargetPlayerOrControllerOfTarget => {
+                ctx.target_players.contains(&player)
+                    || ctx
+                        .target_objects
+                        .first()
+                        .is_some_and(|snapshot| snapshot.controller == player)
+            }
             PlayerFilter::Excluding { base, excluded } => {
                 base.matches_player(player, ctx) && !excluded.matches_player(player, ctx)
             }
@@ -737,8 +779,12 @@ impl PlayerFilter {
                 ctx.iterated_player.is_some_and(|p| p == player)
                     && inner.matches_player(player, ctx)
             }
-            PlayerFilter::ControllerOf(_) => false, // Resolved via object lookup
-            PlayerFilter::OwnerOf(_) => false,      // Resolved via object lookup
+            PlayerFilter::ControllerOf(object_ref) => self
+                .resolve_object_ref(object_ref, ctx)
+                .is_some_and(|snapshot| snapshot.controller == player),
+            PlayerFilter::OwnerOf(object_ref) => self
+                .resolve_object_ref(object_ref, ctx)
+                .is_some_and(|snapshot| snapshot.owner == player),
         }
     }
 
@@ -2967,24 +3013,32 @@ impl ObjectFilter {
             });
         }
         if let Some(colors) = self.colors {
-            let mut color_words = Vec::new();
-            if colors.contains(crate::color::Color::White) {
-                color_words.push("white");
-            }
-            if colors.contains(crate::color::Color::Blue) {
-                color_words.push("blue");
-            }
-            if colors.contains(crate::color::Color::Black) {
-                color_words.push("black");
-            }
-            if colors.contains(crate::color::Color::Red) {
-                color_words.push("red");
-            }
-            if colors.contains(crate::color::Color::Green) {
-                color_words.push("green");
-            }
-            if !color_words.is_empty() {
-                parts.push(color_words.join(" or "));
+            if colors.contains_all(
+                crate::color::Color::ALL
+                    .into_iter()
+                    .collect::<crate::color::ColorSet>(),
+            ) {
+                parts.push("colored".to_string());
+            } else {
+                let mut color_words = Vec::new();
+                if colors.contains(crate::color::Color::White) {
+                    color_words.push("white");
+                }
+                if colors.contains(crate::color::Color::Blue) {
+                    color_words.push("blue");
+                }
+                if colors.contains(crate::color::Color::Black) {
+                    color_words.push("black");
+                }
+                if colors.contains(crate::color::Color::Red) {
+                    color_words.push("red");
+                }
+                if colors.contains(crate::color::Color::Green) {
+                    color_words.push("green");
+                }
+                if !color_words.is_empty() {
+                    parts.push(color_words.join(" or "));
+                }
             }
         }
         for constraint in &self.tagged_constraints {
@@ -3076,7 +3130,7 @@ impl ObjectFilter {
         }
         if !self.supertypes.is_empty() {
             for supertype in &self.supertypes {
-                parts.push(format!("{supertype:?}").to_ascii_lowercase());
+                parts.push(supertype.name().to_string());
             }
         }
         if !self.excluded_card_types.is_empty() {
@@ -3086,10 +3140,7 @@ impl ObjectFilter {
         }
         if !self.excluded_supertypes.is_empty() {
             for supertype in &self.excluded_supertypes {
-                parts.push(format!(
-                    "non{}",
-                    format!("{supertype:?}").to_ascii_lowercase()
-                ));
+                parts.push(format!("non{}", supertype.name()));
             }
         }
         if !self.excluded_subtypes.is_empty() {
@@ -3109,7 +3160,7 @@ impl ObjectFilter {
                 remaining.retain(|subtype| !outlaw_pack.contains(subtype));
             }
             for subtype in &remaining {
-                parts.push(format!("non-{subtype:?}"));
+                parts.push(format!("non-{}", subtype.to_string().to_ascii_lowercase()));
             }
         }
         if !self.excluded_colors.is_empty() {
@@ -3239,7 +3290,7 @@ impl ObjectFilter {
                 true,
                 self.all_card_types
                     .iter()
-                    .map(|t| format!("{:?}", t).to_lowercase())
+                    .map(|t| t.name().to_string())
                     .collect::<Vec<_>>()
                     .join(" "),
             ))
@@ -3260,7 +3311,7 @@ impl ObjectFilter {
                     true,
                     self.card_types
                         .iter()
-                        .map(|t| format!("{:?}", t).to_lowercase())
+                        .map(|t| t.name().to_string())
                         .collect::<Vec<_>>()
                         .join(joiner),
                 ))
@@ -3324,7 +3375,7 @@ impl ObjectFilter {
                 parts.push("outlaw".to_string());
                 remaining.retain(|subtype| !outlaw_pack.contains(subtype));
             }
-            parts.extend(remaining.iter().map(|subtype| format!("{subtype:?}")));
+            parts.extend(remaining.iter().map(std::string::ToString::to_string));
             Some(parts.join(" or "))
         } else {
             None
@@ -4541,7 +4592,7 @@ mod tests {
             .without_subtype(crate::types::Subtype::Zombie);
         assert_eq!(
             filter.description(),
-            "non-Vampire non-Werewolf non-Zombie creature"
+            "non-vampire non-werewolf non-zombie creature"
         );
     }
 
@@ -4764,6 +4815,34 @@ mod tests {
 
         assert!(PlayerFilter::Specific(you).matches_player(you, &ctx));
         assert!(!PlayerFilter::Specific(you).matches_player(opponent, &ctx));
+    }
+
+    #[test]
+    fn test_player_filter_controller_of_target_uses_target_snapshot() {
+        use crate::card::CardBuilder;
+        use crate::ids::CardId;
+        use crate::snapshot::ObjectSnapshot;
+
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+
+        let land = CardBuilder::new(CardId::from_raw(1001), "Target Forest")
+            .card_types(vec![CardType::Land])
+            .subtypes(vec![Subtype::Forest])
+            .build();
+        let land_id = game.create_object_from_card(&land, bob, Zone::Battlefield);
+        let snapshot =
+            ObjectSnapshot::from_object(game.object(land_id).expect("target land exists"), &game);
+
+        let ctx = FilterContext::new(alice).with_target_objects(vec![snapshot]);
+        let controller_filter = PlayerFilter::ControllerOf(ObjectRef::Target);
+        let owner_filter = PlayerFilter::OwnerOf(ObjectRef::Target);
+
+        assert!(controller_filter.matches_player(bob, &ctx));
+        assert!(!controller_filter.matches_player(alice, &ctx));
+        assert!(owner_filter.matches_player(bob, &ctx));
+        assert!(!owner_filter.matches_player(alice, &ctx));
     }
 
     #[test]

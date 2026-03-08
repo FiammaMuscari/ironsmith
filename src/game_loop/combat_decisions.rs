@@ -49,6 +49,12 @@ fn generic_mana_cost(amount: u32) -> crate::mana::ManaCost {
     crate::mana::ManaCost::from_pips(pips)
 }
 
+fn object_label(game: &GameState, id: ObjectId, fallback: &str) -> String {
+    game.object(id)
+        .map(|o| o.name.clone())
+        .unwrap_or_else(|| format!("{fallback} #{}", id.0))
+}
+
 fn static_abilities_for_object_with_effects(
     game: &GameState,
     object_id: ObjectId,
@@ -153,8 +159,8 @@ pub fn apply_attacker_declarations(
 
         let Some(creature) = game.object(decl.creature) else {
             return Err(ResponseError::InvalidAttackers(format!(
-                "Creature {:?} not found",
-                decl.creature
+                "Creature #{} not found",
+                decl.creature.0
             ))
             .into());
         };
@@ -371,8 +377,8 @@ pub fn apply_blocker_declarations(
     for decl in declarations {
         let Some(blocker) = game.object(decl.blocker) else {
             return Err(ResponseError::InvalidBlockers(format!(
-                "Blocker {:?} not found",
-                decl.blocker
+                "Blocker #{} not found",
+                decl.blocker.0
             ))
             .into());
         };
@@ -384,8 +390,8 @@ pub fn apply_blocker_declarations(
         }
         if game.object(decl.blocking).is_none() {
             return Err(ResponseError::InvalidBlockers(format!(
-                "Attacker {:?} not found",
-                decl.blocking
+                "Attacker #{} not found",
+                decl.blocking.0
             ))
             .into());
         }
@@ -485,8 +491,8 @@ pub fn apply_blocker_declarations(
     for (attacker_id, blockers) in &combat.blockers {
         let Some(attacker) = game.object(*attacker_id) else {
             return Err(ResponseError::InvalidBlockers(format!(
-                "Attacker {:?} not found",
-                attacker_id
+                "Attacker #{} not found",
+                attacker_id.0
             ))
             .into());
         };
@@ -494,8 +500,9 @@ pub fn apply_blocker_declarations(
         let min = minimum_blockers(attacker);
         if !blockers.is_empty() && blockers.len() < min {
             return Err(ResponseError::InvalidBlockers(format!(
-                "{:?} needs at least {} blockers",
-                attacker_id, min
+                "{} needs at least {} blockers",
+                object_label(game, *attacker_id, "Attacker"),
+                min
             ))
             .into());
         }
@@ -504,8 +511,9 @@ pub fn apply_blocker_declarations(
             && blockers.len() > max
         {
             return Err(ResponseError::InvalidBlockers(format!(
-                "{:?} can't be blocked by more than {} creature(s)",
-                attacker_id, max
+                "{} can't be blocked by more than {} creature(s)",
+                object_label(game, *attacker_id, "Attacker"),
+                max
             ))
             .into());
         }

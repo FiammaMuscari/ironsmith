@@ -82,7 +82,7 @@ impl EffectExecutor for RemoveUpToCountersEffect {
         // Ask the player how many counters to remove (0 to actual_max)
         let description = format!(
             "Choose how many {} counters to remove (0-{})",
-            format!("{:?}", self.counter_type).to_lowercase(),
+            self.counter_type.description(),
             actual_max
         );
         let spec = NumberSpec::up_to(ctx.source, actual_max, description);

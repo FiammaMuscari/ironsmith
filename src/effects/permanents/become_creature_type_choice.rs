@@ -42,7 +42,7 @@ impl BecomeCreatureTypeChoiceEffect {
             .collect()
     }
 
-    fn all_creature_types() -> &'static [Subtype] {
+    pub(crate) fn all_creature_types() -> &'static [Subtype] {
         &[
             Subtype::Advisor,
             Subtype::Ally,
@@ -254,7 +254,7 @@ impl EffectExecutor for BecomeCreatureTypeChoiceEffect {
         let options: Vec<SelectableOption> = subtype_options
             .iter()
             .enumerate()
-            .map(|(idx, subtype)| SelectableOption::new(idx, format!("{subtype:?}")))
+            .map(|(idx, subtype)| SelectableOption::new(idx, subtype.to_string()))
             .collect();
         let choice_ctx = SelectOptionsContext::new(
             chooser,

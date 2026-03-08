@@ -74,13 +74,13 @@ impl From<crate::special_actions::ActionError> for GameLoopError {
 impl std::fmt::Display for GameLoopError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GameLoopError::TurnError(e) => write!(f, "Turn error: {:?}", e),
+            GameLoopError::TurnError(e) => write!(f, "Turn error: {e}"),
             GameLoopError::ResolutionFailed(msg) => write!(f, "Resolution failed: {}", msg),
             GameLoopError::InvalidState(msg) => write!(f, "Invalid state: {}", msg),
             GameLoopError::GameOver => write!(f, "Game over"),
             GameLoopError::ResponseError(e) => write!(f, "Response error: {}", e),
             GameLoopError::CombatError(e) => write!(f, "Combat error: {}", e),
-            GameLoopError::ActionError(e) => write!(f, "Action error: {:?}", e),
+            GameLoopError::ActionError(e) => write!(f, "Action error: {e}"),
         }
     }
 }

@@ -4,8 +4,10 @@ use crate::color::Color;
 use crate::decisions::{ManaColorsSpec, ask_choose_one, make_decision};
 use crate::executor::ExecutionContext;
 use crate::game_state::GameState;
+use crate::ids::ObjectId;
 use crate::ids::PlayerId;
 use crate::mana::ManaSymbol;
+use crate::types::Subtype;
 
 /// Choose one or more mana colors through the decision system with stable
 /// fallback behavior and length normalization.
@@ -78,9 +80,49 @@ pub(crate) fn credit_mana_symbols<I>(game: &mut GameState, player_id: PlayerId, 
 where
     I: IntoIterator<Item = ManaSymbol>,
 {
+    credit_mana_symbols_with_context(game, player_id, symbols, None, &[], None);
+}
+
+pub(crate) fn credit_mana_symbols_from_context<I>(
+    game: &mut GameState,
+    player_id: PlayerId,
+    symbols: I,
+    ctx: &ExecutionContext,
+) where
+    I: IntoIterator<Item = ManaSymbol>,
+{
+    credit_mana_symbols_with_context(
+        game,
+        player_id,
+        symbols,
+        Some(ctx.source),
+        &ctx.mana_usage_restrictions,
+        ctx.mana_source_chosen_creature_type,
+    );
+}
+
+fn credit_mana_symbols_with_context<I>(
+    game: &mut GameState,
+    player_id: PlayerId,
+    symbols: I,
+    source: Option<ObjectId>,
+    restrictions: &[crate::ability::ManaUsageRestriction],
+    source_chosen_creature_type: Option<Subtype>,
+) where
+    I: IntoIterator<Item = ManaSymbol>,
+{
     if let Some(player) = game.player_mut(player_id) {
         for symbol in symbols {
-            player.mana_pool.add(symbol, 1);
+            if restrictions.is_empty() {
+                player.mana_pool.add(symbol, 1);
+            } else {
+                player.add_restricted_mana(crate::ability::RestrictedManaUnit {
+                    symbol,
+                    source: source.unwrap_or(ObjectId::from_raw(0)),
+                    source_chosen_creature_type,
+                    restrictions: restrictions.to_vec(),
+                });
+            }
         }
     }
 }
@@ -92,9 +134,44 @@ pub(crate) fn credit_repeated_mana_symbol(
     symbol: ManaSymbol,
     count: u32,
 ) {
-    if let Some(player) = game.player_mut(player_id) {
-        player.mana_pool.add(symbol, count);
-    }
+    credit_repeated_mana_symbol_with_context(game, player_id, symbol, count, None, &[], None);
+}
+
+pub(crate) fn credit_repeated_mana_symbol_from_context(
+    game: &mut GameState,
+    player_id: PlayerId,
+    symbol: ManaSymbol,
+    count: u32,
+    ctx: &ExecutionContext,
+) {
+    credit_repeated_mana_symbol_with_context(
+        game,
+        player_id,
+        symbol,
+        count,
+        Some(ctx.source),
+        &ctx.mana_usage_restrictions,
+        ctx.mana_source_chosen_creature_type,
+    );
+}
+
+fn credit_repeated_mana_symbol_with_context(
+    game: &mut GameState,
+    player_id: PlayerId,
+    symbol: ManaSymbol,
+    count: u32,
+    source: Option<ObjectId>,
+    restrictions: &[crate::ability::ManaUsageRestriction],
+    source_chosen_creature_type: Option<Subtype>,
+) {
+    credit_mana_symbols_with_context(
+        game,
+        player_id,
+        std::iter::repeat_n(symbol, count as usize),
+        source,
+        restrictions,
+        source_chosen_creature_type,
+    );
 }
 
 /// Choose one or more mana symbols through the decision system with stable

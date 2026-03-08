@@ -60,7 +60,10 @@ impl ReplacementMatcher for WouldPutCountersMatcher {
 
     fn display(&self) -> String {
         match &self.counter_type {
-            Some(ct) => format!("When {:?} counters would be put on a permanent", ct),
+            Some(ct) => format!(
+                "When {} counters would be put on a permanent",
+                ct.description()
+            ),
             None => "When counters would be put on a permanent".to_string(),
         }
     }
@@ -114,7 +117,10 @@ impl ReplacementMatcher for WouldRemoveCountersMatcher {
 
     fn display(&self) -> String {
         match &self.counter_type {
-            Some(ct) => format!("When {:?} counters would be removed from a permanent", ct),
+            Some(ct) => format!(
+                "When {} counters would be removed from a permanent",
+                ct.description()
+            ),
             None => "When counters would be removed from a permanent".to_string(),
         }
     }
@@ -172,7 +178,7 @@ mod tests {
         let matcher = WouldPutCountersMatcher::plus_one_on_creature();
         assert_eq!(
             matcher.display(),
-            "When PlusOnePlusOne counters would be put on a permanent"
+            "When +1/+1 counters would be put on a permanent"
         );
     }
 }

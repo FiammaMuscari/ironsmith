@@ -5,10 +5,17 @@
 
 use crate::color::Color;
 use crate::combat_state::AttackTarget;
+use crate::compiled_text::{compile_effect_list, compiled_lines};
 use crate::game_state::Target;
 use crate::ids::{ObjectId, PlayerId};
 use crate::object::CounterType;
 use crate::zone::Zone;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DecisionUiHints {
+    pub context_text: Option<String>,
+    pub consequence_text: Option<String>,
+}
 
 // ============================================================================
 // Boolean Context
@@ -28,6 +35,8 @@ pub struct BooleanContext {
     pub description: String,
     /// Name of the source card (for display).
     pub source_name: Option<String>,
+    /// Optional richer UI hints for contextual rendering.
+    pub ui_hints: DecisionUiHints,
 }
 
 impl BooleanContext {
@@ -38,12 +47,23 @@ impl BooleanContext {
             source,
             description: description.into(),
             source_name: None,
+            ui_hints: DecisionUiHints::default(),
         }
     }
 
     /// Set the source name for display.
     pub fn with_source_name(mut self, name: impl Into<String>) -> Self {
         self.source_name = Some(name.into());
+        self
+    }
+
+    pub fn with_context_text(mut self, text: impl Into<String>) -> Self {
+        self.ui_hints.context_text = Some(text.into());
+        self
+    }
+
+    pub fn with_consequence_text(mut self, text: impl Into<String>) -> Self {
+        self.ui_hints.consequence_text = Some(text.into());
         self
     }
 }
@@ -69,6 +89,8 @@ pub struct NumberContext {
     pub max: u32,
     /// Whether this is an X value decision (affects response type).
     pub is_x_value: bool,
+    /// Optional richer UI hints for contextual rendering.
+    pub ui_hints: DecisionUiHints,
 }
 
 impl NumberContext {
@@ -87,6 +109,7 @@ impl NumberContext {
             max,
             description: description.into(),
             is_x_value: false,
+            ui_hints: DecisionUiHints::default(),
         }
     }
 
@@ -99,7 +122,18 @@ impl NumberContext {
             max,
             description: "Choose value for X".to_string(),
             is_x_value: true,
+            ui_hints: DecisionUiHints::default(),
         }
+    }
+
+    pub fn with_context_text(mut self, text: impl Into<String>) -> Self {
+        self.ui_hints.context_text = Some(text.into());
+        self
+    }
+
+    pub fn with_consequence_text(mut self, text: impl Into<String>) -> Self {
+        self.ui_hints.consequence_text = Some(text.into());
+        self
     }
 }
 
@@ -206,6 +240,8 @@ pub struct SelectObjectsContext {
     pub min: usize,
     /// Maximum objects to select (None = unlimited).
     pub max: Option<usize>,
+    /// Optional richer UI hints for contextual rendering.
+    pub ui_hints: DecisionUiHints,
 }
 
 impl SelectObjectsContext {
@@ -225,7 +261,18 @@ impl SelectObjectsContext {
             candidates,
             min,
             max,
+            ui_hints: DecisionUiHints::default(),
         }
+    }
+
+    pub fn with_context_text(mut self, text: impl Into<String>) -> Self {
+        self.ui_hints.context_text = Some(text.into());
+        self
+    }
+
+    pub fn with_consequence_text(mut self, text: impl Into<String>) -> Self {
+        self.ui_hints.consequence_text = Some(text.into());
+        self
     }
 }
 
@@ -281,6 +328,8 @@ pub struct SelectOptionsContext {
     pub min: usize,
     /// Maximum options to select.
     pub max: usize,
+    /// Optional richer UI hints for contextual rendering.
+    pub ui_hints: DecisionUiHints,
 }
 
 impl SelectOptionsContext {
@@ -300,6 +349,7 @@ impl SelectOptionsContext {
             options,
             min,
             max,
+            ui_hints: DecisionUiHints::default(),
         }
     }
 
@@ -318,6 +368,7 @@ impl SelectOptionsContext {
             options,
             min: 1,
             max: 1,
+            ui_hints: DecisionUiHints::default(),
         }
     }
 
@@ -343,7 +394,18 @@ impl SelectOptionsContext {
             options,
             min: 1,
             max: 1,
+            ui_hints: DecisionUiHints::default(),
         }
+    }
+
+    pub fn with_context_text(mut self, text: impl Into<String>) -> Self {
+        self.ui_hints.context_text = Some(text.into());
+        self
+    }
+
+    pub fn with_consequence_text(mut self, text: impl Into<String>) -> Self {
+        self.ui_hints.consequence_text = Some(text.into());
+        self
     }
 }
 
@@ -888,6 +950,8 @@ pub struct TargetsContext {
     pub context: String,
     /// The targeting requirements.
     pub requirements: Vec<TargetRequirementContext>,
+    /// Optional richer UI hints for contextual rendering.
+    pub ui_hints: DecisionUiHints,
 }
 
 impl TargetsContext {
@@ -903,7 +967,18 @@ impl TargetsContext {
             source,
             context: context.into(),
             requirements,
+            ui_hints: DecisionUiHints::default(),
         }
+    }
+
+    pub fn with_context_text(mut self, text: impl Into<String>) -> Self {
+        self.ui_hints.context_text = Some(text.into());
+        self
+    }
+
+    pub fn with_consequence_text(mut self, text: impl Into<String>) -> Self {
+        self.ui_hints.consequence_text = Some(text.into());
+        self
     }
 }
 
@@ -939,6 +1014,136 @@ pub enum DecisionContext {
 }
 
 impl DecisionContext {
+    pub fn source(&self) -> Option<ObjectId> {
+        match self {
+            DecisionContext::Boolean(ctx) => ctx.source,
+            DecisionContext::Number(ctx) => ctx.source,
+            DecisionContext::SelectObjects(ctx) => ctx.source,
+            DecisionContext::SelectOptions(ctx) => ctx.source,
+            DecisionContext::Modes(ctx) => ctx.source,
+            DecisionContext::HybridChoice(ctx) => ctx.source,
+            DecisionContext::Order(ctx) => ctx.source,
+            DecisionContext::Attackers(_)
+            | DecisionContext::Blockers(_)
+            | DecisionContext::Distribute(_)
+            | DecisionContext::Colors(_)
+            | DecisionContext::Counters(_)
+            | DecisionContext::Partition(_)
+            | DecisionContext::Proliferate(_)
+            | DecisionContext::Priority(_) => None,
+            DecisionContext::Targets(ctx) => Some(ctx.source),
+        }
+    }
+
+    pub fn prompt_text(&self) -> Option<&str> {
+        match self {
+            DecisionContext::Boolean(ctx) => Some(&ctx.description),
+            DecisionContext::Number(ctx) => Some(&ctx.description),
+            DecisionContext::SelectObjects(ctx) => Some(&ctx.description),
+            DecisionContext::SelectOptions(ctx) => Some(&ctx.description),
+            DecisionContext::Modes(ctx) => Some(&ctx.spell_name),
+            DecisionContext::HybridChoice(ctx) => Some(&ctx.spell_name),
+            DecisionContext::Order(ctx) => Some(&ctx.description),
+            DecisionContext::Targets(ctx) => Some(&ctx.context),
+            DecisionContext::Attackers(_)
+            | DecisionContext::Blockers(_)
+            | DecisionContext::Distribute(_)
+            | DecisionContext::Colors(_)
+            | DecisionContext::Counters(_)
+            | DecisionContext::Partition(_)
+            | DecisionContext::Proliferate(_)
+            | DecisionContext::Priority(_) => None,
+        }
+    }
+
+    pub fn context_text(&self) -> Option<&str> {
+        match self {
+            DecisionContext::Boolean(ctx) => ctx.ui_hints.context_text.as_deref(),
+            DecisionContext::Number(ctx) => ctx.ui_hints.context_text.as_deref(),
+            DecisionContext::SelectObjects(ctx) => ctx.ui_hints.context_text.as_deref(),
+            DecisionContext::SelectOptions(ctx) => ctx.ui_hints.context_text.as_deref(),
+            DecisionContext::Targets(ctx) => ctx.ui_hints.context_text.as_deref(),
+            DecisionContext::Modes(_)
+            | DecisionContext::HybridChoice(_)
+            | DecisionContext::Order(_)
+            | DecisionContext::Attackers(_)
+            | DecisionContext::Blockers(_)
+            | DecisionContext::Distribute(_)
+            | DecisionContext::Colors(_)
+            | DecisionContext::Counters(_)
+            | DecisionContext::Partition(_)
+            | DecisionContext::Proliferate(_)
+            | DecisionContext::Priority(_) => None,
+        }
+    }
+
+    pub fn consequence_text(&self) -> Option<&str> {
+        match self {
+            DecisionContext::Boolean(ctx) => ctx.ui_hints.consequence_text.as_deref(),
+            DecisionContext::Number(ctx) => ctx.ui_hints.consequence_text.as_deref(),
+            DecisionContext::SelectObjects(ctx) => ctx.ui_hints.consequence_text.as_deref(),
+            DecisionContext::SelectOptions(ctx) => ctx.ui_hints.consequence_text.as_deref(),
+            DecisionContext::Targets(ctx) => ctx.ui_hints.consequence_text.as_deref(),
+            DecisionContext::Modes(_)
+            | DecisionContext::HybridChoice(_)
+            | DecisionContext::Order(_)
+            | DecisionContext::Attackers(_)
+            | DecisionContext::Blockers(_)
+            | DecisionContext::Distribute(_)
+            | DecisionContext::Colors(_)
+            | DecisionContext::Counters(_)
+            | DecisionContext::Partition(_)
+            | DecisionContext::Proliferate(_)
+            | DecisionContext::Priority(_) => None,
+        }
+    }
+
+    pub fn with_context_text(mut self, text: impl Into<String>) -> Self {
+        let text = text.into();
+        match &mut self {
+            DecisionContext::Boolean(ctx) => ctx.ui_hints.context_text = Some(text),
+            DecisionContext::Number(ctx) => ctx.ui_hints.context_text = Some(text),
+            DecisionContext::SelectObjects(ctx) => ctx.ui_hints.context_text = Some(text),
+            DecisionContext::SelectOptions(ctx) => ctx.ui_hints.context_text = Some(text),
+            DecisionContext::Targets(ctx) => ctx.ui_hints.context_text = Some(text),
+            DecisionContext::Modes(_)
+            | DecisionContext::HybridChoice(_)
+            | DecisionContext::Order(_)
+            | DecisionContext::Attackers(_)
+            | DecisionContext::Blockers(_)
+            | DecisionContext::Distribute(_)
+            | DecisionContext::Colors(_)
+            | DecisionContext::Counters(_)
+            | DecisionContext::Partition(_)
+            | DecisionContext::Proliferate(_)
+            | DecisionContext::Priority(_) => {}
+        }
+        self
+    }
+
+    pub fn with_consequence_text(mut self, text: impl Into<String>) -> Self {
+        let text = text.into();
+        match &mut self {
+            DecisionContext::Boolean(ctx) => ctx.ui_hints.consequence_text = Some(text),
+            DecisionContext::Number(ctx) => ctx.ui_hints.consequence_text = Some(text),
+            DecisionContext::SelectObjects(ctx) => ctx.ui_hints.consequence_text = Some(text),
+            DecisionContext::SelectOptions(ctx) => ctx.ui_hints.consequence_text = Some(text),
+            DecisionContext::Targets(ctx) => ctx.ui_hints.consequence_text = Some(text),
+            DecisionContext::Modes(_)
+            | DecisionContext::HybridChoice(_)
+            | DecisionContext::Order(_)
+            | DecisionContext::Attackers(_)
+            | DecisionContext::Blockers(_)
+            | DecisionContext::Distribute(_)
+            | DecisionContext::Colors(_)
+            | DecisionContext::Counters(_)
+            | DecisionContext::Partition(_)
+            | DecisionContext::Proliferate(_)
+            | DecisionContext::Priority(_) => {}
+        }
+        self
+    }
+
     /// Convert to BooleanContext, panicking if wrong type.
     pub fn into_boolean(self) -> BooleanContext {
         match self {
@@ -1052,6 +1257,115 @@ impl DecisionContext {
     }
 }
 
+pub fn enrich_display_hints(
+    game: &crate::game_state::GameState,
+    ctx: DecisionContext,
+) -> DecisionContext {
+    let mut ctx = ctx;
+    let source_text = ctx.context_text().map(str::to_string).or_else(|| {
+        ctx.source()
+            .and_then(|source| decision_source_text(game, source))
+    });
+    let Some(source_text) = source_text.filter(|text| !text.trim().is_empty()) else {
+        return ctx;
+    };
+
+    let has_explicit_context = ctx.context_text().is_some();
+    if !has_explicit_context {
+        ctx = ctx.with_context_text(source_text.clone());
+    }
+    if ctx.consequence_text().is_some() {
+        return ctx;
+    }
+    let Some((context_text, consequence_text)) = infer_follow_up_hints(&ctx, &source_text) else {
+        return ctx;
+    };
+    if !has_explicit_context || ctx.context_text() == Some(source_text.as_str()) {
+        ctx = ctx.with_context_text(context_text);
+    }
+    ctx.with_consequence_text(consequence_text)
+}
+
+pub fn decision_source_text(
+    game: &crate::game_state::GameState,
+    source: ObjectId,
+) -> Option<String> {
+    if let Some(entry) = game
+        .stack
+        .iter()
+        .rev()
+        .find(|entry| entry.object_id == source)
+    {
+        if entry.is_ability {
+            return entry
+                .ability_effects
+                .as_ref()
+                .map(|effects| compile_effect_list(effects))
+                .filter(|text| !text.trim().is_empty());
+        }
+        return game.object(source).and_then(|obj| {
+            let lines = compiled_lines(&obj.to_card_definition());
+            (!lines.is_empty()).then(|| lines.join("; "))
+        });
+    }
+
+    game.object(source).and_then(|obj| {
+        let lines = compiled_lines(&obj.to_card_definition());
+        (!lines.is_empty()).then(|| lines.join("; "))
+    })
+}
+
+fn infer_follow_up_hints(ctx: &DecisionContext, source_text: &str) -> Option<(String, String)> {
+    let prompt = ctx.prompt_text()?.trim();
+    if prompt.is_empty() {
+        return None;
+    }
+    let (context_text, consequence_text) = split_follow_up_clause(source_text)?;
+    prompt_matches_follow_up_antecedent(prompt, &context_text)
+        .then_some((context_text, consequence_text))
+}
+
+fn split_follow_up_clause(text: &str) -> Option<(String, String)> {
+    let lower = text.to_ascii_lowercase();
+    for marker in ["if you do, ", "when you do, "] {
+        if let Some(idx) = lower.find(marker) {
+            let context_text = text[..idx].trim().trim_end_matches('.').trim();
+            let consequence_text = text[idx + marker.len()..].trim();
+            if context_text.is_empty() || consequence_text.is_empty() {
+                continue;
+            }
+            return Some((
+                format!("{context_text}."),
+                consequence_text.trim_end_matches('.').trim().to_string(),
+            ));
+        }
+    }
+    None
+}
+
+fn prompt_matches_follow_up_antecedent(prompt: &str, antecedent: &str) -> bool {
+    let prompt = prompt.to_ascii_lowercase();
+    let antecedent = antecedent.to_ascii_lowercase();
+    [
+        "discard",
+        "sacrifice",
+        "search",
+        "exile",
+        "return",
+        "destroy",
+        "draw",
+        "reveal",
+        "counter",
+        "tap",
+        "untap",
+        "pay",
+        "mill",
+        "shuffle",
+    ]
+    .into_iter()
+    .any(|keyword| prompt.contains(keyword) && antecedent.contains(keyword))
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -1068,6 +1382,7 @@ mod tests {
 
         assert_eq!(ctx.description, "draw a card");
         assert_eq!(ctx.source_name, Some("Wall of Omens".to_string()));
+        assert_eq!(ctx.ui_hints, DecisionUiHints::default());
     }
 
     #[test]
@@ -1077,6 +1392,7 @@ mod tests {
 
         assert_eq!(ctx.min, 0);
         assert_eq!(ctx.max, 5);
+        assert_eq!(ctx.ui_hints, DecisionUiHints::default());
     }
 
     #[test]
@@ -1098,6 +1414,7 @@ mod tests {
         assert_eq!(ctx.candidates.len(), 2);
         assert_eq!(ctx.min, 1);
         assert_eq!(ctx.max, Some(1));
+        assert_eq!(ctx.ui_hints, DecisionUiHints::default());
     }
 
     #[test]
@@ -1120,5 +1437,66 @@ mod tests {
 
         let boolean = ctx.into_boolean();
         assert_eq!(boolean.description, "test");
+    }
+
+    #[test]
+    fn enrich_display_hints_splits_if_you_do_follow_up_for_matching_prompt() {
+        let game = crate::tests::test_helpers::setup_two_player_game();
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(1);
+        let ctx = DecisionContext::SelectObjects(
+            SelectObjectsContext::new(
+                alice,
+                Some(source),
+                "Choose 1 card to discard",
+                Vec::new(),
+                1,
+                Some(1),
+            )
+            .with_context_text(
+                "When this creature enters, you may discard a card. If you do, search your library for a creature card, reveal it, put it into your hand, then shuffle.",
+            ),
+        );
+
+        let enriched = enrich_display_hints(&game, ctx).into_objects();
+        assert_eq!(
+            enriched.ui_hints.context_text.as_deref(),
+            Some("When this creature enters, you may discard a card.")
+        );
+        assert_eq!(
+            enriched.ui_hints.consequence_text.as_deref(),
+            Some(
+                "search your library for a creature card, reveal it, put it into your hand, then shuffle"
+            )
+        );
+    }
+
+    #[test]
+    fn enrich_display_hints_keeps_full_context_for_non_matching_follow_up_prompt() {
+        let game = crate::tests::test_helpers::setup_two_player_game();
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(1);
+        let ctx = DecisionContext::SelectObjects(
+            SelectObjectsContext::new(
+                alice,
+                Some(source),
+                "Search your library for a creature card",
+                Vec::new(),
+                1,
+                Some(1),
+            )
+            .with_context_text(
+                "When this creature enters, you may discard a card. If you do, search your library for a creature card, reveal it, put it into your hand, then shuffle.",
+            ),
+        );
+
+        let enriched = enrich_display_hints(&game, ctx).into_objects();
+        assert_eq!(
+            enriched.ui_hints.context_text.as_deref(),
+            Some(
+                "When this creature enters, you may discard a card. If you do, search your library for a creature card, reveal it, put it into your hand, then shuffle."
+            )
+        );
+        assert_eq!(enriched.ui_hints.consequence_text, None);
     }
 }

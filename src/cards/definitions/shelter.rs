@@ -29,7 +29,6 @@ mod tests {
     use crate::card::PowerToughness;
     use crate::color::Color;
     use crate::decision::AutoPassDecisionMaker;
-    use crate::effect::EffectResult;
     use crate::executor::ExecutionContext;
     use crate::executor::ResolvedTarget;
     use crate::executor::execute_effect;

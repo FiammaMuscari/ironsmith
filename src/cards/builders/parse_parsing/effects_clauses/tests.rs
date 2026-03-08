@@ -1,6 +1,6 @@
 use super::*;
 use crate::cards::builders::*;
-use crate::effect::EventValueSpec;
+use crate::effect::{EventValueSpec, Value};
 use crate::static_abilities::StaticAbilityId;
 use crate::*;
 
@@ -21,6 +21,14 @@ fn extract_single_static_ability(parsed: LineAst) -> StaticAbility {
                 .expect("single static ability should lower")
         }
         other => panic!("expected static ability parse, got {other:?}"),
+    }
+}
+
+fn card_text_error_message(err: CardTextError) -> String {
+    match err {
+        CardTextError::UnsupportedLine(msg)
+        | CardTextError::ParseError(msg)
+        | CardTextError::InvariantViolation(msg) => msg,
     }
 }
 
@@ -90,6 +98,43 @@ fn parse_target_phrase_top_two_cards_of_your_library_preserves_count() {
 }
 
 #[test]
+fn parse_target_phrase_top_two_cards_without_library_suffix_defaults_to_your_library() {
+    let tokens = tokenize_line("the top two cards", 0);
+    let target = parse_target_phrase(&tokens).expect("parse top-two shorthand target");
+
+    let TargetAst::WithCount(inner, count) = target else {
+        panic!("expected counted target");
+    };
+    assert_eq!(count, ChoiceCount::exactly(2));
+
+    let TargetAst::Object(filter, _, _) = *inner else {
+        panic!("expected object target");
+    };
+    assert_eq!(filter.zone, Some(Zone::Library));
+    assert_eq!(filter.owner, Some(PlayerFilter::You));
+}
+
+#[test]
+fn parse_effect_clause_exile_top_card_without_library_suffix() {
+    let tokens = tokenize_line("exile the top card", 0);
+    let ast = parse_effect_clause(&tokens).expect("parse exile-top shorthand clause");
+
+    let EffectAst::Exile { target, face_down } = ast else {
+        panic!("expected exile effect");
+    };
+    assert!(
+        !face_down,
+        "top-card shorthand should not imply face-down exile"
+    );
+
+    let TargetAst::Object(filter, _, _) = target else {
+        panic!("expected object target");
+    };
+    assert_eq!(filter.zone, Some(Zone::Library));
+    assert_eq!(filter.owner, Some(PlayerFilter::You));
+}
+
+#[test]
 fn parse_target_phrase_that_creatures_or_spells_controller_targets_player() {
     let tokens = tokenize_line("that creature's or spell's controller", 0);
     let target = parse_target_phrase(&tokens).expect("parse disjunctive controller target");
@@ -107,6 +152,84 @@ fn parse_target_phrase_that_creatures_or_spells_controller_targets_player() {
 }
 
 #[test]
+fn parse_target_phrase_defending_player() {
+    let tokens = tokenize_line("defending player", 0);
+    let target = parse_target_phrase(&tokens).expect("parse defending-player target");
+
+    assert!(matches!(
+        target,
+        TargetAst::Player(PlayerFilter::Defending, _)
+    ));
+}
+
+#[test]
+fn parse_target_phrase_any_other_target_is_supported() {
+    let tokens = tokenize_line("any other target", 0);
+    let target = parse_target_phrase(&tokens).expect("parse any-other-target");
+    assert!(matches!(target, TargetAst::AnyTarget(_)));
+}
+
+#[test]
+fn parse_spell_filter_power_or_toughness_disjunction() {
+    let tokens = tokenize_line("creature spell with power or toughness 2 or less", 0);
+    let filter = parse_spell_filter(&tokens);
+
+    assert_eq!(
+        filter.any_of.len(),
+        2,
+        "expected power/toughness spell filter to lower as a disjunction, got {filter:?}"
+    );
+    assert!(
+        filter
+            .any_of
+            .iter()
+            .all(|branch| branch.card_types == vec![CardType::Creature]),
+        "expected both branches to keep creature-spell identity, got {filter:?}"
+    );
+    assert!(
+        filter
+            .any_of
+            .iter()
+            .any(|branch| branch.power == Some(crate::filter::Comparison::LessThanOrEqual(2))),
+        "expected one branch to constrain power, got {filter:?}"
+    );
+    assert!(
+        filter
+            .any_of
+            .iter()
+            .any(|branch| branch.toughness == Some(crate::filter::Comparison::LessThanOrEqual(2))),
+        "expected one branch to constrain toughness, got {filter:?}"
+    );
+}
+
+#[test]
+fn parse_object_filter_one_or_more_colors() {
+    let tokens = tokenize_line("creature that's one or more colors", 0);
+    let filter = parse_object_filter(&tokens, false).expect("parse one-or-more-colors filter");
+
+    assert_eq!(filter.card_types, vec![CardType::Creature]);
+    let colors = filter.colors.expect("expected colored filter");
+    for color in Color::ALL {
+        assert!(
+            colors.contains(color),
+            "expected one-or-more-colors filter to include {color:?}, got {filter:?}"
+        );
+    }
+}
+
+#[test]
+fn parse_object_filter_three_or_more_colors_still_fails_loudly() {
+    let tokens = tokenize_line("creature that's three or more colors", 0);
+    let err = parse_object_filter(&tokens, false)
+        .expect_err("unsupported three-or-more-colors filter should fail");
+    let message = card_text_error_message(err);
+    assert!(
+        message.contains("unsupported color-count object filter"),
+        "expected loud color-count failure, got {message}"
+    );
+}
+
+#[test]
 fn parse_deal_damage_equal_to_each_opponent_wraps_for_each_opponent() {
     let tokens = tokenize_line(
         "deals damage equal to the number of cards in your hand to each opponent",
@@ -114,6 +237,39 @@ fn parse_deal_damage_equal_to_each_opponent_wraps_for_each_opponent() {
     );
     let ast = parse_effect_clause(&tokens).expect("parse equal-to each opponent damage");
     assert!(matches!(ast, EffectAst::ForEachOpponent { .. }));
+}
+
+#[test]
+fn parse_deal_damage_equal_to_fixed_plus_sacrificed_mana_value() {
+    let tokens = tokenize_line(
+        "this creature deals damage equal to 2 plus the sacrificed permanent's mana value to any target",
+        0,
+    );
+    let effect = parse_effect_clause(&tokens)
+        .expect("damage equal to fixed plus sacrificed permanent mana value should parse");
+    let debug = format!("{effect:?}");
+    assert!(
+        debug.contains("Add(")
+            && debug.contains("Fixed(2)")
+            && debug.contains("ManaValueOf")
+            && debug.contains("AnyTarget"),
+        "expected additive damage amount targeting any target, got {debug}"
+    );
+}
+
+#[test]
+fn parse_divided_damage_distribution_still_fails_loudly() {
+    let tokens = tokenize_line(
+        "this creature deals 4 damage divided as you choose among any number of targets",
+        0,
+    );
+    let err = parse_effect_clause(&tokens)
+        .expect_err("divided-damage distribution should remain unsupported");
+    let message = card_text_error_message(err);
+    assert!(
+        message.contains("unsupported divided-damage distribution clause"),
+        "expected strict divided-damage failure, got {message}"
+    );
 }
 
 #[test]
@@ -173,6 +329,62 @@ fn parse_deal_damage_to_each_opponent_equal_to_power_wraps_for_each_opponent() {
         effects.as_slice(),
         [EffectAst::ForEachOpponent { .. }]
     ));
+}
+
+#[test]
+fn parse_effect_clause_play_the_exiled_card_this_turn_fails_loudly() {
+    let err = parse_line("Play the exiled card this turn.", 0).expect_err("expected parse error");
+    let msg = card_text_error_message(err);
+    assert!(msg.contains("could not find verb in effect clause"));
+}
+
+#[test]
+fn parse_effect_clause_repeat_this_process_parses_loop_marker() {
+    let parsed = parse_line("Repeat this process.", 0).expect("repeat-this-process should parse");
+    assert!(matches!(
+        parsed,
+        LineAst::Statement { effects } if matches!(effects.as_slice(), [EffectAst::RepeatThisProcess])
+    ));
+}
+
+#[test]
+fn parse_effect_clause_roll_a_twenty_sided_die_fails_loudly() {
+    let err = parse_line("Roll a 20 sided die.", 0).expect_err("expected parse error");
+    let msg = card_text_error_message(err);
+    assert!(msg.contains("could not find verb in effect clause"));
+}
+
+#[test]
+fn parse_line_teferi_time_raveler_static_restriction_fails_loudly() {
+    let err = parse_line(
+        "Each opponent can cast spells only any time they could cast a sorcery.",
+        0,
+    )
+    .expect_err("expected parse error");
+    let msg = card_text_error_message(err);
+    assert!(msg.contains("could not find verb in effect clause"));
+}
+
+#[test]
+fn parse_effect_sentences_unmodeled_followup_sentence_fails_loudly() {
+    let tokens = tokenize_line(
+        "Add {C}{C}. This mana can't be spent to cast nonartifact spells.",
+        0,
+    );
+    let err = parse_effect_sentences(&tokens).expect_err("expected parse error");
+    let msg = card_text_error_message(err);
+    assert!(msg.contains("could not find verb in effect clause"));
+}
+
+#[test]
+fn parse_activated_add_mana_unmodeled_followup_sentence_fails_loudly() {
+    let tokens = tokenize_line(
+        "{T}: Add {C}{C}. This mana can't be spent to cast nonartifact spells.",
+        0,
+    );
+    let err = parse_activated_line(&tokens).expect_err("expected parse error");
+    let msg = card_text_error_message(err);
+    assert!(msg.contains("could not find verb in effect clause"));
 }
 
 #[test]
@@ -601,6 +813,60 @@ fn parse_put_into_library_second_from_top_clause() {
         effects
             .iter()
             .any(|effect| matches!(effect, EffectAst::MoveToLibrarySecondFromTop { .. }))
+    );
+}
+
+#[test]
+fn parse_put_into_library_third_from_top_clause() {
+    let tokens = tokenize_line(
+        "Put target creature into its owner's library third from the top.",
+        0,
+    );
+    let effects = parse_effect_sentence(&tokens).expect("parse put third-from-top sentence");
+    assert!(effects.iter().any(|effect| {
+        matches!(
+            effect,
+            EffectAst::MoveToLibraryNthFromTop {
+                position: Value::Fixed(3),
+                ..
+            }
+        )
+    }));
+}
+
+#[test]
+fn parse_put_into_library_beneath_top_x_cards_clause() {
+    let tokens = tokenize_line(
+        "Put target nonland permanent into its owner's library just beneath the top X cards of that library.",
+        0,
+    );
+    let effects = parse_effect_sentence(&tokens).expect("parse put beneath-top-x sentence");
+    assert!(effects.iter().any(|effect| {
+        matches!(
+            effect,
+            EffectAst::MoveToLibraryNthFromTop {
+                position: Value::Add(left, right),
+                ..
+            } if matches!(
+                (left.as_ref(), right.as_ref()),
+                (Value::X, Value::Fixed(1)) | (Value::Fixed(1), Value::X)
+            )
+        )
+    }));
+}
+
+#[test]
+fn parse_put_into_library_from_bottom_still_fails_loudly() {
+    let tokens = tokenize_line(
+        "Put target creature into its owner's library third from the bottom.",
+        0,
+    );
+    let err =
+        parse_effect_sentence(&tokens).expect_err("unsupported bottom-position tail should fail");
+    let debug = format!("{err:?}");
+    assert!(
+        debug.contains("unsupported put clause"),
+        "expected unsupported put-clause error, got {debug}"
     );
 }
 
@@ -1877,6 +2143,59 @@ fn parse_trigger_clause_this_deals_damage_to_a_player() {
 }
 
 #[test]
+fn parse_trigger_clause_this_put_into_graveyard_from_anywhere() {
+    let tokens = tokenize_line("this creature is put into a graveyard from anywhere", 0);
+    let trigger = parse_trigger_clause(&tokens).expect("parse trigger clause");
+    match trigger {
+        TriggerSpec::PutIntoGraveyard(filter) => {
+            assert_eq!(filter, ObjectFilter::source());
+        }
+        other => panic!("expected PutIntoGraveyard trigger, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_trigger_clause_this_put_into_exile_from_anywhere_fails_loudly() {
+    let tokens = tokenize_line("this creature is put into exile from anywhere", 0);
+    let err = parse_trigger_clause(&tokens).expect_err("unsupported exile trigger should fail");
+    let message = card_text_error_message(err);
+    assert!(
+        message.contains("unsupported"),
+        "expected explicit unsupported trigger error, got {message}"
+    );
+}
+
+#[test]
+fn parse_effect_clause_add_any_color_for_each_removed_counter() {
+    let tokens = tokenize_line(
+        "add one mana of any color for each charge counter removed this way",
+        0,
+    );
+    let effect = parse_effect_clause(&tokens).expect("parse effect clause");
+    match effect {
+        EffectAst::AddManaAnyColor { amount, player, .. } => {
+            assert_eq!(amount, Value::X);
+            assert_eq!(player, PlayerAst::Implicit);
+        }
+        other => panic!("expected AddManaAnyColor effect, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_effect_clause_add_any_color_removed_counter_tail_still_fails_loudly() {
+    let tokens = tokenize_line(
+        "add one mana of any color for each charge counter removed this way unless it's your turn",
+        0,
+    );
+    let err = parse_effect_clause(&tokens).expect_err("unsupported trailing mana should fail");
+    let message = card_text_error_message(err);
+    assert!(
+        message.contains("unsupported trailing mana clause"),
+        "expected strict trailing mana error, got {message}"
+    );
+}
+
+#[test]
 fn parse_effect_clause_player_gets_multiple_poison_counters() {
     let tokens = tokenize_line("that player gets two poison counters", 0);
     let effect = parse_effect_clause(&tokens).expect("parse effect clause");
@@ -2242,6 +2561,33 @@ fn parse_draw_that_many_cards_plus_one() {
 }
 
 #[test]
+fn parse_mill_that_many_cards() {
+    let tokens = tokenize_line("that many cards", 0);
+    let effect = parse_mill(&tokens, Some(SubjectAst::Player(PlayerAst::You)))
+        .expect("parse mill that-many cards");
+    assert!(matches!(
+        effect,
+        EffectAst::Mill {
+            count: Value::EventValue(EventValueSpec::Amount),
+            player: PlayerAst::You,
+        }
+    ));
+}
+
+#[test]
+fn parse_mill_that_many_permanents_fails_loudly() {
+    let tokens = tokenize_line("that many permanents", 0);
+    let err = parse_mill(&tokens, Some(SubjectAst::Player(PlayerAst::You)))
+        .expect_err("non-card trailing mill target should remain unsupported");
+    let message = card_text_error_message(err);
+    assert!(
+        message.contains("missing card keyword")
+            || message.contains("unsupported trailing mill clause"),
+        "expected loud mill trailing-target failure, got {message}"
+    );
+}
+
+#[test]
 fn parse_draw_three_cards_instead_trailing_clause() {
     let tokens = tokenize_line("three cards instead", 0);
     let effect = parse_draw(&tokens, Some(SubjectAst::Player(PlayerAst::You)))
@@ -2475,5 +2821,238 @@ fn parse_put_counters_those_counters_moves_all() {
             from: TargetAst::Tagged(tag, _),
             ..
         } if tag.as_str() == IT_TAG
+    ));
+}
+
+#[test]
+fn parse_predicate_opponent_controls_more_lands_than_you() {
+    let tokens = tokenize_line("an opponent controls more lands than you", 0);
+    let predicate = parse_predicate(&tokens).expect("parse relative land-count predicate");
+    assert!(matches!(
+        predicate,
+        PredicateAst::PlayerControlsMoreThanYou { player: PlayerAst::Opponent, filter }
+            if filter.card_types == vec![CardType::Land]
+    ));
+}
+
+#[test]
+fn parse_predicate_opponent_has_more_life_than_you() {
+    let tokens = tokenize_line("an opponent has more life than you", 0);
+    let predicate = parse_predicate(&tokens).expect("parse relative life-total predicate");
+    assert!(matches!(
+        predicate,
+        PredicateAst::PlayerHasMoreLifeThanYou {
+            player: PlayerAst::Opponent
+        }
+    ));
+}
+
+#[test]
+fn parse_predicate_opponent_has_more_cards_in_hand_than_you() {
+    let tokens = tokenize_line("an opponent has more cards in hand than you", 0);
+    let predicate = parse_predicate(&tokens).expect("parse relative hand-count predicate");
+    assert!(matches!(
+        predicate,
+        PredicateAst::PlayerHasMoreCardsInHandThanYou {
+            player: PlayerAst::Opponent
+        }
+    ));
+}
+
+#[test]
+fn parse_predicate_your_life_total_at_most_half_starting() {
+    let tokens = tokenize_line(
+        "your life total is less than or equal to half your starting life total",
+        0,
+    );
+    let predicate = parse_predicate(&tokens).expect("parse half-starting-life threshold");
+    assert!(matches!(
+        predicate,
+        PredicateAst::PlayerLifeAtMostHalfStartingLifeTotal {
+            player: PlayerAst::You
+        }
+    ));
+}
+
+#[test]
+fn parse_predicate_opponents_life_total_less_than_half_starting() {
+    let tokens = tokenize_line(
+        "opponent's life total is less than half their starting life total",
+        0,
+    );
+    let predicate = parse_predicate(&tokens).expect("parse strict half-starting-life threshold");
+    assert!(matches!(
+        predicate,
+        PredicateAst::PlayerLifeLessThanHalfStartingLifeTotal {
+            player: PlayerAst::Opponent
+        }
+    ));
+}
+
+#[test]
+fn parse_predicate_sacrificed_creature_was_hamster() {
+    let tokens = tokenize_line("the sacrificed creature was a Hamster", 0);
+    let predicate = parse_predicate(&tokens).expect("parse sacrificed-creature subtype predicate");
+    assert!(matches!(
+        predicate,
+        PredicateAst::ItMatches(filter)
+            if filter.card_types == vec![CardType::Creature]
+                && filter.subtypes == vec![Subtype::Hamster]
+    ));
+}
+
+#[test]
+fn parse_predicate_sacrificed_land_was_cave() {
+    let tokens = tokenize_line("the sacrificed land was a Cave", 0);
+    let predicate = parse_predicate(&tokens).expect("parse sacrificed-land subtype predicate");
+    assert!(matches!(
+        predicate,
+        PredicateAst::ItMatches(filter)
+            if filter.card_types == vec![CardType::Land]
+                && filter.subtypes == vec![Subtype::Cave]
+    ));
+}
+
+#[test]
+fn parse_predicate_sacrificed_instant_was_arcane_still_fails_loudly() {
+    let tokens = tokenize_line("the sacrificed instant was Arcane", 0);
+    let err = parse_predicate(&tokens)
+        .expect_err("nonpermanent sacrificed-object subject should stay unsupported");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("unsupported")
+            || rendered.contains("could not parse")
+            || rendered.contains("expected"),
+        "expected loud failure for nonpermanent sacrificed-object subject, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_predicate_this_creature_isnt_saddled() {
+    let tokens = tokenize_line("this creature isn't saddled", 0);
+    let predicate = parse_predicate(&tokens).expect("parse source-not-saddled predicate");
+    assert!(matches!(
+        predicate,
+        PredicateAst::Not(inner) if matches!(&*inner, PredicateAst::SourceIsSaddled)
+    ));
+}
+
+#[test]
+fn parse_predicate_this_creature_isnt_saddled_with_extra_tail_still_fails_loudly() {
+    let tokens = tokenize_line("this creature isn't saddled this turn", 0);
+    let err = parse_predicate(&tokens).expect_err("unsupported saddled predicate tail should fail");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("unsupported")
+            || rendered.contains("could not parse")
+            || rendered.contains("expected"),
+        "expected loud failure for unsupported saddled predicate tail, got {rendered}"
+    );
+}
+
+#[test]
+fn parse_predicate_that_artifact_is_equipment() {
+    let tokens = tokenize_line("that artifact is an Equipment", 0);
+    let predicate = parse_predicate(&tokens).expect("parse tagged equipment predicate");
+    assert!(matches!(
+        predicate,
+        PredicateAst::ItMatches(filter)
+            if filter.subtypes == vec![Subtype::Equipment]
+    ));
+}
+
+#[test]
+fn parse_predicate_its_not_a_token() {
+    let tokens = tokenize_line("it's not a token", 0);
+    let predicate = parse_predicate(&tokens).expect("parse tagged nontoken predicate");
+    assert!(matches!(
+        predicate,
+        PredicateAst::ItMatches(filter) if filter.nontoken
+    ));
+}
+
+#[test]
+fn parse_target_phrase_it_with_void_counter_on_it() {
+    let tokens = tokenize_line("it with a void counter on it", 0);
+    let target = parse_target_phrase(&tokens).expect("parse tagged counter-state target phrase");
+    let TargetAst::Object(filter, _, _) = target else {
+        panic!("expected tagged object target");
+    };
+    assert!(filter.tagged_constraints.iter().any(|constraint| {
+        constraint.tag.as_str() == IT_TAG
+            && constraint.relation == TaggedOpbjectRelation::IsTaggedObject
+    }));
+    assert_eq!(
+        filter.with_counter,
+        Some(crate::filter::CounterConstraint::Typed(CounterType::Void))
+    );
+}
+
+#[test]
+fn parse_target_phrase_it_with_two_counter_types_still_fails_loudly() {
+    let tokens = tokenize_line("it with a void counter on it or a silver counter on it", 0);
+    let err = parse_target_phrase(&tokens)
+        .expect_err("mixed counter-state disjunction must stay unsupported");
+    let message = card_text_error_message(err);
+    assert!(
+        message.contains("unsupported counter-state object filter")
+            || message.contains("unsupported target phrase"),
+        "expected loud counter-state failure, got {message}"
+    );
+}
+
+#[test]
+fn parse_effect_sentence_implicit_tagged_subtype_addition() {
+    let tokens = tokenize_line("It's a Phyrexian in addition to its other types.", 0);
+    let effects = parse_effect_sentence(&tokens).expect("parse implicit tagged subtype sentence");
+    assert!(matches!(
+        effects.as_slice(),
+        [EffectAst::AddSubtypes { target, subtypes, duration }]
+            if matches!(target, TargetAst::Tagged(tag, _) if tag.as_str() == IT_TAG)
+                && *duration == Until::Forever
+                && subtypes == &vec![Subtype::Phyrexian]
+    ));
+}
+
+#[test]
+fn parse_effect_sentence_implicit_tagged_base_pt_and_subtype_addition() {
+    let tokens = tokenize_line(
+        "Each of them is a 1/1 Spirit in addition to its other types.",
+        0,
+    );
+    let effects =
+        parse_effect_sentence(&tokens).expect("parse implicit tagged base-pt subtype sentence");
+    assert!(matches!(
+        effects.as_slice(),
+        [
+            EffectAst::SetBasePowerToughness {
+                power: Value::Fixed(1),
+                toughness: Value::Fixed(1),
+                target: TargetAst::Tagged(tag_a, _),
+                duration: Until::Forever,
+            },
+            EffectAst::AddSubtypes {
+                target: TargetAst::Tagged(tag_b, _),
+                subtypes,
+                duration: Until::Forever,
+            },
+        ] if tag_a.as_str() == IT_TAG
+            && tag_b.as_str() == IT_TAG
+            && subtypes == &vec![Subtype::Spirit]
+    ));
+}
+
+#[test]
+fn parse_effect_sentence_implicit_card_type_without_addition_tail_is_supported() {
+    let tokens = tokenize_line("It's an enchantment.", 0);
+    let effects = parse_effect_sentence(&tokens)
+        .expect("plain implicit card-type clause should parse as a type-setting effect");
+    assert!(matches!(
+        effects.as_slice(),
+        [EffectAst::AddCardTypes {
+            target: TargetAst::Tagged(tag, _),
+            card_types,
+            ..
+        }] if tag.as_str() == IT_TAG && card_types == &vec![CardType::Enchantment]
     ));
 }

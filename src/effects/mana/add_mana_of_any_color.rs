@@ -1,6 +1,6 @@
 //! Add mana of any color effect implementation.
 
-use super::choice_helpers::{choose_mana_colors, credit_mana_symbols};
+use super::choice_helpers::{choose_mana_colors, credit_mana_symbols_from_context};
 use crate::color::Color;
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
@@ -95,10 +95,11 @@ impl EffectExecutor for AddManaOfAnyColorEffect {
             self.available_colors.as_deref(),
             Color::Green,
         );
-        credit_mana_symbols(
+        credit_mana_symbols_from_context(
             game,
             player_id,
             colors.into_iter().map(ManaSymbol::from_color),
+            ctx,
         );
 
         Ok(EffectOutcome::count(amount as i32))

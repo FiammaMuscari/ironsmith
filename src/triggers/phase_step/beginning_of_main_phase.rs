@@ -3,8 +3,8 @@
 use crate::events::EventKind;
 use crate::ids::PlayerId;
 use crate::target::PlayerFilter;
-use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
+use crate::triggers::{TriggerEvent, describe_player_filter_possessive};
 
 /// Which main phase to trigger on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +96,11 @@ impl TriggerMatcher for BeginningOfMainPhaseTrigger {
             PlayerFilter::You => format!("At the beginning of your {}", phase_str),
             PlayerFilter::Any => format!("At the beginning of each {}", phase_str),
             PlayerFilter::Opponent => format!("At the beginning of each opponent's {}", phase_str),
-            _ => format!("At the beginning of {:?}'s {}", self.player, phase_str),
+            _ => format!(
+                "At the beginning of {} {}",
+                describe_player_filter_possessive(&self.player),
+                phase_str
+            ),
         }
     }
 }

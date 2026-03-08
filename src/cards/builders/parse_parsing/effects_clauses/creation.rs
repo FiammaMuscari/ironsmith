@@ -540,6 +540,14 @@ pub(crate) fn parse_create(
         tail_tokens.truncate(attached_token_idx);
     }
     let tail_words = words(&tail_tokens);
+    if attached_to_target.is_some()
+        && tail_words.iter().any(|word| *word == "copy" || *word == "copies")
+    {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported aura-copy attachment fanout clause (clause: '{}')",
+            clause_words.join(" ")
+        )));
+    }
     let with_idx = tail_words.iter().position(|word| *word == "with");
     let raw_for_each_idx = tail_words
         .windows(2)
@@ -856,10 +864,14 @@ pub(crate) fn parse_create(
             }
         }
     }
+    let mut dynamic_power_toughness = None;
     if let Some(pt_idx) = name_words.iter().position(|word| looks_like_pt_word(word))
-        && pt_idx > 0
         && pt_idx < name_words_primary_len
     {
+        if name_words[pt_idx].eq_ignore_ascii_case("x/x") {
+            dynamic_power_toughness = Some((Value::X, Value::X));
+            name_words[pt_idx] = "0/0";
+        }
         let prefix_words = &name_words[..pt_idx];
         let keep_prefix = prefix_words.contains(&"legendary")
             || prefix_words
@@ -891,6 +903,7 @@ pub(crate) fn parse_create(
     let create = EffectAst::CreateTokenWithMods {
         name,
         count: resolve_create_count(references_iterated_object),
+        dynamic_power_toughness,
         player,
         attached_to: attached_to_target,
         tapped,

@@ -9,9 +9,41 @@ const pill = "text-[13px] uppercase cursor-pointer hover:brightness-125 transiti
 const inputPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[13px] font-medium border-0 outline-none focus:ring-1 focus:ring-primary/50";
 const selectPill = "rounded-full bg-secondary text-secondary-foreground px-2.5 py-0.5 text-[13px] font-medium border-0 outline-none cursor-pointer uppercase tracking-wide";
 
+function formatPercent(value, digits = 1) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return null;
+  return `${(amount * 100).toFixed(digits)}%`;
+}
+
+function formatCardLoadDiagnosticsClipboard(diagnostics, fallbackName, fallbackError) {
+  const compiledText = Array.isArray(diagnostics?.compiledText) && diagnostics.compiledText.length > 0
+    ? diagnostics.compiledText.join("\n")
+    : "-";
+  const compiledAbilities = Array.isArray(diagnostics?.compiledAbilities) && diagnostics.compiledAbilities.length > 0
+    ? diagnostics.compiledAbilities.join("\n")
+    : "-";
+  const primaryError = diagnostics?.error || fallbackError || null;
+  const parseError = diagnostics?.parseError || null;
+
+  return [
+    diagnostics?.canonicalName || fallbackName ? `Card: ${diagnostics?.canonicalName || fallbackName}` : "",
+    diagnostics?.query ? `Query: ${diagnostics.query}` : "",
+    primaryError ? `Error: ${primaryError}` : "",
+    parseError && parseError !== primaryError ? `Parse error: ${parseError}` : "",
+    formatPercent(diagnostics?.semanticScore) ? `Similarity score: ${formatPercent(diagnostics?.semanticScore)}` : "",
+    Number.isFinite(diagnostics?.thresholdPercent) ? `Threshold: ${diagnostics.thresholdPercent.toFixed(0)}%` : "",
+    `Oracle text:\n${diagnostics?.oracleText || "-"}`,
+    `Compiled text:\n${compiledText}`,
+    `Compiled abilities:\n${compiledAbilities}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export default function AddCardBar({
   zoneViews = ["battlefield"],
   setZoneViews,
+  onAddCardFailure,
 }) {
   const {
     game,
@@ -51,9 +83,40 @@ export default function AddCardBar({
       setCardName("");
       await refresh(`Added ${name} to ${zone}`);
     } catch (err) {
-      setStatus(`Add card failed: ${err}`, true);
+      const errMsg = String(err?.message || err);
+      setStatus(`Add card failed: ${errMsg}`, true);
+      if (typeof onAddCardFailure === "function") {
+        let copyText = `Card: ${name}\n\nError: ${errMsg}`;
+        if (game && typeof game.cardLoadDiagnostics === "function") {
+          try {
+            const diagnostics = await game.cardLoadDiagnostics(name, errMsg);
+            copyText = formatCardLoadDiagnosticsClipboard(diagnostics, name, errMsg);
+          } catch (diagnosticsError) {
+            console.warn("cardLoadDiagnostics failed:", diagnosticsError);
+          }
+        }
+
+        onAddCardFailure({
+          tone: "error",
+          title: `Could not add ${name}`,
+          body: `${errMsg} Click to copy diagnostics.`,
+          copyText,
+          copyStatusMessage: `Copied diagnostics for ${name}`,
+        });
+      }
     }
-  }, [addLocked, cardName, game, playerIndex, perspective, zone, skipTriggers, refresh, setStatus]);
+  }, [
+    addLocked,
+    cardName,
+    game,
+    onAddCardFailure,
+    playerIndex,
+    perspective,
+    zone,
+    skipTriggers,
+    refresh,
+    setStatus,
+  ]);
 
   return (
     <div className="panel-gradient flex items-center gap-1.5 rounded px-2.5 py-1">

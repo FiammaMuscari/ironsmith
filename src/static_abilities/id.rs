@@ -155,6 +155,7 @@ pub enum StaticAbilityId {
     PreventDamageToSelfRemoveCounter,
     DoesntUntap,
     MayChooseNotToUntapDuringUntapStep,
+    ChooseCreatureTypeAsEnters,
     EntersTapped,
     EntersTappedUnlessControlTwoOrMoreOtherLands,
     EntersTappedUnlessControlTwoOrFewerOtherLands,
@@ -167,6 +168,8 @@ pub enum StaticAbilityId {
     ShuffleIntoLibraryFromGraveyard,
     AllPermanentsEnterTapped,
     EnterTappedForFilter,
+    EnterUntappedForFilter,
+    EnterAsCopyAsEnters,
     EnterWithCountersForFilter,
     CanBeCommander,
     LevelAbilities,
@@ -353,6 +356,7 @@ impl StaticAbilityId {
             | PreventDamageToSelfRemoveCounter
             | DoesntUntap
             | MayChooseNotToUntapDuringUntapStep
+            | ChooseCreatureTypeAsEnters
             | EntersTapped
             | EntersTappedUnlessControlTwoOrMoreOtherLands
             | EntersTappedUnlessControlTwoOrFewerOtherLands
@@ -365,6 +369,8 @@ impl StaticAbilityId {
             | ShuffleIntoLibraryFromGraveyard
             | AllPermanentsEnterTapped
             | EnterTappedForFilter
+            | EnterUntappedForFilter
+            | EnterAsCopyAsEnters
             | EnterWithCountersForFilter
             | CanBeCommander
             | LevelAbilities

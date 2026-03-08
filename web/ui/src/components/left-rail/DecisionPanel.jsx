@@ -4,6 +4,7 @@ import { useHoveredObjectId } from "@/context/HoverContext";
 import DecisionRouter from "@/components/decisions/DecisionRouter";
 import { normalizeDecisionText } from "@/components/decisions/decisionText";
 import { SymbolText } from "@/lib/mana-symbols";
+import { nextPriorityAdvanceLabel, priorityPassButtonColor } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Undo2 } from "lucide-react";
@@ -49,44 +50,6 @@ function formatPriorityActionLabel(action) {
     if (match) return match[1];
   }
   return label;
-}
-
-function nextStepLabel(phase, step, stackSize) {
-  if (stackSize > 0) return "Resolve";
-  switch (step) {
-    case "Untap": return "Upkeep";
-    case "Upkeep": return "Draw";
-    case "Draw": return "Main Phase";
-    case "BeginCombat": return "Attackers";
-    case "DeclareAttackers": return "Blockers";
-    case "DeclareBlockers": return "Damage";
-    case "CombatDamage": return "End Combat";
-    case "EndCombat": return "Main 2";
-    case "End": return "Cleanup";
-    case "Cleanup": return "Next Turn";
-    default: break;
-  }
-  switch (phase) {
-    case "FirstMain": return "Combat";
-    case "NextMain": return "End Step";
-    case "Ending": return "Cleanup";
-    default: return "Next";
-  }
-}
-
-function passButtonColor(phase, step, stackSize) {
-  if (stackSize > 0) return "yellow";
-  if (phase === "FirstMain" && !step) return "red";
-  switch (step) {
-    case "BeginCombat":
-    case "DeclareAttackers":
-      return "blue";
-    case "DeclareBlockers":
-    case "CombatDamage":
-      return "orange";
-    default:
-      return "yellow";
-  }
 }
 
 const PASS_COLORS = {
@@ -190,7 +153,7 @@ export default function DecisionPanel({ inspectorOracleTextHeight = 0 }) {
     : null;
 
   const metaText = decision
-    ? `${decisionPlayer?.name || "?"} · ${decision.kind}`
+    ? `${decisionPlayer?.name || "?"} · ${decision.reason || decision.kind}`
     : "No pending action";
 
   const isPriorityDecision = decision?.kind === "priority";
@@ -201,8 +164,8 @@ export default function DecisionPanel({ inspectorOracleTextHeight = 0 }) {
   const holdingPriority = holdRule === "always";
   const passLabel = holdingPriority
     ? passAction?.label || "Pass priority"
-    : `→ ${nextStepLabel(state?.phase, state?.step, stackSize)}`;
-  const passColorKey = passButtonColor(state?.phase, state?.step, stackSize);
+    : `→ ${nextPriorityAdvanceLabel(state?.phase, state?.step, stackSize)}`;
+  const passColorKey = priorityPassButtonColor(state?.phase, state?.step, stackSize);
   const passColors = PASS_COLORS[passColorKey];
 
   const undoAvailable = !!state?.cancelable && (!decision || canAct);

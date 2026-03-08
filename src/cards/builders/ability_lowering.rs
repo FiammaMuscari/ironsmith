@@ -1,10 +1,10 @@
 use crate::ability::{Ability, AbilityKind, TriggeredAbility};
 use crate::cards::ParseAnnotations;
 use crate::cards::builders::{
-    AdditionalCostChoiceOptionAst, CardDefinitionBuilder, CardTextError, EffectAst, LineInfo,
-    LoweredEffects, NormalizedAdditionalCostChoiceOptionAst, NormalizedParsedAbility,
-    NormalizedPreparedAbility, ParsedAbility, PreparedEffectsForLowering, ReferenceExports,
-    ReferenceImports, StaticAbilityAst, TriggerSpec, collect_tag_spans_from_effects_with_context,
+    CardDefinitionBuilder, CardTextError, EffectAst, LineInfo, LoweredEffects,
+    NormalizedAdditionalCostChoiceOptionAst, NormalizedParsedAbility, NormalizedPreparedAbility,
+    ParsedAbility, PreparedEffectsForLowering, ReferenceExports, ReferenceImports,
+    StaticAbilityAst, TriggerSpec, collect_tag_spans_from_effects_with_context,
     compile_trigger_spec, materialize_prepared_effects_with_trigger_context,
     materialize_prepared_statement_effects, materialize_prepared_triggered_effects,
     prepare_effects_for_lowering, prepare_effects_with_trigger_context_for_lowering,
@@ -38,37 +38,6 @@ pub(crate) fn lower_statement_effects(
     effects_ast: &[EffectAst],
 ) -> Result<Vec<Effect>, CardTextError> {
     Ok(lower_statement_effects_with_imports(effects_ast, &ReferenceImports::default())?.effects)
-}
-
-pub(crate) fn lower_effects_with_trigger_context_and_imports(
-    trigger: Option<&TriggerSpec>,
-    effects_ast: &[EffectAst],
-    imports: &ReferenceImports,
-) -> Result<LoweredEffects, CardTextError> {
-    let prepared =
-        prepare_effects_with_trigger_context_for_lowering(trigger, effects_ast, imports.clone())?;
-    lower_prepared_effects_with_trigger_context(&prepared)
-}
-
-pub(crate) fn lower_activated_ability_effects_with_imports(
-    effects_ast: &[EffectAst],
-    imports: &ReferenceImports,
-) -> Result<LoweredEffects, CardTextError> {
-    lower_effects_with_trigger_context_and_imports(None, effects_ast, imports)
-}
-
-pub(crate) fn lower_additional_cost_choice_modes_with_exports(
-    options: &[AdditionalCostChoiceOptionAst],
-) -> Result<(Vec<EffectMode>, ReferenceExports), CardTextError> {
-    let mut prepared_options = Vec::with_capacity(options.len());
-    for option in options {
-        prepared_options.push(NormalizedAdditionalCostChoiceOptionAst {
-            description: option.description.clone(),
-            effects_ast: option.effects.clone(),
-            prepared: prepare_effects_for_lowering(&option.effects, ReferenceImports::default())?,
-        });
-    }
-    lower_prepared_additional_cost_choice_modes_with_exports(&prepared_options)
 }
 
 pub(crate) fn lower_prepared_additional_cost_choice_modes_with_exports(

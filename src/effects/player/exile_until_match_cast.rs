@@ -82,8 +82,11 @@ impl EffectExecutor for ExileUntilMatchCastEffect {
             } else {
                 format!("Cast {candidate_name}?")
             };
-            let choice_ctx =
-                crate::decisions::context::BooleanContext::new(caster_id, Some(candidate_id), prompt);
+            let choice_ctx = crate::decisions::context::BooleanContext::new(
+                caster_id,
+                Some(candidate_id),
+                prompt,
+            );
             let should_cast = ctx.decision_maker.decide_boolean(game, &choice_ctx);
 
             if should_cast {

@@ -8,6 +8,7 @@ const WORKER_METHODS = [
   "addLifeDelta",
   "advancePhase",
   "cancelDecision",
+  "cardLoadDiagnostics",
   "cardsMeetingThreshold",
   "dispatch",
   "drawCard",

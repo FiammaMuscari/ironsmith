@@ -10,6 +10,18 @@ pub enum Zone {
 }
 
 impl Zone {
+    pub fn name(self) -> &'static str {
+        match self {
+            Zone::Library => "library",
+            Zone::Hand => "hand",
+            Zone::Battlefield => "battlefield",
+            Zone::Graveyard => "graveyard",
+            Zone::Stack => "stack",
+            Zone::Exile => "exile",
+            Zone::Command => "command",
+        }
+    }
+
     /// Returns true if objects in this zone are public (visible to all players).
     pub fn is_public(&self) -> bool {
         matches!(
@@ -26,6 +38,12 @@ impl Zone {
     /// Returns true if cards in this zone are ordered (order matters).
     pub fn is_ordered(&self) -> bool {
         matches!(self, Zone::Library | Zone::Stack)
+    }
+}
+
+impl std::fmt::Display for Zone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
     }
 }
 

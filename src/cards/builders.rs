@@ -5,7 +5,7 @@
 
 use crate::ConditionExpr;
 use crate::ability::{
-    self, Ability, AbilityKind, ActivatedAbility, ActivationTiming, LevelAbility, TriggeredAbility,
+    self, Ability, AbilityKind, ActivationTiming, LevelAbility, TriggeredAbility,
 };
 use crate::alternative_cast::AlternativeCastingMethod;
 use crate::card::{CardBuilder, PowerToughness, PtValue};
@@ -15,22 +15,21 @@ use crate::effect::{
     ChoiceCount, Condition, Effect, EffectId, EffectMode, EffectPredicate, EmblemDescription,
     EventValueSpec, Until, Value,
 };
-use crate::effects::VoteOption;
 use crate::ids::CardId;
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::object::CounterType;
-use crate::static_abilities::{
-    Anthem, AnthemCountExpression, AnthemValue, GrantAbility, StaticAbility, StaticAbilityId,
-};
+use crate::static_abilities::StaticAbility;
 use crate::tag::TagKey;
-use crate::target::{
-    ChooseSpec, ObjectFilter, ObjectRef, PlayerFilter, TaggedObjectConstraint,
-    TaggedOpbjectRelation,
-};
+use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
 use crate::triggers::Trigger;
 use crate::types::{CardType, Subtype, Supertype};
 use crate::zone::Zone;
 use std::collections::HashMap;
+
+#[cfg(test)]
+use crate::filter::TaggedOpbjectRelation;
+#[cfg(test)]
+use crate::static_abilities::StaticAbilityId;
 
 use super::CardDefinition;
 mod effect_ast_normalization;
@@ -44,6 +43,18 @@ pub enum CardTextError {
     ParseError(String),
     InvariantViolation(String),
 }
+
+impl std::fmt::Display for CardTextError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CardTextError::UnsupportedLine(message)
+            | CardTextError::ParseError(message)
+            | CardTextError::InvariantViolation(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for CardTextError {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum KeywordAction {
@@ -444,6 +455,7 @@ pub(crate) enum TriggerSpec {
         player: PlayerFilter,
         amount: u32,
     },
+    #[allow(dead_code)]
     Custom(String),
     SagaChapter(Vec<u32>),
     Either(Box<TriggerSpec>, Box<TriggerSpec>),
@@ -509,6 +521,10 @@ pub(crate) enum PredicateAst {
         tag: TagKey,
         filter: ObjectFilter,
     },
+    PlayerTaggedObjectEnteredBattlefieldThisTurn {
+        player: PlayerAst,
+        tag: TagKey,
+    },
     PlayerControls {
         player: PlayerAst,
         filter: ObjectFilter,
@@ -546,7 +562,23 @@ pub(crate) enum PredicateAst {
         player: PlayerAst,
         filter: ObjectFilter,
     },
+    PlayerControlsMoreThanYou {
+        player: PlayerAst,
+        filter: ObjectFilter,
+    },
+    PlayerLifeAtMostHalfStartingLifeTotal {
+        player: PlayerAst,
+    },
+    PlayerLifeLessThanHalfStartingLifeTotal {
+        player: PlayerAst,
+    },
     PlayerHasLessLifeThanYou {
+        player: PlayerAst,
+    },
+    PlayerHasMoreLifeThanYou {
+        player: PlayerAst,
+    },
+    PlayerIsMonarch {
         player: PlayerAst,
     },
     PlayerHasCitysBlessing {
@@ -574,8 +606,16 @@ pub(crate) enum PredicateAst {
         player: PlayerAst,
         count: u32,
     },
+    PlayerHasMoreCardsInHandThanYou {
+        player: PlayerAst,
+    },
+    PlayerCastSpellsThisTurnOrMore {
+        player: PlayerAst,
+        count: u32,
+    },
     YouHaveNoCardsInHand,
     SourceIsTapped,
+    SourceIsSaddled,
     #[allow(dead_code)]
     SourceHasNoCounter(CounterType),
     TriggeringObjectHadNoCounter(CounterType),
@@ -687,6 +727,11 @@ pub(crate) enum EffectAst {
     Draw {
         count: Value,
         player: PlayerAst,
+    },
+    DrawForEachTaggedMatching {
+        player: PlayerAst,
+        tag: TagKey,
+        filter: ObjectFilter,
     },
     Counter {
         target: TargetAst,
@@ -901,6 +946,11 @@ pub(crate) enum EffectAst {
         target: TargetAst,
         duration: Until,
     },
+    BecomeCopy {
+        target: TargetAst,
+        source: TargetAst,
+        duration: Until,
+    },
     Surveil {
         count: Value,
         player: PlayerAst,
@@ -920,6 +970,11 @@ pub(crate) enum EffectAst {
     },
     PlayFromGraveyardUntilEot {
         player: PlayerAst,
+    },
+    AdditionalLandPlays {
+        count: Value,
+        player: PlayerAst,
+        duration: Until,
     },
     GrantPlayTaggedUntilEndOfTurn {
         tag: TagKey,
@@ -1027,6 +1082,11 @@ pub(crate) enum EffectAst {
         reveal: bool,
         if_not_chosen: Vec<EffectAst>,
     },
+    ChooseFromLookedCardsOntoBattlefieldOrIntoHandRestOnBottomOfLibrary {
+        player: PlayerAst,
+        battlefield_filter: ObjectFilter,
+        tapped: bool,
+    },
     PutRestOnBottomOfLibrary,
     CopySpell {
         target: TargetAst,
@@ -1051,6 +1111,13 @@ pub(crate) enum EffectAst {
         count: ChoiceCount,
         player: PlayerAst,
         tag: TagKey,
+    },
+    ChooseObjectsAcrossZones {
+        filter: ObjectFilter,
+        count: ChoiceCount,
+        player: PlayerAst,
+        tag: TagKey,
+        zones: Vec<Zone>,
     },
     Sacrifice {
         filter: ObjectFilter,
@@ -1111,6 +1178,10 @@ pub(crate) enum EffectAst {
         battlefield_tapped: bool,
         attached_to: Option<TargetAst>,
     },
+    MoveToLibraryNthFromTop {
+        target: TargetAst,
+        position: Value,
+    },
     MoveToLibrarySecondFromTop {
         target: TargetAst,
     },
@@ -1128,6 +1199,9 @@ pub(crate) enum EffectAst {
         filter: ObjectFilter,
         count: u32,
         shared_type: Option<SharedTypeConstraintAst>,
+    },
+    BecomeMonarch {
+        player: PlayerAst,
     },
     SetLifeTotal {
         amount: Value,
@@ -1153,6 +1227,11 @@ pub(crate) enum EffectAst {
         count: Value,
         player: PlayerAst,
     },
+    ChooseCardName {
+        player: PlayerAst,
+        tag: TagKey,
+    },
+    RepeatThisProcess,
     May {
         effects: Vec<EffectAst>,
     },
@@ -1160,6 +1239,7 @@ pub(crate) enum EffectAst {
         player: PlayerAst,
         effects: Vec<EffectAst>,
     },
+    #[allow(dead_code)]
     MayByTaggedController {
         tag: TagKey,
         effects: Vec<EffectAst>,
@@ -1223,6 +1303,11 @@ pub(crate) enum EffectAst {
     ForEachTaggedPlayer {
         tag: TagKey,
         effects: Vec<EffectAst>,
+    },
+    RepeatProcess {
+        effects: Vec<EffectAst>,
+        continue_effect_index: usize,
+        continue_predicate: IfResultPredicate,
     },
     Enchant {
         filter: ObjectFilter,
@@ -1335,6 +1420,7 @@ pub(crate) enum EffectAst {
     CreateTokenWithMods {
         name: String,
         count: Value,
+        dynamic_power_toughness: Option<(Value, Value)>,
         player: PlayerAst,
         attached_to: Option<TargetAst>,
         tapped: bool,
@@ -1621,17 +1707,17 @@ impl CardDefinitionBuilder {
 
         let mut left = Vec::new();
         for supertype in supertypes {
-            left.push(format!("{:?}", supertype));
+            left.push(supertype.to_string());
         }
         for card_type in card_types {
-            left.push(format!("{:?}", card_type));
+            left.push(card_type.to_string());
         }
 
         let mut line = left.join(" ");
         if !subtypes.is_empty() {
             let right = subtypes
                 .iter()
-                .map(|subtype| format!("{:?}", subtype))
+                .map(std::string::ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(" ");
             if !line.is_empty() {
@@ -1902,6 +1988,7 @@ impl CardDefinitionBuilder {
                         activation_restrictions: vec![],
                         mana_output: None,
                         activation_condition: None,
+                        mana_usage_restrictions: vec![],
                     }),
                     functional_zones: vec![Zone::Battlefield],
                     text: Some(format!("Crew {amount}")),
@@ -1926,6 +2013,7 @@ impl CardDefinitionBuilder {
                         activation_restrictions: vec![],
                         mana_output: None,
                         activation_condition: None,
+                        mana_usage_restrictions: vec![],
                     }),
                     functional_zones: vec![Zone::Battlefield],
                     text: Some(format!("Saddle {amount}")),
@@ -1946,12 +2034,30 @@ impl CardDefinitionBuilder {
         Ok(definition)
     }
 
+    /// Build a CardDefinition from oracle text, preserving unsupported lines as markers.
+    pub fn parse_text_allow_unsupported(
+        self,
+        text: impl Into<String>,
+    ) -> Result<CardDefinition, CardTextError> {
+        let (definition, _) = self.parse_text_with_annotations_allow_unsupported(text)?;
+        Ok(definition)
+    }
+
     /// Build a CardDefinition from oracle text, returning parse annotations.
     pub fn parse_text_with_annotations(
         self,
         text: impl Into<String>,
     ) -> Result<(CardDefinition, ParseAnnotations), CardTextError> {
-        effect_pipeline::parse_text_with_annotations(self, text.into())
+        effect_pipeline::parse_text_with_annotations(self, text.into(), false)
+    }
+
+    /// Build a CardDefinition from oracle text, returning parse annotations while
+    /// preserving unsupported lines as markers.
+    pub fn parse_text_with_annotations_allow_unsupported(
+        self,
+        text: impl Into<String>,
+    ) -> Result<(CardDefinition, ParseAnnotations), CardTextError> {
+        effect_pipeline::parse_text_with_annotations(self, text.into(), true)
     }
 
     /// Build a CardDefinition from oracle text, prepending metadata lines
@@ -2009,17 +2115,17 @@ impl CardDefinitionBuilder {
 
             let mut left = Vec::new();
             for supertype in supertypes {
-                left.push(format!("{:?}", supertype));
+                left.push(supertype.to_string());
             }
             for card_type in card_types {
-                left.push(format!("{:?}", card_type));
+                left.push(card_type.to_string());
             }
 
             let mut line = left.join(" ");
             if !subtypes.is_empty() {
                 let right = subtypes
                     .iter()
-                    .map(|subtype| format!("{:?}", subtype))
+                    .map(std::string::ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(" ");
                 if !line.is_empty() {
@@ -2574,6 +2680,7 @@ impl CardDefinitionBuilder {
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Battlefield],
             text: Some(text),
@@ -2599,6 +2706,7 @@ impl CardDefinitionBuilder {
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Graveyard],
             text: Some(text),
@@ -2626,6 +2734,7 @@ impl CardDefinitionBuilder {
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Hand],
             text: Some(text),
@@ -3702,32 +3811,27 @@ impl CardDefinitionBuilder {
     /// Add protection from a color.
     pub fn protection_from(self, colors: ColorSet) -> Self {
         use crate::ability::ProtectionFrom;
-        self.with_ability(
-            Ability::static_ability(StaticAbility::protection(ProtectionFrom::Color(colors)))
-                .with_text(&format!("Protection from {:?}", colors)),
-        )
+        let protection = StaticAbility::protection(ProtectionFrom::Color(colors));
+        let text = protection.display();
+        self.with_ability(Ability::static_ability(protection).with_text(&text))
     }
 
     /// Add protection from a card type.
     pub fn protection_from_card_type(self, card_type: CardType) -> Self {
         use crate::ability::ProtectionFrom;
-        self.with_ability(
-            Ability::static_ability(StaticAbility::protection(ProtectionFrom::CardType(
-                card_type,
-            )))
-            .with_text(&format!("Protection from {:?}s", card_type)),
-        )
+        let protection = StaticAbility::protection(ProtectionFrom::CardType(card_type));
+        let text = protection.display();
+        self.with_ability(Ability::static_ability(protection).with_text(&text))
     }
 
     /// Add protection from a creature subtype (e.g., "Protection from Humans").
     pub fn protection_from_subtype(self, subtype: Subtype) -> Self {
         use crate::ability::ProtectionFrom;
-        self.with_ability(
-            Ability::static_ability(StaticAbility::protection(ProtectionFrom::Permanents(
-                ObjectFilter::default().with_subtype(subtype),
-            )))
-            .with_text(&format!("Protection from {:?}", subtype)),
-        )
+        let protection = StaticAbility::protection(ProtectionFrom::Permanents(
+            ObjectFilter::default().with_subtype(subtype),
+        ));
+        let text = protection.display();
+        self.with_ability(Ability::static_ability(protection).with_text(&text))
     }
 
     // === Triggered ability shortcuts ===
@@ -4032,6 +4136,7 @@ impl CardDefinitionBuilder {
                 activation_restrictions: vec![],
                 mana_output: None,
                 activation_condition: None,
+                mana_usage_restrictions: vec![],
             }),
             functional_zones: vec![Zone::Battlefield],
             text: Some(level_up_text),
@@ -4654,20 +4759,18 @@ mod effect_parse_tests {
     use super::*;
     use crate::alternative_cast::AlternativeCastingMethod;
     use crate::compiled_text::compiled_lines;
-    use crate::effect::{Condition, Until, Value};
+    use crate::effect::Value;
     use crate::effects::CantEffect;
     use crate::effects::{
         AddManaOfAnyColorEffect, AddManaOfAnyOneColorEffect, AddManaOfLandProducedTypesEffect,
-        AddScaledManaEffect, BattlefieldController, ConniveEffect, CounterEffect,
-        CreateTokenCopyEffect, DestroyEffect, DiscardEffect, DrawCardsEffect, EnergyCountersEffect,
-        ExchangeControlEffect, ExileEffect, ExileInsteadOfGraveyardEffect, ForEachObject,
-        ForPlayersEffect, GainControlEffect, GrantPlayFromGraveyardEffect, LookAtHandEffect,
-        ModifyPowerToughnessEffect, ModifyPowerToughnessForEachEffect, MoveToZoneEffect,
-        PutCountersEffect, RemoveCountersEffect, RemoveUpToAnyCountersEffect,
-        ReturnAllToBattlefieldEffect, ReturnFromGraveyardToBattlefieldEffect, ReturnToHandEffect,
-        SacrificeEffect, ScryEffect, SetBasePowerToughnessEffect, SetLifeTotalEffect,
-        SkipCombatPhasesEffect, SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect,
-        SkipTurnEffect, SurveilEffect, TapEffect, TargetOnlyEffect, TransformEffect,
+        AddScaledManaEffect, CreateTokenCopyEffect, DestroyEffect, DiscardEffect, DrawCardsEffect,
+        EnergyCountersEffect, ExchangeControlEffect, ExileInsteadOfGraveyardEffect, ForEachObject,
+        ForPlayersEffect, GrantPlayFromGraveyardEffect, LookAtHandEffect,
+        ModifyPowerToughnessForEachEffect, PutCountersEffect, RemoveCountersEffect,
+        RemoveUpToAnyCountersEffect, ReturnFromGraveyardToBattlefieldEffect, SacrificeEffect,
+        SetBasePowerToughnessEffect, SetLifeTotalEffect, SkipCombatPhasesEffect,
+        SkipDrawStepEffect, SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, SurveilEffect,
+        TapEffect,
     };
     use crate::ids::CardId;
     use crate::mana::{ManaCost, ManaSymbol};
@@ -5472,16 +5575,16 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
 
     #[test]
     fn parse_adamant_mana_spent_conditional_compiles_semantically() {
-        let err = CardDefinitionBuilder::new(CardId::new(), "Turn into a Pumpkin Variant")
+        let def = CardDefinitionBuilder::new(CardId::new(), "Turn into a Pumpkin Variant")
             .parse_text(
                 "Return target nonland permanent to its owner's hand. Draw a card.\nAdamant — If at least three blue mana was spent to cast this spell, create a Food token.",
             )
-            .expect_err("adamant spent-to-cast condition should fail until supported");
-        let message = format!("{err:?}");
+            .expect("adamant spent-to-cast condition should parse");
+        let debug = format!("{def:#?}");
         assert!(
-            message.contains("unsupported spent-to-cast condition clause")
-                || message.contains("unsupported leading enters-with-counter condition"),
-            "expected explicit unsupported adamant parse error, got {message}"
+            debug.contains("ManaSpentToCastThisSpellAtLeast")
+                && debug.contains("CreateTokenEffect"),
+            "expected adamant condition and token creation in lowered definition, got {debug}"
         );
     }
 
@@ -6450,8 +6553,65 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             2,
             "expected two-color restriction, got {colors:?}"
         );
+        assert_eq!(add_any.amount, Value::SourcePower);
         assert!(colors.contains(&crate::color::Color::Green));
         assert!(colors.contains(&crate::color::Color::Blue));
+
+        let lines = compiled_lines(&def);
+        let mana_line = lines
+            .iter()
+            .find(|line| line.starts_with("Mana ability"))
+            .expect("expected mana ability line");
+        assert!(
+            mana_line.to_ascii_lowercase().contains("power"),
+            "compiled text should describe the X value, got: {mana_line}"
+        );
+        assert!(
+            !mana_line.contains("Add X mana in any combination"),
+            "compiled text should not leave X unresolved, got: {mana_line}"
+        );
+    }
+
+    #[test]
+    fn parse_add_any_combination_with_unbound_x_without_definition_fails() {
+        let err = CardDefinitionBuilder::new(CardId::new(), "Broken Vivi Variant")
+            .parse_text("{T}: Add X mana in any combination of {G} and/or {U}.")
+            .expect_err("bare X mana ability should fail without a where clause or X cost");
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("unresolved X in mana ability"),
+            "expected unresolved-X parse error, got: {message}"
+        );
+    }
+
+    #[test]
+    fn parse_add_any_combination_with_named_self_where_tail_keeps_source_power() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Vivi Ornitier")
+            .parse_text(
+                "{0}: Add X mana in any combination of {U} and/or {R}, where X is Vivi Ornitier's power.",
+            )
+            .expect("named self-reference where-tail should parse");
+
+        let mana_ability = def
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Activated(a) if a.is_mana_ability() => Some(a),
+                _ => None,
+            })
+            .expect("expected mana ability");
+        let add_any = mana_ability
+            .effects
+            .iter()
+            .find_map(|effect| effect.downcast_ref::<AddManaOfAnyColorEffect>())
+            .expect("expected AddManaOfAnyColorEffect");
+        assert_eq!(add_any.amount, Value::SourcePower);
+        let colors = add_any
+            .available_colors
+            .as_ref()
+            .expect("expected restricted colors");
+        assert!(colors.contains(&crate::color::Color::Blue));
+        assert!(colors.contains(&crate::color::Color::Red));
     }
 
     #[test]
@@ -8765,14 +8925,14 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .collect();
         assert!(
             displays.iter().any(|display| {
-                display.contains("gets +1/+1")
+                (display.contains("gets +1/+1") || display.contains("get +1/+1"))
                     && display.contains("as long as enchanted permanent is an equipment")
             }),
             "expected conditional granted pump static, got: {displays:?}"
         );
         assert!(
             displays.iter().any(|display| {
-                display.contains("has Trample")
+                (display.contains("has Trample") || display.contains("have Trample"))
                     && display.contains("as long as enchanted permanent is an equipment")
             }),
             "expected conditional granted trample static, got: {displays:?}"
@@ -9171,18 +9331,37 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
-    fn parse_put_from_among_into_hand_fails_instead_of_misparsing() {
-        let err = CardDefinitionBuilder::new(CardId::new(), "Ainok Wayfarer Variant")
+    fn parse_mill_then_put_from_among_into_hand_with_if_you_dont() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Ainok Wayfarer Variant")
             .parse_text(
                 "When this creature enters, mill three cards. You may put a land card from among them into your hand. If you don't, put a +1/+1 counter on this creature.",
             )
-            .expect_err("put-from-among clause should not silently parse as returning source");
+            .expect("mill plus put-from-among clause should parse");
 
-        let message = format!("{err:?}");
+        let debug = format!("{:#?}", def).to_ascii_lowercase();
         assert!(
-            message.contains("unsupported put-from-among clause")
-                || message.contains("unsupported mechanic marker clause"),
-            "expected strict put-from-among parse error, got {message}"
+            debug.contains("milleffect")
+                && debug.contains("chooseobjectseffect")
+                && debug.contains("zone: graveyard")
+                && debug.contains("putcounterseffect"),
+            "expected mill -> choose-from-graveyard -> fallback-counter lowering, got {debug}"
+        );
+    }
+
+    #[test]
+    fn parse_mill_then_put_from_among_into_hand() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Six Variant")
+            .parse_text(
+                "When this creature enters, mill three cards. You may put a land card from among them into your hand.",
+            )
+            .expect("mill plus put-from-among clause should parse");
+
+        let debug = format!("{:#?}", def).to_ascii_lowercase();
+        assert!(
+            debug.contains("milleffect")
+                && debug.contains("chooseobjectseffect")
+                && debug.contains("zone: graveyard"),
+            "expected mill -> choose-from-graveyard lowering, got {debug}"
         );
     }
 
@@ -10088,6 +10267,23 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
     }
 
     #[test]
+    fn parse_self_activated_ability_cost_reduction_for_each_static_line() {
+        let def = CardDefinitionBuilder::new(CardId::new(), "Channel Reducer Variant")
+            .parse_text(
+                "{1}{G}, Discard this card: Destroy target artifact, enchantment, or nonbasic land an opponent controls.\nThis ability costs {1} less to activate for each legendary creature you control.",
+            )
+            .expect("self activated-ability cost reduction line should parse");
+
+        let debug = format!("{:?}", def);
+        assert!(
+            debug.contains("ActivatedAbilityCostReduction")
+                && debug.contains("per_matching_objects: Some")
+                && debug.contains("functional_zones: [Battlefield, Hand"),
+            "expected self cost reduction with per-match filter and nonbattlefield zones, got {debug}"
+        );
+    }
+
+    #[test]
     fn parse_enchanted_creature_gets_xx_where_x_creature_cards_in_graveyard() {
         let def = CardDefinitionBuilder::new(CardId::new(), "Wreath Variant")
             .card_types(vec![CardType::Enchantment])
@@ -10187,7 +10383,9 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .find(|line| line.starts_with("Activated ability"))
             .expect("expected activated ability line");
         assert!(
-            activated.contains("can't block") && activated.contains("this permanent this turn"),
+            activated.contains("can't block")
+                && (activated.contains("this permanent this turn")
+                    || activated.contains("this creature this turn")),
             "expected cant-block-this-creature text in compiled line, got {activated}"
         );
     }
@@ -10438,7 +10636,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             for_each.filter.tagged_constraints.iter().any(|constraint| {
                 constraint.relation == TaggedOpbjectRelation::IsTaggedObject
-                    && constraint.tag.as_str() == "revealed_0"
+                    && is_sentence_helper_tag(constraint.tag.as_str(), "revealed")
             }),
             "expected revealed-this-way fanout to reference revealed tag, got {for_each:?}"
         );
@@ -10449,6 +10647,28 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
                 .contains(&CardType::Land),
             "expected nonland constraint on revealed cards, got {for_each:?}"
         );
+    }
+
+    #[test]
+    fn parser_sentence_helpers_do_not_use_legacy_fixed_helper_tags() {
+        for source in [
+            include_str!("builders/parse_parsing/effects_sentences/dispatch_entry.rs"),
+            include_str!("builders/parse_parsing/effects_sentences/dispatch_inner.rs"),
+            include_str!("builders/parse_parsing/effects_sentences/search_library.rs"),
+            include_str!("builders/parse_parsing/effects_sentences/sentence_primitives.rs"),
+        ] {
+            for legacy in [
+                "\"exiled_0\"",
+                "\"looked_0\"",
+                "\"chosen_0\"",
+                "\"revealed_0\"",
+            ] {
+                assert!(
+                    !source.contains(legacy),
+                    "legacy fixed helper tag {legacy} should not appear in parser helpers"
+                );
+            }
+        }
     }
 
     #[test]

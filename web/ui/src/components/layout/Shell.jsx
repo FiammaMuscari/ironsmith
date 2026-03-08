@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import { parseNames } from "@/lib/constants";
 import Topbar from "./Topbar";
@@ -26,6 +26,18 @@ export default function Shell() {
   const [lobbyOpen, setLobbyOpen] = useState(false);
   const [zoneViews, setZoneViews] = useState(["battlefield"]);
   const [deckLoadingMode, setDeckLoadingMode] = useState(false);
+  const [notices, setNotices] = useState([]);
+  const nextNoticeIdRef = useRef(1);
+
+  const pushNotice = useCallback((notice) => {
+    const id = nextNoticeIdRef.current++;
+    setNotices((current) => [...current, { id, ...notice }].slice(-6));
+    return id;
+  }, []);
+
+  const dismissNotice = useCallback((noticeId) => {
+    setNotices((current) => current.filter((notice) => notice.id !== noticeId));
+  }, []);
 
   useEffect(() => {
     if (multiplayer.matchStarted) {
@@ -143,7 +155,21 @@ export default function Shell() {
       const result = await game.loadDecks(decks);
       setDeckLoadingMode(false);
       const loaded = result?.loaded ?? 0;
-      const failed = result?.failed || [];
+      const failed = Array.isArray(result?.failed) ? result.failed : [];
+      pushNotice({
+        tone: "success",
+        title: "Deck load complete",
+        body: `Loaded ${loaded} card${loaded === 1 ? "" : "s"}.`,
+      });
+      if (failed.length > 0) {
+        pushNotice({
+          tone: "error",
+          title: "Deck load issues",
+          body: `${failed.length} card${failed.length === 1 ? "" : "s"} failed. Click to copy the card names.`,
+          copyText: failed.join("\n"),
+          copyStatusMessage: `Copied ${failed.length} failed deck card name${failed.length === 1 ? "" : "s"}`,
+        });
+      }
       if (failed.length > 0) {
         const unique = [...new Set(failed)];
         const failedStr = unique.length <= 5
@@ -156,7 +182,7 @@ export default function Shell() {
     } catch (err) {
       setStatus(`Load decks failed: ${err}`, true);
     }
-  }, [game, multiplayer.mode, refresh, setStatus]);
+  }, [game, multiplayer.mode, pushNotice, refresh, setStatus]);
 
   const handleChangePerspective = useCallback(
     async (playerIndex) => {
@@ -248,12 +274,18 @@ export default function Shell() {
         onOpenLobby={() => setLobbyOpen(true)}
         deckLoadingMode={deckLoadingMode}
       />
-      <AddCardBar zoneViews={zoneViews} setZoneViews={setZoneViews} />
+      <AddCardBar
+        zoneViews={zoneViews}
+        setZoneViews={setZoneViews}
+        onAddCardFailure={pushNotice}
+      />
       <Workspace
         zoneViews={zoneViews}
         deckLoadingMode={deckLoadingMode}
         onLoadDecks={handleLoadCustomDecks}
         onCancelDeckLoading={() => setDeckLoadingMode(false)}
+        notices={notices}
+        onDismissNotice={dismissNotice}
       />
       <LogDrawer open={logOpen} onOpenChange={setLogOpen} />
       {lobbyOpen ? (

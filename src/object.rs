@@ -144,6 +144,7 @@ pub enum CounterType {
     Strife,
     Study,
     Stun,
+    Void,
     Task,
     Theft,
     Tide,
@@ -229,6 +230,23 @@ pub enum ObjectKind {
     Emblem,
 }
 
+impl ObjectKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            ObjectKind::Card => "card",
+            ObjectKind::Token => "token",
+            ObjectKind::SpellCopy => "spell copy",
+            ObjectKind::Emblem => "emblem",
+        }
+    }
+}
+
+impl std::fmt::Display for ObjectKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// Stored copiable fields needed to end a bestow cast and restore creature form.
 #[derive(Debug, Clone)]
 pub struct BestowCastState {
@@ -273,6 +291,7 @@ pub struct Object {
     pub base_power: Option<PtValue>,
     pub base_toughness: Option<PtValue>,
     pub base_loyalty: Option<u32>,
+    pub base_defense: Option<u32>,
     /// Abilities this object has (copiable)
     pub abilities: Vec<Ability>,
 
@@ -360,6 +379,7 @@ impl Object {
             base_power,
             base_toughness,
             base_loyalty: card.loyalty,
+            base_defense: card.defense,
             abilities: Vec::new(),
             counters: HashMap::new(),
             attached_to: None,
@@ -419,6 +439,7 @@ impl Object {
         self.base_power = base_power;
         self.base_toughness = base_toughness;
         self.base_loyalty = def.card.loyalty;
+        self.base_defense = def.card.defense;
         self.abilities = def.abilities.clone();
 
         self.spell_effect = def.spell_effect.clone();
@@ -451,7 +472,7 @@ impl Object {
                 oracle_text: self.oracle_text.clone(),
                 power_toughness,
                 loyalty: self.base_loyalty,
-                defense: None,
+                defense: self.base_defense,
                 other_face: self.other_face,
                 is_token: matches!(self.kind, ObjectKind::Token),
             },
@@ -496,6 +517,7 @@ impl Object {
             base_power: power.map(PtValue::Fixed),
             base_toughness: toughness.map(PtValue::Fixed),
             base_loyalty: None,
+            base_defense: None,
             abilities: Vec::new(),
             counters: HashMap::new(),
             attached_to: None,
@@ -538,6 +560,7 @@ impl Object {
             base_power: source.base_power,
             base_toughness: source.base_toughness,
             base_loyalty: source.base_loyalty,
+            base_defense: source.base_defense,
             abilities: source.abilities.clone(),
             // Non-copiable values reset to defaults
             counters: HashMap::new(),
@@ -599,6 +622,7 @@ impl Object {
             base_power: None,
             base_toughness: None,
             base_loyalty: None,
+            base_defense: None,
             abilities,
             counters: HashMap::new(),
             attached_to: None,
@@ -633,6 +657,7 @@ impl Object {
         self.base_power = source.base_power;
         self.base_toughness = source.base_toughness;
         self.base_loyalty = source.base_loyalty;
+        self.base_defense = source.base_defense;
         self.abilities = source.abilities.clone();
         self.aura_attach_filter = source.aura_attach_filter.clone();
     }
@@ -899,6 +924,11 @@ impl Object {
         )
     }
 
+    /// Returns the printed defense value of this battle.
+    pub fn defense(&self) -> Option<u32> {
+        self.base_defense
+    }
+
     /// Adds counters of the specified type.
     pub fn add_counters(&mut self, counter_type: CounterType, amount: u32) {
         *self.counters.entry(counter_type).or_insert(0) += amount;
@@ -1069,6 +1099,7 @@ impl Object {
             base_power: def.card.power_toughness.map(|pt| pt.power),
             base_toughness: def.card.power_toughness.map(|pt| pt.toughness),
             base_loyalty: def.card.loyalty,
+            base_defense: def.card.defense,
             abilities: def.abilities.clone(),
             counters: HashMap::new(),
             attached_to: None,

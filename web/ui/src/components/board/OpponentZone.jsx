@@ -1,15 +1,18 @@
 import { useCallback } from "react";
 import BattlefieldRow from "./BattlefieldRow";
+import DeckZonePile from "./DeckZonePile";
 import ManaPool from "@/components/left-rail/ManaPool";
-import { useCombatArrows } from "@/context/CombatArrowContext";
+import { useCombatArrows } from "@/context/useCombatArrows";
 import { useGame } from "@/context/GameContext";
+import { getPlayerAccent } from "@/lib/player-colors";
 import { cn } from "@/lib/utils";
 
-const ZONE_ORDER = ["battlefield", "hand", "graveyard", "exile", "command"];
+const ZONE_ORDER = ["battlefield", "hand", "graveyard", "library", "exile", "command"];
 const ZONE_LABELS = {
   battlefield: "Battlefield",
   hand: "Hand",
   graveyard: "Graveyard",
+  library: "Deck",
   exile: "Exile",
   command: "Command",
 };
@@ -25,9 +28,30 @@ function getZoneCards(player, zone) {
   switch (zone) {
     case "hand": return player.hand_cards || [];
     case "graveyard": return player.graveyard_cards || [];
+    case "library": return [];
     case "exile": return player.exile_cards || [];
     case "command": return player.command_cards || [];
     default: return player.battlefield || [];
+  }
+}
+
+function getZoneCount(player, zone) {
+  switch (zone) {
+    case "hand":
+      return player.hand_size ?? 0;
+    case "graveyard":
+      return player.graveyard_size ?? 0;
+    case "library":
+      return player.library_size ?? 0;
+    case "exile":
+      return Array.isArray(player.exile_cards) ? player.exile_cards.length : 0;
+    case "command":
+      return player.command_size ?? (Array.isArray(player.command_cards) ? player.command_cards.length : 0);
+    default:
+      return (player.battlefield || []).reduce((total, card) => {
+        const count = Number(card.count);
+        return total + (Number.isFinite(count) && count > 1 ? count : 1);
+      }, 0);
   }
 }
 
@@ -37,6 +61,7 @@ function buildZoneEntries(player, zoneViews) {
     zone,
     label: ZONE_LABELS[zone] || zone,
     cards: getZoneCards(player, zone),
+    count: getZoneCount(player, zone),
     active: activeZones.includes(zone),
   }));
 }
@@ -53,6 +78,7 @@ function zoneCounts(player) {
     { label: "Battlefield", count: battlefieldCount },
     { label: "Hand", count: player.hand_size ?? 0 },
     { label: "Graveyard", count: player.graveyard_size ?? 0 },
+    { label: "Deck", count: player.library_size ?? 0 },
     { label: "Exile", count: exileCards.length },
     { label: "Command", count: player.command_size ?? commandCards.length },
   ];
@@ -160,11 +186,12 @@ function OpponentSlot({
   legalTargetObjectIds,
 }) {
   const { combatModeRef, combatMode, dragArrow } = useCombatArrows();
+  const playerAccent = getPlayerAccent(state?.players || [], player?.id);
   const zoneEntries = buildZoneEntries(player, zoneViews);
   const activeZoneEntries = zoneEntries.filter((entry) => entry.active);
   const visibleZones = new Set(
     activeZoneEntries
-      .filter((entry) => entry.zone === "battlefield" || entry.cards.length > 0)
+      .filter((entry) => entry.zone === "battlefield" || entry.zone === "library" || entry.count > 0)
       .map((entry) => entry.zone)
   );
   if (visibleZones.size === 0 && activeZoneEntries.length > 0) {
@@ -278,13 +305,16 @@ function OpponentSlot({
           </span>
           <span
             className={cn(
-              "text-[16px] text-[#a4bdd7] uppercase tracking-wider font-bold",
-              isPlayerLegalTarget && "text-[#d7ebff] drop-shadow-[0_0_7px_rgba(100,169,255,0.7)]"
+              "text-[16px] uppercase tracking-wider font-bold",
+              isPlayerLegalTarget && "drop-shadow-[0_0_7px_rgba(100,169,255,0.7)]"
             )}
             data-player-target={player.index ?? player.id}
             data-player-target-name={player.index ?? player.id}
             onClick={handlePlayerTargetClick}
-            style={{ cursor: isPlayerLegalTarget && canPickTargetFromBoard ? "pointer" : undefined }}
+            style={{
+              color: playerAccent?.hex,
+              cursor: isPlayerLegalTarget && canPickTargetFromBoard ? "pointer" : undefined,
+            }}
           >
             {player.name}
             {zoneName && <span className="text-muted-foreground">{zoneName}</span>}
@@ -321,19 +351,23 @@ function OpponentSlot({
                 {showZoneHeaders && (
                   <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-[#9cb8d8] px-0.5">
                     <span>{entry.label}</span>
-                    <span className="text-[#d6e6fb]">{entry.cards.length}</span>
+                    <span className="text-[#d6e6fb]">{entry.count}</span>
                   </div>
                 )}
-                <BattlefieldRow
-                  cards={entry.cards}
-                  compact={entry.zone !== "battlefield"}
-                  battlefieldSide="top"
-                  selectedObjectId={selectedObjectId}
-                  onCardClick={handleCardClick}
-                  onExpandInspector={entry.zone === "battlefield" ? onExpandInspector : undefined}
-                  legalTargetObjectIds={legalTargetObjectIds}
-                  allowVerticalScroll={entry.zone === "hand"}
-                />
+                {entry.zone === "library" ? (
+                  <DeckZonePile count={entry.count} />
+                ) : (
+                  <BattlefieldRow
+                    cards={entry.cards}
+                    compact={entry.zone !== "battlefield"}
+                    battlefieldSide="top"
+                    selectedObjectId={selectedObjectId}
+                    onCardClick={handleCardClick}
+                    onExpandInspector={entry.zone === "battlefield" ? onExpandInspector : undefined}
+                    legalTargetObjectIds={legalTargetObjectIds}
+                    allowVerticalScroll={entry.zone === "hand"}
+                  />
+                )}
               </div>
             </div>
           );

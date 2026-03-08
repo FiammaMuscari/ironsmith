@@ -4,8 +4,8 @@ use crate::cards::builders::{
     has_demonstrative_object_reference, is_mana_replacement_clause_words,
     is_mana_trigger_additional_clause_words, is_target_player_dealt_damage_by_this_turn_subject,
     keyword_action_to_static_ability, parse_ability_line, parse_card_type, parse_color,
-    parse_effect_chain_with_sentence_primitives,
-    parse_effect_with_verb, parse_for_each_object_subject, parse_get_for_each_count_value,
+    parse_cant_restrictions, parse_effect_chain_with_sentence_primitives, parse_effect_with_verb,
+    parse_for_each_object_subject, parse_get_for_each_count_value,
     parse_get_modifier_values_with_tail, parse_has_base_power_clause,
     parse_has_base_power_toughness_clause, parse_leading_player_may, parse_object_filter,
     parse_pt_modifier, parse_pt_modifier_values, parse_put_counters, parse_restriction_duration,
@@ -16,6 +16,7 @@ use crate::cards::builders::{
     starts_with_until_end_of_turn, strip_leading_instead_prefix, token_index_for_word_index,
     trim_commas, words,
 };
+use super::zones::parse_half_starting_life_total_value;
 use crate::{ChooseSpec, ObjectFilter, TagKey, Until, Value};
 
 pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {
@@ -175,6 +176,19 @@ pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTex
         }
         let target = parse_target_phrase(tokens)?;
         return Ok(EffectAst::TargetOnly { target });
+    }
+
+    if let Some((duration, clause_tokens)) = parse_restriction_duration(tokens)?
+        && find_negation_span(&clause_tokens).is_some()
+        && let Some(restrictions) = parse_cant_restrictions(&clause_tokens)?
+        && let [parsed] = restrictions.as_slice()
+        && parsed.target.is_none()
+    {
+        return Ok(EffectAst::Cant {
+            restriction: parsed.restriction.clone(),
+            duration,
+            condition: None,
+        });
     }
 
     let (verb, verb_idx) = find_verb(tokens).ok_or_else(|| {
@@ -441,9 +455,13 @@ pub(crate) fn parse_become_clause(
 
     // Player "life total becomes N"
     if let Some(player) = extract_subject_player(Some(subject)) {
+        if become_words == ["monarch"] {
+            return Ok(EffectAst::BecomeMonarch { player });
+        }
         if subject_words.contains(&"life") && subject_words.contains(&"total") {
             let amount = parse_value(&become_tokens)
                 .map(|(value, _)| value)
+                .or_else(|| parse_half_starting_life_total_value(&become_tokens, player))
                 .ok_or_else(|| {
                     CardTextError::ParseError(format!(
                         "missing life total amount (clause: '{}')",
@@ -493,6 +511,29 @@ pub(crate) fn parse_become_clause(
         });
     }
 
+    // "copy of <target>"
+    if become_words.starts_with(&["copy", "of"]) {
+        let Some(source_start) = token_index_for_word_index(become_body_tokens, 2) else {
+            return Err(CardTextError::ParseError(format!(
+                "missing copy source in become clause (clause: '{}')",
+                words(rest_tokens).join(" ")
+            )));
+        };
+        let source_tokens = trim_commas(&become_body_tokens[source_start..]);
+        if source_tokens.is_empty() {
+            return Err(CardTextError::ParseError(format!(
+                "missing copy source in become clause (clause: '{}')",
+                words(rest_tokens).join(" ")
+            )));
+        }
+        let source = parse_target_phrase(&source_tokens)?;
+        return Ok(EffectAst::BecomeCopy {
+            target,
+            source,
+            duration,
+        });
+    }
+
     // "colorless"
     if become_words == ["colorless"] {
         return Ok(EffectAst::MakeColorless { target, duration });
@@ -537,8 +578,8 @@ pub(crate) fn parse_become_clause(
                 }
                 continue;
             }
-            if let Some(subtype) =
-                parse_subtype_word(word).or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
+            if let Some(subtype) = parse_subtype_word(word)
+                .or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
             {
                 if !subtypes.contains(&subtype) {
                     subtypes.push(subtype);
@@ -576,7 +617,11 @@ pub(crate) fn parse_become_clause(
             false
         };
 
-        let colors = if colors.is_empty() { None } else { Some(colors) };
+        let colors = if colors.is_empty() {
+            None
+        } else {
+            Some(colors)
+        };
         if !all_prefix_words_supported || !suffix_supported {
             return Ok(EffectAst::BecomeBasePtCreature {
                 power: Value::Fixed(power),

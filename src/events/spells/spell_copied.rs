@@ -40,7 +40,7 @@ impl GameEventType for SpellCopiedEvent {
     }
 
     fn display(&self) -> String {
-        format!("Spell copied by player {:?}", self.copier)
+        format!("Spell copied by player {}", self.copier.0)
     }
 
     fn as_any(&self) -> &dyn Any {

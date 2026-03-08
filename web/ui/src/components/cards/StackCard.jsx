@@ -1,8 +1,13 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
+import { useGame } from "@/context/GameContext";
 import { cancelMotion, createTimeline, uiSpring } from "@/lib/motion/anime";
+import { getPlayerAccent, playerAccentVars } from "@/lib/player-colors";
 import { scryfallImageUrl } from "@/lib/scryfall";
 import { ManaCostIcons } from "@/lib/mana-symbols";
 import { cn } from "@/lib/utils";
+import AnimatedCircuitFrame from "@/components/cards/AnimatedCircuitFrame";
+
+const STACK_CARD_CIRCUIT_PATH = "M9.5 2.5H90.5C93.26 2.5 95.5 4.74 95.5 7.5V88.5C95.5 91.26 93.26 93.5 90.5 93.5H9.5C6.74 93.5 4.5 91.26 4.5 88.5V7.5C4.5 4.74 6.74 2.5 9.5 2.5Z";
 
 export default function StackCard({
   entry,
@@ -12,6 +17,7 @@ export default function StackCard({
   className = "",
   onClick,
 }) {
+  const { state } = useGame();
   const name = entry.name || `Object#${entry.id}`;
   const artUrl = scryfallImageUrl(name, "art_crop");
   const scryfallUrl = scryfallImageUrl(name);
@@ -23,6 +29,13 @@ export default function StackCard({
     || (entry.power != null && entry.toughness != null
       ? `${entry.power}/${entry.toughness}`
       : null);
+  const stackAccent = getPlayerAccent(state?.players || [], entry?.controller);
+  const stackAccentStyle = stackAccent
+    ? {
+      ...playerAccentVars(stackAccent),
+      "--glow-rgb": stackAccent.rgb,
+    }
+    : undefined;
   const rootRef = useRef(null);
   const motionRef = useRef(null);
 
@@ -67,7 +80,7 @@ export default function StackCard({
     <div
       ref={rootRef}
       className={cn(
-        "game-card stack-card w-full min-w-0 min-h-[96px] cursor-pointer overflow-hidden",
+        "game-card stack-card stack-card-circuit w-full min-w-0 min-h-[96px] cursor-pointer overflow-hidden",
         isActive && "stack-card-active",
         isLeaving && "pointer-events-none",
         className
@@ -75,17 +88,15 @@ export default function StackCard({
       data-object-id={entry.id}
       data-card-name={name}
       onClick={() => onClick?.(entry.inspect_object_id ?? entry.id)}
+      style={stackAccentStyle}
     >
-      {artUrl && (
-        <div className="stack-card-art absolute inset-y-0 left-0 z-0 w-[102px] overflow-hidden pointer-events-none">
-          <img
-            className="h-full w-full object-cover opacity-88 saturate-[1.08] contrast-[1.06]"
-            src={artUrl}
-            alt=""
-            loading="lazy"
-            referrerPolicy="no-referrer"
-          />
-        </div>
+      {!isLeaving && (
+        <AnimatedCircuitFrame
+          seed={`${entry.id}:${entry.controller}:${name}`}
+          path={STACK_CARD_CIRCUIT_PATH}
+          viewBox="0 0 100 96"
+          overlayClassName="stack-circuit-overlay"
+        />
       )}
 
       {scryfallUrl && (
@@ -100,8 +111,19 @@ export default function StackCard({
         </a>
       )}
 
-      <div className="stack-card-body relative z-2 ml-[102px] flex min-h-[96px] flex-col px-2.5 py-2">
+      <div className="stack-card-body relative z-2 flex min-h-[96px] flex-col px-2.5 py-2">
         <div className="flex items-start gap-2">
+          <div className="relative h-7 w-7 shrink-0 overflow-hidden rounded-md bg-[#0b121b]">
+            {artUrl && (
+              <img
+                className="h-full w-full object-cover opacity-90"
+                src={artUrl}
+                alt=""
+                loading="lazy"
+                referrerPolicy="no-referrer"
+              />
+            )}
+          </div>
           <div className="min-w-0 flex-1">
             <div className="stack-card-title break-words leading-[1.08] text-[#edf5ff]">
               {name}

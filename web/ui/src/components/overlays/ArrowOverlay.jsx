@@ -1,7 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useCombatArrows } from "@/context/CombatArrowContext";
-import { animate, cancelMotion, createDrawable } from "@/lib/motion/anime";
-import { getCardRect, getPlayerTargetRect, centerOf } from "@/hooks/useCardPositions";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCombatArrows } from "@/context/useCombatArrows";
+import { animate, cancelMotion } from "@/lib/motion/anime";
+import { getCardElement, getCardRect, getPlayerTargetRect, centerOf } from "@/hooks/useCardPositions";
+
+const ARROW_DASH_ARRAY = "8 4";
 
 function curvedArrowPath(x1, y1, x2, y2) {
   const dx = x2 - x1;
@@ -54,6 +56,44 @@ function segmentEntryOnRect(from, to, rect) {
   };
 }
 
+function segmentExitOnRect(from, to, rect) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const left = rect.left;
+  const right = rect.right;
+  const top = rect.top;
+  const bottom = rect.bottom;
+  let u1 = 0;
+  let u2 = 1;
+
+  const clip = (p, q) => {
+    if (p === 0) return q >= 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > u2) return false;
+      if (r > u1) u1 = r;
+      return true;
+    }
+    if (r < u1) return false;
+    if (r < u2) u2 = r;
+    return true;
+  };
+
+  if (
+    !clip(-dx, from.x - left) ||
+    !clip(dx, right - from.x) ||
+    !clip(-dy, from.y - top) ||
+    !clip(dy, bottom - from.y)
+  ) {
+    return null;
+  }
+
+  return {
+    x: from.x + dx * u2,
+    y: from.y + dy * u2,
+  };
+}
+
 function pointBeforeRect(from, rect, gap = 10) {
   const targetCenter = centerOf(rect);
   const entry = segmentEntryOnRect(from, targetCenter, rect);
@@ -68,15 +108,31 @@ function pointBeforeRect(from, rect, gap = 10) {
   };
 }
 
+function pointAfterRect(rect, to, gap = 10) {
+  const sourceCenter = centerOf(rect);
+  const exit = segmentExitOnRect(sourceCenter, to, rect);
+  if (!exit) return sourceCenter;
+  const vx = to.x - sourceCenter.x;
+  const vy = to.y - sourceCenter.y;
+  const len = Math.hypot(vx, vy);
+  if (len < 1e-3) return exit;
+  return {
+    x: exit.x + (vx / len) * gap,
+    y: exit.y + (vy / len) * gap,
+  };
+}
+
 export default function ArrowOverlay() {
   const { arrows, dragArrow } = useCombatArrows();
   const [, setTick] = useState(0);
   const pathRefs = useRef(new Map());
-  const drawAnimationsRef = useRef(new Map());
+  const pathAnimationsRef = useRef(new Map());
   const animatedKeysRef = useRef(new Set());
+  const overlayActive = arrows.length > 0 || !!dragArrow;
   const paths = (() => {
     const result = [];
     for (const arrow of arrows) {
+      const fromEl = getCardElement(arrow.fromId);
       const fromRect = getCardRect(arrow.fromId);
       let toRect = null;
       if (arrow.toPlayerId != null) {
@@ -84,9 +140,16 @@ export default function ArrowOverlay() {
       } else if (arrow.toId != null) {
         toRect = getCardRect(arrow.toId);
       }
-      if (!fromRect || !toRect) continue;
+      if (!fromRect || !toRect || !fromEl) continue;
 
-      const from = centerOf(fromRect);
+      const sourceCenter = centerOf(fromRect);
+      const sourceIsStackAnchor = fromEl.getAttribute("data-arrow-anchor") === "stack";
+      const initialTo = arrow.toPlayerId != null
+        ? pointBeforeRect(sourceCenter, toRect, 9)
+        : centerOf(toRect);
+      const from = sourceIsStackAnchor
+        ? pointAfterRect(fromRect, initialTo, 10)
+        : sourceCenter;
       const to = arrow.toPlayerId != null
         ? pointBeforeRect(from, toRect, 9)
         : centerOf(toRect);
@@ -95,21 +158,37 @@ export default function ArrowOverlay() {
     }
     return result;
   })();
+  const pathSignature = paths.map((path) => path.key).join("|");
+  const pathKeys = useMemo(
+    () => (pathSignature ? pathSignature.split("|") : []),
+    [pathSignature]
+  );
 
   useEffect(() => {
-    if (arrows.length === 0) return;
+    if (!overlayActive) return;
+
+    let frameId = 0;
     const recalc = () => setTick((t) => t + 1);
+    const tick = () => {
+      recalc();
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
     window.addEventListener("resize", recalc);
     window.addEventListener("scroll", recalc, true);
     return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
       window.removeEventListener("resize", recalc);
       window.removeEventListener("scroll", recalc, true);
     };
-  }, [arrows.length]);
+  }, [overlayActive]);
 
   useLayoutEffect(() => {
-    const animationStore = drawAnimationsRef.current;
-    const nextKeys = new Set(paths.map((path) => path.key));
+    const animationStore = pathAnimationsRef.current;
+    const nextKeys = new Set(pathKeys);
 
     for (const [key, animation] of animationStore.entries()) {
       if (nextKeys.has(key)) continue;
@@ -119,19 +198,18 @@ export default function ArrowOverlay() {
       pathRefs.current.delete(key);
     }
 
-    for (const path of paths) {
-      if (animatedKeysRef.current.has(path.key)) continue;
-      const node = pathRefs.current.get(path.key);
+    for (const key of pathKeys) {
+      if (animatedKeysRef.current.has(key)) continue;
+      const node = pathRefs.current.get(key);
       if (!node) continue;
 
-      const [drawable] = createDrawable(node);
-      const animation = animate(drawable, {
-        draw: ["0 0", "0 1"],
+      const animation = animate(node, {
+        opacity: [0, 1],
         ease: "out(3)",
-        duration: 420,
+        duration: 220,
       });
-      animationStore.set(path.key, animation);
-      animatedKeysRef.current.add(path.key);
+      animationStore.set(key, animation);
+      animatedKeysRef.current.add(key);
     }
 
     return () => {
@@ -140,14 +218,18 @@ export default function ArrowOverlay() {
       }
       animationStore.clear();
     };
-  }, [paths]);
+  }, [pathKeys]);
 
   // Build live drag arrow path
   let dragPath = null;
   if (dragArrow) {
+    const fromEl = getCardElement(dragArrow.fromId);
     const fromRect = getCardRect(dragArrow.fromId);
     if (fromRect) {
-      const from = centerOf(fromRect);
+      const dragTarget = { x: dragArrow.x, y: dragArrow.y };
+      const from = fromEl?.getAttribute("data-arrow-anchor") === "stack"
+        ? pointAfterRect(fromRect, dragTarget, 10)
+        : centerOf(fromRect);
       dragPath = {
         d: curvedArrowPath(from.x, from.y, dragArrow.x, dragArrow.y),
         color: dragArrow.color || "#ff3b30",
@@ -171,24 +253,14 @@ export default function ArrowOverlay() {
           </feMerge>
         </filter>
         <marker
-          id="arrowhead-red"
+          id="arrowhead-confirmed"
           markerWidth="8"
           markerHeight="6"
           refX="7"
           refY="3"
           orient="auto"
         >
-          <polygon points="0 0, 8 3, 0 6" fill="#ff3b30" />
-        </marker>
-        <marker
-          id="arrowhead-blue"
-          markerWidth="8"
-          markerHeight="6"
-          refX="7"
-          refY="3"
-          orient="auto"
-        >
-          <polygon points="0 0, 8 3, 0 6" fill="#3b82f6" />
+          <polygon points="0 0, 8 3, 0 6" fill="context-stroke" opacity="0.96" />
         </marker>
         <marker
           id="arrowhead-drag"
@@ -218,8 +290,9 @@ export default function ArrowOverlay() {
           stroke={p.color}
           strokeWidth={2.5}
           strokeLinecap="round"
+          strokeDasharray={ARROW_DASH_ARRAY}
           filter="url(#arrow-glow)"
-          markerEnd={p.color.includes("3b82f6") ? "url(#arrowhead-blue)" : "url(#arrowhead-red)"}
+          markerEnd="url(#arrowhead-confirmed)"
         />
       ))}
 
@@ -231,7 +304,7 @@ export default function ArrowOverlay() {
           stroke={dragPath.color}
           strokeWidth={3}
           strokeLinecap="round"
-          strokeDasharray="8 4"
+          strokeDasharray={ARROW_DASH_ARRAY}
           filter="url(#arrow-glow)"
           opacity={0.85}
           markerEnd="url(#arrowhead-drag)"

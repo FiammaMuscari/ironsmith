@@ -148,9 +148,16 @@ def collect_unique_blocks(
         layout = (card.get("layout") or "").strip().lower()
         faces = card.get("card_faces") or []
 
-        # Flip cards need both faces available at runtime for the Flip effect.
-        # We generate both faces and wire `Card.other_face` on the front face.
-        if layout == "flip" and isinstance(faces, list) and len(faces) >= 2:
+        # Multi-face layouts need both faces available at runtime. We treat
+        # transform/adventure-style cards the same as flip cards in the baked
+        # payload so front-face lookups still resolve even when the root card
+        # has no strict parser block of its own.
+        if layout in {
+            "flip",
+            "transform",
+            "modal_dfc",
+            "adventure",
+        } and isinstance(faces, list) and len(faces) >= 2:
             front = faces[0]
             back = faces[1]
             combined_name = (card.get("name") or "").strip()
@@ -616,6 +623,39 @@ def write_generated_source(
         "        registry.register_alias(entry.combined_name.as_str(), entry.front_name.as_str());"
     )
     lines.append("    }")
+    lines.append("}")
+    lines.append("")
+    lines.append(
+        "pub fn generated_parser_card_parse_source(name: &str) -> Option<(String, String)> {"
+    )
+    lines.append("    let texts = generated_card_texts();")
+    lines.append("    let normalized = name.trim();")
+    lines.append("")
+    lines.append("    for entry in &texts.singles {")
+    lines.append("        if entry.name.eq_ignore_ascii_case(normalized) {")
+    lines.append("            return Some((entry.name.clone(), entry.block.clone()));")
+    lines.append("        }")
+    lines.append("    }")
+    lines.append("")
+    lines.append("    for entry in &texts.flips {")
+    lines.append("        if entry.front_name.eq_ignore_ascii_case(normalized) {")
+    lines.append(
+        "            return Some((entry.front_name.clone(), entry.front_block.clone()));"
+    )
+    lines.append("        }")
+    lines.append("        if entry.back_name.eq_ignore_ascii_case(normalized) {")
+    lines.append(
+        "            return Some((entry.back_name.clone(), entry.back_block.clone()));"
+    )
+    lines.append("        }")
+    lines.append("        if entry.combined_name.eq_ignore_ascii_case(normalized) {")
+    lines.append(
+        "            return Some((entry.front_name.clone(), entry.front_block.clone()));"
+    )
+    lines.append("        }")
+    lines.append("    }")
+    lines.append("")
+    lines.append("    None")
     lines.append("}")
     lines.append("")
     lines.append("pub fn try_compile_card_by_name(name: &str) -> Result<CardDefinition, String> {")

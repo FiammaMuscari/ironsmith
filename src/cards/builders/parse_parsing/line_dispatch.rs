@@ -5,14 +5,13 @@ use crate::cards::builders::{
     find_verb, is_non_mana_additional_cost_modifier_line,
     is_untap_during_each_other_players_untap_step_words, leading_mana_symbols_to_oracle,
     parse_ability_line, parse_activated_line, parse_activated_line_with_raw, parse_activation_cost,
-    parse_buyback_line,
-    parse_cast_this_spell_only_line, parse_cycling_line, parse_effect_sentences,
-    parse_enters_with_counters_line, parse_entwine_line, parse_equip_line, parse_escape_line,
-    parse_if_this_spell_costs_less_to_cast_line, parse_kicker_line, parse_level_up_line,
-    parse_loyalty_shorthand_activation_cost, parse_madness_line, parse_mana_symbol,
-    parse_mana_symbol_group, parse_morph_keyword_line, parse_multikicker_line,
-    parse_reinforce_line, parse_saga_chapter_prefix,
-    parse_scryfall_mana_cost, parse_static_ability_ast_line, parse_this_spell_cost_condition,
+    parse_buyback_line, parse_cast_this_spell_only_line, parse_channel_line, parse_cycling_line,
+    parse_effect_sentences, parse_enters_with_counters_line, parse_entwine_line, parse_equip_line,
+    parse_escape_line, parse_if_this_spell_costs_less_to_cast_line, parse_kicker_line,
+    parse_level_up_line, parse_loyalty_shorthand_activation_cost, parse_madness_line,
+    parse_mana_symbol, parse_mana_symbol_group, parse_morph_keyword_line, parse_multikicker_line,
+    parse_reinforce_line, parse_saga_chapter_prefix, parse_scryfall_mana_cost,
+    parse_static_ability_ast_line, parse_this_spell_cost_condition, parse_transmute_line,
     parse_triggered_line, parser_trace, parser_trace_line, split_on_or,
     starts_with_until_end_of_turn, tokenize_line, trim_commas, unsupported_rule_error_for_view,
     words,
@@ -425,13 +424,26 @@ fn line_has_choose_leading_spell_clause(view: &ClauseView<'_>) -> bool {
 
 fn line_has_put_from_among_clause(view: &ClauseView<'_>) -> bool {
     let normalized = normalized_line(view);
-    let supported_reveal_or_look_top_sequence =
-        (normalized.starts_with("reveal the top ") || normalized.starts_with("look at the top "))
-            && normalized.contains("put the rest into")
-            && normalized.contains("graveyard");
+    let supported_reveal_or_look_top_sequence = (normalized.starts_with("reveal the top ")
+        || normalized.starts_with("look at the top "))
+        && normalized.contains("put the rest into")
+        && normalized.contains("graveyard");
+    let supported_look_battlefield_or_hand_sequence = normalized.starts_with("look at the top ")
+        && (normalized.contains("from among them onto the battlefield")
+            || normalized.contains("from among those cards onto the battlefield"))
+        && (normalized.contains("put a card from among them into your hand")
+            || normalized.contains("put a card from among those cards into your hand"))
+        && normalized.contains("put the rest on the bottom of your library");
+    let supported_mill_into_hand_sequence = normalized.contains("mill")
+        && normalized.contains("put a ")
+        && (normalized.contains("from among them into your hand")
+            || normalized.contains("from among those cards into your hand"));
     normalized.contains("put a ")
-        && normalized.contains("from among them into your hand")
+        && (normalized.contains("from among them into your hand")
+            || normalized.contains("from among those cards into your hand"))
         && !supported_reveal_or_look_top_sequence
+        && !supported_look_battlefield_or_hand_sequence
+        && !supported_mill_into_hand_sequence
 }
 
 fn line_has_standalone_token_reminder_clause(view: &ClauseView<'_>) -> bool {
@@ -692,12 +704,20 @@ fn parse_first_parsed_ability_rule(
         parse_morph_keyword_line(view.tokens)
     }
 
-    const RULES: [RuleDef<ParsedAbility>; 5] = [
+    fn parse_transmute_rule(view: &ClauseView<'_>) -> Result<Option<ParsedAbility>, CardTextError> {
+        parse_transmute_line(view.tokens)
+    }
+
+    fn parse_channel_rule(view: &ClauseView<'_>) -> Result<Option<ParsedAbility>, CardTextError> {
+        parse_channel_line(view.tokens)
+    }
+
+    const RULES: [RuleDef<ParsedAbility>; 7] = [
         RuleDef {
             id: "equip",
             priority: 100,
             heads: &["equip"],
-            shape_mask: RULE_SHAPE_HAS_COLON,
+            shape_mask: 0,
             run: parse_equip_rule,
         },
         RuleDef {
@@ -717,13 +737,7 @@ fn parse_first_parsed_ability_rule(
         RuleDef {
             id: "cycling",
             priority: 130,
-            heads: &[
-                "cycling",
-                "basic",
-                "forestcycling",
-                "mountaincycling",
-                "swampcycling",
-            ],
+            heads: &[],
             shape_mask: 0,
             run: parse_cycling_rule,
         },
@@ -733,6 +747,20 @@ fn parse_first_parsed_ability_rule(
             heads: &["morph", "megamorph"],
             shape_mask: 0,
             run: parse_morph_rule,
+        },
+        RuleDef {
+            id: "transmute",
+            priority: 150,
+            heads: &["transmute"],
+            shape_mask: 0,
+            run: parse_transmute_rule,
+        },
+        RuleDef {
+            id: "channel",
+            priority: 160,
+            heads: &["channel"],
+            shape_mask: RULE_SHAPE_HAS_COLON,
+            run: parse_channel_rule,
         },
     ];
     let view = ClauseView::from_tokens(tokens);
@@ -1069,6 +1097,86 @@ fn parse_replicate_line_rule(view: &ClauseView<'_>) -> Result<Option<LineAst>, C
     )))
 }
 
+fn parse_pact_next_upkeep_line_rule(
+    view: &ClauseView<'_>,
+) -> Result<Option<LineAst>, CardTextError> {
+    let raw_line = view.raw.unwrap_or_default();
+    let raw_segments = raw_line
+        .split('.')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if raw_segments.len() != 3 {
+        return Ok(None);
+    }
+
+    let first_tokens = tokenize_line(raw_segments[0], view.line_index.unwrap_or_default());
+    let first_effects = parse_effect_sentences(&first_tokens)?;
+    if first_effects.is_empty() {
+        return Ok(None);
+    }
+
+    let upkeep_raw = raw_segments[1].trim();
+    let upkeep_segment = tokenize_line(upkeep_raw, view.line_index.unwrap_or_default());
+    let upkeep_tokens = trim_commas(&upkeep_segment);
+    let upkeep_words = words(&upkeep_tokens);
+    let pay_prefix = if upkeep_words.starts_with(&[
+        "at", "the", "beginning", "of", "your", "next", "upkeep", "pay",
+    ]) {
+        "at the beginning of your next upkeep, pay"
+    } else if upkeep_words.starts_with(&[
+        "at", "the", "beginning", "of", "the", "next", "upkeep", "pay",
+    ]) {
+        "at the beginning of the next upkeep, pay"
+    } else {
+        return Ok(None);
+    };
+
+    let Some(raw_mana) = upkeep_raw
+        .get(pay_prefix.len()..)
+        .map(str::trim)
+        .filter(|tail| !tail.is_empty())
+    else {
+        return Ok(None);
+    };
+    let mana_cost = parse_scryfall_mana_cost(raw_mana)?;
+    let mut mana = Vec::new();
+    for pip in mana_cost.pips() {
+        let [symbol] = pip.as_slice() else {
+            return Ok(None);
+        };
+        mana.push(*symbol);
+    }
+    if mana.is_empty() {
+        return Ok(None);
+    }
+
+    let lose_segment = tokenize_line(raw_segments[2], view.line_index.unwrap_or_default());
+    let lose_tokens = trim_commas(&lose_segment);
+    let lose_words = words(&lose_tokens);
+    if lose_words != ["if", "you", "dont", "you", "lose", "the", "game"]
+        && lose_words != ["if", "you", "don't", "you", "lose", "the", "game"]
+        && lose_words != ["if", "you", "don", "t", "you", "lose", "the", "game"]
+        && lose_words != ["if", "you", "do", "not", "you", "lose", "the", "game"]
+    {
+        return Ok(None);
+    }
+
+    let mut effects = first_effects;
+    effects.push(crate::cards::builders::EffectAst::DelayedUntilNextUpkeep {
+        player: crate::cards::builders::PlayerAst::You,
+        effects: vec![crate::cards::builders::EffectAst::UnlessPays {
+            effects: vec![crate::cards::builders::EffectAst::LoseGame {
+                player: crate::cards::builders::PlayerAst::You,
+            }],
+            player: crate::cards::builders::PlayerAst::You,
+            mana,
+        }],
+    });
+    parser_trace("parse_line:branch=pact-next-upkeep", view.tokens);
+    Ok(Some(LineAst::Statement { effects }))
+}
+
 fn parse_additional_cost_line_rule(
     view: &ClauseView<'_>,
 ) -> Result<Option<LineAst>, CardTextError> {
@@ -1313,7 +1421,8 @@ fn parse_statement_verb_leading_rule(
 }
 
 fn parse_static_line_rule(view: &ClauseView<'_>) -> Result<Option<LineAst>, CardTextError> {
-    if parse_ability_line(view.tokens).is_some() {
+    if parse_ability_line(view.tokens).is_some() && !line_prefers_static_parse(view.words.as_slice())
+    {
         return Ok(None);
     }
     let Some(abilities) = parse_static_ability_ast_line(view.tokens)? else {
@@ -1326,11 +1435,20 @@ fn parse_static_line_rule(view: &ClauseView<'_>) -> Result<Option<LineAst>, Card
 fn parse_keyword_ability_line_rule(
     view: &ClauseView<'_>,
 ) -> Result<Option<LineAst>, CardTextError> {
+    if line_prefers_static_parse(view.words.as_slice()) {
+        return Ok(None);
+    }
     if let Some(actions) = parse_ability_line(view.tokens) {
         parser_trace("parse_line:branch=keyword-ability-line", view.tokens);
         return Ok(Some(LineAst::Abilities(actions)));
     }
     Ok(None)
+}
+
+fn line_prefers_static_parse(words: &[&str]) -> bool {
+    words.len() > 3
+        && words.ends_with(&["cant", "be", "blocked"])
+        && !words.starts_with(&["protection", "from"])
 }
 
 fn parse_statement_line_rule(view: &ClauseView<'_>) -> Result<Option<LineAst>, CardTextError> {
@@ -1351,7 +1469,7 @@ fn parse_statement_line_rule(view: &ClauseView<'_>) -> Result<Option<LineAst>, C
     Ok(Some(LineAst::Statement { effects }))
 }
 
-const PRE_DIAGNOSTIC_LINE_PARSE_RULES: [RuleDef<LineAst>; 16] = [
+const PRE_DIAGNOSTIC_LINE_PARSE_RULES: [RuleDef<LineAst>; 17] = [
     RuleDef {
         id: "cost-floor-reminder",
         priority: 100,
@@ -1397,19 +1515,7 @@ const PRE_DIAGNOSTIC_LINE_PARSE_RULES: [RuleDef<LineAst>; 16] = [
     RuleDef {
         id: "parsed-ability",
         priority: 160,
-        heads: &[
-            "equip",
-            "level",
-            "levelup",
-            "reinforce",
-            "cycling",
-            "basic",
-            "forestcycling",
-            "mountaincycling",
-            "swampcycling",
-            "morph",
-            "megamorph",
-        ],
+        heads: &[],
         shape_mask: 0,
         run: parse_parsed_ability_line_rule,
     },
@@ -1419,6 +1525,13 @@ const PRE_DIAGNOSTIC_LINE_PARSE_RULES: [RuleDef<LineAst>; 16] = [
         heads: &["buyback", "kicker", "multikicker", "entwine"],
         shape_mask: 0,
         run: parse_optional_cost_line_rule,
+    },
+    RuleDef {
+        id: "pact-next-upkeep",
+        priority: 175,
+        heads: &["search"],
+        shape_mask: 0,
+        run: parse_pact_next_upkeep_line_rule,
     },
     RuleDef {
         id: "triggered",

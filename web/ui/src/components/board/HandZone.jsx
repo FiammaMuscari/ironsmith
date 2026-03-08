@@ -1,4 +1,4 @@
-import { useRef, useMemo, useEffect, useCallback } from "react";
+import { Fragment, useRef, useMemo, useEffect, useLayoutEffect, useCallback } from "react";
 import { useGame } from "@/context/GameContext";
 import { useHover } from "@/context/HoverContext";
 import { useDragActions } from "@/context/DragContext";
@@ -6,6 +6,15 @@ import useNewCards from "@/hooks/useNewCards";
 import GameCard from "@/components/cards/GameCard";
 import { stagger } from "@/lib/motion/anime";
 import useLayoutReflow from "@/lib/motion/useLayoutReflow";
+
+const HAND_CARD_WIDTH = 124;
+const HAND_CARD_BASE_OVERLAP = 20;
+const HAND_ROULETTE_THRESHOLD = 10;
+const HAND_ROULETTE_VISIBLE_CARDS = 7;
+const HAND_ROULETTE_EDGE_PADDING = 12;
+const HAND_ROULETTE_WRAP_GAP = 20;
+const HAND_ROULETTE_CYCLE_COUNT = 3;
+const HAND_ROULETTE_CENTER_CYCLE = 1;
 
 /** Map card_types array to a glow kind for hand display. */
 function handGlowFromTypes(cardTypes) {
@@ -102,7 +111,38 @@ function buildPlayableMaps(state, player) {
   return { handPlayable, extraPlayable };
 }
 
-export default function HandZone({ player, selectedObjectId, onInspect }) {
+function computeHandOverlap(total) {
+  return Math.min(30, HAND_CARD_BASE_OVERLAP + Math.max(0, total - 5) * 1.5);
+}
+
+function computeRouletteWidth(total) {
+  const visibleCards = Math.min(HAND_ROULETTE_VISIBLE_CARDS, total);
+  const overlap = computeHandOverlap(total);
+  const stride = HAND_CARD_WIDTH - overlap;
+  return Math.round(
+    HAND_CARD_WIDTH
+    + Math.max(0, visibleCards - 1) * stride
+    + (HAND_ROULETTE_EDGE_PADDING * 2)
+  );
+}
+
+function buildHandCardRowStyle(index, total) {
+  const overlap = computeHandOverlap(total);
+
+  return {
+    flex: `0 0 ${HAND_CARD_WIDTH}px`,
+    width: `${HAND_CARD_WIDTH}px`,
+    minWidth: `${HAND_CARD_WIDTH}px`,
+    maxWidth: `${HAND_CARD_WIDTH}px`,
+    marginLeft: index === 0 ? "0px" : `-${overlap.toFixed(1)}px`,
+    zIndex: index + 2,
+    "--card-rotate": "0deg",
+    "--card-translate-x": "0px",
+    "--card-translate-y": "0px",
+  };
+}
+
+export default function HandZone({ player, selectedObjectId, onInspect, isExpanded = false }) {
   const { state } = useGame();
   const { hoverCard, clearHover, hoveredObjectId, hoveredLinkedObjectIds } = useHover();
   const { startDrag, updateDrag, endDrag } = useDragActions();
@@ -111,6 +151,10 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
   const dragHandlersRef = useRef(null);
   const hoverClearTimerRef = useRef(null);
   const handListRef = useRef(null);
+  const handScrollRef = useRef(null);
+  const centerCycleRef = useRef(null);
+  const rouletteCycleSpanRef = useRef(0);
+  const rouletteRecenteringRef = useRef(false);
   const handCards = useMemo(
     () => (player?.can_view_hand && player?.hand_cards) || [],
     [player?.can_view_hand, player?.hand_cards]
@@ -152,9 +196,44 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
     ].join("::"),
     [extraCards, handCards]
   );
+  const renderedHandCardCount = handCards.length + extraCards.length;
+  const hasExtra = extraCards.length > 0;
+  const isRoulette = renderedHandCardCount >= HAND_ROULETTE_THRESHOLD;
+  const rouletteWidth = useMemo(
+    () => computeRouletteWidth(renderedHandCardCount),
+    [renderedHandCardCount]
+  );
+  const surfaceWidth = isRoulette
+    ? `min(${rouletteWidth}px, calc(100vw - 290px))`
+    : "fit-content";
+  const rouletteCycleIndexes = isRoulette
+    ? Array.from({ length: HAND_ROULETTE_CYCLE_COUNT }, (_, index) => index)
+    : [HAND_ROULETTE_CENTER_CYCLE];
+  const handEntries = useMemo(() => {
+    const entries = handCards.map((card, visualIndex) => ({
+      kind: "hand",
+      key: `hand-${card.id}`,
+      card,
+      visualIndex,
+    }));
+    if (hasExtra && handCards.length > 0) {
+      entries.push({ kind: "separator", key: "separator" });
+    }
+    for (let extraIndex = 0; extraIndex < extraCards.length; extraIndex += 1) {
+      const extra = extraCards[extraIndex];
+      entries.push({
+        kind: "extra",
+        key: `extra-${extra.id}`,
+        extra,
+        visualIndex: handCards.length + extraIndex,
+      });
+    }
+    return entries;
+  }, [extraCards, handCards, hasExtra]);
 
   useLayoutReflow(handListRef, handLayoutSignature, {
     children: ".game-card",
+    disabled: isRoulette,
     delay: stagger(24),
     duration: 360,
     bounce: 0.14,
@@ -210,6 +289,71 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
       hoverClearTimerRef.current = null;
     }, 110);
   }, [clearHover]);
+
+  const recenterRouletteIfNeeded = useCallback(() => {
+    if (!isRoulette) return;
+    const scrollEl = handScrollRef.current;
+    const cycleSpan = rouletteCycleSpanRef.current;
+    if (!scrollEl || cycleSpan <= 0 || rouletteRecenteringRef.current) return;
+
+    const minScrollLeft = cycleSpan * 0.5;
+    const maxScrollLeft = cycleSpan * 1.5;
+    let nextScrollLeft = scrollEl.scrollLeft;
+
+    while (nextScrollLeft < minScrollLeft) {
+      nextScrollLeft += cycleSpan;
+    }
+    while (nextScrollLeft > maxScrollLeft) {
+      nextScrollLeft -= cycleSpan;
+    }
+
+    if (Math.abs(nextScrollLeft - scrollEl.scrollLeft) < 0.5) return;
+
+    rouletteRecenteringRef.current = true;
+    scrollEl.scrollLeft = nextScrollLeft;
+    requestAnimationFrame(() => {
+      rouletteRecenteringRef.current = false;
+    });
+  }, [isRoulette]);
+
+  useLayoutEffect(() => {
+    if (!isRoulette) {
+      rouletteCycleSpanRef.current = 0;
+      rouletteRecenteringRef.current = false;
+      return;
+    }
+
+    const scrollEl = handScrollRef.current;
+    const centerCycleEl = centerCycleRef.current;
+    if (!scrollEl || !centerCycleEl) return;
+
+    const cycleSpan = centerCycleEl.offsetWidth + HAND_ROULETTE_WRAP_GAP;
+    rouletteCycleSpanRef.current = cycleSpan;
+    rouletteRecenteringRef.current = true;
+    scrollEl.scrollLeft = cycleSpan;
+    requestAnimationFrame(() => {
+      rouletteRecenteringRef.current = false;
+    });
+  }, [handLayoutSignature, isRoulette]);
+
+  const handleRouletteWheel = useCallback((event) => {
+    if (!isRoulette) return;
+    const scrollEl = handScrollRef.current;
+    if (!scrollEl) return;
+    const primaryDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+      ? event.deltaX
+      : event.deltaY;
+    if (primaryDelta === 0) return;
+    event.preventDefault();
+    scrollEl.scrollBy({
+      left: primaryDelta * 1.1,
+      behavior: "auto",
+    });
+  }, [isRoulette]);
+
+  const handleRouletteScroll = useCallback(() => {
+    recenterRouletteIfNeeded();
+  }, [recenterRouletteIfNeeded]);
 
   const handlePointerDown = (e, card, plays, glowKind) => {
     if (plays.length === 0) return;
@@ -269,106 +413,137 @@ export default function HandZone({ player, selectedObjectId, onInspect }) {
   if (!player) return null;
 
   if (player.can_view_hand) {
-    const hasExtra = extraCards.length > 0;
+    const renderHandEntry = (entry, cycleIndex) => {
+      const isPrimaryCycle = !isRoulette || cycleIndex === HAND_ROULETTE_CENTER_CYCLE;
+
+      if (entry.kind === "separator") {
+        return (
+          <div
+            key={`${cycleIndex}-${entry.key}`}
+            className="mx-3 w-px self-stretch my-2 bg-[rgba(174,118,255,0.3)]"
+          />
+        );
+      }
+
+      if (entry.kind === "hand") {
+        const { card, visualIndex } = entry;
+        const plays = handPlayable.get(Number(card.id)) || [];
+        const isPlayable = plays.length > 0;
+        const baseGlowKind = isPlayable ? handGlowFromTypes(card.card_types) : null;
+        const isActionLinkedHover = (
+          hoveredLinkedObjectIds.has(String(card.id))
+          || (
+            hoveredObjectId != null
+            && String(hoveredObjectId) === String(card.id)
+            && priorityActionObjectIds.has(String(card.id))
+          )
+        );
+        const glowKind = isActionLinkedHover ? "action-link" : baseGlowKind;
+        const isNew = isPrimaryCycle && newIds.has(card.id);
+        const isBumped = isPrimaryCycle && bumpedIds.has(card.id);
+        let bumpDir = 0;
+        if (isBumped) {
+          if (visualIndex > 0 && newIds.has(handCards[visualIndex - 1].id)) bumpDir = 1;
+          else if (visualIndex < handCards.length - 1 && newIds.has(handCards[visualIndex + 1].id)) bumpDir = -1;
+        }
+        return (
+          <GameCard
+            key={`${cycleIndex}-${entry.key}`}
+            card={card}
+            variant="hand"
+            isPlayable={isPlayable}
+            glowKind={glowKind}
+            isNew={isNew}
+            isBumped={isBumped}
+            bumpDirection={bumpDir}
+            handCircuitMode={isExpanded ? "full" : "top"}
+            isInspected={selectedObjectId != null && String(card.id) === String(selectedObjectId)}
+            onClick={isPlayable ? undefined : (e) => handleCardClick(e, card)}
+            onPointerDown={isPlayable ? (e) => handlePointerDown(e, card, plays, glowKind) : undefined}
+            onMouseEnter={() => handleHoverEnter(card.id)}
+            onMouseLeave={handleHoverLeave}
+            style={{
+              ...buildHandCardRowStyle(visualIndex, renderedHandCardCount),
+              scrollSnapAlign: isRoulette ? "start" : undefined,
+            }}
+          />
+        );
+      }
+
+      const { extra, visualIndex } = entry;
+      const card = { id: extra.id, name: extra.name };
+      const plays = extra.actions;
+      const isPlayable = plays.length > 0;
+      const isActionLinkedHover = (
+        hoveredLinkedObjectIds.has(String(extra.id))
+        || (
+          hoveredObjectId != null
+          && String(hoveredObjectId) === String(extra.id)
+          && priorityActionObjectIds.has(String(extra.id))
+        )
+      );
+      return (
+        <GameCard
+          key={`${cycleIndex}-${entry.key}`}
+          card={card}
+          variant="hand"
+          isPlayable={isPlayable}
+          glowKind={isActionLinkedHover ? "action-link" : (isPlayable ? "extra" : null)}
+          isNew={isPrimaryCycle}
+          handCircuitMode={isExpanded ? "full" : "top"}
+          isInspected={selectedObjectId != null && String(extra.id) === String(selectedObjectId)}
+          onClick={plays.length === 0
+            ? (e) => handleCardClick(e, card)
+            : plays.length <= 1 ? undefined : (e) => handleCardClick(e, card)}
+          onPointerDown={plays.length > 0 ? (e) => handlePointerDown(e, card, plays, "extra") : undefined}
+          onMouseEnter={() => handleHoverEnter(extra.id)}
+          onMouseLeave={handleHoverLeave}
+          style={{
+            ...buildHandCardRowStyle(visualIndex, renderedHandCardCount),
+            scrollSnapAlign: isRoulette ? "start" : undefined,
+          }}
+        />
+      );
+    };
 
     return (
       <section
-        className="hand-zone-surface w-full min-w-0 max-w-full bg-transparent px-2 py-1 h-full min-h-0 overflow-hidden"
+        className={`hand-zone-surface min-w-0 bg-transparent px-2 py-1 h-full min-h-0 overflow-visible ${isRoulette ? "hand-zone-surface-roulette" : "max-w-full"}`}
+        style={{ width: surfaceWidth, maxWidth: isRoulette ? surfaceWidth : "100%" }}
       >
-        <div className="hand-zone-scroll min-h-0 h-full w-full min-w-0 -mx-2 px-2 overflow-x-auto overflow-y-hidden pb-0.5 overscroll-x-contain">
-          <div ref={handListRef} className="hand-zone-row flex gap-1.5 flex-nowrap items-start h-full w-max pl-1 pr-2">
-            {/* Regular hand cards */}
-            {handCards.map((card, i) => {
-              const plays = handPlayable.get(Number(card.id)) || [];
-              const isPlayable = plays.length > 0;
-              const baseGlowKind = isPlayable ? handGlowFromTypes(card.card_types) : null;
-              const isActionLinkedHover = (
-                hoveredLinkedObjectIds.has(String(card.id))
-                || (
-                  hoveredObjectId != null
-                  && String(hoveredObjectId) === String(card.id)
-                  && priorityActionObjectIds.has(String(card.id))
-                )
-              );
-              const glowKind = isActionLinkedHover ? "action-link" : baseGlowKind;
-              const isNew = newIds.has(card.id);
-              const isBumped = bumpedIds.has(card.id);
-              let bumpDir = 0;
-              if (isBumped) {
-                if (i > 0 && newIds.has(handCards[i - 1].id)) bumpDir = 1;
-                else if (i < handCards.length - 1 && newIds.has(handCards[i + 1].id)) bumpDir = -1;
-              }
-              return (
-                <GameCard
-                  key={card.id}
-                  card={card}
-                  variant="hand"
-                  isPlayable={isPlayable}
-                  glowKind={glowKind}
-                  isNew={isNew}
-                  isBumped={isBumped}
-                  bumpDirection={bumpDir}
-                  isInspected={isPlayable && selectedObjectId != null && String(card.id) === String(selectedObjectId)}
-                  onClick={isPlayable ? undefined : (e) => handleCardClick(e, card)}
-                  onPointerDown={isPlayable ? (e) => handlePointerDown(e, card, plays, glowKind) : undefined}
-                  onMouseEnter={() => handleHoverEnter(card.id)}
-                  onMouseLeave={handleHoverLeave}
-                  style={{
-                    flex: "0 0 124px",
-                    width: "124px",
-                    minWidth: "124px",
-                    maxWidth: "124px",
-                  }}
-                />
-              );
-            })}
+        <div className={`hand-zone-viewport min-h-0 h-full w-full min-w-0 overflow-visible ${isRoulette ? "hand-zone-viewport-roulette" : ""}`}>
+          <div
+            ref={handScrollRef}
+            className={`hand-zone-scroll min-h-0 h-full w-full min-w-0 -mx-2 px-2 overflow-x-auto overflow-y-hidden overscroll-x-contain ${isRoulette ? "hand-zone-scroll-roulette" : ""}`}
+            onScroll={handleRouletteScroll}
+            onWheel={handleRouletteWheel}
+          >
+            <div
+              ref={handListRef}
+              className={`hand-zone-row flex min-h-full w-max flex-nowrap items-end pt-1 pb-2 overflow-visible ${isRoulette ? "hand-zone-row-roulette justify-start px-1.5" : "mx-auto min-w-full justify-center pl-4 pr-4"}`}
+            >
+              {rouletteCycleIndexes.map((cycleIndex) => (
+                <Fragment key={`cycle-${cycleIndex}`}>
+                  <div
+                    ref={cycleIndex === HAND_ROULETTE_CENTER_CYCLE ? centerCycleRef : null}
+                    className="hand-zone-cycle flex min-h-full flex-nowrap items-end overflow-visible"
+                  >
+                    {handEntries.map((entry) => renderHandEntry(entry, cycleIndex))}
+                  </div>
+                  {isRoulette && cycleIndex < HAND_ROULETTE_CYCLE_COUNT - 1 && (
+                    <div
+                      aria-hidden="true"
+                      className="hand-zone-cycle-gap shrink-0"
+                      style={{ width: `${HAND_ROULETTE_WRAP_GAP}px` }}
+                    />
+                  )}
+                </Fragment>
+              ))}
 
-            {/* Separator when extra cards present */}
-            {hasExtra && handCards.length > 0 && (
-              <div className="w-px self-stretch my-2 bg-[rgba(174,118,255,0.3)]" />
-            )}
-
-            {/* Extra playable cards from other zones */}
-            {extraCards.map((extra) => {
-              const card = { id: extra.id, name: extra.name };
-              const plays = extra.actions;
-              const isPlayable = plays.length > 0;
-              const isActionLinkedHover = (
-                hoveredLinkedObjectIds.has(String(extra.id))
-                || (
-                  hoveredObjectId != null
-                  && String(hoveredObjectId) === String(extra.id)
-                  && priorityActionObjectIds.has(String(extra.id))
-                )
-              );
-              return (
-                <GameCard
-                  key={`extra-${extra.id}`}
-                  card={card}
-                  variant="hand"
-                  isPlayable={isPlayable}
-                  glowKind={isActionLinkedHover ? "action-link" : (isPlayable ? "extra" : null)}
-                  isNew
-                  isInspected={selectedObjectId != null && String(extra.id) === String(selectedObjectId)}
-                  onClick={plays.length === 0
-                    ? (e) => handleCardClick(e, card)
-                    : plays.length <= 1 ? undefined : (e) => handleCardClick(e, card)}
-                  onPointerDown={plays.length > 0 ? (e) => handlePointerDown(e, card, plays, "extra") : undefined}
-                  onMouseEnter={() => handleHoverEnter(extra.id)}
-                  onMouseLeave={handleHoverLeave}
-                  style={{
-                    flex: "0 0 124px",
-                    width: "124px",
-                    minWidth: "124px",
-                    maxWidth: "124px",
-                  }}
-                />
-              );
-            })}
-
-            {handCards.length === 0 && extraCards.length === 0 && (
-              <div className="text-muted-foreground text-[17px] p-3 italic">Empty hand</div>
-            )}
+              {handCards.length === 0 && extraCards.length === 0 && (
+                <div className="text-muted-foreground text-[17px] p-3 italic">Empty hand</div>
+              )}
+            </div>
           </div>
         </div>
       </section>

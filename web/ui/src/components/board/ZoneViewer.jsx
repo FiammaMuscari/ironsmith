@@ -4,6 +4,7 @@ const VIEWABLE_ZONES = [
   { id: "battlefield", label: "Battlefield" },
   { id: "hand", label: "Hand" },
   { id: "graveyard", label: "Graveyard" },
+  { id: "library", label: "Deck" },
   { id: "exile", label: "Exile" },
   { id: "command", label: "Command" },
 ];

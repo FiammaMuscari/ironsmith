@@ -1,6 +1,8 @@
 #[allow(unused_imports)]
 use crate::ability::{Ability, AbilityKind, TriggeredAbility};
 #[allow(unused_imports)]
+use crate::alternative_cast::AlternativeCastingMethod;
+#[allow(unused_imports)]
 use crate::cards::builders::ability_lowering::{
     materialize_static_abilities_ast, parsed_triggered_ability,
 };
@@ -18,13 +20,13 @@ use crate::cards::builders::parse_parsing::{
     parse_equal_to_number_of_filter_plus_or_minus_fixed_value,
     parse_equal_to_number_of_filter_value, parse_equal_to_number_of_opponents_you_have_value,
     parse_flashback_keyword_line, parse_granted_activated_or_triggered_ability_for_gain,
-    parse_mana_symbol, parse_named_number, parse_number, parse_object_filter,
-    parse_source_must_be_blocked_if_able_line, parse_spell_filter, parse_subtype_flexible,
-    parse_subtype_word, parse_triggered_line, parse_value, parse_zone_word, parser_trace,
-    parser_trace_stack, replace_unbound_x_with_value, scale_dynamic_cost_modifier_value,
-    spell_filter_has_identity, split_on_and, split_on_comma, split_on_comma_or_semicolon,
-    starts_with_until_end_of_turn, trim_commas, trim_edge_punctuation, value_contains_unbound_x,
-    words,
+    parse_mana_symbol, parse_named_number, parse_number, parse_number_word_i32,
+    parse_object_filter, parse_source_must_be_blocked_if_able_line, parse_spell_filter,
+    parse_subtype_flexible, parse_subtype_word, parse_triggered_line, parse_value, parse_zone_word,
+    parser_trace, parser_trace_stack, replace_unbound_x_with_value,
+    scale_dynamic_cost_modifier_value, spell_filter_has_identity, split_on_and, split_on_comma,
+    split_on_comma_or_semicolon, starts_with_until_end_of_turn, trim_commas, trim_edge_punctuation,
+    value_contains_unbound_x, words,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -290,9 +292,12 @@ pub(crate) fn keyword_action_to_static_ability(action: KeywordAction) -> Option<
         KeywordAction::ProtectionFromCardType(card_type) => Some(StaticAbility::protection(
             crate::ability::ProtectionFrom::CardType(card_type),
         )),
-        KeywordAction::ProtectionFromSubtype(subtype) => Some(StaticAbility::keyword_marker(
-            format!("protection from {:?}", subtype),
-        )),
+        KeywordAction::ProtectionFromSubtype(subtype) => {
+            Some(StaticAbility::keyword_marker(format!(
+                "protection from {}",
+                subtype.to_string().to_ascii_lowercase()
+            )))
+        }
         KeywordAction::Unblockable => Some(StaticAbility::unblockable()),
         KeywordAction::Devoid => Some(StaticAbility::make_colorless(ObjectFilter::source())),
         KeywordAction::Annihilator(amount) => Some(StaticAbility::keyword_marker(format!(
@@ -517,6 +522,7 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
         single_static_ability_ast_rule!(parse_all_cards_spells_permanents_colorless_line),
         multi_static_ability_ast_rule!(parse_all_are_color_and_type_addition_line),
         single_static_ability_ast_rule!(parse_all_creatures_are_color_line),
+        single_static_ability_ast_rule!(parse_protection_from_colored_spells_line),
         single_static_ability_ast_rule!(parse_blood_moon_line),
         single_static_ability_ast_rule!(parse_land_type_addition_line),
         multi_static_ability_ast_rule!(parse_lands_are_pt_creatures_still_lands_line),
@@ -603,10 +609,13 @@ fn static_ability_ast_line_rules() -> &'static [StaticAbilityLineRuleDef] {
         single_static_ability_ast_rule!(parse_enters_with_additional_counter_for_filter_line),
         single_static_ability_ast_rule!(parse_reveal_from_hand_or_enters_tapped_line),
         single_static_ability_ast_rule!(parse_conditional_enters_tapped_unless_line),
+        single_static_ability_ast_rule!(parse_enters_untapped_for_filter_line),
+        single_static_ability_ast_rule!(parse_enter_as_copy_as_enters_line),
         single_static_ability_ast_rule!(parse_enters_tapped_for_filter_line),
         single_static_ability_ast_rule!(parse_enters_tapped_line),
         multi_static_ability_ast_rule!(parse_additional_land_play_line),
         single_static_ability_ast_rule!(parse_play_lands_from_graveyard_line),
+        single_static_ability_ast_rule!(parse_cast_spells_from_hand_without_paying_mana_costs_line),
         single_static_ability_ast_rule!(parse_cost_reduction_line),
         single_static_ability_ast_rule!(parse_can_block_additional_creature_each_combat_line),
         single_static_ability_ast_rule!(parse_all_creatures_able_to_block_source_line),
@@ -1655,9 +1664,101 @@ pub(crate) fn parse_choose_creature_type_as_enters_line(
         return Ok(None);
     }
 
-    Err(CardTextError::ParseError(format!(
-        "unsupported choose-creature-type-as-enters clause (clause: '{}')",
-        words.join(" ")
+    Ok(Some(StaticAbility::choose_creature_type_as_enters(
+        words.join(" "),
+    )))
+}
+
+pub(crate) fn parse_enter_as_copy_as_enters_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.len() < 11 || !clause_words.starts_with(&["you", "may", "have"]) {
+        return Ok(None);
+    }
+
+    let mut idx = 3usize;
+    if clause_words.get(idx).copied() != Some("this") {
+        return Ok(None);
+    }
+    idx += 1;
+    if clause_words.get(idx).is_some_and(|word| {
+        matches!(
+            *word,
+            "land" | "creature" | "artifact" | "enchantment" | "permanent"
+        )
+    }) {
+        idx += 1;
+    }
+
+    if clause_words.get(idx).copied() != Some("enter")
+        && clause_words.get(idx).copied() != Some("enters")
+    {
+        return Ok(None);
+    }
+    idx += 1;
+
+    if clause_words.get(idx).copied() == Some("the")
+        && clause_words.get(idx + 1).copied() == Some("battlefield")
+    {
+        idx += 2;
+    }
+
+    let mut enters_tapped_if_chosen = false;
+    if clause_words.get(idx).copied() == Some("tapped") {
+        enters_tapped_if_chosen = true;
+        idx += 1;
+    }
+
+    if clause_words.get(idx..idx + 4) != Some(&["as", "a", "copy", "of"]) {
+        return Ok(None);
+    }
+    idx += 4;
+
+    let except_idx = clause_words.iter().position(|word| *word == "except");
+    let filter_end_word_idx = except_idx.unwrap_or(clause_words.len());
+    let filter_start_token_idx = token_index_for_word_index(tokens, idx).unwrap_or(tokens.len());
+    let filter_end_token_idx =
+        token_index_for_word_index(tokens, filter_end_word_idx).unwrap_or(tokens.len());
+    let filter_tokens = trim_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
+    if filter_tokens.is_empty() {
+        return Ok(None);
+    }
+    let filter = parse_object_filter(&filter_tokens, false)?;
+
+    let mut added_subtypes = Vec::new();
+    if let Some(except_idx) = except_idx {
+        let tail = &clause_words[except_idx..];
+        if tail.len() != 10
+            || tail[0] != "except"
+            || tail[1] != "its"
+            || !matches!(tail[2], "a" | "an")
+            || tail[4..] != ["in", "addition", "to", "its", "other", "types"]
+        {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported enters-as-copy exception clause (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        let Some(subtype) = parse_subtype_word(tail[3]).or_else(|| parse_subtype_flexible(tail[3]))
+        else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported enters-as-copy subtype '{}' (clause: '{}')",
+                tail[3],
+                clause_words.join(" ")
+            )));
+        };
+        added_subtypes.push(subtype);
+    }
+
+    Ok(Some(StaticAbility::with_enter_as_copy_as_enters(
+        crate::static_abilities::EnterAsCopyAsEntersSpec {
+            filter,
+            may: true,
+            enters_tapped_if_chosen,
+            added_subtypes,
+        },
+        clause_words.join(" "),
     )))
 }
 
@@ -1750,7 +1851,7 @@ pub(crate) fn parse_choose_color_as_enters_line(
     let display = match excluded {
         Some(color) => format!(
             "As {display_subject} enters, choose a color other than {}.",
-            format!("{color:?}").to_ascii_lowercase()
+            color.name().to_string()
         ),
         None => format!("As {display_subject} enters, choose a color."),
     };
@@ -1870,6 +1971,7 @@ pub(crate) fn parse_characteristic_defining_pt_line(
 
     let mut parsed_power: Option<Value> = None;
     let mut parsed_toughness: Option<Value> = None;
+    let mut previous_value: Option<Value> = None;
     let mut idx = 0usize;
     while idx < line_words.len() {
         let Some((axis, value_start_word_idx)) =
@@ -1913,19 +2015,26 @@ pub(crate) fn parse_characteristic_defining_pt_line(
             )));
         }
 
-        let value = parse_characteristic_defining_stat_value(&value_tokens).ok_or_else(|| {
-            CardTextError::ParseError(format!(
-                "unsupported characteristic defining {} value (value: '{}')",
-                axis,
-                words(&value_tokens).join(" ")
-            ))
-        })?;
+        let value = parse_characteristic_defining_stat_value(&value_tokens)
+            .or_else(|| {
+                previous_value.as_ref().and_then(|base| {
+                    parse_characteristic_defining_relative_value(&value_tokens, base)
+                })
+            })
+            .ok_or_else(|| {
+                CardTextError::ParseError(format!(
+                    "unsupported characteristic defining {} value (value: '{}')",
+                    axis,
+                    words(&value_tokens).join(" ")
+                ))
+            })?;
 
         match axis {
-            "power" => parsed_power = Some(value),
-            "toughness" => parsed_toughness = Some(value),
+            "power" => parsed_power = Some(value.clone()),
+            "toughness" => parsed_toughness = Some(value.clone()),
             _ => {}
         }
+        previous_value = Some(value);
 
         if let Some(next_idx) = next_clause_word_idx {
             idx = next_idx;
@@ -1942,6 +2051,27 @@ pub(crate) fn parse_characteristic_defining_pt_line(
         parsed_power.unwrap_or(Value::SourcePower),
         parsed_toughness.unwrap_or(Value::SourceToughness),
     )))
+}
+
+fn parse_characteristic_defining_relative_value(tokens: &[Token], base: &Value) -> Option<Value> {
+    let trimmed = trim_edge_punctuation(tokens);
+    let words = words(&trimmed);
+    if !words.starts_with(&["that", "number"]) {
+        return None;
+    }
+    if words.len() == 2 {
+        return Some(base.clone());
+    }
+    if words.len() == 4 && words[2] == "plus" {
+        let (amount, used) = parse_number(&trimmed[3..])?;
+        if used == trimmed[3..].len() {
+            return Some(Value::Add(
+                Box::new(base.clone()),
+                Box::new(Value::Fixed(amount as i32)),
+            ));
+        }
+    }
+    None
 }
 
 fn parse_characteristic_axis_clause_start<'a>(
@@ -3701,13 +3831,94 @@ pub(crate) fn parse_add_mana_equal_amount_value(tokens: &[Token]) -> Option<Valu
         None
     };
 
+    let parse_mana_value_segment = |segment: &[&str]| -> Option<Value> {
+        if segment.starts_with(&["that", "spell", "mana", "value"])
+            || segment.starts_with(&["that", "spells", "mana", "value"])
+            || segment.starts_with(&["that", "card", "mana", "value"])
+            || segment.starts_with(&["that", "cards", "mana", "value"])
+            || segment.starts_with(&[
+                "the",
+                "mana",
+                "value",
+                "of",
+                "the",
+                "sacrificed",
+                "creature",
+            ])
+            || segment.starts_with(&[
+                "the",
+                "mana",
+                "value",
+                "of",
+                "the",
+                "sacrificed",
+                "artifact",
+            ])
+            || segment.starts_with(&[
+                "the",
+                "mana",
+                "value",
+                "of",
+                "the",
+                "sacrificed",
+                "permanent",
+            ])
+            || segment.starts_with(&["mana", "value", "of", "the", "sacrificed", "creature"])
+            || segment.starts_with(&["mana", "value", "of", "the", "sacrificed", "artifact"])
+            || segment.starts_with(&["mana", "value", "of", "the", "sacrificed", "permanent"])
+            || segment.starts_with(&["the", "sacrificed", "creature", "mana", "value"])
+            || segment.starts_with(&["the", "sacrificed", "artifact", "mana", "value"])
+            || segment.starts_with(&["the", "sacrificed", "permanent", "mana", "value"])
+            || segment.starts_with(&["the", "sacrificed", "creatures", "mana", "value"])
+            || segment.starts_with(&["the", "sacrificed", "artifacts", "mana", "value"])
+            || segment.starts_with(&["the", "sacrificed", "permanents", "mana", "value"])
+            || segment.starts_with(&["sacrificed", "creature", "mana", "value"])
+            || segment.starts_with(&["sacrificed", "artifact", "mana", "value"])
+            || segment.starts_with(&["sacrificed", "permanent", "mana", "value"])
+            || segment.starts_with(&["sacrificed", "creatures", "mana", "value"])
+            || segment.starts_with(&["sacrificed", "artifacts", "mana", "value"])
+            || segment.starts_with(&["sacrificed", "permanents", "mana", "value"])
+            || segment.starts_with(&["its", "mana", "value"])
+        {
+            return Some(Value::ManaValueOf(Box::new(ChooseSpec::Tagged(
+                TagKey::from(IT_TAG),
+            ))));
+        }
+        if matches!(
+            segment,
+            ["this", "spell", "mana", "value"]
+                | ["this", "creature", "mana", "value"]
+                | ["this", "permanent", "mana", "value"]
+                | ["this", "card", "mana", "value"]
+        ) {
+            return Some(Value::ManaValueOf(Box::new(ChooseSpec::Source)));
+        }
+        None
+    };
+
+    let parse_amount_segment = |segment: &[&str]| -> Option<Value> {
+        parse_power_or_toughness_segment(segment)
+            .or_else(|| {
+                if segment.len() == 1 {
+                    parse_number_word_i32(segment[0]).map(Value::Fixed)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| parse_mana_value_segment(segment))
+    };
+
     if let Some(plus_idx) = tail.iter().position(|word| *word == "plus")
         && plus_idx > 0
         && plus_idx + 1 < tail.len()
-        && let Some(left) = parse_power_or_toughness_segment(&tail[..plus_idx])
-        && let Some(right) = parse_power_or_toughness_segment(&tail[plus_idx + 1..])
+        && let Some(left) = parse_amount_segment(&tail[..plus_idx])
+        && let Some(right) = parse_amount_segment(&tail[plus_idx + 1..])
     {
         return Some(Value::Add(Box::new(left), Box::new(right)));
+    }
+
+    if let Some(value) = parse_amount_segment(tail) {
+        return Some(value);
     }
 
     if is_source_power_segment(tail)
@@ -4976,6 +5187,10 @@ pub(crate) fn parse_static_condition_clause(
         ));
     }
 
+    if let Some(condition) = parse_cards_in_hand_static_condition(&tokens) {
+        return Ok(condition);
+    }
+
     if clause_words == ["this", "creature", "is", "equipped"]
         || clause_words == ["this", "is", "equipped"]
         || clause_words == ["it", "is", "equipped"]
@@ -5292,6 +5507,39 @@ fn parse_conjoined_static_condition_clause(tokens: &[Token]) -> Option<crate::Co
         if let Some(right) = right {
             return Some(crate::ConditionExpr::And(Box::new(left), Box::new(right)));
         }
+    }
+    None
+}
+
+fn parse_cards_in_hand_static_condition(tokens: &[Token]) -> Option<crate::ConditionExpr> {
+    let clause_words = words(tokens);
+    let (player, count_start_idx) = match clause_words.as_slice() {
+        ["you", "have", ..] => (PlayerFilter::You, 2usize),
+        ["that", "player", "has", ..] => (PlayerFilter::Target(Box::new(PlayerFilter::Any)), 3),
+        ["an", "opponent", "has", ..] => (PlayerFilter::Opponent, 3usize),
+        ["opponent", "has", ..] => (PlayerFilter::Opponent, 2usize),
+        _ => return None,
+    };
+
+    let count_tokens = tokens.get(count_start_idx..)?;
+    let (count, used) = parse_number(count_tokens)?;
+    let tail_tokens = count_tokens.get(used..)?;
+    let tail_words = words(tail_tokens);
+    if tail_words.as_slice() == ["or", "more", "cards", "in", "hand"]
+        || tail_words.as_slice() == ["or", "more", "card", "in", "hand"]
+    {
+        return Some(crate::ConditionExpr::PlayerCardsInHandOrMore {
+            player,
+            count: count as i32,
+        });
+    }
+    if tail_words.as_slice() == ["or", "fewer", "cards", "in", "hand"]
+        || tail_words.as_slice() == ["or", "fewer", "card", "in", "hand"]
+    {
+        return Some(crate::ConditionExpr::PlayerCardsInHandOrFewer {
+            player,
+            count: count as i32,
+        });
     }
     None
 }
@@ -6120,6 +6368,29 @@ pub(crate) fn parse_anthem_and_keyword_line(
     }
 
     Ok(Some(result))
+}
+
+pub(crate) fn parse_protection_from_colored_spells_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let clause_words = words(tokens);
+    if !matches!(
+        clause_words.as_slice(),
+        ["protection", "from", "spells", "that", "are", "one", "or", "more", "colors"]
+    ) {
+        return Ok(None);
+    }
+
+    let all_colors = crate::color::ColorSet::WHITE
+        .union(crate::color::ColorSet::BLUE)
+        .union(crate::color::ColorSet::BLACK)
+        .union(crate::color::ColorSet::RED)
+        .union(crate::color::ColorSet::GREEN);
+    let mut filter = ObjectFilter::spell();
+    filter.colors = Some(all_colors);
+    Ok(Some(StaticAbility::protection(
+        crate::ability::ProtectionFrom::Permanents(filter),
+    )))
 }
 
 fn grant_for_anthem_subject(clause: &ParsedAnthemClause, ability: StaticAbility) -> StaticAbility {
@@ -7612,6 +7883,17 @@ pub(crate) fn parse_where_x_value_clause(tokens: &[Token]) -> Option<Value> {
         return Some(value);
     }
 
+    if matches!(
+        words.get(3..),
+        Some(["the", "mana", "value", "of", "the", "exiled", "card"])
+            | Some(["the", "exiled", "card", "mana", "value"])
+            | Some(["the", "exiled", "cards", "mana", "value"])
+    ) {
+        return Some(Value::ManaValueOf(Box::new(ChooseSpec::Tagged(
+            TagKey::from(IT_TAG),
+        ))));
+    }
+
     // where X is the number of cards in your hand
     if words.contains(&"cards")
         && words.contains(&"in")
@@ -7648,13 +7930,27 @@ pub(crate) fn parse_where_x_source_stat_value(tokens: &[Token]) -> Option<Value>
         return None;
     }
     match words.get(3..) {
-        Some(["this", "creatures", "power"]) | Some(["its", "power"]) => Some(Value::SourcePower),
-        Some(["this", "creatures", "toughness"]) | Some(["its", "toughness"]) => {
-            Some(Value::SourceToughness)
-        }
-        Some(["this", "creatures", "mana", "value"]) | Some(["its", "mana", "value"]) => {
-            Some(Value::ManaValueOf(Box::new(ChooseSpec::Source)))
-        }
+        Some(["this", "power"])
+        | Some(["thiss", "power"])
+        | Some(["this", "creature", "power"])
+        | Some(["thiss", "creature", "power"])
+        | Some(["this", "creatures", "power"])
+        | Some(["thiss", "creatures", "power"])
+        | Some(["its", "power"]) => Some(Value::SourcePower),
+        Some(["this", "toughness"])
+        | Some(["thiss", "toughness"])
+        | Some(["this", "creature", "toughness"])
+        | Some(["thiss", "creature", "toughness"])
+        | Some(["this", "creatures", "toughness"])
+        | Some(["thiss", "creatures", "toughness"])
+        | Some(["its", "toughness"]) => Some(Value::SourceToughness),
+        Some(["this", "mana", "value"])
+        | Some(["thiss", "mana", "value"])
+        | Some(["this", "creature", "mana", "value"])
+        | Some(["thiss", "creature", "mana", "value"])
+        | Some(["this", "creatures", "mana", "value"])
+        | Some(["thiss", "creatures", "mana", "value"])
+        | Some(["its", "mana", "value"]) => Some(Value::ManaValueOf(Box::new(ChooseSpec::Source))),
         _ => None,
     }
 }
@@ -8138,6 +8434,39 @@ pub(crate) fn parse_enters_tapped_for_filter_line(
         filter.controller = Some(controller);
     }
     Ok(Some(StaticAbility::enters_tapped_for_filter(filter)))
+}
+
+pub(crate) fn parse_enters_untapped_for_filter_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let clause_words = words(tokens);
+    if clause_words.contains(&"unless") || clause_words.first().copied() == Some("this") {
+        return Ok(None);
+    }
+
+    let Some(enter_word_idx) = clause_words
+        .iter()
+        .position(|word| *word == "enter" || *word == "enters")
+    else {
+        return Ok(None);
+    };
+    let Some(enter_token_idx) = token_index_for_word_index(tokens, enter_word_idx) else {
+        return Ok(None);
+    };
+    if !clause_words
+        .iter()
+        .skip(enter_word_idx + 1)
+        .any(|word| *word == "untapped")
+    {
+        return Ok(None);
+    }
+
+    let before_enter = &tokens[..enter_token_idx];
+    if before_enter.is_empty() {
+        return Ok(None);
+    }
+    let filter = parse_object_filter(before_enter, false)?;
+    Ok(Some(StaticAbility::enters_untapped_for_filter(filter)))
 }
 
 pub(crate) fn parse_reveal_from_hand_or_enters_tapped_line(
@@ -8962,33 +9291,61 @@ pub(crate) fn parse_attached_gets_and_cant_block_line(
 
     let tail_tokens = trim_edge_punctuation(&tokens[and_idx + 1..]);
     let tail_words = normalize_cant_words(&tail_tokens);
-    let restriction = match tail_words.as_slice() {
-        ["cant", "block"] => crate::effect::Restriction::block(ObjectFilter::source()),
-        ["cant", "attack"] => crate::effect::Restriction::attack(ObjectFilter::source()),
-        ["cant", "attack", "or", "block"] => {
-            crate::effect::Restriction::attack_or_block(ObjectFilter::source())
-        }
-        _ => return Ok(None),
-    };
-
     let subject = if is_enchanted {
         "enchanted creature"
     } else {
         "equipped creature"
     };
-    let display = match tail_words.as_slice() {
-        ["cant", "block"] => format!("{subject} can't block"),
-        ["cant", "attack"] => format!("{subject} can't attack"),
-        _ => format!("{subject} can't attack or block"),
-    };
-    let granted = Ability {
-        kind: AbilityKind::Static(StaticAbility::restriction(restriction, display.clone())),
-        functional_zones: vec![Zone::Battlefield],
-        text: Some(display.clone()),
-    };
-    let grant = StaticAbility::attached_ability_grant(granted, display);
     let anthem = build_anthem_static_ability(&parse_anthem_clause(tokens, get_idx, and_idx)?);
-    Ok(Some(vec![anthem, grant]))
+    let granted = match tail_words.as_slice() {
+        ["cant", "block"] => {
+            let display = format!("{subject} can't block");
+            let granted = Ability {
+                kind: AbilityKind::Static(StaticAbility::restriction(
+                    crate::effect::Restriction::block(ObjectFilter::source()),
+                    display.clone(),
+                )),
+                functional_zones: vec![Zone::Battlefield],
+                text: Some(display.clone()),
+            };
+            StaticAbility::attached_ability_grant(granted, display)
+        }
+        ["cant", "attack"] => {
+            let display = format!("{subject} can't attack");
+            let granted = Ability {
+                kind: AbilityKind::Static(StaticAbility::restriction(
+                    crate::effect::Restriction::attack(ObjectFilter::source()),
+                    display.clone(),
+                )),
+                functional_zones: vec![Zone::Battlefield],
+                text: Some(display.clone()),
+            };
+            StaticAbility::attached_ability_grant(granted, display)
+        }
+        ["cant", "attack", "or", "block"] => {
+            let display = format!("{subject} can't attack or block");
+            let granted = Ability {
+                kind: AbilityKind::Static(StaticAbility::restriction(
+                    crate::effect::Restriction::attack_or_block(ObjectFilter::source()),
+                    display.clone(),
+                )),
+                functional_zones: vec![Zone::Battlefield],
+                text: Some(display.clone()),
+            };
+            StaticAbility::attached_ability_grant(granted, display)
+        }
+        ["cant", "be", "blocked"] => {
+            let display = format!("{subject} can't be blocked");
+            let granted = Ability {
+                kind: AbilityKind::Static(StaticAbility::unblockable()),
+                functional_zones: vec![Zone::Battlefield],
+                text: Some(display.clone()),
+            };
+            StaticAbility::attached_ability_grant(granted, display)
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(vec![anthem, granted]))
 }
 
 pub(crate) fn parse_prevent_damage_to_source_remove_counter_line(
@@ -9979,6 +10336,68 @@ pub(crate) fn parse_play_lands_from_graveyard_line(
         return Ok(Some(StaticAbility::grants(spec)));
     }
     Ok(None)
+}
+
+pub(crate) fn parse_cast_spells_from_hand_without_paying_mana_costs_line(
+    tokens: &[Token],
+) -> Result<Option<StaticAbility>, CardTextError> {
+    let normalized = words(tokens);
+    if !normalized.starts_with(&["you", "may", "cast"]) {
+        return Ok(None);
+    }
+
+    let Some(from_hand_word_idx) = normalized
+        .windows(3)
+        .position(|window| window == ["from", "your", "hand"])
+    else {
+        return Ok(None);
+    };
+
+    let suffix = &normalized[from_hand_word_idx..];
+    let is_supported_suffix = matches!(
+        suffix,
+        [
+            "from", "your", "hand", "without", "paying", "their", "mana", "costs"
+        ] | [
+            "from", "your", "hand", "without", "paying", "their", "mana", "cost"
+        ] | [
+            "from", "your", "hand", "without", "paying", "its", "mana", "cost"
+        ]
+    );
+    if !is_supported_suffix {
+        return Ok(None);
+    }
+
+    let Some(filter_start_token_idx) = token_index_for_word_index(tokens, 3) else {
+        return Ok(None);
+    };
+    let Some(filter_end_token_idx) = token_index_for_word_index(tokens, from_hand_word_idx) else {
+        return Ok(None);
+    };
+
+    let filter_tokens = trim_commas(&tokens[filter_start_token_idx..filter_end_token_idx]);
+    let filter_words = words(&filter_tokens);
+    if filter_words.is_empty()
+        || !filter_words
+            .iter()
+            .any(|word| *word == "spell" || *word == "spells")
+    {
+        return Ok(None);
+    }
+
+    let mut filter = ObjectFilter::nonland();
+    merge_spell_filters(&mut filter, parse_spell_filter(&filter_tokens));
+
+    let spec = crate::grant::GrantSpec::new(
+        crate::grant::Grantable::AlternativeCast(AlternativeCastingMethod::alternative_cost(
+            "Without paying mana cost",
+            None,
+            Vec::new(),
+        )),
+        filter,
+        Zone::Hand,
+    );
+    Ok(Some(StaticAbility::grants(spec)))
 }
 
 pub(crate) fn parse_pt_modifier(raw: &str) -> Result<(i32, i32), CardTextError> {

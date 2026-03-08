@@ -3,8 +3,8 @@
 use crate::events::EventKind;
 use crate::ids::PlayerId;
 use crate::target::PlayerFilter;
-use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
+use crate::triggers::{TriggerEvent, describe_player_filter_possessive};
 
 /// Trigger that fires at the beginning of combat.
 ///
@@ -47,7 +47,10 @@ impl TriggerMatcher for BeginningOfCombatTrigger {
         match &self.player {
             PlayerFilter::You => "At the beginning of combat on your turn".to_string(),
             PlayerFilter::Any => "At the beginning of each combat".to_string(),
-            _ => format!("At the beginning of combat on {:?}'s turn", self.player),
+            _ => format!(
+                "At the beginning of combat on {} turn",
+                describe_player_filter_possessive(&self.player)
+            ),
         }
     }
 }

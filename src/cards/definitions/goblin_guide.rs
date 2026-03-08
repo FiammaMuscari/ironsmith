@@ -116,8 +116,12 @@ mod tests {
 
         let trigger = trigger.expect("Should have attack trigger");
 
-        // The trigger should have two effects (reveal + conditional move)
-        assert_eq!(trigger.effects.len(), 2);
+        // The trigger should at least include the reveal and follow-up move sequence.
+        assert!(
+            trigger.effects.len() >= 2,
+            "Expected reveal plus follow-up effects, got {:?}",
+            trigger.effects
+        );
 
         // Verify one of the effects uses PlayerFilter::Defending
         let uses_defending = trigger

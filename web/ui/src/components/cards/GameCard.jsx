@@ -4,6 +4,10 @@ import { cn } from "@/lib/utils";
 import { fetchScryfallCardMeta, scryfallImageUrl } from "@/lib/scryfall";
 import { ManaCostIcons } from "@/lib/mana-symbols";
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
 function glowPhaseFromSeed(seed) {
   let hash = 0;
   const text = String(seed || "");
@@ -75,6 +79,57 @@ function counterPalette(rawKind) {
     default:
       return { accent: "#a7c3e7", fill: "rgba(59, 86, 122, 0.28)", stroke: "#dcecff" };
   }
+}
+
+function normalizeCounterEntry(rawCounter, fallbackKind = "") {
+  const kind = String(
+    rawCounter?.kind
+    ?? rawCounter?.name
+    ?? rawCounter?.counter_type
+    ?? fallbackKind
+    ?? ""
+  ).trim();
+  const amount = Number(
+    rawCounter?.amount
+    ?? rawCounter?.count
+    ?? rawCounter?.value
+  );
+  if (!kind || !Number.isFinite(amount) || amount <= 0) return null;
+  return { kind, amount };
+}
+
+function parseCounterSignature(counterSignature) {
+  const signature = String(counterSignature || "").trim();
+  if (!signature || signature === "-") return [];
+
+  return signature
+    .split("|")
+    .map((entry) => {
+      const divider = entry.lastIndexOf(":");
+      if (divider <= 0) return null;
+      const kind = entry.slice(0, divider).trim();
+      const amount = Number(entry.slice(divider + 1).trim());
+      return normalizeCounterEntry({ amount }, kind);
+    })
+    .filter(Boolean);
+}
+
+function resolveBattlefieldCounters(rawCounters, counterSignature) {
+  if (Array.isArray(rawCounters)) {
+    const normalized = rawCounters
+      .map((counter) => normalizeCounterEntry(counter))
+      .filter(Boolean);
+    if (normalized.length > 0) return normalized;
+  }
+
+  if (rawCounters && typeof rawCounters === "object") {
+    const normalized = Object.entries(rawCounters)
+      .map(([kind, amount]) => normalizeCounterEntry({ amount }, kind))
+      .filter(Boolean);
+    if (normalized.length > 0) return normalized;
+  }
+
+  return parseCounterSignature(counterSignature);
 }
 
 function buildCounterBadge(counter) {
@@ -168,6 +223,31 @@ function BattlefieldCounterBadge({ badge }) {
   );
 }
 
+function handCardFooterStat(card) {
+  if (card?.power_toughness) {
+    return {
+      label: card.power_toughness,
+      className: "text-[#f5d08b]",
+      title: `Power/Toughness ${card.power_toughness}`,
+    };
+  }
+  if (card?.loyalty != null) {
+    return {
+      label: `L${card.loyalty}`,
+      className: "text-[#f2be6b]",
+      title: `Loyalty ${card.loyalty}`,
+    };
+  }
+  if (card?.defense != null) {
+    return {
+      label: `D${card.defense}`,
+      className: "text-[#8fd8ff]",
+      title: `Defense ${card.defense}`,
+    };
+  }
+  return null;
+}
+
 export default function GameCard({
   card,
   compact = false,
@@ -188,12 +268,16 @@ export default function GameCard({
   style,
   className = "",
   centerOverlay = null,
+  handCircuitMode = "full",
 }) {
   const name = card.name || "";
   const artVersion = "art_crop";
   const artUrl = scryfallImageUrl(name, artVersion);
   const count = Number(card.count);
   const groupSize = Number.isFinite(count) && count > 1 ? count : 1;
+  const battlefieldStackDepth = variant === "battlefield"
+    ? Math.max(0, Math.min(groupSize, 4) - 1)
+    : 0;
   const [battlefieldManaCost, setBattlefieldManaCost] = useState(card.mana_cost ?? null);
   const glowPhase = glowPhaseFromSeed(`${card.id}:${name}`);
   const auraDelay1 = `-${((glowPhase % 4200) / 1000).toFixed(3)}s`;
@@ -207,12 +291,106 @@ export default function GameCard({
   const artTreatmentClass = variant === "battlefield"
     ? "opacity-100 saturate-[1.12] contrast-[1.08] brightness-[1.08]"
     : "opacity-72 saturate-[1.05] contrast-[1.04]";
+  const stableId = card?.stable_id ?? card?.id ?? "";
+  const battlefieldCircuitActive = variant === "battlefield" && (
+    isInspected
+    || glowKind === "action-link"
+    || glowKind === "attack-selected"
+    || glowKind === "spell"
+  );
+  const showBattlefieldCircuit = battlefieldCircuitActive;
+  const showHandCircuit = variant === "hand" && (Boolean(glowKind) || isPlayable || isInspected);
+  const showCircuitAnimation = showBattlefieldCircuit || showHandCircuit;
+  const replaceGlowWithCircuit = (
+    (variant === "hand" && showHandCircuit)
+    || (variant === "battlefield" && battlefieldCircuitActive)
+  );
+  const usesTopOnlyHandCircuit = variant === "hand" && handCircuitMode === "top";
+  const circuitViewBox = usesTopOnlyHandCircuit ? "0 0 100 46" : "0 0 100 140";
+  const circuitPath = usesTopOnlyHandCircuit
+    ? "M2.5 1.5H97.5"
+    : "M5.5 2.5H94.5C97.26 2.5 99.5 4.74 99.5 7.5V132.5C99.5 135.26 97.26 137.5 94.5 137.5H5.5C2.74 137.5 0.5 135.26 0.5 132.5V7.5C0.5 4.74 2.74 2.5 5.5 2.5Z";
   const rootRef = useRef(null);
   const entryMotionRef = useRef(null);
   const bumpMotionRef = useRef(null);
-  const counterBadges = variant === "battlefield" && Array.isArray(card.counters)
-    ? card.counters.map(buildCounterBadge).filter(Boolean)
+  const stackMotionRef = useRef(null);
+  const circuitMotionRefs = useRef([]);
+  const circuitGlowRef = useRef(null);
+  const circuitCoreRef = useRef(null);
+  const circuitAccentRef = useRef(null);
+  const stackCleanupTimersRef = useRef([]);
+  const previousGroupSizeRef = useRef(groupSize);
+  const counterBadges = variant === "battlefield"
+    ? resolveBattlefieldCounters(card?.counters, card?.counter_signature)
+      .map(buildCounterBadge)
+      .filter(Boolean)
     : [];
+  const handFooterStat = variant === "hand" ? handCardFooterStat(card) : null;
+
+  const clearStackAnimation = () => {
+    const node = rootRef.current;
+    if (!node) return;
+    for (const timeoutId of stackCleanupTimersRef.current) {
+      window.clearTimeout(timeoutId);
+    }
+    stackCleanupTimersRef.current = [];
+    node.style.removeProperty("--card-jolt-x");
+    node.style.removeProperty("--card-jolt-y");
+    node.style.removeProperty("--card-jolt-scale");
+    node.style.removeProperty("--card-flash-brightness");
+    const badge = node.querySelector(".battlefield-group-badge");
+    if (badge) {
+      badge.style.removeProperty("transform");
+      badge.style.removeProperty("opacity");
+    }
+    const layers = node.querySelectorAll(".battlefield-group-stack-layer");
+    for (const layer of layers) {
+      layer.style.removeProperty("transform");
+      layer.style.removeProperty("opacity");
+      layer.style.removeProperty("visibility");
+    }
+    const enteringLayers = node.querySelectorAll(".battlefield-group-stack-layer-entering");
+    for (const enteringLayer of enteringLayers) {
+      enteringLayer.remove();
+    }
+  };
+
+  useLayoutEffect(() => {
+    circuitMotionRefs.current.forEach(cancelMotion);
+    circuitMotionRefs.current = [];
+
+    if (!showCircuitAnimation) return undefined;
+
+    const startOffset = -((glowPhase % 1000) + 100);
+    const primaryNodes = [circuitGlowRef.current, circuitCoreRef.current].filter(Boolean);
+
+    if (primaryNodes.length > 0) {
+      circuitMotionRefs.current.push(
+        animate(primaryNodes, {
+          strokeDashoffset: [startOffset, startOffset - 1000],
+          ease: "linear",
+          duration: 2400 + (glowPhase % 900),
+          loop: true,
+        })
+      );
+    }
+
+    if (circuitAccentRef.current) {
+      circuitMotionRefs.current.push(
+        animate(circuitAccentRef.current, {
+          strokeDashoffset: [startOffset - 460, startOffset - 1460],
+          ease: "linear",
+          duration: 4200 + (glowPhase % 1400),
+          loop: true,
+        })
+      );
+    }
+
+    return () => {
+      circuitMotionRefs.current.forEach(cancelMotion);
+      circuitMotionRefs.current = [];
+    };
+  }, [glowPhase, showCircuitAnimation]);
 
   useLayoutEffect(() => {
     const node = rootRef.current;
@@ -243,11 +421,125 @@ export default function GameCard({
     });
   }, [bumpDirection, isBumped, isNew]);
 
+  useLayoutEffect(() => {
+    const node = rootRef.current;
+    const previousGroupSize = previousGroupSizeRef.current;
+    previousGroupSizeRef.current = groupSize;
+    if (!node || variant !== "battlefield" || groupSize <= previousGroupSize || groupSize <= 1) {
+      return undefined;
+    }
+
+    cancelMotion(stackMotionRef.current);
+    stackMotionRef.current = null;
+    clearStackAnimation();
+
+    const badge = node.querySelector(".battlefield-group-badge");
+    const layers = Array.from(node.querySelectorAll(".battlefield-group-stack-layer"));
+    const width = node.getBoundingClientRect().width || 124;
+    const height = node.getBoundingClientRect().height || 96;
+    const currentVisibleDepth = Math.max(0, Math.min(groupSize, 4) - 1);
+    const previousVisibleDepth = Math.max(0, Math.min(previousGroupSize, 4) - 1);
+    const timeline = createTimeline({ autoplay: true });
+
+    timeline.add(node, {
+      keyframes: [
+        {
+          "--card-jolt-y": "-1px",
+          "--card-jolt-scale": 1.018,
+          "--card-flash-brightness": 1.08,
+          duration: 110,
+        },
+        {
+          "--card-jolt-y": "0px",
+          "--card-jolt-scale": 1,
+          "--card-flash-brightness": 1,
+          duration: 210,
+        },
+      ],
+      ease: uiSpring({ duration: 320, bounce: 0.18 }),
+    }, 0);
+
+    if (badge) {
+      timeline.add(badge, {
+        keyframes: [
+          { scale: 0.86, opacity: 0.76, duration: 0 },
+          { scale: 1.18, opacity: 1, duration: 150 },
+          { scale: 1, opacity: 1, duration: 170 },
+        ],
+        ease: uiSpring({ duration: 320, bounce: 0.24 }),
+        onComplete: () => {
+          badge.style.removeProperty("transform");
+          badge.style.removeProperty("opacity");
+        },
+      }, 0);
+    }
+
+    if (currentVisibleDepth > previousVisibleDepth) {
+      for (let depth = previousVisibleDepth + 1; depth <= currentVisibleDepth; depth += 1) {
+        const layer = layers[depth - 1];
+        if (!layer) continue;
+        const targetX = depth * clamp(width * 0.03, 3, 5);
+        const targetY = depth * clamp(height * -0.032, -3, -2);
+        const startX = targetX - clamp(width * 0.96, 184, 244);
+        const startY = targetY + clamp(height * 0.09, 12, 22);
+        const visibleX = targetX - clamp(width * 0.58, 104, 148);
+        const visibleY = targetY + clamp(height * 0.16, 16, 30);
+        const midX = targetX - clamp(width * 0.2, 32, 54);
+        const midY = targetY + clamp(height * 0.08, 10, 18);
+        const entryDuration = 560;
+        const targetOpacity = Math.max(0.4, 0.92 - (depth * 0.11));
+        const delay = 12 + ((depth - previousVisibleDepth - 1) * 42);
+        const enteringLayer = layer.cloneNode(true);
+        enteringLayer.classList.add("battlefield-group-stack-layer-entering");
+        enteringLayer.style.zIndex = "5";
+        enteringLayer.style.setProperty("--stack-enter-start-x", `${startX}px`);
+        enteringLayer.style.setProperty("--stack-enter-target-x", `${targetX}px`);
+        enteringLayer.style.setProperty("--stack-enter-visible-x", `${visibleX}px`);
+        enteringLayer.style.setProperty("--stack-enter-mid-x", `${midX}px`);
+        enteringLayer.style.setProperty("--stack-enter-target-y", `${targetY}px`);
+        enteringLayer.style.setProperty("--stack-enter-start-y", `${startY}px`);
+        enteringLayer.style.setProperty("--stack-enter-visible-y", `${visibleY}px`);
+        enteringLayer.style.setProperty("--stack-enter-mid-y", `${midY}px`);
+        enteringLayer.style.setProperty("--stack-enter-start-rotate", "-24deg");
+        enteringLayer.style.setProperty("--stack-enter-visible-rotate", "-15deg");
+        enteringLayer.style.setProperty("--stack-enter-mid-rotate", "-6deg");
+        enteringLayer.style.setProperty("--stack-enter-target-opacity", String(targetOpacity));
+        enteringLayer.style.animationDelay = `${delay}ms`;
+        layer.style.visibility = "hidden";
+        node.appendChild(enteringLayer);
+
+        const cleanupTimer = window.setTimeout(() => {
+          if (!node.isConnected) return;
+          if (layer.isConnected) {
+            layer.style.removeProperty("visibility");
+          }
+          if (enteringLayer.isConnected) {
+            enteringLayer.remove();
+          }
+        }, delay + entryDuration + 50);
+        stackCleanupTimersRef.current.push(cleanupTimer);
+      }
+    }
+
+    stackMotionRef.current = timeline;
+
+    return () => {
+      cancelMotion(stackMotionRef.current);
+      stackMotionRef.current = null;
+      clearStackAnimation();
+    };
+  }, [groupSize, variant]);
+
   useEffect(() => () => {
     cancelMotion(entryMotionRef.current);
     entryMotionRef.current = null;
     cancelMotion(bumpMotionRef.current);
     bumpMotionRef.current = null;
+    cancelMotion(stackMotionRef.current);
+    stackMotionRef.current = null;
+    circuitMotionRefs.current.forEach(cancelMotion);
+    circuitMotionRefs.current = [];
+    clearStackAnimation();
   }, []);
 
   useEffect(() => {
@@ -269,7 +561,6 @@ export default function GameCard({
   const visibleBattlefieldManaCost = variant === "battlefield"
     ? (card.mana_cost ?? battlefieldManaCost)
     : null;
-  const stableId = card?.stable_id ?? card?.id ?? "";
   const memberStableIds = Array.isArray(card?.member_stable_ids) && card.member_stable_ids.length > 0
     ? card.member_stable_ids
     : [stableId].filter(Boolean);
@@ -284,6 +575,7 @@ export default function GameCard({
         compact && "w-[96px] min-w-[96px] min-h-[134px] p-1 text-[14px]",
         !compact && variant === "hand" && "flex-1 basis-0 min-w-0 max-w-[124px] min-h-[100px]",
         !compact && variant !== "hand" && "w-[124px] min-w-[124px] min-h-[172px]",
+        battlefieldStackDepth > 0 && "battlefield-grouped-card",
         card.tapped && "tapped",
         isPlayable && !glowKind && "playable",
         glowKind === "land" && "glow-land",
@@ -302,6 +594,8 @@ export default function GameCard({
         glowKind === "attack-candidate" && "attack-candidate",
         glowKind === "attack-selected" && "attack-selected",
         glowKind === "blocker-candidate" && "blocker-candidate",
+        showCircuitAnimation && "card-circuit-active",
+        replaceGlowWithCircuit && "card-circuit-replaces-glow",
         isHovered && "hovered",
         isDragging && "dragging",
         isInspected && "inspected",
@@ -328,6 +622,32 @@ export default function GameCard({
         ...(isBumped ? { "--bump-x": `${bumpDirection * 4}px` } : undefined),
       }}
     >
+      {variant === "battlefield" && battlefieldStackDepth > 0 && (
+        <div className="battlefield-group-stack" aria-hidden="true">
+          {Array.from({ length: battlefieldStackDepth }, (_, index) => (
+            <div
+              key={`stack-layer-${index + 1}`}
+              className="battlefield-group-stack-layer"
+              style={{
+                "--group-stack-depth": index + 1,
+                zIndex: battlefieldStackDepth - index,
+              }}
+            >
+              {artUrl && (
+                <img
+                  className="battlefield-group-stack-art"
+                  src={artUrl}
+                  alt=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              <span className="battlefield-frame" aria-hidden="true" />
+              <span className="game-card-shade battlefield-card-shade" aria-hidden="true" />
+            </div>
+          ))}
+        </div>
+      )}
       <div className="game-card-surface">
         {artUrl && (
           <img
@@ -344,6 +664,42 @@ export default function GameCard({
         {variant === "battlefield" && (
           <span className="battlefield-frame" aria-hidden="true" />
         )}
+        {showCircuitAnimation && (
+          <div className="card-circuit-overlay" aria-hidden="true">
+            <svg
+              className={cn(
+                "card-circuit-svg",
+                usesTopOnlyHandCircuit && "card-circuit-svg-top",
+              )}
+              viewBox={circuitViewBox}
+              preserveAspectRatio="none"
+            >
+              <path
+                className="card-circuit-track"
+                d={circuitPath}
+                pathLength="1000"
+              />
+              <path
+                ref={circuitGlowRef}
+                className="card-circuit-glow"
+                d={circuitPath}
+                pathLength="1000"
+              />
+              <path
+                ref={circuitCoreRef}
+                className="card-circuit-core"
+                d={circuitPath}
+                pathLength="1000"
+              />
+              <path
+                ref={circuitAccentRef}
+                className="card-circuit-accent"
+                d={circuitPath}
+                pathLength="1000"
+              />
+            </svg>
+          </div>
+        )}
         <span
           className={cn(
             "game-card-shade",
@@ -357,20 +713,6 @@ export default function GameCard({
             <div className="hand-card-title whitespace-nowrap overflow-hidden text-ellipsis text-shadow-[0_1px_1px_rgba(0,0,0,0.85)]">
               {name}
             </div>
-            {(card.mana_cost || card.power_toughness) && (
-              <div className="hand-card-peek-meta mt-0.5 flex items-center justify-between gap-1.5">
-                {card.mana_cost ? (
-                  <span className="inline-flex min-w-0 items-center gap-px overflow-hidden">
-                    <ManaCostIcons cost={card.mana_cost} size={12} />
-                  </span>
-                ) : <span />}
-                {card.power_toughness && (
-                  <span className="shrink-0 text-[#f5d08b] text-[11px] font-bold leading-none tracking-wide">
-                    {card.power_toughness}
-                  </span>
-                )}
-              </div>
-            )}
           </div>
         ) : (
           <div className="battlefield-header">
@@ -422,16 +764,22 @@ export default function GameCard({
         )}
 
         {/* Mana cost + P/T bar (hand cards) */}
-        {variant === "hand" && (card.mana_cost || card.power_toughness) && (
+        {variant === "hand" && (card.mana_cost || handFooterStat) && (
           <div className="hand-card-bottom-bar absolute bottom-0 left-0 right-0 z-2 flex items-center justify-between px-1 py-0.5 bg-[rgba(6,10,16,0.92)]">
             {card.mana_cost ? (
               <span className="inline-flex items-center gap-px">
                 <ManaCostIcons cost={card.mana_cost} size={14} />
               </span>
             ) : <span />}
-            {card.power_toughness && (
-              <span className="text-[#f5d08b] text-[12px] font-bold leading-none tracking-wide">
-                {card.power_toughness}
+            {handFooterStat && (
+              <span
+                className={cn(
+                  "text-[12px] font-bold leading-none tracking-wide",
+                  handFooterStat.className,
+                )}
+                title={handFooterStat.title}
+              >
+                {handFooterStat.label}
               </span>
             )}
           </div>

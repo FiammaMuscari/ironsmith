@@ -20,6 +20,18 @@ pub enum TurnError {
     InvalidState { message: String },
 }
 
+impl std::fmt::Display for TurnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TurnError::CannotAdvance => f.write_str("Cannot advance the turn"),
+            TurnError::NoPlayersRemaining => f.write_str("No players remain in the game"),
+            TurnError::InvalidState { message } => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for TurnError {}
+
 /// Result of passing priority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PriorityResult {

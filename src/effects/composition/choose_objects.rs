@@ -57,6 +57,8 @@ pub struct ChooseObjectsEffect {
     pub chooser: PlayerFilter,
     /// Zone to search for objects.
     pub zone: Zone,
+    /// Additional zones to search for objects.
+    pub additional_zones: Vec<Zone>,
     /// Tag name to store chosen objects under.
     pub tag: TagKey,
     /// Human-readable description for the decision prompt.
@@ -82,6 +84,7 @@ impl ChooseObjectsEffect {
             count: count.into(),
             chooser,
             zone: Zone::Battlefield,
+            additional_zones: Vec::new(),
             tag: tag.into(),
             description: "Choose",
             is_search: false,
@@ -93,6 +96,20 @@ impl ChooseObjectsEffect {
     /// Set the zone to search for objects.
     pub fn in_zone(mut self, zone: Zone) -> Self {
         self.zone = zone;
+        self.additional_zones.clear();
+        self
+    }
+
+    /// Set the zones to search for objects.
+    pub fn in_zones(mut self, zones: Vec<Zone>) -> Self {
+        let mut iter = zones.into_iter();
+        if let Some(first) = iter.next() {
+            self.zone = first;
+            self.additional_zones = iter.collect();
+        } else {
+            self.zone = Zone::Battlefield;
+            self.additional_zones.clear();
+        }
         self
     }
 
@@ -132,6 +149,16 @@ impl ChooseObjectsEffect {
                 .unwrap_or(1);
         }
         self.count.max.unwrap_or(self.count.min).max(1)
+    }
+
+    pub(crate) fn search_zones(&self) -> Vec<Zone> {
+        let mut zones = vec![self.filter.zone.unwrap_or(self.zone)];
+        for zone in &self.additional_zones {
+            if !zones.contains(zone) {
+                zones.push(*zone);
+            }
+        }
+        zones
     }
 }
 
@@ -335,7 +362,7 @@ impl EffectExecutor for ChooseObjectsEffect {
                 let color_name = Color::ALL
                     .iter()
                     .find(|&&c| colors.contains(c))
-                    .map(|c| format!("{:?}", c).to_lowercase())
+                    .map(|c| c.name().to_string())
                     .unwrap_or_default();
                 if !color_name.is_empty() {
                     format!("{} ", color_name)
@@ -354,14 +381,14 @@ impl EffectExecutor for ChooseObjectsEffect {
             self.filter
                 .card_types
                 .iter()
-                .map(|t| format!("{:?}", t).to_lowercase())
+                .map(|t| t.name().to_string())
                 .collect::<Vec<_>>()
                 .join(" or ")
         } else if !self.filter.subtypes.is_empty() {
             self.filter
                 .subtypes
                 .iter()
-                .map(|s| format!("{:?}", s).to_lowercase())
+                .map(|s| s.to_string().to_ascii_lowercase())
                 .collect::<Vec<_>>()
                 .join(" or ")
         } else {

@@ -97,7 +97,11 @@ impl GameEventType for PutCountersEvent {
     }
 
     fn display(&self) -> String {
-        format!("Put {} {:?} counter(s)", self.count, self.counter_type)
+        format!(
+            "Put {} {} counter(s)",
+            self.count,
+            self.counter_type.description()
+        )
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -171,6 +175,6 @@ mod tests {
     #[test]
     fn test_put_counters_display() {
         let event = PutCountersEvent::new(ObjectId::from_raw(1), CounterType::PlusOnePlusOne, 3);
-        assert_eq!(event.display(), "Put 3 PlusOnePlusOne counter(s)");
+        assert_eq!(event.display(), "Put 3 +1/+1 counter(s)");
     }
 }

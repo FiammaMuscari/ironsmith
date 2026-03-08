@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { useWasmGame } from "@/hooks/useWasmGame";
 import { usePeerLobby } from "@/hooks/usePeerLobby";
+import { isCombatPhase, isEndingPhase, isMainPhase } from "@/lib/constants";
 import { cardsMeetingThresholdFromStats, loadSemanticStats } from "@/lib/semanticCache";
 
 const GameContext = createContext(null);
@@ -52,6 +53,42 @@ function isCastOrPlayConfirmDecision(decision) {
   if (legal.length !== 1) return false;
   const optionText = String(legal[0]?.description || "");
   return /^\s*(cast|play)\b/i.test(optionText);
+}
+
+function priorityHoldReason({
+  autoPassEnabled,
+  holdRule,
+  decision,
+  currentState,
+  perspectiveMode = "any",
+  requireNonEmptyStack = false,
+}) {
+  if (!autoPassEnabled) return "auto-pass disabled";
+  if (!decision || decision.kind !== "priority") return "not a priority decision";
+
+  const perspective = currentState?.perspective;
+  if (perspectiveMode === "local" && decision.player !== perspective) return "not local priority";
+  if (perspectiveMode === "opponent" && decision.player === perspective) return "not opponent priority";
+
+  const stackSize = Number(currentState?.stack_size || 0);
+  if (requireNonEmptyStack && stackSize <= 0) return "stack empty";
+
+  if (holdRule === "never") return null;
+  if (holdRule === "always") return "always hold";
+  if (holdRule === "stack" && stackSize > 0) return "stack non-empty";
+  if (holdRule === "main" && isMainPhase(currentState?.phase)) return "main phase";
+  if (holdRule === "combat" && isCombatPhase(currentState?.phase)) return "combat phase";
+  if (holdRule === "ending" && isEndingPhase(currentState?.phase)) return "ending phase";
+  if (holdRule === "if_actions") {
+    const hasNonPass = (decision.actions || []).some((action) => action.kind !== "pass_priority");
+    if (hasNonPass) {
+      return perspectiveMode === "opponent"
+        ? "opponent has playable actions"
+        : "playable actions available";
+    }
+  }
+
+  return null;
 }
 
 function tryBuildAutoResolveCommand(decision) {
@@ -391,24 +428,84 @@ export function GameProvider({ children }) {
 
   const opponentHoldReason = useCallback(
     (decision, currentState) => {
-      if (!autoPassEnabled) return "auto-pass disabled";
-      if (!decision || decision.kind !== "priority") return null;
-      if (decision.player === currentState.perspective) return null;
-
-      if (holdRule === "never") return null;
-      if (holdRule === "always") return "always hold";
-      if (holdRule === "stack" && currentState.stack_size > 0) return "stack non-empty";
-      if (holdRule === "main" && (currentState.phase === "FirstMain" || currentState.phase === "NextMain"))
-        return "main phase";
-      if (holdRule === "combat" && currentState.phase === "Combat") return "combat phase";
-      if (holdRule === "ending" && currentState.phase === "Ending") return "ending phase";
-      if (holdRule === "if_actions") {
-        const hasNonPass = (decision.actions || []).some((a) => a.kind !== "pass_priority");
-        if (hasNonPass) return "opponent has playable actions";
-      }
-      return null;
+      return priorityHoldReason({
+        autoPassEnabled,
+        holdRule,
+        decision,
+        currentState,
+        perspectiveMode: "opponent",
+      });
     },
     [autoPassEnabled, holdRule]
+  );
+
+  const localTurnHoldReason = useCallback(
+    (decision, currentState) => (
+      priorityHoldReason({
+        autoPassEnabled,
+        holdRule,
+        decision,
+        currentState,
+        perspectiveMode: "local",
+        requireNonEmptyStack: true,
+      })
+    ),
+    [autoPassEnabled, holdRule]
+  );
+
+  const localOffTurnHoldReason = useCallback(
+    (decision, currentState) => (
+      priorityHoldReason({
+        autoPassEnabled,
+        holdRule,
+        decision,
+        currentState,
+        perspectiveMode: "local",
+      })
+    ),
+    [autoPassEnabled, holdRule]
+  );
+
+  const settleLocalStackPriority = useCallback(
+    async (currentGame, currentState) => {
+      if (!currentState) {
+        return { state: currentState, autoPasses: 0, holdReason: null };
+      }
+
+      if (multiplayerActiveRef.current || !autoPassEnabled) {
+        return { state: currentState, autoPasses: 0, holdReason: null };
+      }
+
+      let st = currentState;
+      let autoPasses = 0;
+      let holdReason = null;
+
+      for (let i = 0; i < 4; i++) {
+        if (!st?.decision || st.decision.kind !== "priority" || st.decision.player !== st.perspective) {
+          break;
+        }
+        if (st.active_player !== st.perspective) {
+          break;
+        }
+
+        holdReason = localTurnHoldReason(st.decision, st);
+        if (holdReason) break;
+
+        const passAction = (st.decision.actions || []).find((action) => action.kind === "pass_priority");
+        if (!passAction) {
+          holdReason = "no pass action available";
+          break;
+        }
+
+        st = await currentGame.dispatch({ type: "priority_action", action_index: passAction.index });
+        autoPasses += 1;
+
+        if (Number(st?.stack_size || 0) <= 0) break;
+      }
+
+      return { state: st, autoPasses, holdReason };
+    },
+    [autoPassEnabled, localTurnHoldReason]
   );
 
   const settleOpponentPriority = useCallback(
@@ -428,9 +525,19 @@ export function GameProvider({ children }) {
       let holdReason = null;
 
       for (let i = 0; i < 24; i++) {
-        while (st && st.decision && st.decision.player !== st.perspective) {
+        while (
+          st
+          && st.decision
+          && (
+            st.decision.player !== st.perspective
+            || st.active_player !== st.perspective
+          )
+        ) {
           if (st.decision.kind === "priority") {
-            holdReason = opponentHoldReason(st.decision, st);
+            const isLocalOffTurnPriority = st.decision.player === st.perspective;
+            holdReason = isLocalOffTurnPriority
+              ? localOffTurnHoldReason(st.decision, st)
+              : opponentHoldReason(st.decision, st);
             if (holdReason) break;
             const passAction = (st.decision.actions || []).find((a) => a.kind === "pass_priority");
             if (!passAction) { holdReason = "no pass action available"; break; }
@@ -467,7 +574,20 @@ export function GameProvider({ children }) {
 
       return { state: st, autoPasses, autoDeclares, phaseAdvances, holdReason };
     },
-    [autoPassEnabled, opponentHoldReason]
+    [autoPassEnabled, localOffTurnHoldReason, opponentHoldReason]
+  );
+
+  const settlePriorityAutomation = useCallback(
+    async (currentGame, currentState) => {
+      const localAutoResult = await settleLocalStackPriority(currentGame, currentState);
+      const opponentAutoResult = await settleOpponentPriority(currentGame, localAutoResult.state);
+      return {
+        ...opponentAutoResult,
+        localAutoPasses: localAutoResult.autoPasses,
+        localHoldReason: localAutoResult.holdReason,
+      };
+    },
+    [settleLocalStackPriority, settleOpponentPriority]
   );
 
   const autoResolveTrivialDecisions = useCallback(
@@ -494,9 +614,11 @@ export function GameProvider({ children }) {
 
   const settleNoop = useCallback(async (_currentGame, currentState) => ({
     state: currentState,
+    localAutoPasses: 0,
     autoPasses: 0,
     autoDeclares: 0,
     phaseAdvances: 0,
+    localHoldReason: null,
     holdReason: null,
   }), []);
 
@@ -512,7 +634,7 @@ export function GameProvider({ children }) {
     ) => {
       let st = currentState;
       const autoResult = allowOpponentAutomation
-        ? await settleOpponentPriority(currentGame, st)
+        ? await settlePriorityAutomation(currentGame, st)
         : await settleNoop(currentGame, st);
       st = autoResult.state;
 
@@ -520,7 +642,7 @@ export function GameProvider({ children }) {
         ? await autoResolveTrivialDecisions(
           currentGame,
           st,
-          allowOpponentAutomation ? settleOpponentPriority : settleNoop
+          allowOpponentAutomation ? settlePriorityAutomation : settleNoop
         )
         : { state: st, resolved: 0 };
       st = autoResolved.state;
@@ -529,6 +651,9 @@ export function GameProvider({ children }) {
 
       const parts = [];
       if (message) parts.push(message);
+      if (allowOpponentAutomation && autoResult.localAutoPasses > 0) {
+        parts.push(`passed priority x${autoResult.localAutoPasses}`);
+      }
       if (allowOpponentAutomation && autoResult.autoPasses > 0) {
         parts.push(`auto-passed x${autoResult.autoPasses}`);
       }
@@ -557,7 +682,7 @@ export function GameProvider({ children }) {
     [
       autoResolveTrivialDecisions,
       settleNoop,
-      settleOpponentPriority,
+      settlePriorityAutomation,
       setStatus,
     ]
   );

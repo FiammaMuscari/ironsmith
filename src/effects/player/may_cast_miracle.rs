@@ -96,8 +96,9 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
             owner,
             Some(card_id),
             format!(
-                "Cast {} for its miracle cost ({:?})?",
-                card_name, miracle_cost
+                "Cast {} for its miracle cost ({})?",
+                card_name,
+                miracle_cost.to_oracle()
             ),
         )
         .with_source_name(&card_name);

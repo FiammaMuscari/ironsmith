@@ -1,6 +1,6 @@
 //! Add mana of any color/type that lands matching a filter could produce.
 
-use super::choice_helpers::{choose_mana_symbols, credit_mana_symbols};
+use super::choice_helpers::{choose_mana_symbols, credit_mana_symbols_from_context};
 use crate::ability::{AbilityKind, ActivatedAbility};
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
@@ -79,7 +79,7 @@ impl EffectExecutor for AddManaOfLandProducedTypesEffect {
             available[0],
         );
 
-        credit_mana_symbols(game, player_id, chosen_symbols);
+        credit_mana_symbols_from_context(game, player_id, chosen_symbols, ctx);
 
         Ok(EffectOutcome::count(amount as i32))
     }

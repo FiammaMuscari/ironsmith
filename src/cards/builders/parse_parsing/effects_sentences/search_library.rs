@@ -1,12 +1,12 @@
 use crate::cards::builders::{
-    CardTextError, CarryContext, ChoiceCount, EffectAst, IT_TAG, IfResultPredicate, PlayerAst,
-    ReturnControllerAst, SubjectAst, TagKey, TargetAst, TextSpan, Token,
-    apply_shuffle_subject_graveyard_owner_context, ends_with_until_end_of_turn, find_negation_span,
-    find_verb, is_article, maybe_apply_carried_player, maybe_apply_carried_player_with_clause,
-    parse_cant_restrictions, parse_effect_chain, parse_effect_chain_with_sentence_primitives,
-    parse_effect_clause, parse_number, parse_object_filter, parse_subject, parse_target_phrase,
-    parse_zone_word, span_from_tokens, split_on_or, starts_with_until_end_of_turn,
-    token_index_for_word_index, tokenize_line, trim_commas, words,
+    CardTextError, CarryContext, ChoiceCount, EffectAst, IT_TAG, PlayerAst, ReturnControllerAst,
+    SubjectAst, TagKey, TargetAst, TextSpan, Token, apply_shuffle_subject_graveyard_owner_context,
+    ends_with_until_end_of_turn, find_negation_span, find_verb, is_article,
+    maybe_apply_carried_player, maybe_apply_carried_player_with_clause, parse_cant_restrictions,
+    parse_effect_chain, parse_effect_chain_with_sentence_primitives, parse_effect_clause,
+    parse_number, parse_object_filter, parse_subject, parse_target_phrase, parse_zone_word,
+    span_from_tokens, split_on_or, starts_with_until_end_of_turn, token_index_for_word_index,
+    tokenize_line, trim_commas, words,
 };
 use crate::target::{ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation};
 use crate::types::{CardType, Subtype};
@@ -187,8 +187,7 @@ pub(crate) fn parse_search_library_sentence(
     let search_body_words = &search_words[1..];
     let mut search_player_target: Option<TargetAst> = None;
     let mut forced_library_owner: Option<PlayerFilter> = None;
-    let mut include_hand_and_graveyard_bundle = false;
-    let mut nonlibrary_choice_zones: Vec<Zone> = Vec::new();
+    let mut search_zones_override: Option<Vec<Zone>> = None;
     if search_body_words.starts_with(&["your", "library", "for"])
         || search_body_words.starts_with(&["their", "library", "for"])
     {
@@ -212,7 +211,7 @@ pub(crate) fn parse_search_library_sentence(
     ]) {
         player = PlayerAst::ItsController;
         forced_library_owner = Some(PlayerFilter::ControllerOf(crate::filter::ObjectRef::Target));
-        include_hand_and_graveyard_bundle = true;
+        search_zones_override = Some(vec![Zone::Graveyard, Zone::Hand, Zone::Library]);
     } else if search_body_words.starts_with(&[
         "its",
         "owner",
@@ -232,7 +231,47 @@ pub(crate) fn parse_search_library_sentence(
     ]) {
         player = PlayerAst::ItsOwner;
         forced_library_owner = Some(PlayerFilter::OwnerOf(crate::filter::ObjectRef::Target));
-        include_hand_and_graveyard_bundle = true;
+        search_zones_override = Some(vec![Zone::Graveyard, Zone::Hand, Zone::Library]);
+    } else if search_body_words.starts_with(&[
+        "target",
+        "player",
+        "graveyard",
+        "hand",
+        "and",
+        "library",
+        "for",
+    ]) || search_body_words.starts_with(&[
+        "target",
+        "players",
+        "graveyard",
+        "hand",
+        "and",
+        "library",
+        "for",
+    ]) {
+        search_player_target = Some(parse_target_phrase(&search_tokens[1..3])?);
+        forced_library_owner = Some(PlayerFilter::target_player());
+        search_zones_override = Some(vec![Zone::Graveyard, Zone::Hand, Zone::Library]);
+    } else if search_body_words.starts_with(&[
+        "target",
+        "opponent",
+        "graveyard",
+        "hand",
+        "and",
+        "library",
+        "for",
+    ]) || search_body_words.starts_with(&[
+        "target",
+        "opponents",
+        "graveyard",
+        "hand",
+        "and",
+        "library",
+        "for",
+    ]) {
+        search_player_target = Some(parse_target_phrase(&search_tokens[1..3])?);
+        forced_library_owner = Some(PlayerFilter::target_opponent());
+        search_zones_override = Some(vec![Zone::Graveyard, Zone::Hand, Zone::Library]);
     } else if search_body_words.starts_with(&["target", "player", "library", "for"])
         || search_body_words.starts_with(&["target", "players", "library", "for"])
     {
@@ -247,6 +286,25 @@ pub(crate) fn parse_search_library_sentence(
         || search_body_words.starts_with(&["that", "players", "library", "for"])
     {
         player = PlayerAst::That;
+    } else if search_body_words.starts_with(&[
+        "that",
+        "player",
+        "graveyard",
+        "hand",
+        "and",
+        "library",
+        "for",
+    ]) || search_body_words.starts_with(&[
+        "that",
+        "players",
+        "graveyard",
+        "hand",
+        "and",
+        "library",
+        "for",
+    ]) {
+        player = PlayerAst::That;
+        search_zones_override = Some(vec![Zone::Graveyard, Zone::Hand, Zone::Library]);
     } else if search_body_words.starts_with(&["its", "controller", "library", "for"])
         || search_body_words.starts_with(&["its", "controllers", "library", "for"])
     {
@@ -276,15 +334,18 @@ pub(crate) fn parse_search_library_sentence(
             let has_hand = zone_words
                 .iter()
                 .any(|word| *word == "hand" || *word == "hands");
+            let mut zones = Vec::new();
             if has_graveyard {
-                nonlibrary_choice_zones.push(Zone::Graveyard);
+                zones.push(Zone::Graveyard);
             }
             if has_hand {
-                nonlibrary_choice_zones.push(Zone::Hand);
+                zones.push(Zone::Hand);
             }
-            if nonlibrary_choice_zones.is_empty() {
+            if zones.is_empty() {
                 return Ok(None);
             }
+            zones.push(Zone::Library);
+            search_zones_override = Some(zones);
         } else {
             return Ok(None);
         }
@@ -412,7 +473,15 @@ pub(crate) fn parse_search_library_sentence(
     let raw_filter_tokens = trim_commas(&search_tokens[filter_start..filter_end]);
     let mut filter_tokens = raw_filter_tokens.clone();
     let mut same_name_reference: Option<SameNameReference> = None;
-    if let Some((base_filter_tokens, reference_tokens)) =
+    let raw_filter_words = words(&raw_filter_tokens);
+    if raw_filter_words.len() >= 3
+        && raw_filter_words[raw_filter_words.len() - 3..] == ["with", "that", "name"]
+    {
+        let base_end = token_index_for_word_index(&raw_filter_tokens, raw_filter_words.len() - 3)
+            .unwrap_or(raw_filter_tokens.len());
+        filter_tokens = trim_commas(&raw_filter_tokens[..base_end]);
+        same_name_reference = Some(SameNameReference::TaggedIt);
+    } else if let Some((base_filter_tokens, reference_tokens)) =
         split_search_same_name_reference_filter(&raw_filter_tokens)
     {
         if base_filter_tokens.is_empty() || reference_tokens.is_empty() {
@@ -582,101 +651,47 @@ pub(crate) fn parse_search_library_sentence(
         false
     };
     let shuffle = (words_all.contains(&"shuffle") && !trailing_discard_before_shuffle)
-        || !nonlibrary_choice_zones.is_empty();
+        || search_zones_override
+            .as_ref()
+            .is_some_and(|zones| zones.contains(&Zone::Library));
     let split_battlefield_and_hand = put_idx.is_some()
         && words_all.contains(&"battlefield")
         && words_all.contains(&"hand")
         && words_all.contains(&"other")
         && words_all.contains(&"one");
-    let zone_bundle_filter = if include_hand_and_graveyard_bundle {
-        Some(filter.clone())
-    } else {
-        None
-    };
-    let mut effects = if !nonlibrary_choice_zones.is_empty() {
-        let chosen_tag: TagKey = "searched_nonlibrary".into();
+    let mut effects = if let Some(search_zones) = search_zones_override.clone() {
+        let chosen_tag: TagKey = "searched_multi_zone".into();
         let battlefield_tapped = destination == Zone::Battlefield && words_all.contains(&"tapped");
-
-        let mut move_effects = Vec::new();
+        let mut sequence = vec![EffectAst::ChooseObjectsAcrossZones {
+            filter,
+            count,
+            player,
+            tag: chosen_tag.clone(),
+            zones: search_zones.clone(),
+        }];
         if reveal {
-            move_effects.push(EffectAst::RevealTagged {
+            sequence.push(EffectAst::RevealTagged {
                 tag: chosen_tag.clone(),
             });
         }
-        move_effects.push(EffectAst::MoveToZone {
-            target: TargetAst::Tagged(chosen_tag.clone(), span_from_tokens(tokens)),
-            zone: destination,
-            to_top: matches!(destination, Zone::Library),
-            battlefield_controller: ReturnControllerAst::Preserve,
-            battlefield_tapped: battlefield_tapped,
-            attached_to: None,
-        });
-
-        let mut first_filter = filter.clone();
-        first_filter.zone = Some(nonlibrary_choice_zones[0]);
-        if first_filter.owner.is_none() {
-            first_filter.owner = Some(PlayerFilter::You);
+        if shuffle && destination == Zone::Library && search_zones.contains(&Zone::Library) {
+            sequence.push(EffectAst::ShuffleLibrary { player });
         }
-
-        let did_not_effects = if nonlibrary_choice_zones.len() > 1 {
-            let mut second_filter = filter.clone();
-            second_filter.zone = Some(nonlibrary_choice_zones[1]);
-            if second_filter.owner.is_none() {
-                second_filter.owner = Some(PlayerFilter::You);
-            }
-
-            vec![
-                EffectAst::ChooseObjects {
-                    filter: second_filter,
-                    count: ChoiceCount::up_to(1),
-                    player,
-                    tag: chosen_tag.clone(),
-                },
-                EffectAst::IfResult {
-                    predicate: IfResultPredicate::Did,
-                    effects: move_effects.clone(),
-                },
-                EffectAst::IfResult {
-                    predicate: IfResultPredicate::DidNot,
-                    effects: vec![EffectAst::SearchLibrary {
-                        filter,
-                        destination,
-                        player,
-                        reveal,
-                        shuffle,
-                        count,
-                        tapped: battlefield_tapped,
-                    }],
-                },
-            ]
-        } else {
-            vec![EffectAst::SearchLibrary {
-                filter,
-                destination,
-                player,
-                reveal,
-                shuffle,
-                count,
-                tapped: battlefield_tapped,
-            }]
-        };
-
-        vec![
-            EffectAst::ChooseObjects {
-                filter: first_filter,
-                count: ChoiceCount::up_to(1),
-                player,
-                tag: chosen_tag.clone(),
-            },
-            EffectAst::IfResult {
-                predicate: IfResultPredicate::Did,
-                effects: move_effects,
-            },
-            EffectAst::IfResult {
-                predicate: IfResultPredicate::DidNot,
-                effects: did_not_effects,
-            },
-        ]
+        sequence.push(EffectAst::ForEachTagged {
+            tag: chosen_tag.clone(),
+            effects: vec![EffectAst::MoveToZone {
+                target: TargetAst::Tagged(chosen_tag, span_from_tokens(tokens)),
+                zone: destination,
+                to_top: matches!(destination, Zone::Library),
+                battlefield_controller: ReturnControllerAst::Preserve,
+                battlefield_tapped: battlefield_tapped,
+                attached_to: None,
+            }],
+        });
+        if shuffle && !(destination == Zone::Library && search_zones.contains(&Zone::Library)) {
+            sequence.push(EffectAst::ShuffleLibrary { player });
+        }
+        sequence
     } else if split_battlefield_and_hand {
         let battlefield_tapped = words_all.contains(&"tapped");
         vec![
@@ -711,20 +726,6 @@ pub(crate) fn parse_search_library_sentence(
             tapped: battlefield_tapped,
         }]
     };
-
-    if include_hand_and_graveyard_bundle && let Some(base_filter) = zone_bundle_filter {
-        for zone in [Zone::Graveyard, Zone::Hand] {
-            let mut zone_filter = base_filter.clone();
-            zone_filter.zone = Some(zone);
-            if zone_filter.owner.is_none() {
-                zone_filter.owner = forced_library_owner.clone();
-            }
-            effects.push(EffectAst::ExileAll {
-                filter: zone_filter,
-                face_down: false,
-            });
-        }
-    }
 
     if trailing_discard_before_shuffle
         && let (Some(discard_idx), Some(shuffle_idx)) = (
@@ -1050,6 +1051,33 @@ pub(crate) fn parse_shuffle_object_into_library_sentence(
     if target_tokens.is_empty() {
         return Ok(None);
     }
+    let target_words = words(&target_tokens);
+    if matches!(subject, SubjectAst::Player(PlayerAst::ItsOwner))
+        && matches!(
+            target_words.as_slice(),
+            ["them"] | ["those", "cards"] | ["those", "objects"] | ["those"]
+        )
+    {
+        return Ok(Some(vec![EffectAst::ForEachTagged {
+            tag: TagKey::from(IT_TAG),
+            effects: vec![
+                EffectAst::MoveToZone {
+                    target: TargetAst::Tagged(
+                        TagKey::from(IT_TAG),
+                        span_from_tokens(&target_tokens),
+                    ),
+                    zone: Zone::Library,
+                    to_top: false,
+                    battlefield_controller: ReturnControllerAst::Preserve,
+                    battlefield_tapped: false,
+                    attached_to: None,
+                },
+                EffectAst::ShuffleLibrary {
+                    player: PlayerAst::ItsOwner,
+                },
+            ],
+        }]));
+    }
     let target = parse_target_phrase(&target_tokens)?;
 
     Ok(Some(vec![
@@ -1257,7 +1285,7 @@ pub(crate) fn parse_for_each_exiled_this_way_sentence(
     let filter = parse_object_filter(&filter_tokens, false)?;
 
     Ok(Some(vec![EffectAst::ForEachTagged {
-        tag: "exiled_0".into(),
+        tag: IT_TAG.into(),
         effects: vec![EffectAst::SearchLibrary {
             filter,
             destination: Zone::Battlefield,
@@ -1563,6 +1591,14 @@ pub(crate) fn parse_restriction_duration(
         }
     }
 
+    if all_words.ends_with(&["for", "the", "rest", "of", "the", "game"]) {
+        let end_idx = tokens.len().saturating_sub(6);
+        let remainder = trim_commas(&tokens[..end_idx]);
+        if !remainder.is_empty() {
+            return Ok(Some((Until::Forever, remainder)));
+        }
+    }
+
     let suffix_idx = tokens.windows(4).position(|window| {
         window[0].is_word("for")
             && window[1].is_word("as")
@@ -1625,7 +1661,9 @@ pub(crate) fn parse_restriction_duration(
 
 fn has_source_remains_tapped_duration(tokens: &[Token]) -> bool {
     let words = words(tokens);
-    words.windows(4).any(|window| window == ["for", "as", "long", "as"])
+    words
+        .windows(4)
+        .any(|window| window == ["for", "as", "long", "as"])
         && words.contains(&"remains")
         && words.contains(&"tapped")
         && (words.contains(&"this")

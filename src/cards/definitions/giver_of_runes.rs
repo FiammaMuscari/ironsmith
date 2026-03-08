@@ -27,7 +27,6 @@ mod tests {
     use crate::ability::{AbilityKind, ActivationTiming};
     use crate::card::CardBuilder;
     use crate::decision::AutoPassDecisionMaker;
-    use crate::effect::EffectResult;
     use crate::executor::execute_effect;
     use crate::executor::{ExecutionContext, ResolvedTarget};
     use crate::game_state::GameState;

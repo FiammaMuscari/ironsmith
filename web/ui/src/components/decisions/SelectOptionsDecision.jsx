@@ -8,6 +8,7 @@ import { ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SymbolText } from "@/lib/mana-symbols";
 import { normalizeDecisionText } from "./decisionText";
+import DecisionSummary from "./DecisionSummary";
 
 const STRIP_ITEM_BASE_CLASS = "h-auto min-h-8 max-w-[360px] min-w-[120px] justify-start self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] px-2.5 text-left text-[12px] font-semibold text-[rgba(206,223,242,0.52)] whitespace-nowrap transition-all hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]";
 const STRIP_ITEM_ACTIVE_CLASS = "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]";
@@ -174,12 +175,13 @@ function SectionHeader({ text }) {
   );
 }
 
-function Description({ text }) {
-  if (!text) return null;
+function Description({ decision, hideDescription = false, layout = "panel" }) {
   return (
-    <div className="text-[13px] text-muted-foreground px-1 leading-snug">
-      <SymbolText text={normalizeDecisionText(text)} />
-    </div>
+    <DecisionSummary
+      decision={decision}
+      hideDescription={hideDescription}
+      layout={layout}
+    />
   );
 }
 
@@ -389,7 +391,9 @@ function SingleSelectDecision({
               : "sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1"
           )}
         >
-          {!paymentDecision && !hideDescription && <Description text={decision.description} />}
+          {!paymentDecision && !hideDescription && (
+            <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+          )}
           {showHoverHint && (
             <HoverHint text="Hover a related card to show its available choices." />
           )}
@@ -515,7 +519,9 @@ function MultiSelectDecision({
               ? "px-1 py-0"
               : "sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1"
           )}>
-          {!paymentDecision && !hideDescription && <Description text={decision.description} />}
+          {!paymentDecision && !hideDescription && (
+            <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+          )}
           <SectionHeader text={`Select ${min === max ? min : `${min}–${max}`}`} />
           {showHoverHint && (
             <HoverHint text="Hover a related card to show its choices. You can keep previous selections." />
@@ -674,7 +680,7 @@ function OrderingDecision({
           <div className="flex w-max min-w-full items-center gap-1.5">
             {!hideDescription && (
               <div className="shrink-0 px-1">
-                <Description text={decision.description} />
+                <Description decision={decision} hideDescription={hideDescription} layout={layout} />
               </div>
             )}
             <SectionHeader text="Order" />
@@ -684,7 +690,9 @@ function OrderingDecision({
       ) : (
         <ScrollArea className="flex-1 min-h-0">
           <div className="flex flex-col gap-1 pr-1">
-            {!hideDescription && <Description text={decision.description} />}
+            {!hideDescription && (
+              <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+            )}
             <SectionHeader text="Order" />
             {rows}
           </div>
@@ -789,7 +797,7 @@ function DistributeDecision({
           <div className="flex w-max min-w-full items-center gap-1.5">
             {!hideDescription && (
               <div className="shrink-0 px-1">
-                <Description text={decision.description} />
+                <Description decision={decision} hideDescription={hideDescription} layout={layout} />
               </div>
             )}
             <SectionHeader text={`Distribute ${total} total`} />
@@ -799,7 +807,9 @@ function DistributeDecision({
       ) : (
         <ScrollArea className="flex-1 min-h-0">
           <div className="flex flex-col gap-1 pr-1">
-            {!hideDescription && <Description text={decision.description} />}
+            {!hideDescription && (
+              <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+            )}
             <SectionHeader text={`Distribute ${total} total`} />
             {rows}
           </div>
@@ -901,7 +911,7 @@ function CountersDecision({
           <div className="flex w-max min-w-full items-center gap-1.5">
             {!hideDescription && (
               <div className="shrink-0 px-1">
-                <Description text={decision.description} />
+                <Description decision={decision} hideDescription={hideDescription} layout={layout} />
               </div>
             )}
             <SectionHeader text="Counters" />
@@ -911,7 +921,9 @@ function CountersDecision({
       ) : (
         <ScrollArea className="flex-1 min-h-0">
           <div className="flex flex-col gap-1 pr-1">
-            {!hideDescription && <Description text={decision.description} />}
+            {!hideDescription && (
+              <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+            )}
             <SectionHeader text="Counters" />
             {rows}
           </div>
@@ -1014,7 +1026,7 @@ function RepeatableDecision({
           <div className="flex w-max min-w-full items-center gap-1.5">
             {!hideDescription && (
               <div className="shrink-0 px-1">
-                <Description text={decision.description} />
+                <Description decision={decision} hideDescription={hideDescription} layout={layout} />
               </div>
             )}
             <SectionHeader text="Repeat" />
@@ -1024,7 +1036,9 @@ function RepeatableDecision({
       ) : (
         <ScrollArea className="flex-1 min-h-0">
           <div className="flex flex-col gap-1 pr-1">
-            {!hideDescription && <Description text={decision.description} />}
+            {!hideDescription && (
+              <Description decision={decision} hideDescription={hideDescription} layout={layout} />
+            )}
             <SectionHeader text="Repeat" />
             {rows}
           </div>

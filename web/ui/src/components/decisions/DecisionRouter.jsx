@@ -9,6 +9,7 @@ import NumberDecision from "./NumberDecision";
 /** Derive a stable key so React remounts stateful decision components when the
  *  underlying decision changes (e.g. "discard a card" → "search library"). */
 function decisionKey(decision) {
+  const metaKey = `|${decision.description || ""}|${decision.context_text || ""}|${decision.consequence_text || ""}`;
   if (decision.attacker_options) {
     return decision.attacker_options
       .map((opt) => {
@@ -17,7 +18,7 @@ function decisionKey(decision) {
           .join("+");
         return `${Number(opt.creature)}:${opt.must_attack ? 1 : 0}:${targets}`;
       })
-      .join("|");
+      .join("|") + metaKey;
   }
   if (decision.blocker_options) {
     return decision.blocker_options
@@ -27,13 +28,13 @@ function decisionKey(decision) {
           .join("+");
         return `${Number(opt.attacker)}:${opt.min_blockers || 0}:${blockers}`;
       })
-      .join("|");
+      .join("|") + metaKey;
   }
   if (decision.candidates) {
-    return decision.candidates.map((c) => c.id).join(",");
+    return decision.candidates.map((c) => c.id).join(",") + metaKey;
   }
   if (decision.options) {
-    return decision.options.map((o) => `${o.index}:${o.description}`).join(",");
+    return decision.options.map((o) => `${o.index}:${o.description}`).join(",") + metaKey;
   }
   if (decision.requirements) {
     return decision.requirements
@@ -42,9 +43,9 @@ function decisionKey(decision) {
           .map((t) => (t.kind === "player" ? `p${t.player}` : `o${t.object}`))
           .join("+")
       )
-      .join(",");
+      .join(",") + metaKey;
   }
-  return decision.description || "";
+  return metaKey;
 }
 
 export default function DecisionRouter({

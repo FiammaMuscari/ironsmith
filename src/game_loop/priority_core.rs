@@ -31,7 +31,10 @@ pub fn advance_priority_with_dm(
                     .map(|e| ReplacementOption {
                         index: i,
                         source: e.source,
-                        description: format!("{:?}", e.replacement),
+                        description: game
+                            .object(e.source)
+                            .map(|obj| format!("Apply replacement effect from {}", obj.name))
+                            .unwrap_or_else(|| "Apply replacement effect".to_string()),
                     })
             })
             .collect();

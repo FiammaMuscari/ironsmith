@@ -1,9 +1,8 @@
 use std::fmt::Write;
 
-use crate::cards::{
-    CardDefinition, buried_alive, cataclysm, cataclysmic_gearhulk, culling_the_weak, village_rites,
-};
+use crate::cards::CardDefinition;
 
+#[allow(dead_code)]
 fn render_definition(def: &CardDefinition) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "name: {}", def.name());

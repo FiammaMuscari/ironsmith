@@ -25,6 +25,17 @@ impl PtValue {
     }
 }
 
+impl std::fmt::Display for PtValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PtValue::Fixed(n) => write!(f, "{n}"),
+            PtValue::Star => f.write_str("*"),
+            PtValue::StarPlus(n) if *n >= 0 => write!(f, "*+{n}"),
+            PtValue::StarPlus(n) => write!(f, "*{n}"),
+        }
+    }
+}
+
 /// Power and toughness pair for creatures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowerToughness {

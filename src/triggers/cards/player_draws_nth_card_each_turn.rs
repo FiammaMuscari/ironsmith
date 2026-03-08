@@ -3,8 +3,8 @@
 use crate::events::EventKind;
 use crate::events::other::CardsDrawnEvent;
 use crate::target::PlayerFilter;
-use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
+use crate::triggers::{TriggerEvent, describe_player_filter_subject};
 
 /// Trigger for "Whenever [player] draws their Nth card each turn".
 ///
@@ -72,8 +72,8 @@ impl TriggerMatcher for PlayerDrawsNthCardEachTurnTrigger {
                 format!("Whenever that player draws their {ordinal} card each turn")
             }
             _ => format!(
-                "Whenever {:?} draws their {ordinal} card each turn",
-                self.player
+                "Whenever {} draws their {ordinal} card each turn",
+                describe_player_filter_subject(&self.player)
             ),
         }
     }

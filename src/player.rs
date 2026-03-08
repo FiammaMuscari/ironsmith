@@ -502,6 +502,7 @@ pub struct Player {
     pub starting_life: i32,
     pub life: i32,
     pub mana_pool: ManaPool,
+    pub restricted_mana: Vec<crate::ability::RestrictedManaUnit>,
     pub poison_counters: u32,
     pub energy_counters: u32,
     pub experience_counters: u32,
@@ -542,6 +543,7 @@ impl Player {
             starting_life,
             life: starting_life,
             mana_pool: ManaPool::new(),
+            restricted_mana: Vec::new(),
             poison_counters: 0,
             energy_counters: 0,
             experience_counters: 0,
@@ -585,6 +587,11 @@ impl Player {
     /// Records combat damage dealt to this player by a commander.
     pub fn record_commander_damage(&mut self, commander: ObjectId, amount: u32) {
         *self.commander_damage.entry(commander).or_insert(0) += amount;
+    }
+
+    pub fn add_restricted_mana(&mut self, unit: crate::ability::RestrictedManaUnit) {
+        self.mana_pool.add(unit.symbol, 1);
+        self.restricted_mana.push(unit);
     }
 
     /// Returns the combat damage this player has taken from a commander.

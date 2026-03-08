@@ -1,5 +1,5 @@
 import { useGame } from "@/context/GameContext";
-import { formatStep } from "@/lib/constants";
+import { formatPhase, formatStep } from "@/lib/constants";
 
 export default function TurnPane() {
   const { state } = useGame();
@@ -22,7 +22,7 @@ export default function TurnPane() {
           Turn {state.turn_number}
         </span>
         <span className="border border-[#1e3044] bg-[#0c151f] px-1.5 rounded-sm">
-          {state.phase}
+          {formatPhase(state.phase)}
         </span>
         <span className="border border-[#1e3044] bg-[#0c151f] px-1.5 rounded-sm">
           {formatStep(state.step)}

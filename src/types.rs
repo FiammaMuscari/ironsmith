@@ -6,6 +6,23 @@ pub enum Supertype {
     World,
 }
 
+impl Supertype {
+    pub fn name(self) -> &'static str {
+        match self {
+            Supertype::Basic => "basic",
+            Supertype::Legendary => "legendary",
+            Supertype::Snow => "snow",
+            Supertype::World => "world",
+        }
+    }
+}
+
+impl std::fmt::Display for Supertype {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CardType {
     Land,
@@ -146,6 +163,7 @@ pub enum Subtype {
     Dwarf,
     Elder,
     Eldrazi,
+    Hamster,
     Spawn,
     Scion,
     Elemental,
@@ -351,6 +369,13 @@ pub enum Subtype {
 }
 
 impl Subtype {
+    pub fn display_name(self) -> String {
+        match self {
+            Subtype::Urzas => "Urza's".to_string(),
+            _ => split_pascal_case_identifier(&format!("{self:?}")),
+        }
+    }
+
     /// Returns true if this is a basic land type.
     pub fn is_basic_land_type(&self) -> bool {
         matches!(
@@ -432,6 +457,7 @@ impl Subtype {
                 | Subtype::Dwarf
                 | Subtype::Elder
                 | Subtype::Eldrazi
+                | Subtype::Hamster
                 | Subtype::Spawn
                 | Subtype::Scion
                 | Subtype::Elemental
@@ -585,6 +611,23 @@ impl Subtype {
                 | Subtype::Zubera
         )
     }
+}
+
+impl std::fmt::Display for Subtype {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.display_name())
+    }
+}
+
+fn split_pascal_case_identifier(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 4);
+    for (idx, ch) in raw.chars().enumerate() {
+        if idx > 0 && ch.is_ascii_uppercase() {
+            out.push(' ');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 #[cfg(test)]

@@ -62,8 +62,12 @@ impl EffectExecutor for PhaseOutEffect {
             ObjectApplyResultPolicy::CountApplied
         };
 
-        let apply_result =
-            apply_to_selected_objects(game, ctx, &self.spec, result_policy, |game, _ctx, object_id| {
+        let apply_result = apply_to_selected_objects(
+            game,
+            ctx,
+            &self.spec,
+            result_policy,
+            |game, _ctx, object_id| {
                 if game
                     .object(object_id)
                     .is_some_and(|object| object.zone == Zone::Battlefield)
@@ -74,7 +78,8 @@ impl EffectExecutor for PhaseOutEffect {
                 } else {
                     Ok(false)
                 }
-            })?;
+            },
+        )?;
 
         Ok(apply_result.outcome)
     }

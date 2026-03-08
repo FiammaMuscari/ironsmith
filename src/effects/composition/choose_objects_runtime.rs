@@ -100,6 +100,27 @@ fn graveyard_candidate_players(
     vec![chooser_id]
 }
 
+fn hand_candidate_players(
+    effect: &ChooseObjectsEffect,
+    game: &GameState,
+    filter_ctx: &crate::filter::FilterContext,
+    chooser_id: PlayerId,
+) -> Vec<PlayerId> {
+    if let Some(owner_filter) = &effect.filter.owner {
+        let owners = game
+            .players
+            .iter()
+            .map(|player| player.id)
+            .filter(|player_id| owner_filter.matches_player(*player_id, filter_ctx))
+            .collect::<Vec<_>>();
+        if !owners.is_empty() {
+            return owners;
+        }
+    }
+
+    vec![chooser_id]
+}
+
 fn library_candidate_players(
     effect: &ChooseObjectsEffect,
     game: &GameState,
@@ -120,14 +141,26 @@ fn library_candidate_players(
     vec![chooser_id]
 }
 
-fn collect_candidates(
+fn effective_search_zones(
+    effect: &ChooseObjectsEffect,
+    game: &GameState,
+    chooser_id: PlayerId,
+) -> Vec<Zone> {
+    let mut zones = effect.search_zones();
+    if effect.is_search && zones.contains(&Zone::Library) && !game.can_search_library(chooser_id) {
+        zones.retain(|zone| *zone != Zone::Library);
+    }
+    zones
+}
+
+fn collect_candidates_in_zone(
     effect: &ChooseObjectsEffect,
     game: &GameState,
     ctx: &ExecutionContext,
     chooser_id: PlayerId,
+    search_zone: Zone,
 ) -> Result<Vec<ObjectId>, ExecutionError> {
     let filter_ctx = ctx.filter_context(game);
-    let search_zone = effect.filter.zone.unwrap_or(effect.zone);
     let top_only_limit = effect.top_only_selection_limit(ctx.x_value);
 
     let candidates = match search_zone {
@@ -138,18 +171,14 @@ fn collect_candidates(
             .filter(|(_, obj)| effect.filter.matches(obj, &filter_ctx, game))
             .map(|(id, _)| id)
             .collect(),
-        Zone::Hand => {
-            let player = game
-                .player(chooser_id)
-                .ok_or(ExecutionError::PlayerNotFound(chooser_id))?;
-            player
-                .hand
-                .iter()
-                .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
-                .filter(|(_, obj)| effect.filter.matches(obj, &filter_ctx, game))
-                .map(|(id, _)| id)
-                .collect()
-        }
+        Zone::Hand => hand_candidate_players(effect, game, &filter_ctx, chooser_id)
+            .iter()
+            .filter_map(|owner_id| game.player(*owner_id))
+            .flat_map(|player| player.hand.iter())
+            .filter_map(|&id| game.object(id).map(|obj| (id, obj)))
+            .filter(|(_, obj)| effect.filter.matches(obj, &filter_ctx, game))
+            .map(|(id, _)| id)
+            .collect(),
         Zone::Graveyard => {
             let owner_ids = graveyard_candidate_players(effect, game, &filter_ctx, chooser_id);
 
@@ -236,6 +265,23 @@ fn collect_candidates(
             .collect(),
     };
 
+    Ok(candidates)
+}
+
+fn collect_candidates(
+    effect: &ChooseObjectsEffect,
+    game: &GameState,
+    ctx: &ExecutionContext,
+    chooser_id: PlayerId,
+) -> Result<Vec<ObjectId>, ExecutionError> {
+    let mut candidates = Vec::new();
+    for zone in effective_search_zones(effect, game, chooser_id) {
+        for id in collect_candidates_in_zone(effect, game, ctx, chooser_id, zone)? {
+            if !candidates.contains(&id) {
+                candidates.push(id);
+            }
+        }
+    }
     Ok(candidates)
 }
 
@@ -365,10 +411,13 @@ pub(crate) fn run_choose_objects(
 ) -> Result<EffectOutcome, ExecutionError> {
     let chooser_id = resolve_player_filter(game, &effect.chooser, ctx)?;
 
-    if effect.is_search && !game.can_search_library(chooser_id) {
+    if effect.is_search
+        && effect.search_zones() == vec![Zone::Library]
+        && !game.can_search_library(chooser_id)
+    {
         return Ok(EffectOutcome::from_result(EffectResult::Prevented));
     }
-    if effect.is_search {
+    if effect.is_search && effect.search_zones().contains(&Zone::Library) {
         game.library_searches_this_turn.insert(chooser_id);
     }
 
@@ -458,6 +507,13 @@ mod tests {
             .card_types(vec![CardType::Creature])
             .build();
         game.create_object_from_card(&card, owner, Zone::Library)
+    }
+
+    fn create_hand_card(game: &mut GameState, name: &str, owner: PlayerId) -> ObjectId {
+        let card = CardBuilder::new(CardId::from_raw(game.new_object_id().0 as u32), name)
+            .card_types(vec![CardType::Creature])
+            .build();
+        game.create_object_from_card(&card, owner, Zone::Hand)
     }
 
     #[test]
@@ -664,5 +720,33 @@ mod tests {
             chosen[0], alice_card,
             "should only search chooser's library"
         );
+    }
+
+    #[test]
+    fn test_multi_zone_search_collects_hand_and_library_candidates() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let hand_card = create_hand_card(&mut game, "Hand Creature", bob);
+        let library_card = create_library_card(&mut game, "Library Creature", bob);
+        let _alice_card = create_library_card(&mut game, "Alice Creature", alice);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let filter = ObjectFilter::default()
+            .with_type(CardType::Creature)
+            .owned_by(PlayerFilter::Opponent);
+        let effect = ChooseObjectsEffect::new(filter, 2, PlayerFilter::You, "chosen")
+            .in_zones(vec![Zone::Hand, Zone::Library])
+            .as_search();
+        let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
+
+        let EffectResult::Objects(chosen) = outcome.result else {
+            panic!("expected object selection result");
+        };
+        assert_eq!(chosen.len(), 2);
+        assert!(chosen.contains(&hand_card));
+        assert!(chosen.contains(&library_card));
     }
 }

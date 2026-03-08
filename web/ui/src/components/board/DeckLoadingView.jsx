@@ -1,12 +1,18 @@
 import { useState, useMemo } from "react";
 import { useGame } from "@/context/GameContext";
 import { Badge } from "@/components/ui/badge";
+import { Slider } from "@/components/ui/slider";
 import { parseDeckList } from "@/lib/decklists";
 
 const pill = "text-[13px] uppercase cursor-pointer hover:brightness-125 transition-all select-none";
 
 export default function DeckLoadingView({ onLoad, onCancel }) {
-  const { state } = useGame();
+  const {
+    state,
+    semanticThreshold,
+    setSemanticThreshold,
+    cardsMeetingThreshold,
+  } = useGame();
   const players = state?.players || [];
   const [texts, setTexts] = useState(() => players.map(() => ""));
 
@@ -61,13 +67,31 @@ export default function DeckLoadingView({ onLoad, onCancel }) {
           </div>
         ))}
       </div>
-      <div className="flex items-center justify-center gap-2 py-1">
+      <div className="flex items-center justify-between gap-3 py-1">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="text-[12px] font-semibold uppercase tracking-wide text-[#8fb1d6] whitespace-nowrap">
+            Min similarity
+          </span>
+          <Slider
+            className="w-28"
+            min={0}
+            max={100}
+            step={1}
+            value={[Math.round(semanticThreshold)]}
+            onValueChange={([value]) => setSemanticThreshold(value)}
+          />
+          <span className="text-[12px] text-muted-foreground whitespace-nowrap">
+            {semanticThreshold > 0 ? `${Math.round(semanticThreshold)}%` : "Off"} ({cardsMeetingThreshold})
+          </span>
+        </div>
+        <div className="flex items-center justify-center gap-2">
         <Badge variant="secondary" className={`${pill} px-4`} onClick={handleLoad}>
           Load{totalCards > 0 ? ` (${totalCards} cards)` : ""}
         </Badge>
         <Badge variant="secondary" className={pill} onClick={onCancel}>
           Cancel
         </Badge>
+        </div>
       </div>
     </main>
   );

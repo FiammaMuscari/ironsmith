@@ -36,7 +36,10 @@ export function parseDeckList(text) {
     if (!parsingMainDeck) continue;
 
     const match = trimmed.match(CARD_LINE);
-    if (!match) continue;
+    if (!match) {
+      cards.push(normalizeCardName(trimmed));
+      continue;
+    }
 
     const count = parseInt(match[1], 10);
     const name = normalizeCardName(match[2]);

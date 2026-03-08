@@ -610,6 +610,12 @@ pub enum Value {
     /// Half of a player's life total, rounded down.
     HalfLifeTotalRoundedDown(PlayerFilter),
 
+    /// Half of a player's starting life total, rounded up.
+    HalfStartingLifeTotalRoundedUp(PlayerFilter),
+
+    /// Half of a player's starting life total, rounded down.
+    HalfStartingLifeTotalRoundedDown(PlayerFilter),
+
     /// Number of cards in a player's hand
     CardsInHand(PlayerFilter),
 
@@ -766,6 +772,7 @@ pub enum EventValueSpec {
 /// A rule restriction ("can't" effect) specification.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Restriction {
+    AdditionalLandPlays(PlayerFilter, u32),
     GainLife(PlayerFilter),
     SearchLibraries(PlayerFilter),
     /// Players matching the player filter can't cast matching spells.
@@ -815,6 +822,10 @@ pub enum Restriction {
 }
 
 impl Restriction {
+    pub fn additional_land_plays(filter: PlayerFilter, count: u32) -> Self {
+        Self::AdditionalLandPlays(filter, count)
+    }
+
     pub fn gain_life(filter: PlayerFilter) -> Self {
         Self::GainLife(filter)
     }
@@ -995,6 +1006,7 @@ impl Restriction {
         let ctx = game.filter_context_for_combat(controller, source, None, None);
 
         match self {
+            Restriction::AdditionalLandPlays(_, _) => {}
             Restriction::GainLife(filter) => {
                 for player in &game.players {
                     if player.is_in_game()
@@ -1575,8 +1587,26 @@ pub enum Condition {
         filter: ObjectFilter,
     },
 
+    /// A specific player controls more matching objects than you.
+    PlayerControlsMoreThanYou {
+        player: PlayerFilter,
+        filter: ObjectFilter,
+    },
+
+    /// A specific player's life total is less than or equal to half their starting life total.
+    PlayerLifeAtMostHalfStartingLifeTotal { player: PlayerFilter },
+
+    /// A specific player's life total is strictly less than half their starting life total.
+    PlayerLifeLessThanHalfStartingLifeTotal { player: PlayerFilter },
+
     /// A specific player has less life than you.
     PlayerHasLessLifeThanYou { player: PlayerFilter },
+
+    /// A specific player has more life than you.
+    PlayerHasMoreLifeThanYou { player: PlayerFilter },
+
+    /// A specific player is currently the monarch.
+    PlayerIsMonarch { player: PlayerFilter },
 
     /// A specific player has the city's blessing designation.
     PlayerHasCitysBlessing { player: PlayerFilter },
@@ -1595,6 +1625,9 @@ pub enum Condition {
 
     /// A specific player has N or fewer cards in hand.
     PlayerCardsInHandOrFewer { player: PlayerFilter, count: i32 },
+
+    /// A specific player has more cards in hand than you.
+    PlayerHasMoreCardsInHandThanYou { player: PlayerFilter },
 
     /// You have a card in hand matching the filter.
     ///
@@ -1681,6 +1714,8 @@ pub enum Condition {
 
     /// Source object is tapped
     SourceIsTapped,
+    /// Source object is saddled
+    SourceIsSaddled,
     /// Source object is currently on its back face (face down in engine state)
     SourceIsFaceDown,
 
@@ -1728,6 +1763,9 @@ pub enum Condition {
         tag: TagKey,
         filter: ObjectFilter,
     },
+
+    /// A tagged object entered the battlefield under the given player's control this turn.
+    PlayerTaggedObjectEnteredBattlefieldThisTurn { player: PlayerFilter, tag: TagKey },
 
     /// A player owns a card with the given name in each listed zone.
     PlayerOwnsCardNamedInZones {
@@ -2010,6 +2048,18 @@ impl Effect {
     pub fn set_life_total_player(amount: impl Into<Value>, player: PlayerFilter) -> Self {
         use crate::effects::SetLifeTotalEffect;
         Self::new(SetLifeTotalEffect::new(amount, player))
+    }
+
+    /// Create a "become the monarch" effect for the controller.
+    pub fn become_monarch() -> Self {
+        use crate::effects::BecomeMonarchEffect;
+        Self::new(BecomeMonarchEffect::you())
+    }
+
+    /// Create a "become the monarch" effect for a specific player.
+    pub fn become_monarch_player(player: PlayerFilter) -> Self {
+        use crate::effects::BecomeMonarchEffect;
+        Self::new(BecomeMonarchEffect::new(player))
     }
 
     /// Create an "exchange life totals" effect.
@@ -3008,6 +3058,16 @@ impl Effect {
         ))
     }
 
+    /// Repeat a compiled process while a tracked effect result keeps matching.
+    pub fn repeat_process(
+        effects: Vec<Effect>,
+        condition: EffectId,
+        predicate: EffectPredicate,
+    ) -> Self {
+        use crate::effects::RepeatProcessEffect;
+        Self::new(RepeatProcessEffect::new(effects, condition, predicate))
+    }
+
     /// Create a "for each object matching filter" effect.
     ///
     /// Example: "For each creature you control, gain 1 life."
@@ -3152,6 +3212,12 @@ impl Effect {
     ) -> Self {
         use crate::effects::ChooseObjectsEffect;
         Self::new(ChooseObjectsEffect::new(filter, count, chooser, tag.into()))
+    }
+
+    /// Choose a card name and tag it for later same-name references.
+    pub fn choose_card_name(chooser: PlayerFilter, tag: impl Into<TagKey>) -> Self {
+        use crate::effects::ChooseCardNameEffect;
+        Self::new(ChooseCardNameEffect::new(chooser, tag))
     }
 
     /// Create a conditional effect based on game state.
@@ -3487,9 +3553,7 @@ impl Effect {
         caster: PlayerFilter,
     ) -> Self {
         use crate::effects::ExileUntilMatchGrantPlayEffect;
-        Self::new(ExileUntilMatchGrantPlayEffect::new(
-            player, filter, caster,
-        ))
+        Self::new(ExileUntilMatchGrantPlayEffect::new(player, filter, caster))
     }
 
     /// Create a "surveil" effect.
@@ -3550,6 +3614,16 @@ impl Effect {
     pub fn grant_play_from_graveyard_until_eot(player: PlayerFilter) -> Self {
         use crate::effects::GrantPlayFromGraveyardEffect;
         Self::new(GrantPlayFromGraveyardEffect::new(player))
+    }
+
+    /// Grant additional land plays for a duration.
+    pub fn additional_land_plays(
+        count: impl Into<Value>,
+        player: PlayerFilter,
+        duration: Until,
+    ) -> Self {
+        use crate::effects::AdditionalLandPlaysEffect;
+        Self::new(AdditionalLandPlaysEffect::new(count, player, duration))
     }
 
     /// Exile cards instead of going to graveyard this turn.

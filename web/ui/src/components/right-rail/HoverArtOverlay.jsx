@@ -109,6 +109,64 @@ function measureInspectorTextWidth(ctx, text = "") {
   return ctx.measureText(normalized).width;
 }
 
+function buildPlayerNameMap(state) {
+  const byId = new Map();
+  for (const player of state?.players || []) {
+    const id = Number(player?.id);
+    if (!Number.isFinite(id)) continue;
+    const name = String(player?.name || "").trim();
+    byId.set(id, name || `P${id + 1}`);
+  }
+  return byId;
+}
+
+function formatInspectorPlayerLabel(playerId, playerNameById) {
+  const id = Number(playerId);
+  if (!Number.isFinite(id)) return null;
+  return playerNameById.get(id) || `P${id + 1}`;
+}
+
+function normalizeInspectorCounters(rawCounters) {
+  if (!Array.isArray(rawCounters)) return [];
+  return rawCounters
+    .map((counter) => {
+      const kind = String(counter?.kind || "").trim();
+      const amount = Number(counter?.amount);
+      if (!kind || !Number.isFinite(amount) || amount <= 0) return null;
+      return { kind, amount };
+    })
+    .filter(Boolean);
+}
+
+function formatInspectorCounterLine(counters) {
+  if (!Array.isArray(counters) || counters.length === 0) return null;
+  return counters
+    .map((counter) => `${counter.amount} ${counter.kind}`)
+    .join(" · ");
+}
+
+function InspectorMetadataBlock({
+  lines,
+  className = "",
+  lineClassName = "",
+  style,
+}) {
+  if (!Array.isArray(lines) || lines.length === 0) return null;
+
+  return (
+    <div className={className} style={style}>
+      {lines.map((line, index) => (
+        <div
+          key={`${line}-${index}`}
+          className={cn(index > 0 && "mt-0.5", lineClassName)}
+        >
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function setObjectName(map, key, name, options = {}) {
   const parsedKey = Number(key);
   if (!Number.isFinite(parsedKey)) return;
@@ -427,6 +485,7 @@ export default function HoverArtOverlay({
   onPreferredInspectorWidthChange = null,
 }) {
   const { state, game, inspectorDebug } = useGame();
+  const playerNameById = useMemo(() => buildPlayerNameMap(state), [state]);
   const { byId: objectNameById, byStableId: objectNameByStableId } = useMemo(
     () => buildObjectNameMaps(state),
     [state]
@@ -521,24 +580,34 @@ export default function HoverArtOverlay({
     return null;
   }, [details, oracleText, isBattle]);
 
-  const countersText = useMemo(() => {
-    const counters = details?.counters || [];
-    if (counters.length === 0) return null;
-    return counters
-      .map((counter) => `${counter.amount} ${counter.kind}`)
-      .join(" \u00b7 ");
-  }, [details?.counters]);
+  const normalizedCounters = useMemo(
+    () => normalizeInspectorCounters(details?.counters),
+    [details?.counters]
+  );
 
-  const metadataText = useMemo(() => {
-    if (!details) return null;
-    const parts = [];
-    if (details.type_line) parts.push(details.type_line);
-    if (details.zone) parts.push(details.zone);
-    if (details.controller != null) parts.push(`P${details.controller}`);
-    if (details.tapped) parts.push("Tapped");
-    if (countersText) parts.push(countersText);
-    return parts.length > 0 ? parts.join(" \u00b7 ") : null;
-  }, [details, countersText]);
+  const typeLine = String(details?.type_line || hoveredStackObject?.type_line || "").trim() || null;
+  const zoneLine = String(details?.zone || hoveredStackObject?.zone || "").trim() || null;
+  const metadataLines = useMemo(() => {
+    if (!details) return [];
+
+    const lines = [];
+
+    const ownerLabel = formatInspectorPlayerLabel(details.owner, playerNameById);
+    if (ownerLabel) lines.push(`Owner: ${ownerLabel}`);
+
+    const controllerLabel = formatInspectorPlayerLabel(details.controller, playerNameById);
+    if (controllerLabel) lines.push(`Controller: ${controllerLabel}`);
+
+    const countersLine = formatInspectorCounterLine(normalizedCounters);
+    if (countersLine) lines.push(countersLine);
+
+    return lines;
+  }, [details, normalizedCounters, playerNameById]);
+  const headerDetailLines = useMemo(
+    () => [typeLine, zoneLine, ...metadataLines].filter(Boolean),
+    [metadataLines, typeLine, zoneLine]
+  );
+  const metadataText = headerDetailLines.join("\n");
   const artObjectName = stableLinkedObjectName || objectName;
   const imageUrl = artObjectName ? scryfallImageUrl(artObjectName, "art_crop") : "";
   const imageErrored = !!imageUrl && failedImageUrl === imageUrl;
@@ -617,7 +686,9 @@ export default function HoverArtOverlay({
     maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, statsText || ""));
 
     context.font = `600 ${compact ? 11 : 13}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
-    maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, metadataText || ""));
+    for (const line of headerDetailLines) {
+      maxTextWidth = Math.max(maxTextWidth, measureInspectorTextWidth(context, line));
+    }
 
     const maxRuleLineMeasure = compact ? 320 : 460;
     context.font = `600 ${compact ? 15 : 18}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
@@ -635,7 +706,7 @@ export default function HoverArtOverlay({
 
     const horizontalPadding = compact ? 56 : 90;
     return Math.ceil(maxTextWidth + horizontalPadding);
-  }, [compact, displayRulesLines, groupedCardCount, manaCost, metadataText, objectName, statsText]);
+  }, [compact, displayRulesLines, groupedCardCount, headerDetailLines, manaCost, objectName, statsText]);
   const preferredInspectorWidth = useMemo(() => {
     if (compact || displayMode !== "inspector" || typeof document === "undefined") return null;
     const canvas = document.createElement("canvas");
@@ -653,7 +724,9 @@ export default function HoverArtOverlay({
     headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, statsText || ""));
 
     context.font = `600 ${INSPECTOR_METADATA_FONT_SIZE}px Rajdhani, "Segoe UI", "Inter", sans-serif`;
-    headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, metadataText || ""));
+    for (const line of headerDetailLines) {
+      headerWidth = Math.max(headerWidth, measureInspectorTextWidth(context, line));
+    }
 
     const manaSymbols = String(manaCost || "").match(/\{[^}]+\}/g);
     if (manaSymbols && manaSymbols.length > 0) {
@@ -726,7 +799,7 @@ export default function HoverArtOverlay({
     displayRulesLines,
     groupedCardCount,
     manaCost,
-    metadataText,
+    headerDetailLines,
     objectName,
     statsText,
   ]);
@@ -1143,13 +1216,15 @@ export default function HoverArtOverlay({
   }, [objectIdKey, highlightedRuleLineIndices, displayRulesText]);
 
   const inspectorScale = activeInspectorTextScale;
-  const oracleTopPaddingClass = compact ? "pt-[56px]" : "";
   const oracleContainerClass = compact
-    ? `relative z-10 px-2.5 ${oracleTopPaddingClass} pb-1.5`
+    ? "relative z-10 px-2.5 pb-1.5"
     : "relative z-10 min-h-full flex flex-col justify-end";
+  const compactOraclePaddingTop = 14
+    + (objectName ? 32 : 0)
+    + (headerDetailLines.length * 15);
   const topMetadataTextClassName = compact
-    ? "text-[11px] leading-snug text-[#d1e2f6] text-right"
-    : "leading-snug text-[#d1e2f6] text-right";
+    ? "text-[11px] leading-snug text-[#d1e2f6] text-left"
+    : "leading-snug text-[#d1e2f6] text-left";
   const rulesTextClassName = compact
     ? "text-[13px] leading-[1.28] text-white font-semibold text-right"
     : "text-white font-semibold text-right";
@@ -1174,6 +1249,9 @@ export default function HoverArtOverlay({
     paddingLeft: `${10 * inspectorScale}px`,
     paddingRight: `${10 * inspectorScale}px`,
   };
+  const resolvedOracleContainerStyle = compact
+    ? { paddingTop: `${compactOraclePaddingTop}px` }
+    : inspectorOracleContainerStyle;
   const rulesTextStyle = compact ? ORACLE_TEXT_STYLE : {
     ...ORACLE_TEXT_STYLE,
     fontSize: `${INSPECTOR_RULES_FONT_SIZE * inspectorScale}px`,
@@ -1199,23 +1277,46 @@ export default function HoverArtOverlay({
           />
         </div>
         <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-start justify-between gap-2">
-          {objectName && (
-            <div
-              className="max-w-[72%] rounded-full border border-[#6eb4ff]/38 bg-[rgba(7,14,24,0.8)] px-3 py-1.5 text-[13px] font-extrabold leading-none tracking-[0.08em] text-[#edf6ff] shadow-[0_0_18px_rgba(58,140,245,0.18)] backdrop-blur-[10px]"
+          <div className="flex max-w-[72%] flex-col items-start gap-1.5">
+            {objectName && (
+              <div
+                className="rounded-full border border-[#6eb4ff]/38 bg-[rgba(7,14,24,0.8)] px-3 py-1.5 text-[13px] font-extrabold leading-none tracking-[0.08em] text-[#edf6ff] shadow-[0_0_18px_rgba(58,140,245,0.18)] backdrop-blur-[10px]"
+                style={METADATA_TEXT_STYLE}
+              >
+                <span className="inline-flex items-center gap-2">
+                  {groupedCardCount > 1 && (
+                    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-[#f5d08b]/70 bg-[rgba(0,0,0,0.45)] px-1 text-[11px] font-bold leading-none tracking-wide text-[#f5d08b]">
+                      x{groupedCardCount}
+                    </span>
+                  )}
+                  <span className="truncate">{objectName}</span>
+                </span>
+              </div>
+            )}
+            {typeLine && (
+              <div
+                className="max-w-full rounded-[16px] border border-[#6eb4ff]/24 bg-[rgba(7,14,24,0.76)] px-3 py-2 text-[12px] font-semibold leading-tight text-[#d3e8ff] shadow-[0_0_18px_rgba(58,140,245,0.14)] backdrop-blur-[10px]"
+                style={METADATA_TEXT_STYLE}
+              >
+                {typeLine}
+              </div>
+            )}
+            {zoneLine && (
+              <div
+                className="max-w-full rounded-[16px] border border-[#6eb4ff]/24 bg-[rgba(7,14,24,0.76)] px-3 py-2 text-[12px] font-semibold leading-tight text-[#d3e8ff] shadow-[0_0_18px_rgba(58,140,245,0.14)] backdrop-blur-[10px]"
+                style={METADATA_TEXT_STYLE}
+              >
+                {zoneLine}
+              </div>
+            )}
+            <InspectorMetadataBlock
+              lines={metadataLines}
+              className="max-w-full rounded-[16px] border border-[#6eb4ff]/24 bg-[rgba(7,14,24,0.76)] px-3 py-2 text-[12px] font-semibold leading-tight text-[#d3e8ff] shadow-[0_0_18px_rgba(58,140,245,0.14)] backdrop-blur-[10px]"
               style={METADATA_TEXT_STYLE}
-            >
-              <span className="inline-flex items-center gap-2">
-                {groupedCardCount > 1 && (
-                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-[#f5d08b]/70 bg-[rgba(0,0,0,0.45)] px-1 text-[11px] font-bold leading-none tracking-wide text-[#f5d08b]">
-                    x{groupedCardCount}
-                  </span>
-                )}
-                <span className="truncate">{objectName}</span>
-              </span>
-            </div>
-          )}
+            />
+          </div>
           {(manaCost || statsText) && (
-            <div className="flex flex-col items-end gap-1">
+            <div className="flex shrink-0 flex-col items-end gap-1">
               {manaCost && (
                 <div className="rounded-full border border-[#6eb4ff]/28 bg-[rgba(7,14,24,0.78)] px-2.5 py-1 shadow-[0_0_16px_rgba(58,140,245,0.16)] backdrop-blur-[10px]">
                   <ManaCostIcons cost={manaCost} size={16} />
@@ -1232,16 +1333,6 @@ export default function HoverArtOverlay({
             </div>
           )}
         </div>
-        {metadataText && (
-          <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex justify-end">
-            <div
-              className="max-w-[84%] rounded-full border border-[#6eb4ff]/24 bg-[rgba(7,14,24,0.76)] px-3 py-1.5 text-right text-[12px] font-semibold leading-tight text-[#d3e8ff] shadow-[0_0_18px_rgba(58,140,245,0.14)] backdrop-blur-[10px]"
-              style={METADATA_TEXT_STYLE}
-            >
-              {metadataText}
-            </div>
-          </div>
-        )}
       </div>
     );
   }
@@ -1262,8 +1353,8 @@ export default function HoverArtOverlay({
       </div>
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.08)_0%,rgba(0,0,0,0.16)_48%,rgba(0,0,0,0.3)_100%)]" />
       <div className="absolute inset-0 overflow-hidden">
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[34%] bg-[linear-gradient(180deg,rgba(0,0,0,0)_0%,rgba(0,0,0,0.52)_46%,rgba(0,0,0,0.74)_100%)] backdrop-blur-[2.4px]" />
-        <div ref={topHeaderRef} className="absolute top-0 left-0 z-10 flex flex-col items-start gap-0">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[34%] bg-[linear-gradient(180deg,rgba(0,0,0,0)_0%,rgba(0,0,0,0.52)_46%,rgba(0,0,0,0.74)_100%)]" />
+        <div ref={topHeaderRef} className="absolute top-0 left-0 z-10 flex max-w-[82%] flex-col items-start gap-1">
           {objectName && (
             <div className={cn(
               "rounded-r-sm bg-[linear-gradient(90deg,rgba(0,0,0,0.66)_0%,rgba(0,0,0,0.44)_82%,rgba(0,0,0,0.12)_100%)] px-3 py-1.5 font-extrabold leading-[1.02] tracking-[0.02em] text-[#f3f8ff] backdrop-blur-[2px]",
@@ -1279,11 +1370,41 @@ export default function HoverArtOverlay({
               </span>
             </div>
           )}
+          {typeLine && (
+            <div
+              className={cn(
+                "rounded-r-sm bg-[rgba(0,0,0,0.48)] px-2.5 py-1 backdrop-blur-[1.8px]",
+                topMetadataTextClassName
+              )}
+              style={{ ...METADATA_TEXT_STYLE, ...inspectorTopMetaStyle }}
+            >
+              {typeLine}
+            </div>
+          )}
+          {zoneLine && (
+            <div
+              className={cn(
+                "rounded-r-sm bg-[rgba(0,0,0,0.48)] px-2.5 py-1 backdrop-blur-[1.8px]",
+                topMetadataTextClassName
+              )}
+              style={{ ...METADATA_TEXT_STYLE, ...inspectorTopMetaStyle }}
+            >
+              {zoneLine}
+            </div>
+          )}
+          <InspectorMetadataBlock
+            lines={metadataLines}
+            className={cn(
+              "rounded-r-sm bg-[rgba(0,0,0,0.48)] px-2.5 py-1 backdrop-blur-[1.8px]",
+              topMetadataTextClassName
+            )}
+            style={{ ...METADATA_TEXT_STYLE, ...inspectorTopMetaStyle }}
+          />
         </div>
-        {(manaCost || statsText || metadataText) && (
+        {(manaCost || statsText) && (
           <div ref={topMetadataRef} className="absolute top-0 right-0 z-10 flex max-w-[78%] flex-col items-end gap-0">
             {(manaCost || statsText) && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center justify-end gap-1.5">
                 {manaCost && (
                   <div className="rounded-sm bg-[rgba(0,0,0,0.52)] px-2 py-1 backdrop-blur-[1.8px]" style={inspectorManaStyle}>
                     <ManaCostIcons cost={manaCost} size={compact ? 14 : Math.max(13, Math.round(18 * inspectorScale))} />
@@ -1300,14 +1421,6 @@ export default function HoverArtOverlay({
                     {statsText}
                   </div>
                 )}
-              </div>
-            )}
-            {metadataText && (
-              <div
-                className={cn("rounded-sm bg-[rgba(0,0,0,0.48)] px-2.5 py-1 backdrop-blur-[1.8px]", topMetadataTextClassName)}
-                style={{ ...METADATA_TEXT_STYLE, ...inspectorTopMetaStyle }}
-              >
-                {metadataText}
               </div>
             )}
           </div>
@@ -1351,7 +1464,7 @@ export default function HoverArtOverlay({
           className="inspector-oracle-scroll absolute inset-x-0 top-0 overflow-y-auto pointer-events-auto overscroll-contain touch-pan-y"
           style={{ bottom: `${Math.max(0, stackTimelineHeight - 4)}px` }}
         >
-          <div ref={oracleContainerRef} className={oracleContainerClass} style={inspectorOracleContainerStyle}>
+          <div ref={oracleContainerRef} className={oracleContainerClass} style={resolvedOracleContainerStyle}>
             <div ref={oracleBodyRef} className="space-y-1">
               {displayRulesLines.length > 0 && (
                 <div className="space-y-0.5">
@@ -1372,10 +1485,7 @@ export default function HoverArtOverlay({
                         className={cn(
                           rulesTextClassName,
                           "inspector-oracle-line",
-                          /^\s*[•*-]\s+/.test(String(line || "")) && "inspector-oracle-line-bullet",
-                          highlightedRuleLineIndices.has(lineIndex)
-                            ? "inspector-rule-highlight border-y"
-                            : ""
+                          /^\s*[•*-]\s+/.test(String(line || "")) && "inspector-oracle-line-bullet"
                         )}
                         style={rulesTextStyle}
                       />

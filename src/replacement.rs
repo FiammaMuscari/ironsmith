@@ -15,6 +15,7 @@ use crate::events::zones::matchers::{
 use crate::ids::{ObjectId, PlayerId};
 use crate::object::CounterType;
 use crate::target::{ObjectFilter, PlayerFilter};
+use crate::types::Subtype;
 use crate::zone::Zone;
 
 /// A replacement effect that modifies events.
@@ -96,8 +97,15 @@ pub enum ReplacementAction {
     /// Enter tapped
     EnterTapped,
 
+    /// Enter untapped
+    EnterUntapped,
+
     /// Enter as a copy of something
-    EnterAsCopy(ObjectId),
+    EnterAsCopy {
+        source: ObjectId,
+        enters_tapped: bool,
+        added_subtypes: Vec<Subtype>,
+    },
 
     /// Double the effect (e.g., double damage, double counters)
     Double,

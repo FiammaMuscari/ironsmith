@@ -1,7 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useGame } from "@/context/GameContext";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import useNewCards from "@/hooks/useNewCards";
 import StackCard from "@/components/cards/StackCard";
+import AnimatedCircuitFrame from "@/components/cards/AnimatedCircuitFrame";
+import { getPlayerAccent, playerAccentVars } from "@/lib/player-colors";
 import { ManaCostIcons } from "@/lib/mana-symbols";
 import { scryfallImageUrl } from "@/lib/scryfall";
 import { stagger } from "@/lib/motion/anime";
@@ -12,6 +15,7 @@ const STACK_LEAVE_ANIMATION_MS = 360;
 const HORIZONTAL_STACK_ENTRY_WIDTH = "clamp(180px, 17vw, 230px)";
 const HORIZONTAL_STACK_ENTRY_MIN_HEIGHT = 50;
 const HORIZONTAL_STACK_BADGE_TOP = 27;
+const HORIZONTAL_STACK_CIRCUIT_PATH = "M6 2.5H94C96.48 2.5 98.5 4.52 98.5 7V43C98.5 45.48 96.48 47.5 94 47.5H6C3.52 47.5 1.5 45.48 1.5 43V7C1.5 4.52 3.52 2.5 6 2.5Z";
 
 function isFocusedDecision(decision) {
   return (
@@ -26,6 +30,20 @@ function stackInspectObjectId(entry) {
   return entry?.inspect_object_id ?? entry?.id ?? null;
 }
 
+function resolveActiveStackInspectId(stackObjects = [], selectedObjectId = null) {
+  const selectedKey = selectedObjectId == null ? null : String(selectedObjectId);
+  if (selectedKey != null) {
+    const selectedEntry = stackObjects.find((entry) => (
+      String(stackInspectObjectId(entry)) === selectedKey
+      || String(entry?.id) === selectedKey
+    ));
+    if (selectedEntry) return String(stackInspectObjectId(selectedEntry));
+  }
+
+  const topEntry = stackObjects[0] || null;
+  return topEntry ? String(stackInspectObjectId(topEntry)) : null;
+}
+
 function horizontalStackKindLabel(entry) {
   const abilityKind = String(entry?.ability_kind || "").trim();
   const normalized = abilityKind.toLowerCase();
@@ -38,8 +56,8 @@ function horizontalStackKindLabel(entry) {
 function HorizontalStackEntry({
   entry,
   positionLabel,
-  showLeadingBorder = true,
   isActive = false,
+  accent = null,
   onClick,
 }) {
   const name = entry?.name || `Object#${entry?.id}`;
@@ -50,6 +68,12 @@ function HorizontalStackEntry({
     || (entry?.power != null && entry?.toughness != null
       ? `${entry.power}/${entry.toughness}`
       : null);
+  const accentStyle = accent
+    ? {
+      ...playerAccentVars(accent),
+      "--glow-rgb": accent.rgb,
+    }
+    : undefined;
 
   return (
     <div
@@ -58,28 +82,33 @@ function HorizontalStackEntry({
         width: HORIZONTAL_STACK_ENTRY_WIDTH,
         minHeight: `${HORIZONTAL_STACK_ENTRY_MIN_HEIGHT}px`,
       }}
+      data-arrow-anchor="stack"
+      data-object-id={entry?.id}
     >
       <button
         type="button"
         className={cn(
-          "relative grid h-full w-full grid-cols-[24px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-0 overflow-hidden bg-[linear-gradient(180deg,rgba(7,16,27,0.94),rgba(6,12,21,0.98))] px-2 py-[5px] text-left transition-[background,box-shadow,transform] duration-150",
-          showLeadingBorder && "shadow-[inset_1px_0_0_rgba(53,80,108,0.65),0_10px_18px_rgba(0,0,0,0.22)]",
-          showLeadingBorder && !isActive && "hover:shadow-[inset_1px_0_0_rgba(127,190,244,0.92),-10px_0_18px_-14px_rgba(127,190,244,0.95),0_10px_18px_rgba(0,0,0,0.22)]",
-          !showLeadingBorder && "shadow-[0_10px_18px_rgba(0,0,0,0.22)]",
+          "stack-timeline-entry-surface stack-timeline-circuit relative grid h-full w-full grid-cols-[24px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-0 overflow-hidden bg-[linear-gradient(180deg,rgba(7,16,27,0.94),rgba(6,12,21,0.98))] px-2 py-[5px] text-left transition-[background,box-shadow,transform] duration-150",
+          !isActive && "hover:shadow-[0_0_16px_-8px_rgba(var(--player-accent-rgb,127,190,244),0.9),0_10px_18px_rgba(0,0,0,0.22)]",
           isActive && "stack-timeline-item-active",
-          isActive && showLeadingBorder && "bg-[linear-gradient(180deg,rgba(10,22,37,0.98),rgba(7,16,28,1))] shadow-[inset_1px_0_0_rgba(142,196,255,0.95),-10px_0_18px_-14px_rgba(142,196,255,0.98),0_12px_22px_rgba(0,0,0,0.3)]",
-          isActive && !showLeadingBorder && "bg-[linear-gradient(180deg,rgba(10,22,37,0.98),rgba(7,16,28,1))] shadow-[0_12px_22px_rgba(0,0,0,0.3)]"
+          isActive && "bg-[linear-gradient(180deg,rgba(10,22,37,0.98),rgba(7,16,28,1))]"
         )}
-        style={{ minHeight: `${HORIZONTAL_STACK_ENTRY_MIN_HEIGHT}px` }}
+        style={{ minHeight: `${HORIZONTAL_STACK_ENTRY_MIN_HEIGHT}px`, ...accentStyle }}
         onClick={() => onClick?.(stackInspectObjectId(entry))}
       >
+        <AnimatedCircuitFrame
+          seed={`stack-timeline:${entry?.id}:${entry?.controller}:${name}`}
+          path={HORIZONTAL_STACK_CIRCUIT_PATH}
+          viewBox="0 0 100 50"
+          overlayClassName="stack-circuit-overlay"
+        />
         <span
-          className="pointer-events-none absolute left-2 rounded bg-[rgba(8,18,30,0.9)] px-1 py-[1px] text-[8px] font-bold uppercase leading-none tracking-[0.12em] text-[#8ec4ff]"
+          className="stack-entry-badge pointer-events-none absolute left-2 z-[2] rounded bg-[rgba(8,18,30,0.9)] px-1 py-[1px] text-[8px] font-bold uppercase leading-none tracking-[0.12em] text-[#8ec4ff]"
           style={{ top: `${HORIZONTAL_STACK_BADGE_TOP}px` }}
         >
           {positionLabel}
         </span>
-        <div className="relative h-6 w-6 shrink-0 overflow-hidden rounded-md border border-[#29425b]/75 bg-[#0b121b]">
+        <div className="relative z-[2] h-6 w-6 shrink-0 overflow-hidden rounded-md bg-[#0b121b]">
           {artUrl && (
             <img
               className="h-full w-full object-cover opacity-90"
@@ -90,11 +119,11 @@ function HorizontalStackEntry({
             />
           )}
         </div>
-        <div className="relative h-6 min-w-0">
+        <div className="relative z-[2] h-6 min-w-0">
           <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-1.5">
-            <div className="min-w-0 truncate pr-1 text-[13px] font-semibold leading-[1.02] text-[#edf5ff]">
-              {name}
-            </div>
+            <div className="stack-entry-title min-w-0 truncate pr-1 text-[13px] font-semibold leading-[1.02] text-[#edf5ff]">
+                {name}
+              </div>
             <div className="flex shrink-0 items-start gap-1 pt-[1px]">
               {isSpell && entry?.mana_cost && (
                 <span className="shrink-0 scale-[0.82] origin-top-right">
@@ -122,6 +151,7 @@ export default function InspectorStackTimeline({
   canAct = false,
   stackObjects = [],
   stackPreview = [],
+  selectedObjectId = null,
   timelineHeight = 176,
   embedded = false,
   layout = "vertical",
@@ -132,6 +162,8 @@ export default function InspectorStackTimeline({
   onToggleCollapsed = null,
   maxBodyHeight = null,
 }) {
+  const { state } = useGame();
+  const players = state?.players || [];
   const [leavingEntries, setLeavingEntries] = useState([]);
   const previousStackRef = useRef([]);
   const leaveTimeoutsRef = useRef(new Map());
@@ -141,9 +173,9 @@ export default function InspectorStackTimeline({
   const hasStackEntries = stackObjects.length > 0 || leavingEntries.length > 0 || stackPreview.length > 0;
   const stackIds = useMemo(() => stackObjects.map((entry) => entry.id), [stackObjects]);
   const { newIds } = useNewCards(stackIds);
-  const topLiveEntryId = useMemo(
-    () => (stackObjects.length > 0 ? String(stackInspectObjectId(stackObjects[0])) : null),
-    [stackObjects]
+  const activeStackInspectId = useMemo(
+    () => resolveActiveStackInspectId(stackObjects, selectedObjectId),
+    [selectedObjectId, stackObjects]
   );
   const timelineEntries = useMemo(
     () => [
@@ -251,7 +283,7 @@ export default function InspectorStackTimeline({
   if (isHorizontal) {
     return (
       <section
-        className="relative flex items-stretch overflow-visible rounded-[14px] border border-[#35506c]/80 bg-[linear-gradient(180deg,rgba(6,14,24,0.86),rgba(5,10,18,0.98))] backdrop-blur-[2.2px] shadow-[0_14px_30px_rgba(0,0,0,0.38)]"
+        className="relative flex items-stretch overflow-visible rounded-[14px] bg-[linear-gradient(180deg,rgba(6,14,24,0.86),rgba(5,10,18,0.98))] backdrop-blur-[2.2px] shadow-[0_14px_30px_rgba(0,0,0,0.38)]"
         style={{ minHeight: `${HORIZONTAL_STACK_ENTRY_MIN_HEIGHT + 2}px` }}
         data-inspector-stack-timeline
       >
@@ -265,19 +297,21 @@ export default function InspectorStackTimeline({
           >
             {horizontalEntries.length > 0
               ? horizontalEntries.map((entry, index) => (
-                <HorizontalStackEntry
-                  key={entry.__timeline_key}
-                  entry={entry}
-                  positionLabel={index === 0 ? "Top" : `#${horizontalEntries.length - index}`}
-                  showLeadingBorder={index > 0}
-                  isActive={
-                    !entry.__leaving
-                    && topLiveEntryId != null
-                    && String(topLiveEntryId) === String(stackInspectObjectId(entry))
-                  }
-                  onClick={entry.__leaving ? undefined : onInspectObject}
-                />
-              ))
+                  <HorizontalStackEntry
+                    key={entry.__timeline_key}
+                    entry={entry}
+                    positionLabel={index === 0 ? "Top" : `#${horizontalEntries.length - index}`}
+                    isActive={
+                      !entry.__leaving
+                      && activeStackInspectId != null
+                      && String(activeStackInspectId) === String(stackInspectObjectId(entry))
+                    }
+                    accent={
+                      !entry.__leaving ? getPlayerAccent(players, entry.controller) : null
+                    }
+                    onClick={entry.__leaving ? undefined : onInspectObject}
+                  />
+                ))
               : horizontalPreviewEntries.map((name, index) => (
                 <div
                   key={`${name}-${index}`}
@@ -362,8 +396,8 @@ export default function InspectorStackTimeline({
                       isLeaving={entry.__leaving}
                       isActive={
                         !entry.__leaving
-                        && topLiveEntryId != null
-                        && String(topLiveEntryId) === String(stackInspectObjectId(entry))
+                        && activeStackInspectId != null
+                        && String(activeStackInspectId) === String(stackInspectObjectId(entry))
                       }
                       className="pt-4"
                       onClick={entry.__leaving ? undefined : onInspectObject}
@@ -403,8 +437,8 @@ export default function InspectorStackTimeline({
                       isLeaving={entry.__leaving}
                       isActive={
                         !entry.__leaving
-                        && topLiveEntryId != null
-                        && String(topLiveEntryId) === String(stackInspectObjectId(entry))
+                        && activeStackInspectId != null
+                        && String(activeStackInspectId) === String(stackInspectObjectId(entry))
                       }
                       className="pt-4"
                       onClick={entry.__leaving ? undefined : onInspectObject}

@@ -1,6 +1,6 @@
 //! Add mana from commander color identity effect implementation.
 
-use super::choice_helpers::{choose_mana_colors, credit_repeated_mana_symbol};
+use super::choice_helpers::{choose_mana_colors, credit_repeated_mana_symbol_from_context};
 use crate::color::Color;
 use crate::effect::{EffectOutcome, Value};
 use crate::effects::EffectExecutor;
@@ -67,7 +67,13 @@ impl EffectExecutor for AddManaFromCommanderColorIdentityEffect {
 
         // If colorless identity, add colorless mana
         if color_identity.is_empty() {
-            credit_repeated_mana_symbol(game, player_id, ManaSymbol::Colorless, amount);
+            credit_repeated_mana_symbol_from_context(
+                game,
+                player_id,
+                ManaSymbol::Colorless,
+                amount,
+                ctx,
+            );
             return Ok(EffectOutcome::count(amount as i32));
         }
 
@@ -102,7 +108,13 @@ impl EffectExecutor for AddManaFromCommanderColorIdentityEffect {
         .next()
         .unwrap_or(available_colors[0]);
 
-        credit_repeated_mana_symbol(game, player_id, ManaSymbol::from_color(color), amount);
+        credit_repeated_mana_symbol_from_context(
+            game,
+            player_id,
+            ManaSymbol::from_color(color),
+            amount,
+            ctx,
+        );
 
         Ok(EffectOutcome::count(amount as i32))
     }

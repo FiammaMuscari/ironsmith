@@ -1,11 +1,10 @@
 use crate::cards::builders::ability_lowering::parsed_triggered_ability;
 use crate::cards::builders::effect_ast_traversal::for_each_nested_effects_mut;
 use crate::cards::builders::parse_compile::effects_reference_it_tag;
-use crate::cards::builders::parse_parsing::effects_sentences::TokenCopyFollowup;
 use crate::cards::builders::parse_parsing::{
     POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, POST_CONDITIONAL_SENTENCE_PRIMITIVES,
     PRE_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, PRE_CONDITIONAL_SENTENCE_PRIMITIVES, find_verb,
-    has_effect_head_without_verb, is_token_creation_context,
+    has_effect_head_without_verb, is_token_creation_context, parse_additional_land_plays_clause,
     parse_can_attack_as_though_no_defender_clause,
     parse_can_block_additional_creature_this_turn_clause, parse_cant_effect_sentence,
     parse_cast_or_play_tagged_clause, parse_choose_target_and_verb_clause, parse_connive_clause,
@@ -17,14 +16,13 @@ use crate::cards::builders::parse_parsing::{
     parse_sentence_put_onto_battlefield_with_counters_on_it,
     parse_sentence_return_with_counters_on_it, parse_simple_gain_ability_clause,
     parse_simple_lose_ability_clause, parse_subject_object_filter,
-    strip_leading_instead_prefix,
-    parse_until_end_of_turn_may_play_tagged_clause,
+    parse_unsupported_play_cast_permission_clause, parse_until_end_of_turn_may_play_tagged_clause,
     parse_until_your_next_turn_may_play_tagged_clause, parse_verb_first_clause,
     parse_win_the_game_clause, run_sentence_primitives, segment_has_effect_head,
     split_effect_chain_on_and, split_leading_result_prefix, split_on_comma_or_semicolon,
     split_segments_on_comma_effect_head, split_segments_on_comma_then,
     starts_with_inline_token_rules_tail, starts_with_target_indicator,
-    starts_with_until_end_of_turn, target_ast_to_object_filter,
+    starts_with_until_end_of_turn, strip_leading_instead_prefix, target_ast_to_object_filter,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -34,7 +32,7 @@ use crate::cards::builders::{
     parse_keyword_mechanic_clause, parse_predicate, parse_subject, parse_target_phrase,
     parse_triggered_line, parse_value, span_from_tokens, split_on_or, trim_commas, words,
 };
-use crate::effect::{ChoiceCount, Until};
+use crate::effect::ChoiceCount;
 use crate::mana::ManaSymbol;
 use crate::static_abilities::StaticAbility;
 use crate::target::{ObjectFilter, PlayerFilter};
@@ -372,7 +370,13 @@ pub(crate) fn parse_effect_clause_with_trailing_if(
 fn trailing_if_predicate_supported(predicate: &PredicateAst) -> bool {
     matches!(
         predicate,
-        PredicateAst::ManaSpentToCastThisSpellAtLeast { .. } | PredicateAst::ItMatches(_)
+        PredicateAst::ManaSpentToCastThisSpellAtLeast { .. }
+            | PredicateAst::ItMatches(_)
+            | PredicateAst::PlayerControlsMoreThanYou { .. }
+            | PredicateAst::PlayerLifeAtMostHalfStartingLifeTotal { .. }
+            | PredicateAst::PlayerLifeLessThanHalfStartingLifeTotal { .. }
+            | PredicateAst::PlayerHasMoreLifeThanYou { .. }
+            | PredicateAst::PlayerHasMoreCardsInHandThanYou { .. }
     ) || matches!(predicate, PredicateAst::TaggedMatches(tag, _) if tag.as_str() == "enchanted")
 }
 
@@ -1068,6 +1072,10 @@ pub(crate) fn bind_implicit_player_context(effect: &mut EffectAst, player: Playe
         | EffectAst::ShuffleLibrary {
             player: effect_player,
         }
+        | EffectAst::AdditionalLandPlays {
+            player: effect_player,
+            ..
+        }
         | EffectAst::CreateToken {
             player: effect_player,
             ..
@@ -1087,6 +1095,18 @@ pub(crate) fn bind_implicit_player_context(effect: &mut EffectAst, player: Playe
         | EffectAst::CopySpell {
             player: effect_player,
             ..
+        }
+        | EffectAst::SkipTurn {
+            player: effect_player,
+        }
+        | EffectAst::SkipCombatPhases {
+            player: effect_player,
+        }
+        | EffectAst::SkipNextCombatPhaseThisTurn {
+            player: effect_player,
+        }
+        | EffectAst::SkipDrawStep {
+            player: effect_player,
         }
         | EffectAst::RetargetStackObject {
             chooser: effect_player,
@@ -1289,7 +1309,8 @@ pub(crate) fn parse_choose_new_targets_clause(
     let clause_words = words(tokens);
     let is_choose = clause_words.starts_with(&["choose", "new", "targets", "for"])
         || clause_words.starts_with(&["chooses", "new", "targets", "for"]);
-    let is_choose_single_target = clause_words.starts_with(&["choose", "a", "new", "target", "for"])
+    let is_choose_single_target = clause_words
+        .starts_with(&["choose", "a", "new", "target", "for"])
         || clause_words.starts_with(&["chooses", "a", "new", "target", "for"]);
     if !is_choose && !is_choose_single_target {
         return Ok(None);
@@ -1590,6 +1611,12 @@ pub(crate) fn parse_stack_retarget_filter(tokens: &[Token]) -> Result<ObjectFilt
 pub(crate) fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
     const PRIMITIVES: &[ClausePrimitive] = &[
         ClausePrimitive {
+            parser: parse_choose_card_name_clause,
+        },
+        ClausePrimitive {
+            parser: parse_repeat_this_process_clause,
+        },
+        ClausePrimitive {
             parser: parse_retarget_clause,
         },
         ClausePrimitive {
@@ -1627,6 +1654,12 @@ pub(crate) fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst
         },
         ClausePrimitive {
             parser: parse_until_your_next_turn_may_play_tagged_clause,
+        },
+        ClausePrimitive {
+            parser: parse_additional_land_plays_clause,
+        },
+        ClausePrimitive {
+            parser: parse_unsupported_play_cast_permission_clause,
         },
         ClausePrimitive {
             parser: parse_cast_or_play_tagged_clause,
@@ -1676,6 +1709,49 @@ pub(crate) fn run_clause_primitives(tokens: &[Token]) -> Result<Option<EffectAst
         if let Some(effect) = (primitive.parser)(tokens)? {
             return Ok(Some(effect));
         }
+    }
+    Ok(None)
+}
+
+pub(crate) fn parse_choose_card_name_clause(
+    tokens: &[Token],
+) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    let player = if matches!(
+        clause_words.as_slice(),
+        ["choose", "a", "card", "name"] | ["choose", "card", "name"]
+    ) {
+        PlayerAst::You
+    } else if matches!(
+        clause_words.as_slice(),
+        ["you", "choose", "a", "card", "name"] | ["you", "choose", "card", "name"]
+    ) {
+        PlayerAst::You
+    } else if matches!(
+        clause_words.as_slice(),
+        ["that", "player", "chooses", "a", "card", "name"]
+            | ["that", "player", "chooses", "card", "name"]
+    ) {
+        PlayerAst::That
+    } else {
+        return Ok(None);
+    };
+
+    Ok(Some(EffectAst::ChooseCardName {
+        player,
+        tag: TagKey::from(IT_TAG),
+    }))
+}
+
+pub(crate) fn parse_repeat_this_process_clause(
+    tokens: &[Token],
+) -> Result<Option<EffectAst>, CardTextError> {
+    let clause_words = words(tokens);
+    if matches!(
+        clause_words.as_slice(),
+        ["repeat", "this", "process"] | ["and", "repeat", "this", "process"]
+    ) {
+        return Ok(Some(EffectAst::RepeatThisProcess));
     }
     Ok(None)
 }

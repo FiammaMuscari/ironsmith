@@ -2212,6 +2212,7 @@ fn continuous_filter_context(
         your_commanders: Vec::new(),
         iterated_player: None,
         target_players: Vec::new(),
+        target_objects: Vec::new(),
         tagged_objects: std::collections::HashMap::new(),
     }
 }
@@ -2498,6 +2499,8 @@ fn resolve_value_with_context(
         | Value::LifeTotal(_)
         | Value::HalfLifeTotalRoundedUp(_)
         | Value::HalfLifeTotalRoundedDown(_)
+        | Value::HalfStartingLifeTotalRoundedUp(_)
+        | Value::HalfStartingLifeTotalRoundedDown(_)
         | Value::CardsInHand(_)
         | Value::LifeGainedThisTurn(_)
         | Value::LifeLostThisTurn(_)

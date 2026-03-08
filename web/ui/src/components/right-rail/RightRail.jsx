@@ -1,4 +1,5 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import HoverArtOverlay from "./HoverArtOverlay";
 import { useHoveredObjectId } from "@/context/HoverContext";
 import { useGame } from "@/context/GameContext";
@@ -52,6 +53,10 @@ function objectExistsInState(state, objectId) {
     if (String(entry?.id) === needle) return true;
   }
 
+  if ((state?.viewed_cards?.card_ids || []).some((id) => String(id) === needle)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -88,14 +93,29 @@ function locateObjectInState(state, objectId) {
     }
   }
 
+  const viewedCards = state?.viewed_cards || null;
+  if ((viewedCards?.card_ids || []).some((id) => String(id) === needle)) {
+    return {
+      side: viewedCards?.visibility === "public" ? "public-view" : "private-view",
+      zone: String(viewedCards?.zone || "").toLowerCase(),
+      viewVisibility: viewedCards?.visibility === "public" ? "public" : "private",
+    };
+  }
+
   return null;
 }
 
-function shouldUseTopInlineDock(location) {
-  return (
-    location?.side === "self"
-    && location?.zone !== "stack"
-  );
+function preferredInlinePlacement(location) {
+  if (location?.viewVisibility === "private") {
+    return { dock: "bottom", side: "left" };
+  }
+  if (location?.viewVisibility === "public") {
+    return { dock: "top", side: "left" };
+  }
+  return {
+    dock: location?.side === "self" && location?.zone !== "stack" ? "top" : "bottom",
+    side: "right",
+  };
 }
 
 function isFocusedDecision(decision) {
@@ -132,10 +152,12 @@ function decisionReferencesObject(decision, objectId) {
 
 export default function RightRail({
   pinnedObjectId,
+  onInspectObject = null,
   inspectorBottomOffset = DEFAULT_INSPECTOR_BOTTOM_OFFSET,
   inline = false,
   inlineExpanded = false,
   inlineDockPlacement = "bottom",
+  inlineHostSide = "right",
   inlineExpandedSide = "right",
   allowTopInlinePlacement = false,
   forceInlineExpanded = false,
@@ -200,10 +222,28 @@ export default function RightRail({
     }
     return locateObjectInState(state, validSelectedObjectId);
   }, [decision?.player, focusedDecision, resolvingCastObjectId, state, validSelectedObjectId]);
-  const prefersTopInlineDock = (
+  const preferredPlacement = useMemo(
+    () => preferredInlinePlacement(selectedObjectLocation),
+    [selectedObjectLocation]
+  );
+  const viewedCardIds = useMemo(
+    () => state?.viewed_cards?.card_ids || [],
+    [state?.viewed_cards?.card_ids]
+  );
+  const viewedCardIndex = validSelectedObjectId == null
+    ? -1
+    : viewedCardIds.findIndex((id) => String(id) === String(validSelectedObjectId));
+  const canCycleViewedCards = (
     inline
-    && allowTopInlinePlacement
-    && shouldUseTopInlineDock(selectedObjectLocation)
+    && preferredPlacement.side === "left"
+    && viewedCardIds.length > 1
+    && viewedCardIndex >= 0
+    && typeof onInspectObject === "function"
+  );
+  const resolvedInlineDockPlacement = (
+    preferredPlacement.dock === "top" && !allowTopInlinePlacement
+      ? "bottom"
+      : preferredPlacement.dock
   );
   const suppressDirectResolvingCastInspector =
     !hasStackEntries
@@ -219,9 +259,8 @@ export default function RightRail({
   const shouldShowRail = shouldShowInspector && (
     !inline
     || (
-      prefersTopInlineDock
-        ? inlineDockPlacement === "top"
-        : inlineDockPlacement === "bottom"
+      inlineDockPlacement === resolvedInlineDockPlacement
+      && inlineHostSide === preferredPlacement.side
     )
   );
   const shouldRenderExpandedInlineInspector =
@@ -429,6 +468,26 @@ export default function RightRail({
   const expandedInlineShellOffset = inlineExpandedSide === "left"
     ? { left: `-${INLINE_EXPANDED_RIGHT_BLEED}px`, right: "auto", transformOrigin: "bottom left" }
     : { left: "auto", right: `-${INLINE_EXPANDED_RIGHT_BLEED}px`, transformOrigin: "bottom right" };
+  const cycleViewedCard = useCallback((direction) => {
+    if (!canCycleViewedCards) return;
+    const nextIndex = (viewedCardIndex + direction + viewedCardIds.length) % viewedCardIds.length;
+    const nextObjectId = viewedCardIds[nextIndex];
+    if (nextObjectId == null) return;
+    onInspectObject(nextObjectId);
+  }, [canCycleViewedCards, onInspectObject, viewedCardIds, viewedCardIndex]);
+
+  const handleCyclePointerDown = useCallback((event, direction) => {
+    event.preventDefault();
+    event.stopPropagation();
+    cycleViewedCard(direction);
+  }, [cycleViewedCard]);
+
+  const handleCycleClick = useCallback((event, direction) => {
+    if (event.detail !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    cycleViewedCard(direction);
+  }, [cycleViewedCard]);
 
   return (
     <aside
@@ -442,6 +501,28 @@ export default function RightRail({
       aria-hidden={!shouldShowRail}
     >
       <div className={cn("relative h-full min-h-0", inline ? "overflow-visible" : "overflow-hidden")}>
+        {canCycleViewedCards && shouldShowRail && (
+          <>
+            <button
+              type="button"
+              className="pointer-events-auto absolute left-1 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-[#35506c]/85 bg-[rgba(7,12,19,0.92)] text-[#d8e8fa] shadow-[0_8px_18px_rgba(0,0,0,0.38)] transition-colors hover:border-[#4d7093] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#80bfff]/70"
+              aria-label="Show previous revealed card"
+              onPointerDown={(event) => handleCyclePointerDown(event, -1)}
+              onClick={(event) => handleCycleClick(event, -1)}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              className="pointer-events-auto absolute right-1 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-[#35506c]/85 bg-[rgba(7,12,19,0.92)] text-[#d8e8fa] shadow-[0_8px_18px_rgba(0,0,0,0.38)] transition-colors hover:border-[#4d7093] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#80bfff]/70"
+              aria-label="Show next revealed card"
+              onPointerDown={(event) => handleCyclePointerDown(event, 1)}
+              onClick={(event) => handleCycleClick(event, 1)}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </>
+        )}
         <div
           ref={compactInspectorRef}
           className={cn(

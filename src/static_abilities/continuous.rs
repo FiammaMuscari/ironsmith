@@ -33,7 +33,7 @@ fn attached_subject(filter: &ObjectFilter) -> Option<String> {
     })?;
 
     let noun = if filter.card_types.len() == 1 {
-        format!("{:?}", filter.card_types[0]).to_ascii_lowercase()
+        filter.card_types[0].name().to_string()
     } else {
         "permanent".to_string()
     };
@@ -1563,7 +1563,7 @@ impl StaticAbilityKind for AddCardTypesForFilter {
         let types = self
             .card_types
             .iter()
-            .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
+            .map(|card_type| card_type.name().to_string())
             .collect::<Vec<_>>();
         format!(
             "{subject} {verb} {} in addition to {possessive} other types",
@@ -1631,7 +1631,7 @@ impl StaticAbilityKind for RemoveCardTypesForFilter {
         let types = self
             .card_types
             .iter()
-            .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
+            .map(|card_type| card_type.name().to_string())
             .collect::<Vec<_>>();
         let mut text = format!("{subject} {verb} no longer {}", join_with_and(&types));
         if let Some(condition) = &self.condition {
@@ -1694,7 +1694,7 @@ impl StaticAbilityKind for SetCardTypesForFilter {
         let types = self
             .card_types
             .iter()
-            .map(|card_type| format!("{card_type:?}").to_ascii_lowercase())
+            .map(|card_type| card_type.name().to_string())
             .collect::<Vec<_>>();
         format!("{subject} {verb} {}", join_with_and(&types))
     }
@@ -1747,7 +1747,7 @@ impl StaticAbilityKind for AddSubtypesForFilter {
         let subtype_words = self
             .subtypes
             .iter()
-            .map(|subtype| format!("{subtype:?}"))
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>();
         let base_phrase = subtype_words.join(" ");
         let subtype_phrase = if verb == "are" {
@@ -1822,7 +1822,7 @@ impl StaticAbilityKind for SetCreatureSubtypesForFilter {
         let subtypes = self
             .subtypes
             .iter()
-            .map(|subtype| format!("{subtype:?}").to_ascii_lowercase())
+            .map(|subtype| subtype.to_string().to_ascii_lowercase())
             .collect::<Vec<_>>();
         format!("{subject} {verb} {}", join_with_and(&subtypes))
     }
@@ -1950,7 +1950,7 @@ impl StaticAbilityKind for AddSupertypesForFilter {
         let supertypes = self
             .supertypes
             .iter()
-            .map(|supertype| format!("{supertype:?}").to_ascii_lowercase())
+            .map(|supertype| supertype.name().to_string())
             .collect::<Vec<_>>()
             .join(" and ");
         format!("{subject} {verb} {supertypes}")
@@ -2005,7 +2005,7 @@ impl StaticAbilityKind for RemoveSupertypesForFilter {
         let supertypes = self
             .supertypes
             .iter()
-            .map(|supertype| format!("{supertype:?}").to_ascii_lowercase())
+            .map(|supertype| supertype.name().to_string())
             .collect::<Vec<_>>()
             .join(" and ");
         format!("{subject} {verb} no longer {supertypes}")

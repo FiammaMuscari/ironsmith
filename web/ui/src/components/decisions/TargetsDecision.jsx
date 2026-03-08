@@ -1,9 +1,13 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useGame } from "@/context/GameContext";
 import { useHoveredObjectId } from "@/context/HoverContext";
+import { useCombatArrows } from "@/context/useCombatArrows";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { getCardRect, centerOf } from "@/hooks/useCardPositions";
+import { getPlayerAccent } from "@/lib/player-colors";
 import { X, ArrowRight } from "lucide-react";
+import DecisionSummary from "./DecisionSummary";
 
 const STRIP_ITEM_BASE_CLASS = "h-8 max-w-[360px] min-w-[120px] justify-start self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] px-2.5 text-[12px] font-semibold text-[rgba(206,223,242,0.52)] transition-all hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]";
 const STRIP_ITEM_ACTIVE_CLASS = "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]";
@@ -79,6 +83,47 @@ function buildTargetNameMaps(state) {
   return { objectNames, playerNames };
 }
 
+function normalizeNumericId(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resolveTargetDecisionSourceId(state, decision) {
+  const topStackObject = (state?.stack_objects || [])[0] || null;
+  const decisionSourceId = normalizeNumericId(decision?.source_id);
+  const decisionSourceName = String(decision?.source_name || "").trim().toLowerCase();
+
+  if (topStackObject) {
+    const topStackId = normalizeNumericId(topStackObject?.id);
+    const topInspectId = normalizeNumericId(topStackObject?.inspect_object_id);
+    const topName = String(topStackObject?.name || "").trim().toLowerCase();
+
+    if (
+      decisionSourceId != null
+      && (decisionSourceId === topStackId || decisionSourceId === topInspectId)
+    ) {
+      return topStackId;
+    }
+
+    if (decisionSourceName && topName && decisionSourceName === topName) {
+      return topStackId;
+    }
+
+    if (topStackId != null) {
+      return topStackId;
+    }
+  }
+
+  return decisionSourceId;
+}
+
+function resolveTargetDecisionColor(state, decision) {
+  const topStackObject = (state?.stack_objects || [])[0] || null;
+  const controllerId = normalizeNumericId(topStackObject?.controller) ?? normalizeNumericId(decision?.player);
+  const accent = getPlayerAccent(state?.players || [], controllerId);
+  return accent?.hex || "#ff3b30";
+}
+
 function isGenericObjectName(name, objectId = null) {
   if (!name) return true;
   const trimmed = String(name).trim();
@@ -116,6 +161,8 @@ function ActiveRequirementTargets({
   showSkip,
   skipLabel,
   horizontal = false,
+  showTargetButtons = true,
+  interactionHint = null,
 }) {
   const legalTargets = req.legal_targets || [];
   const objectTargets = legalTargets.filter((target) => targetObjectId(target) != null);
@@ -261,8 +308,12 @@ function ActiveRequirementTargets({
           <div className={cn(STRIP_META_ITEM_CLASS, !isActive && "opacity-80")}>
             {header}
           </div>
-          {targetButtons}
-          {!showRows && (
+          {showTargetButtons ? targetButtons : (
+            <div className="px-2 text-[12px] italic text-[#89a7c7] whitespace-nowrap">
+              {interactionHint || "Click a highlighted card or player to target it directly."}
+            </div>
+          )}
+          {!showRows && showTargetButtons && (
             <div className="px-2 text-[12px] italic text-[#89a7c7] whitespace-nowrap">
               No legal targets.
             </div>
@@ -326,12 +377,14 @@ export default function TargetsDecision({
   inspectorOracleTextHeight = 0,
   inlineSubmit = true,
   onSubmitActionChange = null,
+  hideDescription = false,
   layout = "panel",
 }) {
   const { dispatch, state } = useGame();
+  const { startDragArrow, updateDragArrow, endDragArrow } = useCombatArrows();
   const stripLayout = layout === "strip";
   const hoveredObjectId = useHoveredObjectId();
-  const requirements = decision.requirements || [];
+  const requirements = useMemo(() => decision.requirements || [], [decision.requirements]);
   const { objectNames: objectNamesById, playerNames: playerNamesById } = useMemo(
     () => buildTargetNameMaps(state),
     [state]
@@ -340,6 +393,14 @@ export default function TargetsDecision({
   // Per-requirement selections: array of arrays
   const [selectionsByReq, setSelectionsByReq] = useState(() =>
     requirements.map(() => [])
+  );
+  const liveTargetSourceId = useMemo(
+    () => resolveTargetDecisionSourceId(state, decision),
+    [state, decision]
+  );
+  const liveTargetColor = useMemo(
+    () => resolveTargetDecisionColor(state, decision),
+    [state, decision]
   );
 
   const currentReq = requirements[currentReqIdx];
@@ -370,7 +431,7 @@ export default function TargetsDecision({
     return Math.max(180, Math.min(360, dynamicMax));
   }, [inspectorOracleTextHeight]);
 
-  const handleSelectTarget = (
+  const handleSelectTarget = useCallback((
     target,
     preferredReqIdx = currentReqIdx,
     { toggleExisting = false, strictRequirement = false } = {}
@@ -460,7 +521,12 @@ export default function TargetsDecision({
       }
       return next;
     });
-  };
+  }, [
+    currentReqIdx,
+    objectNamesById,
+    playerNamesById,
+    requirements,
+  ]);
 
   useEffect(() => {
     const onExternalTargetChoice = (event) => {
@@ -475,6 +541,39 @@ export default function TargetsDecision({
       window.removeEventListener("ironsmith:target-choice", onExternalTargetChoice);
     };
   }, [canAct, currentReqIdx, handleSelectTarget]);
+
+  useEffect(() => {
+    if (!canAct || requirements.length === 0 || allDone || liveTargetSourceId == null) {
+      endDragArrow();
+      return undefined;
+    }
+
+    const sourceRect = getCardRect(liveTargetSourceId);
+    const sourceCenter = sourceRect
+      ? centerOf(sourceRect)
+      : { x: window.innerWidth * 0.5, y: window.innerHeight * 0.5 };
+
+    startDragArrow(liveTargetSourceId, sourceCenter.x, sourceCenter.y, liveTargetColor);
+
+    const onPointerMove = (event) => {
+      updateDragArrow(event.clientX, event.clientY);
+    };
+
+    document.addEventListener("pointermove", onPointerMove);
+    return () => {
+      document.removeEventListener("pointermove", onPointerMove);
+      endDragArrow();
+    };
+  }, [
+    allDone,
+    canAct,
+    endDragArrow,
+    liveTargetColor,
+    liveTargetSourceId,
+    requirements.length,
+    startDragArrow,
+    updateDragArrow,
+  ]);
 
   const handleRemoveTarget = (reqIdx, selIdx) => {
     setSelectionsByReq((prev) => {
@@ -515,6 +614,11 @@ export default function TargetsDecision({
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-1.5">
+      <DecisionSummary
+        decision={decision}
+        hideDescription={hideDescription}
+        layout={layout}
+      />
       <div className="flex flex-col gap-1.5">
         <div className={cn(
           stripLayout
@@ -531,6 +635,9 @@ export default function TargetsDecision({
             const showCompletedOptions = allDone && reqSelections.length > 0;
             const shouldShowSelectedChips = reqSelections.length > 0 && !isActive && !showCompletedOptions;
             const shouldShowTargetOptions = isActive || showCompletedOptions;
+            const interactionHint = !canSelectMore
+              ? "Target selected. Submit or move to the next requirement."
+              : "Click a highlighted card or player to target it directly.";
             const requirementHeader = (
               <div className={cn(
                 "leading-snug",
@@ -626,6 +733,8 @@ export default function TargetsDecision({
                     showSkip={isActive && (isOptional || currentMet) && !allDone}
                     skipLabel={isOptional ? "Skip (optional)" : <>Next requirement <ArrowRight className="size-3 inline" /></>}
                     horizontal={stripLayout}
+                    showTargetButtons={!stripLayout}
+                    interactionHint={interactionHint}
                   />
                 )}
               </div>

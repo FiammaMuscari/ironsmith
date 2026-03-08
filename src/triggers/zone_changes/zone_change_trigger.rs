@@ -31,9 +31,10 @@ use crate::target::ObjectFilter;
 use crate::triggers::TriggerEvent;
 use crate::triggers::matcher_trait::{TriggerContext, TriggerMatcher};
 use crate::zone::Zone;
+use std::fmt;
 
 /// Pattern for matching zones in zone change events.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Clone, PartialEq, Default)]
 pub enum ZonePattern {
     /// Match any zone.
     #[default]
@@ -44,6 +45,17 @@ pub enum ZonePattern {
     OneOf(Vec<Zone>),
     /// Match any zone except this one.
     AnyExcept(Zone),
+}
+
+impl fmt::Debug for ZonePattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Any => f.write_str("Any"),
+            Self::Specific(zone) => write!(f, "Specific({zone:?})"),
+            Self::OneOf(zones) => f.debug_tuple("OneOf").field(zones).finish(),
+            Self::AnyExcept(zone) => write!(f, "AnyExcept({zone:?})"),
+        }
+    }
 }
 
 impl ZonePattern {
@@ -308,7 +320,9 @@ impl ZoneChangeTrigger {
         }
         let has_article = filter_desc.starts_with("a ")
             || filter_desc.starts_with("an ")
-            || filter_desc.starts_with("the ");
+            || filter_desc.starts_with("the ")
+            || filter_desc.starts_with("this ")
+            || filter_desc.starts_with("that ");
         if self.count_mode == CountMode::OneOrMore {
             parts.push("one or more".to_string());
         } else if !has_article {
@@ -341,6 +355,9 @@ impl ZoneChangeTrigger {
             }
             (_, ZonePattern::Specific(Zone::Graveyard)) => {
                 parts.push("is put into a graveyard".to_string());
+                if matches!(self.from, ZonePattern::Any) {
+                    parts.push("from anywhere".to_string());
+                }
             }
             (_, ZonePattern::Specific(Zone::Exile)) => {
                 parts.push("is exiled".to_string());

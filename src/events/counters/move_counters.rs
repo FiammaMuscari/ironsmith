@@ -105,8 +105,8 @@ impl GameEventType for MoveCountersEvent {
 
     fn display(&self) -> String {
         match (&self.counter_type, self.count) {
-            (Some(ct), Some(n)) => format!("Move {} {:?} counter(s)", n, ct),
-            (Some(ct), None) => format!("Move all {:?} counters", ct),
+            (Some(ct), Some(n)) => format!("Move {} {} counter(s)", n, ct.description()),
+            (Some(ct), None) => format!("Move all {} counters", ct.description()),
             (None, Some(n)) => format!("Move {} counters", n),
             (None, None) => "Move all counters".to_string(),
         }
@@ -210,7 +210,7 @@ mod tests {
             Some(CounterType::PlusOnePlusOne),
             Some(3),
         );
-        assert_eq!(event1.display(), "Move 3 PlusOnePlusOne counter(s)");
+        assert_eq!(event1.display(), "Move 3 +1/+1 counter(s)");
 
         let event2 =
             MoveCountersEvent::new(ObjectId::from_raw(1), ObjectId::from_raw(2), None, None);

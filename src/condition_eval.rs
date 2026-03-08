@@ -39,6 +39,21 @@ fn player_has_card_in_hand_matching(
     })
 }
 
+fn player_life_compares_to_half_starting(
+    game: &GameState,
+    player: PlayerId,
+    inclusive: bool,
+) -> bool {
+    game.player(player).is_some_and(|state| {
+        let doubled_life = state.life.saturating_mul(2);
+        if inclusive {
+            doubled_life <= state.starting_life
+        } else {
+            doubled_life < state.starting_life
+        }
+    })
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SharedConditionContext<'a> {
     controller: PlayerId,
@@ -184,6 +199,9 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::PlayerControlsExactly { .. } => {}
         Condition::PlayerControlsAtLeastWithDifferentPowers { .. } => {}
         Condition::PlayerControlsMost { .. } => {}
+        Condition::PlayerControlsMoreThanYou { .. } => {}
+        Condition::PlayerLifeAtMostHalfStartingLifeTotal { .. } => {}
+        Condition::PlayerLifeLessThanHalfStartingLifeTotal { .. } => {}
         Condition::LifeTotalOrLess(..) => {}
         Condition::LifeTotalOrGreater(..) => {}
         Condition::CardsInHandOrMore(..) => {}
@@ -209,6 +227,7 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::TargetHasGreatestPowerAmongCreatures => {}
         Condition::TargetManaValueLteColorsSpentToCastThisSpell => {}
         Condition::SourceIsTapped => {}
+        Condition::SourceIsSaddled => {}
         Condition::SourceIsFaceDown => {}
         Condition::SourceHasNoCounter(..) => {}
         Condition::SourceHasCounterAtLeast { .. } => {}
@@ -221,6 +240,7 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::TargetMatches(..) => {}
         Condition::TargetIsSoulbondPaired => {}
         Condition::PlayerTaggedObjectMatches { .. } => {}
+        Condition::PlayerTaggedObjectEnteredBattlefieldThisTurn { .. } => {}
         Condition::PlayerOwnsCardNamedInZones { .. } => {}
         Condition::FirstTimeThisTurn => {}
         Condition::MaxTimesEachTurn(..) => {}
@@ -258,6 +278,9 @@ fn assert_condition_variant_coverage(condition: &Condition) {
         Condition::PlayerControlsBasicLandTypesAmongLandsOrMore { .. } => {}
         Condition::PlayerHasCardTypesInGraveyardOrMore { .. } => {}
         Condition::PlayerHasLessLifeThanYou { .. } => {}
+        Condition::PlayerHasMoreLifeThanYou { .. } => {}
+        Condition::PlayerHasMoreCardsInHandThanYou { .. } => {}
+        Condition::PlayerIsMonarch { .. } => {}
         Condition::PlayerHasCitysBlessing { .. } => {}
         Condition::PlayerGraveyardHasCardsAtLeast { .. } => {}
     }
@@ -391,6 +414,13 @@ pub fn evaluate_condition_external(
             };
             player_had_land_enter_battlefield_this_turn(game, player_id)
         }
+        Condition::PlayerTaggedObjectEnteredBattlefieldThisTurn { player, tag } => {
+            let Some(player_id) = resolve_condition_player_external(game, ctx, player) else {
+                return false;
+            };
+            let _ = (player_id, tag);
+            false
+        }
         Condition::PlayerCardsInHandOrMore { player, count } => {
             let Some(player_id) = resolve_condition_player_external(game, ctx, player) else {
                 return false;
@@ -408,12 +438,43 @@ pub fn evaluate_condition_external(
                 .unwrap_or(false)
         }
         Condition::PlayerHasLessLifeThanYou { player } => {
+            let you_life = game.player(ctx.controller).map(|p| p.life).unwrap_or(0);
+            matching_condition_players_external(game, ctx, player)
+                .into_iter()
+                .any(|player_id| game.player(player_id).map(|p| p.life).unwrap_or(0) < you_life)
+        }
+        Condition::PlayerLifeAtMostHalfStartingLifeTotal { player } => {
+            matching_condition_players_external(game, ctx, player)
+                .into_iter()
+                .any(|player_id| player_life_compares_to_half_starting(game, player_id, true))
+        }
+        Condition::PlayerLifeLessThanHalfStartingLifeTotal { player } => {
+            matching_condition_players_external(game, ctx, player)
+                .into_iter()
+                .any(|player_id| player_life_compares_to_half_starting(game, player_id, false))
+        }
+        Condition::PlayerHasMoreLifeThanYou { player } => {
+            let you_life = game.player(ctx.controller).map(|p| p.life).unwrap_or(0);
+            matching_condition_players_external(game, ctx, player)
+                .into_iter()
+                .any(|player_id| game.player(player_id).map(|p| p.life).unwrap_or(0) > you_life)
+        }
+        Condition::PlayerHasMoreCardsInHandThanYou { player } => {
+            let your_hand = game
+                .player(ctx.controller)
+                .map(|p| p.hand.len())
+                .unwrap_or(0);
+            matching_condition_players_external(game, ctx, player)
+                .into_iter()
+                .any(|player_id| {
+                    game.player(player_id).map(|p| p.hand.len()).unwrap_or(0) > your_hand
+                })
+        }
+        Condition::PlayerIsMonarch { player } => {
             let Some(player_id) = resolve_condition_player_external(game, ctx, player) else {
                 return false;
             };
-            let you_life = game.player(ctx.controller).map(|p| p.life).unwrap_or(0);
-            let other_life = game.player(player_id).map(|p| p.life).unwrap_or(0);
-            other_life < you_life
+            game.is_monarch(player_id)
         }
         Condition::PlayerHasCitysBlessing { player } => {
             let Some(player_id) = resolve_condition_player_external(game, ctx, player) else {
@@ -652,6 +713,31 @@ pub fn evaluate_condition_external(
                 your_count >= other_count
             })
         }
+        Condition::PlayerControlsMoreThanYou { player, filter } => {
+            let count_for = |candidate: PlayerId| {
+                let opponents: Vec<PlayerId> = game
+                    .players
+                    .iter()
+                    .filter(|p| p.id != candidate)
+                    .map(|p| p.id)
+                    .collect();
+                let mut filter_ctx = crate::filter::FilterContext::new(candidate)
+                    .with_source(ctx.source)
+                    .with_opponents(opponents);
+                if *player == PlayerFilter::IteratedPlayer {
+                    filter_ctx = filter_ctx.with_iterated_player(Some(candidate));
+                }
+                condition_candidate_ids_for_zone(game, filter.zone)
+                    .iter()
+                    .filter_map(|&id| game.object(id))
+                    .filter(|obj| condition_object_matches_player_zone(obj, candidate, filter.zone))
+                    .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                    .count()
+            };
+            matching_condition_players_external(game, ctx, player)
+                .into_iter()
+                .any(|player_id| count_for(player_id) > count_for(ctx.controller))
+        }
         Condition::PlayerOwnsCardNamedInZones {
             player,
             name,
@@ -786,6 +872,7 @@ pub fn evaluate_condition_external(
 
         Condition::SourceAttackedThisTurn => game.creature_attacked_this_turn(ctx.source),
         Condition::SourceIsTapped => game.is_tapped(ctx.source),
+        Condition::SourceIsSaddled => game.is_saddled(ctx.source),
         Condition::SourceIsFaceDown => game.is_face_down(ctx.source),
         Condition::SourceIsUntapped => !game.is_tapped(ctx.source),
         Condition::SourceIsAttacking => game
@@ -1233,17 +1320,65 @@ fn evaluate_condition_simple(
                 .unwrap_or(0);
             current == max_count
         }
-        Condition::PlayerHasLessLifeThanYou { player } => {
-            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
-                return false;
+        Condition::PlayerControlsMoreThanYou { player, filter } => {
+            let count_for = |candidate: PlayerId| {
+                let opponents: Vec<PlayerId> = game
+                    .players
+                    .iter()
+                    .filter(|p| p.id != candidate)
+                    .map(|p| p.id)
+                    .collect();
+                let mut ctx = crate::filter::FilterContext::new(candidate)
+                    .with_source(source)
+                    .with_opponents(opponents);
+                if *player == PlayerFilter::IteratedPlayer {
+                    ctx = ctx.with_iterated_player(Some(candidate));
+                }
+                condition_candidate_ids_for_zone(game, filter.zone)
+                    .iter()
+                    .filter_map(|&id| game.object(id))
+                    .filter(|obj| condition_object_matches_player_zone(obj, candidate, filter.zone))
+                    .filter(|obj| filter.matches(obj, &ctx, game))
+                    .count()
             };
+
+            matching_condition_players_simple(game, controller, player)
+                .into_iter()
+                .any(|player_id| count_for(player_id) > count_for(controller))
+        }
+        Condition::PlayerLifeAtMostHalfStartingLifeTotal { player } => {
+            matching_condition_players_simple(game, controller, player)
+                .into_iter()
+                .any(|player_id| player_life_compares_to_half_starting(game, player_id, true))
+        }
+        Condition::PlayerLifeLessThanHalfStartingLifeTotal { player } => {
+            matching_condition_players_simple(game, controller, player)
+                .into_iter()
+                .any(|player_id| player_life_compares_to_half_starting(game, player_id, false))
+        }
+        Condition::PlayerHasLessLifeThanYou { player } => {
             let Some(you_life) = game.player(controller).map(|p| p.life) else {
                 return false;
             };
-            let Some(other_life) = game.player(player_id).map(|p| p.life) else {
+            matching_condition_players_simple(game, controller, player)
+                .into_iter()
+                .filter_map(|player_id| game.player(player_id).map(|p| p.life))
+                .any(|other_life| other_life < you_life)
+        }
+        Condition::PlayerHasMoreLifeThanYou { player } => {
+            let Some(you_life) = game.player(controller).map(|p| p.life) else {
                 return false;
             };
-            other_life < you_life
+            matching_condition_players_simple(game, controller, player)
+                .into_iter()
+                .filter_map(|player_id| game.player(player_id).map(|p| p.life))
+                .any(|other_life| other_life > you_life)
+        }
+        Condition::PlayerIsMonarch { player } => {
+            let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
+                return false;
+            };
+            game.is_monarch(player_id)
         }
         Condition::PlayerHasCitysBlessing { player } => {
             let Some(player_id) = resolve_condition_player_simple(game, controller, player) else {
@@ -1264,6 +1399,14 @@ fn evaluate_condition_simple(
             };
             let hand = game.player(player_id).map(|p| p.hand.len()).unwrap_or(0);
             hand <= *count as usize
+        }
+        Condition::PlayerHasMoreCardsInHandThanYou { player } => {
+            let your_hand = game.player(controller).map(|p| p.hand.len()).unwrap_or(0);
+            matching_condition_players_simple(game, controller, player)
+                .into_iter()
+                .any(|player_id| {
+                    game.player(player_id).map(|p| p.hand.len()).unwrap_or(0) > your_hand
+                })
         }
         Condition::PlayerCastSpellsThisTurnOrMore { player, count } => {
             let filter_ctx = game.filter_context_for(controller, Some(source));
@@ -1327,6 +1470,7 @@ fn evaluate_condition_simple(
         Condition::TargetMatches(_) => false,
         Condition::TargetIsSoulbondPaired => false,
         Condition::PlayerTaggedObjectMatches { .. } => false,
+        Condition::PlayerTaggedObjectEnteredBattlefieldThisTurn { .. } => false,
         // Target-dependent conditions default to false during casting
         Condition::TargetIsTapped
         | Condition::TargetIsAttacking
@@ -1339,6 +1483,7 @@ fn evaluate_condition_simple(
         | Condition::TargetHasGreatestPowerAmongCreatures
         | Condition::TargetManaValueLteColorsSpentToCastThisSpell
         | Condition::SourceIsTapped
+        | Condition::SourceIsSaddled
         | Condition::SourceIsFaceDown => false,
         Condition::Custom(_)
         | Condition::Unmodeled(_)
@@ -1415,6 +1560,68 @@ fn resolve_condition_player_external(
         PlayerFilter::Defending => ctx.defending_player,
         PlayerFilter::Attacking => Some(ctx.attacking_player.unwrap_or(ctx.controller)),
         _ => resolve_condition_player_simple(game, ctx.controller, player),
+    }
+}
+
+fn matching_condition_players_simple(
+    game: &GameState,
+    controller: PlayerId,
+    player: &PlayerFilter,
+) -> Vec<PlayerId> {
+    match player {
+        PlayerFilter::Opponent | PlayerFilter::NotYou => game
+            .players
+            .iter()
+            .filter(|p| p.id != controller && p.is_in_game())
+            .map(|p| p.id)
+            .collect(),
+        PlayerFilter::Any => game
+            .players
+            .iter()
+            .filter(|p| p.is_in_game())
+            .map(|p| p.id)
+            .collect(),
+        _ => resolve_condition_player_simple(game, controller, player)
+            .into_iter()
+            .collect(),
+    }
+}
+
+fn matching_condition_players_external(
+    game: &GameState,
+    ctx: &ExternalEvaluationContext<'_>,
+    player: &PlayerFilter,
+) -> Vec<PlayerId> {
+    match player {
+        PlayerFilter::Defending => ctx.defending_player.into_iter().collect(),
+        PlayerFilter::Attacking => Some(ctx.attacking_player.unwrap_or(ctx.controller))
+            .into_iter()
+            .collect(),
+        _ => matching_condition_players_simple(game, ctx.controller, player),
+    }
+}
+
+fn matching_condition_players_exec(
+    game: &GameState,
+    ctx: &ExecutionContext,
+    player: &PlayerFilter,
+) -> Result<Vec<PlayerId>, ExecutionError> {
+    match player {
+        PlayerFilter::Opponent | PlayerFilter::NotYou => Ok(game
+            .players
+            .iter()
+            .filter(|p| p.id != ctx.controller && p.is_in_game())
+            .map(|p| p.id)
+            .collect()),
+        PlayerFilter::Any => Ok(game
+            .players
+            .iter()
+            .filter(|p| p.is_in_game())
+            .map(|p| p.id)
+            .collect()),
+        _ => Ok(vec![crate::effects::helpers::resolve_player_filter(
+            game, player, ctx,
+        )?]),
     }
 }
 
@@ -1617,11 +1824,46 @@ fn evaluate_condition(
                 .unwrap_or(0);
             Ok(current == max_count)
         }
+        Condition::PlayerControlsMoreThanYou { player, filter } => {
+            let count_for = |candidate: PlayerId| {
+                let mut filter_ctx = ctx.filter_context(game);
+                filter_ctx.iterated_player = Some(candidate);
+                condition_candidate_ids_for_zone(game, filter.zone)
+                    .iter()
+                    .filter_map(|&id| game.object(id))
+                    .filter(|obj| condition_object_matches_player_zone(obj, candidate, filter.zone))
+                    .filter(|obj| filter.matches(obj, &filter_ctx, game))
+                    .count()
+            };
+            Ok(matching_condition_players_exec(game, ctx, player)?
+                .into_iter()
+                .any(|player_id| count_for(player_id) > count_for(ctx.controller)))
+        }
+        Condition::PlayerLifeAtMostHalfStartingLifeTotal { player } => {
+            Ok(matching_condition_players_exec(game, ctx, player)?
+                .into_iter()
+                .any(|player_id| player_life_compares_to_half_starting(game, player_id, true)))
+        }
+        Condition::PlayerLifeLessThanHalfStartingLifeTotal { player } => {
+            Ok(matching_condition_players_exec(game, ctx, player)?
+                .into_iter()
+                .any(|player_id| player_life_compares_to_half_starting(game, player_id, false)))
+        }
         Condition::PlayerHasLessLifeThanYou { player } => {
-            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
             let you_life = game.player(ctx.controller).map(|p| p.life).unwrap_or(0);
-            let other_life = game.player(player_id).map(|p| p.life).unwrap_or(0);
-            Ok(other_life < you_life)
+            Ok(matching_condition_players_exec(game, ctx, player)?
+                .into_iter()
+                .any(|player_id| game.player(player_id).map(|p| p.life).unwrap_or(0) < you_life))
+        }
+        Condition::PlayerHasMoreLifeThanYou { player } => {
+            let you_life = game.player(ctx.controller).map(|p| p.life).unwrap_or(0);
+            Ok(matching_condition_players_exec(game, ctx, player)?
+                .into_iter()
+                .any(|player_id| game.player(player_id).map(|p| p.life).unwrap_or(0) > you_life))
+        }
+        Condition::PlayerIsMonarch { player } => {
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            Ok(game.is_monarch(player_id))
         }
         Condition::PlayerHasCitysBlessing { player } => {
             let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
@@ -1636,6 +1878,17 @@ fn evaluate_condition(
             let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
             let hand_count = game.player(player_id).map(|p| p.hand.len()).unwrap_or(0);
             Ok(hand_count <= *count as usize)
+        }
+        Condition::PlayerHasMoreCardsInHandThanYou { player } => {
+            let your_hand = game
+                .player(ctx.controller)
+                .map(|p| p.hand.len())
+                .unwrap_or(0);
+            Ok(matching_condition_players_exec(game, ctx, player)?
+                .into_iter()
+                .any(|player_id| {
+                    game.player(player_id).map(|p| p.hand.len()).unwrap_or(0) > your_hand
+                }))
         }
         Condition::PlayerCastSpellsThisTurnOrMore { player, count } => {
             let filter_ctx = ctx.filter_context(game);
@@ -1818,6 +2071,7 @@ fn evaluate_condition(
             Ok(target_mana_value <= colors_spent)
         }
         Condition::SourceIsTapped => Ok(game.is_tapped(ctx.source)),
+        Condition::SourceIsSaddled => Ok(game.is_saddled(ctx.source)),
         Condition::SourceIsFaceDown => Ok(game.is_face_down(ctx.source)),
         Condition::TargetIsAttacking => {
             // Check if the target is among declared attackers
@@ -1871,7 +2125,9 @@ fn evaluate_condition(
             Ok(false)
         }
         Condition::TaggedObjectIsSoulbondPaired(tag) => {
-            let tagged_id = ctx.get_tagged(tag.as_str()).map(|snapshot| snapshot.object_id);
+            let tagged_id = ctx
+                .get_tagged(tag.as_str())
+                .map(|snapshot| snapshot.object_id);
             Ok(tagged_id.is_some_and(|id| game.is_soulbond_paired(id)))
         }
         Condition::EnchantedPermanentAttackedThisTurn => Ok(game
@@ -1918,6 +2174,17 @@ fn evaluate_condition(
                 }
             }
             Ok(false)
+        }
+        Condition::PlayerTaggedObjectEnteredBattlefieldThisTurn { player, tag } => {
+            let player_id = crate::effects::helpers::resolve_player_filter(game, player, ctx)?;
+            let Some(tagged) = ctx.get_tagged_all(tag.as_str()) else {
+                return Ok(false);
+            };
+            Ok(tagged.iter().any(|snapshot| {
+                game.objects_entered_battlefield_this_turn
+                    .get(&snapshot.stable_id)
+                    .is_some_and(|entry_controller| *entry_controller == player_id)
+            }))
         }
         Condition::FirstTimeThisTurn | Condition::MaxTimesEachTurn(_) => Ok(true),
         Condition::TriggeringObjectWasEnchanted => Ok(ctx

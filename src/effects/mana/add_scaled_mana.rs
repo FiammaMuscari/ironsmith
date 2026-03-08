@@ -3,7 +3,7 @@
 //! Adds a fixed mana pattern repeated by a resolved numeric value.
 //! Example: "Add {B} for each creature card in your graveyard."
 
-use super::choice_helpers::credit_mana_symbols;
+use super::choice_helpers::credit_mana_symbols_from_context;
 use crate::effect::{EffectOutcome, EffectResult, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
@@ -47,7 +47,7 @@ impl EffectExecutor for AddScaledManaEffect {
         for _ in 0..repeats {
             added.extend(self.mana.iter().copied());
         }
-        credit_mana_symbols(game, player_id, added.iter().copied());
+        credit_mana_symbols_from_context(game, player_id, added.iter().copied(), ctx);
 
         Ok(EffectOutcome::from_result(EffectResult::ManaAdded(added)))
     }

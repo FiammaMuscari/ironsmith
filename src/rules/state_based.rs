@@ -303,20 +303,6 @@ fn check_permanent_sbas_with_view(
     }
 }
 
-/// Check Role Aura uniqueness.
-///
-/// Per MTG rule 704.5y: if a permanent has multiple Role Auras attached that are
-/// controlled by the same player, the one with the most recent timestamp stays
-/// and the others are put into their owners' graveyards.
-fn check_role_sbas(
-    game: &GameState,
-    all_effects: &[crate::continuous::ContinuousEffect],
-    actions: &mut Vec<StateBasedAction>,
-) {
-    let view = crate::derived_view::DerivedGameView::from_effects(game, all_effects.to_vec());
-    check_role_sbas_with_view(game, &view, actions);
-}
-
 fn check_role_sbas_with_view(
     game: &GameState,
     view: &crate::derived_view::DerivedGameView<'_>,

@@ -3,11 +3,11 @@ use crate::cards::builders::parse_parsing::{
     ClauseView, POST_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, POST_CONDITIONAL_SENTENCE_PRIMITIVES,
     PRE_CONDITIONAL_SENTENCE_PRIMITIVE_INDEX, PRE_CONDITIONAL_SENTENCE_PRIMITIVES,
     RULE_SHAPE_STARTS_IF, RuleDef, RuleIndex, UnsupportedDiagnoser, UnsupportedRuleDef,
-    apply_where_x_to_damage_amounts, find_verb, is_activate_only_restriction_sentence,
-    is_trigger_only_restriction_sentence, is_until_end_of_turn, parse_conditional_sentence,
-    parse_effect_chain, parse_effect_chain_inner, parse_number,
-    parse_prevent_next_time_damage_sentence, parse_pt_modifier,
-    parse_redirect_next_damage_sentence, parse_search_library_sentence,
+    apply_where_x_to_damage_amounts, find_verb, helper_tag_for_tokens,
+    is_activate_only_restriction_sentence, is_trigger_only_restriction_sentence,
+    is_until_end_of_turn, normalize_cant_words, parse_conditional_sentence, parse_effect_chain,
+    parse_effect_chain_inner, parse_number, parse_prevent_next_time_damage_sentence,
+    parse_pt_modifier, parse_redirect_next_damage_sentence, parse_search_library_sentence,
     parse_simple_gain_ability_clause, parse_trigger_clause, parse_where_x_value_clause,
     parser_trace, replace_unbound_x_in_effects_anywhere, run_sentence_primitives,
     split_leading_result_prefix, split_on_and, split_on_comma, split_until_source_leaves_tail,
@@ -167,10 +167,6 @@ sentence_unsupported_adapters!(
         sentence_has_chosen_at_random_clause
     ),
     (
-        sentence_has_for_each_card_exiled_from_hand_this_way_clause_rule,
-        sentence_has_for_each_card_exiled_from_hand_this_way_clause
-    ),
-    (
         sentence_has_defending_players_choice_clause_rule,
         sentence_has_defending_players_choice_clause
     ),
@@ -208,7 +204,7 @@ sentence_unsupported_adapters!(
     ),
 );
 
-const SENTENCE_UNSUPPORTED_RULES: [UnsupportedRuleDef; 34] = [
+const SENTENCE_UNSUPPORTED_RULES: [UnsupportedRuleDef; 33] = [
     UnsupportedRuleDef {
         id: "ring-tempts",
         priority: 10,
@@ -402,14 +398,6 @@ const SENTENCE_UNSUPPORTED_RULES: [UnsupportedRuleDef; 34] = [
         predicate: sentence_has_chosen_at_random_clause_rule,
     },
     UnsupportedRuleDef {
-        id: "draw-for-each-card-exiled-from-hand-this-way",
-        priority: 310,
-        heads: &["draw", "for"],
-        shape_mask: 0,
-        message: "unsupported draw-for-each-card-exiled-from-hand clause",
-        predicate: sentence_has_for_each_card_exiled_from_hand_this_way_clause_rule,
-    },
-    UnsupportedRuleDef {
         id: "defending-players-choice",
         priority: 320,
         heads: &["defending", "target", "of"],
@@ -487,8 +475,27 @@ const SENTENCE_UNSUPPORTED_DIAGNOSER: UnsupportedDiagnoser =
     UnsupportedDiagnoser::new(&SENTENCE_UNSUPPORTED_RULES);
 
 fn diagnose_sentence_unsupported(tokens: &[Token]) -> Option<CardTextError> {
+    if sentence_looks_like_supported_negated_untap_clause(tokens) {
+        return None;
+    }
     let view = ClauseView::from_tokens(tokens);
     SENTENCE_UNSUPPORTED_DIAGNOSER.diagnose(&view, "clause")
+}
+
+fn sentence_looks_like_supported_negated_untap_clause(tokens: &[Token]) -> bool {
+    let words = normalize_cant_words(tokens);
+    let has_negated_untap = words.windows(3).any(|window| {
+        window == ["dont", "untap", "during"] || window == ["doesnt", "untap", "during"]
+    });
+    let has_controllers_untap_step = words.windows(3).any(|window| {
+        window == ["controllers", "untap", "step"] || window == ["controllers", "untap", "steps"]
+    });
+    let has_tapped_duration = words
+        .windows(4)
+        .any(|window| window == ["for", "as", "long", "as"])
+        && words.contains(&"remains")
+        && words.contains(&"tapped");
+    has_negated_untap && has_controllers_untap_step && has_tapped_duration
 }
 
 fn parse_redirect_next_damage_sentence_rule(
@@ -561,7 +568,7 @@ fn parse_effect_chain_rule(view: &ClauseView<'_>) -> Result<Option<Vec<EffectAst
     parse_effect_chain(view.tokens).map(Some)
 }
 
-const SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 5] = [
+const SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 6] = [
     RuleDef {
         id: "redirect-next-damage",
         priority: 100,
@@ -591,6 +598,13 @@ const SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 5] = [
         run: parse_spell_this_way_pay_life_rule,
     },
     RuleDef {
+        id: "preconditional-primitives",
+        priority: 135,
+        heads: SENTENCE_PRIMITIVE_RULE_HEADS,
+        shape_mask: 0,
+        run: parse_preconditional_sentence_primitives_rule,
+    },
+    RuleDef {
         id: "conditional",
         priority: 140,
         heads: &["if"],
@@ -599,14 +613,7 @@ const SENTENCE_PRE_DIAGNOSTIC_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 5] = [
     },
 ];
 
-const SENTENCE_POST_DIAGNOSTIC_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 3] = [
-    RuleDef {
-        id: "preconditional-primitives",
-        priority: 150,
-        heads: SENTENCE_PRIMITIVE_RULE_HEADS,
-        shape_mask: 0,
-        run: parse_preconditional_sentence_primitives_rule,
-    },
+const SENTENCE_POST_DIAGNOSTIC_PARSE_RULES: [RuleDef<Vec<EffectAst>>; 2] = [
     RuleDef {
         id: "postconditional-primitives",
         priority: 160,
@@ -843,26 +850,12 @@ fn sentence_has_chosen_at_random_clause(words: &[&str], _: &[Token]) -> bool {
         .any(|window| window == ["chosen", "at", "random"])
 }
 
-fn sentence_has_for_each_card_exiled_from_hand_this_way_clause(
-    words: &[&str],
-    _: &[Token],
-) -> bool {
-    words
-        .windows(4)
-        .any(|window| window == ["for", "each", "card", "exiled"])
-        && words
-            .windows(3)
-            .any(|window| window == ["hand", "this", "way"])
-}
-
 fn sentence_has_defending_players_choice_clause(words: &[&str], _: &[Token]) -> bool {
-    words.contains(&"defending")
-        && words
-            .windows(3)
-            .any(|window| window == ["player's", "choice", "target"])
-        || words
-            .windows(3)
-            .any(|window| window == ["defending", "player's", "choice"])
+    words.windows(3).any(|window| {
+        window == ["defending", "player's", "choice"]
+            || window == ["defending", "player", "choice"]
+            || window == ["player's", "choice", "target"]
+    }) || words.windows(4).any(|window| window == ["defending", "player", "s", "choice"])
 }
 
 fn sentence_has_target_creature_token_player_planeswalker_clause(
@@ -922,9 +915,10 @@ fn sentence_has_unsupported_negated_untap_clause(words: &[&str], _: &[Token]) ->
     let has_supported_control_duration = words
         .windows(6)
         .any(|window| window == ["for", "as", "long", "as", "you", "control"]);
-    let has_supported_source_tapped_duration = words.windows(4).any(|window| {
-        window == ["for", "as", "long", "as"]
-    }) && words.contains(&"remains")
+    let has_supported_source_tapped_duration = words
+        .windows(4)
+        .any(|window| window == ["for", "as", "long", "as"])
+        && words.contains(&"remains")
         && words.contains(&"tapped")
         && (words.contains(&"this")
             || words.contains(&"thiss")
@@ -3013,11 +3007,11 @@ pub(crate) fn parse_exile_then_return_same_object_sentence(
                 tapped: _,
                 controller: _,
             } if target_references_it_tag(target) => {
-                *target = TargetAst::Tagged(TagKey::from("exiled_0"), None);
+                *target = TargetAst::Tagged(TagKey::from(IT_TAG), None);
                 rewrote_return = true;
             }
             EffectAst::ReturnToHand { target, random: _ } if target_references_it_tag(target) => {
-                *target = TargetAst::Tagged(TagKey::from("exiled_0"), None);
+                *target = TargetAst::Tagged(TagKey::from(IT_TAG), None);
                 rewrote_return = true;
             }
             _ => {}
@@ -3112,7 +3106,7 @@ pub(crate) fn parse_exile_up_to_one_each_target_type_sentence(
         return Ok(None);
     }
 
-    let tag = TagKey::from("exiled_0");
+    let tag = helper_tag_for_tokens(tokens, "exiled");
     let mut effects: Vec<EffectAst> = filters
         .into_iter()
         .map(|filter| EffectAst::ChooseObjects {
@@ -3209,8 +3203,8 @@ pub(crate) fn parse_look_at_top_then_exile_one_sentence(
         return Ok(None);
     }
 
-    let looked_tag = TagKey::from("looked_0");
-    let chosen_tag = TagKey::from("chosen_0");
+    let looked_tag = helper_tag_for_tokens(tokens, "looked");
+    let chosen_tag = helper_tag_for_tokens(tokens, "chosen");
     let mut looked_filter = ObjectFilter::tagged(looked_tag.clone());
     looked_filter.zone = Some(Zone::Library);
 
@@ -3531,6 +3525,14 @@ pub(crate) fn parse_gain_x_plus_life_sentence(
     else {
         return Ok(None);
     };
+    if gain_idx > 0
+        && matches!(
+            words[gain_idx - 1],
+            "cant" | "cannot" | "doesnt" | "don't" | "dont"
+        )
+    {
+        return Ok(None);
+    }
 
     if words.len() <= gain_idx + 4 {
         return Ok(None);

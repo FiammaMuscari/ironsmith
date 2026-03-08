@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useGame } from "@/context/GameContext";
-import { useCombatArrows } from "@/context/CombatArrowContext";
+import { useCombatArrows } from "@/context/useCombatArrows";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";

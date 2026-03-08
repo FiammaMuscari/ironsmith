@@ -63,9 +63,9 @@ pub use executor_trait::{CostValidationError, EffectExecutor, ModalSpec};
 // Re-export effect implementations
 pub use cards::{
     ClashEffect, ConniveEffect, DiscardEffect, DiscardHandEffect, DrawCardsEffect,
-    ExileTopOfLibraryEffect, LookAtHandEffect, LookAtTopCardsEffect, MillEffect,
-    RevealTaggedEffect, RevealTopEffect, ScryEffect, SearchLibraryEffect,
-    ShuffleGraveyardIntoLibraryEffect, ShuffleLibraryEffect, SurveilEffect,
+    DrawForEachTaggedMatchingEffect, ExileTopOfLibraryEffect, LookAtHandEffect,
+    LookAtTopCardsEffect, MillEffect, RevealTaggedEffect, RevealTopEffect, ScryEffect,
+    SearchLibraryEffect, ShuffleGraveyardIntoLibraryEffect, ShuffleLibraryEffect, SurveilEffect,
 };
 pub use combat::{
     EnterAttackingEffect, FightEffect, GoadEffect, GrantAbilitiesAllEffect,
@@ -79,9 +79,10 @@ pub use composition::{
     ConditionalEffect, CounterAbilityEffect, EmitKeywordActionEffect, ExploreEffect,
     ForEachControllerOfTaggedEffect, ForEachObject, ForEachTaggedEffect, ForEachTaggedPlayerEffect,
     ForPlayersEffect, IfEffect, ManifestDreadEffect, MayEffect, OpenAttractionEffect,
-    ReflexiveTriggerEffect, SequenceEffect, SupportEffect, TagAllEffect, TagAttachedToSourceEffect,
-    TagTriggeringDamageTargetEffect, TagTriggeringObjectEffect, TaggedEffect, TargetOnlyEffect,
-    UnlessActionEffect, UnlessPaysEffect, VoteEffect, VoteOption, WithIdEffect,
+    ReflexiveTriggerEffect, RepeatProcessEffect, SequenceEffect, SupportEffect, TagAllEffect,
+    TagAttachedToSourceEffect, TagTriggeringDamageTargetEffect, TagTriggeringObjectEffect,
+    TaggedEffect, TargetOnlyEffect, UnlessActionEffect, UnlessPaysEffect, VoteEffect, VoteOption,
+    WithIdEffect,
 };
 pub use continuous::ApplyContinuousEffect;
 pub use control::{ExchangeControlEffect, GainControlEffect, SharedTypeConstraint};
@@ -114,13 +115,13 @@ pub use permanents::{
     SoulbondPairEffect, TapEffect, TransformEffect, UnearthEffect, UntapEffect,
 };
 pub use player::{
-    CascadeEffect, CastSourceEffect, CastTaggedEffect, ControlPlayerEffect, CreateEmblemEffect,
-    DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect,
-    ExileUntilMatchCastEffect, ExileUntilMatchGrantPlayEffect, ExperienceCountersEffect,
-    ExtraTurnAfterNextTurnEffect, ExtraTurnEffect, GrantEffect, GrantPlayFromGraveyardEffect,
-    GrantPlayTaggedDuration, GrantPlayTaggedEffect,
-    GrantTaggedSpellLifeCostByManaValueEffect, LoseTheGameEffect, PayEnergyEffect,
-    PoisonCountersEffect, SkipCombatPhasesEffect, SkipDrawStepEffect,
+    AdditionalLandPlaysEffect, BecomeMonarchEffect, CascadeEffect, CastSourceEffect,
+    CastTaggedEffect, ChooseCardNameEffect, ControlPlayerEffect, CreateEmblemEffect,
+    DiscoverEffect, EnergyCountersEffect, ExileInsteadOfGraveyardEffect, ExileUntilMatchCastEffect,
+    ExileUntilMatchGrantPlayEffect, ExperienceCountersEffect, ExtraTurnAfterNextTurnEffect,
+    ExtraTurnEffect, GrantEffect, GrantPlayFromGraveyardEffect, GrantPlayTaggedDuration,
+    GrantPlayTaggedEffect, GrantTaggedSpellLifeCostByManaValueEffect, LoseTheGameEffect,
+    PayEnergyEffect, PoisonCountersEffect, SkipCombatPhasesEffect, SkipDrawStepEffect,
     SkipNextCombatPhaseThisTurnEffect, SkipTurnEffect, WinTheGameEffect,
 };
 pub use replacement::{ApplyReplacementEffect, ReplacementApplyMode};
@@ -135,8 +136,9 @@ pub use tokens::{
 pub use zones::{
     BattlefieldController, DestroyEffect, DestroyNoRegenerationEffect, ExileEffect,
     ExileFromHandAsCostEffect, ExileUntilDuration, ExileUntilEffect, HauntExileEffect,
-    MoveToLibrarySecondFromTopEffect, MoveToZoneEffect, PutOntoBattlefieldEffect,
-    ReorderGraveyardEffect, ReorderLibraryTopEffect, ReturnAllToBattlefieldEffect,
-    ReturnFromGraveyardOrExileToBattlefieldEffect, ReturnFromGraveyardToBattlefieldEffect,
-    ReturnFromGraveyardToHandEffect, ReturnToHandEffect, SacrificeEffect, SacrificeTargetEffect,
+    MoveToLibraryNthFromTopEffect, MoveToLibrarySecondFromTopEffect, MoveToZoneEffect,
+    PutOntoBattlefieldEffect, ReorderGraveyardEffect, ReorderLibraryTopEffect,
+    ReturnAllToBattlefieldEffect, ReturnFromGraveyardOrExileToBattlefieldEffect,
+    ReturnFromGraveyardToBattlefieldEffect, ReturnFromGraveyardToHandEffect, ReturnToHandEffect,
+    SacrificeEffect, SacrificeTargetEffect,
 };

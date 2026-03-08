@@ -1,6 +1,6 @@
 //! Add mana effect implementation.
 
-use super::choice_helpers::credit_mana_symbols;
+use super::choice_helpers::credit_mana_symbols_from_context;
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
@@ -50,7 +50,7 @@ impl EffectExecutor for AddManaEffect {
     ) -> Result<EffectOutcome, ExecutionError> {
         let player_id = resolve_player_filter(game, &self.player, ctx)?;
 
-        credit_mana_symbols(game, player_id, self.mana.iter().copied());
+        credit_mana_symbols_from_context(game, player_id, self.mana.iter().copied(), ctx);
 
         Ok(EffectOutcome::from_result(EffectResult::ManaAdded(
             self.mana.clone(),

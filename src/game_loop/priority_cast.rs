@@ -44,6 +44,29 @@ fn collect_available_casting_methods(
                 });
             }
         }
+
+        let granted = game
+            .grant_registry
+            .granted_alternative_casts_for_card(game, spell_id, Zone::Hand, player);
+        let base_alt_idx = spell.alternative_casts.len();
+        for (offset, grant) in granted.iter().enumerate() {
+            if grant.method.cast_from_zone() != Zone::Hand
+                || !can_cast_with_alternative_from_hand(game, player, spell, spell_id, &grant.method)
+            {
+                continue;
+            }
+
+            let (name, cost_desc) = format_alternative_method(&grant.method, spell);
+            methods.push(CastingMethodOption {
+                method: CastingMethod::PlayFrom {
+                    source: grant.source_id,
+                    zone: Zone::Hand,
+                    use_alternative: Some(base_alt_idx + offset),
+                },
+                name,
+                cost_description: cost_desc,
+            });
+        }
     }
 
     methods
@@ -338,7 +361,13 @@ fn format_alternative_method(
             }
             let cost_effects = method.cost_effects();
             for effect in cost_effects {
-                parts.push(format!("{:?}", effect));
+                let rendered =
+                    crate::compiled_text::compile_effect_list(std::slice::from_ref(&effect));
+                if rendered.trim().is_empty() {
+                    parts.push("additional cost".to_string());
+                } else {
+                    parts.push(rendered);
+                }
             }
             ("Bestow".to_string(), parts.join(", "))
         }
@@ -351,7 +380,13 @@ fn format_alternative_method(
                 parts.push(format_mana_cost_simple(mana));
             }
             for effect in cost_effects {
-                parts.push(format!("{:?}", effect));
+                let rendered =
+                    crate::compiled_text::compile_effect_list(std::slice::from_ref(&effect));
+                if rendered.trim().is_empty() {
+                    parts.push("additional cost".to_string());
+                } else {
+                    parts.push(rendered);
+                }
             }
             let cost_desc = if parts.is_empty() {
                 "Free".to_string()

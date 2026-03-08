@@ -9,8 +9,8 @@ use crate::cards::builders::{
     split_on_and, token_index_for_word_index, trim_commas, words,
 };
 use crate::{
-    CardType, ColorSet, ObjectFilter, PlayerFilter, Supertype, TagKey, TaggedObjectConstraint,
-    TaggedOpbjectRelation, Zone,
+    CardType, Color, ColorSet, ObjectFilter, PlayerFilter, Supertype, TagKey,
+    TaggedObjectConstraint, TaggedOpbjectRelation, Zone,
 };
 
 fn parse_attached_reference_or_another_disjunction(
@@ -756,6 +756,14 @@ pub(crate) fn parse_object_filter(
         }
     }
 
+    if all_words.first().is_some_and(|word| matches!(*word, "it" | "them")) {
+        filter.tagged_constraints.push(TaggedObjectConstraint {
+            tag: TagKey::from(IT_TAG),
+            relation: TaggedOpbjectRelation::IsTaggedObject,
+        });
+        all_words.remove(0);
+    }
+
     if let Some(idx) = all_words
         .windows(7)
         .position(|window| window == ["that", "entered", "since", "your", "last", "turn", "ended"])
@@ -943,23 +951,45 @@ pub(crate) fn parse_object_filter(
         all_words = remaining;
     }
 
-    if all_words.windows(4).any(|window| {
-        window == ["one", "or", "more", "colors"] || window == ["one", "or", "more", "color"]
+    if let Some(color_count_idx) = all_words.windows(4).position(|window| {
+        matches!(
+            window,
+            ["one", "or", "more", "colors"]
+                | ["one", "or", "more", "color"]
+                | ["two", "or", "more", "colors"]
+                | ["two", "or", "more", "color"]
+                | ["three", "or", "more", "colors"]
+                | ["three", "or", "more", "color"]
+                | ["four", "or", "more", "colors"]
+                | ["four", "or", "more", "color"]
+                | ["five", "or", "more", "colors"]
+                | ["five", "or", "more", "color"]
+        )
     }) {
-        return Err(CardTextError::ParseError(format!(
-            "unsupported color-count object filter (clause: '{}')",
-            all_words.join(" ")
-        )));
+        let count_word = all_words[color_count_idx];
+        if count_word == "one" {
+            let any_color: ColorSet = Color::ALL.into_iter().collect();
+            filter.colors = Some(any_color);
+        } else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported color-count object filter (clause: '{}')",
+                all_words.join(" ")
+            )));
+        }
     }
-    if all_words.windows(3).any(|window| {
+    let has_power_or_toughness_clause = all_words.windows(3).any(|window| {
         window == ["power", "or", "toughness"] || window == ["toughness", "or", "power"]
-    }) {
+    });
+    if has_power_or_toughness_clause
+        && !all_words
+            .iter()
+            .any(|word| matches!(*word, "spell" | "spells"))
+    {
         return Err(CardTextError::ParseError(format!(
             "unsupported power-or-toughness object filter (clause: '{}')",
             all_words.join(" ")
         )));
     }
-
     if all_words.first().is_some_and(|word| *word == "equipped") {
         filter.tagged_constraints.push(TaggedObjectConstraint {
             tag: TagKey::from("equipped"),
@@ -1093,12 +1123,18 @@ pub(crate) fn parse_object_filter(
         }
     }
 
-    if all_words.len() == 1 && (all_words[0] == "it" || all_words[0] == "them") {
+    if all_words
+        .first()
+        .is_some_and(|word| *word == "it" || *word == "them")
+    {
         filter.tagged_constraints.push(TaggedObjectConstraint {
             tag: IT_TAG.into(),
             relation: TaggedOpbjectRelation::IsTaggedObject,
         });
-        return Ok(filter);
+        if all_words.len() == 1 {
+            return Ok(filter);
+        }
+        all_words.remove(0);
     }
 
     let has_share_card_type = (all_words.contains(&"share") || all_words.contains(&"shares"))
@@ -2363,6 +2399,42 @@ pub(crate) fn parse_object_filter(
         filter = disjunction;
     }
 
+    if has_power_or_toughness_clause && saw_spell {
+        let mut power_or_toughness_cmp = None;
+        for idx in 0..all_words.len() {
+            let (_, value_tokens) = match all_words.get(idx..) {
+                Some(["power", "or", "toughness", rest @ ..])
+                | Some(["toughness", "or", "power", rest @ ..]) => {
+                    (crate::filter::PtReference::Effective, rest)
+                }
+                _ => continue,
+            };
+            let Some((cmp, _)) =
+                parse_filter_comparison_tokens("power", value_tokens, &clause_words)?
+            else {
+                continue;
+            };
+            power_or_toughness_cmp = Some(cmp);
+            break;
+        }
+        if let Some(cmp) = power_or_toughness_cmp {
+            let mut base = filter.clone();
+            base.any_of.clear();
+            base.power = None;
+            base.toughness = None;
+
+            let mut power_branch = base.clone();
+            power_branch.power = Some(cmp.clone());
+
+            let mut toughness_branch = base;
+            toughness_branch.toughness = Some(cmp);
+
+            let mut disjunction = ObjectFilter::default();
+            disjunction.any_of = vec![power_branch, toughness_branch];
+            filter = disjunction;
+        }
+    }
+
     let has_constraints = !filter.card_types.is_empty()
         || !filter.all_card_types.is_empty()
         || !filter.supertypes.is_empty()
@@ -2561,6 +2633,36 @@ pub(crate) fn parse_spell_filter(tokens: &[Token]) -> ObjectFilter {
         cmp_idx += axis_word_count + consumed;
     }
 
+    for idx in 0..words.len() {
+        let Some(value_tokens) = (match words.get(idx..) {
+            Some(["power", "or", "toughness", rest @ ..]) => Some(rest),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let Some((cmp, _)) = parse_filter_comparison_tokens("power", value_tokens, &clause_words)
+            .ok()
+            .flatten()
+        else {
+            continue;
+        };
+
+        let mut base = filter.clone();
+        base.any_of.clear();
+        base.power = None;
+        base.toughness = None;
+
+        let mut power_branch = base.clone();
+        power_branch.power = Some(cmp.clone());
+
+        let mut toughness_branch = base;
+        toughness_branch.toughness = Some(cmp);
+
+        let mut disjunction = ObjectFilter::default();
+        disjunction.any_of = vec![power_branch, toughness_branch];
+        return disjunction;
+    }
+
     filter
 }
 
@@ -2576,6 +2678,7 @@ pub(crate) fn spell_filter_has_identity(filter: &ObjectFilter) -> bool {
         || filter.targets_player.is_some()
         || filter.targets_object.is_some()
         || filter.alternative_cast.is_some()
+        || !filter.any_of.is_empty()
 }
 
 pub(crate) fn merge_spell_filters(base: &mut ObjectFilter, extra: ObjectFilter) {

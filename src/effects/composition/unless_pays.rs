@@ -163,39 +163,16 @@ impl EffectExecutor for UnlessPaysEffect {
             mana_symbols.push(ManaSymbol::Generic(capped));
         }
 
-        // Format the mana cost for display
-        let mana_display: String = self
-            .mana
-            .iter()
-            .map(|s| format!("{:?}", s))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let multiplied_mana_display = if mana_multiplier > 1 && !mana_display.is_empty() {
-            format!("({mana_display}) x {mana_multiplier}")
+        let mana_display = if mana_symbols.is_empty() {
+            None
         } else {
-            mana_display.clone()
+            Some(ManaCost::from_symbols(mana_symbols.clone()).to_oracle())
         };
-        let additional_display = if additional_generic > 0 {
-            format!(" plus {additional_generic} generic mana")
-        } else {
-            String::new()
-        };
-        let payment_display = if multiplied_mana_display.is_empty() && additional_generic == 0 {
-            if life_to_pay > 0 {
-                format!("{life_to_pay} life")
-            } else {
-                "no cost".to_string()
-            }
-        } else if multiplied_mana_display.is_empty() {
-            if life_to_pay > 0 {
-                format!("{additional_generic} generic mana and {life_to_pay} life")
-            } else {
-                format!("{additional_generic} generic mana")
-            }
-        } else if life_to_pay > 0 {
-            format!("{multiplied_mana_display}{additional_display} and {life_to_pay} life")
-        } else {
-            format!("{multiplied_mana_display}{additional_display}")
+        let payment_display = match (mana_display, life_to_pay) {
+            (None, 0) => "no cost".to_string(),
+            (None, life) => format!("{life} life"),
+            (Some(mana), 0) => mana,
+            (Some(mana), life) => format!("{mana} and {life} life"),
         };
 
         for paying_player in paying_players {

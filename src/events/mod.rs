@@ -280,6 +280,7 @@ impl Event {
                 enters_tapped,
                 enters_with_counters,
                 enters_as_copy_of: None,
+                added_subtypes: Vec::new(),
             },
             ProvNodeId::default(),
         )

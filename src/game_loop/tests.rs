@@ -4,6 +4,7 @@ mod tests {
     use crate::ability::Ability;
     use crate::ability::AbilityKind;
     use crate::card::{CardBuilder, PowerToughness};
+    use crate::cards::builders::CardDefinitionBuilder;
     use crate::cards::definitions::emrakul_the_promised_end;
     use crate::combat_state::AttackTarget;
     use crate::decision::{AutoPassDecisionMaker, DecisionMaker};
@@ -47,6 +48,119 @@ mod tests {
             game.damage_to_players_this_turn
                 .get(&PlayerId::from_index(1)),
             Some(&3)
+        );
+    }
+
+    #[test]
+    fn test_monarch_end_step_draws_a_card() {
+        let mut game = setup_game();
+        let mut trigger_queue = TriggerQueue::new();
+        let bob = PlayerId::from_index(1);
+
+        let library_card = CardBuilder::new(CardId::from_raw(9102), "Monarch Draw Test")
+            .card_types(vec![CardType::Artifact])
+            .build();
+        game.create_object_from_card(&library_card, bob, Zone::Library);
+
+        game.turn.active_player = bob;
+        game.turn.phase = Phase::Ending;
+        game.turn.step = Some(crate::game_state::Step::End);
+        game.monarch = Some(bob);
+
+        let hand_before = game.player(bob).expect("bob exists").hand.len();
+        let library_before = game.player(bob).expect("bob exists").library.len();
+
+        generate_and_queue_step_triggers(&mut game, &mut trigger_queue);
+
+        assert_eq!(
+            trigger_queue.entries.len(),
+            1,
+            "the monarch should get a draw trigger at the beginning of their end step"
+        );
+        assert_eq!(
+            trigger_queue.entries[0].source_name.as_str(),
+            "The Monarch",
+            "the designation trigger should have a stable synthetic source name"
+        );
+        assert_eq!(
+            trigger_queue.entries[0].controller, bob,
+            "the monarch controls the designation trigger"
+        );
+
+        put_triggers_on_stack(&mut game, &mut trigger_queue)
+            .expect("monarch draw trigger should go on the stack");
+        assert_eq!(
+            game.stack.len(),
+            1,
+            "monarch draw trigger should use the stack"
+        );
+
+        resolve_stack_entry(&mut game).expect("monarch draw trigger should resolve");
+
+        assert_eq!(
+            game.player(bob).expect("bob exists").hand.len(),
+            hand_before + 1,
+            "the monarch should draw one card on their end step"
+        );
+        assert_eq!(
+            game.player(bob).expect("bob exists").library.len(),
+            library_before - 1,
+            "the drawn card should leave the library"
+        );
+    }
+
+    #[test]
+    fn test_monarch_changes_when_creature_deals_combat_damage_to_monarch() {
+        let mut game = setup_game();
+        let mut trigger_queue = TriggerQueue::new();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let attacker_id = create_creature(&mut game, "Monarch Raider", alice, 3, 3);
+        game.monarch = Some(bob);
+
+        let events = vec![CombatDamageEvent {
+            source: attacker_id,
+            target: DamageEventTarget::Player(bob),
+            amount: 3,
+            life_lost: 3,
+            result: DamageResult {
+                damage_dealt: 3,
+                ..DamageResult::default()
+            },
+        }];
+
+        generate_damage_triggers(&mut game, &events, &mut trigger_queue);
+
+        assert_eq!(
+            trigger_queue.entries.len(),
+            1,
+            "combat damage to the monarch should queue the designation trigger"
+        );
+        assert_eq!(
+            trigger_queue.entries[0].source_name.as_str(),
+            "The Monarch",
+            "designation transfer should come from the monarch rules object"
+        );
+        assert_eq!(
+            trigger_queue.entries[0].controller, bob,
+            "the damaged monarch controls the transfer trigger"
+        );
+
+        put_triggers_on_stack(&mut game, &mut trigger_queue)
+            .expect("monarch transfer trigger should go on the stack");
+        assert_eq!(
+            game.stack.len(),
+            1,
+            "the monarch transfer trigger should be put on the stack"
+        );
+
+        resolve_stack_entry(&mut game).expect("monarch transfer trigger should resolve");
+
+        assert_eq!(
+            game.monarch,
+            Some(alice),
+            "the attacking creature's controller should become the monarch"
         );
     }
 
@@ -2968,6 +3082,7 @@ mod tests {
                     activation_restrictions: vec![],
                     mana_output: None,
                     activation_condition: None,
+                    mana_usage_restrictions: vec![],
                 }),
                 functional_zones: vec![Zone::Battlefield],
                 text: None,
@@ -3014,6 +3129,7 @@ mod tests {
                     activation_restrictions: vec![],
                     mana_output: None,
                     activation_condition: None,
+                    mana_usage_restrictions: vec![],
                 }),
                 functional_zones: vec![Zone::Battlefield],
                 text: None,
@@ -3069,6 +3185,7 @@ mod tests {
                     activation_restrictions: vec![],
                     mana_output: None,
                     activation_condition: Some(crate::ConditionExpr::MaxActivationsPerTurn(2)),
+                    mana_usage_restrictions: vec![],
                 }),
                 functional_zones: vec![Zone::Battlefield],
                 text: None,
@@ -3594,6 +3711,7 @@ mod tests {
                     activation_restrictions: vec![],
                     mana_output: None,
                     activation_condition: None,
+                    mana_usage_restrictions: vec![],
                 }),
                 functional_zones: vec![Zone::Battlefield],
                 text: None,
@@ -5804,6 +5922,106 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_omniscience_grants_free_cast_from_hand_without_mana() {
+        use crate::cards::definitions::lightning_bolt;
+        use crate::decision::compute_legal_actions;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.priority_player = Some(alice);
+
+        let omniscience = CardDefinitionBuilder::new(CardId::from_raw(9001), "Omniscience Test")
+            .card_types(vec![CardType::Enchantment])
+            .parse_text("You may cast spells from your hand without paying their mana costs.")
+            .expect("Omniscience text should parse");
+        game.create_object_from_definition(&omniscience, alice, Zone::Battlefield);
+
+        let bolt = lightning_bolt();
+        let bolt_id = game.create_object_from_definition(&bolt, alice, Zone::Hand);
+
+        let actions = compute_legal_actions(&game, alice);
+        let free_cast = actions.iter().find(|action| {
+            matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id,
+                    from_zone: Zone::Hand,
+                    casting_method: CastingMethod::PlayFrom {
+                        zone: Zone::Hand,
+                        use_alternative: Some(_),
+                        ..
+                    },
+                } if *spell_id == bolt_id
+            )
+        });
+
+        assert!(
+            free_cast.is_some(),
+            "Omniscience should expose a free cast action from hand without available mana"
+        );
+    }
+
+    #[test]
+    fn test_omniscience_choose_casting_method_includes_free_option() {
+        use crate::cards::definitions::{basic_mountain, lightning_bolt};
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.priority_player = Some(alice);
+
+        let omniscience = CardDefinitionBuilder::new(CardId::from_raw(9002), "Omniscience Test")
+            .card_types(vec![CardType::Enchantment])
+            .parse_text("You may cast spells from your hand without paying their mana costs.")
+            .expect("Omniscience text should parse");
+        game.create_object_from_definition(&omniscience, alice, Zone::Battlefield);
+
+        let mountain = basic_mountain();
+        game.create_object_from_definition(&mountain, alice, Zone::Battlefield);
+
+        let bolt = lightning_bolt();
+        let bolt_id = game.create_object_from_definition(&bolt, alice, Zone::Hand);
+
+        let mut state = PriorityLoopState::new(game.players_in_game());
+        let mut trigger_queue = TriggerQueue::new();
+        let cast_response = PriorityResponse::PriorityAction(LegalAction::CastSpell {
+            spell_id: bolt_id,
+            from_zone: Zone::Hand,
+            casting_method: CastingMethod::Normal,
+        });
+
+        let result =
+            apply_priority_response(&mut game, &mut trigger_queue, &mut state, &cast_response);
+
+        match result {
+            Ok(GameProgress::NeedsDecisionCtx(
+                crate::decisions::context::DecisionContext::SelectOptions(ctx),
+            )) => {
+                assert_eq!(ctx.player, alice);
+                assert_eq!(ctx.source, Some(bolt_id));
+                assert_eq!(ctx.options.len(), 2, "Should offer normal and free cast methods");
+                assert!(
+                    ctx.options.iter().any(|option| {
+                        option.description.to_ascii_lowercase().contains("without paying mana cost")
+                            || option.description.to_ascii_lowercase().contains("free")
+                    }),
+                    "expected a free-cast option in ChooseCastingMethod, got {:?}",
+                    ctx.options
+                );
+            }
+            other => panic!(
+                "Expected SelectOptions context for Omniscience casting choice, got {:?}",
+                other
+            ),
+        }
+    }
+
     // =========================================================================
     // Underworld Breach / Granted Escape Tests
     // =========================================================================
@@ -7997,6 +8215,101 @@ mod tests {
                 .unwrap_or(false)
         });
         assert!(forest_on_battlefield, "forest should be on battlefield");
+    }
+
+    #[test]
+    fn test_sundering_eruption_lets_target_controller_search_after_land_dies() {
+        use crate::cards::builders::CardDefinitionBuilder;
+        use crate::cards::definitions::{basic_forest, basic_mountain};
+        use crate::executor::{ExecutionContext, ResolvedTarget, execute_effect};
+        use crate::ids::ObjectId;
+
+        struct AcceptAndChooseFirstDecisionMaker;
+        impl DecisionMaker for AcceptAndChooseFirstDecisionMaker {
+            fn decide_boolean(
+                &mut self,
+                _game: &GameState,
+                _ctx: &crate::decisions::context::BooleanContext,
+            ) -> bool {
+                true
+            }
+
+            fn decide_objects(
+                &mut self,
+                _game: &GameState,
+                ctx: &crate::decisions::context::SelectObjectsContext,
+            ) -> Vec<ObjectId> {
+                ctx.candidates
+                    .iter()
+                    .filter(|candidate| candidate.legal)
+                    .map(|candidate| candidate.id)
+                    .take(1)
+                    .collect()
+            }
+        }
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let sundering_eruption = CardDefinitionBuilder::new(CardId::new(), "Sundering Eruption")
+            .parse_text(
+                "Mana cost: {2}{R}\n\
+                 Type: Sorcery\n\
+                 Destroy target land. Its controller may search their library for a basic land card, put it onto the battlefield tapped, then shuffle. Creatures without flying can't block this turn.",
+            )
+            .expect("Sundering Eruption text should parse");
+        let spell_effects = sundering_eruption
+            .spell_effect
+            .as_ref()
+            .expect("Sundering Eruption should have spell effects");
+
+        let source_id = game.create_object_from_definition(&sundering_eruption, alice, Zone::Hand);
+        let target_land_id =
+            game.create_object_from_definition(&basic_forest(), bob, Zone::Battlefield);
+        let library_basic_id =
+            game.create_object_from_definition(&basic_mountain(), bob, Zone::Library);
+        let bob_library_before = game.player(bob).expect("bob exists").library.len();
+
+        let mut dm = AcceptAndChooseFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new_default(source_id, alice)
+            .with_decision_maker(&mut dm)
+            .with_targets(vec![ResolvedTarget::Object(target_land_id)]);
+        ctx.snapshot_targets(&game);
+
+        for effect in spell_effects {
+            execute_effect(&mut game, effect, &mut ctx).expect("spell effect should resolve");
+        }
+
+        let bob_battlefield_has_mountain = game.battlefield.iter().any(|&id| {
+            game.object(id)
+                .map(|obj| obj.name == "Mountain" && obj.controller == bob && game.is_tapped(id))
+                .unwrap_or(false)
+        });
+        assert!(
+            bob_battlefield_has_mountain,
+            "Bob should put a tapped basic land onto the battlefield"
+        );
+        let bob_graveyard_has_forest = game.player(bob).is_some_and(|player| {
+            player.graveyard.iter().any(|&id| {
+                game.object(id)
+                    .map(|obj| obj.name == "Forest" && obj.owner == bob)
+                    .unwrap_or(false)
+            })
+        });
+        assert!(
+            bob_graveyard_has_forest,
+            "the destroyed target land should be in Bob's graveyard"
+        );
+        assert_eq!(
+            game.player(bob).expect("bob exists").library.len(),
+            bob_library_before - 1,
+            "Bob should have searched a basic land out of the library"
+        );
+        assert!(
+            game.object(library_basic_id).is_none(),
+            "the searched basic land should become a new battlefield object"
+        );
     }
 
     // ============================================================================

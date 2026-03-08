@@ -1,6 +1,7 @@
 use crate::cards::builders::{
     CardTextError, IT_TAG, TargetAst, Token, is_article, parse_card_type, parse_non_type,
-    parse_number, parse_object_filter, parse_subtype_word, span_from_tokens,
+    parse_filter_counter_constraint_words, parse_number, parse_object_filter, parse_subtype_word,
+    span_from_tokens,
     token_index_for_word_index, words,
 };
 use crate::{CardType, ChoiceCount, ObjectFilter, PlayerFilter, TagKey, Zone};
@@ -18,6 +19,15 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
 
     let mut random_choice = false;
     let token_words = words(tokens);
+    if token_words.contains(&"defending")
+        && token_words.contains(&"player")
+        && token_words.contains(&"choice")
+    {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported defending player's choice target phrase '{}'",
+            token_words.join(" ")
+        )));
+    }
     if token_words.ends_with(&["chosen", "at", "random"])
         && let Some(random_idx) = token_index_for_word_index(tokens, token_words.len() - 3)
     {
@@ -32,6 +42,19 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
     let mut explicit_target = false;
 
     let all_words = words(tokens);
+    if all_words.first().is_some_and(|word| matches!(*word, "it" | "them"))
+        && all_words.get(1).is_some_and(|word| *word == "with")
+        && let Some((counter_constraint, consumed)) =
+            parse_filter_counter_constraint_words(&all_words[2..])
+        && consumed == all_words.len().saturating_sub(2)
+    {
+        let mut filter = ObjectFilter::tagged(TagKey::from(IT_TAG));
+        filter.with_counter = Some(counter_constraint);
+        return Ok(wrap_target_count(
+            TargetAst::Object(filter, None, span),
+            target_count,
+        ));
+    }
     if all_words.as_slice() == ["that", "permanent"] || all_words.as_slice() == ["that", "creature"]
     {
         return Ok(wrap_target_count(
@@ -305,7 +328,9 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
 
     // "the top two cards of your library" style phrases place the numeric count
     // after "top", so parse and preserve that count before object-filter parsing.
+    let mut saw_top_prefix = false;
     if tokens.get(idx).is_some_and(|token| token.is_word("top")) {
+        saw_top_prefix = true;
         let count_idx = idx + 1;
 
         if tokens
@@ -486,6 +511,9 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
     if words_all.as_slice() == ["any", "target"] {
         return Ok(wrap_target_count(TargetAst::AnyTarget(span), target_count));
     }
+    if words_all.as_slice() == ["any", "other", "target"] {
+        return Ok(wrap_target_count(TargetAst::AnyTarget(span), target_count));
+    }
 
     let remaining = &tokens[idx..];
     let remaining_words: Vec<&str> = words(remaining)
@@ -493,6 +521,19 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
         .filter(|word| !is_article(word))
         .collect();
     let target_span = if explicit_target { span } else { None };
+
+    let bare_top_library_shorthand = saw_top_prefix
+        && !remaining_words.contains(&"library")
+        && (matches!(remaining_words.as_slice(), ["top", "card"] | ["card"])
+            || (target_count.is_some() && matches!(remaining_words.as_slice(), ["cards"])));
+    if bare_top_library_shorthand {
+        let mut filter = ObjectFilter::default().in_zone(Zone::Library);
+        filter.owner = Some(PlayerFilter::You);
+        return Ok(wrap_target_count(
+            TargetAst::Object(filter, target_span, None),
+            target_count,
+        ));
+    }
 
     if remaining_words.as_slice() == ["player", "on", "your", "team"]
         || remaining_words.as_slice() == ["players", "on", "your", "team"]
@@ -517,6 +558,12 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
     if remaining_words.as_slice() == ["that", "opponent"] {
         return Ok(wrap_target_count(
             TargetAst::Player(PlayerFilter::target_opponent(), target_span),
+            target_count,
+        ));
+    }
+    if remaining_words.as_slice() == ["defending", "player"] {
+        return Ok(wrap_target_count(
+            TargetAst::Player(PlayerFilter::Defending, target_span),
             target_count,
         ));
     }
@@ -620,6 +667,22 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
     if remaining_words.as_slice() == ["spell"] || remaining_words.as_slice() == ["spells"] {
         return Ok(wrap_target_count(
             TargetAst::Spell(target_span),
+            target_count,
+        ));
+    }
+
+    if remaining_words
+        .first()
+        .is_some_and(|word| matches!(*word, "it" | "them"))
+        && remaining_words.get(1).is_some_and(|word| *word == "with")
+        && let Some((counter_constraint, consumed)) =
+            parse_filter_counter_constraint_words(&remaining_words[2..])
+        && consumed == remaining_words.len().saturating_sub(2)
+    {
+        let mut filter = ObjectFilter::tagged(TagKey::from(IT_TAG));
+        filter.with_counter = Some(counter_constraint);
+        return Ok(wrap_target_count(
+            TargetAst::Object(filter, target_span, span),
             target_count,
         ));
     }
@@ -746,15 +809,13 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
         ));
     }
 
-    let opponent_or_planeswalker = remaining_words.windows(3).any(|window| {
-        matches!(
-            window,
-            ["opponent", "or", "planeswalker"]
-                | ["opponents", "or", "planeswalkers"]
-                | ["planeswalker", "or", "opponent"]
-                | ["planeswalkers", "or", "opponents"]
-        )
-    });
+    let opponent_or_planeswalker = matches!(
+        remaining_words.as_slice(),
+        ["opponent", "or", "planeswalker"]
+            | ["opponents", "or", "planeswalkers"]
+            | ["planeswalker", "or", "opponent"]
+            | ["planeswalkers", "or", "opponents"]
+    );
     if opponent_or_planeswalker {
         return Ok(wrap_target_count(
             TargetAst::PlayerOrPlaneswalker(PlayerFilter::Opponent, target_span),
@@ -782,15 +843,13 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
         ));
     }
 
-    let player_or_planeswalker = remaining_words.windows(3).any(|window| {
-        matches!(
-            window,
-            ["player", "or", "planeswalker"]
-                | ["players", "or", "planeswalkers"]
-                | ["planeswalker", "or", "player"]
-                | ["planeswalkers", "or", "players"]
-        )
-    });
+    let player_or_planeswalker = matches!(
+        remaining_words.as_slice(),
+        ["player", "or", "planeswalker"]
+            | ["players", "or", "planeswalkers"]
+            | ["planeswalker", "or", "player"]
+            | ["planeswalkers", "or", "players"]
+    );
     if player_or_planeswalker {
         return Ok(wrap_target_count(
             TargetAst::PlayerOrPlaneswalker(PlayerFilter::Any, target_span),
@@ -840,7 +899,28 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
         return Ok(wrap_target_count(TargetAst::AnyTarget(span), target_count));
     }
 
-    let filter = parse_object_filter(remaining, other)?;
+    let mixed_object_player_target = remaining_words.contains(&"player")
+        && remaining_words.contains(&"planeswalker")
+        && remaining_words.contains(&"token");
+    if mixed_object_player_target {
+        return Err(CardTextError::ParseError(format!(
+            "unsupported creature-token/player/planeswalker target phrase (clause: '{}')",
+            remaining_words.join(" ")
+        )));
+    }
+
+    let mut filter = parse_object_filter(remaining, other)?;
+    if filter.with_counter.is_none()
+        && remaining_words
+            .first()
+            .is_some_and(|word| matches!(*word, "it" | "them"))
+        && remaining_words.get(1).is_some_and(|word| *word == "with")
+        && let Some((counter_constraint, consumed)) =
+            parse_filter_counter_constraint_words(&remaining_words[2..])
+        && consumed == remaining_words.len().saturating_sub(2)
+    {
+        filter.with_counter = Some(counter_constraint);
+    }
     let it_span = if filter
         .tagged_constraints
         .iter()
@@ -915,6 +995,10 @@ pub(crate) fn is_source_reference_words(words: &[&str]) -> bool {
     }
 
     if words.len() == 1 {
+        return true;
+    }
+
+    if words.len() > 2 && words[1] == "of" {
         return true;
     }
 

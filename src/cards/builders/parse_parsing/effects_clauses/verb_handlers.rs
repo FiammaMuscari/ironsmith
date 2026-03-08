@@ -12,8 +12,7 @@ use crate::cards::builders::parse_parsing::effects_clauses::{
 use crate::cards::builders::parse_parsing::{
     extract_subject_player, parse_add_mana_equal_amount_value,
     parse_devotion_value_from_add_clause, parse_dynamic_cost_modifier_value, parse_mana_symbol,
-    parse_number, parse_subtype_word, parse_supertype_word, parse_target_count_range_prefix,
-    try_build_unless, wrap_target_count,
+    parse_number, parse_target_count_range_prefix, try_build_unless, wrap_target_count,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
@@ -104,6 +103,54 @@ pub(crate) fn parse_effect_with_verb(
         Verb::Pay => parse_pay(tokens, subject),
         Verb::Goad => parse_goad(tokens),
     }
+}
+
+fn parse_library_nth_from_top_destination(tokens: &[Token]) -> Option<Value> {
+    let library_idx = tokens
+        .iter()
+        .position(|token| token.is_word("library") || token.is_word("libraries"))?;
+    let tail_tokens = trim_commas(&tokens[library_idx + 1..]);
+    if tail_tokens.is_empty() {
+        return None;
+    }
+
+    let filtered_tail: Vec<&str> = words(&tail_tokens)
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    let fixed_position = match filtered_tail.as_slice() {
+        ["second", "from", "top"] => Some(2),
+        ["third", "from", "top"] => Some(3),
+        ["fourth", "from", "top"] => Some(4),
+        ["fifth", "from", "top"] => Some(5),
+        _ => None,
+    };
+    if let Some(position) = fixed_position {
+        return Some(Value::Fixed(position));
+    }
+
+    let amount_start = match filtered_tail.as_slice() {
+        ["just", "beneath", "top", ..] => Some(3usize),
+        ["beneath", "top", ..] => Some(2usize),
+        _ => None,
+    }?;
+    let amount_tokens = filtered_tail[amount_start..]
+        .iter()
+        .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+        .collect::<Vec<_>>();
+    let (amount, used) = parse_value(&amount_tokens)?;
+    let amount_words = words(&amount_tokens);
+    if !matches!(amount_words.get(used).copied(), Some("card" | "cards")) {
+        return None;
+    }
+    if used + 1 > amount_words.len() {
+        return None;
+    }
+    if amount_words[used + 1..] != ["of", "that", "library"] {
+        return None;
+    }
+
+    Some(Value::Add(Box::new(amount), Box::new(Value::Fixed(1))))
 }
 
 pub(crate) fn parse_look(
@@ -329,6 +376,32 @@ pub(crate) fn parse_shuffle(
     }
 
     let clause_words = words(tokens);
+    if matches!(player, PlayerAst::ItsOwner)
+        && matches!(
+            clause_words.as_slice(),
+            ["them", "into", "their", "libraries"]
+                | ["them", "into", "their", "library"]
+                | ["those", "cards", "into", "their", "libraries"]
+                | ["those", "cards", "into", "their", "library"]
+        )
+    {
+        return Ok(EffectAst::ForEachTagged {
+            tag: TagKey::from(IT_TAG),
+            effects: vec![
+                EffectAst::MoveToZone {
+                    target: TargetAst::Tagged(TagKey::from(IT_TAG), span_from_tokens(tokens)),
+                    zone: Zone::Library,
+                    to_top: true,
+                    battlefield_controller: ReturnControllerAst::Preserve,
+                    battlefield_tapped: false,
+                    attached_to: None,
+                },
+                EffectAst::ShuffleLibrary {
+                    player: PlayerAst::ItsOwner,
+                },
+            ],
+        });
+    }
     if clause_words.contains(&"graveyard")
         || clause_words.contains(&"cards")
         || clause_words.contains(&"card")
@@ -846,6 +919,12 @@ pub(crate) fn parse_deal_damage_with_amount(
     }
 
     let target_words = words(target_tokens);
+    if target_words.as_slice() == ["instead"] {
+        return Ok(EffectAst::DealDamage {
+            amount,
+            target: TargetAst::PlayerOrPlaneswalker(PlayerFilter::Any, None),
+        });
+    }
     if target_words.starts_with(&["each", "of"]) {
         let each_of_tokens = &target_tokens[2..];
         let each_of_words = words(each_of_tokens);
@@ -2843,7 +2922,8 @@ pub(crate) fn parse_put_into_hand(
             )));
         }
 
-        let destination_words: Vec<&str> = words(&tokens[into_idx + 1..])
+        let destination_tokens = &tokens[into_idx + 1..];
+        let destination_words: Vec<&str> = words(destination_tokens)
             .into_iter()
             .filter(|word| !is_article(word))
             .collect();
@@ -2853,11 +2933,12 @@ pub(crate) fn parse_put_into_hand(
             || destination_words.contains(&"graveyards")
         {
             Some(Zone::Graveyard)
-        } else if destination_words.contains(&"library")
-            && destination_words.ends_with(&["second", "from", "top"])
-        {
-            return Ok(EffectAst::MoveToLibrarySecondFromTop {
-                target: parse_target_phrase(&target_tokens)?,
+        } else if let Some(position) = parse_library_nth_from_top_destination(destination_tokens) {
+            let target = parse_target_phrase(&target_tokens)?;
+            return Ok(if position == Value::Fixed(2) {
+                EffectAst::MoveToLibrarySecondFromTop { target }
+            } else {
+                EffectAst::MoveToLibraryNthFromTop { target, position }
             });
         } else {
             None

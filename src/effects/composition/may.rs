@@ -94,7 +94,12 @@ impl EffectExecutor for MayEffect {
         }
 
         // Generate a description from the effects
-        let description = format!("{:?}", self.effects);
+        let description = crate::compiled_text::compile_effect_list(&self.effects);
+        let description = if description.trim().is_empty() {
+            "perform the effect".to_string()
+        } else {
+            description
+        };
 
         // Use explicit decider when present ("that player may ..."), otherwise
         // preserve legacy behavior: iterated player if set, then controller.

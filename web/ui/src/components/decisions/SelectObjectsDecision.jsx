@@ -3,7 +3,7 @@ import { useGame } from "@/context/GameContext";
 import { useHoveredObjectId } from "@/context/HoverContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { normalizeDecisionText } from "./decisionText";
+import DecisionSummary from "./DecisionSummary";
 
 const STRIP_ITEM_BASE_CLASS = "h-8 max-w-[360px] min-w-[120px] justify-start self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] px-2.5 text-[12px] font-semibold text-[rgba(206,223,242,0.52)] transition-all hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]";
 const STRIP_ITEM_ACTIVE_CLASS = "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]";
@@ -115,11 +115,11 @@ export default function SelectObjectsDecision({
               : "sticky top-0 z-10 border-y border-[#2f4b67] bg-[rgba(13,24,36,0.96)] px-1.5 py-1"
           )}
         >
-          {!hideDescription && decision.description && (
-            <div className="text-[14px] text-[#b6cae1] leading-snug">
-              {normalizeDecisionText(decision.description)}
-            </div>
-          )}
+          <DecisionSummary
+            decision={decision}
+            hideDescription={hideDescription}
+            layout={layout}
+          />
           <div className="text-[13px] text-[#8ba4c1] leading-snug">
             Select {min === max ? min : `${min}-${max}`} object(s)
           </div>

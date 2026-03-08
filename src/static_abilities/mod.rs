@@ -590,6 +590,16 @@ pub trait StaticAbilityKind: std::fmt::Debug + Send + Sync + StaticAbilityKindCl
         None
     }
 
+    /// Returns info for "as this enters, choose a creature type" abilities.
+    fn creature_type_choice_as_enters(&self) -> Option<ChooseCreatureTypeAsEntersSpec> {
+        None
+    }
+
+    /// Returns info for "you may have this enter as a copy ..." abilities.
+    fn enter_as_copy_as_enters(&self) -> Option<&EnterAsCopyAsEntersSpec> {
+        None
+    }
+
     /// Returns an inline granted ability when this static ability wraps one.
     fn granted_inline_ability(&self) -> Option<&crate::ability::Ability> {
         None
@@ -794,6 +804,19 @@ pub struct ChooseColorAsEntersSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ChooseBasicLandTypeAsEntersSpec;
 
+/// Spec for "as this enters, choose a creature type" abilities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChooseCreatureTypeAsEntersSpec;
+
+/// Spec for "you may have this enter as a copy ..." abilities.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnterAsCopyAsEntersSpec {
+    pub filter: crate::target::ObjectFilter,
+    pub may: bool,
+    pub enters_tapped_if_chosen: bool,
+    pub added_subtypes: Vec<crate::types::Subtype>,
+}
+
 // Implement Clone for Box<dyn StaticAbilityKind>
 impl Clone for Box<dyn StaticAbilityKind> {
     fn clone(&self) -> Self {
@@ -832,6 +855,14 @@ impl StaticAbility {
 
     pub fn basic_land_type_choice_as_enters(&self) -> Option<ChooseBasicLandTypeAsEntersSpec> {
         self.0.basic_land_type_choice_as_enters()
+    }
+
+    pub fn creature_type_choice_as_enters(&self) -> Option<ChooseCreatureTypeAsEntersSpec> {
+        self.0.creature_type_choice_as_enters()
+    }
+
+    pub fn enter_as_copy_as_enters(&self) -> Option<&EnterAsCopyAsEntersSpec> {
+        self.0.enter_as_copy_as_enters()
     }
 
     pub fn granted_inline_ability(&self) -> Option<&crate::ability::Ability> {
@@ -1529,6 +1560,10 @@ impl StaticAbility {
         Self::new(EnterTappedForFilter::new(filter))
     }
 
+    pub fn enters_untapped_for_filter(filter: crate::target::ObjectFilter) -> Self {
+        Self::new(EnterUntappedForFilter::new(filter))
+    }
+
     pub fn enters_with_counters_for_filter(
         filter: crate::target::ObjectFilter,
         counter_type: crate::object::CounterType,
@@ -1735,6 +1770,20 @@ impl StaticAbility {
         Self::new(ability)
     }
 
+    pub fn reduce_activated_ability_costs_for_each(
+        filter: crate::target::ObjectFilter,
+        reduction: u32,
+        per_matching_objects: crate::target::ObjectFilter,
+        minimum_total_mana: Option<u32>,
+    ) -> Self {
+        let mut ability = ActivatedAbilityCostReduction::new(filter, reduction)
+            .with_per_matching_objects(per_matching_objects);
+        if let Some(minimum) = minimum_total_mana {
+            ability = ability.with_minimum_total_mana(minimum);
+        }
+        Self::new(ability)
+    }
+
     pub fn delve() -> Self {
         Self::new(Delve)
     }
@@ -1790,6 +1839,14 @@ impl StaticAbility {
 
     pub fn choose_basic_land_type_as_enters(display: String) -> Self {
         Self::new(ChooseBasicLandTypeAsEnters::new(display))
+    }
+
+    pub fn choose_creature_type_as_enters(display: String) -> Self {
+        Self::new(ChooseCreatureTypeAsEnters::new(display))
+    }
+
+    pub fn with_enter_as_copy_as_enters(spec: EnterAsCopyAsEntersSpec, display: String) -> Self {
+        Self::new(EnterAsCopyAsEnters::new(spec, display))
     }
 
     pub fn enchanted_land_is_chosen_type(display: String) -> Self {

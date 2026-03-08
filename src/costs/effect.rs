@@ -82,7 +82,16 @@ impl CostPayer for EffectCost {
         self.effect
             .0
             .cost_description()
-            .unwrap_or_else(|| format!("{:?}", self.effect))
+            .or_else(|| {
+                let rendered =
+                    crate::compiled_text::compile_effect_list(std::slice::from_ref(&self.effect));
+                if rendered.trim().is_empty() {
+                    None
+                } else {
+                    Some(rendered)
+                }
+            })
+            .unwrap_or_else(|| "Perform the stated effect".to_string())
     }
 
     fn requires_tap(&self) -> bool {

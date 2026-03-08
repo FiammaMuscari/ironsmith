@@ -127,6 +127,48 @@ pub enum ActionError {
     NotActivePlayer,
 }
 
+impl std::fmt::Display for ActionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActionError::NotYourPriority => f.write_str("You do not have priority"),
+            ActionError::WrongPhase { required, actual } => {
+                write!(f, "Wrong phase: need {required}, currently in {actual}")
+            }
+            ActionError::WrongStep { required, actual } => match (required, actual) {
+                (Some(required), Some(actual)) => {
+                    write!(f, "Wrong step: need {required}, currently in {actual}")
+                }
+                (Some(required), None) => write!(f, "Wrong step: need {required}"),
+                (None, Some(actual)) => write!(f, "Wrong step: currently in {actual}"),
+                (None, None) => f.write_str("Wrong step"),
+            },
+            ActionError::StackNotEmpty => f.write_str("The stack must be empty"),
+            ActionError::AlreadyPlayedLand => {
+                f.write_str("You have already played a land this turn")
+            }
+            ActionError::NotALand => f.write_str("That object is not a land"),
+            ActionError::CantPayCost => f.write_str("You cannot pay that cost"),
+            ActionError::SummoningSickness => f.write_str("That creature has summoning sickness"),
+            ActionError::InvalidTarget => f.write_str("Invalid target for this action"),
+            ActionError::WrongZone { expected, actual } => {
+                write!(f, "Wrong zone: need {expected}, found {actual}")
+            }
+            ActionError::NoSuchAbility => {
+                f.write_str("That object does not have the required ability")
+            }
+            ActionError::NotFaceDown => f.write_str("That permanent is not face down"),
+            ActionError::ObjectNotFound => f.write_str("Object not found"),
+            ActionError::PlayerNotFound => f.write_str("Player not found"),
+            ActionError::InvalidTiming => {
+                f.write_str("You cannot perform that action at this time")
+            }
+            ActionError::NotActivePlayer => f.write_str("You are not the active player"),
+        }
+    }
+}
+
+impl std::error::Error for ActionError {}
+
 /// Check if a special action can be performed.
 pub fn can_perform(
     action: &SpecialAction,
@@ -720,6 +762,8 @@ pub fn perform_activate_mana_ability_restricted_colors(
         );
         let effects = mana_ability.effects.clone();
         let mana = mana_ability.mana_output.clone().unwrap_or_default();
+        let mana_usage_restrictions = mana_ability.mana_usage_restrictions.clone();
+        let source_chosen_creature_type = game.chosen_creature_type(permanent_id);
 
         // Pay mana costs from TotalCost (for abilities like Blood Celebrant that cost {B})
         let mut cost_ctx = CostContext::new(permanent_id, player, decision_maker);
@@ -733,14 +777,25 @@ pub fn perform_activate_mana_ability_restricted_colors(
         // Add mana to player's pool
         if let Some(player_data) = game.player_mut(player) {
             for symbol in mana {
-                player_data.mana_pool.add(symbol, 1);
+                if mana_usage_restrictions.is_empty() {
+                    player_data.mana_pool.add(symbol, 1);
+                } else {
+                    player_data.add_restricted_mana(crate::ability::RestrictedManaUnit {
+                        symbol,
+                        source: permanent_id,
+                        source_chosen_creature_type,
+                        restrictions: mana_usage_restrictions.clone(),
+                    });
+                }
             }
         }
 
         // Execute additional effects if present (for complex mana abilities like Ancient Tomb)
         if !effects.is_empty() {
             let mut effect_ctx = ExecutionContext::new(permanent_id, player, decision_maker)
-                .with_mana_color_restriction(mana_color_restriction.clone());
+                .with_mana_color_restriction(mana_color_restriction.clone())
+                .with_mana_usage_restrictions(mana_usage_restrictions)
+                .with_mana_source_chosen_creature_type(source_chosen_creature_type);
             if let Some(x) = x_value_from_costs {
                 effect_ctx = effect_ctx.with_x(x);
             }
@@ -1218,7 +1273,7 @@ fn describe_permanent_filter(filter: &ObjectFilter) -> String {
         let types = filter
             .card_types
             .iter()
-            .map(|t| format!("{:?}", t).to_lowercase())
+            .map(|t| t.name().to_string())
             .collect::<Vec<_>>()
             .join(" or ");
         parts.push(types);

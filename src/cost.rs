@@ -326,6 +326,48 @@ pub enum CostPaymentError {
     Other(String),
 }
 
+impl std::fmt::Display for CostPaymentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CostPaymentError::SourceNotFound => f.write_str("Source object not found"),
+            CostPaymentError::PlayerNotFound => f.write_str("Player not found"),
+            CostPaymentError::InsufficientMana => f.write_str("Not enough mana"),
+            CostPaymentError::AlreadyTapped => f.write_str("That permanent is already tapped"),
+            CostPaymentError::SummoningSickness => {
+                f.write_str("That creature has summoning sickness")
+            }
+            CostPaymentError::AlreadyUntapped => f.write_str("That permanent is already untapped"),
+            CostPaymentError::InsufficientLife => f.write_str("Not enough life"),
+            CostPaymentError::SourceNotOnBattlefield => {
+                f.write_str("The source is not on the battlefield")
+            }
+            CostPaymentError::NoValidSacrificeTarget => {
+                f.write_str("No valid permanent can be sacrificed")
+            }
+            CostPaymentError::InsufficientCardsInHand => f.write_str("Not enough cards in hand"),
+            CostPaymentError::InsufficientCounters => {
+                f.write_str("Not enough counters on the source")
+            }
+            CostPaymentError::InsufficientEnergy => f.write_str("Not enough energy counters"),
+            CostPaymentError::InsufficientCardsToExile => {
+                f.write_str("Not enough cards in hand to exile")
+            }
+            CostPaymentError::InsufficientCardsInGraveyard => {
+                f.write_str("Not enough cards in the graveyard")
+            }
+            CostPaymentError::NoValidReturnTarget => {
+                f.write_str("No valid permanent can be returned to hand")
+            }
+            CostPaymentError::InsufficientCardsToReveal => {
+                f.write_str("Not enough cards in hand to reveal")
+            }
+            CostPaymentError::Other(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for CostPaymentError {}
+
 /// Check if a player can pay an activated ability's or spell's cost.
 ///
 /// This checks all cost components against the current game state.

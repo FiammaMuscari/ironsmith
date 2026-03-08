@@ -26,24 +26,28 @@ use super::{
 };
 #[allow(unused_imports)]
 use crate::cards::builders::parse_parsing::{
-    apply_exile_subject_hand_owner_context, parse_connive_clause, parse_counter_descriptor,
-    parse_counter_target_count_prefix, parse_counter_type_from_tokens,
-    parse_for_each_targeted_object_subject, parse_get_modifier_values_with_tail, parse_number,
-    parse_pt_modifier_values, parse_put_counters, parse_sentence_put_multiple_counters_on_target,
+    apply_exile_subject_hand_owner_context, parse_become_clause, parse_card_type,
+    parse_connive_clause, parse_counter_descriptor, parse_counter_target_count_prefix,
+    parse_counter_type_from_tokens, parse_for_each_targeted_object_subject,
+    parse_get_modifier_values_with_tail, parse_mana_symbol_word_flexible, parse_number,
+    parse_pt_modifier_values,
+    parse_put_counters, parse_sentence_put_multiple_counters_on_target,
     parse_sentence_target_player_chooses_then_puts_on_top_of_library,
     parse_sentence_target_player_chooses_then_you_put_it_onto_battlefield, parse_transform,
     parse_where_x_value_clause, parser_trace, parser_trace_enabled, split_on_and, split_on_comma,
+    split_on_period,
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, EffectAst, IT_TAG, IfResultPredicate, PlayerAst, PredicateAst,
-    ReturnControllerAst, SubjectAst, TagKey, TargetAst, TextSpan, Token, is_article,
-    is_source_reference_words, parse_color, parse_effect_clause, parse_keyword_mechanic_clause,
-    parse_object_filter, parse_subject, parse_target_phrase, parse_value, span_from_tokens,
-    token_index_for_word_index, words,
+    ReturnControllerAst, SubjectAst, TagKey, TargetAst, TextSpan, Token, helper_tag_for_tokens,
+    is_article, is_source_reference_words, parse_color, parse_effect_clause,
+    parse_keyword_mechanic_clause, parse_object_filter, parse_subject, parse_target_phrase,
+    parse_value, span_from_tokens, token_index_for_word_index, words,
 };
 #[allow(unused_imports)]
-use crate::effect::{ChoiceCount, Value};
+use crate::effect::{ChoiceCount, Until, Value};
+use crate::mana::ManaSymbol;
 #[allow(unused_imports)]
 use crate::target::{ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation};
 #[allow(unused_imports)]
@@ -230,6 +234,132 @@ pub(crate) fn parse_sentence_you_and_target_player_each_draw(
     tokens: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
     parse_you_and_target_player_each_draw_sentence(tokens)
+}
+
+pub(crate) fn parse_draw_for_each_card_exiled_from_hand_this_way_sentence(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let mut clause_tokens = trim_commas(tokens);
+    while clause_tokens
+        .first()
+        .is_some_and(|token| token.is_word("then") || token.is_word("and"))
+    {
+        clause_tokens.remove(0);
+    }
+
+    let clause_words = words(&clause_tokens);
+    let (player, mut effects) = match clause_words.as_slice() {
+        [
+            "that",
+            "player",
+            "shuffles",
+            "then",
+            "draws",
+            "a",
+            "card",
+            "for",
+            "each",
+            "card",
+            "exiled",
+            "from",
+            "their",
+            "hand",
+            "this",
+            "way",
+        ] => (
+            PlayerAst::That,
+            vec![EffectAst::ShuffleLibrary {
+                player: PlayerAst::That,
+            }],
+        ),
+        [
+            "that",
+            "player",
+            "draws",
+            "a",
+            "card",
+            "for",
+            "each",
+            "card",
+            "exiled",
+            "from",
+            "their",
+            "hand",
+            "this",
+            "way",
+        ] => (PlayerAst::That, Vec::new()),
+        [
+            "you",
+            "draw",
+            "a",
+            "card",
+            "for",
+            "each",
+            "card",
+            "exiled",
+            "from",
+            "your",
+            "hand",
+            "this",
+            "way",
+        ] => (PlayerAst::You, Vec::new()),
+        [
+            "draw",
+            "a",
+            "card",
+            "for",
+            "each",
+            "card",
+            "exiled",
+            "from",
+            "your",
+            "hand",
+            "this",
+            "way",
+        ] => (PlayerAst::Implicit, Vec::new()),
+        [
+            "draws",
+            "a",
+            "card",
+            "for",
+            "each",
+            "card",
+            "exiled",
+            "from",
+            "their",
+            "hand",
+            "this",
+            "way",
+        ] => (PlayerAst::That, Vec::new()),
+        [
+            "draws",
+            "a",
+            "card",
+            "for",
+            "each",
+            "card",
+            "exiled",
+            "from",
+            "your",
+            "hand",
+            "this",
+            "way",
+        ] => (PlayerAst::Implicit, Vec::new()),
+        _ => return Ok(None),
+    };
+
+    effects.push(EffectAst::DrawForEachTaggedMatching {
+        player,
+        tag: TagKey::from(IT_TAG),
+        filter: ObjectFilter::default().in_zone(Zone::Hand),
+    });
+    Ok(Some(effects))
+}
+
+pub(crate) fn parse_sentence_draw_for_each_card_exiled_from_hand_this_way(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    parse_draw_for_each_card_exiled_from_hand_this_way_sentence(tokens)
 }
 
 pub(crate) fn parse_sentence_you_and_attacking_player_each_draw_and_lose(
@@ -1833,13 +1963,22 @@ pub(crate) fn parse_sentence_comma_then_chain_special(
     let is_return_source_tail = tail_words.starts_with(&["return", "this"])
         && (tail_words.contains(&"owner") || tail_words.contains(&"owners"))
         && tail_words.contains(&"hand");
-    if !is_that_player_tail && !is_return_source_tail {
+    let is_put_source_on_top_of_library_tail = tail_words.starts_with(&["put", "this"])
+        && tail_words.contains(&"top")
+        && (tail_words.contains(&"owner") || tail_words.contains(&"owners"))
+        && tail_words.last().copied() == Some("library");
+    if !is_that_player_tail && !is_return_source_tail && !is_put_source_on_top_of_library_tail {
         return Ok(None);
     }
     if is_return_source_tail
         && !head_words
             .first()
             .is_some_and(|word| matches!(*word, "tap" | "untap"))
+    {
+        return Ok(None);
+    }
+    if is_put_source_on_top_of_library_tail
+        && !head_words.first().is_some_and(|word| *word == "draw")
     {
         return Ok(None);
     }
@@ -2349,13 +2488,31 @@ pub(crate) fn parse_sentence_choose_all_from_battlefield_and_graveyard_to_hand(
     let Some(from_idx) = clause_words.iter().position(|word| *word == "from") else {
         return Ok(None);
     };
-    let zone_pair = if clause_words[from_idx..]
-        .windows(7)
-        .any(|window| window == ["from", "the", "battlefield", "and", "from", "your", "graveyard"])
-    {
+    let zone_pair = if clause_words[from_idx..].windows(7).any(|window| {
+        window
+            == [
+                "from",
+                "the",
+                "battlefield",
+                "and",
+                "from",
+                "your",
+                "graveyard",
+            ]
+    }) {
         [Zone::Battlefield, Zone::Graveyard]
     } else if clause_words[from_idx..].windows(8).any(|window| {
-        window == ["from", "the", "command", "zone", "and", "from", "your", "graveyard"]
+        window
+            == [
+                "from",
+                "the",
+                "command",
+                "zone",
+                "and",
+                "from",
+                "your",
+                "graveyard",
+            ]
     }) {
         [Zone::Command, Zone::Graveyard]
     } else {
@@ -3117,7 +3274,7 @@ pub(crate) fn parse_sentence_exile_multi_target(
         if second_filter.controller.is_none() {
             second_filter.controller = Some(PlayerFilter::Any);
         }
-        let tag = TagKey::from("exiled_0");
+        let tag = helper_tag_for_tokens(tokens, "exiled");
         return Ok(Some(vec![
             EffectAst::ChooseObjects {
                 filter: first_filter,
@@ -3377,7 +3534,7 @@ pub(crate) fn parse_sentence_reveal_selected_cards_in_your_hand(
     filter.zone = Some(Zone::Hand);
     filter.owner = Some(PlayerFilter::You);
 
-    let tag = TagKey::from("revealed_0");
+    let tag = helper_tag_for_tokens(tokens, "revealed");
     Ok(Some(vec![
         EffectAst::ChooseObjects {
             filter,
@@ -3750,6 +3907,90 @@ pub(crate) fn parse_sentence_unless_pays(
     Ok(None)
 }
 
+pub(crate) fn parse_sentence_delayed_next_upkeep_unless_pays_lose_game(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let segments = split_on_period(tokens);
+    if segments.len() != 3 {
+        return Ok(None);
+    }
+
+    let first_effects = parse_effect_chain(&segments[0])?;
+    if first_effects.is_empty() {
+        return Ok(None);
+    }
+
+    let upkeep_tokens = trim_commas(&segments[1]);
+    let upkeep_words = words(&upkeep_tokens);
+    let pay_idx = if upkeep_words.starts_with(&[
+        "at", "the", "beginning", "of", "your", "next", "upkeep", "pay",
+    ]) {
+        7usize
+    } else if upkeep_words.starts_with(&["at", "the", "beginning", "of", "the", "next", "upkeep", "pay"])
+    {
+        8usize
+    } else {
+        return Ok(None);
+    };
+
+    let Some(pay_token_idx) = token_index_for_word_index(&upkeep_tokens, pay_idx) else {
+        return Ok(None);
+    };
+    let mana_tokens = &upkeep_tokens[pay_token_idx + 1..];
+    if mana_tokens.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing mana payment in delayed next-upkeep clause (clause: '{}')",
+            upkeep_words.join(" ")
+        )));
+    }
+
+    let mut mana = Vec::new();
+    for token in mana_tokens {
+        let Some(word) = token.as_word() else {
+            continue;
+        };
+        if let Ok(generic) = word.parse::<u8>() {
+            mana.push(ManaSymbol::Generic(generic));
+            continue;
+        }
+        if let Some(symbol) = parse_mana_symbol_word_flexible(word) {
+            mana.push(symbol);
+            continue;
+        }
+        return Err(CardTextError::ParseError(format!(
+            "unsupported mana payment in delayed next-upkeep clause (clause: '{}')",
+            upkeep_words.join(" ")
+        )));
+    }
+    if mana.is_empty() {
+        return Err(CardTextError::ParseError(format!(
+            "missing mana payment in delayed next-upkeep clause (clause: '{}')",
+            upkeep_words.join(" ")
+        )));
+    }
+
+    let lose_tokens = trim_commas(&segments[2]);
+    let lose_words = words(&lose_tokens);
+    let valid_lose_clause = lose_words == ["if", "you", "dont", "you", "lose", "the", "game"]
+        || lose_words == ["if", "you", "don't", "you", "lose", "the", "game"];
+    if !valid_lose_clause {
+        return Ok(None);
+    }
+
+    let mut effects = first_effects;
+    effects.push(EffectAst::DelayedUntilNextUpkeep {
+        player: PlayerAst::You,
+        effects: vec![EffectAst::UnlessPays {
+            effects: vec![EffectAst::LoseGame {
+                player: PlayerAst::You,
+            }],
+            player: PlayerAst::You,
+            mana,
+        }],
+    });
+    Ok(Some(effects))
+}
+
 /// Try to build an UnlessPays or UnlessAction AST from the tokens after "unless".
 /// Returns the unless wrapper containing the given `effects` as the main effects.
 pub(crate) fn try_build_unless(
@@ -3994,9 +4235,6 @@ pub(crate) fn parse_sentence_fallback_mechanic_marker(
             "and",
             "toughness",
         ])
-        || clause_words.starts_with(&[
-            "it", "becomes", "an", "angel", "in", "addition", "to", "its", "other", "types",
-        ])
         || clause_words.starts_with(&["for", "each", "1", "damage", "prevented", "this", "way"])
         || clause_words.starts_with(&[
             "for", "each", "card", "less", "than", "two", "a", "player", "draws", "this", "way",
@@ -4052,7 +4290,145 @@ pub(crate) fn parse_sentence_fallback_mechanic_marker(
     )))
 }
 
+pub(crate) fn parse_sentence_implicit_become_clause(
+    tokens: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let clause_words = words(tokens);
+    let target = if clause_words.starts_with(&["its"]) || clause_words.starts_with(&["it", "is"]) {
+        TargetAst::Tagged(TagKey::from(IT_TAG), None)
+    } else if clause_words.starts_with(&["each", "of", "them", "is"]) {
+        TargetAst::Tagged(TagKey::from(IT_TAG), None)
+    } else {
+        return Ok(None);
+    };
+    let rest_word_idx = if clause_words.starts_with(&["its"]) {
+        1usize
+    } else if clause_words.starts_with(&["it", "is"]) {
+        2usize
+    } else {
+        4usize
+    };
+
+    let rest_token_idx = token_index_for_word_index(tokens, rest_word_idx).unwrap_or(tokens.len());
+    let rest_tokens = trim_commas(&tokens[rest_token_idx..]);
+    let rest_words = words(&rest_tokens);
+    if rest_words.is_empty() || rest_words.first().copied() == Some("still") {
+        return Ok(None);
+    }
+
+    let addition_tail_len = if rest_words
+        .ends_with(&["in", "addition", "to", "its", "other", "types"])
+        || rest_words.ends_with(&["in", "addition", "to", "their", "other", "types"])
+        || rest_words.ends_with(&["in", "addition", "to", "its", "other", "type"])
+        || rest_words.ends_with(&["in", "addition", "to", "their", "other", "type"])
+    {
+        Some(6usize)
+    } else {
+        None
+    };
+
+    let body_words = if rest_words
+        .first()
+        .is_some_and(|word| matches!(*word, "a" | "an" | "the"))
+    {
+        &rest_words[1..]
+    } else {
+        &rest_words[..]
+    };
+    if body_words.is_empty() {
+        return Ok(None);
+    }
+
+    if let Ok((power, toughness)) = parse_pt_modifier_values(body_words[0])
+        && let Some(tail_len) = addition_tail_len
+        && body_words.len() > 1 + tail_len
+    {
+        let subtype_words = &body_words[1..body_words.len().saturating_sub(tail_len)];
+        let mut subtypes = Vec::new();
+        for word in subtype_words {
+            let Some(subtype) = parse_subtype_word(word)
+                .or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
+            else {
+                return Ok(None);
+            };
+            if !subtypes.contains(&subtype) {
+                subtypes.push(subtype);
+            }
+        }
+        if subtypes.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(vec![
+            EffectAst::SetBasePowerToughness {
+                power,
+                toughness,
+                target: target.clone(),
+                duration: Until::Forever,
+            },
+            EffectAst::AddSubtypes {
+                target,
+                subtypes,
+                duration: Until::Forever,
+            },
+        ]));
+    }
+
+    let type_words = if let Some(tail_len) = addition_tail_len {
+        &body_words[..body_words.len().saturating_sub(tail_len)]
+    } else {
+        body_words
+    };
+    if type_words.is_empty() {
+        return Ok(None);
+    }
+
+    let mut card_types = Vec::new();
+    let mut all_card_types = true;
+    for word in type_words {
+        if let Some(card_type) = parse_card_type(word) {
+            if !card_types.contains(&card_type) {
+                card_types.push(card_type);
+            }
+        } else {
+            all_card_types = false;
+            break;
+        }
+    }
+    if all_card_types && !card_types.is_empty() {
+        return Ok(Some(vec![EffectAst::AddCardTypes {
+            target,
+            card_types,
+            duration: Until::Forever,
+        }]));
+    }
+
+    let mut subtypes = Vec::new();
+    for word in type_words {
+        let Some(subtype) = parse_subtype_word(word)
+            .or_else(|| word.strip_suffix('s').and_then(parse_subtype_word))
+        else {
+            return Ok(None);
+        };
+        if !subtypes.contains(&subtype) {
+            subtypes.push(subtype);
+        }
+    }
+    if subtypes.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(vec![EffectAst::AddSubtypes {
+        target,
+        subtypes,
+        duration: Until::Forever,
+    }]))
+}
+
 pub(crate) const PRE_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
+    SentencePrimitive {
+        name: "implicit-become-clause",
+        parser: parse_sentence_implicit_become_clause,
+    },
     SentencePrimitive {
         name: "fallback-mechanic-marker",
         parser: parse_sentence_fallback_mechanic_marker,
@@ -4272,12 +4648,20 @@ pub(crate) const POST_CONDITIONAL_SENTENCE_PRIMITIVES: &[SentencePrimitive] = &[
         parser: parse_sentence_for_each_exiled_this_way,
     },
     SentencePrimitive {
+        name: "draw-for-each-card-exiled-from-hand-this-way",
+        parser: parse_sentence_draw_for_each_card_exiled_from_hand_this_way,
+    },
+    SentencePrimitive {
         name: "each-player-put-permanent-cards-exiled-with-source",
         parser: parse_sentence_each_player_put_permanent_cards_exiled_with_source,
     },
     SentencePrimitive {
         name: "for-each-destroyed-this-way",
         parser: parse_sentence_for_each_destroyed_this_way,
+    },
+    SentencePrimitive {
+        name: "search-delayed-next-upkeep-unless-pays-lose-game",
+        parser: parse_sentence_delayed_next_upkeep_unless_pays_lose_game,
     },
     SentencePrimitive {
         name: "exile-then-return-same-object",

@@ -1,9 +1,9 @@
-import { createContext, useContext, useState, useCallback, useRef } from "react";
-
-const CombatArrowContext = createContext(null);
+import { useState, useCallback, useMemo, useRef } from "react";
+import { CombatArrowContext } from "@/context/CombatArrowContext.shared";
 
 export function CombatArrowProvider({ children }) {
-  const [arrows, setArrows] = useState([]);
+  const [combatArrows, setCombatArrows] = useState([]);
+  const [stackArrows, setStackArrows] = useState([]);
   // arrows shape: [{ fromId, toId, toPlayerId, color, key }]
 
   // Live drag arrow: { fromId, x, y, color }
@@ -20,11 +20,19 @@ export function CombatArrowProvider({ children }) {
   }, []);
 
   const updateArrows = useCallback((newArrows) => {
-    setArrows(newArrows);
+    setCombatArrows(newArrows);
   }, []);
 
   const clearArrows = useCallback(() => {
-    setArrows([]);
+    setCombatArrows([]);
+  }, []);
+
+  const updateStackArrows = useCallback((newArrows) => {
+    setStackArrows(newArrows);
+  }, []);
+
+  const clearStackArrows = useCallback(() => {
+    setStackArrows([]);
   }, []);
 
   const startDragArrow = useCallback((fromId, x, y, color) => {
@@ -39,19 +47,18 @@ export function CombatArrowProvider({ children }) {
     setDragArrow(null);
   }, []);
 
+  const arrows = useMemo(
+    () => [...combatArrows, ...stackArrows],
+    [combatArrows, stackArrows]
+  );
+
   return (
     <CombatArrowContext.Provider value={{
-      arrows, updateArrows, clearArrows,
+      arrows, updateArrows, clearArrows, updateStackArrows, clearStackArrows,
       dragArrow, startDragArrow, updateDragArrow, endDragArrow,
       combatMode, combatModeRef, setCombatMode,
     }}>
       {children}
     </CombatArrowContext.Provider>
   );
-}
-
-export function useCombatArrows() {
-  const ctx = useContext(CombatArrowContext);
-  if (!ctx) throw new Error("useCombatArrows must be inside CombatArrowProvider");
-  return ctx;
 }

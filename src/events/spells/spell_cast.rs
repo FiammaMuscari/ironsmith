@@ -47,7 +47,7 @@ impl GameEventType for SpellCastEvent {
     }
 
     fn display(&self) -> String {
-        format!("Spell cast by player {:?}", self.caster)
+        format!("Spell cast by player {}", self.caster.0)
     }
 
     fn as_any(&self) -> &dyn Any {

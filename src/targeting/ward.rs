@@ -176,7 +176,7 @@ fn format_ward_cost_description(cost: &WardCost) -> String {
                 format!("Discard {} cards", count)
             }
         }
-        WardCost::Sacrifice(filter) => format!("Sacrifice a permanent matching {:?}", filter),
+        WardCost::Sacrifice(filter) => format!("Sacrifice {}", filter.description()),
     }
 }
 

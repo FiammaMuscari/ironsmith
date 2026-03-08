@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
+import { useCombatArrows } from "@/context/useCombatArrows";
 import { useDragActions } from "@/context/DragContext";
 import { useHoverActions } from "@/context/HoverContext";
 import TableCore from "@/components/board/TableCore";
@@ -9,11 +10,13 @@ import DragOverlay from "@/components/overlays/DragOverlay";
 import CastParticles from "@/components/overlays/CastParticles";
 import ArrowOverlay from "@/components/overlays/ArrowOverlay";
 import { animate, cancelMotion, uiSpring } from "@/lib/motion/anime";
+import { copyTextToClipboard } from "@/lib/clipboard";
+import { buildStackTargetPresentation, normalizeZoneViews } from "@/lib/stack-targets";
 
 const HAND_PEEK_HEIGHT = 46;
 const HAND_REVEAL_HEIGHT = 164;
-const HAND_GLOW_OVERFLOW = 14;
-const HAND_COLLAPSED_SHELL_HEIGHT = HAND_PEEK_HEIGHT + HAND_GLOW_OVERFLOW;
+const HAND_COLLAPSED_SHELL_HEIGHT = HAND_PEEK_HEIGHT;
+const HAND_LANE_HOVER_FUZZ = 6;
 
 function objectExistsInState(state, objectId) {
   if (!state || objectId == null) return false;
@@ -40,6 +43,7 @@ function objectExistsInState(state, objectId) {
 
   for (const entry of state?.stack_objects || []) {
     if (String(entry?.id) === needle) return true;
+    if (String(entry?.inspect_object_id) === needle) return true;
   }
 
   return false;
@@ -68,11 +72,30 @@ function sameObjectId(left, right) {
   return left != null && right != null && String(left) === String(right);
 }
 
+function rectContainsPoint(rect, x, y, fuzz = 0) {
+  if (!rect) return false;
+  return (
+    x >= (rect.left - fuzz)
+    && x <= (rect.right + fuzz)
+    && y >= (rect.top - fuzz)
+    && y <= (rect.bottom + fuzz)
+  );
+}
+
+function stackSelectionKeys(entry) {
+  const keys = [entry?.id, entry?.inspect_object_id]
+    .filter((value) => value != null)
+    .map((value) => String(value));
+  return Array.from(new Set(keys));
+}
+
 export default function Workspace({
   zoneViews,
   deckLoadingMode,
   onLoadDecks,
   onCancelDeckLoading,
+  notices = [],
+  onDismissNotice,
 }) {
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [pinnedInspectorObjectId, setPinnedInspectorObjectId] = useState(null);
@@ -84,17 +107,14 @@ export default function Workspace({
   const handRevealShellRef = useRef(null);
   const handRevealMotionRef = useRef(null);
   const handHoverCloseTimerRef = useRef(null);
-  const { state, dispatch, status } = useGame();
+  const { state, dispatch, setStatus } = useGame();
+  const { updateStackArrows, clearStackArrows } = useCombatArrows();
   const { endDrag } = useDragActions();
   const { clearHover, hoverCard } = useHoverActions();
 
   const players = state?.players || [];
   const perspective = state?.perspective;
   const me = players.find((p) => p.id === perspective) || players[0];
-  const addCardError = status?.isError && typeof status?.msg === "string" && status.msg.startsWith("Add card failed:")
-    ? status.msg
-    : null;
-  const [dismissedAddCardError, setDismissedAddCardError] = useState(null);
   const selectedObjectIsValid = objectExistsInState(state, selectedObjectId);
   const forceInlineInspectorExpanded =
     sameObjectId(pinnedInspectorObjectId, selectedObjectId)
@@ -105,6 +125,54 @@ export default function Workspace({
   const handLaneOpen = handLaneHovered;
   const decision = state?.decision || null;
   const combatDeclarationActive = decision?.kind === "attackers" || decision?.kind === "blockers";
+  const legalTargetObjectIds = useMemo(() => {
+    const ids = new Set();
+    if (!decision || decision.kind !== "targets") return ids;
+    for (const req of decision.requirements || []) {
+      for (const target of req.legal_targets || []) {
+        if (target.kind === "object" && target.object != null) {
+          ids.add(Number(target.object));
+        }
+      }
+    }
+    return ids;
+  }, [decision]);
+  const legalTargetPlayerIds = useMemo(() => {
+    const ids = new Set();
+    if (!decision || decision.kind !== "targets") return ids;
+    for (const req of decision.requirements || []) {
+      for (const target of req.legal_targets || []) {
+        if (target.kind === "player" && target.player != null) {
+          ids.add(Number(target.player));
+        }
+      }
+    }
+    return ids;
+  }, [decision]);
+  const activeViewedCards = state?.viewed_cards || null;
+  const activeViewedCardIds = useMemo(
+    () => new Set((activeViewedCards?.card_ids || []).map((id) => String(id))),
+    [activeViewedCards?.card_ids]
+  );
+  const stackTargetPresentation = useMemo(
+    () => buildStackTargetPresentation(state, zoneViews, selectedObjectId),
+    [selectedObjectId, state, zoneViews]
+  );
+  const temporaryZoneViews = useMemo(
+    () => (combatDeclarationActive ? [] : stackTargetPresentation.temporaryZoneViews),
+    [combatDeclarationActive, stackTargetPresentation.temporaryZoneViews]
+  );
+  const effectiveZoneViews = useMemo(() => {
+    const merged = new Set(normalizeZoneViews(zoneViews));
+    for (const zone of temporaryZoneViews) {
+      merged.add(zone);
+    }
+    return normalizeZoneViews(Array.from(merged));
+  }, [temporaryZoneViews, zoneViews]);
+  const stackArrowSignature = useMemo(
+    () => stackTargetPresentation.arrows.map((arrow) => arrow.key).join("|"),
+    [stackTargetPresentation.arrows]
+  );
 
   useEffect(() => {
     if (selectedObjectId == null) return;
@@ -124,8 +192,22 @@ export default function Workspace({
   }, [selectedObjectId, selectedObjectIsValid]);
 
   useEffect(() => {
+    const viewedIds = activeViewedCards?.card_ids || [];
+    if (viewedIds.length === 0) return;
+    const selectedKey = selectedObjectId == null ? null : String(selectedObjectId);
+    if (selectedKey != null && activeViewedCardIds.has(selectedKey)) return;
+    const nextViewedId = viewedIds[0];
+    if (nextViewedId == null) return;
+    queueMicrotask(() => {
+      setSelectedObjectId(nextViewedId);
+      setPinnedInspectorObjectId(String(nextViewedId));
+      setExpandedInspectorObjectId(null);
+    });
+  }, [activeViewedCardIds, activeViewedCards?.card_ids, selectedObjectId]);
+
+  useEffect(() => {
     const stackObjects = state?.stack_objects || [];
-    const currentStackIds = stackObjects.map((entry) => String(entry?.id));
+    const currentStackIds = stackObjects.flatMap((entry) => stackSelectionKeys(entry));
     const previousStackIds = previousStackIdsRef.current;
     const removedIds = previousStackIds.filter((id) => !currentStackIds.includes(id));
 
@@ -160,6 +242,33 @@ export default function Workspace({
       setExpandedInspectorObjectId(null);
     });
   }, [combatDeclarationActive]);
+
+  useEffect(() => {
+    if (combatDeclarationActive || stackTargetPresentation.arrows.length === 0) {
+      clearStackArrows();
+      return undefined;
+    }
+
+    let firstFrameId = 0;
+    let secondFrameId = 0;
+    firstFrameId = window.requestAnimationFrame(() => {
+      secondFrameId = window.requestAnimationFrame(() => {
+        updateStackArrows(stackTargetPresentation.arrows);
+      });
+    });
+
+    return () => {
+      if (firstFrameId) window.cancelAnimationFrame(firstFrameId);
+      if (secondFrameId) window.cancelAnimationFrame(secondFrameId);
+    };
+  }, [
+    clearStackArrows,
+    combatDeclarationActive,
+    effectiveZoneViews,
+    stackArrowSignature,
+    stackTargetPresentation.arrows,
+    updateStackArrows,
+  ]);
 
   useEffect(() => () => {
     if (handHoverCloseTimerRef.current) {
@@ -229,17 +338,30 @@ export default function Workspace({
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleMeasure);
     };
-  }, [deckLoadingMode, players.length, zoneViews]);
+  }, [deckLoadingMode, effectiveZoneViews, players.length]);
 
   const handleInspectObject = useCallback(
     (objectId) => {
       if (combatDeclarationActive) return;
+      if (
+        decision?.kind === "targets"
+        && decision.player === state?.perspective
+        && objectId != null
+        && legalTargetObjectIds.has(Number(objectId))
+      ) {
+        window.dispatchEvent(
+          new CustomEvent("ironsmith:target-choice", {
+            detail: { target: { kind: "object", object: Number(objectId) } },
+          })
+        );
+        return;
+      }
       setSelectedObjectId(objectId);
       setPinnedInspectorObjectId(objectId == null ? null : String(objectId));
       setExpandedInspectorObjectId(null);
       if (objectId != null) hoverCard(objectId);
     },
-    [combatDeclarationActive, hoverCard]
+    [combatDeclarationActive, decision, hoverCard, legalTargetObjectIds, state?.perspective]
   );
 
   const handleExpandInspector = useCallback(
@@ -255,12 +377,25 @@ export default function Workspace({
     [combatDeclarationActive, hoverCard]
   );
 
+  const handleNoticeClick = useCallback(
+    async (notice) => {
+      if (!notice?.copyText) return;
+      const copied = await copyTextToClipboard(notice.copyText);
+      if (copied) {
+        setStatus(notice.copyStatusMessage || "Copied to clipboard");
+      } else {
+        setStatus("Could not copy to clipboard", true);
+      }
+    },
+    [setStatus]
+  );
+
   const handleHandLaneEnter = useCallback(() => {
     if (handHoverCloseTimerRef.current) {
       clearTimeout(handHoverCloseTimerRef.current);
       handHoverCloseTimerRef.current = null;
     }
-    setHandLaneHovered(true);
+    setHandLaneHovered((currentHovered) => (currentHovered ? currentHovered : true));
   }, []);
 
   const handleHandLaneLeave = useCallback(() => {
@@ -278,8 +413,39 @@ export default function Workspace({
       clearTimeout(handHoverCloseTimerRef.current);
       handHoverCloseTimerRef.current = null;
     }
-    setHandLaneHovered(false);
+    setHandLaneHovered((currentHovered) => (currentHovered ? false : currentHovered));
   }, []);
+
+  useEffect(() => {
+    const onPointerMove = (event) => {
+      const shellEl = handRevealShellRef.current;
+      if (!shellEl) return;
+
+      const target = event.target;
+      const overHandCard = target instanceof Element
+        && target.closest(".hand-reveal-shell .game-card.hand-card");
+      const insideExpandedShell = handLaneOpen && rectContainsPoint(
+        shellEl.getBoundingClientRect(),
+        event.clientX,
+        event.clientY,
+        HAND_LANE_HOVER_FUZZ
+      );
+
+      if (overHandCard || insideExpandedShell) {
+        handleHandLaneEnter();
+        return;
+      }
+
+      if (handLaneOpen) {
+        handleHandLaneLeave();
+      }
+    };
+
+    document.addEventListener("pointermove", onPointerMove, { passive: true });
+    return () => {
+      document.removeEventListener("pointermove", onPointerMove);
+    };
+  }, [handLaneOpen, handleHandLaneEnter, handleHandLaneLeave]);
 
   // Handle drag drop — if user drops on the battlefield area, dispatch the action
   useEffect(() => {
@@ -380,25 +546,72 @@ export default function Workspace({
       <DragOverlay />
       <CastParticles />
       <ArrowOverlay />
-      {addCardError && dismissedAddCardError !== addCardError && (
-        <button
-          type="button"
-          className="add-card-error-toast absolute top-2 right-2 z-[120] max-w-[min(420px,48vw)] rounded border border-[#9f2b2b] bg-[rgba(24,8,8,0.96)] px-3 py-2 text-left text-[13px] font-semibold leading-tight text-[#ff7f7f] shadow-[0_10px_26px_rgba(0,0,0,0.45)] hover:border-[#c04040] hover:text-[#ff9f9f] transition-colors"
-          onClick={() => setDismissedAddCardError(addCardError)}
-          title="Click to dismiss"
-        >
-          {addCardError}
-        </button>
+      {notices.length > 0 && (
+        <div className="absolute top-2 right-2 z-[120] flex max-w-[min(460px,52vw)] flex-col gap-2">
+          {notices.map((notice) => {
+            const toneClasses = notice.tone === "success"
+              ? "border-[#285f3c] bg-[rgba(8,24,14,0.96)] text-[#8fe2ad] hover:border-[#3e8b5b]"
+              : notice.tone === "error"
+                ? "border-[#9f2b2b] bg-[rgba(24,8,8,0.96)] text-[#ff7f7f] hover:border-[#c04040]"
+                : "border-[#35506c] bg-[rgba(8,13,20,0.96)] text-[#cfe3fb] hover:border-[#4d7093]";
+            const clickable = Boolean(notice.copyText);
+            return (
+              <div
+                key={notice.id}
+                className={`relative overflow-hidden rounded border shadow-[0_10px_26px_rgba(0,0,0,0.45)] ${toneClasses}`}
+              >
+                {clickable ? (
+                  <button
+                    type="button"
+                    className="w-full px-3 py-2 pr-9 text-left transition-colors"
+                    onClick={() => handleNoticeClick(notice)}
+                    title="Click to copy"
+                  >
+                    <div className="text-[13px] font-bold uppercase tracking-wide">
+                      {notice.title}
+                    </div>
+                    {notice.body ? (
+                      <div className="mt-1 text-[13px] font-semibold leading-tight">
+                        {notice.body}
+                      </div>
+                    ) : null}
+                  </button>
+                ) : (
+                  <div className="px-3 py-2 pr-9 text-left">
+                    <div className="text-[13px] font-bold uppercase tracking-wide">
+                      {notice.title}
+                    </div>
+                    {notice.body ? (
+                      <div className="mt-1 text-[13px] font-semibold leading-tight">
+                        {notice.body}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="absolute right-1.5 top-1.5 rounded px-1 text-[12px] font-bold text-current opacity-80 transition-opacity hover:opacity-100"
+                  onClick={() => onDismissNotice?.(notice.id)}
+                  aria-label={`Dismiss ${notice.title}`}
+                >
+                  x
+                </button>
+              </div>
+            );
+          })}
+        </div>
       )}
-      <div className="min-h-0 h-full overflow-hidden">
+      <div className="min-h-0 h-full overflow-visible">
         <TableCore
           selectedObjectId={selectedObjectId}
           onInspect={handleInspectObject}
           onExpandInspector={handleExpandInspector}
-          zoneViews={zoneViews}
+          zoneViews={effectiveZoneViews}
           deckLoadingMode={deckLoadingMode}
           onLoadDecks={onLoadDecks}
           onCancelDeckLoading={onCancelDeckLoading}
+          legalTargetPlayerIds={legalTargetPlayerIds}
+          legalTargetObjectIds={legalTargetObjectIds}
         />
       </div>
       {!deckLoadingMode && opponentsInspectorDockTop != null && (
@@ -411,8 +624,30 @@ export default function Workspace({
           <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
             <RightRail
               pinnedObjectId={selectedObjectId}
+              onInspectObject={handleInspectObject}
               inline
               inlineDockPlacement="top"
+              allowTopInlinePlacement
+              inlineExpanded={inlineInspectorExpanded}
+              forceInlineExpanded={forceInlineInspectorExpanded}
+              fullArtInlineExpanded={forceInlineInspectorFullArt}
+            />
+          </div>
+        </div>
+      )}
+      {!deckLoadingMode && opponentsInspectorDockTop != null && (
+        <div
+          className="pointer-events-none fixed inset-x-0 z-30 flex items-end justify-start overflow-visible px-2"
+          style={{ top: `${opponentsInspectorDockTop}px`, height: `${HAND_PEEK_HEIGHT}px` }}
+        >
+          <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
+            <RightRail
+              pinnedObjectId={selectedObjectId}
+              onInspectObject={handleInspectObject}
+              inline
+              inlineDockPlacement="top"
+              inlineHostSide="left"
+              inlineExpandedSide="left"
               allowTopInlinePlacement
               inlineExpanded={inlineInspectorExpanded}
               forceInlineExpanded={forceInlineInspectorExpanded}
@@ -427,16 +662,32 @@ export default function Workspace({
         data-bottom-dock
         data-inspector-dock="bottom"
       >
+        <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
+          <RightRail
+            pinnedObjectId={selectedObjectId}
+            onInspectObject={handleInspectObject}
+            inline
+            inlineHostSide="left"
+            inlineExpandedSide="left"
+            allowTopInlinePlacement={opponentsInspectorDockTop != null}
+            inlineExpanded={inlineInspectorExpanded}
+            forceInlineExpanded={forceInlineInspectorExpanded}
+            fullArtInlineExpanded={forceInlineInspectorFullArt}
+          />
+        </div>
         <div
           className="pointer-events-none relative min-w-0 flex-1 h-full overflow-visible"
           data-hand-dock-lane
         >
           <div
             ref={handRevealShellRef}
-            className="hand-reveal-shell pointer-events-auto absolute inset-x-0 bottom-0 overflow-hidden"
+            className="hand-reveal-shell absolute left-0 bottom-0"
             data-open={handLaneOpen ? "true" : "false"}
             aria-expanded={handLaneOpen}
-            style={{ height: `${handLaneOpen ? HAND_REVEAL_HEIGHT : HAND_COLLAPSED_SHELL_HEIGHT}px` }}
+            style={{
+              height: `${handLaneOpen ? HAND_REVEAL_HEIGHT : HAND_COLLAPSED_SHELL_HEIGHT}px`,
+              "--hand-shell-offset-x": "3vw",
+            }}
             onMouseEnter={handleHandLaneEnter}
             onMouseLeave={handleHandLaneLeave}
             onFocusCapture={handleHandLaneEnter}
@@ -447,12 +698,13 @@ export default function Workspace({
           >
             <div
               className="hand-reveal-body"
-              style={{ height: `${HAND_REVEAL_HEIGHT}px` }}
+              style={{ height: "100%" }}
             >
               <HandZone
                 player={me}
                 selectedObjectId={selectedObjectId}
                 onInspect={handleInspectObject}
+                isExpanded={handLaneOpen}
               />
             </div>
           </div>
@@ -460,6 +712,7 @@ export default function Workspace({
         <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
           <RightRail
             pinnedObjectId={selectedObjectId}
+            onInspectObject={handleInspectObject}
             inline
             allowTopInlinePlacement={opponentsInspectorDockTop != null}
             inlineExpanded={inlineInspectorExpanded}

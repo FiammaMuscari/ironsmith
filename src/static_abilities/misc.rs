@@ -3,9 +3,9 @@
 //! This module contains static abilities that don't fit neatly into other categories.
 
 use super::{
-    ChooseBasicLandTypeAsEntersSpec, ChooseColorAsEntersSpec, ConditionalSpellKeywordKind,
-    ConditionalSpellKeywordSpec, GraveyardCountMetric, StaticAbilityId, StaticAbilityKind,
-    ThisSpellCastRestrictionKind,
+    ChooseBasicLandTypeAsEntersSpec, ChooseColorAsEntersSpec, ChooseCreatureTypeAsEntersSpec,
+    ConditionalSpellKeywordKind, ConditionalSpellKeywordSpec, EnterAsCopyAsEntersSpec,
+    GraveyardCountMetric, StaticAbilityId, StaticAbilityKind, ThisSpellCastRestrictionKind,
     text_utils::{capitalize_first, join_with_and, number_word_u32},
 };
 use crate::ability::LevelAbility;
@@ -1123,6 +1123,59 @@ impl StaticAbilityKind for ChooseBasicLandTypeAsEnters {
     }
 }
 
+/// "As this enters, choose a creature type."
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChooseCreatureTypeAsEnters {
+    pub display: String,
+}
+
+impl ChooseCreatureTypeAsEnters {
+    pub fn new(display: String) -> Self {
+        Self { display }
+    }
+}
+
+impl StaticAbilityKind for ChooseCreatureTypeAsEnters {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::ChooseCreatureTypeAsEnters
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn creature_type_choice_as_enters(&self) -> Option<ChooseCreatureTypeAsEntersSpec> {
+        Some(ChooseCreatureTypeAsEntersSpec)
+    }
+}
+
+/// "You may have this enter tapped as a copy of ..."
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnterAsCopyAsEnters {
+    pub spec: EnterAsCopyAsEntersSpec,
+    pub display: String,
+}
+
+impl EnterAsCopyAsEnters {
+    pub fn new(spec: EnterAsCopyAsEntersSpec, display: String) -> Self {
+        Self { spec, display }
+    }
+}
+
+impl StaticAbilityKind for EnterAsCopyAsEnters {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::EnterAsCopyAsEnters
+    }
+
+    fn display(&self) -> String {
+        self.display.clone()
+    }
+
+    fn enter_as_copy_as_enters(&self) -> Option<&EnterAsCopyAsEntersSpec> {
+        Some(&self.spec)
+    }
+}
+
 /// "All damage that would be dealt to you and other permanents you control is dealt to this creature instead."
 #[derive(Debug, Clone, PartialEq)]
 pub struct RedirectDamageToSource {
@@ -1421,6 +1474,74 @@ impl StaticAbilityKind for EnterTappedForFilter {
     }
 }
 
+/// Permanents matching a filter enter the battlefield untapped.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnterUntappedForFilter {
+    pub filter: ObjectFilter,
+}
+
+impl EnterUntappedForFilter {
+    pub fn new(filter: ObjectFilter) -> Self {
+        Self { filter }
+    }
+}
+
+impl StaticAbilityKind for EnterUntappedForFilter {
+    fn id(&self) -> StaticAbilityId {
+        StaticAbilityId::EnterUntappedForFilter
+    }
+
+    fn display(&self) -> String {
+        let filter = &self.filter;
+        let is_simple_lands_you_control = filter.card_types == vec![crate::types::CardType::Land]
+            && filter.controller == Some(PlayerFilter::You)
+            && matches!(filter.zone, None | Some(Zone::Battlefield))
+            && filter.subtypes.is_empty()
+            && filter.supertypes.is_empty()
+            && filter.colors.is_none()
+            && filter.excluded_card_types.is_empty()
+            && filter.excluded_subtypes.is_empty()
+            && filter.excluded_supertypes.is_empty()
+            && filter.excluded_colors.is_empty()
+            && !filter.token
+            && !filter.nontoken
+            && !filter.tapped
+            && !filter.untapped
+            && !filter.attacking
+            && !filter.nonattacking
+            && !filter.blocking
+            && !filter.nonblocking
+            && filter.owner.is_none()
+            && filter.tagged_constraints.is_empty()
+            && filter.targets_object.is_none()
+            && filter.targets_player.is_none()
+            && filter.ability_markers.is_empty()
+            && filter.excluded_ability_markers.is_empty()
+            && !filter.noncommander;
+        if is_simple_lands_you_control {
+            return "Lands you control enter untapped".to_string();
+        }
+
+        format!(
+            "{} enter untapped",
+            capitalize_first(&self.filter.description())
+        )
+    }
+
+    fn generate_replacement_effect(
+        &self,
+        source: ObjectId,
+        controller: PlayerId,
+    ) -> Option<ReplacementEffect> {
+        Some(ReplacementEffect::with_matcher(
+            source,
+            controller,
+            WouldEnterBattlefieldMatcher::new(self.filter.clone()),
+            ReplacementAction::EnterUntapped,
+        ))
+    }
+}
+
 /// Permanents matching a filter enter the battlefield with counters.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnterWithCountersForFilter {
@@ -1562,6 +1683,12 @@ impl StaticAbilityKind for AdditionalLandPlay {
 
     fn display(&self) -> String {
         "You may play an additional land on each of your turns".to_string()
+    }
+
+    fn apply_restrictions(&self, game: &mut GameState, _source: ObjectId, controller: PlayerId) {
+        if let Some(player) = game.player_mut(controller) {
+            player.land_plays_per_turn = player.land_plays_per_turn.saturating_add(1);
+        }
     }
 }
 

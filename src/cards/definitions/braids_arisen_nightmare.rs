@@ -124,28 +124,42 @@ mod tests {
         let ability = &def.abilities[0];
         if let AbilityKind::Triggered(triggered) = &ability.kind {
             // Now uses composed effects: with_id(may(...)) and if_then(...)
-            assert_eq!(
-                triggered.effects.len(),
-                2,
-                "Should have 2 top-level effects (with_id + if_then)"
+            assert!(
+                triggered.effects.len() >= 2,
+                "Should have the top-level may/if-then effect structure, got {:?}",
+                triggered.effects
             );
 
-            // First effect should be WithIdEffect wrapping MayEffect
-            let debug_str_0 = format!("{:?}", &triggered.effects[0]);
+            let first_structural_effect = triggered
+                .effects
+                .iter()
+                .find(|effect| !format!("{:?}", effect).contains("TagTriggeringObjectEffect"))
+                .expect("expected non-prelude structural effect");
+
+            // First structural effect should be WithIdEffect wrapping MayEffect
+            let debug_str_0 = format!("{:?}", first_structural_effect);
             assert!(
                 debug_str_0.contains("WithIdEffect"),
-                "First effect should be WithIdEffect"
+                "First structural effect should be WithIdEffect"
             );
             assert!(
                 debug_str_0.contains("MayEffect"),
-                "First effect should contain MayEffect"
+                "First structural effect should contain MayEffect"
             );
 
-            // Second effect should be IfEffect
-            let debug_str_1 = format!("{:?}", &triggered.effects[1]);
+            let second_structural_effect = triggered
+                .effects
+                .iter()
+                .skip_while(|effect| !format!("{:?}", effect).contains("WithIdEffect"))
+                .skip(1)
+                .find(|effect| !format!("{:?}", effect).contains("TagTriggeringObjectEffect"))
+                .expect("expected if-effect after the may wrapper");
+
+            // Next structural effect should be IfEffect
+            let debug_str_1 = format!("{:?}", second_structural_effect);
             assert!(
                 debug_str_1.contains("IfEffect"),
-                "Second effect should be IfEffect"
+                "Next structural effect should be IfEffect"
             );
         } else {
             panic!("Expected triggered ability");

@@ -8,7 +8,7 @@ use crate::cards::builders::{
     append_token_reminder_to_last_create_effect, build_may_cast_tagged_effect,
     collapse_token_copy_end_of_combat_exile_followup,
     collapse_token_copy_next_end_step_exile_followup, effect_creates_any_token,
-    effect_creates_eldrazi_spawn_or_scion, explicit_player_for_carry,
+    effect_creates_eldrazi_spawn_or_scion, explicit_player_for_carry, helper_tag_for_tokens,
     is_activate_only_restriction_sentence, is_article, is_exile_that_token_at_end_of_combat,
     is_generic_token_reminder_sentence, is_round_up_each_time_sentence,
     is_sacrifice_that_token_at_end_of_combat, is_simple_copy_reference_sentence,
@@ -56,12 +56,16 @@ fn parse_reveal_top_count_put_all_matching_into_hand_rest_graveyard(
         .iter()
         .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
         .collect::<Vec<_>>();
-    let (count, used) = parse_number(&count_tokens).ok_or_else(|| {
-        CardTextError::ParseError(format!(
-            "missing reveal count in reveal-top matching split clause (clause: '{}')",
-            first_words.join(" ")
-        ))
-    })?;
+    if count_tokens
+        .first()
+        .and_then(Token::as_word)
+        .is_some_and(|word| word == "card" || word == "cards")
+    {
+        return Ok(None);
+    }
+    let Some((count, used)) = parse_number(&count_tokens) else {
+        return Ok(None);
+    };
     if count_tokens
         .get(used)
         .and_then(Token::as_word)
@@ -173,8 +177,8 @@ fn parse_delayed_dies_exile_top_power_choose_play(
         return Ok(None);
     }
 
-    let looked_tag = TagKey::from("looked_0");
-    let chosen_tag = TagKey::from("chosen_0");
+    let looked_tag = helper_tag_for_tokens(first, "looked");
+    let chosen_tag = helper_tag_for_tokens(first, "chosen");
     let mut exiled_filter = ObjectFilter::default();
     exiled_filter.zone = Some(Zone::Exile);
     exiled_filter
@@ -215,10 +219,14 @@ fn parse_pair_sentence_sequence(
     first: &[Token],
     second: &[Token],
 ) -> Result<Option<(&'static str, Vec<EffectAst>)>, CardTextError> {
-    const RULES: [(&str, PairSentenceRule); 7] = [
+    const RULES: [(&str, PairSentenceRule); 8] = [
         (
             "delayed-dies-exile-top-power-choose-play",
             parse_delayed_dies_exile_top_power_choose_play,
+        ),
+        (
+            "mill-then-put-from-among-into-hand",
+            parse_mill_then_may_put_from_among_into_hand,
         ),
         (
             "exile-until-match-grant-play-this-turn",
@@ -259,22 +267,22 @@ fn parse_tap_all_then_they_dont_untap_while_source_tapped(
     first: &[Token],
     second: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let first_effects = parse_effect_sentence(first)?;
+    let Ok(first_effects) = parse_effect_sentence(first) else {
+        return Ok(None);
+    };
     let [EffectAst::TapAll { filter }] = first_effects.as_slice() else {
         return Ok(None);
     };
 
     let second_tokens = trim_commas(second);
     let second_words = words(&second_tokens);
-    let starts_with_supported_pronoun_clause = second_words.starts_with(&[
-        "they",
-        "dont",
-        "untap",
-        "during",
-    ]) || second_words.starts_with(&["they", "do", "not", "untap", "during"]);
-    let has_source_tapped_duration = second_words.windows(4).any(|window| {
-        window == ["for", "as", "long", "as"]
-    }) && second_words.contains(&"remains")
+    let starts_with_supported_pronoun_clause = second_words
+        .starts_with(&["they", "dont", "untap", "during"])
+        || second_words.starts_with(&["they", "do", "not", "untap", "during"]);
+    let has_source_tapped_duration = second_words
+        .windows(4)
+        .any(|window| window == ["for", "as", "long", "as"])
+        && second_words.contains(&"remains")
         && second_words.contains(&"tapped")
         && (second_words.contains(&"this")
             || second_words.contains(&"thiss")
@@ -384,11 +392,13 @@ fn parse_exile_until_match_grant_play_this_turn(
         return Ok(None);
     }
 
-    Ok(Some(vec![EffectAst::ExileUntilMatchGrantPlayUntilEndOfTurn {
-        player,
-        filter,
-        caster,
-    }]))
+    Ok(Some(vec![
+        EffectAst::ExileUntilMatchGrantPlayUntilEndOfTurn {
+            player,
+            filter,
+            caster,
+        },
+    ]))
 }
 
 fn parse_look_at_top_reveal_match_put_rest_bottom(
@@ -396,7 +406,9 @@ fn parse_look_at_top_reveal_match_put_rest_bottom(
     second: &[Token],
     third: &[Token],
 ) -> Result<Option<Vec<EffectAst>>, CardTextError> {
-    let first_effects = parse_effect_sentence(first)?;
+    let Ok(first_effects) = parse_effect_sentence(first) else {
+        return Ok(None);
+    };
     let [EffectAst::LookAtTopCards { player, count, .. }] = first_effects.as_slice() else {
         return Ok(None);
     };
@@ -526,6 +538,244 @@ fn parse_top_cards_view_sentence(tokens: &[Token]) -> Option<(PlayerAst, Value, 
     }
 
     Some((PlayerAst::You, Value::Fixed(count as i32), revealed))
+}
+
+fn parse_counted_looked_cards_into_your_hand_words(words: &[&str]) -> Option<u32> {
+    if !words.starts_with(&["put"]) {
+        return None;
+    }
+
+    let count_tokens = words[1..]
+        .iter()
+        .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+        .collect::<Vec<_>>();
+    let (count, used) = parse_number(&count_tokens)?;
+
+    let mut idx = 1 + used;
+    if words.get(idx).copied() == Some("of") {
+        idx += 1;
+    }
+
+    match words.get(idx).copied() {
+        Some("them") => idx += 1,
+        Some("those") => {
+            idx += 1;
+            if words.get(idx).copied() == Some("card") || words.get(idx).copied() == Some("cards") {
+                idx += 1;
+            }
+        }
+        _ => return None,
+    }
+
+    if words.get(idx..idx + 3) != Some(&["into", "your", "hand"]) {
+        return None;
+    }
+    idx += 3;
+
+    if idx == words.len() {
+        return Some(count as u32);
+    }
+    if idx + 1 == words.len() && words[idx] == "instead" {
+        return Some(count as u32);
+    }
+
+    None
+}
+
+fn parse_if_this_spell_was_kicked_counted_looked_cards_into_hand(tokens: &[Token]) -> Option<u32> {
+    let trimmed = trim_commas(tokens);
+    let clause_words = words(&trimmed);
+    if !clause_words.starts_with(&["if", "this", "spell", "was", "kicked"]) {
+        return None;
+    }
+
+    let tail_start = token_index_for_word_index(&trimmed, 5).unwrap_or(trimmed.len());
+    let tail = trim_commas(&trimmed[tail_start..]);
+    let tail_words = words(&tail);
+    parse_counted_looked_cards_into_your_hand_words(&tail_words)
+}
+
+fn parse_may_put_filtered_looked_card_onto_battlefield(
+    tokens: &[Token],
+) -> Result<Option<(PlayerAst, ObjectFilter, bool)>, CardTextError> {
+    let sentence_tokens = trim_commas(tokens);
+    let sentence_words = words(&sentence_tokens);
+    if sentence_words.is_empty() {
+        return Ok(None);
+    }
+
+    let (chooser, action_word_idx) = if sentence_words.starts_with(&["you", "may", "put"]) {
+        (PlayerAst::You, 2usize)
+    } else if sentence_words.starts_with(&["that", "player", "may", "put"]) {
+        (PlayerAst::That, 3usize)
+    } else if sentence_words.starts_with(&["they", "may", "put"]) {
+        (PlayerAst::That, 2usize)
+    } else if sentence_words.starts_with(&["may", "put"]) {
+        (PlayerAst::You, 1usize)
+    } else {
+        return Ok(None);
+    };
+
+    let from_among_word_idx = sentence_words
+        .windows(3)
+        .position(|window| window == ["from", "among", "them"])
+        .or_else(|| {
+            sentence_words
+                .windows(4)
+                .position(|window| window == ["from", "among", "those", "cards"])
+        });
+    let Some(from_among_word_idx) = from_among_word_idx else {
+        return Ok(None);
+    };
+    if from_among_word_idx <= action_word_idx {
+        return Ok(None);
+    }
+
+    let filter_start = token_index_for_word_index(&sentence_tokens, action_word_idx + 1)
+        .unwrap_or(sentence_tokens.len());
+    let filter_end = token_index_for_word_index(&sentence_tokens, from_among_word_idx)
+        .unwrap_or(sentence_tokens.len());
+    let filter_tokens = trim_commas(&sentence_tokens[filter_start..filter_end]);
+    if filter_tokens.is_empty() {
+        return Ok(None);
+    }
+    let mut filter = if let Some(filter) = parse_looked_card_reveal_filter(&filter_tokens) {
+        filter
+    } else {
+        return Ok(None);
+    };
+    normalize_search_library_filter(&mut filter);
+    filter.zone = None;
+
+    let after_from_word_idx = if sentence_words
+        .windows(4)
+        .any(|window| window == ["from", "among", "those", "cards"])
+    {
+        from_among_word_idx + 4
+    } else {
+        from_among_word_idx + 3
+    };
+    let after_from_words = &sentence_words[after_from_word_idx..];
+    let tapped = match after_from_words {
+        ["onto", "the", "battlefield"] | ["onto", "battlefield"] => false,
+        ["onto", "the", "battlefield", "tapped"] | ["onto", "battlefield", "tapped"] => true,
+        _ => return Ok(None),
+    };
+
+    Ok(Some((chooser, filter, tapped)))
+}
+
+fn parse_if_you_dont_put_card_from_among_them_into_your_hand(tokens: &[Token]) -> bool {
+    let trimmed = trim_commas(tokens);
+    let words: Vec<&str> = words(&trimmed)
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    words.as_slice()
+        == [
+            "if", "you", "dont", "put", "card", "from", "among", "them", "into", "your", "hand",
+        ]
+        || words.as_slice()
+            == [
+                "if", "you", "do", "not", "put", "card", "from", "among", "them", "into", "your",
+                "hand",
+            ]
+        || words.as_slice()
+            == [
+                "if", "you", "dont", "put", "card", "from", "among", "those", "cards", "into",
+                "your", "hand",
+            ]
+        || words.as_slice()
+            == [
+                "if", "you", "do", "not", "put", "card", "from", "among", "those", "cards", "into",
+                "your", "hand",
+            ]
+}
+
+fn is_put_rest_on_bottom_of_library_sentence(tokens: &[Token]) -> bool {
+    let trimmed = trim_commas(tokens);
+    let words = words(&trimmed);
+    matches!(words.first().copied(), Some("put" | "puts"))
+        && words.contains(&"rest")
+        && words.contains(&"bottom")
+        && words.contains(&"library")
+}
+
+fn parse_look_at_top_put_counted_into_hand_rest_bottom_with_kicker_override(
+    first: &[Token],
+    second: &[Token],
+    third: &[Token],
+    fourth: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Ok(first_effects) = parse_effect_sentence(first) else {
+        return Ok(None);
+    };
+    let [EffectAst::LookAtTopCards { player, .. }] = first_effects.as_slice() else {
+        return Ok(None);
+    };
+
+    let Some(base_count) =
+        parse_counted_looked_cards_into_your_hand_words(&words(&trim_commas(second)))
+    else {
+        return Ok(None);
+    };
+    let Some(kicked_count) = parse_if_this_spell_was_kicked_counted_looked_cards_into_hand(third)
+    else {
+        return Ok(None);
+    };
+    if !is_put_rest_on_bottom_of_library_sentence(fourth) {
+        return Ok(None);
+    }
+
+    Ok(Some(vec![
+        first_effects[0].clone(),
+        EffectAst::Conditional {
+            predicate: crate::cards::builders::PredicateAst::ThisSpellWasKicked,
+            if_true: vec![EffectAst::PutSomeIntoHandRestOnBottomOfLibrary {
+                player: *player,
+                count: kicked_count,
+            }],
+            if_false: vec![EffectAst::PutSomeIntoHandRestOnBottomOfLibrary {
+                player: *player,
+                count: base_count,
+            }],
+        },
+    ]))
+}
+
+fn parse_look_at_top_may_put_match_onto_battlefield_then_if_not_put_into_hand_rest_bottom(
+    first: &[Token],
+    second: &[Token],
+    third: &[Token],
+    fourth: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Ok(first_effects) = parse_effect_sentence(first) else {
+        return Ok(None);
+    };
+    let [EffectAst::LookAtTopCards { .. }] = first_effects.as_slice() else {
+        return Ok(None);
+    };
+
+    let Some((chooser, battlefield_filter, tapped)) =
+        parse_may_put_filtered_looked_card_onto_battlefield(second)?
+    else {
+        return Ok(None);
+    };
+    if !parse_if_you_dont_put_card_from_among_them_into_your_hand(third) {
+        return Ok(None);
+    }
+    if !is_put_rest_on_bottom_of_library_sentence(fourth) {
+        return Ok(None);
+    }
+
+    Ok(Some(vec![
+        first_effects[0].clone(),
+        EffectAst::ChooseFromLookedCardsOntoBattlefieldOrIntoHandRestOnBottomOfLibrary {
+            player: chooser,
+            battlefield_filter,
+            tapped,
+        },
+    ]))
 }
 
 fn parse_top_cards_put_match_into_hand_rest_graveyard(
@@ -847,12 +1097,142 @@ fn parse_looked_card_reveal_filter(tokens: &[Token]) -> Option<ObjectFilter> {
         .or_else(|| parse_object_filter(tokens, false).ok())
 }
 
+fn parse_may_put_filtered_card_from_among_into_hand(
+    tokens: &[Token],
+    default_player: PlayerAst,
+    zone: Zone,
+) -> Result<Option<(PlayerAst, ObjectFilter)>, CardTextError> {
+    let sentence_tokens = trim_commas(tokens);
+    let sentence_words = words(&sentence_tokens);
+    if sentence_words.is_empty() {
+        return Ok(None);
+    }
+
+    let (chooser, action_word_idx) = if sentence_words.starts_with(&["you", "may", "put"]) {
+        (PlayerAst::You, 2usize)
+    } else if sentence_words.starts_with(&["that", "player", "may", "put"]) {
+        (PlayerAst::That, 3usize)
+    } else if sentence_words.starts_with(&["they", "may", "put"]) {
+        (PlayerAst::That, 2usize)
+    } else if sentence_words.starts_with(&["may", "put"]) {
+        (default_player, 1usize)
+    } else if sentence_words.starts_with(&["put"]) {
+        (default_player, 0usize)
+    } else {
+        return Ok(None);
+    };
+
+    let from_among_word_idx = sentence_words
+        .windows(3)
+        .position(|window| window == ["from", "among", "them"])
+        .or_else(|| {
+            sentence_words
+                .windows(4)
+                .position(|window| window == ["from", "among", "those", "cards"])
+        });
+    let Some(from_among_word_idx) = from_among_word_idx else {
+        return Ok(None);
+    };
+    if from_among_word_idx <= action_word_idx {
+        return Ok(None);
+    }
+
+    let filter_start = token_index_for_word_index(&sentence_tokens, action_word_idx + 1)
+        .unwrap_or(sentence_tokens.len());
+    let filter_end = token_index_for_word_index(&sentence_tokens, from_among_word_idx)
+        .unwrap_or(sentence_tokens.len());
+    let filter_tokens = trim_commas(&sentence_tokens[filter_start..filter_end]);
+    if filter_tokens.is_empty() {
+        return Ok(None);
+    }
+
+    let mut filter = if let Some(filter) = parse_looked_card_reveal_filter(&filter_tokens) {
+        filter
+    } else {
+        return Ok(None);
+    };
+    normalize_search_library_filter(&mut filter);
+    filter.zone = Some(zone);
+
+    let after_from_word_idx = if sentence_words
+        .windows(4)
+        .any(|window| window == ["from", "among", "those", "cards"])
+    {
+        from_among_word_idx + 4
+    } else {
+        from_among_word_idx + 3
+    };
+    let after_from_words = &sentence_words[after_from_word_idx..];
+    let moves_into_hand =
+        after_from_words.starts_with(&["into"]) && after_from_words.contains(&"hand");
+    if !moves_into_hand {
+        return Ok(None);
+    }
+
+    Ok(Some((chooser, filter)))
+}
+
+fn parse_mill_then_may_put_from_among_into_hand(
+    first: &[Token],
+    second: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Ok(first_effects) = parse_effect_sentence(first) else {
+        return Ok(None);
+    };
+    let [EffectAst::Mill { player, .. }] = first_effects.as_slice() else {
+        return Ok(None);
+    };
+
+    let Some((chooser, filter)) =
+        parse_may_put_filtered_card_from_among_into_hand(second, *player, Zone::Graveyard)?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(vec![
+        first_effects[0].clone(),
+        EffectAst::ChooseFromLookedCardsIntoHandRestIntoGraveyard {
+            player: chooser,
+            filter,
+            reveal: false,
+            if_not_chosen: Vec::new(),
+        },
+    ]))
+}
+
+fn parse_mill_then_may_put_from_among_into_hand_then_if_you_dont(
+    first: &[Token],
+    second: &[Token],
+    third: &[Token],
+) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let Some(mut effects) = parse_mill_then_may_put_from_among_into_hand(first, second)? else {
+        return Ok(None);
+    };
+    let Some(if_not_chosen) = parse_if_you_dont_sentence(third)? else {
+        return Ok(None);
+    };
+
+    let Some(EffectAst::ChooseFromLookedCardsIntoHandRestIntoGraveyard {
+        if_not_chosen: existing,
+        ..
+    }) = effects.get_mut(1)
+    else {
+        return Ok(None);
+    };
+    *existing = if_not_chosen;
+    Ok(Some(effects))
+}
+
 fn parse_triple_sentence_sequence(
     first: &[Token],
     second: &[Token],
     third: &[Token],
 ) -> Result<Option<(&'static str, Vec<EffectAst>)>, CardTextError> {
-    const RULES: [(&str, TripleSentenceRule); 3] = [
+    const RULES: [(&str, TripleSentenceRule); 4] = [
+        (
+            "mill-then-put-from-among-into-hand-then-if-you-dont",
+            parse_mill_then_may_put_from_among_into_hand_then_if_you_dont,
+        ),
         (
             "exile-until-match-cast-rest-bottom",
             parse_exile_until_match_cast_rest_bottom,
@@ -910,6 +1290,34 @@ fn parse_if_no_card_into_hand_this_way_sentence(
     Ok(Some(effects))
 }
 
+fn parse_if_you_dont_sentence(tokens: &[Token]) -> Result<Option<Vec<EffectAst>>, CardTextError> {
+    let words: Vec<&str> = words(tokens)
+        .into_iter()
+        .filter(|word| !is_article(word))
+        .collect();
+    let has_expected_prefix =
+        words.starts_with(&["if", "you", "dont"]) || words.starts_with(&["if", "you", "do", "not"]);
+    if !has_expected_prefix {
+        return Ok(None);
+    }
+
+    let Some(comma_idx) = tokens
+        .iter()
+        .position(|token| matches!(token, Token::Comma(_)))
+    else {
+        return Ok(None);
+    };
+    if comma_idx + 1 >= tokens.len() {
+        return Ok(None);
+    }
+
+    let effects = parse_effect_chain(&tokens[comma_idx + 1..])?;
+    if effects.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(effects))
+}
+
 fn parse_look_at_top_reveal_match_put_rest_bottom_then_if_not_into_hand(
     first: &[Token],
     second: &[Token],
@@ -941,10 +1349,20 @@ fn parse_quad_sentence_sequence(
     third: &[Token],
     fourth: &[Token],
 ) -> Result<Option<(&'static str, Vec<EffectAst>)>, CardTextError> {
-    const RULES: [(&str, QuadSentenceRule); 1] = [(
-        "look-at-top-reveal-match-put-rest-bottom-if-not-into-hand",
-        parse_look_at_top_reveal_match_put_rest_bottom_then_if_not_into_hand,
-    )];
+    const RULES: [(&str, QuadSentenceRule); 3] = [
+        (
+            "look-at-top-put-counted-into-hand-rest-bottom-kicker-override",
+            parse_look_at_top_put_counted_into_hand_rest_bottom_with_kicker_override,
+        ),
+        (
+            "look-at-top-may-put-match-onto-battlefield-if-not-put-into-hand-rest-bottom",
+            parse_look_at_top_may_put_match_onto_battlefield_then_if_not_put_into_hand_rest_bottom,
+        ),
+        (
+            "look-at-top-reveal-match-put-rest-bottom-if-not-into-hand",
+            parse_look_at_top_reveal_match_put_rest_bottom_then_if_not_into_hand,
+        ),
+    ];
 
     for (name, rule) in RULES {
         if let Some(combined) = rule(first, second, third, fourth)? {
@@ -1604,6 +2022,7 @@ pub(crate) fn replace_unbound_x_in_effect_anywhere(
         | EffectAst::Scry { count: amount, .. }
         | EffectAst::Surveil { count: amount, .. }
         | EffectAst::Discover { count: amount, .. }
+        | EffectAst::LookAtTopCards { count: amount, .. }
         | EffectAst::PayEnergy { amount, .. }
         | EffectAst::CopySpell { count: amount, .. }
         | EffectAst::SetLifeTotal { amount, .. }
@@ -1630,10 +2049,20 @@ pub(crate) fn replace_unbound_x_in_effect_anywhere(
             replace_value(amount, replacement, clause)?;
         }
         EffectAst::CreateToken { count, .. }
-        | EffectAst::CreateTokenWithMods { count, .. }
         | EffectAst::CreateTokenCopy { count, .. }
         | EffectAst::CreateTokenCopyFromSource { count, .. } => {
             replace_value(count, replacement, clause)?;
+        }
+        EffectAst::CreateTokenWithMods {
+            count,
+            dynamic_power_toughness,
+            ..
+        } => {
+            replace_value(count, replacement, clause)?;
+            if let Some((power, toughness)) = dynamic_power_toughness {
+                replace_value(power, replacement, clause)?;
+                replace_value(toughness, replacement, clause)?;
+            }
         }
         EffectAst::CounterUnlessPays {
             life,

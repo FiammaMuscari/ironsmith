@@ -29,6 +29,7 @@ mod if_effect;
 mod may;
 mod mechanic_actions;
 mod reflexive_trigger;
+mod repeat_process;
 mod sequence;
 mod tag_attached_to_source;
 mod tag_triggering_damage_target;
@@ -60,6 +61,7 @@ pub use mechanic_actions::{
     OpenAttractionEffect, SupportEffect,
 };
 pub use reflexive_trigger::ReflexiveTriggerEffect;
+pub use repeat_process::RepeatProcessEffect;
 pub use sequence::SequenceEffect;
 pub use tag_attached_to_source::TagAttachedToSourceEffect;
 pub use tag_triggering_damage_target::TagTriggeringDamageTargetEffect;

@@ -2,7 +2,7 @@
 //!
 //! Used by Chrome Mox to produce mana based on the colors of the exiled card.
 
-use super::choice_helpers::{choose_mana_colors, credit_mana_symbols};
+use super::choice_helpers::{choose_mana_colors, credit_mana_symbols_from_context};
 use crate::color::Color;
 use crate::effect::EffectOutcome;
 use crate::effects::EffectExecutor;
@@ -90,7 +90,12 @@ impl EffectExecutor for AddManaOfImprintedColorsEffect {
                 .into_iter()
                 .next()
                 .unwrap_or(colors[0]);
-        credit_mana_symbols(game, controller, [ManaSymbol::from_color(chosen_color)]);
+        credit_mana_symbols_from_context(
+            game,
+            controller,
+            [ManaSymbol::from_color(chosen_color)],
+            ctx,
+        );
 
         Ok(EffectOutcome::count(1))
     }

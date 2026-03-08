@@ -1,5 +1,11 @@
+export function getCardElement(objectId) {
+  return document.querySelector(
+    `[data-arrow-anchor="stack"][data-object-id="${objectId}"], .game-card[data-object-id="${objectId}"]`
+  );
+}
+
 export function getCardRect(objectId) {
-  const el = document.querySelector(`.game-card[data-object-id="${objectId}"]`);
+  const el = getCardElement(objectId);
   return el ? el.getBoundingClientRect() : null;
 }
 

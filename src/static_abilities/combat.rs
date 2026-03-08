@@ -243,7 +243,7 @@ impl StaticAbilityKind for Landwalk {
     }
 
     fn display(&self) -> String {
-        format!("{:?}walk", self.land_subtype)
+        format!("{}walk", self.land_subtype)
     }
 
     fn is_keyword(&self) -> bool {
@@ -592,7 +592,7 @@ impl CantAttackUnlessCondition {
                 Self::describe_source_condition(left),
                 Self::describe_source_condition(right)
             ),
-            other => format!("{other:?}").to_ascii_lowercase(),
+            _ => "the stated condition is met".to_string(),
         }
     }
 
