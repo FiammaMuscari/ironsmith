@@ -40,6 +40,7 @@ pub enum PriorityResponse {
     OptionalCosts(Vec<(usize, u32)>),
     ManaPayment(usize),
     ManaPipPayment(usize),
+    NextCostChoice(usize),
     SacrificeTarget(ObjectId),
     CardCostChoice(ObjectId),
     HybridChoice(usize),

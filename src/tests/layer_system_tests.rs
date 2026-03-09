@@ -1860,6 +1860,33 @@ use crate::game_loop::{
     check_and_apply_sbas_with, put_triggers_on_stack, resolve_stack_entry,
 };
 
+fn drive_non_priority_decisions_with_dm<D: crate::decision::DecisionMaker>(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    state: &mut PriorityLoopState,
+    mut progress: crate::decision::GameProgress,
+    decision_maker: &mut D,
+) -> crate::decision::GameProgress {
+    loop {
+        match progress {
+            crate::decision::GameProgress::NeedsDecisionCtx(
+                crate::decisions::context::DecisionContext::Priority(_),
+            ) => return progress,
+            crate::decision::GameProgress::NeedsDecisionCtx(ref ctx) => {
+                progress = crate::game_loop::apply_decision_context_with_dm(
+                    game,
+                    trigger_queue,
+                    state,
+                    ctx,
+                    decision_maker,
+                )
+                .expect("follow-up decision context should resolve");
+            }
+            _ => return progress,
+        }
+    }
+}
+
 /// Test: Undying creature returns from the graveyard with a +1/+1 counter.
 ///
 /// Scenario: Alice controls a Butcher Ghoul (1/1 with undying) and casts Lightning Bolt
@@ -2166,7 +2193,7 @@ fn test_counter_annihilation_enables_undying_loop() {
         &mut decision_maker,
     )
     .expect("Activation should start");
-    let _progress = match progress {
+    let progress = match progress {
         crate::decision::GameProgress::NeedsDecisionCtx(
             crate::decisions::context::DecisionContext::Targets(_),
         ) => {
@@ -2183,8 +2210,16 @@ fn test_counter_annihilation_enables_undying_loop() {
         }
         other => panic!("Expected Targets context but got {:?}", other),
     };
+    let _progress = drive_non_priority_decisions_with_dm(
+        &mut game,
+        &mut trigger_queue,
+        &mut state,
+        progress,
+        &mut decision_maker,
+    );
 
-    // After targeting, cost_effects execute automatically:
+    // After targeting, the activation still needs follow-up cost decisions:
+    // - choose the next unpaid cost
     // - ChooseObjectsEffect selects Sightless Ghoul (first valid candidate in battlefield order)
     // - SacrificeEffect sacrifices it
     //
@@ -2430,7 +2465,7 @@ fn test_yawgmoth_undying_loop_draws_cards_until_death() {
         } else {
             vec![]
         };
-        let _progress = match progress {
+        let progress = match progress {
             crate::decision::GameProgress::NeedsDecisionCtx(
                 crate::decisions::context::DecisionContext::Targets(_),
             ) => {
@@ -2446,8 +2481,16 @@ fn test_yawgmoth_undying_loop_draws_cards_until_death() {
             }
             other => panic!("Expected Targets context but got {:?}", other),
         };
+        let _progress = drive_non_priority_decisions_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            progress,
+            &mut decision_maker,
+        );
 
-        // After targeting, cost_effects execute automatically:
+        // After targeting, the activation still needs follow-up cost decisions:
+        // - choose the next unpaid cost
         // - ChooseObjectsEffect selects first valid creature (auto-selection)
         // - SacrificeEffect sacrifices it
         // - 1 life is paid

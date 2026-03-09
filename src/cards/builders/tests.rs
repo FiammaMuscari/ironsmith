@@ -1769,6 +1769,20 @@ fn test_parse_target_opponent_gains_control_clause() {
 }
 
 #[test]
+fn test_parse_gain_control_each_noncommander_creature_clause() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Subjugate the Hobbits Variant")
+        .card_types(vec![CardType::Sorcery])
+        .parse_text("Gain control of each noncommander creature with mana value 3 or less.")
+        .expect("parse universal gain-control clause");
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("gain control of each noncommander creature with mana value 3 or less"),
+        "expected compiled text to preserve universal gain-control wording, got {rendered}"
+    );
+}
+
+#[test]
 fn test_parse_create_token_for_each_creature_that_died_this_turn() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Mahadi Variant")
         .card_types(vec![CardType::Creature])

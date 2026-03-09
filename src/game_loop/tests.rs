@@ -3883,14 +3883,48 @@ mod tests {
         }
 
         let choose_target = PriorityResponse::Targets(vec![Target::Player(bob)]);
-        apply_priority_response_with_dm(
+        let cost_order_ctx = match apply_priority_response_with_dm(
             &mut game,
             &mut trigger_queue,
             &mut state,
             &choose_target,
             &mut dm,
         )
-        .expect("should choose damage target");
+        .expect("should choose damage target") {
+            crate::decision::GameProgress::NeedsDecisionCtx(
+                crate::decisions::context::DecisionContext::SelectOptions(ctx),
+            ) => ctx,
+            other => panic!(
+                "expected Bosh next-cost chooser after choosing target, got {:?}",
+                other
+            ),
+        };
+
+        let sacrifice_cost_index = cost_order_ctx
+            .options
+            .iter()
+            .find(|opt| opt.description.to_ascii_lowercase().contains("sacrifice"))
+            .map(|opt| opt.index)
+            .expect("expected a sacrifice cost option");
+        let choose_sacrifice_cost = PriorityResponse::NextCostChoice(sacrifice_cost_index);
+        let progress = apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &choose_sacrifice_cost,
+            &mut dm,
+        )
+        .expect("should choose sacrifice cost first");
+
+        match progress {
+            crate::decision::GameProgress::NeedsDecisionCtx(
+                crate::decisions::context::DecisionContext::SelectObjects(_),
+            ) => {}
+            other => panic!(
+                "expected sacrifice target prompt after choosing Bosh sacrifice cost, got {:?}",
+                other
+            ),
+        }
 
         let choose_sacrifice = PriorityResponse::SacrificeTarget(relic_id);
         apply_priority_response_with_dm(
@@ -3903,6 +3937,13 @@ mod tests {
         .expect("should choose sacrifice target");
 
         assert_eq!(game.stack.len(), 1, "Bosh ability should be on stack");
+        let bosh_entry = game.stack.last().expect("Bosh ability should be on stack");
+        let sacrificed = bosh_entry
+            .tagged_objects
+            .get(&crate::tag::TagKey::from("sacrifice_cost_0"))
+            .expect("Bosh stack entry should keep the sacrificed-artifact tag");
+        assert_eq!(sacrificed.len(), 1);
+        assert_eq!(sacrificed[0].name, "Calibration Relic");
 
         resolve_stack_entry(&mut game).expect("Bosh ability should resolve");
 
@@ -4025,7 +4066,7 @@ mod tests {
         );
 
         let choose_target = PriorityResponse::Targets(vec![Target::Object(target_id)]);
-        apply_priority_response_with_dm(
+        let progress = apply_priority_response_with_dm(
             &mut game,
             &mut trigger_queue,
             &mut state,
@@ -4034,25 +4075,58 @@ mod tests {
         )
         .expect("Yawgmoth target choice should continue activation");
 
-        assert_eq!(
-            dm.decision_order,
-            vec!["objects"],
-            "the sacrifice-side object choice should happen only after the target response"
-        );
-        assert_eq!(
-            dm.life_when_object_cost_chosen,
-            Some(19),
-            "life payment should happen after targets and before the sacrifice selection"
-        );
+        let next_cost_ctx = match progress {
+            crate::decision::GameProgress::NeedsDecisionCtx(
+                crate::decisions::context::DecisionContext::SelectOptions(ctx),
+            ) => ctx,
+            other => panic!(
+                "expected next-cost chooser after Yawgmoth target selection, got {:?}",
+                other
+            ),
+        };
+        let life_cost_index = next_cost_ctx
+            .options
+            .iter()
+            .find(|opt| opt.description.to_ascii_lowercase().contains("life"))
+            .map(|opt| opt.index)
+            .expect("expected a life-payment option");
+        let choose_life_first = PriorityResponse::NextCostChoice(life_cost_index);
+        let progress = apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &choose_life_first,
+            &mut dm,
+        )
+        .expect("Yawgmoth should accept paying life first");
+
+        match progress {
+            crate::decision::GameProgress::NeedsDecisionCtx(
+                crate::decisions::context::DecisionContext::SelectObjects(_),
+            ) => {}
+            other => panic!(
+                "expected sacrifice selection prompt after Yawgmoth life payment, got {:?}",
+                other
+            ),
+        }
+
         assert_eq!(
             game.player(alice).expect("Alice exists").life,
             19,
             "Yawgmoth activation should pay 1 life"
         );
-        assert!(
-            !game.battlefield.contains(&fodder_id),
-            "chosen creature should leave the battlefield as part of the activation cost"
-        );
+        assert!(game.battlefield.contains(&fodder_id));
+
+        apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &PriorityResponse::SacrificeTarget(fodder_id),
+            &mut dm,
+        )
+        .expect("Yawgmoth should accept the chosen sacrifice");
+
+        assert!(!game.battlefield.contains(&fodder_id));
         assert!(
             game.player(alice)
                 .expect("Alice exists")
@@ -4067,6 +4141,16 @@ mod tests {
             1,
             "Yawgmoth ability should be on the stack"
         );
+        let yawgmoth_entry = game
+            .stack
+            .last()
+            .expect("Yawgmoth ability should be on the stack");
+        let sacrificed = yawgmoth_entry
+            .tagged_objects
+            .get(&crate::tag::TagKey::from("sacrifice_cost_0"))
+            .expect("Yawgmoth stack entry should keep the sacrificed-creature tag");
+        assert_eq!(sacrificed.len(), 1);
+        assert_eq!(sacrificed[0].name, "Fodder");
     }
 
     #[test]
@@ -4139,12 +4223,38 @@ mod tests {
         )
         .expect("activation should start");
 
+        let next_cost_ctx = match progress {
+            GameProgress::NeedsDecisionCtx(
+                crate::decisions::context::DecisionContext::SelectOptions(ctx),
+            ) => ctx,
+            other => panic!(
+                "expected next-cost chooser for proliferate activation, got {:?}",
+                other
+            ),
+        };
+
+        assert!(
+            next_cost_ctx.description.to_lowercase().contains("choose the next cost to pay"),
+            "expected next-cost prompt, got description: {}",
+            next_cost_ctx.description
+        );
+
+        let choose_discard_cost = PriorityResponse::NextCostChoice(1);
+        let progress = apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &choose_discard_cost,
+            &mut dm,
+        )
+        .expect("discard cost should be selectable first");
+
         let objects_ctx = match progress {
             GameProgress::NeedsDecisionCtx(
                 crate::decisions::context::DecisionContext::SelectObjects(ctx),
             ) => ctx,
             other => panic!(
-                "expected SelectObjects discard decision for proliferate activation, got {:?}",
+                "expected SelectObjects discard decision after choosing discard cost, got {:?}",
                 other
             ),
         };
@@ -5522,31 +5632,59 @@ mod tests {
             &mut dm,
         );
 
-        // This should NOT be a PayMana decision since there's no mana cost!
-        // It should go straight to casting and then return a Priority decision
-        match result {
-            Ok(GameProgress::NeedsDecisionCtx(ref ctx)) => {
-                // Check if this is a mana payment context
-                if let crate::decisions::context::DecisionContext::SelectOptions(opts_ctx) = ctx {
-                    if opts_ctx.description.contains("mana") {
-                        panic!(
-                            "Should NOT require mana payment for Force of Will alternative cost!"
-                        );
-                    }
-                }
-                // Other context types are acceptable (including Priority)
-            }
-            Ok(GameProgress::Continue) => {
-                // Also acceptable
-            }
-            Ok(GameProgress::StackResolved) => {
-                // Also acceptable
-            }
-            Ok(GameProgress::GameOver(_)) => {
-                // Shouldn't happen but handle it
-            }
-            Err(e) => panic!("Error during casting: {:?}", e),
+        let next_cost_ctx = match result {
+            Ok(GameProgress::NeedsDecisionCtx(
+                crate::decisions::context::DecisionContext::SelectOptions(ctx),
+            )) => ctx,
+            other => panic!(
+                "expected next-cost chooser for Force of Will alternative cost, got {:?}",
+                other
+            ),
+        };
+        let exile_cost_index = next_cost_ctx
+            .options
+            .iter()
+            .find(|opt| opt.description.to_ascii_lowercase().contains("exile"))
+            .map(|opt| opt.index)
+            .expect("expected an exile cost option");
+
+        let mut dm = crate::decision::AutoPassDecisionMaker;
+        let choose_exile_cost = PriorityResponse::NextCostChoice(exile_cost_index);
+        let progress = apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &choose_exile_cost,
+            &mut dm,
+        )
+        .expect("should choose exile cost first");
+
+        match progress {
+            GameProgress::NeedsDecisionCtx(
+                crate::decisions::context::DecisionContext::SelectObjects(_),
+            ) => {}
+            other => panic!(
+                "expected exile-from-hand chooser after selecting Force of Will exile cost, got {:?}",
+                other
+            ),
         }
+
+        let blue_card_id = game
+            .player(alice)
+            .expect("Alice exists")
+            .hand
+            .iter()
+            .copied()
+            .find(|&id| id != fow_id)
+            .expect("expected another blue card in hand");
+        apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &PriorityResponse::CardCostChoice(blue_card_id),
+            &mut dm,
+        )
+        .expect("should finish paying Force of Will after exiling a blue card");
 
         // Verify the alternative costs were paid
         // - Life should have decreased by 1
@@ -5578,6 +5716,20 @@ mod tests {
             }),
             "Force of Will should be on the stack"
         );
+        let force_entry = game
+            .stack
+            .iter()
+            .find(|e| {
+                game.object(e.object_id)
+                    .is_some_and(|obj| obj.name == "Force of Will")
+            })
+            .expect("Force of Will stack entry should exist");
+        let exiled = force_entry
+            .tagged_objects
+            .get(&crate::tag::TagKey::from("exile_cost"))
+            .expect("Force of Will stack entry should keep the exiled-card tag");
+        assert_eq!(exiled.len(), 1);
+        assert_eq!(exiled[0].name, "Counterspell");
     }
 
     #[test]

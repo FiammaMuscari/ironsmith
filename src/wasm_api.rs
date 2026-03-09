@@ -4415,7 +4415,9 @@ impl WasmGame {
                     .priority_state
                     .pending_cast
                     .as_ref()
-                    .is_some_and(|pending| matches!(pending.stage, CastStage::ChoosingCardCost))
+                    .is_some_and(|pending| {
+                        matches!(pending.stage, CastStage::ChoosingSacrifice | CastStage::ChoosingCardCost)
+                    })
                 {
                     Ok(PriorityResponse::CardCostChoice(ObjectId::from_raw(chosen)))
                 } else {
@@ -4556,6 +4558,23 @@ impl WasmGame {
                 .copied()
                 .ok_or_else(|| JsValue::from_str("mana payment choice requires one option"))?;
             return Ok(PriorityResponse::ManaPayment(choice));
+        }
+        if self
+            .priority_state
+            .pending_activation
+            .as_ref()
+            .is_some_and(|pending| matches!(pending.stage, ActivationStage::ChoosingNextCost))
+            || self
+                .priority_state
+                .pending_cast
+                .as_ref()
+                .is_some_and(|pending| matches!(pending.stage, CastStage::ChoosingNextCost))
+        {
+            let choice = option_indices
+                .first()
+                .copied()
+                .ok_or_else(|| JsValue::from_str("next-cost choice requires one option"))?;
+            return Ok(PriorityResponse::NextCostChoice(choice));
         }
         if self
             .priority_state
@@ -4944,6 +4963,8 @@ fn decision_reason(ctx: &DecisionContext) -> Option<String> {
             let d = o.description.to_lowercase();
             if d.contains("replacement") {
                 Some("Replacement effect".into())
+            } else if d.contains("choose the next cost to pay") {
+                Some("Next cost".into())
             } else if d.contains("optional cost") {
                 Some("Additional costs".into())
             } else {

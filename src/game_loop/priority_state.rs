@@ -11,9 +11,11 @@
 /// 4. ChoosingOptionalCosts (601.2b) - Announce additional costs (kicker, buyback)
 /// 5. AnnouncingCost (601.2b) - Announce hybrid/Phyrexian mana choices
 /// 6. ChoosingTargets (601.2c) - Choose targets
-/// 7. ChoosingCardCost - Select cards/objects for non-mana costs
-/// 8. PayingMana (601.2g-h) - Activate mana abilities and pay costs
-/// 9. ReadyToFinalize (601.2i) - Spell becomes cast
+/// 7. ChoosingNextCost - Choose the next remaining cost to pay
+/// 8. ProcessingCosts - Pay a selected non-mana cost
+/// 9. ChoosingSacrifice / ChoosingCardCost - Resolve object/card cost choices
+/// 10. PayingMana (601.2g-h) - Activate mana abilities and pay costs
+/// 11. ReadyToFinalize (601.2i) - Spell becomes cast
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CastStage {
     /// Spell is being proposed - moved to stack per 601.2a.
@@ -31,6 +33,12 @@ pub enum CastStage {
     AnnouncingCost,
     /// Need to choose targets.
     ChoosingTargets,
+    /// Need to choose the next remaining cost to pay.
+    ChoosingNextCost,
+    /// Need to pay a selected immediate non-mana cost.
+    ProcessingCosts,
+    /// Need to choose a permanent for a sacrifice cost.
+    ChoosingSacrifice,
     /// Need to choose cards/objects for non-mana costs (discard, exile-from-hand, etc.).
     ChoosingCardCost,
     /// Need to pay mana costs (player can activate mana abilities).
@@ -48,6 +56,9 @@ impl CastStage {
             CastStage::ChoosingOptionalCosts => "choosing optional costs",
             CastStage::AnnouncingCost => "announcing costs",
             CastStage::ChoosingTargets => "choosing targets",
+            CastStage::ChoosingNextCost => "choosing next cost",
+            CastStage::ProcessingCosts => "processing costs",
+            CastStage::ChoosingSacrifice => "choosing sacrifices",
             CastStage::ChoosingCardCost => "choosing card costs",
             CastStage::PayingMana => "paying mana",
             CastStage::ReadyToFinalize => "ready to finalize",
@@ -110,12 +121,12 @@ pub struct PendingCast {
     /// Remaining mana pips to pay (pip-by-pip payment flow).
     /// Each element is a pip with its alternatives (e.g., [Black, Life(2)] for {B/P}).
     pub remaining_mana_pips: Vec<Vec<crate::mana::ManaSymbol>>,
-    /// Cards chosen in advance for non-mana card costs.
-    ///
-    /// Currently consumed by cost payers through CostContext::pre_chosen_cards.
-    pub pre_chosen_card_cost_objects: Vec<ObjectId>,
-    /// Pending card/object cost choices that must be selected before paying mana.
-    pub remaining_card_choice_costs: Vec<ActivationCardCostChoice>,
+    /// Remaining non-mana spell costs to pay, in player-chosen order.
+    pub remaining_cost_steps: Vec<ActivationCostStep>,
+    /// Tagged object snapshots captured while paying spell costs.
+    pub tagged_objects: std::collections::HashMap<crate::tag::TagKey, Vec<ObjectSnapshot>>,
+    /// Next `sacrifice_cost_{N}` tag index to assign for choose-and-sacrifice costs.
+    pub next_sacrifice_cost_tag_index: usize,
     /// Pre-chosen modes for modal spells (per MTG rule 601.2b).
     /// Set during ChoosingModes stage, used during resolution.
     pub chosen_modes: Option<Vec<usize>>,
@@ -162,8 +173,9 @@ impl PendingCast {
             mana_spent_to_cast: ManaPool::default(),
             mana_cost_to_pay: None,
             remaining_mana_pips: Vec::new(),
-            pre_chosen_card_cost_objects: Vec::new(),
-            remaining_card_choice_costs: Vec::new(),
+            remaining_cost_steps: Vec::new(),
+            tagged_objects: std::collections::HashMap::new(),
+            next_sacrifice_cost_tag_index: 0,
             chosen_modes,
             hybrid_choices: Vec::new(),
             pending_hybrid_pips: Vec::new(),
@@ -182,7 +194,9 @@ pub enum ActivationStage {
     AnnouncingCost,
     /// Need to choose ability targets.
     ChoosingTargets,
-    /// Need to pay deferred non-mana costs in activation-cost order.
+    /// Need to choose the next remaining cost to pay.
+    ChoosingNextCost,
+    /// Need to pay a selected deferred non-mana cost.
     ProcessingCosts,
     /// Need to choose sacrifice targets.
     ChoosingSacrifice,
@@ -200,6 +214,7 @@ impl ActivationStage {
             ActivationStage::ChoosingX => "choosing X",
             ActivationStage::AnnouncingCost => "announcing costs",
             ActivationStage::ChoosingTargets => "choosing targets",
+            ActivationStage::ChoosingNextCost => "choosing next cost",
             ActivationStage::ProcessingCosts => "processing costs",
             ActivationStage::ChoosingSacrifice => "choosing sacrifices",
             ActivationStage::ChoosingCardCost => "choosing card costs",
@@ -233,6 +248,13 @@ pub enum ActivationCardCostChoice {
         card_type: Option<CardType>,
         description: String,
     },
+    /// Choose an object in a specific zone to exile as a cost.
+    ExileChosenObject {
+        filter: ObjectFilter,
+        zone: Zone,
+        description: String,
+        choice_tag: crate::tag::TagKey,
+    },
     /// Choose a card to reveal from hand.
     RevealFromHand {
         card_type: Option<CardType>,
@@ -242,6 +264,7 @@ pub enum ActivationCardCostChoice {
     ReturnToHand {
         filter: ObjectFilter,
         description: String,
+        choice_tag: Option<crate::tag::TagKey>,
     },
 }
 
@@ -254,6 +277,7 @@ pub enum ActivationCostStep {
     Sacrifice {
         filter: ObjectFilter,
         description: String,
+        choice_tag: Option<crate::tag::TagKey>,
     },
     /// A card/object choice that must be surfaced through SelectObjects.
     CardChoice(ActivationCardCostChoice),
@@ -310,6 +334,7 @@ pub(crate) fn append_card_choice_costs_from_processing_mode(
             out.push(ActivationCardCostChoice::ReturnToHand {
                 filter: filter.clone(),
                 description,
+                choice_tag: None,
             });
         }
         CostProcessingMode::Immediate
@@ -319,6 +344,124 @@ pub(crate) fn append_card_choice_costs_from_processing_mode(
     }
 
     out.len() > before_len
+}
+
+fn tagged_filter_matches(filter: &ObjectFilter, tag: &crate::tag::TagKey) -> bool {
+    filter.tagged_constraints.len() == 1
+        && filter.tagged_constraints[0].tag == *tag
+        && filter.tagged_constraints[0].relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
+}
+
+fn choose_tagged_cost_step(
+    choose: &crate::effects::ChooseObjectsEffect,
+    next: &crate::costs::Cost,
+) -> Option<ActivationCostStep> {
+    if !choose.count.is_single() {
+        return None;
+    }
+
+    let next_effect = next.effect_ref()?;
+
+    if let Some(sacrifice) = next_effect.downcast_ref::<crate::effects::SacrificeEffect>() {
+        if sacrifice.player == crate::target::PlayerFilter::You
+            && tagged_filter_matches(&sacrifice.filter, &choose.tag)
+        {
+            return Some(ActivationCostStep::Sacrifice {
+                filter: choose.filter.clone(),
+                description: crate::costs::CostProcessingMode::SacrificeTarget {
+                    filter: choose.filter.clone(),
+                }
+                .display(),
+                choice_tag: Some(choose.tag.clone()),
+            });
+        }
+    }
+
+    if let Some(exile) = next_effect.downcast_ref::<crate::effects::ExileEffect>() {
+        let zone = choose.filter.zone.unwrap_or(choose.zone);
+        let description = match zone {
+            Zone::Hand => crate::costs::CostProcessingMode::ExileFromHand {
+                count: 1,
+                color_filter: choose.filter.colors,
+            }
+            .display(),
+            Zone::Graveyard => crate::costs::CostProcessingMode::ExileFromGraveyard {
+                count: 1,
+                card_type: if choose.filter.card_types.len() == 1 {
+                    choose.filter.card_types.first().copied()
+                } else {
+                    None
+                },
+            }
+            .display(),
+            _ => format!("Exile {}", choose.filter.description()),
+        };
+
+        match exile.spec.base() {
+            ChooseSpec::Tagged(tag) if tag == &choose.tag => {
+                return Some(ActivationCostStep::CardChoice(
+                    ActivationCardCostChoice::ExileChosenObject {
+                        filter: choose.filter.clone(),
+                        zone,
+                        description,
+                        choice_tag: choose.tag.clone(),
+                    },
+                ));
+            }
+            ChooseSpec::Object(filter) if tagged_filter_matches(filter, &choose.tag) => {
+                return Some(ActivationCostStep::CardChoice(
+                    ActivationCardCostChoice::ExileChosenObject {
+                        filter: choose.filter.clone(),
+                        zone,
+                        description,
+                        choice_tag: choose.tag.clone(),
+                    },
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(return_to_hand) = next_effect.downcast_ref::<crate::effects::ReturnToHandEffect>() {
+        if let ChooseSpec::Object(filter) = return_to_hand.spec.base()
+            && tagged_filter_matches(filter, &choose.tag)
+        {
+            return Some(ActivationCostStep::CardChoice(
+                ActivationCardCostChoice::ReturnToHand {
+                    filter: choose.filter.clone(),
+                    description: crate::costs::CostProcessingMode::ReturnToHandTarget {
+                        filter: choose.filter.clone(),
+                    }
+                    .display(),
+                    choice_tag: Some(choose.tag.clone()),
+                },
+            ));
+        }
+    }
+
+    None
+}
+
+pub(crate) fn append_activation_cost_steps_from_components(
+    components: &[crate::costs::Cost],
+    out: &mut Vec<ActivationCostStep>,
+) {
+    let mut idx = 0usize;
+    while idx < components.len() {
+        if let Some(choose) = components[idx]
+            .effect_ref()
+            .and_then(|effect| effect.downcast_ref::<crate::effects::ChooseObjectsEffect>())
+            && let Some(next) = components.get(idx + 1)
+            && let Some(step) = choose_tagged_cost_step(choose, next)
+        {
+            out.push(step);
+            idx += 2;
+            continue;
+        }
+
+        append_activation_cost_steps_from_cost(&components[idx], out);
+        idx += 1;
+    }
 }
 
 /// Expand an activation cost into ordered post-target cost-payment steps.
@@ -338,6 +481,7 @@ pub(crate) fn append_activation_cost_steps_from_cost(
             out.push(ActivationCostStep::Sacrifice {
                 filter,
                 description,
+                choice_tag: None,
             });
         }
         CostProcessingMode::DiscardCards { count, card_types } => {
@@ -388,6 +532,7 @@ pub(crate) fn append_activation_cost_steps_from_cost(
                 ActivationCardCostChoice::ReturnToHand {
                     filter,
                     description,
+                    choice_tag: None,
                 },
             ));
         }
@@ -424,7 +569,7 @@ pub struct PendingActivation {
     /// Remaining mana pips to pay (pip-by-pip payment flow).
     /// Each element is a pip with its alternatives (e.g., [Black, Life(2)] for {B/P}).
     pub remaining_mana_pips: Vec<Vec<crate::mana::ManaSymbol>>,
-    /// Remaining non-mana activation costs to pay, in original cost order.
+    /// Remaining non-mana activation costs awaiting payment.
     pub remaining_cost_steps: Vec<ActivationCostStep>,
     /// Tagged object snapshots captured while paying activation costs.
     ///

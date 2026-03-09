@@ -1,10 +1,11 @@
 fn stage_after_activation_announcements(pending: &PendingActivation) -> ActivationStage {
     if !pending.remaining_requirements.is_empty() {
         ActivationStage::ChoosingTargets
-    } else if !pending.remaining_cost_steps.is_empty() {
-        ActivationStage::ProcessingCosts
-    } else if pending.mana_cost_to_pay.is_some() || !pending.remaining_mana_pips.is_empty() {
-        ActivationStage::PayingMana
+    } else if !pending.remaining_cost_steps.is_empty()
+        || pending.mana_cost_to_pay.is_some()
+        || !pending.remaining_mana_pips.is_empty()
+    {
+        ActivationStage::ChoosingNextCost
     } else {
         ActivationStage::ReadyToFinalize
     }
@@ -144,6 +145,16 @@ pub fn apply_priority_response_with_dm(
         return Err(GameLoopError::InvalidState(
             "ManaPipPayment response but no pending activation or cast".to_string(),
         ));
+    }
+
+    if let PriorityResponse::NextCostChoice(choice) = response {
+        return apply_next_cost_choice_response(
+            game,
+            trigger_queue,
+            state,
+            *choice,
+            &mut *decision_maker,
+        );
     }
 
     // Handle sacrifice target selection for a pending activation
@@ -564,15 +575,13 @@ pub fn apply_priority_response_with_dm(
             let mut remaining_cost_steps = Vec::new();
             let payment_trace: Vec<CostStep> = Vec::new();
 
+            append_activation_cost_steps_from_components(cost.costs(), &mut remaining_cost_steps);
             for cost_component in cost.costs() {
                 match cost_component.processing_mode() {
                     crate::costs::CostProcessingMode::ManaPayment { cost } => {
                         mana_cost_to_pay = Some(cost);
                     }
-                    _ => append_activation_cost_steps_from_cost(
-                        cost_component,
-                        &mut remaining_cost_steps,
-                    ),
+                    _ => {}
                 }
             }
 
@@ -609,10 +618,10 @@ pub fn apply_priority_response_with_dm(
                     ActivationStage::AnnouncingCost
                 } else if !target_requirements.is_empty() {
                     ActivationStage::ChoosingTargets
-                } else if !remaining_cost_steps.is_empty() {
-                    ActivationStage::ProcessingCosts
+                } else if !remaining_cost_steps.is_empty() || mana_cost_to_pay.is_some() {
+                    ActivationStage::ChoosingNextCost
                 } else {
-                    ActivationStage::PayingMana
+                    ActivationStage::ReadyToFinalize
                 };
 
                 let pending = PendingActivation::new(
