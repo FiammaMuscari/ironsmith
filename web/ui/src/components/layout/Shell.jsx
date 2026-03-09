@@ -56,6 +56,7 @@ export default function Shell() {
           await game.setSemanticThreshold(semanticThreshold);
         }
         await game.reset(parseNames(playerNames), startingLife);
+        await addStartingBattlefieldPreset(game);
         await refresh("WASM loaded");
         // Run demo setup: advance to main phase + 3 Black Lotuses
         await setupDemoBoard();
@@ -142,6 +143,7 @@ export default function Shell() {
     }
     try {
       await game.reset(parseNames(playerNames), startingLife);
+      await addStartingBattlefieldPreset(game);
       setDeckLoadingMode(false);
       await refresh("Game reset");
     } catch (err) {
@@ -301,4 +303,8 @@ export default function Shell() {
       ) : null}
     </div>
   );
+}
+
+async function addStartingBattlefieldPreset(game) {
+  await game.addCardToZone(0, "Omniscience", "battlefield", true);
 }
