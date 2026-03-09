@@ -6376,7 +6376,17 @@ pub(crate) fn parse_protection_from_colored_spells_line(
     let clause_words = words(tokens);
     if !matches!(
         clause_words.as_slice(),
-        ["protection", "from", "spells", "that", "are", "one", "or", "more", "colors"]
+        [
+            "protection",
+            "from",
+            "spells",
+            "that",
+            "are",
+            "one",
+            "or",
+            "more",
+            "colors"
+        ]
     ) {
         return Ok(None);
     }

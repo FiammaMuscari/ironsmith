@@ -14,5 +14,5 @@ pub(crate) use for_each::*;
 pub(crate) use verb_handlers::*;
 pub(crate) use zones::*;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "parser-tests"))]
 mod tests;

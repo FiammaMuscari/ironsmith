@@ -1896,10 +1896,11 @@ pub struct WasmGame {
     pending_decision: Option<DecisionContext>,
     pending_replay_action: Option<PendingReplayAction>,
     /// Checkpoint at the start of the current user-initiated spell/ability
-    /// action chain. Unlike `pending_replay_action`, this survives direct
-    /// `GameProgress::NeedsDecisionCtx(...)` follow-up prompts so Undo can
-    /// still roll back only the in-progress action instead of the whole
-    /// priority epoch.
+    /// action chain. Unlike `pending_replay_action`, this survives nested
+    /// prompts while the action is still being announced or paid. Once the
+    /// spell or ability is committed and resolution produces a follow-up
+    /// prompt, this checkpoint is cleared so Undo does not rewind a resolving
+    /// action.
     pending_action_checkpoint: Option<ReplayCheckpoint>,
     game_over: Option<GameResult>,
     perspective: PlayerId,
@@ -2713,12 +2714,10 @@ impl WasmGame {
                     self.priority_epoch_undo_land_stable_id =
                         self.committed_undo_land_stable_id(&replay.checkpoint, &replay.root);
                     if let GameProgress::NeedsDecisionCtx(next_ctx) = progress {
-                        // Follow-up contexts produced directly by GameProgress
-                        // continue on the committed game state, but Undo should
-                        // still roll back to the start of the user action.
-                        if should_track_action_checkpoint {
-                            self.pending_action_checkpoint = Some(replay.checkpoint.clone());
-                        }
+                        // The spell/ability is now committed. Follow-up prompts
+                        // produced during resolution must not preserve Undo for
+                        // the action that just finished paying its costs.
+                        self.pending_action_checkpoint = None;
                         self.pending_decision = Some(next_ctx);
                         self.pending_replay_action = None;
                         self.snapshot()
@@ -2776,12 +2775,10 @@ impl WasmGame {
                     self.priority_epoch_undo_land_stable_id =
                         self.committed_undo_land_stable_id(&checkpoint, &root);
                     if let GameProgress::NeedsDecisionCtx(next_ctx) = progress {
-                        // Follow-up contexts produced directly by GameProgress
-                        // continue on the committed game state, but Undo should
-                        // still roll back to the start of the user action.
-                        if should_track_action_checkpoint {
-                            self.pending_action_checkpoint = Some(checkpoint);
-                        }
+                        // The spell/ability is now committed. Follow-up prompts
+                        // produced during resolution must not preserve Undo for
+                        // the action that just finished paying its costs.
+                        self.pending_action_checkpoint = None;
                         self.pending_decision = Some(next_ctx);
                         self.pending_replay_action = None;
                         self.snapshot()
@@ -2814,6 +2811,15 @@ impl WasmGame {
     fn is_cancelable(&self) -> bool {
         if let Some(replay) = self.pending_replay_action.as_ref() {
             return self.is_replay_chain_cancelable(replay);
+        }
+
+        if self.pending_action_checkpoint.is_none()
+            && self
+                .pending_decision
+                .as_ref()
+                .is_some_and(|ctx| !matches!(ctx, DecisionContext::Priority(_)))
+        {
+            return false;
         }
 
         if let Some(checkpoint) = self.pending_action_checkpoint.as_ref() {
@@ -6401,6 +6407,195 @@ mod tests {
             }
             other => panic!("expected player target on stack snapshot, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn duress_snapshot_keeps_revealed_hand_visible_during_discard_choice() {
+        let mut wasm = WasmGame::new();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        let duress_id = wasm
+            .add_card_to_zone(0, "Duress".to_string(), "hand".to_string(), true)
+            .expect("should add Duress to hand");
+        wasm.add_card_to_zone(
+            0,
+            "Black Lotus".to_string(),
+            "battlefield".to_string(),
+            true,
+        )
+        .expect("should add Black Lotus to battlefield");
+
+        let hydra_id = wasm
+            .add_card_to_zone(1, "Ulvenwald Hydra".to_string(), "hand".to_string(), true)
+            .expect("should add Ulvenwald Hydra to hand");
+        let peek_id = wasm
+            .add_card_to_zone(1, "Peek".to_string(), "hand".to_string(), true)
+            .expect("should add Peek to hand");
+        let keyrune_id = wasm
+            .add_card_to_zone(1, "Dimir Keyrune".to_string(), "hand".to_string(), true)
+            .expect("should add Dimir Keyrune to hand");
+        let forest_id = wasm
+            .add_card_to_zone(1, "Forest".to_string(), "hand".to_string(), true)
+            .expect("should add Forest to hand");
+
+        wasm.priority_epoch_checkpoint = Some(wasm.capture_replay_checkpoint());
+        wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(
+            alice,
+            compute_legal_actions(&wasm.game, alice),
+        )));
+
+        let priority_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => ctx,
+            other => panic!("expected priority decision, got {other:?}"),
+        };
+        let cast_duress_index = priority_ctx
+            .actions
+            .iter()
+            .position(|action| {
+                matches!(
+                    action,
+                    LegalAction::CastSpell { spell_id, .. } if *spell_id == ObjectId::from_raw(duress_id)
+                )
+            })
+            .expect("expected cast Duress action");
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "priority_action",
+                "action_index": cast_duress_index,
+            }))
+            .expect("cast spell command should serialize"),
+        )
+        .expect("casting Duress should enter its decision chain");
+
+        assert!(
+            matches!(wasm.pending_decision, Some(DecisionContext::Targets(_))),
+            "Duress should be waiting on targets after cast"
+        );
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_targets",
+                "targets": [
+                    { "kind": "player", "player": bob.0 }
+                ],
+            }))
+            .expect("target selection command should serialize"),
+        )
+        .expect("choosing the Duress target should succeed");
+
+        loop {
+            match wasm.pending_decision.as_ref() {
+                Some(DecisionContext::SelectOptions(options)) => {
+                    let option_index = options
+                        .options
+                        .iter()
+                        .find(|option| option.legal && option.description.contains("Black Lotus"))
+                        .or_else(|| options.options.iter().find(|option| option.legal))
+                        .map(|option| option.index)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "expected a legal mana-payment option, got {:?}",
+                                options
+                                    .options
+                                    .iter()
+                                    .map(|option| option.description.clone())
+                                    .collect::<Vec<_>>()
+                            )
+                        });
+                    wasm.dispatch(
+                        serde_wasm_bindgen::to_value(&json!({
+                            "type": "select_options",
+                            "option_indices": [option_index],
+                        }))
+                        .expect("option choice command should serialize"),
+                    )
+                    .expect("payment choice should succeed");
+                }
+                Some(DecisionContext::SelectObjects(_)) => break,
+                Some(other) => panic!("unexpected Duress follow-up decision: {other:?}"),
+                None => panic!("Duress resolved without presenting the discard decision"),
+            }
+        }
+
+        let pending_cast_stack_id = wasm
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
+        let snapshot = GameSnapshot::from_game(
+            &wasm.game,
+            wasm.perspective,
+            wasm.pending_decision.as_ref(),
+            wasm.game_over.as_ref(),
+            pending_cast_stack_id,
+            Vec::new(),
+            wasm.active_viewed_cards.as_ref(),
+            wasm.is_cancelable(),
+            None,
+            0,
+        );
+
+        let viewed_cards = snapshot
+            .viewed_cards
+            .as_ref()
+            .expect("Duress discard prompt should keep revealed cards in snapshot");
+        assert_eq!(viewed_cards.visibility, "public");
+        assert_eq!(viewed_cards.subject, bob.0);
+        assert_eq!(
+            viewed_cards.card_ids,
+            vec![hydra_id, peek_id, keyrune_id, forest_id],
+            "snapshot should surface every revealed hand card, not only legal discard choices"
+        );
+
+        let decision = match snapshot
+            .decision
+            .as_ref()
+            .expect("snapshot should include the pending discard choice")
+        {
+            super::DecisionView::SelectObjects(view) => view,
+            other => panic!("expected select_objects decision, got {other:?}"),
+        };
+        let candidate_ids: Vec<u64> = decision
+            .candidates
+            .iter()
+            .map(|candidate| candidate.id)
+            .collect();
+        assert_eq!(
+            candidate_ids,
+            vec![peek_id, keyrune_id],
+            "discard decision should only offer the legal noncreature nonland cards"
+        );
+    }
+
+    #[test]
+    fn committed_resolution_prompt_is_not_cancelable() {
+        let mut wasm = WasmGame::new();
+        let alice = PlayerId::from_index(0);
+        wasm.priority_epoch_checkpoint = Some(wasm.capture_replay_checkpoint());
+        wasm.priority_epoch_has_undoable_action = true;
+        wasm.pending_decision = Some(DecisionContext::SelectObjects(SelectObjectsContext::new(
+            alice,
+            None,
+            "Resolve effect",
+            vec![SelectableObject::new(ObjectId::from_raw(1), "Choice")],
+            1,
+            Some(1),
+        )));
+        assert!(
+            wasm.pending_action_checkpoint.is_none(),
+            "committed follow-up prompts should not retain the action-chain undo checkpoint"
+        );
+        assert!(
+            !wasm.is_cancelable(),
+            "once the spell has resolved into its imprint prompt, undo should be disabled"
+        );
     }
 
     #[test]

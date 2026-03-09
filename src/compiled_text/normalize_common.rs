@@ -5248,6 +5248,30 @@ fn describe_search_selection_with_cards(selection: &str) -> String {
     if selection.is_empty() {
         return "a card".to_string();
     }
+    if let Some(rest) = selection.strip_prefix("all ") {
+        let rest = rest.trim();
+        if let Some(name) = rest.strip_prefix("permanent named ") {
+            return format!("all cards named {name}");
+        }
+        if let Some(name) = rest.strip_prefix("card named ") {
+            return format!("all cards named {name}");
+        }
+        if rest == "nonland permanent" || rest == "nonland permanent card" {
+            return "all nonland cards".to_string();
+        }
+        if matches!(rest, "permanent" | "permanent card" | "card") {
+            return "all cards".to_string();
+        }
+        if let Some(tail) = rest.strip_prefix("permanent ") {
+            return format!("all cards {tail}");
+        }
+        if let Some(tail) = rest.strip_prefix("card ") {
+            return format!("all cards {tail}");
+        }
+        if rest.contains(" cards") {
+            return selection.to_string();
+        }
+    }
     if let Some(name) = selection.strip_prefix("a permanent named ") {
         return format!("a card named {name}");
     }

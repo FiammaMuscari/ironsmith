@@ -650,10 +650,7 @@ pub(crate) fn parse_search_library_sentence(
     } else {
         false
     };
-    let shuffle = (words_all.contains(&"shuffle") && !trailing_discard_before_shuffle)
-        || search_zones_override
-            .as_ref()
-            .is_some_and(|zones| zones.contains(&Zone::Library));
+    let shuffle = words_all.contains(&"shuffle") && !trailing_discard_before_shuffle;
     let split_battlefield_and_hand = put_idx.is_some()
         && words_all.contains(&"battlefield")
         && words_all.contains(&"hand")
@@ -662,6 +659,7 @@ pub(crate) fn parse_search_library_sentence(
     let mut effects = if let Some(search_zones) = search_zones_override.clone() {
         let chosen_tag: TagKey = "searched_multi_zone".into();
         let battlefield_tapped = destination == Zone::Battlefield && words_all.contains(&"tapped");
+        let shuffle_player = PlayerAst::That;
         let mut sequence = vec![EffectAst::ChooseObjectsAcrossZones {
             filter,
             count,
@@ -675,7 +673,9 @@ pub(crate) fn parse_search_library_sentence(
             });
         }
         if shuffle && destination == Zone::Library && search_zones.contains(&Zone::Library) {
-            sequence.push(EffectAst::ShuffleLibrary { player });
+            sequence.push(EffectAst::ShuffleLibrary {
+                player: shuffle_player,
+            });
         }
         sequence.push(EffectAst::ForEachTagged {
             tag: chosen_tag.clone(),
@@ -689,7 +689,9 @@ pub(crate) fn parse_search_library_sentence(
             }],
         });
         if shuffle && !(destination == Zone::Library && search_zones.contains(&Zone::Library)) {
-            sequence.push(EffectAst::ShuffleLibrary { player });
+            sequence.push(EffectAst::ShuffleLibrary {
+                player: shuffle_player,
+            });
         }
         sequence
     } else if split_battlefield_and_hand {

@@ -502,6 +502,7 @@ export default function HoverArtOverlay({
   const [detailsCache, setDetailsCache] = useState({});
   const [failedImageUrl, setFailedImageUrl] = useState(null);
   const [copiedDebug, setCopiedDebug] = useState(false);
+  const [compiledViewObjectKey, setCompiledViewObjectKey] = useState(null);
   const [inspectorScaleSession, setInspectorScaleSession] = useState({ key: null, scale: 1 });
   const [measuredPreferredInspectorWidth, setMeasuredPreferredInspectorWidth] = useState({
     key: null,
@@ -636,8 +637,19 @@ export default function HoverArtOverlay({
   const hasSemanticScore = Number.isFinite(semanticScore);
   const compiledText = detailAbilities && detailAbilities.length > 0
     ? stripInspectorAbilityPrefixes(detailAbilities.join("\n"))
-    : stripInspectorAbilityPrefixes(oracleText || "");
-  const displayRulesLines = useMemo(() => {
+    : stripInspectorAbilityPrefixes(
+      hoveredStackAbilityText
+      || hoveredStackEffectText
+      || String(oracleText || "")
+    );
+  const showCompiledText = inspectorDebug && objectIdKey != null && compiledViewObjectKey === objectIdKey;
+  const oracleRulesLines = useMemo(() => {
+    return String(details?.oracle_text || "")
+      .split("\n")
+      .map((line) => String(line || "").trim())
+      .filter(Boolean);
+  }, [details?.oracle_text]);
+  const compiledRulesLines = useMemo(() => {
     if (detailAbilities && detailAbilities.length > 0) {
       return detailAbilities
         .map((line) => stripInspectorAbilityPrefixes(String(line || "")).trim())
@@ -654,6 +666,15 @@ export default function HoverArtOverlay({
       .map((line) => line.trim())
       .filter(Boolean);
   }, [detailAbilities, hoveredStackAbilityText, hoveredStackEffectText, oracleText]);
+  const displayRulesLines = useMemo(() => {
+    if (showCompiledText && compiledRulesLines.length > 0) {
+      return compiledRulesLines;
+    }
+    if (oracleRulesLines.length > 0) {
+      return oracleRulesLines;
+    }
+    return compiledRulesLines;
+  }, [compiledRulesLines, oracleRulesLines, showCompiledText]);
   const displayRulesText = displayRulesLines.join("\n");
   const inspectorScaleSessionKey = useMemo(
     () => (
@@ -897,6 +918,7 @@ export default function HoverArtOverlay({
 
   const copyDebugPayload = useCallback(async () => {
     if (!canCopyDebug) return;
+    setCompiledViewObjectKey(objectIdKey);
     try {
       if (navigator?.clipboard?.writeText) {
         await navigator.clipboard.writeText(debugClipboardText);
@@ -923,7 +945,7 @@ export default function HoverArtOverlay({
     } catch {
       // ignore
     }
-  }, [canCopyDebug, debugClipboardText]);
+  }, [canCopyDebug, debugClipboardText, objectIdKey]);
 
   useEffect(() => {
     if (!copiedDebug) return;
@@ -1426,36 +1448,20 @@ export default function HoverArtOverlay({
           </div>
         )}
         {inspectorDebug && (
-          <div className="absolute top-0 right-0 z-20 p-1 max-w-[66%] pointer-events-auto">
-            <div className="rounded-sm border border-[#2f4662] bg-[rgba(5,11,20,0.84)] px-2 py-1 shadow-[0_8px_24px_rgba(0,0,0,0.5)]">
-              <div className="flex items-start gap-2">
-                <div className="min-w-0 text-[10px] leading-tight text-[#c7dbf2]">
-                  <div className="font-bold uppercase tracking-wider text-[#8ec4ff]">Debug</div>
-                  <div>
-                    Similarity: {hasSemanticScore ? `${(semanticScore * 100).toFixed(1)}%` : "-"}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className={`shrink-0 mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded border transition-colors ${
-                    canCopyDebug
-                      ? "border-[#436183] text-[#9dc9f8] hover:border-[#6e9ccc] hover:text-[#d9ecff]"
-                      : "border-[#2a3d52] text-[#627d98] opacity-60"
-                  }`}
-                  disabled={!canCopyDebug}
-                  title={canCopyDebug ? "Copy compiled + raw definition" : "No debug text available"}
-                  onClick={copyDebugPayload}
-                >
-                  {copiedDebug ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                </button>
-              </div>
-              <div className="mt-1 max-h-[180px] overflow-auto pr-0.5 text-[10px] leading-tight text-[#dbe9fb]">
-                <div className="font-bold uppercase tracking-wider text-[#8ec4ff]">Compiled</div>
-                <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[10px]">{compiledText || "-"}</pre>
-                <div className="mt-1 font-bold uppercase tracking-wider text-[#8ec4ff]">Raw</div>
-                <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[10px]">{rawDefinition || "-"}</pre>
-              </div>
-            </div>
+          <div className="absolute top-0 right-0 z-20 p-1 pointer-events-auto">
+            <button
+              type="button"
+              className={`inline-flex h-6 w-6 items-center justify-center rounded border bg-[rgba(5,11,20,0.84)] shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-colors ${
+                canCopyDebug
+                  ? "border-[#436183] text-[#9dc9f8] hover:border-[#6e9ccc] hover:text-[#d9ecff]"
+                  : "border-[#2a3d52] text-[#627d98] opacity-60"
+              }`}
+              disabled={!canCopyDebug}
+              title={canCopyDebug ? "Copy compiled + raw definition" : "No debug text available"}
+              onClick={copyDebugPayload}
+            >
+              {copiedDebug ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+            </button>
           </div>
         )}
 

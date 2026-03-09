@@ -541,7 +541,9 @@ pub(crate) fn parse_create(
     }
     let tail_words = words(&tail_tokens);
     if attached_to_target.is_some()
-        && tail_words.iter().any(|word| *word == "copy" || *word == "copies")
+        && tail_words
+            .iter()
+            .any(|word| *word == "copy" || *word == "copies")
     {
         return Err(CardTextError::ParseError(format!(
             "unsupported aura-copy attachment fanout clause (clause: '{}')",

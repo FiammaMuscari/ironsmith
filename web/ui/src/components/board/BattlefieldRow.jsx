@@ -336,6 +336,7 @@ export default function BattlefieldRow({
   selectedObjectId,
   onInspect,
   onCardClick,
+  onCardPointerDown,
   onExpandInspector,
   activatableMap,
   legalTargetObjectIds = new Set(),
@@ -840,7 +841,13 @@ export default function BattlefieldRow({
               onExpandInspector(card.id);
             } : undefined}
             onClick={onCardClick ? (e) => onCardClick(e, card) : () => onInspect?.(card.id)}
-            onPointerDown={isCombatCandidate ? (e) => handleCombatPointerDown(e, card) : undefined}
+            onPointerDown={
+              isCombatCandidate
+                ? (e) => handleCombatPointerDown(e, card)
+                : onCardPointerDown
+                  ? (e) => onCardPointerDown(e, card)
+                  : undefined
+            }
             onMouseEnter={() => hoverCard(card.id)}
             onMouseLeave={clearHover}
             centerOverlay={showsUndoOverlay ? (

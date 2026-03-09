@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getCardRect, centerOf } from "@/hooks/useCardPositions";
 import { getPlayerAccent } from "@/lib/player-colors";
+import { usePointerClickGuard } from "@/lib/usePointerClickGuard";
 import { X, ArrowRight } from "lucide-react";
 import DecisionSummary from "./DecisionSummary";
 
@@ -164,6 +165,7 @@ function ActiveRequirementTargets({
   showTargetButtons = true,
   interactionHint = null,
 }) {
+  const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
   const legalTargets = req.legal_targets || [];
   const objectTargets = legalTargets.filter((target) => targetObjectId(target) != null);
   const hasHoverMatch = hoveredObjectId != null
@@ -281,8 +283,15 @@ function ActiveRequirementTargets({
               : "bg-[rgba(12,20,30,0.72)] text-[#647f99] hover:bg-[rgba(12,20,30,0.72)] hover:text-[#647f99]")
         )}
         disabled={!canAct || isUnavailable}
-        onClick={() =>
-          onSelectTarget(target, reqIdx, { toggleExisting: true, strictRequirement: true })}
+        onPointerDown={(event) => {
+          if (!canAct || isUnavailable || !registerPointerDown(event)) return;
+          event.preventDefault();
+          onSelectTarget(target, reqIdx, { toggleExisting: true, strictRequirement: true });
+        }}
+        onClick={(event) => {
+          if (!canAct || isUnavailable || !shouldHandleClick(event)) return;
+          onSelectTarget(target, reqIdx, { toggleExisting: true, strictRequirement: true });
+        }}
         ref={(node) => {
           if (node) {
             targetButtonRefs.current.set(listKey, node);
@@ -324,7 +333,15 @@ function ActiveRequirementTargets({
               size="sm"
               className={cn(STRIP_ITEM_BASE_CLASS, "h-8 min-w-[140px]")}
               disabled={!canAct}
-              onClick={onSkipRequirement}
+              onPointerDown={(event) => {
+                if (!canAct || !registerPointerDown(event)) return;
+                event.preventDefault();
+                onSkipRequirement();
+              }}
+              onClick={(event) => {
+                if (!canAct || !shouldHandleClick(event)) return;
+                onSkipRequirement();
+              }}
             >
               {skipLabel}
             </Button>
@@ -362,7 +379,15 @@ function ActiveRequirementTargets({
           size="sm"
           className="mt-1 h-6 w-full justify-start rounded-none border-y border-x-0 border-[#2a3d52] bg-[rgba(10,19,29,0.75)] px-2.5 text-[12px] text-[#9ab6d3] hover:border-[#3f5f83] hover:bg-[rgba(17,30,46,0.92)] hover:text-[#ddecff]"
           disabled={!canAct}
-          onClick={onSkipRequirement}
+          onPointerDown={(event) => {
+            if (!canAct || !registerPointerDown(event)) return;
+            event.preventDefault();
+            onSkipRequirement();
+          }}
+          onClick={(event) => {
+            if (!canAct || !shouldHandleClick(event)) return;
+            onSkipRequirement();
+          }}
         >
           {skipLabel}
         </Button>
@@ -382,6 +407,7 @@ export default function TargetsDecision({
 }) {
   const { dispatch, state } = useGame();
   const { startDragArrow, updateDragArrow, endDragArrow } = useCombatArrows();
+  const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
   const stripLayout = layout === "strip";
   const hoveredObjectId = useHoveredObjectId();
   const requirements = useMemo(() => decision.requirements || [], [decision.requirements]);
@@ -708,7 +734,15 @@ export default function TargetsDecision({
                               : "h-5 rounded-full border border-[#4a6f94] bg-[rgba(22,40,60,0.9)] px-1.5 text-[12px] text-[#d7e8fa] hover:border-[#6993bf] hover:bg-[rgba(29,52,78,0.95)]"
                           )}
                           disabled={!canAct}
-                          onClick={() => handleRemoveTarget(reqIdx, selIdx)}
+                          onPointerDown={(event) => {
+                            if (!canAct || !registerPointerDown(event)) return;
+                            event.preventDefault();
+                            handleRemoveTarget(reqIdx, selIdx);
+                          }}
+                          onClick={(event) => {
+                            if (!canAct || !shouldHandleClick(event)) return;
+                            handleRemoveTarget(reqIdx, selIdx);
+                          }}
                         >
                           {label} <X className="size-3 inline ml-1" />
                         </Button>
@@ -753,7 +787,15 @@ export default function TargetsDecision({
               stripLayout ? "w-auto ml-1" : "w-full"
             )}
             disabled={!canAct || !canSubmit}
-            onClick={handleSubmit}
+            onPointerDown={(event) => {
+              if (!canAct || !canSubmit || !registerPointerDown(event)) return;
+              event.preventDefault();
+              handleSubmit();
+            }}
+            onClick={(event) => {
+              if (!canAct || !canSubmit || !shouldHandleClick(event)) return;
+              handleSubmit();
+            }}
           >
             Submit Targets ({allSelections.length})
           </Button>

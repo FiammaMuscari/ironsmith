@@ -719,6 +719,69 @@ function resolveDecisionTitle(decision) {
   }
 }
 
+function buildViewedCardsIdentity(viewedCards) {
+  if (!viewedCards) return "";
+  const cardIds = Array.isArray(viewedCards.card_ids) ? viewedCards.card_ids.join(",") : "";
+  return [
+    viewedCards.visibility || "",
+    viewedCards.subject ?? "",
+    viewedCards.zone || "",
+    viewedCards.source ?? "",
+    viewedCards.description || "",
+    cardIds,
+  ].join("|");
+}
+
+function ViewedCardsStripStep({
+  label,
+  description = "",
+  sourceName = "",
+  cards = [],
+}) {
+  const normalizedSourceName = String(sourceName || "").trim();
+  const normalizedDescription = String(description || "").trim();
+
+  return (
+    <div className="min-w-0 flex-1 overflow-hidden px-1 py-1">
+      <div className="flex flex-col gap-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="shrink-0 text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
+            {label}
+          </div>
+          {normalizedSourceName && (
+            <div className="min-w-0 truncate text-[11px] text-[#d2e5fb]">
+              <SymbolText text={normalizeDecisionText(normalizedSourceName)} />
+            </div>
+          )}
+        </div>
+        {normalizedDescription && (
+          <div className="text-[12px] text-[#8fb5d8] leading-snug">
+            <SymbolText text={normalizeDecisionText(normalizedDescription)} />
+          </div>
+        )}
+        <div className="action-strip-scroll min-w-0 overflow-x-auto overflow-y-hidden">
+          <div className="flex w-max min-w-full items-center gap-1.5 pb-0.5">
+            {cards.length > 0 ? cards.map((card) => (
+              <div
+                key={card.id}
+                className="inline-flex max-w-[220px] items-center rounded-sm border border-[#35506c]/78 bg-[rgba(12,22,34,0.72)] px-2 py-1 text-[12px] text-[#eef6ff] shadow-[0_0_12px_rgba(72,120,166,0.18)]"
+              >
+                <span className="truncate">
+                  <SymbolText text={normalizeDecisionText(card.name)} />
+                </span>
+              </div>
+            )) : (
+              <div className="text-[12px] italic text-[#89a7c7]">
+                No cards visible.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function resolveDecisionMiniInspectorStackObject(stackObjects = [], selectedObjectId = null) {
   if (!Array.isArray(stackObjects) || stackObjects.length === 0) return null;
   const selectedKey = selectedObjectId == null ? null : String(selectedObjectId);
@@ -824,6 +887,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
   const stackSize = Number(state?.stack_size || 0);
   const showPriorityAdvanceButton = !!passAction;
   const showDecisionMiniInspector = shouldShowDecisionMiniInspector(decision, displayedStackObject);
+  const canCancelDecision = canAct && !!state?.cancelable;
   const passLabel = holdRule === "always"
     ? (passAction?.label || "Pass priority")
     : `→ ${nextPriorityAdvanceLabel(state?.phase, state?.step, stackSize)}`;
@@ -840,6 +904,32 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     () => buildObjectNameById(state?.players, state?.stack_objects),
     [state?.players, state?.stack_objects]
   );
+  const viewedCards = state?.viewed_cards || null;
+  const viewedCardsLabel = viewedCards?.visibility === "public" ? "Revealed" : "Look";
+  const viewedCardsIdentity = useMemo(
+    () => buildViewedCardsIdentity(viewedCards),
+    [viewedCards]
+  );
+  const [acknowledgedViewedCardsToken, setAcknowledgedViewedCardsToken] = useState("");
+  const viewedCardsToken = viewedCardsIdentity
+    ? `${state?.snapshot_id ?? "live"}:${viewedCardsIdentity}`
+    : "";
+  const showViewedCardsStep = Boolean(viewedCardsToken)
+    && acknowledgedViewedCardsToken !== viewedCardsToken;
+  const viewedCardEntries = useMemo(
+    () => (viewedCards?.card_ids || []).map((id) => ({
+      id: String(id),
+      name: objectNameById.get(String(id)) || `Card #${id}`,
+    })),
+    [objectNameById, viewedCards]
+  );
+  const viewedCardsSourceName = (() => {
+    if (viewedCards?.source != null) {
+      const sourceName = objectNameById.get(String(viewedCards.source));
+      if (sourceName) return sourceName;
+    }
+    return decision?.source_name || "";
+  })();
   const hoveredObjectFamilyIds = useMemo(
     () => buildObjectFamilyIds(state?.players, hoveredObjectId),
     [state?.players, hoveredObjectId]
@@ -904,6 +994,11 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     && !!submitAction
     && !submitAction.disabled
     && typeof submitAction.onSubmit === "function";
+  const canAdvanceViewedCardsStep = !!decision;
+  const completeViewedCardsStep = useCallback(() => {
+    if (!viewedCardsToken) return;
+    setAcknowledgedViewedCardsToken(viewedCardsToken);
+  }, [viewedCardsToken]);
 
   if (!decision || isCombatDecision) return null;
   if (isPriorityDecision && !passAction) return null;
@@ -924,42 +1019,70 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
             </div>
           )}
           {isPriorityDecision ? (
-            <div className="flex min-h-[46px] items-stretch gap-2">
-              <div className={cn(
-                "shrink-0 flex self-stretch items-stretch gap-2",
-                showPriorityAdvanceButton ? "min-w-[308px]" : "min-w-[112px]"
-              )}>
-                {showPriorityAdvanceButton && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="decision-neon-button decision-submit-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
-                    disabled={!canAct}
-                    onClick={() => triggerPriorityAction(passAction)}
-                  >
-                    {passLabel}
-                  </Button>
-                )}
-                <PriorityControlStack
-                  actionCount={priorityActionCount}
-                  holdEnabled={holdRule === "always"}
-                  confirmEnabled={confirmEnabled}
-                  onHoldChange={(value) => setHoldRule(value ? "always" : "never")}
-                  onConfirmChange={setConfirmEnabled}
-                  className="min-w-[104px]"
+            showViewedCardsStep ? (
+              <div className="flex min-h-[46px] items-stretch gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="decision-neon-button decision-submit-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
+                  disabled={!canAdvanceViewedCardsStep}
+                  onPointerDown={(event) => {
+                    if (!canAdvanceViewedCardsStep || event.button !== 0) return;
+                    event.preventDefault();
+                    completeViewedCardsStep();
+                  }}
+                  onClick={(event) => {
+                    if (!canAdvanceViewedCardsStep || event.detail !== 0) return;
+                    completeViewedCardsStep();
+                  }}
+                >
+                  Done
+                </Button>
+                <ViewedCardsStripStep
+                  label={viewedCardsLabel}
+                  description={viewedCards?.description || ""}
+                  sourceName={viewedCardsSourceName}
+                  cards={viewedCardEntries}
                 />
               </div>
-              <PriorityActionStrip
-                groups={actionGroups}
-                canAct={canAct}
-                hoveredObjectFamilyIds={hoveredObjectFamilyIds}
-                selectedObjectFamilyIds={selectedObjectFamilyIds}
-                selectedActionIndices={selectedActionIndices}
-                onActionClick={triggerPriorityAction}
-                onActionHoverStart={handleActionHoverStart}
-                onActionHoverEnd={handleActionHoverEnd}
-              />
-            </div>
+            ) : (
+              <div className="flex min-h-[46px] items-stretch gap-2">
+                <div className={cn(
+                  "shrink-0 flex self-stretch items-stretch gap-2",
+                  showPriorityAdvanceButton ? "min-w-[308px]" : "min-w-[112px]"
+                )}>
+                  {showPriorityAdvanceButton && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="decision-neon-button decision-submit-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
+                      disabled={!canAct}
+                      onClick={() => triggerPriorityAction(passAction)}
+                    >
+                      {passLabel}
+                    </Button>
+                  )}
+                  <PriorityControlStack
+                    actionCount={priorityActionCount}
+                    holdEnabled={holdRule === "always"}
+                    confirmEnabled={confirmEnabled}
+                    onHoldChange={(value) => setHoldRule(value ? "always" : "never")}
+                    onConfirmChange={setConfirmEnabled}
+                    className="min-w-[104px]"
+                  />
+                </div>
+                <PriorityActionStrip
+                  groups={actionGroups}
+                  canAct={canAct}
+                  hoveredObjectFamilyIds={hoveredObjectFamilyIds}
+                  selectedObjectFamilyIds={selectedObjectFamilyIds}
+                  selectedActionIndices={selectedActionIndices}
+                  onActionClick={triggerPriorityAction}
+                  onActionHoverStart={handleActionHoverStart}
+                  onActionHoverEnd={handleActionHoverEnd}
+                />
+              </div>
+            )
           ) : (
             <>
               <div className="flex min-h-[46px] items-stretch gap-2">
@@ -971,22 +1094,43 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                     variant="ghost"
                     size="sm"
                     className="decision-neon-button decision-submit-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
-                    disabled={!canSubmitFocused}
-                    onClick={() => {
-                      if (!canSubmitFocused) return;
+                    disabled={showViewedCardsStep ? !canAdvanceViewedCardsStep : !canSubmitFocused}
+                    onPointerDown={(event) => {
+                      if (showViewedCardsStep) {
+                        if (!canAdvanceViewedCardsStep || event.button !== 0) return;
+                        event.preventDefault();
+                        completeViewedCardsStep();
+                        return;
+                      }
+                      if (!canSubmitFocused || event.button !== 0) return;
+                      event.preventDefault();
+                      submitAction.onSubmit();
+                    }}
+                    onClick={(event) => {
+                      if (showViewedCardsStep) {
+                        if (!canAdvanceViewedCardsStep || event.detail !== 0) return;
+                        completeViewedCardsStep();
+                        return;
+                      }
+                      if (!canSubmitFocused || event.detail !== 0) return;
                       submitAction.onSubmit();
                     }}
                   >
-                    {submitAction?.label || "Submit"}
+                    {showViewedCardsStep ? "Done" : (submitAction?.label || "Submit")}
                   </Button>
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     className="decision-neon-button decision-neon-button--danger decision-cancel-button h-full w-[96px] shrink-0 self-stretch rounded-none px-2 text-[13px] font-bold uppercase tracking-wide"
-                    disabled={!canAct}
-                    onClick={() => {
-                      if (!canAct) return;
+                    disabled={!canCancelDecision}
+                    onPointerDown={(event) => {
+                      if (!canCancelDecision || event.button !== 0) return;
+                      event.preventDefault();
+                      cancelDecision();
+                    }}
+                    onClick={(event) => {
+                      if (!canCancelDecision || event.detail !== 0) return;
                       cancelDecision();
                     }}
                     >
@@ -1015,14 +1159,23 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 </div>
                 <div className="min-w-0 flex-1 overflow-hidden">
                   {canAct ? (
-                    <DecisionRouter
-                      decision={decision}
-                      canAct={canAct}
-                      inlineSubmit={false}
-                      onSubmitActionChange={handleSubmitActionChange}
-                      hideDescription={showDecisionMiniInspector}
-                      layout="strip"
-                    />
+                    showViewedCardsStep ? (
+                      <ViewedCardsStripStep
+                        label={viewedCardsLabel}
+                        description={viewedCards?.description || ""}
+                        sourceName={viewedCardsSourceName}
+                        cards={viewedCardEntries}
+                      />
+                    ) : (
+                      <DecisionRouter
+                        decision={decision}
+                        canAct={canAct}
+                        inlineSubmit={false}
+                        onSubmitActionChange={handleSubmitActionChange}
+                        hideDescription={showDecisionMiniInspector}
+                        layout="strip"
+                      />
+                    )
                   ) : (
                     <span className="text-[12px] text-[#b8d2ef] whitespace-nowrap">
                       Waiting for opponent
@@ -1050,49 +1203,90 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
       <div className="border-b border-[#2f4662]/85 bg-[rgba(10,22,34,0.88)] px-2 py-0">
         <div className="flex min-h-[46px] items-stretch gap-2">
           {isPriorityDecision ? (
-            <>
-              {showPriorityAdvanceButton && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="decision-neon-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
-                  disabled={!canAct}
-                  onClick={() => triggerPriorityAction(passAction)}
-                >
-                  {passLabel}
-                </Button>
-              )}
-              <PriorityControlStack
-                actionCount={priorityActionCount}
-                holdEnabled={holdRule === "always"}
-                confirmEnabled={confirmEnabled}
-                onHoldChange={(value) => setHoldRule(value ? "always" : "never")}
-                onConfirmChange={setConfirmEnabled}
-                className="min-w-[104px]"
-              />
-            </>
+            showViewedCardsStep ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="decision-neon-button decision-submit-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
+                disabled={!canAdvanceViewedCardsStep}
+                onPointerDown={(event) => {
+                  if (!canAdvanceViewedCardsStep || event.button !== 0) return;
+                  event.preventDefault();
+                  completeViewedCardsStep();
+                }}
+                onClick={(event) => {
+                  if (!canAdvanceViewedCardsStep || event.detail !== 0) return;
+                  completeViewedCardsStep();
+                }}
+              >
+                Done
+              </Button>
+            ) : (
+              <>
+                {showPriorityAdvanceButton && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="decision-neon-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
+                    disabled={!canAct}
+                    onClick={() => triggerPriorityAction(passAction)}
+                  >
+                    {passLabel}
+                  </Button>
+                )}
+                <PriorityControlStack
+                  actionCount={priorityActionCount}
+                  holdEnabled={holdRule === "always"}
+                  confirmEnabled={confirmEnabled}
+                  onHoldChange={(value) => setHoldRule(value ? "always" : "never")}
+                  onConfirmChange={setConfirmEnabled}
+                  className="min-w-[104px]"
+                />
+              </>
+            )
           ) : (
             <>
               <Button
                 variant="ghost"
                 size="sm"
                 className="decision-neon-button decision-submit-button h-full w-[176px] shrink-0 self-stretch rounded-none px-3 text-[14px] font-bold uppercase"
-                disabled={!canSubmitFocused}
-                onClick={() => {
-                  if (!canSubmitFocused) return;
+                disabled={showViewedCardsStep ? !canAdvanceViewedCardsStep : !canSubmitFocused}
+                onPointerDown={(event) => {
+                  if (showViewedCardsStep) {
+                    if (!canAdvanceViewedCardsStep || event.button !== 0) return;
+                    event.preventDefault();
+                    completeViewedCardsStep();
+                    return;
+                  }
+                  if (!canSubmitFocused || event.button !== 0) return;
+                  event.preventDefault();
+                  submitAction.onSubmit();
+                }}
+                onClick={(event) => {
+                  if (showViewedCardsStep) {
+                    if (!canAdvanceViewedCardsStep || event.detail !== 0) return;
+                    completeViewedCardsStep();
+                    return;
+                  }
+                  if (!canSubmitFocused || event.detail !== 0) return;
                   submitAction.onSubmit();
                 }}
               >
-                {submitAction?.label || "Submit"}
+                {showViewedCardsStep ? "Done" : (submitAction?.label || "Submit")}
               </Button>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 className="decision-neon-button decision-neon-button--danger decision-cancel-button h-full w-[96px] shrink-0 self-stretch rounded-none px-2 text-[13px] font-bold uppercase tracking-wide"
-                disabled={!canAct}
-                onClick={() => {
-                  if (!canAct) return;
+                disabled={!canCancelDecision}
+                onPointerDown={(event) => {
+                  if (!canCancelDecision || event.button !== 0) return;
+                  event.preventDefault();
+                  cancelDecision();
+                }}
+                onClick={(event) => {
+                  if (!canCancelDecision || event.detail !== 0) return;
                   cancelDecision();
                 }}
               >
@@ -1122,26 +1316,44 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
       </div>
       <div className="border-b border-[#2f4662]/70 px-2 py-1.5">
         {isPriorityDecision ? (
-          <PriorityActionStrip
-            groups={actionGroups}
-            canAct={canAct}
-            hoveredObjectFamilyIds={hoveredObjectFamilyIds}
-            selectedObjectFamilyIds={selectedObjectFamilyIds}
-            selectedActionIndices={selectedActionIndices}
-            onActionClick={triggerPriorityAction}
-            onActionHoverStart={handleActionHoverStart}
-            onActionHoverEnd={handleActionHoverEnd}
-          />
+          showViewedCardsStep ? (
+            <ViewedCardsStripStep
+              label={viewedCardsLabel}
+              description={viewedCards?.description || ""}
+              sourceName={viewedCardsSourceName}
+              cards={viewedCardEntries}
+            />
+          ) : (
+            <PriorityActionStrip
+              groups={actionGroups}
+              canAct={canAct}
+              hoveredObjectFamilyIds={hoveredObjectFamilyIds}
+              selectedObjectFamilyIds={selectedObjectFamilyIds}
+              selectedActionIndices={selectedActionIndices}
+              onActionClick={triggerPriorityAction}
+              onActionHoverStart={handleActionHoverStart}
+              onActionHoverEnd={handleActionHoverEnd}
+            />
+          )
         ) : (
           <div className="min-w-0">
-            <DecisionRouter
-              decision={decision}
-              canAct={canAct}
-              inlineSubmit={false}
-              onSubmitActionChange={handleSubmitActionChange}
-              hideDescription={false}
-              layout="strip"
-            />
+            {showViewedCardsStep ? (
+              <ViewedCardsStripStep
+                label={viewedCardsLabel}
+                description={viewedCards?.description || ""}
+                sourceName={viewedCardsSourceName}
+                cards={viewedCardEntries}
+              />
+            ) : (
+              <DecisionRouter
+                decision={decision}
+                canAct={canAct}
+                inlineSubmit={false}
+                onSubmitActionChange={handleSubmitActionChange}
+                hideDescription={false}
+                layout="strip"
+              />
+            )}
           </div>
         )}
       </div>

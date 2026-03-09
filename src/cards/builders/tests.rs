@@ -9964,6 +9964,11 @@ fn parse_search_its_controller_graveyard_hand_and_library_exiles_same_name_cards
         !joined.contains("exile target player"),
         "search clause must not collapse into exile-player fallback, got {joined}"
     );
+    assert!(
+        joined.contains("search its controller's graveyard, hand, and library for all cards with the same name as that object and exile them")
+            && joined.contains("then that player shuffles"),
+        "expected compact multi-zone search rendering, got {joined}"
+    );
 
     let debug = format!("{:?}", def.spell_effect).to_ascii_lowercase();
     assert!(
@@ -9973,6 +9978,17 @@ fn parse_search_its_controller_graveyard_hand_and_library_exiles_same_name_cards
             && debug.contains("controllerof")
             && debug.contains("shufflelibraryeffect"),
         "expected same-name exile across hand/graveyard/library and controller shuffle, got {debug}"
+    );
+    assert_eq!(
+        debug.matches("shufflelibraryeffect").count(),
+        1,
+        "expected exactly one shuffle, got {debug}"
+    );
+    assert!(
+        debug.contains("shufflelibraryeffect { player: controllerof(target)")
+            || debug
+                .contains("shufflelibraryeffect { player: controllerof(tagged(tagkey(\"exiled_"),
+        "expected shuffle to target the searched player's controller, got {debug}"
     );
 }
 

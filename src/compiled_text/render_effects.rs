@@ -3456,26 +3456,96 @@ enum SearchDestination {
     LibraryTop,
 }
 
+fn describe_search_origin_zones(choose: &crate::effects::ChooseObjectsEffect) -> Option<String> {
+    let zones = choose.search_zones();
+    if zones.is_empty() {
+        return None;
+    }
+
+    let owner = choose.filter.owner.as_ref().unwrap_or(&choose.chooser);
+    let owner_text = describe_possessive_player_filter(owner);
+    let zone_text = match zones.as_slice() {
+        [Zone::Library] => format!("{owner_text} library"),
+        [Zone::Graveyard, Zone::Hand, Zone::Library] => {
+            format!("{owner_text} graveyard, hand, and library")
+        }
+        [Zone::Hand, Zone::Library] => format!("{owner_text} hand and library"),
+        [Zone::Graveyard, Zone::Library] => format!("{owner_text} graveyard and library"),
+        [Zone::Graveyard] => format!("{owner_text} graveyard"),
+        [Zone::Hand] => format!("{owner_text} hand"),
+        other => {
+            let parts = other
+                .iter()
+                .map(|zone| match zone {
+                    Zone::Battlefield => "battlefield".to_string(),
+                    Zone::Hand => "hand".to_string(),
+                    Zone::Graveyard => "graveyard".to_string(),
+                    Zone::Library => "library".to_string(),
+                    Zone::Stack => "stack".to_string(),
+                    Zone::Exile => "exile".to_string(),
+                    Zone::Command => "command zone".to_string(),
+                })
+                .collect::<Vec<_>>();
+            match parts.as_slice() {
+                [only] => format!("{owner_text} {only}"),
+                [first, second] => format!("{owner_text} {first} and {second}"),
+                [rest @ .., last] => {
+                    format!("{owner_text} {} and {last}", rest.join(", "))
+                }
+                [] => return None,
+            }
+        }
+    };
+
+    Some(zone_text)
+}
+
 fn describe_search_choose_for_each(
     choose: &crate::effects::ChooseObjectsEffect,
     for_each: &crate::effects::ForEachTaggedEffect,
     shuffle: Option<&crate::effects::ShuffleLibraryEffect>,
     shuffle_before_move: bool,
 ) -> Option<String> {
+    fn is_same_name_search(filter: &ObjectFilter) -> bool {
+        filter.tagged_constraints.iter().any(|constraint| {
+            constraint.relation == crate::filter::TaggedOpbjectRelation::SameNameAsTagged
+        })
+    }
+
+    fn matches_search_move_target(spec: &ChooseSpec, tag: &str) -> bool {
+        matches!(spec, ChooseSpec::Iterated)
+            || matches!(spec.base(), ChooseSpec::Tagged(found) if found.as_str() == tag)
+    }
+
     let search_like = choose.is_search
         || (choose.zone == Zone::Library && choose.tag.as_str().starts_with("searched_"));
-    if !search_like || choose.zone != Zone::Library {
+    if !search_like {
         return None;
     }
     if for_each.tag != choose.tag || for_each.effects.len() != 1 {
         return None;
     }
-    let library_owner_filter = choose.filter.owner.as_ref().unwrap_or(&choose.chooser);
+    let search_owner_filter = choose.filter.owner.as_ref().unwrap_or(&choose.chooser);
+    let search_origin = describe_search_origin_zones(choose)?;
+    let searched_library = choose.search_zones().contains(&Zone::Library);
+    let shuffle_clause = if describe_player_filter(search_owner_filter) == "you" {
+        "shuffle".to_string()
+    } else {
+        "that player shuffles".to_string()
+    };
+
+    let move_effect = if let Some(tagged) =
+        for_each.effects[0].downcast_ref::<crate::effects::TaggedEffect>()
+    {
+        tagged.effect.as_ref()
+    } else {
+        &for_each.effects[0]
+    };
 
     let destination = if let Some(put) =
-        for_each.effects[0].downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()
+        move_effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()
     {
-        if !matches!(put.target, ChooseSpec::Iterated) {
+        if !matches_search_move_target(&put.target, choose.tag.as_str()) {
             return None;
         }
         SearchDestination::Battlefield {
@@ -3483,16 +3553,16 @@ fn describe_search_choose_for_each(
             controller: put.controller.clone(),
         }
     } else if let Some(return_to_hand) =
-        for_each.effects[0].downcast_ref::<crate::effects::ReturnToHandEffect>()
+        move_effect.downcast_ref::<crate::effects::ReturnToHandEffect>()
     {
-        if !matches!(return_to_hand.spec, ChooseSpec::Iterated) {
+        if !matches_search_move_target(&return_to_hand.spec, choose.tag.as_str()) {
             return None;
         }
         SearchDestination::Hand
     } else if let Some(move_to_zone) =
-        for_each.effects[0].downcast_ref::<crate::effects::MoveToZoneEffect>()
+        move_effect.downcast_ref::<crate::effects::MoveToZoneEffect>()
     {
-        if !matches!(move_to_zone.target, ChooseSpec::Iterated) {
+        if !matches_search_move_target(&move_to_zone.target, choose.tag.as_str()) {
             return None;
         }
         if move_to_zone.zone == Zone::Battlefield {
@@ -3516,7 +3586,7 @@ fn describe_search_choose_for_each(
     };
 
     if let Some(shuffle) = shuffle
-        && shuffle.player != *library_owner_filter
+        && shuffle.player != *search_owner_filter
     {
         return None;
     }
@@ -3530,6 +3600,7 @@ fn describe_search_choose_for_each(
         implied_filter.description()
     };
     let filter_text = if choose.description.trim().is_empty()
+        || choose.description.trim().eq_ignore_ascii_case("choose")
         || choose.description.trim().eq_ignore_ascii_case("objects")
     {
         implied_filter_text
@@ -3541,7 +3612,11 @@ fn describe_search_choose_for_each(
     } else {
         let mut count_text = describe_choice_count(&choose.count);
         if count_text == "any number" {
-            count_text = "any number of".to_string();
+            count_text = if is_same_name_search(&choose.filter) {
+                "all".to_string()
+            } else {
+                "any number of".to_string()
+            };
         }
         format!("{count_text} {filter_text}")
     };
@@ -3560,7 +3635,7 @@ fn describe_search_choose_for_each(
     let mut text;
     match destination {
         SearchDestination::Battlefield { tapped, controller } => {
-            let control_suffix = if controller == *library_owner_filter {
+            let control_suffix = if controller == *search_owner_filter {
                 String::new()
             } else {
                 format!(
@@ -3570,21 +3645,13 @@ fn describe_search_choose_for_each(
             };
             text = if shuffle.is_some() && shuffle_before_move {
                 format!(
-                    "Search {} library for {}{}, shuffle, then put {} onto the battlefield{}",
-                    describe_possessive_player_filter(library_owner_filter),
-                    selection_text,
-                    reveal_clause,
-                    pronoun,
-                    control_suffix
+                    "Search {search_origin} for {}{}, {}, then put {} onto the battlefield{}",
+                    selection_text, reveal_clause, shuffle_clause, pronoun, control_suffix
                 )
             } else {
                 format!(
-                    "Search {} library for {}{}, put {} onto the battlefield{}",
-                    describe_possessive_player_filter(library_owner_filter),
-                    selection_text,
-                    reveal_clause,
-                    pronoun,
-                    control_suffix
+                    "Search {search_origin} for {}{}, put {} onto the battlefield{}",
+                    selection_text, reveal_clause, pronoun, control_suffix
                 )
             };
             if tapped {
@@ -3594,82 +3661,78 @@ fn describe_search_choose_for_each(
         SearchDestination::Hand => {
             text = if shuffle.is_some() && shuffle_before_move {
                 format!(
-                    "Search {} library for {}{}, shuffle, then put {} into {} hand",
-                    describe_possessive_player_filter(library_owner_filter),
+                    "Search {search_origin} for {}{}, {}, then put {} into {} hand",
                     selection_text,
                     reveal_clause,
+                    shuffle_clause,
                     pronoun,
-                    describe_possessive_player_filter(library_owner_filter)
+                    describe_possessive_player_filter(search_owner_filter)
                 )
             } else {
                 format!(
-                    "Search {} library for {}{}, put {} into {} hand",
-                    describe_possessive_player_filter(library_owner_filter),
+                    "Search {search_origin} for {}{}, put {} into {} hand",
                     selection_text,
                     reveal_clause,
                     pronoun,
-                    describe_possessive_player_filter(library_owner_filter)
+                    describe_possessive_player_filter(search_owner_filter)
                 )
             };
         }
         SearchDestination::Graveyard => {
             text = if shuffle.is_some() && shuffle_before_move {
                 format!(
-                    "Search {} library for {}{}, shuffle, then put {} into {} graveyard",
-                    describe_possessive_player_filter(library_owner_filter),
+                    "Search {search_origin} for {}{}, {}, then put {} into {} graveyard",
                     selection_text,
                     reveal_clause,
+                    shuffle_clause,
                     pronoun,
-                    describe_possessive_player_filter(library_owner_filter)
+                    describe_possessive_player_filter(search_owner_filter)
                 )
             } else {
                 format!(
-                    "Search {} library for {}{}, put {} into {} graveyard",
-                    describe_possessive_player_filter(library_owner_filter),
+                    "Search {search_origin} for {}{}, put {} into {} graveyard",
                     selection_text,
                     reveal_clause,
                     pronoun,
-                    describe_possessive_player_filter(library_owner_filter)
+                    describe_possessive_player_filter(search_owner_filter)
                 )
             };
         }
         SearchDestination::Exile => {
             text = if shuffle.is_some() && shuffle_before_move {
                 format!(
-                    "Search {} library for {}{}, shuffle, then exile {}",
-                    describe_possessive_player_filter(library_owner_filter),
-                    selection_text,
-                    reveal_clause,
-                    pronoun,
+                    "Search {search_origin} for {}{}, {}, then exile {}",
+                    selection_text, reveal_clause, shuffle_clause, pronoun,
+                )
+            } else if selection_text.starts_with("all ") {
+                format!(
+                    "Search {search_origin} for {}{} and exile {}",
+                    selection_text, reveal_clause, pronoun,
                 )
             } else {
                 format!(
-                    "Search {} library for {}{}, exile {}",
-                    describe_possessive_player_filter(library_owner_filter),
-                    selection_text,
-                    reveal_clause,
-                    pronoun,
+                    "Search {search_origin} for {}{}, exile {}",
+                    selection_text, reveal_clause, pronoun,
                 )
             };
         }
         SearchDestination::LibraryTop => {
             text = if shuffle.is_some() && shuffle_before_move {
                 format!(
-                    "Search {} library for {}{}, then shuffle and put {} on top of {} library",
-                    describe_possessive_player_filter(library_owner_filter),
+                    "Search {search_origin} for {}{}, then {} and put {} on top of {} library",
                     selection_text,
                     reveal_clause,
+                    shuffle_clause,
                     pronoun,
-                    describe_possessive_player_filter(library_owner_filter)
+                    describe_possessive_player_filter(search_owner_filter)
                 )
             } else {
                 format!(
-                    "Search {} library for {}{}, put {} on top of {} library",
-                    describe_possessive_player_filter(library_owner_filter),
+                    "Search {search_origin} for {}{}, put {} on top of {} library",
                     selection_text,
                     reveal_clause,
                     pronoun,
-                    describe_possessive_player_filter(library_owner_filter)
+                    describe_possessive_player_filter(search_owner_filter)
                 )
             };
             if !choose.count.is_single() {
@@ -3677,8 +3740,9 @@ fn describe_search_choose_for_each(
             }
         }
     }
-    if shuffle.is_some() && !shuffle_before_move {
-        text.push_str(", then shuffle");
+    if shuffle.is_some() && !shuffle_before_move && searched_library {
+        text.push_str(", then ");
+        text.push_str(&shuffle_clause);
     }
     Some(text)
 }

@@ -2,6 +2,8 @@
 name = "ironsmith"
 version = "0.1.0"
 edition = "2024"
+autobins = false
+autotests = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -25,6 +27,7 @@ serialization = ["dep:serde", "dep:serde_json"]
 generated-registry = []
 parser-tests = []
 parser-tests-full = ["parser-tests"]
+tooling = ["serialization"]
 net = ["serialization", "sha2", "secp256k1"]
 wasm = [
     "serialization",
@@ -40,26 +43,88 @@ wasm = [
 name = "ironsmith"
 path = "src/main.rs"
 required-features = ["serialization"]
+test = false
 
 [[bin]]
 name = "audit_compiled_cards"
 path = "src/bin/audit_compiled_cards.rs"
-required-features = ["serialization"]
+required-features = ["tooling"]
+test = false
 
 [[bin]]
 name = "audit_oracle_clusters"
 path = "src/bin/audit_oracle_clusters.rs"
+required-features = ["tooling"]
+test = false
 
 [[bin]]
 name = "audit_parsed_mechanics"
 path = "src/bin/audit_parsed_mechanics.rs"
-required-features = ["serialization"]
+required-features = ["tooling"]
+test = false
+
+[[bin]]
+name = "audit_unimplemented_partition"
+path = "src/bin/audit_unimplemented_partition.rs"
+required-features = ["tooling"]
+test = false
+
+[[bin]]
+name = "compile_oracle_text"
+path = "src/bin/compile_oracle_text.rs"
+required-features = ["tooling"]
+test = false
 
 [[bin]]
 name = "dump_false_positive_texts"
 path = "src/bin/dump_false_positive_texts.rs"
-required-features = ["serialization"]
+required-features = ["tooling"]
+test = false
+
+[[bin]]
+name = "export_compiled_oracle_csv"
+path = "src/bin/export_compiled_oracle_csv.rs"
+required-features = ["tooling"]
+test = false
+
+[[bin]]
+name = "parse_card_text"
+path = "src/bin/parse_card_text.rs"
+required-features = ["tooling"]
+test = false
 
 [[bin]]
 name = "rebuild_reports"
 path = "src/bin/rebuild_reports.rs"
+required-features = ["tooling"]
+test = false
+
+[[bin]]
+name = "report_replacement_effect_parse_status"
+path = "src/bin/report_replacement_effect_parse_status.rs"
+required-features = ["tooling"]
+test = false
+
+[[test]]
+name = "undo_action_chain"
+path = "tests/undo_action_chain.rs"
+
+[[test]]
+name = "parser_architecture_guards"
+path = "tests/parser_architecture_guards.rs"
+required-features = ["parser-tests"]
+
+[[test]]
+name = "parser_diagnostics_rule_ids"
+path = "tests/parser_diagnostics_rule_ids.rs"
+required-features = ["parser-tests"]
+
+[[test]]
+name = "parser_smoke"
+path = "tests/parser_smoke.rs"
+required-features = ["parser-tests"]
+
+[[test]]
+name = "semantic_mismatch_regressions"
+path = "tests/semantic_mismatch_regressions.rs"
+required-features = ["parser-tests-full"]

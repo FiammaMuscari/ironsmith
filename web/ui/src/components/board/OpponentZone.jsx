@@ -6,6 +6,7 @@ import { useCombatArrows } from "@/context/useCombatArrows";
 import { useGame } from "@/context/GameContext";
 import { getPlayerAccent } from "@/lib/player-colors";
 import { cn } from "@/lib/utils";
+import { usePointerClickGuard } from "@/lib/usePointerClickGuard";
 
 const ZONE_ORDER = ["battlefield", "hand", "graveyard", "library", "exile", "command"];
 const ZONE_LABELS = {
@@ -185,6 +186,7 @@ function OpponentSlot({
   legalTargetPlayerIds,
   legalTargetObjectIds,
 }) {
+  const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
   const { combatModeRef, combatMode, dragArrow } = useCombatArrows();
   const playerAccent = getPlayerAccent(state?.players || [], player?.id);
   const zoneEntries = buildZoneEntries(player, zoneViews);
@@ -240,6 +242,7 @@ function OpponentSlot({
   }, [combatModeRef, playerIdx]);
 
   const handleCardClick = (e, card) => {
+    if (canPickTargetFromBoard && !shouldHandleClick(e)) return;
     const candidateObjectIds = collectCardObjectIds(card);
 
     if (canPickTargetFromBoard) {
@@ -266,7 +269,21 @@ function OpponentSlot({
     onInspect?.(card.id);
   };
 
-  const handlePlayerTargetClick = () => {
+  const handleCardPointerDown = useCallback((event, card) => {
+    if (!canPickTargetFromBoard || !registerPointerDown(event)) return;
+    const candidateObjectIds = collectCardObjectIds(card);
+    const matchedTargetId = candidateObjectIds.find((id) => legalTargetObjectIds.has(id));
+    if (matchedTargetId == null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    window.dispatchEvent(
+      new CustomEvent("ironsmith:target-choice", {
+        detail: { target: { kind: "object", object: matchedTargetId } },
+      })
+    );
+  }, [canPickTargetFromBoard, legalTargetObjectIds, registerPointerDown]);
+
+  const dispatchPlayerTargetChoice = useCallback(() => {
     if (!canPickTargetFromBoard || !isPlayerLegalTarget) return;
     const targetPlayer = legalTargetPlayerIds.has(Number(player.id))
       ? Number(player.id)
@@ -277,7 +294,27 @@ function OpponentSlot({
         detail: { target: { kind: "player", player: targetPlayer } },
       })
     );
-  };
+  }, [
+    canPickTargetFromBoard,
+    isPlayerLegalTarget,
+    legalTargetPlayerIds,
+    player.id,
+    player.index,
+  ]);
+
+  const handlePlayerTargetPointerDown = useCallback((event) => {
+    if (!registerPointerDown(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dispatchPlayerTargetChoice();
+  }, [dispatchPlayerTargetChoice, registerPointerDown]);
+
+  const handlePlayerTargetClick = useCallback((event) => {
+    if (!shouldHandleClick(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dispatchPlayerTargetChoice();
+  }, [dispatchPlayerTargetChoice, shouldHandleClick]);
 
   return (
     <div
@@ -298,6 +335,7 @@ function OpponentSlot({
                 && "text-[#d7ebff] shadow-[0_0_10px_rgba(100,169,255,0.5)] ring-1 ring-[#64a9ff]/55"
             )}
             data-player-target={player.index ?? player.id}
+            onPointerDown={handlePlayerTargetPointerDown}
             onClick={handlePlayerTargetClick}
             style={{ cursor: isPlayerLegalTarget && canPickTargetFromBoard ? "pointer" : undefined }}
           >
@@ -310,6 +348,7 @@ function OpponentSlot({
             )}
             data-player-target={player.index ?? player.id}
             data-player-target-name={player.index ?? player.id}
+            onPointerDown={handlePlayerTargetPointerDown}
             onClick={handlePlayerTargetClick}
             style={{
               color: playerAccent?.hex,
@@ -363,6 +402,7 @@ function OpponentSlot({
                     battlefieldSide="top"
                     selectedObjectId={selectedObjectId}
                     onCardClick={handleCardClick}
+                    onCardPointerDown={handleCardPointerDown}
                     onExpandInspector={entry.zone === "battlefield" ? onExpandInspector : undefined}
                     legalTargetObjectIds={legalTargetObjectIds}
                     allowVerticalScroll={entry.zone === "hand"}

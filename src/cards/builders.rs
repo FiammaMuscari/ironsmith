@@ -10705,5 +10705,5 @@ fn scale_value(base: Value, factor: u32) -> Option<Value> {
     Some(value)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "parser-tests"))]
 mod tests;

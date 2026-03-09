@@ -46,6 +46,10 @@ function objectExistsInState(state, objectId) {
     if (String(entry?.inspect_object_id) === needle) return true;
   }
 
+  if ((state?.viewed_cards?.card_ids || []).some((id) => String(id) === needle)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -100,8 +104,11 @@ export default function Workspace({
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [pinnedInspectorObjectId, setPinnedInspectorObjectId] = useState(null);
   const [expandedInspectorObjectId, setExpandedInspectorObjectId] = useState(null);
+  const [suppressFallbackInspector, setSuppressFallbackInspector] = useState(false);
   const [handLaneHovered, setHandLaneHovered] = useState(false);
   const [opponentsInspectorDockTop, setOpponentsInspectorDockTop] = useState(null);
+  const [opponentsZoneHostRect, setOpponentsZoneHostRect] = useState(null);
+  const [myZoneHostRect, setMyZoneHostRect] = useState(null);
   const workspaceRef = useRef(null);
   const previousStackIdsRef = useRef([]);
   const handRevealShellRef = useRef(null);
@@ -202,6 +209,7 @@ export default function Workspace({
       setSelectedObjectId(nextViewedId);
       setPinnedInspectorObjectId(String(nextViewedId));
       setExpandedInspectorObjectId(null);
+      setSuppressFallbackInspector(false);
     });
   }, [activeViewedCardIds, activeViewedCards?.card_ids, selectedObjectId]);
 
@@ -303,8 +311,10 @@ export default function Workspace({
 
     const measureDockTop = () => {
       const opponentsEl = root.querySelector("[data-opponents-zones]");
+      const myZoneEl = root.querySelector("[data-my-zone]");
       if (!opponentsEl) {
         setOpponentsInspectorDockTop(null);
+        setOpponentsZoneHostRect(null);
         return;
       }
 
@@ -312,6 +322,33 @@ export default function Workspace({
       const nextTop = Math.max(0, Math.round(opponentsRect.bottom - HAND_PEEK_HEIGHT));
       setOpponentsInspectorDockTop((currentTop) => (
         currentTop == null || Math.abs(currentTop - nextTop) >= 1 ? nextTop : currentTop
+      ));
+      const nextOpponentsRect = {
+        top: Math.round(opponentsRect.top),
+        height: Math.round(opponentsRect.height),
+      };
+      setOpponentsZoneHostRect((currentRect) => (
+        currentRect == null
+        || currentRect.top !== nextOpponentsRect.top
+        || currentRect.height !== nextOpponentsRect.height
+          ? nextOpponentsRect
+          : currentRect
+      ));
+      if (!myZoneEl) {
+        setMyZoneHostRect(null);
+        return;
+      }
+      const myZoneRect = myZoneEl.getBoundingClientRect();
+      const nextMyZoneRect = {
+        top: Math.round(myZoneRect.top),
+        height: Math.round(myZoneRect.height),
+      };
+      setMyZoneHostRect((currentRect) => (
+        currentRect == null
+        || currentRect.top !== nextMyZoneRect.top
+        || currentRect.height !== nextMyZoneRect.height
+          ? nextMyZoneRect
+          : currentRect
       ));
     };
 
@@ -359,6 +396,7 @@ export default function Workspace({
       setSelectedObjectId(objectId);
       setPinnedInspectorObjectId(objectId == null ? null : String(objectId));
       setExpandedInspectorObjectId(null);
+      setSuppressFallbackInspector(false);
       if (objectId != null) hoverCard(objectId);
     },
     [combatDeclarationActive, decision, hoverCard, legalTargetObjectIds, state?.perspective]
@@ -372,6 +410,7 @@ export default function Workspace({
       setExpandedInspectorObjectId((currentExpanded) => (
         sameObjectId(currentExpanded, objectId) ? null : String(objectId)
       ));
+      setSuppressFallbackInspector(false);
       hoverCard(objectId);
     },
     [combatDeclarationActive, hoverCard]
@@ -476,6 +515,7 @@ export default function Workspace({
           setSelectedObjectId(ds.objectId);
           setPinnedInspectorObjectId(null);
           setExpandedInspectorObjectId(null);
+          setSuppressFallbackInspector(false);
         }
         return;
       }
@@ -486,6 +526,7 @@ export default function Workspace({
         setSelectedObjectId(ds.objectId != null ? ds.objectId : null);
         setPinnedInspectorObjectId(null);
         setExpandedInspectorObjectId(null);
+        setSuppressFallbackInspector(false);
       }
       clearHover();
     };
@@ -513,6 +554,7 @@ export default function Workspace({
       if (event.button !== 0) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
+      if (decision && decision.player === state?.perspective && decision.kind !== "priority") return;
       if (target.closest("[data-object-id]")) return;
       if (target.closest(".zone-viewer")) return;
       if (target.closest(".priority-inline-panel")) return;
@@ -528,6 +570,7 @@ export default function Workspace({
       setSelectedObjectId(null);
       setPinnedInspectorObjectId(null);
       setExpandedInspectorObjectId(null);
+      setSuppressFallbackInspector(true);
       clearHover();
     };
 
@@ -535,7 +578,7 @@ export default function Workspace({
     return () => {
       document.removeEventListener("pointerdown", onDeadZonePointerDown, true);
     };
-  }, [clearHover]);
+  }, [clearHover, decision, state?.perspective]);
 
   return (
     <section
@@ -625,6 +668,7 @@ export default function Workspace({
             <RightRail
               pinnedObjectId={selectedObjectId}
               onInspectObject={handleInspectObject}
+              suppressFallback={suppressFallbackInspector}
               inline
               inlineDockPlacement="top"
               allowTopInlinePlacement
@@ -635,15 +679,19 @@ export default function Workspace({
           </div>
         </div>
       )}
-      {!deckLoadingMode && opponentsInspectorDockTop != null && (
+      {!deckLoadingMode && opponentsZoneHostRect != null && (
         <div
-          className="pointer-events-none fixed inset-x-0 z-30 flex items-end justify-start overflow-visible px-2"
-          style={{ top: `${opponentsInspectorDockTop}px`, height: `${HAND_PEEK_HEIGHT}px` }}
+          className="pointer-events-none fixed inset-x-0 z-30 flex items-start justify-start overflow-visible px-2"
+          style={{
+            top: `${opponentsZoneHostRect.top}px`,
+            height: `${opponentsZoneHostRect.height}px`,
+          }}
         >
-          <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
+          <div className="pointer-events-none relative flex h-full shrink-0 items-start gap-1.5 self-start overflow-visible">
             <RightRail
               pinnedObjectId={selectedObjectId}
               onInspectObject={handleInspectObject}
+              suppressFallback={suppressFallbackInspector}
               inline
               inlineDockPlacement="top"
               inlineHostSide="left"
@@ -662,19 +710,6 @@ export default function Workspace({
         data-bottom-dock
         data-inspector-dock="bottom"
       >
-        <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
-          <RightRail
-            pinnedObjectId={selectedObjectId}
-            onInspectObject={handleInspectObject}
-            inline
-            inlineHostSide="left"
-            inlineExpandedSide="left"
-            allowTopInlinePlacement={opponentsInspectorDockTop != null}
-            inlineExpanded={inlineInspectorExpanded}
-            forceInlineExpanded={forceInlineInspectorExpanded}
-            fullArtInlineExpanded={forceInlineInspectorFullArt}
-          />
-        </div>
         <div
           className="pointer-events-none relative min-w-0 flex-1 h-full overflow-visible"
           data-hand-dock-lane
@@ -713,6 +748,7 @@ export default function Workspace({
           <RightRail
             pinnedObjectId={selectedObjectId}
             onInspectObject={handleInspectObject}
+            suppressFallback={suppressFallbackInspector}
             inline
             allowTopInlinePlacement={opponentsInspectorDockTop != null}
             inlineExpanded={inlineInspectorExpanded}
@@ -721,6 +757,30 @@ export default function Workspace({
           />
         </div>
       </div>
+      {!deckLoadingMode && myZoneHostRect != null && (
+        <div
+          className="pointer-events-none fixed inset-x-0 z-30 flex items-start justify-start overflow-visible px-2"
+          style={{
+            top: `${myZoneHostRect.top}px`,
+            height: `${myZoneHostRect.height}px`,
+          }}
+        >
+          <div className="pointer-events-none relative flex h-full shrink-0 items-start gap-1.5 self-start overflow-visible">
+            <RightRail
+              pinnedObjectId={selectedObjectId}
+              onInspectObject={handleInspectObject}
+              suppressFallback={suppressFallbackInspector}
+              inline
+              inlineHostSide="left"
+              inlineExpandedSide="left"
+              allowTopInlinePlacement={opponentsInspectorDockTop != null}
+              inlineExpanded={inlineInspectorExpanded}
+              forceInlineExpanded={forceInlineInspectorExpanded}
+              fullArtInlineExpanded={forceInlineInspectorFullArt}
+            />
+          </div>
+        </div>
+      )}
     </section>
   );
 }

@@ -19,6 +19,7 @@ export default function Shell() {
     refresh,
     setStatus,
     multiplayer,
+    semanticThreshold,
   } = useGame();
   const [playerNames, setPlayerNames] = useState("Alice,Bob,Charlie,Diana");
   const [startingLife, setStartingLife] = useState(20);
@@ -51,6 +52,9 @@ export default function Shell() {
     if (!game) return;
     async function init() {
       try {
+        if (typeof game.setSemanticThreshold === "function") {
+          await game.setSemanticThreshold(semanticThreshold);
+        }
         await game.reset(parseNames(playerNames), startingLife);
         await refresh("WASM loaded");
         // Run demo setup: advance to main phase + 3 Black Lotuses

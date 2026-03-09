@@ -1,8 +1,7 @@
 use crate::cards::builders::{
-    CardTextError, IT_TAG, TargetAst, Token, is_article, parse_card_type, parse_non_type,
-    parse_filter_counter_constraint_words, parse_number, parse_object_filter, parse_subtype_word,
-    span_from_tokens,
-    token_index_for_word_index, words,
+    CardTextError, IT_TAG, TargetAst, Token, is_article, parse_card_type,
+    parse_filter_counter_constraint_words, parse_non_type, parse_number, parse_object_filter,
+    parse_subtype_word, span_from_tokens, token_index_for_word_index, words,
 };
 use crate::{CardType, ChoiceCount, ObjectFilter, PlayerFilter, TagKey, Zone};
 
@@ -42,7 +41,9 @@ pub(crate) fn parse_target_phrase(tokens: &[Token]) -> Result<TargetAst, CardTex
     let mut explicit_target = false;
 
     let all_words = words(tokens);
-    if all_words.first().is_some_and(|word| matches!(*word, "it" | "them"))
+    if all_words
+        .first()
+        .is_some_and(|word| matches!(*word, "it" | "them"))
         && all_words.get(1).is_some_and(|word| *word == "with")
         && let Some((counter_constraint, consumed)) =
             parse_filter_counter_constraint_words(&all_words[2..])

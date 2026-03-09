@@ -162,7 +162,15 @@ export default function SelectObjectsDecision({
                         : "bg-[rgba(12,20,30,0.72)] text-[#647f99] hover:bg-[rgba(12,20,30,0.72)] hover:text-[#647f99]")
                   )}
                   disabled={isDisabled}
-                  onClick={() => toggleObject(c.id)}
+                  onPointerDown={(event) => {
+                    if (isDisabled || event.button !== 0) return;
+                    event.preventDefault();
+                    toggleObject(c.id);
+                  }}
+                  onClick={(event) => {
+                    if (isDisabled || event.detail !== 0) return;
+                    toggleObject(c.id);
+                  }}
                 >
                   {c.name}
                 </Button>
@@ -189,7 +197,15 @@ export default function SelectObjectsDecision({
               stripLayout ? "w-auto ml-1" : "w-full"
             )}
             disabled={!canAct || !canSubmit}
-            onClick={handleSubmit}
+            onPointerDown={(event) => {
+              if (!canAct || !canSubmit || event.button !== 0) return;
+              event.preventDefault();
+              handleSubmit();
+            }}
+            onClick={(event) => {
+              if (!canAct || !canSubmit || event.detail !== 0) return;
+              handleSubmit();
+            }}
           >
             {submitLabel}
           </Button>

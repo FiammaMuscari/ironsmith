@@ -1121,11 +1121,25 @@ fn parse_pact_next_upkeep_line_rule(
     let upkeep_tokens = trim_commas(&upkeep_segment);
     let upkeep_words = words(&upkeep_tokens);
     let pay_prefix = if upkeep_words.starts_with(&[
-        "at", "the", "beginning", "of", "your", "next", "upkeep", "pay",
+        "at",
+        "the",
+        "beginning",
+        "of",
+        "your",
+        "next",
+        "upkeep",
+        "pay",
     ]) {
         "at the beginning of your next upkeep, pay"
     } else if upkeep_words.starts_with(&[
-        "at", "the", "beginning", "of", "the", "next", "upkeep", "pay",
+        "at",
+        "the",
+        "beginning",
+        "of",
+        "the",
+        "next",
+        "upkeep",
+        "pay",
     ]) {
         "at the beginning of the next upkeep, pay"
     } else {
@@ -1421,7 +1435,8 @@ fn parse_statement_verb_leading_rule(
 }
 
 fn parse_static_line_rule(view: &ClauseView<'_>) -> Result<Option<LineAst>, CardTextError> {
-    if parse_ability_line(view.tokens).is_some() && !line_prefers_static_parse(view.words.as_slice())
+    if parse_ability_line(view.tokens).is_some()
+        && !line_prefers_static_parse(view.words.as_slice())
     {
         return Ok(None);
     }

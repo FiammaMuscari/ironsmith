@@ -412,11 +412,9 @@ pub(crate) fn inferred_trigger_player_filter(trigger: &TriggerSpec) -> Option<Pl
         | TriggerSpec::EntersBattlefieldOneOrMore(_)
         | TriggerSpec::EntersBattlefieldFromZone { .. }
         | TriggerSpec::EntersBattlefieldTapped(_)
-        | TriggerSpec::EntersBattlefieldUntapped(_) => {
-            Some(PlayerFilter::ControllerOf(ObjectRef::tagged(TagKey::from(
-                "triggering",
-            ))))
-        }
+        | TriggerSpec::EntersBattlefieldUntapped(_) => Some(PlayerFilter::ControllerOf(
+            ObjectRef::tagged(TagKey::from("triggering")),
+        )),
         TriggerSpec::SpellCast { .. } => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::SpellCopied { .. } => Some(PlayerFilter::IteratedPlayer),
         TriggerSpec::PlayerLosesLife(_) => Some(PlayerFilter::IteratedPlayer),
@@ -6172,16 +6170,21 @@ fn try_compile_token_generation_effect(
                         "dynamic token pt requires created token tag to be present".to_string(),
                     ));
                 };
-                compiled.extend(compile_effect_for_target(
-                    &TargetAst::Tagged(TagKey::from(created_tag.as_str()), None),
-                    ctx,
-                    |spec| Effect::set_base_power_toughness(
-                        power.clone(),
-                        toughness.clone(),
-                        spec,
-                        Until::Forever,
-                    ),
-                )?.0);
+                compiled.extend(
+                    compile_effect_for_target(
+                        &TargetAst::Tagged(TagKey::from(created_tag.as_str()), None),
+                        ctx,
+                        |spec| {
+                            Effect::set_base_power_toughness(
+                                power.clone(),
+                                toughness.clone(),
+                                spec,
+                                Until::Forever,
+                            )
+                        },
+                    )?
+                    .0,
+                );
             }
             if let Some(target) = attached_to {
                 let (target_spec, target_choices) =

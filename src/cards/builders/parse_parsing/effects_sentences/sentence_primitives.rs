@@ -30,8 +30,7 @@ use crate::cards::builders::parse_parsing::{
     parse_connive_clause, parse_counter_descriptor, parse_counter_target_count_prefix,
     parse_counter_type_from_tokens, parse_for_each_targeted_object_subject,
     parse_get_modifier_values_with_tail, parse_mana_symbol_word_flexible, parse_number,
-    parse_pt_modifier_values,
-    parse_put_counters, parse_sentence_put_multiple_counters_on_target,
+    parse_pt_modifier_values, parse_put_counters, parse_sentence_put_multiple_counters_on_target,
     parse_sentence_target_player_chooses_then_puts_on_top_of_library,
     parse_sentence_target_player_chooses_then_you_put_it_onto_battlefield, parse_transform,
     parse_where_x_value_clause, parser_trace, parser_trace_enabled, split_on_and, split_on_comma,
@@ -3923,11 +3922,26 @@ pub(crate) fn parse_sentence_delayed_next_upkeep_unless_pays_lose_game(
     let upkeep_tokens = trim_commas(&segments[1]);
     let upkeep_words = words(&upkeep_tokens);
     let pay_idx = if upkeep_words.starts_with(&[
-        "at", "the", "beginning", "of", "your", "next", "upkeep", "pay",
+        "at",
+        "the",
+        "beginning",
+        "of",
+        "your",
+        "next",
+        "upkeep",
+        "pay",
     ]) {
         7usize
-    } else if upkeep_words.starts_with(&["at", "the", "beginning", "of", "the", "next", "upkeep", "pay"])
-    {
+    } else if upkeep_words.starts_with(&[
+        "at",
+        "the",
+        "beginning",
+        "of",
+        "the",
+        "next",
+        "upkeep",
+        "pay",
+    ]) {
         8usize
     } else {
         return Ok(None);

@@ -1,10 +1,11 @@
+use super::zones::parse_half_starting_life_total_value;
 use crate::cards::builders::{
     CardTextError, EffectAst, IT_TAG, TargetAst, Token, Verb, bind_implicit_player_context,
     contains_until_end_of_turn, extract_subject_player, find_negation_span, find_verb,
     has_demonstrative_object_reference, is_mana_replacement_clause_words,
     is_mana_trigger_additional_clause_words, is_target_player_dealt_damage_by_this_turn_subject,
-    keyword_action_to_static_ability, parse_ability_line, parse_card_type, parse_color,
-    parse_cant_restrictions, parse_effect_chain_with_sentence_primitives, parse_effect_with_verb,
+    keyword_action_to_static_ability, parse_ability_line, parse_cant_restrictions, parse_card_type,
+    parse_color, parse_effect_chain_with_sentence_primitives, parse_effect_with_verb,
     parse_for_each_object_subject, parse_get_for_each_count_value,
     parse_get_modifier_values_with_tail, parse_has_base_power_clause,
     parse_has_base_power_toughness_clause, parse_leading_player_may, parse_object_filter,
@@ -16,7 +17,6 @@ use crate::cards::builders::{
     starts_with_until_end_of_turn, strip_leading_instead_prefix, token_index_for_word_index,
     trim_commas, words,
 };
-use super::zones::parse_half_starting_life_total_value;
 use crate::{ChooseSpec, ObjectFilter, TagKey, Until, Value};
 
 pub(crate) fn parse_effect_clause(tokens: &[Token]) -> Result<EffectAst, CardTextError> {

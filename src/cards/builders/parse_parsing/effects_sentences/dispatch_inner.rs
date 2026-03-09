@@ -855,7 +855,9 @@ fn sentence_has_defending_players_choice_clause(words: &[&str], _: &[Token]) -> 
         window == ["defending", "player's", "choice"]
             || window == ["defending", "player", "choice"]
             || window == ["player's", "choice", "target"]
-    }) || words.windows(4).any(|window| window == ["defending", "player", "s", "choice"])
+    }) || words
+        .windows(4)
+        .any(|window| window == ["defending", "player", "s", "choice"])
 }
 
 fn sentence_has_target_creature_token_player_planeswalker_clause(

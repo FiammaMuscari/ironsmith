@@ -352,9 +352,14 @@ pub(crate) fn parse_cast_or_play_tagged_clause(
     let without_paying_its_cost = tail == ["without", "paying", "its", "mana", "cost"]
         || tail == ["without", "paying", "their", "mana", "cost"]
         || tail == ["this", "turn", "without", "paying", "its", "mana", "cost"]
-        || tail == ["until", "end", "of", "turn", "without", "paying", "its", "mana", "cost"]
         || tail
-            == ["until", "the", "end", "of", "turn", "without", "paying", "its", "mana", "cost"];
+            == [
+                "until", "end", "of", "turn", "without", "paying", "its", "mana", "cost",
+            ]
+        || tail
+            == [
+                "until", "the", "end", "of", "turn", "without", "paying", "its", "mana", "cost",
+            ];
     let has_this_turn_duration = tail == ["this", "turn"];
     let has_until_end_of_turn_duration =
         is_until_end_of_turn(tail) || tail == ["until", "the", "end", "of", "turn"];
@@ -362,19 +367,12 @@ pub(crate) fn parse_cast_or_play_tagged_clause(
         || has_until_end_of_turn_duration
         || tail == ["this", "turn", "without", "paying", "its", "mana", "cost"]
         || tail
-            == ["until", "end", "of", "turn", "without", "paying", "its", "mana", "cost"]
+            == [
+                "until", "end", "of", "turn", "without", "paying", "its", "mana", "cost",
+            ]
         || tail
             == [
-                "until",
-                "the",
-                "end",
-                "of",
-                "turn",
-                "without",
-                "paying",
-                "its",
-                "mana",
-                "cost",
+                "until", "the", "end", "of", "turn", "without", "paying", "its", "mana", "cost",
             ]
     {
         return Ok(Some(EffectAst::GrantPlayTaggedUntilEndOfTurn {

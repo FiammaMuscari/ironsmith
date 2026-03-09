@@ -843,9 +843,15 @@ pub(crate) fn parse_half_starting_life_total_value(
     let inferred_player_filter = || match clause_words.as_slice() {
         ["half", "your", "starting", "life", "total"]
         | ["half", "your", "starting", "life", "total", "rounded", "up"]
-        | ["half", "your", "starting", "life", "total", "rounded", "down"] => {
-            Some(PlayerFilter::You)
-        }
+        | [
+            "half",
+            "your",
+            "starting",
+            "life",
+            "total",
+            "rounded",
+            "down",
+        ] => Some(PlayerFilter::You),
         ["half", "target", "players", "starting", "life", "total"]
         | [
             "half",
@@ -890,8 +896,8 @@ pub(crate) fn parse_half_starting_life_total_value(
         ] => Some(PlayerFilter::Opponent),
         _ => None,
     };
-    let player_filter = player_filter_for_set_life_total_reference(player)
-        .or_else(inferred_player_filter)?;
+    let player_filter =
+        player_filter_for_set_life_total_reference(player).or_else(inferred_player_filter)?;
 
     let rounded_up = match clause_words.as_slice() {
         ["half", "your", "starting", "life", "total"]

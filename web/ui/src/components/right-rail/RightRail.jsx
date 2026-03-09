@@ -21,6 +21,7 @@ const INLINE_EXPANDED_MIN_HEIGHT = 152;
 const INLINE_EXPANDED_SAFE_GAP = 12;
 const INLINE_EXPANDED_BOTTOM_GAP = 4;
 const INLINE_EXPANDED_RIGHT_BLEED = 8;
+const VIEWED_CARD_COMPACT_HEIGHT = 74;
 
 function clampNumber(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -60,9 +61,24 @@ function objectExistsInState(state, objectId) {
   return false;
 }
 
+function isViewedCardObject(state, objectId) {
+  if (objectId == null) return false;
+  const needle = String(objectId);
+  return (state?.viewed_cards?.card_ids || []).some((id) => String(id) === needle);
+}
+
 function locateObjectInState(state, objectId) {
   if (objectId == null) return null;
   const needle = String(objectId);
+  const viewedCards = state?.viewed_cards || null;
+  if ((viewedCards?.card_ids || []).some((id) => String(id) === needle)) {
+    return {
+      side: viewedCards?.visibility === "public" ? "public-view" : "private-view",
+      zone: String(viewedCards?.zone || "").toLowerCase(),
+      viewVisibility: viewedCards?.visibility === "public" ? "public" : "private",
+    };
+  }
+
   const perspective = state?.perspective;
   const players = state?.players || [];
   const zonesByPlayer = [
@@ -93,24 +109,15 @@ function locateObjectInState(state, objectId) {
     }
   }
 
-  const viewedCards = state?.viewed_cards || null;
-  if ((viewedCards?.card_ids || []).some((id) => String(id) === needle)) {
-    return {
-      side: viewedCards?.visibility === "public" ? "public-view" : "private-view",
-      zone: String(viewedCards?.zone || "").toLowerCase(),
-      viewVisibility: viewedCards?.visibility === "public" ? "public" : "private",
-    };
-  }
-
   return null;
 }
 
 function preferredInlinePlacement(location) {
   if (location?.viewVisibility === "private") {
-    return { dock: "bottom", side: "left" };
+    return { dock: "bottom", side: "right" };
   }
   if (location?.viewVisibility === "public") {
-    return { dock: "top", side: "left" };
+    return { dock: "top", side: "right" };
   }
   return {
     dock: location?.side === "self" && location?.zone !== "stack" ? "top" : "bottom",
@@ -150,9 +157,55 @@ function decisionReferencesObject(decision, objectId) {
   return false;
 }
 
+function ViewedCardsHeader({
+  label,
+  index,
+  total,
+  canCycle,
+  onCyclePointerDown,
+  onCycleClick,
+}) {
+  const buttonClass = canCycle
+    ? "flex h-5 w-5 items-center justify-center rounded border border-[#35506c]/78 bg-[rgba(11,19,29,0.92)] text-[#cfe3fb] transition-colors hover:border-[#4d7093] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#80bfff]/70"
+    : "flex h-5 w-5 items-center justify-center rounded border border-[#273748]/72 bg-[rgba(11,19,29,0.72)] text-[#5c7591]";
+  return (
+    <div className="flex h-7 shrink-0 items-center justify-between border-b border-[#314558]/85 bg-[rgba(7,14,22,0.96)] px-1.5">
+      <button
+        type="button"
+        className={buttonClass}
+        aria-label={`Show previous ${label.toLowerCase()} card`}
+        disabled={!canCycle}
+        onPointerDown={(event) => onCyclePointerDown(event, -1)}
+        onClick={(event) => onCycleClick(event, -1)}
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </button>
+      <div className="min-w-0 px-2 text-center">
+        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#8eb7de]">
+          {label}
+        </div>
+        <div className="text-[10px] text-[#d7e8fb]">
+          {index + 1}/{total}
+        </div>
+      </div>
+      <button
+        type="button"
+        className={buttonClass}
+        aria-label={`Show next ${label.toLowerCase()} card`}
+        disabled={!canCycle}
+        onPointerDown={(event) => onCyclePointerDown(event, 1)}
+        onClick={(event) => onCycleClick(event, 1)}
+      >
+        <ChevronRight className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 export default function RightRail({
   pinnedObjectId,
   onInspectObject = null,
+  suppressFallback = false,
   inspectorBottomOffset = DEFAULT_INSPECTOR_BOTTOM_OFFSET,
   inline = false,
   inlineExpanded = false,
@@ -190,19 +243,32 @@ export default function RightRail({
     : null;
   const pinnedInspectorObjectId = pinnedObjectId != null ? String(pinnedObjectId) : null;
   const focusedDecision = isFocusedDecision(decision);
+  const pinnedInspectorIsViewedCard = isViewedCardObject(state, pinnedInspectorObjectId);
   const relevantPinnedObjectId = focusedDecision && pinnedInspectorObjectId != null
-    ? (decisionReferencesObject(decision, pinnedInspectorObjectId) ? pinnedInspectorObjectId : null)
+    ? (
+      decisionReferencesObject(decision, pinnedInspectorObjectId) || pinnedInspectorIsViewedCard
+        ? pinnedInspectorObjectId
+        : null
+    )
     : pinnedInspectorObjectId;
+  const relevantHoveredObjectId = focusedDecision && hoveredObjectId != null
+    ? (
+      decisionReferencesObject(decision, hoveredObjectId) || isViewedCardObject(state, hoveredObjectId)
+        ? hoveredObjectId
+        : null
+    )
+    : hoveredObjectId;
+  const fallbackDecisionObjectId = suppressFallback ? null : (resolvingCastObjectId ?? topStackObjectId);
 
-  // During non-priority decision steps (targeting, choose number/options, etc),
-  // keep inspector focus on the spell being cast/resolved instead of hover.
+  // During non-priority decision steps, keep the casting spell as a fallback,
+  // but allow inspected/hovered objects to take precedence.
   const decisionLockedObjectId = focusedDecision
-    ? (resolvingCastObjectId ?? relevantPinnedObjectId ?? hoveredObjectId ?? topStackObjectId)
+    ? (relevantPinnedObjectId ?? relevantHoveredObjectId ?? fallbackDecisionObjectId)
     : null;
 
   const selectedObjectId = focusedDecision
     ? decisionLockedObjectId
-    : (relevantPinnedObjectId ?? hoveredObjectId ?? resolvingCastObjectId ?? topStackObjectId);
+    : (relevantPinnedObjectId ?? relevantHoveredObjectId ?? fallbackDecisionObjectId);
   const validSelectedObjectId = objectExistsInState(state, selectedObjectId)
     ? selectedObjectId
     : null;
@@ -233,11 +299,13 @@ export default function RightRail({
   const viewedCardIndex = validSelectedObjectId == null
     ? -1
     : viewedCardIds.findIndex((id) => String(id) === String(validSelectedObjectId));
+  const viewedCardsLabel = state?.viewed_cards?.visibility === "public" ? "Revealed" : "Look";
+  const hasViewedCards = viewedCardIds.length > 0;
+  const effectiveViewedCardIndex = viewedCardIndex >= 0 ? viewedCardIndex : 0;
   const canCycleViewedCards = (
     inline
-    && preferredPlacement.side === "left"
+    && hasViewedCards
     && viewedCardIds.length > 1
-    && viewedCardIndex >= 0
     && typeof onInspectObject === "function"
   );
   const resolvedInlineDockPlacement = (
@@ -293,6 +361,7 @@ export default function RightRail({
       : INSPECTOR_INLINE_FALLBACK_WIDTH;
     return clampNumber(preferred, INSPECTOR_INLINE_MIN_WIDTH, INSPECTOR_INLINE_MAX_WIDTH_PX);
   }, [preferredInlineWidth]);
+  const showViewedCardsHeader = inline && hasViewedCards && shouldShowRail;
   const expandedInlineWidth = useMemo(() => {
     const preferred = Number.isFinite(preferredExpandedInlineWidth)
       ? Math.round(preferredExpandedInlineWidth)
@@ -450,6 +519,9 @@ export default function RightRail({
         width: shouldShowRail
           ? (useExpandedInlineInspector ? `${expandedInlineWidth}px` : inlineWidth)
           : "0px",
+        height: shouldShowRail && showViewedCardsHeader && !useExpandedInlineInspector
+          ? `${VIEWED_CARD_COMPACT_HEIGHT}px`
+          : undefined,
       }
       : {
         width: INSPECTOR_OVERLAY_WIDTH,
@@ -461,6 +533,7 @@ export default function RightRail({
       inline,
       inlineWidth,
       inspectorBottomOffset,
+      showViewedCardsHeader,
       shouldShowRail,
       useExpandedInlineInspector,
     ]
@@ -470,11 +543,13 @@ export default function RightRail({
     : { left: "auto", right: `-${INLINE_EXPANDED_RIGHT_BLEED}px`, transformOrigin: "bottom right" };
   const cycleViewedCard = useCallback((direction) => {
     if (!canCycleViewedCards) return;
-    const nextIndex = (viewedCardIndex + direction + viewedCardIds.length) % viewedCardIds.length;
+    const nextIndex = (
+      effectiveViewedCardIndex + direction + viewedCardIds.length
+    ) % viewedCardIds.length;
     const nextObjectId = viewedCardIds[nextIndex];
     if (nextObjectId == null) return;
     onInspectObject(nextObjectId);
-  }, [canCycleViewedCards, onInspectObject, viewedCardIds, viewedCardIndex]);
+  }, [canCycleViewedCards, effectiveViewedCardIndex, onInspectObject, viewedCardIds]);
 
   const handleCyclePointerDown = useCallback((event, direction) => {
     event.preventDefault();
@@ -501,28 +576,6 @@ export default function RightRail({
       aria-hidden={!shouldShowRail}
     >
       <div className={cn("relative h-full min-h-0", inline ? "overflow-visible" : "overflow-hidden")}>
-        {canCycleViewedCards && shouldShowRail && (
-          <>
-            <button
-              type="button"
-              className="pointer-events-auto absolute left-1 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-[#35506c]/85 bg-[rgba(7,12,19,0.92)] text-[#d8e8fa] shadow-[0_8px_18px_rgba(0,0,0,0.38)] transition-colors hover:border-[#4d7093] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#80bfff]/70"
-              aria-label="Show previous revealed card"
-              onPointerDown={(event) => handleCyclePointerDown(event, -1)}
-              onClick={(event) => handleCycleClick(event, -1)}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              className="pointer-events-auto absolute right-1 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-[#35506c]/85 bg-[rgba(7,12,19,0.92)] text-[#d8e8fa] shadow-[0_8px_18px_rgba(0,0,0,0.38)] transition-colors hover:border-[#4d7093] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#80bfff]/70"
-              aria-label="Show next revealed card"
-              onPointerDown={(event) => handleCyclePointerDown(event, 1)}
-              onClick={(event) => handleCycleClick(event, 1)}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </>
-        )}
         <div
           ref={compactInspectorRef}
           className={cn(
@@ -533,13 +586,25 @@ export default function RightRail({
             shouldShowRail ? "pointer-events-auto" : "pointer-events-none"
           )}
         >
-          <div className="relative h-full min-h-0 overflow-hidden">
-            <HoverArtOverlay
-              objectId={shouldShowRail ? validSelectedObjectId : null}
-              suppressStableId={inspectorSuppressStableId}
-              compact={inline}
-              onPreferredWidthChange={inline ? setPreferredInlineWidth : null}
-            />
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            {showViewedCardsHeader && (
+              <ViewedCardsHeader
+                label={viewedCardsLabel}
+                index={effectiveViewedCardIndex}
+                total={viewedCardIds.length}
+                canCycle={canCycleViewedCards}
+                onCyclePointerDown={handleCyclePointerDown}
+                onCycleClick={handleCycleClick}
+              />
+            )}
+            <div className="relative min-h-0 flex-1 overflow-hidden">
+              <HoverArtOverlay
+                objectId={shouldShowRail ? validSelectedObjectId : null}
+                suppressStableId={inspectorSuppressStableId}
+                compact={inline}
+                onPreferredWidthChange={inline ? setPreferredInlineWidth : null}
+              />
+            </div>
           </div>
         </div>
         {shouldRenderExpandedInlineInspector && (
@@ -555,16 +620,30 @@ export default function RightRail({
               ...expandedInlineShellOffset,
             }}
           >
-            <HoverArtOverlay
-              objectId={shouldShowRail ? validSelectedObjectId : null}
-              suppressStableId={inspectorSuppressStableId}
-              displayMode={fullArtInlineExpanded ? "full-art" : "inspector"}
-              availableInspectorWidth={expandedInlineWidth}
-              availableInspectorHeight={expandedInlineHeight}
-              onPreferredInspectorWidthChange={
-                fullArtInlineExpanded ? null : setPreferredExpandedInlineWidth
-              }
-            />
+            <div className="flex h-full min-h-0 flex-col overflow-hidden">
+              {showViewedCardsHeader && (
+                <ViewedCardsHeader
+                  label={viewedCardsLabel}
+                  index={effectiveViewedCardIndex}
+                  total={viewedCardIds.length}
+                  canCycle={canCycleViewedCards}
+                  onCyclePointerDown={handleCyclePointerDown}
+                  onCycleClick={handleCycleClick}
+                />
+              )}
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <HoverArtOverlay
+                  objectId={shouldShowRail ? validSelectedObjectId : null}
+                  suppressStableId={inspectorSuppressStableId}
+                  displayMode={fullArtInlineExpanded ? "full-art" : "inspector"}
+                  availableInspectorWidth={expandedInlineWidth}
+                  availableInspectorHeight={expandedInlineHeight}
+                  onPreferredInspectorWidthChange={
+                    fullArtInlineExpanded ? null : setPreferredExpandedInlineWidth
+                  }
+                />
+              </div>
+            </div>
           </div>
         )}
       </div>

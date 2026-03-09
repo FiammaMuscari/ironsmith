@@ -338,8 +338,10 @@ export function GameProvider({ children }) {
   const logRef = useRef([]);
   const [logEntries, setLogEntries] = useState([]);
   const gameRef = useRef(game);
+  const semanticThresholdRef = useRef(semanticThreshold);
   const stateRef = useRef(state);
   const multiplayerActiveRef = useRef(false);
+  const stickyViewedCardsRef = useRef(null);
 
   const pushLog = useCallback((message, isError = false) => {
     const time = new Date().toLocaleTimeString([], {
@@ -361,6 +363,17 @@ export function GameProvider({ children }) {
 
   useEffect(() => {
     gameRef.current = game;
+  }, [game]);
+
+  useEffect(() => {
+    semanticThresholdRef.current = semanticThreshold;
+  }, [semanticThreshold]);
+
+  useEffect(() => {
+    if (!game || typeof game.setSemanticThreshold !== "function") return;
+    game.setSemanticThreshold(semanticThresholdRef.current).catch((err) => {
+      console.warn("initial setSemanticThreshold failed:", err);
+    });
   }, [game]);
 
   useEffect(() => {
@@ -622,6 +635,25 @@ export function GameProvider({ children }) {
     holdReason: null,
   }), []);
 
+  const applyStickyViewedCards = useCallback((nextState, { clear = false } = {}) => {
+    if (!nextState) {
+      if (clear) stickyViewedCardsRef.current = null;
+      return nextState;
+    }
+
+    if (clear) {
+      stickyViewedCardsRef.current = null;
+    }
+
+    if (nextState.viewed_cards) {
+      stickyViewedCardsRef.current = nextState.viewed_cards;
+      return nextState;
+    }
+
+    if (!stickyViewedCardsRef.current) return nextState;
+    return { ...nextState, viewed_cards: stickyViewedCardsRef.current };
+  }, []);
+
   const finalizeState = useCallback(
     async (
       currentGame,
@@ -630,6 +662,7 @@ export function GameProvider({ children }) {
         message = "",
         allowOpponentAutomation = true,
         allowTrivialAutomation = true,
+        clearViewedCards = false,
       } = {}
     ) => {
       let st = currentState;
@@ -646,6 +679,7 @@ export function GameProvider({ children }) {
         )
         : { state: st, resolved: 0 };
       st = autoResolved.state;
+      st = applyStickyViewedCards(st, { clear: clearViewedCards });
       setState(st);
       stateRef.current = st;
 
@@ -680,6 +714,7 @@ export function GameProvider({ children }) {
       return st;
     },
     [
+      applyStickyViewedCards,
       autoResolveTrivialDecisions,
       settleNoop,
       settlePriorityAutomation,
@@ -700,6 +735,7 @@ export function GameProvider({ children }) {
         message: successMessage,
         allowOpponentAutomation: false,
         allowTrivialAutomation: false,
+        clearViewedCards: true,
       });
     },
     [finalizeState]
@@ -738,8 +774,9 @@ export function GameProvider({ children }) {
       try {
         let st = await game.uiState();
         if (multiplayer.matchStarted) {
-          setState(st);
-          stateRef.current = st;
+          const visibleState = applyStickyViewedCards(st);
+          setState(visibleState);
+          stateRef.current = visibleState;
           if (message) setStatus(message);
           return;
         }
@@ -752,7 +789,7 @@ export function GameProvider({ children }) {
         setStatus(`Refresh failed: ${err}`, true);
       }
     },
-    [finalizeState, game, multiplayer.matchStarted, setStatus]
+    [applyStickyViewedCards, finalizeState, game, multiplayer.matchStarted, setStatus]
   );
 
   const dispatch = useCallback(
@@ -784,6 +821,7 @@ export function GameProvider({ children }) {
           message: successMessage,
           allowOpponentAutomation: true,
           allowTrivialAutomation: true,
+          clearViewedCards: true,
         });
       } catch (err) {
         try {
@@ -817,6 +855,7 @@ export function GameProvider({ children }) {
           message: "Decision cancelled",
           allowOpponentAutomation: true,
           allowTrivialAutomation: true,
+          clearViewedCards: true,
         });
       } catch (err) {
         setStatus(`Cancel failed: ${err}`, true);

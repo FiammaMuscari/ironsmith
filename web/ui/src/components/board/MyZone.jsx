@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useGame } from "@/context/GameContext";
 import BattlefieldRow from "./BattlefieldRow";
 import DeckZonePile from "./DeckZonePile";
@@ -5,6 +6,7 @@ import ManaPool from "@/components/left-rail/ManaPool";
 import StackTimelineRail from "@/components/right-rail/StackTimelineRail";
 import { getPlayerAccent } from "@/lib/player-colors";
 import { cn } from "@/lib/utils";
+import { usePointerClickGuard } from "@/lib/usePointerClickGuard";
 
 const ZONE_ORDER = ["battlefield", "hand", "graveyard", "library", "exile", "command"];
 const ZONE_LABELS = {
@@ -142,6 +144,7 @@ export default function MyZone({
   legalTargetPlayerIds = new Set(),
   legalTargetObjectIds = new Set(),
 }) {
+  const { registerPointerDown, shouldHandleClick } = usePointerClickGuard();
   const { state, dispatch } = useGame();
   const playerAccent = getPlayerAccent(state?.players || [], player?.id);
 
@@ -180,6 +183,7 @@ export default function MyZone({
   }
 
   const handleCardClick = (_e, card) => {
+    if (canPickTargetFromBoard && !shouldHandleClick(_e)) return;
     const candidateObjectIds = collectCardObjectIds(card);
 
     if (canPickTargetFromBoard) {
@@ -207,7 +211,21 @@ export default function MyZone({
     onInspect?.(card.id);
   };
 
-  const handlePlayerTargetClick = () => {
+  const handleCardPointerDown = useCallback((event, card) => {
+    if (!canPickTargetFromBoard || !registerPointerDown(event)) return;
+    const candidateObjectIds = collectCardObjectIds(card);
+    const matchedTargetId = candidateObjectIds.find((id) => legalTargetObjectIds.has(id));
+    if (matchedTargetId == null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    window.dispatchEvent(
+      new CustomEvent("ironsmith:target-choice", {
+        detail: { target: { kind: "object", object: matchedTargetId } },
+      })
+    );
+  }, [canPickTargetFromBoard, legalTargetObjectIds, registerPointerDown]);
+
+  const dispatchPlayerTargetChoice = useCallback(() => {
     if (!canPickTargetFromBoard || !isPlayerLegalTarget) return;
     const targetPlayer = legalTargetPlayerIds.has(Number(player.id))
       ? Number(player.id)
@@ -218,7 +236,27 @@ export default function MyZone({
         detail: { target: { kind: "player", player: targetPlayer } },
       })
     );
-  };
+  }, [
+    canPickTargetFromBoard,
+    isPlayerLegalTarget,
+    legalTargetPlayerIds,
+    player.id,
+    player.index,
+  ]);
+
+  const handlePlayerTargetPointerDown = useCallback((event) => {
+    if (!registerPointerDown(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dispatchPlayerTargetChoice();
+  }, [dispatchPlayerTargetChoice, registerPointerDown]);
+
+  const handlePlayerTargetClick = useCallback((event) => {
+    if (!shouldHandleClick(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dispatchPlayerTargetChoice();
+  }, [dispatchPlayerTargetChoice, shouldHandleClick]);
 
   return (
     <section
@@ -234,6 +272,7 @@ export default function MyZone({
               isPlayerLegalTarget
                 && "text-[#d7ebff] rounded px-1 py-0.5 shadow-[0_0_10px_rgba(100,169,255,0.5)] ring-1 ring-[#64a9ff]/55"
             )}
+            onPointerDown={handlePlayerTargetPointerDown}
             onClick={handlePlayerTargetClick}
             style={{ cursor: isPlayerLegalTarget && canPickTargetFromBoard ? "pointer" : undefined }}
           >
@@ -246,6 +285,7 @@ export default function MyZone({
             )}
             data-player-target={player.id}
             data-player-target-name={player.id}
+            onPointerDown={handlePlayerTargetPointerDown}
             onClick={handlePlayerTargetClick}
             style={{
               color: playerAccent?.hex,
@@ -301,6 +341,7 @@ export default function MyZone({
                     battlefieldSide="bottom"
                     selectedObjectId={selectedObjectId}
                     onCardClick={handleCardClick}
+                    onCardPointerDown={handleCardPointerDown}
                     onExpandInspector={entry.zone === "battlefield" ? onExpandInspector : undefined}
                     activatableMap={activatableMap}
                     legalTargetObjectIds={legalTargetObjectIds}

@@ -756,7 +756,10 @@ pub(crate) fn parse_object_filter(
         }
     }
 
-    if all_words.first().is_some_and(|word| matches!(*word, "it" | "them")) {
+    if all_words
+        .first()
+        .is_some_and(|word| matches!(*word, "it" | "them"))
+    {
         filter.tagged_constraints.push(TaggedObjectConstraint {
             tag: TagKey::from(IT_TAG),
             relation: TaggedOpbjectRelation::IsTaggedObject,
