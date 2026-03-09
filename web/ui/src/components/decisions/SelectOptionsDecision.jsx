@@ -28,6 +28,8 @@ function isPlayOptionDescription(text) {
 
 function isPaymentDecision(decision) {
   if (!decision || decision.kind !== "select_options") return false;
+  const reason = String(decision.reason || "").toLowerCase();
+  if (reason.includes("next cost")) return false;
   if (isPaymentOptionDescription(decision.description || "")) return true;
   return (decision.options || []).some((opt) => isPaymentOptionDescription(opt.description));
 }
