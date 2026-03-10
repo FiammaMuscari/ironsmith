@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 use rand::seq::SliceRandom;
@@ -1489,7 +1490,10 @@ pub struct GameState {
     pub next_linked_exile_group_id: u64,
 
     /// Deterministic match RNG state used for shuffles and other random gameplay effects.
-    random_state: u64,
+    random_state: Cell<u64>,
+
+    /// Monotonic counter incremented whenever gameplay consumes irreversible randomness.
+    irreversible_random_count: Cell<u64>,
 }
 
 impl GameState {
@@ -1601,7 +1605,8 @@ impl GameState {
             exiled_with_source: HashMap::new(),
             linked_exile_groups: HashMap::new(),
             next_linked_exile_group_id: 0,
-            random_state: Self::normalize_random_seed(0),
+            random_state: Cell::new(Self::normalize_random_seed(0)),
+            irreversible_random_count: Cell::new(0),
         }
     }
 
@@ -1615,31 +1620,43 @@ impl GameState {
 
     /// Set the deterministic RNG seed for this match.
     pub fn set_random_seed(&mut self, seed: u64) {
-        self.random_state = Self::normalize_random_seed(seed);
+        self.random_state.set(Self::normalize_random_seed(seed));
     }
 
     /// Return the current deterministic RNG state.
     pub fn random_seed(&self) -> u64 {
-        self.random_state
+        self.random_state.get()
+    }
+
+    /// Return the count of irreversible random gameplay operations that have occurred.
+    pub fn irreversible_random_count(&self) -> u64 {
+        self.irreversible_random_count.get()
+    }
+
+    fn record_irreversible_random(&self) {
+        self.irreversible_random_count
+            .set(self.irreversible_random_count.get().wrapping_add(1));
     }
 
     /// Advance the deterministic RNG and return the next 64 random bits.
-    pub fn next_random_u64(&mut self) -> u64 {
-        let mut z = self.random_state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        self.random_state = z;
+    pub fn next_random_u64(&self) -> u64 {
+        let mut z = self.random_state.get().wrapping_add(0x9e37_79b9_7f4a_7c15);
+        self.random_state.set(z);
         z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
         z ^ (z >> 31)
     }
 
     /// Shuffle a slice using the deterministic match RNG.
-    pub fn shuffle_slice<T>(&mut self, values: &mut [T]) {
+    pub fn shuffle_slice<T>(&self, values: &mut [T]) {
+        self.record_irreversible_random();
         let mut rng = StdRng::seed_from_u64(self.next_random_u64());
         values.shuffle(&mut rng);
     }
 
     /// Shuffle a player's library using the deterministic match RNG.
     pub fn shuffle_player_library(&mut self, player_id: PlayerId) {
+        self.record_irreversible_random();
         let seed = self.next_random_u64();
         let Some(index) = self
             .players
@@ -4721,5 +4738,25 @@ impl GameState {
         kind: EventKind,
     ) -> ProvNodeId {
         self.provenance_graph.alloc_child_event(parent, kind)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shuffle_slice_marks_irreversible_random_usage() {
+        let game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let before = game.irreversible_random_count();
+        let mut values = vec![1, 2, 3, 4];
+
+        game.shuffle_slice(&mut values);
+
+        assert_eq!(
+            game.irreversible_random_count(),
+            before + 1,
+            "gameplay shuffles should mark the action chain as irreversible"
+        );
     }
 }

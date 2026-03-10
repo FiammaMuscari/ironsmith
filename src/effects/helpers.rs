@@ -21,8 +21,6 @@ use crate::target::{ChooseSpec, FilterContext, ObjectRef, PlayerFilter};
 use crate::triggers::AttackEventTarget;
 use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
-use rand::seq::SliceRandom;
-
 // ============================================================================
 // Value Resolution
 // ============================================================================
@@ -1475,8 +1473,7 @@ pub fn resolve_objects_from_spec(
                     count.max.unwrap_or(objects.len())
                 };
                 if count.is_random() {
-                    let mut rng = rand::rng();
-                    objects.shuffle(&mut rng);
+                    game.shuffle_slice(&mut objects);
                 }
                 objects.truncate(max);
                 if objects.len() < count.min {

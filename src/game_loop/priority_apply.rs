@@ -13,6 +13,114 @@ pub(super) fn stage_after_activation_announcements(pending: &PendingActivation) 
     }
 }
 
+#[cfg_attr(not(all(feature = "wasm", target_arch = "wasm32")), allow(dead_code))]
+fn restore_priority_step_checkpoint(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    state: &mut PriorityLoopState,
+    checkpoint_game: GameState,
+    checkpoint_trigger_queue: TriggerQueue,
+    checkpoint_state: PriorityLoopState,
+) {
+    *game = checkpoint_game;
+    *trigger_queue = checkpoint_trigger_queue;
+    *state = checkpoint_state;
+}
+
+#[cfg_attr(not(all(feature = "wasm", target_arch = "wasm32")), allow(dead_code))]
+pub(crate) fn apply_priority_response_with_suspension<D: DecisionMaker>(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    state: &mut PriorityLoopState,
+    response: &PriorityResponse,
+    decision_maker: &mut D,
+) -> Result<GameProgress, GameLoopError> {
+    let checkpoint_game = game.clone();
+    let checkpoint_trigger_queue = trigger_queue.clone();
+    let checkpoint_state = state.clone();
+    let result =
+        apply_priority_response_with_dm(game, trigger_queue, state, response, decision_maker);
+
+    if decision_maker.awaiting_choice() {
+        restore_priority_step_checkpoint(
+            game,
+            trigger_queue,
+            state,
+            checkpoint_game,
+            checkpoint_trigger_queue,
+            checkpoint_state,
+        );
+        state.pending_continuation =
+            Some(PendingPriorityContinuation::ApplyResponse(response.clone()));
+        return Ok(GameProgress::Continue);
+    }
+
+    match result {
+        Ok(progress) => Ok(progress),
+        Err(err) => {
+            restore_priority_step_checkpoint(
+                game,
+                trigger_queue,
+                state,
+                checkpoint_game,
+                checkpoint_trigger_queue,
+                checkpoint_state,
+            );
+            Err(err)
+        }
+    }
+}
+
+#[cfg_attr(not(all(feature = "wasm", target_arch = "wasm32")), allow(dead_code))]
+pub(crate) fn resume_pending_priority_continuation_with_dm<D: DecisionMaker>(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    state: &mut PriorityLoopState,
+    decision_maker: &mut D,
+) -> Result<GameProgress, GameLoopError> {
+    let continuation = state.pending_continuation.take().ok_or_else(|| {
+        GameLoopError::InvalidState("No suspended priority continuation".to_string())
+    })?;
+
+    let checkpoint_game = game.clone();
+    let checkpoint_trigger_queue = trigger_queue.clone();
+    let checkpoint_state = state.clone();
+    let result = match &continuation {
+        PendingPriorityContinuation::ApplyResponse(response) => {
+            apply_priority_response_with_dm(game, trigger_queue, state, response, decision_maker)
+        }
+    };
+
+    if decision_maker.awaiting_choice() {
+        restore_priority_step_checkpoint(
+            game,
+            trigger_queue,
+            state,
+            checkpoint_game,
+            checkpoint_trigger_queue,
+            checkpoint_state,
+        );
+        state.pending_continuation = Some(continuation);
+        return Ok(GameProgress::Continue);
+    }
+
+    match result {
+        Ok(progress) => Ok(progress),
+        Err(err) => {
+            restore_priority_step_checkpoint(
+                game,
+                trigger_queue,
+                state,
+                checkpoint_game,
+                checkpoint_trigger_queue,
+                checkpoint_state,
+            );
+            state.pending_continuation = Some(continuation);
+            Err(err)
+        }
+    }
+}
+
 pub fn apply_priority_response_with_dm(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,

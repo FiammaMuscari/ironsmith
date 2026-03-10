@@ -614,6 +614,13 @@ pub struct PendingManaAbility {
     pub undo_locked_by_mana: bool,
 }
 
+/// A suspended priority-loop response that should be rerun once a nested
+/// decision answer is available.
+#[derive(Debug, Clone)]
+pub enum PendingPriorityContinuation {
+    ApplyResponse(PriorityResponse),
+}
+
 /// State for tracking the priority loop between decisions.
 #[derive(Debug, Clone)]
 pub struct PriorityLoopState {
@@ -626,6 +633,8 @@ pub struct PriorityLoopState {
     pub pending_method_selection: Option<PendingMethodSelection>,
     /// A pending mana ability activation waiting for mana payment.
     pub pending_mana_ability: Option<PendingManaAbility>,
+    /// A suspended live priority response waiting for a nested decision answer.
+    pub pending_continuation: Option<PendingPriorityContinuation>,
     /// Checkpoint of game state saved when starting an action chain.
     /// If an error occurs during the chain, we restore to this state.
     pub checkpoint: Option<GameState>,
@@ -643,6 +652,7 @@ impl PriorityLoopState {
             pending_activation: None,
             pending_method_selection: None,
             pending_mana_ability: None,
+            pending_continuation: None,
             checkpoint: None,
             auto_choose_single_pip_payment: true,
         }
@@ -664,6 +674,8 @@ impl PriorityLoopState {
         self.pending_cast.is_some()
             || self.pending_activation.is_some()
             || self.pending_method_selection.is_some()
+            || self.pending_mana_ability.is_some()
+            || self.pending_continuation.is_some()
     }
 
     /// Configure whether single-option pip payments should be auto-selected.

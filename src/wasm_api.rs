@@ -20,7 +20,8 @@ use crate::decision::{
 use crate::decisions::context::DecisionContext;
 use crate::game_loop::{
     ActivationStage, CastStage, PriorityLoopState, PriorityResponse, advance_priority_with_dm,
-    apply_priority_response_with_dm,
+    apply_priority_response_with_dm, apply_priority_response_with_suspension,
+    resume_pending_priority_continuation_with_dm,
 };
 use crate::game_state::{GameState, Target};
 use crate::ids::{
@@ -1911,6 +1912,8 @@ pub struct WasmGame {
     /// prompt, this checkpoint is cleared so Undo does not rewind a resolving
     /// action.
     pending_action_checkpoint: Option<ReplayCheckpoint>,
+    /// Root priority response for the current live action chain.
+    pending_live_action_root: Option<PriorityResponse>,
     game_over: Option<GameResult>,
     perspective: PlayerId,
     /// The unified turn state machine. Created lazily on first advance.
@@ -2019,6 +2022,7 @@ impl WasmGame {
             pending_decision: None,
             pending_replay_action: None,
             pending_action_checkpoint: None,
+            pending_live_action_root: None,
             game_over: None,
             perspective: PlayerId::from_index(0),
             runner: None,
@@ -2650,6 +2654,7 @@ impl WasmGame {
         self.pending_decision = None;
         self.pending_replay_action = None;
         self.pending_action_checkpoint = None;
+        self.pending_live_action_root = None;
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
         self.priority_epoch_undo_land_stable_id = None;
@@ -2675,6 +2680,16 @@ impl WasmGame {
         if self.runner_pending_decision {
             self.runner_pending_decision = false;
             return self.dispatch_runner_decision(pending_ctx, command);
+        }
+
+        if self.priority_state.pending_continuation.is_some() {
+            return self.dispatch_live_priority_continuation(pending_ctx, command);
+        }
+
+        if self.pending_replay_action.is_none()
+            && self.decision_uses_live_priority_response(&pending_ctx)
+        {
+            return self.dispatch_live_priority_response(pending_ctx, command);
         }
 
         if let Some(mut replay) = self.pending_replay_action.take() {
@@ -2914,7 +2929,8 @@ impl WasmGame {
 
         if let Some(checkpoint) = self.pending_action_checkpoint.as_ref() {
             return !self.has_irreversible_mana_undo_lock()
-                && !self.has_irreversible_library_change_since(checkpoint);
+                && !self.has_irreversible_library_change_since(checkpoint)
+                && !self.has_irreversible_random_change_since(checkpoint);
         }
 
         let Some(epoch) = self.priority_epoch_checkpoint.as_ref() else {
@@ -2925,6 +2941,7 @@ impl WasmGame {
             && !self.has_irreversible_mana_undo_lock()
             && !self.has_land_play_since(epoch)
             && !self.has_irreversible_library_change_since(epoch)
+            && !self.has_irreversible_random_change_since(epoch)
     }
 
     fn response_starts_cancelable_action_chain(response: &PriorityResponse) -> bool {
@@ -2995,6 +3012,7 @@ impl WasmGame {
         }
 
         !self.has_irreversible_library_change_since(&replay.checkpoint)
+            && !self.has_irreversible_random_change_since(&replay.checkpoint)
     }
 
     fn priority_action_chain_still_pending(&self) -> bool {
@@ -3002,6 +3020,7 @@ impl WasmGame {
             || self.priority_state.pending_activation.is_some()
             || self.priority_state.pending_mana_ability.is_some()
             || self.priority_state.pending_method_selection.is_some()
+            || self.priority_state.pending_continuation.is_some()
     }
 
     fn select_objects_uses_live_priority_response(&self) -> bool {
@@ -3030,6 +3049,23 @@ impl WasmGame {
         replay_decision_requires_root_reexecution(ctx)
             || matches!(ctx, DecisionContext::SelectObjects(_))
                 && !self.select_objects_uses_live_priority_response()
+    }
+
+    fn decision_uses_live_priority_response(&self, ctx: &DecisionContext) -> bool {
+        if self.priority_state.pending_continuation.is_some() {
+            return true;
+        }
+
+        match ctx {
+            DecisionContext::Priority(_)
+            | DecisionContext::Number(_)
+            | DecisionContext::SelectOptions(_)
+            | DecisionContext::Modes(_)
+            | DecisionContext::HybridChoice(_)
+            | DecisionContext::Targets(_) => true,
+            DecisionContext::SelectObjects(_) => self.select_objects_uses_live_priority_response(),
+            _ => false,
+        }
     }
 
     fn has_irreversible_mana_undo_lock(&self) -> bool {
@@ -3242,6 +3278,10 @@ impl WasmGame {
         }
 
         false
+    }
+
+    fn has_irreversible_random_change_since(&self, checkpoint: &ReplayCheckpoint) -> bool {
+        self.game.irreversible_random_count() != checkpoint.game.irreversible_random_count()
     }
 
     fn semantic_score_for_name(card_name: &str) -> Option<f32> {
@@ -3763,6 +3803,7 @@ impl WasmGame {
         self.pending_decision = None;
         self.pending_replay_action = None;
         self.pending_action_checkpoint = None;
+        self.pending_live_action_root = None;
         self.priority_epoch_checkpoint = None;
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
@@ -3784,6 +3825,7 @@ impl WasmGame {
         self.pending_decision = None;
         self.pending_replay_action = None;
         self.pending_action_checkpoint = None;
+        self.pending_live_action_root = None;
         self.priority_epoch_checkpoint = None;
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
@@ -4066,6 +4108,148 @@ impl WasmGame {
         self.runner_awaiting_priority = false;
         self.advance_until_decision()?;
         self.snapshot()
+    }
+
+    fn finish_live_priority_dispatch(
+        &mut self,
+        progress: GameProgress,
+        action_checkpoint: Option<ReplayCheckpoint>,
+    ) -> Result<JsValue, JsValue> {
+        match progress {
+            GameProgress::NeedsDecisionCtx(next_ctx) => {
+                if self.priority_action_chain_still_pending() {
+                    if let Some(checkpoint) = action_checkpoint {
+                        self.pending_action_checkpoint.get_or_insert(checkpoint);
+                    }
+                    self.pending_decision = Some(next_ctx);
+                    return self.snapshot();
+                }
+
+                self.pending_action_checkpoint = None;
+                self.pending_live_action_root = None;
+                self.pending_decision = Some(next_ctx);
+                self.snapshot()
+            }
+            progress => {
+                self.clear_active_resolving_stack_object();
+                if let Some(root_response) = self.pending_live_action_root.take() {
+                    self.priority_epoch_has_undoable_action |=
+                        Self::response_starts_cancelable_action_chain(&root_response);
+
+                    if let Some(checkpoint) = self
+                        .pending_action_checkpoint
+                        .as_ref()
+                        .or(action_checkpoint.as_ref())
+                    {
+                        let root = ReplayRoot::Response(root_response);
+                        if Self::replay_root_has_irreversible_mana_activation(
+                            &checkpoint.game,
+                            &root,
+                        ) || self.replay_root_mana_activation_added_to_stack(checkpoint, &root)
+                        {
+                            self.priority_epoch_undo_locked_by_mana = true;
+                        }
+                        self.priority_epoch_undo_land_stable_id =
+                            self.committed_undo_land_stable_id(checkpoint, &root);
+                    }
+                }
+
+                self.pending_action_checkpoint = None;
+                self.pending_replay_action = None;
+                self.apply_progress(progress)?;
+                self.snapshot()
+            }
+        }
+    }
+
+    fn dispatch_live_priority_response(
+        &mut self,
+        pending_ctx: DecisionContext,
+        command: UiCommand,
+    ) -> Result<JsValue, JsValue> {
+        let response = match self.command_to_response(&pending_ctx, command) {
+            Ok(response) => response,
+            Err(err) => {
+                self.pending_decision = Some(pending_ctx);
+                return Err(err);
+            }
+        };
+
+        let should_track_action_checkpoint = self.pending_action_checkpoint.is_none()
+            && self.pending_live_action_root.is_none()
+            && Self::response_starts_cancelable_action_chain(&response);
+        let action_checkpoint =
+            should_track_action_checkpoint.then(|| self.capture_replay_checkpoint());
+        if should_track_action_checkpoint {
+            self.pending_live_action_root = Some(response.clone());
+        }
+
+        let mut live_dm = WasmReplayDecisionMaker::new(&[]);
+        let result = apply_priority_response_with_suspension(
+            &mut self.game,
+            &mut self.trigger_queue,
+            &mut self.priority_state,
+            &response,
+            &mut live_dm,
+        );
+        let (pending_context, viewed_cards) = live_dm.finish();
+        self.active_viewed_cards = viewed_cards;
+
+        if let Some(next_ctx) = pending_context {
+            if let Some(checkpoint) = action_checkpoint {
+                self.pending_action_checkpoint.get_or_insert(checkpoint);
+            }
+            self.pending_decision = Some(next_ctx);
+            return self.snapshot();
+        }
+
+        match result {
+            Ok(progress) => self.finish_live_priority_dispatch(progress, action_checkpoint),
+            Err(err) => {
+                if should_track_action_checkpoint {
+                    self.pending_live_action_root = None;
+                }
+                self.pending_decision = Some(pending_ctx);
+                Err(JsValue::from_str(&format!("dispatch failed: {err}")))
+            }
+        }
+    }
+
+    fn dispatch_live_priority_continuation(
+        &mut self,
+        pending_ctx: DecisionContext,
+        command: UiCommand,
+    ) -> Result<JsValue, JsValue> {
+        let answer = match self.command_to_replay_answer(&pending_ctx, command) {
+            Ok(answer) => answer,
+            Err(err) => {
+                self.pending_decision = Some(pending_ctx);
+                return Err(err);
+            }
+        };
+
+        let mut live_dm = WasmReplayDecisionMaker::new(&[answer]);
+        let result = resume_pending_priority_continuation_with_dm(
+            &mut self.game,
+            &mut self.trigger_queue,
+            &mut self.priority_state,
+            &mut live_dm,
+        );
+        let (pending_context, viewed_cards) = live_dm.finish();
+        self.active_viewed_cards = viewed_cards;
+
+        if let Some(next_ctx) = pending_context {
+            self.pending_decision = Some(next_ctx);
+            return self.snapshot();
+        }
+
+        match result {
+            Ok(progress) => self.finish_live_priority_dispatch(progress, None),
+            Err(err) => {
+                self.pending_decision = Some(pending_ctx);
+                Err(JsValue::from_str(&format!("dispatch failed: {err}")))
+            }
+        }
     }
 
     fn capture_replay_checkpoint(&self) -> ReplayCheckpoint {
@@ -5593,7 +5777,7 @@ fn convert_and_validate_targets(
 #[cfg(test)]
 mod tests {
     use super::{
-        GameSnapshot, PendingReplayAction, ReplayOutcome, ReplayRoot, WasmGame,
+        GameSnapshot, PendingReplayAction, ReplayOutcome, ReplayRoot, TargetChoiceView, WasmGame,
         build_object_details_snapshot,
     };
     use crate::ability::Ability;
@@ -5611,12 +5795,13 @@ mod tests {
     use crate::effect::{Effect, Until};
     use crate::events::spells::SpellCastEvent;
     use crate::game_loop::{PendingManaAbility, PriorityResponse};
-    use crate::game_state::{GameState, Phase, StackEntry, Step};
+    use crate::game_state::{GameState, Phase, StackEntry, Step, Target};
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::CounterType;
     use crate::triggers::{Trigger, TriggerEvent, check_triggers};
     use crate::types::CardType;
+    use crate::wasm_api::colors_for_context;
     use crate::zone::Zone;
     use serde_json::json;
 
@@ -7114,14 +7299,15 @@ mod tests {
         wasm.game.turn.phase = Phase::FirstMain;
         wasm.game.turn.step = None;
 
-        let tayam_id = wasm
-            .add_card_to_zone(
+        let tayam_id = ObjectId::from_raw(
+            wasm.add_card_to_zone(
                 alice.0,
                 "Tayam, Luminous Enigma".to_string(),
                 "battlefield".to_string(),
                 true,
             )
-            .expect("should add Tayam to battlefield");
+            .expect("should add Tayam to battlefield"),
+        );
         let ornithopter_ids: Vec<ObjectId> = (0..3)
             .map(|_| {
                 ObjectId::from_raw(
@@ -7256,7 +7442,11 @@ mod tests {
             !wasm.game.battlefield.contains(&lotus_id),
             "Black Lotus should remain sacrificed after the replayed color choice resolves"
         );
-        let pool = &wasm.game.player(alice).expect("alice should exist").mana_pool;
+        let pool = &wasm
+            .game
+            .player(alice)
+            .expect("alice should exist")
+            .mana_pool;
         assert_eq!(
             pool.green, 2,
             "one of the three chosen mana should pay the current generic pip and two should remain"
@@ -7273,7 +7463,10 @@ mod tests {
             "paying Black Lotus into Tayam should consume exactly one generic pip"
         );
         assert!(
-            matches!(wasm.pending_decision, Some(DecisionContext::SelectOptions(_))),
+            matches!(
+                wasm.pending_decision,
+                Some(DecisionContext::SelectOptions(_))
+            ),
             "after choosing the color, the UI should advance to the next payment prompt"
         );
     }
@@ -7288,14 +7481,15 @@ mod tests {
         wasm.game.turn.phase = Phase::FirstMain;
         wasm.game.turn.step = None;
 
-        let tayam_id = wasm
-            .add_card_to_zone(
+        let tayam_id = ObjectId::from_raw(
+            wasm.add_card_to_zone(
                 alice.0,
                 "Tayam, Luminous Enigma".to_string(),
                 "battlefield".to_string(),
                 true,
             )
-            .expect("should add Tayam to battlefield");
+            .expect("should add Tayam to battlefield"),
+        );
         let ornithopter_ids: Vec<ObjectId> = (0..3)
             .map(|_| {
                 ObjectId::from_raw(
@@ -7385,8 +7579,7 @@ mod tests {
                 other => panic!("expected counter-removal prompt, got {other:?}"),
             };
             assert_eq!(
-                counters_ctx.target,
-                *ornithopter_id,
+                counters_ctx.target, *ornithopter_id,
                 "counter-removal replay should advance through the distributed targets in order"
             );
 
@@ -7424,7 +7617,10 @@ mod tests {
             "after removing all three counters, the counter-payment step should be complete"
         );
         assert!(
-            matches!(wasm.pending_decision, Some(DecisionContext::SelectOptions(_))),
+            matches!(
+                wasm.pending_decision,
+                Some(DecisionContext::SelectOptions(_))
+            ),
             "after paying the counter cost, the UI should advance to the remaining mana payment"
         );
     }
