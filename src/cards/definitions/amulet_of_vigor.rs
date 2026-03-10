@@ -317,6 +317,128 @@ mod tests {
         assert!(def.card.oracle_text.contains("untap it"));
     }
 
+    #[test]
+    fn test_cultivator_colossus_triggers_amulet_for_each_land() {
+        use crate::cards::builders::CardDefinitionBuilder;
+        use crate::cards::definitions::{basic_forest, grizzly_bears};
+        use crate::executor::execute_effect;
+        use crate::game_loop::{
+            drain_pending_trigger_events, put_triggers_on_stack, resolve_stack_entry,
+        };
+        use crate::triggers::TriggerQueue;
+
+        #[derive(Default)]
+        struct CountCultivatorChoices {
+            boolean_calls: usize,
+            object_calls: usize,
+        }
+
+        impl crate::decision::DecisionMaker for CountCultivatorChoices {
+            fn decide_boolean(
+                &mut self,
+                _game: &GameState,
+                _ctx: &crate::decisions::context::BooleanContext,
+            ) -> bool {
+                self.boolean_calls += 1;
+                self.boolean_calls <= 2
+            }
+
+            fn decide_objects(
+                &mut self,
+                _game: &GameState,
+                ctx: &crate::decisions::context::SelectObjectsContext,
+            ) -> Vec<ObjectId> {
+                self.object_calls += 1;
+                ctx.candidates
+                    .iter()
+                    .filter(|candidate| candidate.legal)
+                    .map(|candidate| candidate.id)
+                    .take(1)
+                    .collect()
+            }
+        }
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let mut trigger_queue = TriggerQueue::new();
+
+        let amulet_id =
+            game.create_object_from_definition(&amulet_of_vigor(), alice, Zone::Battlefield);
+        let cultivator = CardDefinitionBuilder::new(CardId::new(), "Cultivator Colossus")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "When this creature enters, you may put a land card from your hand onto the battlefield tapped. If you do, draw a card and repeat this process.",
+            )
+            .expect("Cultivator Colossus ETB text should parse");
+        let cultivator_id =
+            game.create_object_from_definition(&cultivator, alice, Zone::Battlefield);
+        game.create_object_from_definition(&basic_forest(), alice, Zone::Hand);
+        game.create_object_from_definition(&basic_forest(), alice, Zone::Hand);
+        game.create_object_from_definition(&grizzly_bears(), alice, Zone::Library);
+        game.create_object_from_definition(&grizzly_bears(), alice, Zone::Library);
+
+        let triggered = cultivator
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered) => Some(triggered),
+                _ => None,
+            })
+            .expect("Cultivator Colossus should have an ETB trigger");
+
+        let mut dm = CountCultivatorChoices::default();
+        let mut ctx =
+            ExecutionContext::new_default(cultivator_id, alice).with_decision_maker(&mut dm);
+
+        for effect in &triggered.effects {
+            execute_effect(&mut game, effect, &mut ctx).expect("Cultivator ETB should resolve");
+        }
+
+        let land_ids: Vec<_> = game
+            .battlefield
+            .iter()
+            .copied()
+            .filter(|&id| {
+                game.object(id)
+                    .is_some_and(|obj| obj.owner == alice && obj.is_land())
+            })
+            .collect();
+        assert_eq!(
+            land_ids.len(),
+            2,
+            "Cultivator should put both Forests onto the battlefield"
+        );
+        assert!(
+            land_ids.iter().all(|&id| game.is_tapped(id)),
+            "the lands should still be tapped before Amulet triggers resolve"
+        );
+
+        drain_pending_trigger_events(&mut game, &mut trigger_queue);
+
+        assert_eq!(
+            trigger_queue.entries.len(),
+            2,
+            "Amulet should trigger once for each tapped land Cultivator put onto the battlefield"
+        );
+        assert!(
+            trigger_queue
+                .entries
+                .iter()
+                .all(|entry| entry.source == amulet_id),
+            "both queued triggers should come from Amulet of Vigor"
+        );
+
+        put_triggers_on_stack(&mut game, &mut trigger_queue)
+            .expect("Amulet triggers should go on the stack");
+        resolve_stack_entry(&mut game).expect("first Amulet trigger should resolve");
+        resolve_stack_entry(&mut game).expect("second Amulet trigger should resolve");
+
+        assert!(
+            land_ids.iter().all(|&id| !game.is_tapped(id)),
+            "resolving the Amulet triggers should untap both lands"
+        );
+    }
+
     // ========================================
     // Replay Integration Tests
     // ========================================

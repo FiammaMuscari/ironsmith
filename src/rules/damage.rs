@@ -102,22 +102,31 @@ pub(crate) fn apply_processed_damage_assignment(
 ) -> AppliedDamageAssignment {
     match target {
         crate::game_event::DamageTarget::Player(player_id) => {
-            let Some(player) = game.player_mut(player_id) else {
-                return AppliedDamageAssignment::default();
-            };
+            let source_controller = game.object(source).map(|obj| obj.controller);
             if keywords.has_infect {
-                player.poison_counters = player.poison_counters.saturating_add(amount);
-                AppliedDamageAssignment {
+                if let Some(event) = game.add_player_counters_with_source(
+                    player_id,
+                    crate::object::CounterType::Poison,
+                    amount,
+                    Some(source),
+                    source_controller,
+                ) {
+                    game.queue_trigger_event(event.provenance(), event);
+                }
+                return AppliedDamageAssignment {
                     applied: true,
                     life_lost: 0,
-                }
-            } else {
-                // Damage is still dealt even when life total can't change; track only actual life lost.
-                let life_lost = game.lose_life(player_id, amount);
-                AppliedDamageAssignment {
-                    applied: true,
-                    life_lost,
-                }
+                };
+            }
+
+            if game.player(player_id).is_none() {
+                return AppliedDamageAssignment::default();
+            }
+            // Damage is still dealt even when life total can't change; track only actual life lost.
+            let life_lost = game.lose_life(player_id, amount);
+            AppliedDamageAssignment {
+                applied: true,
+                life_lost,
             }
         }
         crate::game_event::DamageTarget::Object(object_id) => {
@@ -451,6 +460,7 @@ mod tests {
     use crate::ability::Ability;
     use crate::card::PtValue;
     use crate::cost::OptionalCostsPaid;
+    use crate::events::EventKind;
     use crate::game_state::GameState;
     use crate::ids::{ObjectId, StableId};
     use crate::static_abilities::StaticAbility;
@@ -555,6 +565,41 @@ mod tests {
 
         assert_eq!(result.damage_dealt, 0);
         assert_eq!(result.poison_counters, 3);
+    }
+
+    #[test]
+    fn test_apply_infect_damage_to_player_queues_markers_changed_event() {
+        let mut game = test_game_state();
+        let mut source = make_creature("Infector", 3, 3);
+        add_ability(&mut source, StaticAbility::infect());
+        let source_id = source.id;
+        game.add_object(source);
+
+        let result = apply_processed_damage_assignment(
+            &mut game,
+            source_id,
+            crate::game_event::DamageTarget::Player(PlayerId::from_index(1)),
+            3,
+            SourceDamageKeywords {
+                has_infect: true,
+                ..SourceDamageKeywords::default()
+            },
+        );
+
+        assert!(result.applied);
+        assert_eq!(result.life_lost, 0);
+        assert_eq!(
+            game.player(PlayerId::from_index(1))
+                .expect("player exists")
+                .poison_counters,
+            3
+        );
+        assert!(
+            game.take_pending_trigger_events()
+                .iter()
+                .any(|event| event.kind() == EventKind::MarkersChanged),
+            "infect damage to a player should queue MarkersChangedEvent"
+        );
     }
 
     #[test]

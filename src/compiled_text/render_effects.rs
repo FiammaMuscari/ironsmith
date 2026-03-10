@@ -7697,9 +7697,7 @@ pub(super) fn choices_are_simple_targets(choices: &[ChooseSpec]) -> bool {
             ChooseSpec::Target(_)
             | ChooseSpec::AnyTarget
             | ChooseSpec::AnyOtherTarget
-            | ChooseSpec::PlayerOrPlaneswalker(_) => {
-                true
-            }
+            | ChooseSpec::PlayerOrPlaneswalker(_) => true,
             ChooseSpec::WithCount(inner, _) => is_simple_target(inner),
             _ => false,
         }

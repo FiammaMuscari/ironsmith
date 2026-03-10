@@ -5,6 +5,7 @@ use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
+use crate::object::CounterType;
 use crate::target::PlayerFilter;
 
 /// Effect that gives a player experience counters.
@@ -52,10 +53,17 @@ impl EffectExecutor for ExperienceCountersEffect {
         let player_id = resolve_player_filter(game, &self.player, ctx)?;
         let count = resolve_value(game, &self.count, ctx)?.max(0) as u32;
 
-        if let Some(p) = game.player_mut(player_id) {
-            p.experience_counters += count;
+        let mut outcome = EffectOutcome::count(count as i32);
+        if let Some(event) = game.add_player_counters_with_source(
+            player_id,
+            CounterType::Experience,
+            count,
+            Some(ctx.source),
+            Some(ctx.controller),
+        ) {
+            outcome = outcome.with_event(event);
         }
 
-        Ok(EffectOutcome::count(count as i32))
+        Ok(outcome)
     }
 }

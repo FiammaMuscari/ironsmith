@@ -7,10 +7,15 @@
 
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
+use crate::effects::zones::{
+    BattlefieldEntryOptions, BattlefieldEntryOutcome, move_to_battlefield_with_options,
+};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry};
 use crate::tag::TagKey;
 use crate::zone::Zone;
+
+use super::runtime_helpers::{queue_effect_driven_land_play, with_spell_cast_event};
 
 /// Effect that casts a tagged card immediately.
 #[derive(Debug, Clone, PartialEq)]
@@ -105,11 +110,25 @@ impl EffectExecutor for CastTaggedEffect {
                 if !self.allow_land {
                     return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
                 }
-                copy_obj.zone = Zone::Battlefield;
+                copy_obj.zone = Zone::Command;
                 game.add_object(copy_obj);
-                return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                return match move_to_battlefield_with_options(
+                    game,
+                    ctx,
                     copy_id,
-                ])));
+                    BattlefieldEntryOptions::specific(caster, false),
+                ) {
+                    BattlefieldEntryOutcome::Moved(new_id) => {
+                        queue_effect_driven_land_play(game, ctx, new_id, caster, from_zone);
+                        Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                            new_id,
+                        ])))
+                    }
+                    BattlefieldEntryOutcome::Prevented => {
+                        game.remove_object(copy_id);
+                        Ok(EffectOutcome::from_result(EffectResult::Impossible))
+                    }
+                };
             }
 
             if !self.without_paying_mana_cost
@@ -128,9 +147,14 @@ impl EffectExecutor for CastTaggedEffect {
             stack_entry.source_stable_id = Some(stable_id);
             stack_entry.source_name = Some(card_name);
             game.push_to_stack(stack_entry);
-            return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+            return Ok(with_spell_cast_event(
+                EffectOutcome::from_result(EffectResult::Objects(vec![copy_id])),
+                game,
                 copy_id,
-            ])));
+                caster,
+                from_zone,
+                ctx.provenance,
+            ));
         }
 
         if is_land {
@@ -138,16 +162,22 @@ impl EffectExecutor for CastTaggedEffect {
                 return Ok(EffectOutcome::from_result(EffectResult::TargetInvalid));
             }
 
-            let new_id = match game.move_object(object_id, Zone::Battlefield) {
-                Some(id) => id,
-                None => return Ok(EffectOutcome::from_result(EffectResult::Impossible)),
+            return match move_to_battlefield_with_options(
+                game,
+                ctx,
+                object_id,
+                BattlefieldEntryOptions::specific(ctx.controller, false),
+            ) {
+                BattlefieldEntryOutcome::Moved(new_id) => {
+                    queue_effect_driven_land_play(game, ctx, new_id, ctx.controller, from_zone);
+                    Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+                        new_id,
+                    ])))
+                }
+                BattlefieldEntryOutcome::Prevented => {
+                    Ok(EffectOutcome::from_result(EffectResult::Impossible))
+                }
             };
-            if let Some(new_obj) = game.object_mut(new_id) {
-                new_obj.controller = ctx.controller;
-            }
-            return Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
-                new_id,
-            ])));
         }
 
         let caster = ctx.controller;
@@ -200,8 +230,115 @@ impl EffectExecutor for CastTaggedEffect {
         };
 
         game.push_to_stack(stack_entry);
-        Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+        Ok(with_spell_cast_event(
+            EffectOutcome::from_result(EffectResult::Objects(vec![new_id])),
+            game,
             new_id,
-        ])))
+            caster,
+            from_zone,
+            ctx.provenance,
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card::CardBuilder;
+    use crate::decision::SelectFirstDecisionMaker;
+    use crate::ids::{CardId, PlayerId};
+    use crate::snapshot::ObjectSnapshot;
+    use crate::tag::TagKey;
+    use crate::types::CardType;
+
+    fn setup_game() -> GameState {
+        crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    #[test]
+    fn cast_tagged_spell_emits_spell_cast_event_and_bookkeeping() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let card = CardBuilder::new(CardId::new(), "Tagged Spell")
+            .card_types(vec![CardType::Sorcery])
+            .build();
+        let exiled_id = game.create_object_from_card(&card, alice, Zone::Exile);
+        let snapshot =
+            ObjectSnapshot::from_object(game.object(exiled_id).expect("tagged card"), &game);
+        let mut tags = std::collections::HashMap::new();
+        tags.insert(TagKey::from("it"), vec![snapshot]);
+
+        let source = game.new_object_id();
+        let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new(source, alice, &mut dm).with_tagged_objects(tags);
+
+        let outcome = CastTaggedEffect::new("it")
+            .without_paying_mana_cost()
+            .execute(&mut game, &mut ctx)
+            .expect("cast tagged should resolve");
+
+        let EffectResult::Objects(ids) = outcome.result else {
+            panic!("expected cast tagged to create a stack object");
+        };
+        let cast_id = ids[0];
+        assert!(game.stack.iter().any(|entry| entry.object_id == cast_id));
+        assert_eq!(game.spells_cast_this_turn.get(&alice), Some(&1));
+        assert!(game.spell_cast_order_this_turn.contains_key(&cast_id));
+        assert!(
+            outcome
+                .events
+                .iter()
+                .any(|event| event.kind() == crate::events::EventKind::SpellCast),
+            "cast-tagged spells should emit SpellCastEvent"
+        );
+    }
+
+    #[test]
+    fn cast_tagged_land_emits_land_play_and_etb_events() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let card = CardBuilder::new(CardId::new(), "Tagged Land")
+            .card_types(vec![CardType::Land])
+            .build();
+        let exiled_id = game.create_object_from_card(&card, alice, Zone::Exile);
+        let snapshot =
+            ObjectSnapshot::from_object(game.object(exiled_id).expect("tagged land"), &game);
+        let mut tags = std::collections::HashMap::new();
+        tags.insert(TagKey::from("it"), vec![snapshot]);
+
+        let source = game.new_object_id();
+        let mut dm = SelectFirstDecisionMaker;
+        let mut ctx = ExecutionContext::new(source, alice, &mut dm).with_tagged_objects(tags);
+
+        let outcome = CastTaggedEffect::new("it")
+            .allow_land()
+            .execute(&mut game, &mut ctx)
+            .expect("play tagged land should resolve");
+
+        let EffectResult::Objects(ids) = outcome.result else {
+            panic!("expected played land to move to battlefield");
+        };
+        let land_id = ids[0];
+        assert!(game.battlefield.contains(&land_id));
+        assert_eq!(
+            game.player(alice)
+                .expect("alice exists")
+                .lands_played_this_turn,
+            1
+        );
+
+        let pending = game.take_pending_trigger_events();
+        assert!(
+            pending
+                .iter()
+                .any(|event| event.kind() == crate::events::EventKind::EnterBattlefield),
+            "playing a tagged land should queue an ETB event"
+        );
+        assert!(
+            pending
+                .iter()
+                .any(|event| event.kind() == crate::events::EventKind::LandPlayed),
+            "playing a tagged land should queue a LandPlayedEvent"
+        );
     }
 }

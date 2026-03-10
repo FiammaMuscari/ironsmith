@@ -57,6 +57,7 @@ mod tests {
     use super::*;
     use crate::card::{CardBuilder, PowerToughness};
     use crate::decision::AutoPassDecisionMaker;
+    use crate::events::EventKind;
     use crate::executor::{ExecutionContext, ResolvedTarget, execute_effect};
     use crate::game_state::GameState;
     use crate::ids::{CardId, ObjectId, PlayerId};
@@ -223,6 +224,13 @@ mod tests {
         assert!(
             !game.battlefield.contains(&garrison_id),
             "Garrison should leave the battlefield"
+        );
+        let pending = game.take_pending_trigger_events();
+        assert!(
+            pending
+                .iter()
+                .any(|event| event.kind() == EventKind::EnterBattlefield),
+            "Meld result should queue an EnterBattlefield event"
         );
     }
 

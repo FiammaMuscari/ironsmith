@@ -13,6 +13,8 @@ use crate::game_state::{GameState, StackEntry};
 use crate::mana::{ManaCost, ManaSymbol};
 use crate::zone::Zone;
 
+use super::runtime_helpers::with_spell_cast_event;
+
 /// Effect that resolves a single cascade trigger.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CascadeEffect;
@@ -148,13 +150,13 @@ impl EffectExecutor for CascadeEffect {
                     };
 
                     game.push_to_stack(stack_entry);
-                    casted_card = Some((candidate_id, new_id));
+                    casted_card = Some((candidate_id, new_id, from_zone));
                 }
             }
         }
 
         let mut to_bottom = exiled;
-        if let Some((casted_from_exile, _)) = casted_card {
+        if let Some((casted_from_exile, _, _)) = casted_card {
             to_bottom.retain(|id| *id != casted_from_exile);
         }
         game.shuffle_slice(&mut to_bottom);
@@ -179,10 +181,15 @@ impl EffectExecutor for CascadeEffect {
             }
         }
 
-        if let Some((_, casted_id)) = casted_card {
-            Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+        if let Some((_, casted_id, from_zone)) = casted_card {
+            Ok(with_spell_cast_event(
+                EffectOutcome::from_result(EffectResult::Objects(vec![casted_id])),
+                game,
                 casted_id,
-            ])))
+                ctx.controller,
+                from_zone,
+                ctx.provenance,
+            ))
         } else {
             Ok(EffectOutcome::count(0))
         }

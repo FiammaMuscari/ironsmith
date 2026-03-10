@@ -3,9 +3,11 @@
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
+use crate::event_processor::process_life_gain_with_event;
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::target::PlayerFilter;
+use crate::triggers::TriggerEvent;
 
 /// Effect that exchanges life totals between two players.
 ///
@@ -72,13 +74,101 @@ impl EffectExecutor for ExchangeLifeTotalsEffect {
             return Ok(EffectOutcome::from_result(EffectResult::Prevented));
         }
 
-        if let Some(p1) = game.player_mut(player1_id) {
-            p1.life = life2;
-        }
-        if let Some(p2) = game.player_mut(player2_id) {
-            p2.life = life1;
+        let mut outcome = EffectOutcome::resolved();
+
+        if life2 > life1 {
+            let gained = process_life_gain_with_event(game, player1_id, (life2 - life1) as u32);
+            if gained > 0
+                && let Some(player) = game.player_mut(player1_id)
+            {
+                player.gain_life(gained);
+            }
+            if gained > 0 {
+                outcome = outcome.with_event(TriggerEvent::new_with_provenance(
+                    crate::events::LifeGainEvent::new(player1_id, gained),
+                    ctx.provenance,
+                ));
+            }
+        } else if life1 > life2 {
+            let lost = (life1 - life2) as u32;
+            if let Some(player) = game.player_mut(player1_id) {
+                player.lose_life(lost);
+            }
+            if lost > 0 {
+                outcome = outcome.with_event(TriggerEvent::new_with_provenance(
+                    crate::events::LifeLossEvent::from_effect(player1_id, lost),
+                    ctx.provenance,
+                ));
+            }
         }
 
-        Ok(EffectOutcome::resolved())
+        if life1 > life2 {
+            let gained = process_life_gain_with_event(game, player2_id, (life1 - life2) as u32);
+            if gained > 0
+                && let Some(player) = game.player_mut(player2_id)
+            {
+                player.gain_life(gained);
+            }
+            if gained > 0 {
+                outcome = outcome.with_event(TriggerEvent::new_with_provenance(
+                    crate::events::LifeGainEvent::new(player2_id, gained),
+                    ctx.provenance,
+                ));
+            }
+        } else if life2 > life1 {
+            let lost = (life2 - life1) as u32;
+            if let Some(player) = game.player_mut(player2_id) {
+                player.lose_life(lost);
+            }
+            if lost > 0 {
+                outcome = outcome.with_event(TriggerEvent::new_with_provenance(
+                    crate::events::LifeLossEvent::from_effect(player2_id, lost),
+                    ctx.provenance,
+                ));
+            }
+        }
+
+        Ok(outcome)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::EventKind;
+    use crate::executor::ResolvedTarget;
+    use crate::ids::PlayerId;
+
+    #[test]
+    fn exchange_life_totals_emits_gain_and_loss_events() {
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+        game.player_mut(alice).expect("alice exists").life = 10;
+        game.player_mut(bob).expect("bob exists").life = 20;
+
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice)
+            .with_targets(vec![ResolvedTarget::Player(bob)]);
+        let outcome = ExchangeLifeTotalsEffect::with_target()
+            .execute(&mut game, &mut ctx)
+            .expect("exchange should resolve");
+
+        assert_eq!(game.player(alice).expect("alice exists").life, 20);
+        assert_eq!(game.player(bob).expect("bob exists").life, 10);
+        assert!(
+            outcome
+                .events
+                .iter()
+                .any(|event| event.kind() == EventKind::LifeGain),
+            "exchanging life totals should emit at least one LifeGainEvent"
+        );
+        assert!(
+            outcome
+                .events
+                .iter()
+                .any(|event| event.kind() == EventKind::LifeLoss),
+            "exchanging life totals should emit at least one LifeLossEvent"
+        );
     }
 }

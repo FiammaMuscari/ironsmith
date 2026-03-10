@@ -28,6 +28,7 @@ mod lose_the_game;
 mod may_cast_miracle;
 mod pay_energy;
 mod poison_counters;
+mod runtime_helpers;
 mod skip_combat_phases;
 mod skip_draw_step;
 mod skip_next_combat_phase_this_turn;

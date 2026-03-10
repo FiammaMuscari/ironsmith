@@ -2858,6 +2858,63 @@ impl GameState {
         ))
     }
 
+    /// Remove counters from a player and emit a unified marker event when applicable.
+    ///
+    /// Returns the actual number removed and the corresponding event.
+    pub fn remove_player_counters_with_source(
+        &mut self,
+        player_id: PlayerId,
+        counter_type: crate::object::CounterType,
+        amount: u32,
+        source: Option<ObjectId>,
+        source_controller: Option<PlayerId>,
+    ) -> Option<(u32, crate::triggers::TriggerEvent)> {
+        if amount == 0 {
+            return None;
+        }
+
+        let player = self.player_mut(player_id)?;
+        let removed = match counter_type {
+            crate::object::CounterType::Poison => {
+                let removed = player.poison_counters.min(amount);
+                player.poison_counters = player.poison_counters.saturating_sub(removed);
+                removed
+            }
+            crate::object::CounterType::Energy => {
+                let removed = player.energy_counters.min(amount);
+                player.energy_counters = player.energy_counters.saturating_sub(removed);
+                removed
+            }
+            crate::object::CounterType::Experience => {
+                let removed = player.experience_counters.min(amount);
+                player.experience_counters = player.experience_counters.saturating_sub(removed);
+                removed
+            }
+            _ => return None,
+        };
+
+        if removed == 0 {
+            return None;
+        }
+
+        let event_provenance = self
+            .provenance_graph
+            .alloc_root_event(crate::events::EventKind::MarkersChanged);
+        Some((
+            removed,
+            crate::triggers::TriggerEvent::new_with_provenance(
+                crate::events::MarkersChangedEvent::removed(
+                    counter_type,
+                    player_id,
+                    removed,
+                    source,
+                    source_controller,
+                ),
+                event_provenance,
+            ),
+        ))
+    }
+
     /// Check if an object has any counters of a specific type.
     pub fn has_counters(&self, id: ObjectId, counter_type: crate::object::CounterType) -> bool {
         self.counter_count(id, counter_type) > 0

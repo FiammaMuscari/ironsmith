@@ -7,6 +7,7 @@ use crate::effects::helpers::{resolve_player_from_spec, resolve_value};
 use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
+use crate::object::CounterType;
 use crate::target::ChooseSpec;
 
 /// Effect that asks a player to pay energy counters.
@@ -37,11 +38,18 @@ impl EffectExecutor for PayEnergyEffect {
         let player_id = resolve_player_from_spec(game, &self.player, ctx)?;
         let amount = resolve_value(game, &self.amount, ctx)?.max(0) as u32;
 
-        if let Some(player) = game.player_mut(player_id)
-            && player.energy_counters >= amount
+        if game
+            .player(player_id)
+            .is_some_and(|player| player.energy_counters >= amount)
+            && let Some((removed, event)) = game.remove_player_counters_with_source(
+                player_id,
+                CounterType::Energy,
+                amount,
+                Some(ctx.source),
+                Some(ctx.controller),
+            )
         {
-            player.energy_counters -= amount;
-            return Ok(EffectOutcome::count(amount as i32));
+            return Ok(EffectOutcome::count(removed as i32).with_event(event));
         }
 
         Ok(EffectOutcome::from_result(EffectResult::Impossible))
@@ -84,5 +92,37 @@ impl EffectExecutor for PayEnergyEffect {
                 "not enough energy counters".to_string(),
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::EventKind;
+    use crate::ids::PlayerId;
+    use crate::target::{ChooseSpec, PlayerFilter};
+
+    #[test]
+    fn pay_energy_effect_emits_markers_changed_event() {
+        let mut game = crate::tests::test_helpers::setup_two_player_game();
+        let alice = PlayerId::from_index(0);
+        game.player_mut(alice)
+            .expect("alice exists")
+            .energy_counters = 4;
+
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        let outcome = PayEnergyEffect::new(2, ChooseSpec::Player(PlayerFilter::You))
+            .execute(&mut game, &mut ctx)
+            .expect("pay energy should resolve");
+
+        assert_eq!(game.player(alice).expect("alice exists").energy_counters, 2);
+        assert!(
+            outcome
+                .events
+                .iter()
+                .any(|event| event.kind() == EventKind::MarkersChanged),
+            "paying energy should emit MarkersChangedEvent"
+        );
     }
 }

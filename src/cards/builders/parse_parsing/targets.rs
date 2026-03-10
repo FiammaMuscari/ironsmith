@@ -1,8 +1,7 @@
 use crate::cards::builders::{
     CardTextError, IT_TAG, TargetAst, Token, is_article, parse_card_type,
-    parse_filter_counter_constraint_words, parse_non_type, parse_number,
-    parse_number_or_x_value, parse_object_filter, parse_subtype_word, span_from_tokens,
-    token_index_for_word_index, words,
+    parse_filter_counter_constraint_words, parse_non_type, parse_number, parse_number_or_x_value,
+    parse_object_filter, parse_subtype_word, span_from_tokens, token_index_for_word_index, words,
 };
 use crate::effect::Value;
 use crate::{CardType, ChoiceCount, ObjectFilter, PlayerFilter, TagKey, Zone};

@@ -12746,7 +12746,11 @@ fn parse_modal_choose_up_to_x_header_preserves_dynamic_bounds() {
     let modal = def
         .spell_effect
         .as_ref()
-        .and_then(|effects| effects.iter().find_map(|effect| effect.downcast_ref::<ChooseModeEffect>()))
+        .and_then(|effects| {
+            effects
+                .iter()
+                .find_map(|effect| effect.downcast_ref::<ChooseModeEffect>())
+        })
         .expect("expected choose-mode effect");
     assert!(matches!(modal.choose_count, Value::X));
     assert!(

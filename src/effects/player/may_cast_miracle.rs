@@ -14,6 +14,8 @@ use crate::executor::{ExecutionContext, ExecutionError};
 use crate::game_state::{GameState, StackEntry};
 use crate::zone::Zone;
 
+use super::runtime_helpers::with_spell_cast_event;
+
 /// Effect that allows casting a spell for its miracle cost.
 ///
 /// When this effect resolves, it presents the player with a choice to cast
@@ -155,9 +157,14 @@ impl EffectExecutor for MayCastForMiracleCostEffect {
             };
 
             game.push_to_stack(stack_entry);
-            Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+            Ok(with_spell_cast_event(
+                EffectOutcome::from_result(EffectResult::Objects(vec![new_id])),
+                game,
                 new_id,
-            ])))
+                owner,
+                Zone::Hand,
+                ctx.provenance,
+            ))
         } else {
             Ok(EffectOutcome::from_result(EffectResult::Impossible))
         }

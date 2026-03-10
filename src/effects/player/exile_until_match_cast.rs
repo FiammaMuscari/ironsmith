@@ -11,6 +11,8 @@ use crate::game_state::{GameState, StackEntry};
 use crate::target::{ObjectFilter, PlayerFilter};
 use crate::zone::Zone;
 
+use super::runtime_helpers::with_spell_cast_event;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExileUntilMatchCastEffect {
     pub player: PlayerFilter,
@@ -129,13 +131,13 @@ impl EffectExecutor for ExileUntilMatchCastEffect {
                         tagged_objects: std::collections::HashMap::new(),
                     };
                     game.push_to_stack(stack_entry);
-                    casted_card = Some((candidate_id, new_id));
+                    casted_card = Some((candidate_id, new_id, from_zone));
                 }
             }
         }
 
         let mut to_bottom = exiled;
-        if let Some((casted_from_exile, _)) = casted_card {
+        if let Some((casted_from_exile, _, _)) = casted_card {
             to_bottom.retain(|id| *id != casted_from_exile);
         }
         game.shuffle_slice(&mut to_bottom);
@@ -160,10 +162,15 @@ impl EffectExecutor for ExileUntilMatchCastEffect {
             }
         }
 
-        if let Some((_, casted_id)) = casted_card {
-            Ok(EffectOutcome::from_result(EffectResult::Objects(vec![
+        if let Some((_, casted_id, from_zone)) = casted_card {
+            Ok(with_spell_cast_event(
+                EffectOutcome::from_result(EffectResult::Objects(vec![casted_id])),
+                game,
                 casted_id,
-            ])))
+                caster_id,
+                from_zone,
+                ctx.provenance,
+            ))
         } else {
             Ok(EffectOutcome::count(0))
         }

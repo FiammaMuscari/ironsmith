@@ -18,6 +18,8 @@ use crate::target::PlayerFilter;
 use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
 
+use super::runtime_helpers::register_effect_driven_spell_cast;
+
 /// Effect that resolves a discover action for a player.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiscoverEffect {
@@ -79,6 +81,7 @@ impl EffectExecutor for DiscoverEffect {
         }
 
         let mut selected_object = None;
+        let mut casted_spell = None;
         if let Some(candidate_id) = candidate {
             let Some(candidate_obj) = game.object(candidate_id) else {
                 return Ok(EffectOutcome::count(exiled.len() as i32).with_event(
@@ -143,6 +146,7 @@ impl EffectExecutor for DiscoverEffect {
                     };
                     game.push_to_stack(stack_entry);
                     selected_object = Some(new_id);
+                    casted_spell = Some((new_id, from_zone));
                 }
             } else if let Some((new_id, final_zone)) = game.move_object_with_commander_options(
                 candidate_id,
@@ -188,11 +192,20 @@ impl EffectExecutor for DiscoverEffect {
             EffectResult::Count(0)
         };
 
-        Ok(
+        let mut outcome =
             EffectOutcome::from_result(result).with_event(TriggerEvent::new_with_provenance(
                 KeywordActionEvent::new(KeywordActionKind::Discover, player_id, ctx.source, count),
                 ctx.provenance,
-            )),
-        )
+            ));
+        if let Some((new_id, from_zone)) = casted_spell {
+            outcome = outcome.with_event(register_effect_driven_spell_cast(
+                game,
+                new_id,
+                player_id,
+                from_zone,
+                ctx.provenance,
+            ));
+        }
+        Ok(outcome)
     }
 }

@@ -3,6 +3,7 @@
 use crate::cost::CostPaymentError;
 use crate::costs::{CostContext, CostPayer, CostPaymentResult};
 use crate::game_state::GameState;
+use crate::object::CounterType;
 
 /// An energy payment cost (e.g., pay {E}{E}{E}).
 ///
@@ -42,8 +43,14 @@ impl CostPayer for EnergyCost {
         self.can_pay(game, ctx)?;
 
         // Pay energy
-        if let Some(player) = game.player_mut(ctx.payer) {
-            player.energy_counters = player.energy_counters.saturating_sub(self.amount);
+        if let Some((_, event)) = game.remove_player_counters_with_source(
+            ctx.payer,
+            CounterType::Energy,
+            self.amount,
+            Some(ctx.source),
+            Some(ctx.payer),
+        ) {
+            game.queue_trigger_event(ctx.provenance, event);
         }
 
         Ok(CostPaymentResult::Paid)

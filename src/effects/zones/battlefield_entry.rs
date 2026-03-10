@@ -1,6 +1,9 @@
+use crate::events::EnterBattlefieldEvent;
 use crate::executor::ExecutionContext;
 use crate::game_state::GameState;
 use crate::ids::{ObjectId, PlayerId};
+use crate::provenance::ProvNodeId;
+use crate::triggers::TriggerEvent;
 use crate::zone::Zone;
 
 /// Controller policy when an object enters the battlefield.
@@ -55,6 +58,7 @@ pub(crate) fn move_to_battlefield_with_options(
     object_id: ObjectId,
     options: BattlefieldEntryOptions,
 ) -> BattlefieldEntryOutcome {
+    let old_zone = game.object(object_id).map(|obj| obj.zone);
     let Some(result) = game.move_object_with_etb_processing_with_dm(
         object_id,
         Zone::Battlefield,
@@ -64,6 +68,13 @@ pub(crate) fn move_to_battlefield_with_options(
     };
 
     let new_id = result.new_id;
+
+    if game
+        .object(new_id)
+        .is_none_or(|obj| obj.zone != Zone::Battlefield)
+    {
+        return BattlefieldEntryOutcome::Prevented;
+    }
 
     if let Some(obj) = game.object_mut(new_id) {
         match options.controller {
@@ -77,13 +88,38 @@ pub(crate) fn move_to_battlefield_with_options(
         }
     }
 
-    if let Some(obj) = game.object(new_id) {
+    if let Some((stable_id, controller, is_creature)) = game
+        .object(new_id)
+        .map(|obj| (obj.stable_id, obj.controller, obj.is_creature()))
+    {
         game.objects_entered_battlefield_this_turn
-            .insert(obj.stable_id, obj.controller);
+            .insert(stable_id, controller);
+        if is_creature {
+            *game
+                .creatures_entered_this_turn
+                .entry(controller)
+                .or_insert(0) += 1;
+        }
     }
 
+    let enters_tapped = result.enters_tapped || options.tapped;
     if options.tapped && !result.enters_tapped {
         game.tap(new_id);
+    }
+
+    if let Some(from_zone) = old_zone {
+        let event = if enters_tapped {
+            TriggerEvent::new_with_provenance(
+                EnterBattlefieldEvent::tapped(new_id, from_zone),
+                ProvNodeId::default(),
+            )
+        } else {
+            TriggerEvent::new_with_provenance(
+                EnterBattlefieldEvent::new(new_id, from_zone),
+                ProvNodeId::default(),
+            )
+        };
+        game.queue_trigger_event(ctx.provenance, event);
     }
 
     BattlefieldEntryOutcome::Moved(new_id)

@@ -742,9 +742,9 @@ pub fn validate_target(
         (ResolvedTarget::Player(id), ChooseSpec::AnyTarget) => {
             game.player(*id).is_some_and(|p| p.is_in_game()) && game.can_target_player(*id)
         }
-        (ResolvedTarget::Object(id), ChooseSpec::AnyOtherTarget) => game
-            .object(*id)
-            .is_some_and(|obj| obj.id != ctx.source),
+        (ResolvedTarget::Object(id), ChooseSpec::AnyOtherTarget) => {
+            game.object(*id).is_some_and(|obj| obj.id != ctx.source)
+        }
         (ResolvedTarget::Player(id), ChooseSpec::AnyOtherTarget) => {
             game.player(*id).is_some_and(|p| p.is_in_game()) && game.can_target_player(*id)
         }
