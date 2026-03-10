@@ -1,3 +1,5 @@
+use super::*;
+
 // ============================================================================
 // Combat Decision Handling
 // ============================================================================
@@ -32,7 +34,7 @@ pub fn get_declare_attackers_decision(
     )
 }
 
-fn generic_mana_cost(amount: u32) -> crate::mana::ManaCost {
+pub(super) fn generic_mana_cost(amount: u32) -> crate::mana::ManaCost {
     use crate::mana::ManaSymbol;
 
     if amount == 0 {
@@ -49,13 +51,13 @@ fn generic_mana_cost(amount: u32) -> crate::mana::ManaCost {
     crate::mana::ManaCost::from_pips(pips)
 }
 
-fn object_label(game: &GameState, id: ObjectId, fallback: &str) -> String {
+pub(super) fn object_label(game: &GameState, id: ObjectId, fallback: &str) -> String {
     game.object(id)
         .map(|o| o.name.clone())
         .unwrap_or_else(|| format!("{fallback} #{}", id.0))
 }
 
-fn static_abilities_for_object_with_effects(
+pub(super) fn static_abilities_for_object_with_effects(
     game: &GameState,
     object_id: ObjectId,
     effects: &[crate::continuous::ContinuousEffect],
@@ -77,7 +79,7 @@ fn static_abilities_for_object_with_effects(
         .unwrap_or_default()
 }
 
-fn generic_attack_tax_per_attacker_against_player(
+pub(super) fn generic_attack_tax_per_attacker_against_player(
     game: &GameState,
     defending_player: PlayerId,
     effects: &[crate::continuous::ContinuousEffect],

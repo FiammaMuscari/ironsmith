@@ -4,6 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod tooling_paths;
+
 #[derive(Debug)]
 struct Args {
     threshold: String,
@@ -228,7 +230,7 @@ fn write_partition_report_with_jq(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let root_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root_dir = tooling_paths::repo_root()?;
     let args = parse_args(&root_dir).map_err(std::io::Error::other)?;
     let reports_dir = resolve_reports_dir(&args.reports_dir, &root_dir)?;
 
@@ -266,6 +268,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .current_dir(&root_dir)
         .arg("run")
         .arg("--quiet")
+        .arg("--release")
+        .arg("-p")
+        .arg("ironsmith-tools")
         .arg("--no-default-features")
         .arg("--bin")
         .arg("audit_oracle_clusters")

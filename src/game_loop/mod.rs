@@ -7,6 +7,8 @@
 //! - State-based action integration
 //! - Full turn execution
 
+#![allow(unused_imports)]
+
 use crate::ability::AbilityKind;
 use crate::alternative_cast::CastingMethod;
 use crate::combat_state::{
@@ -63,19 +65,55 @@ use crate::turn::{PriorityResult, PriorityTracker, TurnError, pass_priority, res
 use crate::types::{CardType, Subtype};
 use crate::zone::Zone;
 
-include!("types.rs");
-include!("targeting.rs");
-include!("stack_resolution.rs");
-include!("saga.rs");
-include!("combat_damage.rs");
-include!("priority_state.rs");
-include!("priority_core.rs");
-include!("priority_apply.rs");
-include!("priority_cast.rs");
-include!("priority_mana.rs");
-include!("sba_triggers.rs");
-include!("combat_decisions.rs");
-include!("turn_execution.rs");
-
+mod combat_damage;
+mod combat_decisions;
+mod priority_apply;
+mod priority_cast;
+mod priority_core;
+mod priority_mana;
+mod priority_state;
+mod saga;
+mod sba_triggers;
+mod stack_resolution;
+mod targeting;
 #[cfg(all(test, feature = "engine-integration-tests"))]
-include!("tests.rs");
+mod tests;
+mod turn_execution;
+mod types;
+
+use self::combat_damage::*;
+use self::combat_decisions::*;
+use self::priority_apply::*;
+use self::priority_cast::*;
+use self::priority_core::*;
+use self::priority_mana::*;
+use self::priority_state::*;
+use self::saga::*;
+use self::sba_triggers::*;
+use self::stack_resolution::*;
+use self::targeting::*;
+use self::turn_execution::*;
+use self::types::*;
+
+pub use self::combat_damage::*;
+pub use self::combat_decisions::*;
+pub use self::priority_apply::apply_priority_response_with_dm;
+pub use self::priority_core::*;
+pub use self::priority_mana::run_priority_loop_with;
+pub use self::priority_state::*;
+pub use self::saga::*;
+pub use self::sba_triggers::*;
+pub use self::stack_resolution::*;
+pub use self::targeting::{
+    ExtractedTarget, compute_legal_targets, compute_legal_targets_with_tagged_objects,
+    extract_target_spec, player_matches_filter_with_combat, requires_target_selection,
+    spell_has_legal_targets,
+};
+pub use self::turn_execution::*;
+pub use self::types::*;
+
+pub(crate) use self::priority_mana::{apply_decision_context_with_dm, mana_ability_is_undo_safe};
+pub(crate) use self::targeting::{
+    drain_pending_trigger_events, spell_has_legal_targets_with_modes,
+    spell_has_legal_targets_with_modes_and_view,
+};

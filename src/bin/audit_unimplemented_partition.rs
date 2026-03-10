@@ -9,6 +9,8 @@ use ironsmith::cards::CardDefinitionBuilder;
 use ironsmith::ids::CardId;
 use ironsmith::static_abilities::StaticAbilityId;
 
+mod tooling_paths;
+
 #[derive(Debug)]
 struct Args {
     cards_path: String,
@@ -122,7 +124,7 @@ fn parse_stream_block(lines: &[String]) -> Option<CardInput> {
 fn load_card_inputs_from_stream(
     cards_path: &str,
 ) -> Result<Vec<CardInput>, Box<dyn std::error::Error>> {
-    let scripts_dir = format!("{}/scripts", env!("CARGO_MANIFEST_DIR"));
+    let scripts_dir = tooling_paths::repo_root()?.join("scripts");
     let python_code = r#"
 import sys
 from pathlib import Path

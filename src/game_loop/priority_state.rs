@@ -1,3 +1,5 @@
+use super::*;
+
 // ============================================================================
 // Priority Loop
 // ============================================================================
@@ -283,77 +285,14 @@ pub enum ActivationCostStep {
     CardChoice(ActivationCardCostChoice),
 }
 
-/// Expand a cost processing mode into pending card/object-choice steps.
-///
-/// Returns `true` when the mode produced one-or-more card/object selections.
-pub(crate) fn append_card_choice_costs_from_processing_mode(
-    mode: &crate::costs::CostProcessingMode,
-    out: &mut Vec<ActivationCardCostChoice>,
-) -> bool {
-    use crate::costs::CostProcessingMode;
-
-    let description = mode.display();
-    let before_len = out.len();
-    match mode {
-        CostProcessingMode::DiscardCards { count, card_types } => {
-            for _ in 0..*count {
-                out.push(ActivationCardCostChoice::Discard {
-                    card_types: card_types.clone(),
-                    description: description.clone(),
-                });
-            }
-        }
-        CostProcessingMode::ExileFromHand {
-            count,
-            color_filter,
-        } => {
-            for _ in 0..*count {
-                out.push(ActivationCardCostChoice::ExileFromHand {
-                    color_filter: *color_filter,
-                    description: description.clone(),
-                });
-            }
-        }
-        CostProcessingMode::ExileFromGraveyard { count, card_type } => {
-            for _ in 0..*count {
-                out.push(ActivationCardCostChoice::ExileFromGraveyard {
-                    card_type: *card_type,
-                    description: description.clone(),
-                });
-            }
-        }
-        CostProcessingMode::RevealFromHand { count, card_type } => {
-            for _ in 0..*count {
-                out.push(ActivationCardCostChoice::RevealFromHand {
-                    card_type: *card_type,
-                    description: description.clone(),
-                });
-            }
-        }
-        CostProcessingMode::ReturnToHandTarget { filter } => {
-            out.push(ActivationCardCostChoice::ReturnToHand {
-                filter: filter.clone(),
-                description,
-                choice_tag: None,
-            });
-        }
-        CostProcessingMode::Immediate
-        | CostProcessingMode::InlineWithTriggers
-        | CostProcessingMode::ManaPayment { .. }
-        | CostProcessingMode::SacrificeTarget { .. } => {}
-    }
-
-    out.len() > before_len
-}
-
-fn tagged_filter_matches(filter: &ObjectFilter, tag: &crate::tag::TagKey) -> bool {
+pub(super) fn tagged_filter_matches(filter: &ObjectFilter, tag: &crate::tag::TagKey) -> bool {
     filter.tagged_constraints.len() == 1
         && filter.tagged_constraints[0].tag == *tag
         && filter.tagged_constraints[0].relation
             == crate::filter::TaggedOpbjectRelation::IsTaggedObject
 }
 
-fn choose_tagged_cost_step(
+pub(super) fn choose_tagged_cost_step(
     choose: &crate::effects::ChooseObjectsEffect,
     next: &crate::costs::Cost,
 ) -> Option<ActivationCostStep> {
@@ -678,7 +617,7 @@ pub struct PendingManaAbility {
 /// State for tracking the priority loop between decisions.
 #[derive(Debug, Clone)]
 pub struct PriorityLoopState {
-    tracker: PriorityTracker,
+    pub(super) tracker: PriorityTracker,
     /// A pending spell cast waiting for target selection.
     pub pending_cast: Option<PendingCast>,
     /// A pending ability activation waiting for cost payment.

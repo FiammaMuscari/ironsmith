@@ -1,4 +1,6 @@
-fn stage_after_activation_announcements(pending: &PendingActivation) -> ActivationStage {
+use super::*;
+
+pub(super) fn stage_after_activation_announcements(pending: &PendingActivation) -> ActivationStage {
     if !pending.remaining_requirements.is_empty() {
         ActivationStage::ChoosingTargets
     } else if !pending.remaining_cost_steps.is_empty()
@@ -917,7 +919,7 @@ pub fn apply_priority_response_with_dm(
 ///
 /// When multiple replacement effects could apply to the same event,
 /// the affected player must choose which one to apply first.
-fn apply_replacement_choice_response(
+pub(super) fn apply_replacement_choice_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     chosen_index: usize,
@@ -1038,7 +1040,7 @@ fn apply_replacement_choice_response(
 }
 
 /// Apply a Targets response for a pending spell cast.
-fn apply_targets_response(
+pub(super) fn apply_targets_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1076,7 +1078,7 @@ fn apply_targets_response(
 }
 
 /// Apply an X value response for a pending spell cast.
-fn apply_x_value_response(
+pub(super) fn apply_x_value_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,

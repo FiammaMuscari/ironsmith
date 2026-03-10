@@ -1,3 +1,5 @@
+use super::*;
+
 // ============================================================================
 // Combat Damage
 // ============================================================================
@@ -186,7 +188,7 @@ pub fn execute_combat_damage_step(
     damage_events
 }
 
-fn static_abilities_for_object(
+pub(super) fn static_abilities_for_object(
     game: &GameState,
     object: &crate::object::Object,
 ) -> Vec<crate::static_abilities::StaticAbility> {
@@ -204,7 +206,7 @@ fn static_abilities_for_object(
         })
 }
 
-fn creature_assigns_combat_damage_using_toughness(
+pub(super) fn creature_assigns_combat_damage_using_toughness(
     game: &GameState,
     creature: &crate::object::Object,
 ) -> bool {
@@ -229,7 +231,7 @@ fn creature_assigns_combat_damage_using_toughness(
     false
 }
 
-fn combat_damage_stat_for_creature(
+pub(super) fn combat_damage_stat_for_creature(
     game: &GameState,
     creature: &crate::object::Object,
 ) -> Option<i32> {
@@ -242,7 +244,7 @@ fn combat_damage_stat_for_creature(
     }
 }
 
-fn apply_combat_lifelink(
+pub(super) fn apply_combat_lifelink(
     game: &mut GameState,
     controller: PlayerId,
     damage_result: &DamageResult,
@@ -262,7 +264,7 @@ fn apply_combat_lifelink(
 }
 
 /// Deal damage from an attacker to its blockers.
-fn deal_damage_to_blockers(
+pub(super) fn deal_damage_to_blockers(
     game: &mut GameState,
     attacker_id: ObjectId,
     combat: &CombatState,
@@ -360,7 +362,7 @@ fn deal_damage_to_blockers(
 }
 
 /// Deal damage from an unblocked attacker to its target.
-fn deal_damage_to_defender(
+pub(super) fn deal_damage_to_defender(
     game: &mut GameState,
     attacker_id: ObjectId,
     target: &AttackTarget,
@@ -486,12 +488,12 @@ fn deal_damage_to_defender(
 ///
 /// This processes the damage through replacement/prevention effects before applying.
 #[derive(Debug, Clone, Copy)]
-struct AppliedPermanentDamage {
+pub(super) struct AppliedPermanentDamage {
     damage_dealt: u32,
     total_damage_dealt: u32,
 }
 
-fn apply_damage_to_permanent(
+pub(super) fn apply_damage_to_permanent(
     game: &mut GameState,
     permanent_id: ObjectId,
     source_id: ObjectId,
@@ -550,7 +552,7 @@ fn apply_damage_to_permanent(
 }
 
 #[derive(Debug, Clone, Copy)]
-struct AppliedPlayerDamage {
+pub(super) struct AppliedPlayerDamage {
     damage_dealt: u32,
     life_lost: u32,
     total_damage_dealt: u32,
@@ -559,7 +561,7 @@ struct AppliedPlayerDamage {
 /// Apply damage to a player.
 ///
 /// This processes the damage through replacement/prevention effects before applying.
-fn apply_damage_to_player(
+pub(super) fn apply_damage_to_player(
     game: &mut GameState,
     player_id: PlayerId,
     source_id: ObjectId,

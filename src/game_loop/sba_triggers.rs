@@ -1,3 +1,5 @@
+use super::*;
+
 // ============================================================================
 // State-Based Actions Integration
 // ============================================================================
@@ -143,7 +145,7 @@ pub fn put_triggers_on_stack_with_dm(
     Ok(())
 }
 
-fn is_triggered_mana_ability(game: &GameState, trigger: &TriggeredAbilityEntry) -> bool {
+pub(super) fn is_triggered_mana_ability(game: &GameState, trigger: &TriggeredAbilityEntry) -> bool {
     if !trigger.ability.choices.is_empty() {
         return false;
     }
@@ -166,7 +168,7 @@ fn is_triggered_mana_ability(game: &GameState, trigger: &TriggeredAbilityEntry) 
     )
 }
 
-fn effects_could_add_mana(
+pub(super) fn effects_could_add_mana(
     game: &GameState,
     source: ObjectId,
     controller: PlayerId,
@@ -177,7 +179,7 @@ fn effects_could_add_mana(
         .any(|effect| effect_could_add_mana(game, source, controller, effect))
 }
 
-fn effect_could_add_mana(
+pub(super) fn effect_could_add_mana(
     game: &GameState,
     source: ObjectId,
     controller: PlayerId,
@@ -249,7 +251,7 @@ fn effect_could_add_mana(
     false
 }
 
-fn resolve_triggered_stack_entry_immediately(
+pub(super) fn resolve_triggered_stack_entry_immediately(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     decision_maker: &mut dyn DecisionMaker,
@@ -330,7 +332,7 @@ fn resolve_triggered_stack_entry_immediately(
     }
 }
 
-fn resolve_triggered_mana_abilities_with_dm(
+pub(super) fn resolve_triggered_mana_abilities_with_dm(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     decision_maker: &mut dyn DecisionMaker,
@@ -391,7 +393,10 @@ fn resolve_triggered_mana_abilities_with_dm(
     }
 }
 
-fn can_stack_trigger_this_turn(game: &GameState, trigger: &TriggeredAbilityEntry) -> bool {
+pub(super) fn can_stack_trigger_this_turn(
+    game: &GameState,
+    trigger: &TriggeredAbilityEntry,
+) -> bool {
     let Some(ref condition) = trigger.ability.intervening_if else {
         return true;
     };
@@ -414,7 +419,7 @@ fn can_stack_trigger_this_turn(game: &GameState, trigger: &TriggeredAbilityEntry
 /// Create a stack entry for a triggered ability, handling target selection.
 ///
 /// Returns None if the trigger has mandatory targets but no legal targets exist.
-fn create_triggered_stack_entry_with_targets(
+pub(super) fn create_triggered_stack_entry_with_targets(
     game: &mut GameState,
     trigger: &TriggeredAbilityEntry,
     decision_maker: &mut dyn DecisionMaker,
@@ -527,7 +532,10 @@ fn create_triggered_stack_entry_with_targets(
 }
 
 /// Convert a triggered ability entry to a stack entry.
-fn triggered_to_stack_entry(game: &GameState, trigger: &TriggeredAbilityEntry) -> StackEntry {
+pub(super) fn triggered_to_stack_entry(
+    game: &GameState,
+    trigger: &TriggeredAbilityEntry,
+) -> StackEntry {
     use crate::events::EventKind;
     use crate::events::combat::{CreatureAttackedEvent, CreatureBecameBlockedEvent};
     use crate::events::zones::ZoneChangeEvent;

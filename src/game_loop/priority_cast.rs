@@ -1,6 +1,8 @@
+use super::*;
+
 /// Collect all available casting methods for a spell.
 /// Returns a list of CastingMethodOption structs for each method that can be used.
-fn collect_available_casting_methods(
+pub(super) fn collect_available_casting_methods(
     game: &GameState,
     player: PlayerId,
     spell_id: ObjectId,
@@ -82,7 +84,7 @@ fn collect_available_casting_methods(
 }
 
 /// Format a mana cost in simple text form (e.g., "{3}{U}{U}").
-fn format_mana_cost_simple(cost: &crate::mana::ManaCost) -> String {
+pub(super) fn format_mana_cost_simple(cost: &crate::mana::ManaCost) -> String {
     use crate::mana::ManaSymbol;
 
     let mut parts = Vec::new();
@@ -126,7 +128,7 @@ fn format_mana_cost_simple(cost: &crate::mana::ManaCost) -> String {
     }
 }
 
-fn cost_effects_for_casting_method(
+pub(super) fn cost_effects_for_casting_method(
     game: &GameState,
     caster: PlayerId,
     spell: &crate::object::Object,
@@ -151,7 +153,7 @@ fn cost_effects_for_casting_method(
     }
 }
 
-fn effect_references_x_for_cost(effect: &Effect) -> bool {
+pub(super) fn effect_references_x_for_cost(effect: &Effect) -> bool {
     use crate::effect::Value;
 
     if let Some(sacrifice) = effect.downcast_ref::<crate::effects::SacrificeEffect>() {
@@ -164,7 +166,7 @@ fn effect_references_x_for_cost(effect: &Effect) -> bool {
     false
 }
 
-fn max_x_from_cost_effects(
+pub(super) fn max_x_from_cost_effects(
     game: &GameState,
     caster: PlayerId,
     source: ObjectId,
@@ -285,7 +287,7 @@ fn max_x_from_cost_effects(
     max_x
 }
 
-fn compute_spell_cast_x_bounds(
+pub(super) fn compute_spell_cast_x_bounds(
     game: &GameState,
     caster: PlayerId,
     stack_id: ObjectId,
@@ -326,7 +328,7 @@ fn compute_spell_cast_x_bounds(
 }
 
 /// Format an alternative casting method's name and cost description.
-fn format_alternative_method(
+pub(super) fn format_alternative_method(
     method: &crate::alternative_cast::AlternativeCastingMethod,
     spell: &crate::object::Object,
 ) -> (String, String) {
@@ -444,7 +446,7 @@ fn format_alternative_method(
 /// For compositional effects like ConditionalEffect, this evaluates conditions at cast time
 /// to determine which branch's modal spec to use (e.g., Akroma's Will checking YouControlCommander).
 /// Returns the modal specification if found.
-fn extract_modal_spec_from_spell(
+pub(super) fn extract_modal_spec_from_spell(
     game: &GameState,
     spell_id: ObjectId,
     controller: PlayerId,
@@ -475,7 +477,7 @@ fn extract_modal_spec_from_spell(
 ///
 /// Per MTG rule 601.2b, modes must be chosen before targets.
 /// This is called after the spell is proposed (moved to stack).
-fn check_modes_or_continue(
+pub(super) fn check_modes_or_continue(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -560,7 +562,7 @@ fn check_modes_or_continue(
 ///
 /// This is called after X value is chosen (or when there's no X cost).
 /// Returns the next decision needed or continues the cast.
-fn check_optional_costs_or_continue(
+pub(super) fn check_optional_costs_or_continue(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -653,7 +655,7 @@ fn check_optional_costs_or_continue(
 /// Get the effective mana cost for a spell being cast.
 ///
 /// This is called during casting to determine hybrid/Phyrexian pips.
-fn get_spell_mana_cost(
+pub(super) fn get_spell_mana_cost(
     game: &GameState,
     spell_id: ObjectId,
     caster: PlayerId,
@@ -668,7 +670,7 @@ fn get_spell_mana_cost(
 ///
 /// Returns a list of (pip_index, alternatives) for each pip that has multiple payment options.
 /// Per MTG rule 601.2b, the player must announce how they will pay these during casting.
-fn get_pips_requiring_announcement(
+pub(super) fn get_pips_requiring_announcement(
     cost: &crate::mana::ManaCost,
 ) -> Vec<(usize, Vec<crate::mana::ManaSymbol>)> {
     cost.pips()
@@ -683,7 +685,7 @@ fn get_pips_requiring_announcement(
 ///
 /// Called when there are no optional costs or after optional costs are chosen.
 /// Per MTG rule 601.2b, checks for hybrid/Phyrexian pips first.
-fn continue_to_targeting_or_finalize(
+pub(super) fn continue_to_targeting_or_finalize(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -723,7 +725,7 @@ fn continue_to_targeting_or_finalize(
 ///
 /// Per MTG rule 601.2b, the player announces how they will pay hybrid/Phyrexian costs
 /// before targets are chosen.
-fn check_hybrid_announcement_or_continue(
+pub(super) fn check_hybrid_announcement_or_continue(
     game: &mut GameState,
     _trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -740,7 +742,7 @@ fn check_hybrid_announcement_or_continue(
 }
 
 /// Prompt the player for the next hybrid/Phyrexian pip choice.
-fn prompt_for_next_hybrid_pip(
+pub(super) fn prompt_for_next_hybrid_pip(
     game: &GameState,
     state: &mut PriorityLoopState,
     pending: PendingCast,
@@ -788,7 +790,7 @@ fn prompt_for_next_hybrid_pip(
 }
 
 /// Format a mana symbol for display in hybrid/Phyrexian choice.
-fn format_mana_symbol_for_choice(sym: &crate::mana::ManaSymbol) -> String {
+pub(super) fn format_mana_symbol_for_choice(sym: &crate::mana::ManaSymbol) -> String {
     use crate::mana::ManaSymbol;
     match sym {
         ManaSymbol::White => "{W} (White mana)".to_string(),
@@ -807,7 +809,7 @@ fn format_mana_symbol_for_choice(sym: &crate::mana::ManaSymbol) -> String {
 /// Continue to target selection or mana payment.
 ///
 /// Called after hybrid/Phyrexian choices are made (or when none are needed).
-fn continue_to_targets_or_mana_payment(
+pub(super) fn continue_to_targets_or_mana_payment(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -887,7 +889,7 @@ fn continue_to_targets_or_mana_payment(
     }
 }
 
-fn finalize_pending_spell_cast(
+pub(super) fn finalize_pending_spell_cast(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -931,7 +933,7 @@ fn finalize_pending_spell_cast(
     advance_priority_with_dm(game, trigger_queue, decision_maker)
 }
 
-fn continue_spell_next_cost_or_finalize(
+pub(super) fn continue_spell_next_cost_or_finalize(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -986,7 +988,7 @@ fn continue_spell_next_cost_or_finalize(
     }
 }
 
-fn auto_pay_spell_tap_cost_steps(
+pub(super) fn auto_pay_spell_tap_cost_steps(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     pending: &mut PendingCast,
@@ -1032,7 +1034,7 @@ fn auto_pay_spell_tap_cost_steps(
     }
 }
 
-fn continue_spell_cost_payment(
+pub(super) fn continue_spell_cost_payment(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1177,7 +1179,7 @@ fn continue_spell_cost_payment(
 ///
 /// Called after targets are chosen (or when no targets needed).
 /// Computes the effective mana cost and remaining non-mana payment steps.
-fn continue_to_mana_payment(
+pub(super) fn continue_to_mana_payment(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1230,7 +1232,7 @@ fn continue_to_mana_payment(
 }
 
 /// Continue processing spell cast mana payment pip-by-pip.
-fn continue_spell_cast_mana_payment(
+pub(super) fn continue_spell_cast_mana_payment(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1356,7 +1358,7 @@ fn continue_spell_cast_mana_payment(
 /// - Available mana abilities that can be activated (excluding the one being paid for)
 ///   and that can help pay the remaining cost
 /// - Option to pay (if enough mana is in pool)
-fn compute_mana_ability_payment_options(
+pub(super) fn compute_mana_ability_payment_options(
     game: &GameState,
     player: PlayerId,
     pending: &PendingManaAbility,
@@ -1422,7 +1424,7 @@ fn compute_mana_ability_payment_options(
 ///
 /// Returns true if any of the mana symbols can pay any pip in the cost,
 /// considering the player's current mana pool.
-fn mana_can_help_pay_cost(
+pub(super) fn mana_can_help_pay_cost(
     mana_produced: &[crate::mana::ManaSymbol],
     cost: &crate::mana::ManaCost,
     game: &GameState,
@@ -1494,7 +1496,7 @@ fn mana_can_help_pay_cost(
 /// Get available mana abilities for a player that can be activated.
 ///
 /// Returns a list of (permanent_id, ability_index, description) tuples.
-fn get_available_mana_abilities(
+pub(super) fn get_available_mana_abilities(
     game: &GameState,
     player: PlayerId,
     decision_maker: &mut impl DecisionMaker,
@@ -1531,7 +1533,7 @@ fn get_available_mana_abilities(
 }
 
 /// Describe a mana ability for display.
-fn describe_mana_ability(kind: &crate::ability::AbilityKind) -> String {
+pub(super) fn describe_mana_ability(kind: &crate::ability::AbilityKind) -> String {
     use crate::ability::AbilityKind;
     use crate::mana::ManaSymbol;
 
@@ -1562,14 +1564,14 @@ fn describe_mana_ability(kind: &crate::ability::AbilityKind) -> String {
 }
 
 /// Describe a permanent for display.
-fn describe_permanent(game: &GameState, id: ObjectId) -> String {
+pub(super) fn describe_permanent(game: &GameState, id: ObjectId) -> String {
     game.object(id)
         .map(|obj| obj.name.clone())
         .unwrap_or_else(|| "Unknown".to_string())
 }
 
 /// Get legal sacrifice targets for a filter.
-fn get_legal_sacrifice_targets(
+pub(super) fn get_legal_sacrifice_targets(
     game: &GameState,
     player: PlayerId,
     source: ObjectId,
@@ -1591,7 +1593,7 @@ fn get_legal_sacrifice_targets(
 }
 
 /// Get legal cards in hand that can be discarded for a cost.
-fn get_legal_discard_cards(
+pub(super) fn get_legal_discard_cards(
     game: &GameState,
     player: PlayerId,
     source: ObjectId,
@@ -1619,7 +1621,7 @@ fn get_legal_discard_cards(
 }
 
 /// Get legal cards in hand that can be exiled for a cost.
-fn get_legal_exile_from_hand_cards(
+pub(super) fn get_legal_exile_from_hand_cards(
     game: &GameState,
     player: PlayerId,
     source: ObjectId,
@@ -1648,7 +1650,7 @@ fn get_legal_exile_from_hand_cards(
 }
 
 /// Get legal cards in graveyard that can be exiled for a cost.
-fn get_legal_exile_from_graveyard_cards(
+pub(super) fn get_legal_exile_from_graveyard_cards(
     game: &GameState,
     player: PlayerId,
     card_type: Option<crate::types::CardType>,
@@ -1672,7 +1674,7 @@ fn get_legal_exile_from_graveyard_cards(
 }
 
 /// Get legal cards in hand that can be revealed for a cost.
-fn get_legal_reveal_from_hand_cards(
+pub(super) fn get_legal_reveal_from_hand_cards(
     game: &GameState,
     player: PlayerId,
     source: ObjectId,
@@ -1700,7 +1702,7 @@ fn get_legal_reveal_from_hand_cards(
 }
 
 /// Get legal permanents that can be returned to hand for a cost.
-fn get_legal_return_to_hand_targets(
+pub(super) fn get_legal_return_to_hand_targets(
     game: &GameState,
     player: PlayerId,
     source: ObjectId,
@@ -1721,7 +1723,7 @@ fn get_legal_return_to_hand_targets(
         .collect()
 }
 
-fn get_legal_cost_choice_objects(
+pub(super) fn get_legal_cost_choice_objects(
     game: &GameState,
     player: PlayerId,
     source: ObjectId,
@@ -1760,7 +1762,7 @@ fn get_legal_cost_choice_objects(
         .collect()
 }
 
-fn card_cost_choice_description_and_candidates(
+pub(super) fn card_cost_choice_description_and_candidates(
     game: &GameState,
     player: PlayerId,
     source: ObjectId,
@@ -1821,7 +1823,7 @@ fn card_cost_choice_description_and_candidates(
     (description, candidates)
 }
 
-fn collect_spell_cost_steps(
+pub(super) fn collect_spell_cost_steps(
     game: &GameState,
     spell_id: ObjectId,
     caster: PlayerId,
@@ -1878,7 +1880,7 @@ fn collect_spell_cost_steps(
     cost_steps
 }
 
-fn describe_cost_component(cost: &crate::costs::Cost) -> String {
+pub(super) fn describe_cost_component(cost: &crate::costs::Cost) -> String {
     if cost.requires_tap() {
         return "Tap this permanent".to_string();
     }
@@ -1894,7 +1896,7 @@ fn describe_cost_component(cost: &crate::costs::Cost) -> String {
     }
 }
 
-fn describe_pending_cost_step(step: &ActivationCostStep) -> String {
+pub(super) fn describe_pending_cost_step(step: &ActivationCostStep) -> String {
     match step {
         ActivationCostStep::Cost(cost) => describe_cost_component(cost),
         ActivationCostStep::Sacrifice { description, .. } => description.clone(),
@@ -1909,7 +1911,7 @@ fn describe_pending_cost_step(step: &ActivationCostStep) -> String {
     }
 }
 
-fn spell_stage_after_targets(pending: &PendingCast) -> CastStage {
+pub(super) fn spell_stage_after_targets(pending: &PendingCast) -> CastStage {
     if !pending.remaining_cost_steps.is_empty()
         || pending.mana_cost_to_pay.is_some()
         || !pending.remaining_mana_pips.is_empty()
@@ -1920,7 +1922,7 @@ fn spell_stage_after_targets(pending: &PendingCast) -> CastStage {
     }
 }
 
-fn activation_stage_after_targets(pending: &PendingActivation) -> ActivationStage {
+pub(super) fn activation_stage_after_targets(pending: &PendingActivation) -> ActivationStage {
     if !pending.remaining_cost_steps.is_empty()
         || pending.mana_cost_to_pay.is_some()
         || !pending.remaining_mana_pips.is_empty()
@@ -1931,7 +1933,7 @@ fn activation_stage_after_targets(pending: &PendingActivation) -> ActivationStag
     }
 }
 
-fn build_next_cost_context(
+pub(super) fn build_next_cost_context(
     player: PlayerId,
     source: ObjectId,
     source_name: String,
@@ -1970,7 +1972,7 @@ fn build_next_cost_context(
     )
 }
 
-fn activation_stage_after_announcements(pending: &PendingActivation) -> ActivationStage {
+pub(super) fn activation_stage_after_announcements(pending: &PendingActivation) -> ActivationStage {
     if !pending.remaining_requirements.is_empty() {
         ActivationStage::ChoosingTargets
     } else {
@@ -1978,7 +1980,7 @@ fn activation_stage_after_announcements(pending: &PendingActivation) -> Activati
     }
 }
 
-fn continue_activation_cost_payment(
+pub(super) fn continue_activation_cost_payment(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -2112,7 +2114,7 @@ fn continue_activation_cost_payment(
 }
 
 /// Continue the activation process based on current stage.
-fn continue_activation(
+pub(super) fn continue_activation(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -2436,7 +2438,7 @@ fn continue_activation(
     }
 }
 
-fn auto_pay_activation_tap_cost_steps(
+pub(super) fn auto_pay_activation_tap_cost_steps(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     pending: &mut PendingActivation,

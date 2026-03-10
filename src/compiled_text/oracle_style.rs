@@ -1,4 +1,6 @@
-fn normalize_sentence_surface_style(line: &str) -> String {
+use super::*;
+
+pub(super) fn normalize_sentence_surface_style(line: &str) -> String {
     let mut normalized = line.trim().to_string();
     if normalized.is_empty() {
         return normalized;
@@ -1155,7 +1157,7 @@ fn normalize_sentence_surface_style(line: &str) -> String {
     normalized
 }
 
-fn normalize_search_discard_then_shuffle_surface(line: &str) -> Option<String> {
+pub(super) fn normalize_search_discard_then_shuffle_surface(line: &str) -> Option<String> {
     let (prefix, body) = if let Some(rest) = line.strip_prefix("Spell effects: ") {
         ("Spell effects: ", rest)
     } else {
@@ -1196,7 +1198,7 @@ fn normalize_search_discard_then_shuffle_surface(line: &str) -> Option<String> {
     ))
 }
 
-fn normalize_discard_random_then_discard_surface(line: &str) -> Option<String> {
+pub(super) fn normalize_discard_random_then_discard_surface(line: &str) -> Option<String> {
     let (prefix, body) = if let Some(rest) = line.strip_prefix("Spell effects: ") {
         ("Spell effects: ", rest)
     } else {
@@ -1231,7 +1233,7 @@ fn normalize_discard_random_then_discard_surface(line: &str) -> Option<String> {
     ))
 }
 
-fn normalize_ward_cost_surface(text: &str) -> String {
+pub(super) fn normalize_ward_cost_surface(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return String::new();
@@ -1328,7 +1330,7 @@ fn normalize_ward_cost_surface(text: &str) -> String {
 }
 
 #[allow(dead_code)]
-fn card_self_subject_for_oracle_lines(def: &CardDefinition) -> &'static str {
+pub(super) fn card_self_subject_for_oracle_lines(def: &CardDefinition) -> &'static str {
     use crate::types::CardType;
 
     let card_types = &def.card.card_types;
@@ -1344,7 +1346,7 @@ fn card_self_subject_for_oracle_lines(def: &CardDefinition) -> &'static str {
     "permanent"
 }
 
-fn card_has_graveyard_activated_ability(def: &CardDefinition) -> bool {
+pub(super) fn card_has_graveyard_activated_ability(def: &CardDefinition) -> bool {
     def.abilities.iter().any(|ability| {
         let is_activated = matches!(ability.kind, AbilityKind::Activated(_));
         let zone_marked = ability.functional_zones.contains(&Zone::Graveyard);
@@ -1367,7 +1369,7 @@ fn card_has_graveyard_activated_ability(def: &CardDefinition) -> bool {
 }
 
 #[allow(dead_code)]
-fn enchanted_subject_for_oracle_lines(def: &CardDefinition) -> Option<&'static str> {
+pub(super) fn enchanted_subject_for_oracle_lines(def: &CardDefinition) -> Option<&'static str> {
     if let Some(filter) = &def.aura_attach_filter {
         if filter
             .card_types
@@ -1416,7 +1418,7 @@ fn enchanted_subject_for_oracle_lines(def: &CardDefinition) -> Option<&'static s
 }
 
 #[allow(dead_code)]
-fn normalize_create_under_control_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_create_under_control_clause(text: &str) -> Option<String> {
     let create_occurrences = text.matches("Create ").count() + text.matches("create ").count();
     if create_occurrences > 1 {
         // Avoid cross-sentence rewrites where reminder text can drift onto
@@ -1498,7 +1500,7 @@ fn normalize_create_under_control_clause(text: &str) -> Option<String> {
     Some(format!("{prefix}Its controller creates {created}{suffix}"))
 }
 
-fn normalize_embedded_create_with_token_reminder(text: &str) -> Option<String> {
+pub(super) fn normalize_embedded_create_with_token_reminder(text: &str) -> Option<String> {
     let (create_head, create_tail, lowercase_create) =
         if let Some((head, tail)) = text.split_once("Create ") {
             (head, tail, false)
@@ -1574,11 +1576,11 @@ fn normalize_embedded_create_with_token_reminder(text: &str) -> Option<String> {
     Some(format!("{first} {pronoun} \"{ability}.\""))
 }
 
-fn is_cost_symbol_word(word: &str) -> bool {
+pub(super) fn is_cost_symbol_word(word: &str) -> bool {
     matches!(word, "w" | "u" | "b" | "r" | "g" | "c" | "x") || word.parse::<u32>().is_ok()
 }
 
-fn is_effect_verb_word(word: &str) -> bool {
+pub(super) fn is_effect_verb_word(word: &str) -> bool {
     matches!(
         word,
         "add"
@@ -1602,7 +1604,7 @@ fn is_effect_verb_word(word: &str) -> bool {
     )
 }
 
-fn format_cost_words(words: &[&str]) -> Option<String> {
+pub(super) fn format_cost_words(words: &[&str]) -> Option<String> {
     if words.is_empty() {
         return None;
     }
@@ -1656,7 +1658,7 @@ fn format_cost_words(words: &[&str]) -> Option<String> {
     }
 }
 
-fn normalize_granted_activated_ability_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_granted_activated_ability_clause(text: &str) -> Option<String> {
     let (subject, tail, has_word) = if let Some((subject, tail)) = text.split_once(" has ") {
         (subject, tail, "has")
     } else if let Some((subject, tail)) = text.split_once(" have ") {
@@ -1747,7 +1749,7 @@ fn normalize_granted_activated_ability_clause(text: &str) -> Option<String> {
     Some(format!("{subject} {has_word} \"{cost}: {effect}\""))
 }
 
-fn normalize_granted_beginning_trigger_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_granted_beginning_trigger_clause(text: &str) -> Option<String> {
     let (subject, tail, has_word) = if let Some((subject, tail)) = text.split_once(" has ") {
         (subject.trim(), tail.trim(), "has")
     } else if let Some((subject, tail)) = text.split_once(" have ") {
@@ -1785,7 +1787,7 @@ fn normalize_granted_beginning_trigger_clause(text: &str) -> Option<String> {
 }
 
 #[allow(dead_code)]
-fn normalize_oracle_line_segment(segment: &str) -> String {
+pub(super) fn normalize_oracle_line_segment(segment: &str) -> String {
     let trimmed_owned = strip_square_bracketed_segments(segment.trim());
     let trimmed = trimmed_owned.trim();
     let lower_trimmed = trimmed.to_ascii_lowercase();
@@ -3370,7 +3372,7 @@ fn normalize_oracle_line_segment(segment: &str) -> String {
 }
 
 #[allow(dead_code)]
-fn normalize_for_each_damage_clause(clause: &str) -> Option<String> {
+pub(super) fn normalize_for_each_damage_clause(clause: &str) -> Option<String> {
     let rest = clause.strip_prefix("For each ")?;
     let (subject, tail) = rest.split_once(", Deal ")?;
     let amount = tail.strip_suffix(" damage to that object")?;
@@ -3378,7 +3380,7 @@ fn normalize_for_each_damage_clause(clause: &str) -> Option<String> {
 }
 
 #[allow(dead_code)]
-fn normalize_each_player_then_for_each_damage_clause(line: &str) -> Option<String> {
+pub(super) fn normalize_each_player_then_for_each_damage_clause(line: &str) -> Option<String> {
     let (left, rest) = line.split_once(" damage to that player. For each ")?;
     let amount = left.strip_prefix("Deal ")?;
     let (filter, right) = rest.split_once(" that player controls, Deal ")?;
@@ -3392,7 +3394,7 @@ fn normalize_each_player_then_for_each_damage_clause(line: &str) -> Option<Strin
 }
 
 #[allow(dead_code)]
-fn normalize_oracle_line_for_card(def: &CardDefinition, line: &str) -> String {
+pub(super) fn normalize_oracle_line_for_card(def: &CardDefinition, line: &str) -> String {
     let normalized = line.trim().replace("{{", "{").replace("}}", "}");
     let normalized = normalize_common_semantic_phrasing(&normalized);
     if def.is_spell() && normalized.starts_with("Deal ") {

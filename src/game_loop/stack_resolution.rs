@@ -1,3 +1,5 @@
+use super::*;
+
 // ============================================================================
 // Stack Resolution
 // ============================================================================
@@ -20,7 +22,7 @@ pub fn resolve_stack_entry(game: &mut GameState) -> Result<(), GameLoopError> {
 /// Resolve the top entry on the stack with both a decision maker and trigger queue.
 ///
 /// Use this for ETB replacement effects that need player decisions (like Mox Diamond).
-fn resolve_stack_entry_with_dm_and_triggers(
+pub(super) fn resolve_stack_entry_with_dm_and_triggers(
     game: &mut GameState,
     decision_maker: &mut impl DecisionMaker,
     trigger_queue: &mut TriggerQueue,
@@ -43,7 +45,7 @@ pub fn resolve_stack_entry_with(
 ///
 /// If a trigger_queue is provided, saga lore counters are processed immediately.
 /// Otherwise, saga processing must be handled by the caller.
-fn resolve_stack_entry_full(
+pub(super) fn resolve_stack_entry_full(
     game: &mut GameState,
     decision_maker: &mut impl DecisionMaker,
     mut trigger_queue: Option<&mut TriggerQueue>,
@@ -433,7 +435,7 @@ fn resolve_stack_entry_full(
 }
 
 /// Get effects for a stack entry.
-fn get_effects_for_stack_entry(
+pub(super) fn get_effects_for_stack_entry(
     _game: &GameState,
     entry: &StackEntry,
     obj: &crate::object::Object,

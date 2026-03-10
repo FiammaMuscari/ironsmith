@@ -1,9 +1,11 @@
+use super::*;
+
 /// Compile a list of effects to human-readable text (for stack ability display).
 pub fn compile_effect_list(effects: &[Effect]) -> String {
     describe_effect_list(effects)
 }
 
-fn describe_effect_list(effects: &[Effect]) -> String {
+pub(super) fn describe_effect_list(effects: &[Effect]) -> String {
     let has_non_target_only = effects.iter().any(|effect| {
         effect
             .downcast_ref::<crate::effects::TargetOnlyEffect>()
@@ -601,7 +603,7 @@ fn describe_effect_list(effects: &[Effect]) -> String {
     cleanup_decompiled_text(&text)
 }
 
-fn describe_effect_clause_list(effects: &[Effect]) -> Option<String> {
+pub(super) fn describe_effect_clause_list(effects: &[Effect]) -> Option<String> {
     if effects.len() < 2 {
         return None;
     }
@@ -633,7 +635,7 @@ fn describe_effect_clause_list(effects: &[Effect]) -> Option<String> {
     Some(cleanup_decompiled_text(&body))
 }
 
-fn describe_false_only_conditional(
+pub(super) fn describe_false_only_conditional(
     condition: &crate::effect::Condition,
     false_branch: &str,
 ) -> String {
@@ -708,7 +710,7 @@ fn describe_false_only_conditional(
     )
 }
 
-fn describe_exile_then_return(
+pub(super) fn describe_exile_then_return(
     tagged: &crate::effects::TaggedEffect,
     move_back: &crate::effects::MoveToZoneEffect,
 ) -> Option<String> {
@@ -753,7 +755,7 @@ fn describe_exile_then_return(
     ))
 }
 
-fn describe_reveal_top_then_if_put_into_hand(
+pub(super) fn describe_reveal_top_then_if_put_into_hand(
     reveal_top: &crate::effects::RevealTopEffect,
     conditional: &crate::effects::ConditionalEffect,
 ) -> Option<String> {
@@ -829,7 +831,7 @@ fn describe_reveal_top_then_if_put_into_hand(
     ))
 }
 
-fn describe_tagged_target_then_power_damage(
+pub(super) fn describe_tagged_target_then_power_damage(
     tagged: &crate::effects::TaggedEffect,
     deal: &crate::effects::DealDamageEffect,
 ) -> Option<String> {
@@ -863,7 +865,7 @@ fn describe_tagged_target_then_power_damage(
     ))
 }
 
-fn cleanup_decompiled_text(text: &str) -> String {
+pub(super) fn cleanup_decompiled_text(text: &str) -> String {
     let mut out = text.to_string();
     for (from, to) in [
         ("you gets", "you get"),
@@ -893,7 +895,7 @@ fn cleanup_decompiled_text(text: &str) -> String {
     out
 }
 
-fn describe_inline_ability(ability: &Ability) -> String {
+pub(super) fn describe_inline_ability(ability: &Ability) -> String {
     if let Some(text) = &ability.text
         && !text.trim().is_empty()
     {
@@ -990,7 +992,9 @@ fn describe_inline_ability(ability: &Ability) -> String {
     }
 }
 
-fn activated_ability_has_source_tap_cost(activated: &crate::ability::ActivatedAbility) -> bool {
+pub(super) fn activated_ability_has_source_tap_cost(
+    activated: &crate::ability::ActivatedAbility,
+) -> bool {
     activated.mana_cost.costs().iter().any(|cost| {
         cost.requires_tap()
             || cost.effect_ref().is_some_and(|effect| {
@@ -1001,7 +1005,9 @@ fn activated_ability_has_source_tap_cost(activated: &crate::ability::ActivatedAb
     })
 }
 
-fn activated_ability_has_source_untap_cost(activated: &crate::ability::ActivatedAbility) -> bool {
+pub(super) fn activated_ability_has_source_untap_cost(
+    activated: &crate::ability::ActivatedAbility,
+) -> bool {
     activated.mana_cost.costs().iter().any(|cost| {
         cost.requires_untap()
             || cost.effect_ref().is_some_and(|effect| {
@@ -1012,7 +1018,7 @@ fn activated_ability_has_source_untap_cost(activated: &crate::ability::Activated
     })
 }
 
-fn normalize_inline_ability_text(ability: &Ability, text: &str) -> String {
+pub(super) fn normalize_inline_ability_text(ability: &Ability, text: &str) -> String {
     let trimmed = text.trim();
     let lower = trimmed.to_ascii_lowercase();
     match &ability.kind {
@@ -1051,7 +1057,7 @@ fn normalize_inline_ability_text(ability: &Ability, text: &str) -> String {
     }
 }
 
-fn normalize_cost_phrase(text: &str) -> String {
+pub(super) fn normalize_cost_phrase(text: &str) -> String {
     if let Some(rest) = text.strip_prefix("you ") {
         let normalized = normalize_you_verb_phrase(rest);
         return capitalize_first(&normalized);
@@ -1063,7 +1069,7 @@ fn normalize_cost_phrase(text: &str) -> String {
     text.to_string()
 }
 
-fn describe_cost_component(cost: &crate::costs::Cost) -> String {
+pub(super) fn describe_cost_component(cost: &crate::costs::Cost) -> String {
     if let Some(mana_cost) = cost.mana_cost_ref() {
         return mana_cost.to_oracle();
     }
@@ -1104,7 +1110,7 @@ fn describe_cost_component(cost: &crate::costs::Cost) -> String {
     }
 }
 
-fn describe_cost_list(costs: &[crate::costs::Cost]) -> String {
+pub(super) fn describe_cost_list(costs: &[crate::costs::Cost]) -> String {
     let mut parts = Vec::new();
     let mut idx = 0usize;
     while idx < costs.len() {
@@ -1153,7 +1159,7 @@ fn describe_cost_list(costs: &[crate::costs::Cost]) -> String {
     parts.join(", ")
 }
 
-fn with_indefinite_article(noun: &str) -> String {
+pub(super) fn with_indefinite_article(noun: &str) -> String {
     let trimmed = noun.trim();
     if trimmed.is_empty() {
         return "a permanent".to_string();
@@ -1205,7 +1211,7 @@ fn with_indefinite_article(noun: &str) -> String {
     format!("{article} {trimmed}")
 }
 
-fn ensure_indefinite_article(noun: &str) -> String {
+pub(super) fn ensure_indefinite_article(noun: &str) -> String {
     let trimmed = noun.trim();
     if trimmed.is_empty() {
         return "a permanent".to_string();
@@ -1239,7 +1245,9 @@ fn ensure_indefinite_article(noun: &str) -> String {
     format!("{article} {trimmed}")
 }
 
-fn describe_for_each_double_counters(for_each: &crate::effects::ForEachObject) -> Option<String> {
+pub(super) fn describe_for_each_double_counters(
+    for_each: &crate::effects::ForEachObject,
+) -> Option<String> {
     if for_each.effects.len() != 1 {
         return None;
     }
@@ -1279,7 +1287,7 @@ fn describe_for_each_double_counters(for_each: &crate::effects::ForEachObject) -
     ))
 }
 
-fn describe_for_each_tagged_this_way_subject(filter: &ObjectFilter) -> Option<String> {
+pub(super) fn describe_for_each_tagged_this_way_subject(filter: &ObjectFilter) -> Option<String> {
     let action = filter.tagged_constraints.iter().find_map(|constraint| {
         if constraint.relation != crate::filter::TaggedOpbjectRelation::IsTaggedObject {
             return None;
@@ -1324,7 +1332,7 @@ fn describe_for_each_tagged_this_way_subject(filter: &ObjectFilter) -> Option<St
     Some(format!("For each {subject} {action} this way"))
 }
 
-fn normalize_put_counter_number_for_each(line: &str) -> Option<String> {
+pub(super) fn normalize_put_counter_number_for_each(line: &str) -> Option<String> {
     let (before, after) = split_once_ascii_ci(line, "put the number of ")?;
     let (count_and_counter, after_target) = after.split_once(" counter(s) on ")?;
     let (target, suffix) = after_target
@@ -1356,7 +1364,7 @@ fn normalize_put_counter_number_for_each(line: &str) -> Option<String> {
     Some(rewritten)
 }
 
-fn strip_indefinite_article(text: &str) -> &str {
+pub(super) fn strip_indefinite_article(text: &str) -> &str {
     let trimmed = text.trim();
     if let Some(rest) = trimmed
         .strip_prefix("a ")
@@ -1373,7 +1381,7 @@ fn strip_indefinite_article(text: &str) -> &str {
     trimmed
 }
 
-fn pluralize_word(word: &str) -> String {
+pub(super) fn pluralize_word(word: &str) -> String {
     if word.chars().last().is_some_and(|ch| ch.is_ascii_digit()) {
         return word.to_string();
     }
@@ -1446,7 +1454,7 @@ fn pluralize_word(word: &str) -> String {
     format!("{word}s")
 }
 
-fn pluralize_noun_phrase(phrase: &str) -> String {
+pub(super) fn pluralize_noun_phrase(phrase: &str) -> String {
     let mut base = strip_indefinite_article(phrase).trim();
     let mut trailing = "";
     if let Some(stripped) = base.strip_suffix('.') {
@@ -1532,14 +1540,14 @@ fn pluralize_noun_phrase(phrase: &str) -> String {
     }
 }
 
-fn sacrifice_uses_chosen_tag(filter: &ObjectFilter, tag: &str) -> bool {
+pub(super) fn sacrifice_uses_chosen_tag(filter: &ObjectFilter, tag: &str) -> bool {
     filter.tagged_constraints.iter().any(|constraint| {
         constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
             && constraint.tag.as_str() == tag
     })
 }
 
-fn describe_for_players_choose_types_then_sacrifice_rest(
+pub(super) fn describe_for_players_choose_types_then_sacrifice_rest(
     for_players: &crate::effects::ForPlayersEffect,
 ) -> Option<String> {
     let (tail, choose_effects) = for_players.effects.split_last()?;
@@ -1615,7 +1623,7 @@ fn describe_for_players_choose_types_then_sacrifice_rest(
     ))
 }
 
-fn describe_for_players_choose_then_sacrifice(
+pub(super) fn describe_for_players_choose_then_sacrifice(
     for_players: &crate::effects::ForPlayersEffect,
 ) -> Option<String> {
     if for_players.effects.len() != 2 {
@@ -1644,7 +1652,7 @@ fn describe_for_players_choose_then_sacrifice(
     Some(format!("{subject} {verb} {chosen} of {possessive} choice"))
 }
 
-fn describe_choose_then_sacrifice(
+pub(super) fn describe_choose_then_sacrifice(
     choose: &crate::effects::ChooseObjectsEffect,
     sacrifice: &crate::effects::SacrificeEffect,
 ) -> Option<String> {
@@ -1688,7 +1696,7 @@ fn describe_choose_then_sacrifice(
     }
 }
 
-fn describe_choose_then_destroy(
+pub(super) fn describe_choose_then_destroy(
     choose: &crate::effects::ChooseObjectsEffect,
     destroy: &crate::effects::DestroyEffect,
 ) -> Option<String> {
@@ -1715,7 +1723,7 @@ fn describe_choose_then_destroy(
     Some(format!("{chooser} {choose_verb} {chosen}. Destroy it"))
 }
 
-fn describe_choose_then_for_each_copy(
+pub(super) fn describe_choose_then_for_each_copy(
     choose: &crate::effects::ChooseObjectsEffect,
     for_each: &crate::effects::ForEachTaggedEffect,
 ) -> Option<String> {
@@ -1760,7 +1768,7 @@ fn describe_choose_then_for_each_copy(
     ))
 }
 
-fn describe_choose_then_cant_block(
+pub(super) fn describe_choose_then_cant_block(
     choose: &crate::effects::ChooseObjectsEffect,
     cant: &crate::effects::CantEffect,
 ) -> Option<String> {
@@ -1817,7 +1825,7 @@ fn describe_choose_then_cant_block(
     Some(sentence)
 }
 
-fn describe_tagged_target_then_cant_restriction(
+pub(super) fn describe_tagged_target_then_cant_restriction(
     tagged: &crate::effects::TaggedEffect,
     cant: &crate::effects::CantEffect,
 ) -> Option<String> {
@@ -1843,11 +1851,11 @@ fn describe_tagged_target_then_cant_restriction(
     Some(format!("{subject} {restriction_text}"))
 }
 
-fn tap_uses_chosen_tag(spec: &ChooseSpec, tag: &str) -> bool {
+pub(super) fn tap_uses_chosen_tag(spec: &ChooseSpec, tag: &str) -> bool {
     matches!(spec.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
 }
 
-fn describe_choose_then_tap_cost(
+pub(super) fn describe_choose_then_tap_cost(
     choose: &crate::effects::ChooseObjectsEffect,
     tap: &crate::effects::TapEffect,
 ) -> Option<String> {
@@ -1876,11 +1884,11 @@ fn describe_choose_then_tap_cost(
     ))
 }
 
-fn exile_uses_chosen_tag(spec: &ChooseSpec, tag: &str) -> bool {
+pub(super) fn exile_uses_chosen_tag(spec: &ChooseSpec, tag: &str) -> bool {
     matches!(spec.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
 }
 
-fn move_to_exile_uses_chosen_tag(
+pub(super) fn move_to_exile_uses_chosen_tag(
     move_to_zone: &crate::effects::MoveToZoneEffect,
     tag: &str,
 ) -> bool {
@@ -1888,7 +1896,7 @@ fn move_to_exile_uses_chosen_tag(
         && matches!(move_to_zone.target.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
 }
 
-fn describe_for_each_filter(filter: &ObjectFilter) -> String {
+pub(super) fn describe_for_each_filter(filter: &ObjectFilter) -> String {
     let mut base_filter = filter.clone();
     base_filter.controller = None;
 
@@ -1932,7 +1940,7 @@ fn describe_for_each_filter(filter: &ObjectFilter) -> String {
     base
 }
 
-fn describe_tagged_this_way_action(filter: &ObjectFilter) -> Option<&'static str> {
+pub(super) fn describe_tagged_this_way_action(filter: &ObjectFilter) -> Option<&'static str> {
     filter.tagged_constraints.iter().find_map(|constraint| {
         if constraint.relation != crate::filter::TaggedOpbjectRelation::IsTaggedObject {
             return None;
@@ -1959,7 +1967,7 @@ fn describe_tagged_this_way_action(filter: &ObjectFilter) -> Option<&'static str
     })
 }
 
-fn describe_each_controlled_by_iterated(filter: &ObjectFilter) -> Option<String> {
+pub(super) fn describe_each_controlled_by_iterated(filter: &ObjectFilter) -> Option<String> {
     if filter.controller != Some(PlayerFilter::IteratedPlayer) {
         return None;
     }
@@ -2012,7 +2020,7 @@ fn describe_each_controlled_by_iterated(filter: &ObjectFilter) -> Option<String>
     None
 }
 
-fn describe_for_players_damage_and_controlled_damage(
+pub(super) fn describe_for_players_damage_and_controlled_damage(
     for_players: &crate::effects::ForPlayersEffect,
 ) -> Option<String> {
     if for_players.effects.len() != 2 {
@@ -2071,7 +2079,7 @@ fn describe_for_players_damage_and_controlled_damage(
     ))
 }
 
-fn describe_for_players_reveal_top_mana_value_life_then_put_into_hand(
+pub(super) fn describe_for_players_reveal_top_mana_value_life_then_put_into_hand(
     for_players: &crate::effects::ForPlayersEffect,
 ) -> Option<String> {
     let (subject, possessive) = match for_players.filter {
@@ -2115,7 +2123,7 @@ fn describe_for_players_reveal_top_mana_value_life_then_put_into_hand(
     ))
 }
 
-fn describe_draw_for_each(draw: &crate::effects::DrawCardsEffect) -> Option<String> {
+pub(super) fn describe_draw_for_each(draw: &crate::effects::DrawCardsEffect) -> Option<String> {
     let player = describe_player_filter(&draw.player);
     let verb = player_verb(&player, "draw", "draws");
     match &draw.count {
@@ -2186,7 +2194,7 @@ fn describe_draw_for_each(draw: &crate::effects::DrawCardsEffect) -> Option<Stri
     }
 }
 
-fn describe_create_for_each_count(value: &Value) -> Option<String> {
+pub(super) fn describe_create_for_each_count(value: &Value) -> Option<String> {
     match value {
         Value::Count(filter) => Some(describe_for_each_filter(filter)),
         Value::BasicLandTypesAmong(filter) => Some(describe_basic_land_types_among(filter)),
@@ -2199,7 +2207,7 @@ fn describe_create_for_each_count(value: &Value) -> Option<String> {
     }
 }
 
-fn value_is_iterated_object_count(value: &Value) -> bool {
+pub(super) fn value_is_iterated_object_count(value: &Value) -> bool {
     let Value::Count(filter) = value else {
         return false;
     };
@@ -2209,7 +2217,7 @@ fn value_is_iterated_object_count(value: &Value) -> bool {
     })
 }
 
-fn pluralize_token_phrase(token_phrase: &str) -> String {
+pub(super) fn pluralize_token_phrase(token_phrase: &str) -> String {
     if let Some((head, tail)) = token_phrase.split_once(" token with ") {
         return format!("{head} tokens with {tail}");
     }
@@ -2222,7 +2230,7 @@ fn pluralize_token_phrase(token_phrase: &str) -> String {
     format!("{token_phrase}s")
 }
 
-fn should_render_token_count_with_where_x(value: &Value) -> bool {
+pub(super) fn should_render_token_count_with_where_x(value: &Value) -> bool {
     if matches!(
         value,
         Value::Fixed(_)
@@ -2249,7 +2257,7 @@ fn should_render_token_count_with_where_x(value: &Value) -> bool {
     rendered.chars().any(char::is_whitespace) || rendered.contains('\'')
 }
 
-fn describe_compact_token_count(value: &Value, token_name: &str) -> String {
+pub(super) fn describe_compact_token_count(value: &Value, token_name: &str) -> String {
     match value {
         Value::Fixed(1) => format!("a {token_name} token"),
         Value::Fixed(n) => format!("{n} {token_name} tokens"),
@@ -2311,7 +2319,7 @@ fn describe_compact_token_count(value: &Value, token_name: &str) -> String {
     }
 }
 
-fn describe_compact_create_token(
+pub(super) fn describe_compact_create_token(
     create_token: &crate::effects::CreateTokenEffect,
 ) -> Option<String> {
     if create_token.exile_at_end_of_combat
@@ -2355,11 +2363,11 @@ fn describe_compact_create_token(
     }
 }
 
-fn choose_exact_count(choose: &crate::effects::ChooseObjectsEffect) -> Option<usize> {
+pub(super) fn choose_exact_count(choose: &crate::effects::ChooseObjectsEffect) -> Option<usize> {
     choose.count.max.filter(|max| *max == choose.count.min)
 }
 
-fn describe_choose_selection(choose: &crate::effects::ChooseObjectsEffect) -> String {
+pub(super) fn describe_choose_selection(choose: &crate::effects::ChooseObjectsEffect) -> String {
     if choose.top_only {
         if let Some(exact) = choose_exact_count(choose) {
             if exact > 1 {
@@ -2414,7 +2422,7 @@ fn describe_choose_selection(choose: &crate::effects::ChooseObjectsEffect) -> St
     )
 }
 
-fn describe_choose_then_exile(
+pub(super) fn describe_choose_then_exile(
     choose: &crate::effects::ChooseObjectsEffect,
     exile: &crate::effects::ExileEffect,
 ) -> Option<String> {
@@ -2448,7 +2456,7 @@ fn describe_choose_then_exile(
     ))
 }
 
-fn move_to_library_uses_chosen_tag(
+pub(super) fn move_to_library_uses_chosen_tag(
     move_to_zone: &crate::effects::MoveToZoneEffect,
     tag: &str,
 ) -> bool {
@@ -2456,7 +2464,7 @@ fn move_to_library_uses_chosen_tag(
         && matches!(move_to_zone.target.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
 }
 
-fn move_to_battlefield_uses_chosen_tag(
+pub(super) fn move_to_battlefield_uses_chosen_tag(
     move_to_zone: &crate::effects::MoveToZoneEffect,
     tag: &str,
 ) -> bool {
@@ -2464,7 +2472,7 @@ fn move_to_battlefield_uses_chosen_tag(
         && matches!(move_to_zone.target.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
 }
 
-fn describe_choose_zone_origin(
+pub(super) fn describe_choose_zone_origin(
     choose: &crate::effects::ChooseObjectsEffect,
     zone_text: &str,
 ) -> String {
@@ -2478,7 +2486,7 @@ fn describe_choose_zone_origin(
     }
 }
 
-fn describe_choose_then_move_to_battlefield(
+pub(super) fn describe_choose_then_move_to_battlefield(
     choose: &crate::effects::ChooseObjectsEffect,
     move_to_zone: &crate::effects::MoveToZoneEffect,
 ) -> Option<String> {
@@ -2533,7 +2541,7 @@ fn describe_choose_then_move_to_battlefield(
     ))
 }
 
-fn describe_choose_then_move_to_library(
+pub(super) fn describe_choose_then_move_to_library(
     choose: &crate::effects::ChooseObjectsEffect,
     move_to_zone: &crate::effects::MoveToZoneEffect,
 ) -> Option<String> {
@@ -2589,7 +2597,7 @@ fn describe_choose_then_move_to_library(
     ))
 }
 
-fn describe_look_at_top_then_choose_exile(
+pub(super) fn describe_look_at_top_then_choose_exile(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     choose: &crate::effects::ChooseObjectsEffect,
     exile: &crate::effects::ExileEffect,
@@ -2600,7 +2608,7 @@ fn describe_look_at_top_then_choose_exile(
     describe_look_at_top_then_choose_exile_text(look_at_top, choose, exile.face_down)
 }
 
-fn describe_look_at_top_then_choose_move_to_exile(
+pub(super) fn describe_look_at_top_then_choose_move_to_exile(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     choose: &crate::effects::ChooseObjectsEffect,
     move_to_zone: &crate::effects::MoveToZoneEffect,
@@ -2611,7 +2619,7 @@ fn describe_look_at_top_then_choose_move_to_exile(
     describe_look_at_top_then_choose_exile_text(look_at_top, choose, false)
 }
 
-fn describe_look_at_top_then_move_to_exile(
+pub(super) fn describe_look_at_top_then_move_to_exile(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     move_to_zone: &crate::effects::MoveToZoneEffect,
 ) -> Option<String> {
@@ -2629,7 +2637,7 @@ fn describe_look_at_top_then_move_to_exile(
     ))
 }
 
-fn describe_look_at_top_then_choose_exile_text(
+pub(super) fn describe_look_at_top_then_choose_exile_text(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     choose: &crate::effects::ChooseObjectsEffect,
     face_down: bool,
@@ -2656,7 +2664,11 @@ fn describe_look_at_top_then_choose_exile_text(
     ))
 }
 
-fn describe_exile_top_of_library(player: &PlayerFilter, count: &Value, face_down: bool) -> String {
+pub(super) fn describe_exile_top_of_library(
+    player: &PlayerFilter,
+    count: &Value,
+    face_down: bool,
+) -> String {
     let owner = describe_possessive_player_filter(player);
     let face_down_suffix = if face_down { " face down" } else { "" };
     if let Value::Fixed(n) = count
@@ -2680,7 +2692,10 @@ fn describe_exile_top_of_library(player: &PlayerFilter, count: &Value, face_down
     )
 }
 
-fn for_each_reveals_tag(for_each: &crate::effects::ForEachTaggedEffect, tag: &str) -> bool {
+pub(super) fn for_each_reveals_tag(
+    for_each: &crate::effects::ForEachTaggedEffect,
+    tag: &str,
+) -> bool {
     if for_each.tag.as_str() != tag || for_each.effects.len() != 1 {
         return false;
     }
@@ -2690,7 +2705,7 @@ fn for_each_reveals_tag(for_each: &crate::effects::ForEachTaggedEffect, tag: &st
     )
 }
 
-fn for_each_tagged_for_compaction<'a>(
+pub(super) fn for_each_tagged_for_compaction<'a>(
     effect: &'a Effect,
 ) -> Option<(
     Option<&'a crate::effects::WithIdEffect>,
@@ -2709,7 +2724,10 @@ fn for_each_tagged_for_compaction<'a>(
     None
 }
 
-fn for_each_moves_tag_to_hand(for_each: &crate::effects::ForEachTaggedEffect, tag: &str) -> bool {
+pub(super) fn for_each_moves_tag_to_hand(
+    for_each: &crate::effects::ForEachTaggedEffect,
+    tag: &str,
+) -> bool {
     if for_each.tag.as_str() != tag || for_each.effects.len() != 1 {
         return false;
     }
@@ -2721,7 +2739,7 @@ fn for_each_moves_tag_to_hand(for_each: &crate::effects::ForEachTaggedEffect, ta
     )
 }
 
-fn filter_is_membership_test_for_chosen(
+pub(super) fn filter_is_membership_test_for_chosen(
     filter: &crate::filter::ObjectFilter,
     chosen_tag: &str,
 ) -> bool {
@@ -2734,7 +2752,7 @@ fn filter_is_membership_test_for_chosen(
     }) && chosen_tag.len() > 0
 }
 
-fn for_each_moves_unselected_to_zone(
+pub(super) fn for_each_moves_unselected_to_zone(
     for_each: &crate::effects::ForEachTaggedEffect,
     looked_tag: &str,
     chosen_tag: &str,
@@ -2773,7 +2791,7 @@ fn for_each_moves_unselected_to_zone(
     )
 }
 
-fn for_each_moves_unselected_to_library_bottom(
+pub(super) fn for_each_moves_unselected_to_library_bottom(
     for_each: &crate::effects::ForEachTaggedEffect,
     looked_tag: &str,
     chosen_tag: &str,
@@ -2781,7 +2799,7 @@ fn for_each_moves_unselected_to_library_bottom(
     for_each_moves_unselected_to_zone(for_each, looked_tag, chosen_tag, Zone::Library)
 }
 
-fn describe_choose_filter_from_looked_cards(
+pub(super) fn describe_choose_filter_from_looked_cards(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     choose: &crate::effects::ChooseObjectsEffect,
 ) -> Option<String> {
@@ -2838,7 +2856,7 @@ fn describe_choose_filter_from_looked_cards(
     Some(with_indefinite_article(&card_desc))
 }
 
-fn describe_look_at_top_then_reveal_put_into_hand_rest_bottom(
+pub(super) fn describe_look_at_top_then_reveal_put_into_hand_rest_bottom(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     choose: &crate::effects::ChooseObjectsEffect,
     reveal: Option<&crate::effects::ForEachTaggedEffect>,
@@ -2878,7 +2896,7 @@ fn describe_look_at_top_then_reveal_put_into_hand_rest_bottom(
     ))
 }
 
-fn describe_look_at_top_then_put_into_hand_rest_graveyard(
+pub(super) fn describe_look_at_top_then_put_into_hand_rest_graveyard(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     reveal_top: Option<&crate::effects::RevealTaggedEffect>,
     choose: &crate::effects::ChooseObjectsEffect,
@@ -2935,7 +2953,7 @@ fn describe_look_at_top_then_put_into_hand_rest_graveyard(
     ))
 }
 
-fn describe_if_didnt_put_card_into_hand_this_way(
+pub(super) fn describe_if_didnt_put_card_into_hand_this_way(
     chooser: &PlayerFilter,
     move_to_hand_id: crate::effect::EffectId,
     if_effect: &crate::effects::IfEffect,
@@ -2963,7 +2981,7 @@ fn describe_if_didnt_put_card_into_hand_this_way(
     Some(format!("{condition}, {then_text}"))
 }
 
-fn describe_look_at_top_then_reveal_put_into_hand_rest_bottom_then_if_not_into_hand(
+pub(super) fn describe_look_at_top_then_reveal_put_into_hand_rest_bottom_then_if_not_into_hand(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     choose: &crate::effects::ChooseObjectsEffect,
     reveal: &crate::effects::ForEachTaggedEffect,
@@ -2987,7 +3005,7 @@ fn describe_look_at_top_then_reveal_put_into_hand_rest_bottom_then_if_not_into_h
     Some(format!("{base}. {follow_up}"))
 }
 
-fn for_each_moves_matching_to_hand_else_graveyard<'a>(
+pub(super) fn for_each_moves_matching_to_hand_else_graveyard<'a>(
     for_each: &'a crate::effects::ForEachTaggedEffect,
     looked_tag: &str,
 ) -> Option<&'a crate::filter::ObjectFilter> {
@@ -3017,7 +3035,7 @@ fn for_each_moves_matching_to_hand_else_graveyard<'a>(
     Some(filter)
 }
 
-fn describe_look_at_top_then_reveal_put_matching_into_hand_rest_graveyard(
+pub(super) fn describe_look_at_top_then_reveal_put_matching_into_hand_rest_graveyard(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     reveal_tagged: &crate::effects::RevealTaggedEffect,
     distribute: &crate::effects::ForEachTaggedEffect,
@@ -3037,7 +3055,7 @@ fn describe_look_at_top_then_reveal_put_matching_into_hand_rest_graveyard(
     ))
 }
 
-fn describe_look_count_and_noun(count: &Value) -> (String, &'static str, bool) {
+pub(super) fn describe_look_count_and_noun(count: &Value) -> (String, &'static str, bool) {
     if let Value::Fixed(n) = count
         && *n >= 0
     {
@@ -3051,7 +3069,7 @@ fn describe_look_count_and_noun(count: &Value) -> (String, &'static str, bool) {
     (describe_value(count), "cards", false)
 }
 
-fn describe_draw_then_discard(
+pub(super) fn describe_draw_then_discard(
     draw: &crate::effects::DrawCardsEffect,
     discard: &crate::effects::DiscardEffect,
 ) -> Option<String> {
@@ -3072,7 +3090,7 @@ fn describe_draw_then_discard(
     Some(text)
 }
 
-fn describe_mill_then_may_return(
+pub(super) fn describe_mill_then_may_return(
     mill: &crate::effects::MillEffect,
     may: &crate::effects::MayEffect,
 ) -> Option<String> {
@@ -3105,7 +3123,7 @@ fn describe_mill_then_may_return(
     Some(format!("{mill_clause}, then {player} may {return_clause}"))
 }
 
-fn describe_may_search_library_and_or_nonlibrary(
+pub(super) fn describe_may_search_library_and_or_nonlibrary(
     may: &crate::effects::MayEffect,
 ) -> Option<String> {
     fn downcast_search_library<'a>(
@@ -3244,7 +3262,7 @@ fn describe_may_search_library_and_or_nonlibrary(
     Some(text)
 }
 
-fn describe_gain_life_then_scry(
+pub(super) fn describe_gain_life_then_scry(
     gain: &crate::effects::GainLifeEffect,
     scry: &crate::effects::ScryEffect,
 ) -> Option<String> {
@@ -3277,7 +3295,7 @@ fn describe_gain_life_then_scry(
     ))
 }
 
-fn describe_scry_then_draw(
+pub(super) fn describe_scry_then_draw(
     scry: &crate::effects::ScryEffect,
     draw: &crate::effects::DrawCardsEffect,
 ) -> Option<String> {
@@ -3302,7 +3320,7 @@ fn describe_scry_then_draw(
     ))
 }
 
-fn describe_where_x_basis(value: &Value) -> Option<String> {
+pub(super) fn describe_where_x_basis(value: &Value) -> Option<String> {
     match value {
         Value::Count(filter) => Some(format!(
             "the number of {}",
@@ -3330,7 +3348,7 @@ fn describe_where_x_basis(value: &Value) -> Option<String> {
     }
 }
 
-fn describe_deal_damage_then_gain_life(
+pub(super) fn describe_deal_damage_then_gain_life(
     deal: &crate::effects::DealDamageEffect,
     gain: &crate::effects::GainLifeEffect,
 ) -> Option<String> {
@@ -3352,7 +3370,7 @@ fn describe_deal_damage_then_gain_life(
     ))
 }
 
-fn describe_lose_life_then_gain_life(
+pub(super) fn describe_lose_life_then_gain_life(
     lose: &crate::effects::LoseLifeEffect,
     gain: &crate::effects::GainLifeEffect,
 ) -> Option<String> {
@@ -3375,7 +3393,7 @@ fn describe_lose_life_then_gain_life(
     ))
 }
 
-fn describe_with_id_then_if(
+pub(super) fn describe_with_id_then_if(
     with_id: &crate::effects::WithIdEffect,
     if_effect: &crate::effects::IfEffect,
 ) -> Option<String> {
@@ -3445,7 +3463,7 @@ fn describe_with_id_then_if(
     }
 }
 
-fn describe_with_id_then_reflexive_trigger(
+pub(super) fn describe_with_id_then_reflexive_trigger(
     with_id: &crate::effects::WithIdEffect,
     reflexive: &crate::effects::ReflexiveTriggerEffect,
 ) -> Option<String> {
@@ -3490,7 +3508,7 @@ fn describe_with_id_then_reflexive_trigger(
     Some(format!("{setup}. {condition}, {triggered}"))
 }
 
-fn describe_with_id_then_choose_new_targets(
+pub(super) fn describe_with_id_then_choose_new_targets(
     with_id: &crate::effects::WithIdEffect,
     choose_new: &crate::effects::ChooseNewTargetsEffect,
 ) -> Option<String> {
@@ -3530,7 +3548,9 @@ enum SearchDestination {
     LibraryTop,
 }
 
-fn describe_search_origin_zones(choose: &crate::effects::ChooseObjectsEffect) -> Option<String> {
+pub(super) fn describe_search_origin_zones(
+    choose: &crate::effects::ChooseObjectsEffect,
+) -> Option<String> {
     let zones = choose.search_zones();
     if zones.is_empty() {
         return None;
@@ -3574,7 +3594,7 @@ fn describe_search_origin_zones(choose: &crate::effects::ChooseObjectsEffect) ->
     Some(zone_text)
 }
 
-fn describe_search_choose_for_each(
+pub(super) fn describe_search_choose_for_each(
     choose: &crate::effects::ChooseObjectsEffect,
     for_each: &crate::effects::ForEachTaggedEffect,
     shuffle: Option<&crate::effects::ShuffleLibraryEffect>,
@@ -3819,7 +3839,9 @@ fn describe_search_choose_for_each(
     Some(text)
 }
 
-fn describe_search_sequence(sequence: &crate::effects::SequenceEffect) -> Option<String> {
+pub(super) fn describe_search_sequence(
+    sequence: &crate::effects::SequenceEffect,
+) -> Option<String> {
     if sequence.effects.len() < 2 || sequence.effects.len() > 3 {
         return None;
     }
@@ -3845,7 +3867,9 @@ fn describe_search_sequence(sequence: &crate::effects::SequenceEffect) -> Option
     None
 }
 
-fn describe_reveal_until_sequence(sequence: &crate::effects::SequenceEffect) -> Option<String> {
+pub(super) fn describe_reveal_until_sequence(
+    sequence: &crate::effects::SequenceEffect,
+) -> Option<String> {
     if sequence.effects.len() != 3 {
         return None;
     }
@@ -3891,11 +3915,13 @@ fn describe_reveal_until_sequence(sequence: &crate::effects::SequenceEffect) -> 
     ))
 }
 
-fn describe_effect(effect: &Effect) -> String {
+pub(super) fn describe_effect(effect: &Effect) -> String {
     with_effect_render_depth(|| describe_effect_impl(effect))
 }
 
-fn describe_tap_or_untap_mode(choose_mode: &crate::effects::ChooseModeEffect) -> Option<String> {
+pub(super) fn describe_tap_or_untap_mode(
+    choose_mode: &crate::effects::ChooseModeEffect,
+) -> Option<String> {
     if choose_mode.modes.len() != 2 {
         return None;
     }
@@ -3960,7 +3986,7 @@ fn describe_tap_or_untap_mode(choose_mode: &crate::effects::ChooseModeEffect) ->
     None
 }
 
-fn describe_put_or_remove_counter_mode(
+pub(super) fn describe_put_or_remove_counter_mode(
     choose_mode: &crate::effects::ChooseModeEffect,
 ) -> Option<String> {
     if choose_mode.modes.len() != 2 {
@@ -4045,7 +4071,7 @@ fn describe_put_or_remove_counter_mode(
     Some(format!("{put_clause} or {remove_clause}"))
 }
 
-fn describe_conditional_damage_instead(
+pub(super) fn describe_conditional_damage_instead(
     conditional: &crate::effects::ConditionalEffect,
 ) -> Option<String> {
     if conditional.if_true.len() != 1 || conditional.if_false.len() != 1 {
@@ -4070,7 +4096,7 @@ fn describe_conditional_damage_instead(
     ))
 }
 
-fn describe_conditional_choose_both_instead(
+pub(super) fn describe_conditional_choose_both_instead(
     conditional: &crate::effects::ConditionalEffect,
 ) -> Option<String> {
     if conditional.if_true.len() != 1 || conditional.if_false.len() != 1 {
@@ -4113,7 +4139,7 @@ fn describe_conditional_choose_both_instead(
     Some(out)
 }
 
-fn describe_effect_impl(effect: &Effect) -> String {
+pub(super) fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(sequence) = effect.downcast_ref::<crate::effects::SequenceEffect>() {
         if let Some(compact) = describe_reveal_until_sequence(sequence) {
             return compact;
@@ -7384,7 +7410,7 @@ fn describe_effect_impl(effect: &Effect) -> String {
     "Unsupported effect".to_string()
 }
 
-fn describe_activation_timing_clause(timing: &ActivationTiming) -> Option<&'static str> {
+pub(super) fn describe_activation_timing_clause(timing: &ActivationTiming) -> Option<&'static str> {
     match timing {
         ActivationTiming::AnyTime => None,
         ActivationTiming::SorcerySpeed => Some("Activate only as a sorcery"),
@@ -7395,7 +7421,7 @@ fn describe_activation_timing_clause(timing: &ActivationTiming) -> Option<&'stat
     }
 }
 
-fn normalize_activation_restriction_clause(raw: &str) -> String {
+pub(super) fn normalize_activation_restriction_clause(raw: &str) -> String {
     let mut clause = raw.trim().trim_end_matches('.').to_string();
     if clause.is_empty() {
         return clause;
@@ -7412,7 +7438,7 @@ fn normalize_activation_restriction_clause(raw: &str) -> String {
     clause
 }
 
-fn collect_activation_restriction_clauses(
+pub(super) fn collect_activation_restriction_clauses(
     timing: &ActivationTiming,
     additional_restrictions: &[String],
 ) -> Vec<String> {
@@ -7431,7 +7457,7 @@ fn collect_activation_restriction_clauses(
     clauses
 }
 
-fn push_activation_restriction_clause(clauses: &mut Vec<String>, clause: String) {
+pub(super) fn push_activation_restriction_clause(clauses: &mut Vec<String>, clause: String) {
     if clause.is_empty() {
         return;
     }
@@ -7454,7 +7480,7 @@ fn push_activation_restriction_clause(clauses: &mut Vec<String>, clause: String)
     clauses.push(clause);
 }
 
-fn activation_clause_is_more_specific(candidate: &str, base: &str) -> bool {
+pub(super) fn activation_clause_is_more_specific(candidate: &str, base: &str) -> bool {
     if candidate.len() <= base.len() || !candidate.starts_with(base) {
         return false;
     }
@@ -7467,7 +7493,7 @@ fn activation_clause_is_more_specific(candidate: &str, base: &str) -> bool {
         || tail.starts_with("unless ")
 }
 
-fn join_activation_restriction_clauses(clauses: &[String]) -> String {
+pub(super) fn join_activation_restriction_clauses(clauses: &[String]) -> String {
     let mut iter = clauses.iter();
     let Some(first) = iter.next() else {
         return String::new();
@@ -7485,7 +7511,7 @@ fn join_activation_restriction_clauses(clauses: &[String]) -> String {
     line
 }
 
-fn describe_keyword_ability(ability: &Ability) -> Option<String> {
+pub(super) fn describe_keyword_ability(ability: &Ability) -> Option<String> {
     let raw_text = ability.text.as_deref()?.trim();
     let text = raw_text.to_ascii_lowercase();
     let words = text.split_whitespace().collect::<Vec<_>>();
@@ -7639,11 +7665,11 @@ fn describe_keyword_ability(ability: &Ability) -> Option<String> {
     None
 }
 
-fn trim_cycling_punctuation(word: &str) -> &str {
+pub(super) fn trim_cycling_punctuation(word: &str) -> &str {
     word.trim_matches(|ch: char| matches!(ch, ',' | '.' | ';'))
 }
 
-fn render_cycling_cost_token(word: &str) -> String {
+pub(super) fn render_cycling_cost_token(word: &str) -> String {
     let upper = word.to_ascii_uppercase();
     if upper.starts_with('{') && upper.ends_with('}') {
         upper
@@ -7652,7 +7678,7 @@ fn render_cycling_cost_token(word: &str) -> String {
     }
 }
 
-fn is_cycling_cost_word(word: &str) -> bool {
+pub(super) fn is_cycling_cost_word(word: &str) -> bool {
     !word.is_empty()
         && word.chars().all(|ch| {
             ch.is_ascii_digit()
@@ -7663,7 +7689,7 @@ fn is_cycling_cost_word(word: &str) -> bool {
         })
 }
 
-fn choices_are_simple_targets(choices: &[ChooseSpec]) -> bool {
+pub(super) fn choices_are_simple_targets(choices: &[ChooseSpec]) -> bool {
     fn is_simple_target(choice: &ChooseSpec) -> bool {
         match choice {
             ChooseSpec::Target(_) | ChooseSpec::AnyTarget | ChooseSpec::PlayerOrPlaneswalker(_) => {
@@ -7677,7 +7703,7 @@ fn choices_are_simple_targets(choices: &[ChooseSpec]) -> bool {
     choices.iter().all(is_simple_target)
 }
 
-fn flatten_condition_and_expr(
+pub(super) fn flatten_condition_and_expr(
     condition: &crate::ConditionExpr,
     out: &mut Vec<crate::ConditionExpr>,
 ) {
@@ -7690,7 +7716,9 @@ fn flatten_condition_and_expr(
     }
 }
 
-fn fold_condition_exprs(conditions: Vec<crate::ConditionExpr>) -> Option<crate::ConditionExpr> {
+pub(super) fn fold_condition_exprs(
+    conditions: Vec<crate::ConditionExpr>,
+) -> Option<crate::ConditionExpr> {
     let mut iter = conditions.into_iter();
     let first = iter.next()?;
     Some(iter.fold(first, |acc, next| {
@@ -7698,7 +7726,7 @@ fn fold_condition_exprs(conditions: Vec<crate::ConditionExpr>) -> Option<crate::
     }))
 }
 
-fn split_trigger_intervening_if(
+pub(super) fn split_trigger_intervening_if(
     condition: &crate::ConditionExpr,
 ) -> (Option<crate::ConditionExpr>, Option<u32>) {
     let mut flat = Vec::new();
@@ -7721,7 +7749,7 @@ fn split_trigger_intervening_if(
     (fold_condition_exprs(non_limit), max_times_each_turn)
 }
 
-fn describe_ability(
+pub(super) fn describe_ability(
     index: usize,
     ability: &Ability,
     subject: &str,
@@ -8024,7 +8052,7 @@ fn describe_ability(
     }
 }
 
-fn rewrite_damage_phrases_for_permanent_abilities(
+pub(super) fn rewrite_damage_phrases_for_permanent_abilities(
     effect_text: &str,
     subject: &str,
     rewrite_it_deals: bool,
@@ -8053,7 +8081,7 @@ fn rewrite_damage_phrases_for_permanent_abilities(
     out
 }
 
-fn card_self_reference_phrase_for_card(card: &crate::card::Card) -> &'static str {
+pub(super) fn card_self_reference_phrase_for_card(card: &crate::card::Card) -> &'static str {
     if card.is_instant() || card.is_sorcery() {
         return "this spell";
     }
@@ -8091,11 +8119,11 @@ fn card_self_reference_phrase_for_card(card: &crate::card::Card) -> &'static str
     }
 }
 
-fn subject_for_card(card: &crate::card::Card) -> &'static str {
+pub(super) fn subject_for_card(card: &crate::card::Card) -> &'static str {
     card_self_reference_phrase_for_card(card)
 }
 
-fn extract_activated_x_is_clause(text: Option<&str>) -> Option<String> {
+pub(super) fn extract_activated_x_is_clause(text: Option<&str>) -> Option<String> {
     let text = text?.trim();
     let lower = text.to_ascii_lowercase();
     let idx = lower.find("x is ")?;
@@ -8107,7 +8135,7 @@ fn extract_activated_x_is_clause(text: Option<&str>) -> Option<String> {
     }
 }
 
-fn inject_x_clause_into_modal_heading(line: &mut String, x_clause: &str) -> bool {
+pub(super) fn inject_x_clause_into_modal_heading(line: &mut String, x_clause: &str) -> bool {
     let direct_replacements = vec![
         ("Choose one —\n• ", format!("Choose one. {x_clause}\n• ")),
         ("Choose one -\n• ", format!("Choose one. {x_clause}\n• ")),
@@ -8164,7 +8192,7 @@ fn inject_x_clause_into_modal_heading(line: &mut String, x_clause: &str) -> bool
     false
 }
 
-fn describe_mana_activation_condition(condition: &crate::ConditionExpr) -> String {
+pub(super) fn describe_mana_activation_condition(condition: &crate::ConditionExpr) -> String {
     fn flatten(condition: &crate::ConditionExpr, out: &mut Vec<crate::ConditionExpr>) {
         match condition {
             crate::ConditionExpr::And(left, right) => {
@@ -8275,7 +8303,7 @@ fn describe_mana_activation_condition(condition: &crate::ConditionExpr) -> Strin
 }
 
 #[allow(dead_code)]
-fn collapse_redundant_keyword_tail(line: &str) -> String {
+pub(super) fn collapse_redundant_keyword_tail(line: &str) -> String {
     let mut normalized = line.trim().to_string();
     loop {
         let lower = normalized.to_ascii_lowercase();
@@ -8329,7 +8357,7 @@ fn collapse_redundant_keyword_tail(line: &str) -> String {
     normalized
 }
 
-fn describe_enchant_filter(filter: &ObjectFilter) -> String {
+pub(super) fn describe_enchant_filter(filter: &ObjectFilter) -> String {
     let aura_creature_gate = filter.card_types.len() == 1
         && filter.card_types[0] == CardType::Creature
         && filter.subtypes.len() == 1
@@ -8350,7 +8378,7 @@ fn describe_enchant_filter(filter: &ObjectFilter) -> String {
     }
 }
 
-fn ability_can_render_as_keyword_group(ability: &Ability) -> bool {
+pub(super) fn ability_can_render_as_keyword_group(ability: &Ability) -> bool {
     match &ability.kind {
         AbilityKind::Static(static_ability) => {
             static_ability.is_keyword()
@@ -8362,7 +8390,7 @@ fn ability_can_render_as_keyword_group(ability: &Ability) -> bool {
     }
 }
 
-fn describe_additional_cost_effects(effects: &[Effect]) -> String {
+pub(super) fn describe_additional_cost_effects(effects: &[Effect]) -> String {
     if effects.len() == 1
         && let Some(choose_mode) = effects[0].downcast_ref::<crate::effects::ChooseModeEffect>()
     {
@@ -8399,7 +8427,7 @@ fn describe_additional_cost_effects(effects: &[Effect]) -> String {
     describe_effect_list(effects)
 }
 
-fn describe_alternative_cost_effects(cost_effects: &[Effect]) -> String {
+pub(super) fn describe_alternative_cost_effects(cost_effects: &[Effect]) -> String {
     if cost_effects.len() == 2
         && let Some(choose) = cost_effects[0].downcast_ref::<crate::effects::ChooseObjectsEffect>()
         && let Some(return_to_hand) =
@@ -8464,7 +8492,7 @@ fn describe_alternative_cost_effects(cost_effects: &[Effect]) -> String {
     }
 }
 
-fn describe_exile_from_hand_as_cost_phrase(
+pub(super) fn describe_exile_from_hand_as_cost_phrase(
     exile_hand: &crate::effects::ExileFromHandAsCostEffect,
 ) -> String {
     let count = exile_hand.count.max(1);
@@ -8485,7 +8513,7 @@ fn describe_exile_from_hand_as_cost_phrase(
     format!("exile {amount} {color_prefix}{card_word} from your hand")
 }
 
-fn describe_imprint_from_hand_phrase(
+pub(super) fn describe_imprint_from_hand_phrase(
     imprint: &crate::effects::cards::ImprintFromHandEffect,
 ) -> String {
     let mut card_text = imprint.filter.description();
@@ -8497,7 +8525,7 @@ fn describe_imprint_from_hand_phrase(
     format!("imprint, you may exile {card_text}")
 }
 
-fn describe_optional_cost_line(cost: &crate::cost::OptionalCost) -> String {
+pub(super) fn describe_optional_cost_line(cost: &crate::cost::OptionalCost) -> String {
     let label = cost.label;
     let cost_text = describe_cost_list(cost.cost.costs());
     match label {

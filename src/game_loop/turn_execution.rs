@@ -1,3 +1,5 @@
+use super::*;
+
 // ============================================================================
 // Full Turn Execution
 // ============================================================================
@@ -82,7 +84,7 @@ pub fn generate_and_queue_step_triggers(game: &mut GameState, trigger_queue: &mu
 }
 
 /// Generate damage trigger events from combat damage.
-fn generate_damage_triggers(
+pub(super) fn generate_damage_triggers(
     game: &mut GameState,
     events: &[CombatDamageEvent],
     trigger_queue: &mut TriggerQueue,

@@ -1,4 +1,6 @@
-fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String {
+use super::*;
+
+pub(super) fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String {
     let oracle_lower = def.card.oracle_text.to_ascii_lowercase();
     let oracle_has_fall_greatest_power =
         oracle_lower.contains("with the greatest power among creatures target opponent controls");
@@ -158,7 +160,7 @@ fn normalize_compiled_line_post_pass(def: &CardDefinition, line: &str) -> String
     normalized
 }
 
-fn normalize_gain_life_plus_phrase(text: &str) -> String {
+pub(super) fn normalize_gain_life_plus_phrase(text: &str) -> String {
     let trimmed = text.trim();
     if let Some((left, right)) = split_once_ascii_ci(trimmed, " and you gain ")
         && left
@@ -179,7 +181,7 @@ fn normalize_gain_life_plus_phrase(text: &str) -> String {
     trimmed.to_string()
 }
 
-fn normalize_each_opponent_dynamic_life_exchange(text: &str) -> String {
+pub(super) fn normalize_each_opponent_dynamic_life_exchange(text: &str) -> String {
     let trimmed = text.trim();
 
     if let Some((prefix, rest)) = trimmed.split_once(", for each opponent, that player loses ")
@@ -204,7 +206,7 @@ fn normalize_each_opponent_dynamic_life_exchange(text: &str) -> String {
     trimmed.to_string()
 }
 
-fn normalize_for_each_clause_surface(text: String) -> String {
+pub(super) fn normalize_for_each_clause_surface(text: String) -> String {
     let normalize_for_each_subject = |subject: &str| {
         subject
             .trim()
@@ -603,7 +605,10 @@ fn normalize_for_each_clause_surface(text: String) -> String {
     original
 }
 
-fn normalize_triggered_self_deals_damage_phrase(def: &CardDefinition, text: &str) -> String {
+pub(super) fn normalize_triggered_self_deals_damage_phrase(
+    def: &CardDefinition,
+    text: &str,
+) -> String {
     if let Some(rest) = strip_prefix_ascii_ci(text, "Whenever creature attacks, deal ")
         && let Some(amount) = strip_suffix_ascii_ci(rest, " damage to it.")
             .or_else(|| strip_suffix_ascii_ci(rest, " damage to it"))
@@ -614,7 +619,10 @@ fn normalize_triggered_self_deals_damage_phrase(def: &CardDefinition, text: &str
     text.to_string()
 }
 
-fn normalize_each_opponent_life_exchange_clause(loss: &str, gain: &str) -> Option<String> {
+pub(super) fn normalize_each_opponent_life_exchange_clause(
+    loss: &str,
+    gain: &str,
+) -> Option<String> {
     let loss = loss.trim().trim_end_matches('.');
     let gain = gain.trim().trim_end_matches('.');
 
@@ -637,7 +645,7 @@ fn normalize_each_opponent_life_exchange_clause(loss: &str, gain: &str) -> Optio
     ))
 }
 
-fn normalize_known_low_tail_phrase(text: &str) -> String {
+pub(super) fn normalize_known_low_tail_phrase(text: &str) -> String {
     let trimmed = text.trim();
 
     if let Some((prefix, rest)) =
@@ -919,7 +927,7 @@ fn normalize_known_low_tail_phrase(text: &str) -> String {
     trimmed.to_string()
 }
 
-fn normalize_stubborn_surface_chain(text: &str) -> String {
+pub(super) fn normalize_stubborn_surface_chain(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.eq_ignore_ascii_case("Draw two cards and you lose 2 life. you mill 2 cards.")
         || trimmed.eq_ignore_ascii_case("Draw two cards and you lose 2 life. you mill 2 cards")
@@ -937,7 +945,7 @@ fn normalize_stubborn_surface_chain(text: &str) -> String {
     trimmed.to_string()
 }
 
-fn normalize_spell_self_exile(def: &CardDefinition, text: &str) -> String {
+pub(super) fn normalize_spell_self_exile(def: &CardDefinition, text: &str) -> String {
     let mut normalized = text.to_string();
     let card_name = def.card.name.trim();
     if card_name.is_empty() {
@@ -989,7 +997,7 @@ fn normalize_spell_self_exile(def: &CardDefinition, text: &str) -> String {
     normalized
 }
 
-fn normalize_cost_subject_for_card(def: &CardDefinition, text: &str) -> String {
+pub(super) fn normalize_cost_subject_for_card(def: &CardDefinition, text: &str) -> String {
     let Some((cost, effect)) = text.split_once(": ") else {
         return text.to_string();
     };
@@ -1004,7 +1012,7 @@ fn normalize_cost_subject_for_card(def: &CardDefinition, text: &str) -> String {
     format!("{cost}: {subject} deals {rest}")
 }
 
-fn normalize_compiled_post_pass_phrase(text: &str) -> String {
+pub(super) fn normalize_compiled_post_pass_phrase(text: &str) -> String {
     let mut normalized = text.trim().to_string();
     if normalized.is_empty() {
         return normalized;
@@ -1028,7 +1036,7 @@ fn normalize_compiled_post_pass_phrase(text: &str) -> String {
     normalize_compiled_post_pass_effect(&normalized)
 }
 
-fn normalize_you_cast_spell_you_dont_own_counter_line(text: &str) -> Option<String> {
+pub(super) fn normalize_you_cast_spell_you_dont_own_counter_line(text: &str) -> Option<String> {
     let (head, rest) = split_once_ascii_ci(text, "Whenever you cast a ")?;
     let (owner_phrase, rest) = split_once_ascii_ci(rest, ", for each ")?;
     let owner_phrase = owner_phrase.trim();
@@ -1057,7 +1065,7 @@ fn normalize_you_cast_spell_you_dont_own_counter_line(text: &str) -> Option<Stri
     Some(rewritten)
 }
 
-fn normalize_one_or_more_combat_damage_treasure_line(text: &str) -> Option<String> {
+pub(super) fn normalize_one_or_more_combat_damage_treasure_line(text: &str) -> Option<String> {
     let (head, rest) = split_once_ascii_ci(text, "Whenever one or more ")?;
     let marker = " deal combat damage to a player: Exile card in that player's library. If that doesn't happen, create a Treasure token";
     let (subject, tail) = split_once_ascii_ci(rest, marker)?;
@@ -1077,7 +1085,7 @@ fn normalize_one_or_more_combat_damage_treasure_line(text: &str) -> Option<Strin
     Some(rewritten)
 }
 
-fn normalize_create_one_under_control_list(clauses: &[&str]) -> Option<String> {
+pub(super) fn normalize_create_one_under_control_list(clauses: &[&str]) -> Option<String> {
     if clauses.len() < 2 {
         return None;
     }
@@ -1091,7 +1099,7 @@ fn normalize_create_one_under_control_list(clauses: &[&str]) -> Option<String> {
     Some(format!("Create {}.", join_with_and(&items)))
 }
 
-fn rewrite_return_with_counters_on_it_sequence(text: &str) -> Option<String> {
+pub(super) fn rewrite_return_with_counters_on_it_sequence(text: &str) -> Option<String> {
     let trimmed = text.trim().trim_end_matches('.');
     let mut clauses = trimmed
         .split(". ")
@@ -1194,7 +1202,7 @@ fn rewrite_return_with_counters_on_it_sequence(text: &str) -> Option<String> {
     None
 }
 
-fn chapter_number_to_roman(chapter: u32) -> Option<&'static str> {
+pub(super) fn chapter_number_to_roman(chapter: u32) -> Option<&'static str> {
     match chapter {
         1 => Some("I"),
         2 => Some("II"),
@@ -1210,7 +1218,7 @@ fn chapter_number_to_roman(chapter: u32) -> Option<&'static str> {
     }
 }
 
-fn rewrite_saga_chapter_prefix(text: &str) -> Option<String> {
+pub(super) fn rewrite_saga_chapter_prefix(text: &str) -> Option<String> {
     let trimmed = text.trim();
     if let Some(rest) = trimmed.strip_prefix("Chapter ")
         && let Some((chapter, tail)) = rest.split_once(':')
@@ -1235,7 +1243,7 @@ fn rewrite_saga_chapter_prefix(text: &str) -> Option<String> {
     None
 }
 
-fn rewrite_granted_triggered_ability_quote(text: &str) -> Option<String> {
+pub(super) fn rewrite_granted_triggered_ability_quote(text: &str) -> Option<String> {
     fn insert_trigger_comma_if_missing(body: &str) -> String {
         for verb in [
             " draw ",
@@ -1375,7 +1383,7 @@ fn rewrite_granted_triggered_ability_quote(text: &str) -> Option<String> {
     None
 }
 
-fn normalize_conditional_target_player_pronouns(text: &str) -> String {
+pub(super) fn normalize_conditional_target_player_pronouns(text: &str) -> String {
     // Some oracles refer back to a previously-chosen target player inside an "If ..." clause
     // using "that player" rather than repeating "target player/opponent".
     if text.contains('•') {
@@ -1385,7 +1393,7 @@ fn normalize_conditional_target_player_pronouns(text: &str) -> String {
     normalize_conditional_target_player_pronoun(&normalized, "target player")
 }
 
-fn normalize_conditional_target_player_pronoun(text: &str, phrase: &str) -> String {
+pub(super) fn normalize_conditional_target_player_pronoun(text: &str, phrase: &str) -> String {
     let lower = text.to_ascii_lowercase();
     let marker = format!(", {phrase}");
     let Some(pos) = lower.find(&marker) else {
@@ -1420,7 +1428,7 @@ fn normalize_conditional_target_player_pronoun(text: &str, phrase: &str) -> Stri
     rewritten
 }
 
-fn normalize_compiled_post_pass_effect(text: &str) -> String {
+pub(super) fn normalize_compiled_post_pass_effect(text: &str) -> String {
     let mut normalized = text.trim().to_string();
     if normalized.is_empty() {
         return normalized;
@@ -3318,7 +3326,7 @@ fn normalize_compiled_post_pass_effect(text: &str) -> String {
     normalized
 }
 
-fn normalize_for_each_opponent_clause_chain(text: &str) -> Option<String> {
+pub(super) fn normalize_for_each_opponent_clause_chain(text: &str) -> Option<String> {
     let marker = "for each opponent, that player ";
     let idx = text.to_ascii_lowercase().find(marker)?;
     let prefix = &text[..idx];
@@ -3408,7 +3416,7 @@ fn normalize_for_each_opponent_clause_chain(text: &str) -> Option<String> {
     None
 }
 
-fn normalize_for_each_player_draw_discard_chain(text: &str) -> Option<String> {
+pub(super) fn normalize_for_each_player_draw_discard_chain(text: &str) -> Option<String> {
     let lower = text.to_ascii_lowercase();
     let for_each_marker = "for each player, that player draws ";
     let plain_marker = "each player draws ";
@@ -3444,7 +3452,7 @@ fn normalize_for_each_player_draw_discard_chain(text: &str) -> Option<String> {
     ))
 }
 
-fn normalize_for_each_player_discard_draw_chain(text: &str) -> Option<String> {
+pub(super) fn normalize_for_each_player_discard_draw_chain(text: &str) -> Option<String> {
     let lower = text.to_ascii_lowercase();
     let for_each_marker = "for each player, that player discards ";
     let plain_marker = "each player discards ";
@@ -3475,7 +3483,7 @@ fn normalize_for_each_player_discard_draw_chain(text: &str) -> Option<String> {
     ))
 }
 
-fn parse_card_count_with_rest(text: &str) -> Option<(&str, &str)> {
+pub(super) fn parse_card_count_with_rest(text: &str) -> Option<(&str, &str)> {
     if let Some((count, rest)) = text.split_once(" cards") {
         return Some((count.trim(), rest));
     }
@@ -3485,7 +3493,7 @@ fn parse_card_count_with_rest(text: &str) -> Option<(&str, &str)> {
     None
 }
 
-fn render_card_count_phrase(raw: &str) -> String {
+pub(super) fn render_card_count_phrase(raw: &str) -> String {
     let count = normalize_count_token(raw);
     if matches!(count.as_str(), "a" | "an" | "one") {
         "a card".to_string()
@@ -3494,7 +3502,7 @@ fn render_card_count_phrase(raw: &str) -> String {
     }
 }
 
-fn normalize_count_token(raw: &str) -> String {
+pub(super) fn normalize_count_token(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.eq_ignore_ascii_case("a") || trimmed.eq_ignore_ascii_case("an") {
         return "a".to_string();
@@ -3502,14 +3510,14 @@ fn normalize_count_token(raw: &str) -> String {
     render_small_number_or_raw(trimmed)
 }
 
-fn lower_clause_after_prefix(prefix: &str, clause: &str) -> String {
+pub(super) fn lower_clause_after_prefix(prefix: &str, clause: &str) -> String {
     if prefix.ends_with(", ") {
         return lowercase_first(clause);
     }
     clause.to_string()
 }
 
-fn strip_prefix_ascii_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+pub(super) fn strip_prefix_ascii_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
     if text.len() < prefix.len() {
         return None;
     }
@@ -3523,7 +3531,7 @@ fn strip_prefix_ascii_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
     }
 }
 
-fn strip_suffix_ascii_ci<'a>(text: &'a str, suffix: &str) -> Option<&'a str> {
+pub(super) fn strip_suffix_ascii_ci<'a>(text: &'a str, suffix: &str) -> Option<&'a str> {
     if text.len() < suffix.len() {
         return None;
     }
@@ -3538,14 +3546,17 @@ fn strip_suffix_ascii_ci<'a>(text: &'a str, suffix: &str) -> Option<&'a str> {
     }
 }
 
-fn split_once_ascii_ci<'a>(text: &'a str, separator: &str) -> Option<(&'a str, &'a str)> {
+pub(super) fn split_once_ascii_ci<'a>(
+    text: &'a str,
+    separator: &str,
+) -> Option<(&'a str, &'a str)> {
     let lower = text.to_ascii_lowercase();
     let sep_lower = separator.to_ascii_lowercase();
     let idx = lower.find(&sep_lower)?;
     Some((&text[..idx], &text[idx + separator.len()..]))
 }
 
-fn render_choose_exact_subject(descriptor: &str, count: usize) -> String {
+pub(super) fn render_choose_exact_subject(descriptor: &str, count: usize) -> String {
     let descriptor = descriptor.trim();
     if let Some(rest) = descriptor.strip_prefix("this a ") {
         return format!("this {rest}");
@@ -3573,7 +3584,7 @@ fn render_choose_exact_subject(descriptor: &str, count: usize) -> String {
     format!("{count_word} {}", pluralize_noun_phrase(descriptor))
 }
 
-fn normalize_choose_exact_return_cost_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_choose_exact_return_cost_clause(text: &str) -> Option<String> {
     let marker = " and tags it as 'return_cost_0', ";
     let (head, after) = split_once_ascii_ci(text, marker)?;
     let choose_idx = head.to_ascii_lowercase().rfind("choose exactly ")?;
@@ -3613,7 +3624,7 @@ fn normalize_choose_exact_return_cost_clause(text: &str) -> Option<String> {
     Some(format!("{prefix}{clause}{tail}"))
 }
 
-fn normalize_choose_exact_exile_cost_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_choose_exact_exile_cost_clause(text: &str) -> Option<String> {
     let marker = " and tags it as 'exile_cost_0', exile it";
     let (head, tail) = split_once_ascii_ci(text, marker)?;
     let choose_idx = head.to_ascii_lowercase().rfind("choose exactly ")?;
@@ -3637,7 +3648,7 @@ fn normalize_choose_exact_exile_cost_clause(text: &str) -> Option<String> {
     Some(format!("{prefix}Exile {subject}{tail}"))
 }
 
-fn normalize_choose_exact_tap_cost_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_choose_exact_tap_cost_clause(text: &str) -> Option<String> {
     let marker = " and tags it as 'tap_cost_0'. Tap it ";
     let (head, tail) = split_once_ascii_ci(text, marker)?;
     let choose_idx = head.to_ascii_lowercase().rfind("choose exactly ")?;
@@ -3658,7 +3669,7 @@ fn normalize_choose_exact_tap_cost_clause(text: &str) -> Option<String> {
     Some(format!("{prefix}tap {subject} {tail}"))
 }
 
-fn parse_choose_exact_tail(head: &str) -> Option<(&str, usize, &str)> {
+pub(super) fn parse_choose_exact_tail(head: &str) -> Option<(&str, usize, &str)> {
     let needle = " chooses exactly ";
     let lower = head.to_ascii_lowercase();
     let idx = lower.rfind(needle)?;
@@ -3678,7 +3689,7 @@ fn parse_choose_exact_tail(head: &str) -> Option<(&str, usize, &str)> {
     Some((prefix, count, descriptor))
 }
 
-fn normalize_choose_exact_tagged_it_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_choose_exact_tagged_it_clause(text: &str) -> Option<String> {
     if let Some((head, tail)) = text.split_once(" and tags it as '__it__'. Destroy it")
         && let Some((chooser, count, descriptor)) = parse_choose_exact_tail(head)
     {
@@ -3717,12 +3728,12 @@ fn normalize_choose_exact_tagged_it_clause(text: &str) -> Option<String> {
     None
 }
 
-fn normalize_split_land_search_sequence(text: &str) -> Option<String> {
+pub(super) fn normalize_split_land_search_sequence(text: &str) -> Option<String> {
     let _ = text;
     None
 }
 
-fn is_render_heading_prefix(prefix: &str) -> bool {
+pub(super) fn is_render_heading_prefix(prefix: &str) -> bool {
     let prefix = prefix.trim().to_ascii_lowercase();
     prefix == "spell effects"
         || prefix.starts_with("activated ability ")
@@ -3734,7 +3745,7 @@ fn is_render_heading_prefix(prefix: &str) -> bool {
         || prefix.starts_with("alternative cast ")
 }
 
-fn static_heading_body(line: &str) -> Option<(&str, &str)> {
+pub(super) fn static_heading_body(line: &str) -> Option<(&str, &str)> {
     let (prefix, body) = line.split_once(':')?;
     if prefix
         .trim()
@@ -3747,7 +3758,7 @@ fn static_heading_body(line: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn merge_adjacent_static_heading_lines(lines: Vec<String>) -> Vec<String> {
+pub(super) fn merge_adjacent_static_heading_lines(lines: Vec<String>) -> Vec<String> {
     let mut current = lines;
     loop {
         let mut changed = false;
@@ -3790,7 +3801,7 @@ fn merge_adjacent_static_heading_lines(lines: Vec<String>) -> Vec<String> {
     }
 }
 
-fn merge_static_legendary_gets_then_has_block(
+pub(super) fn merge_static_legendary_gets_then_has_block(
     lines: &[String],
     start_idx: usize,
 ) -> Option<(String, usize)> {

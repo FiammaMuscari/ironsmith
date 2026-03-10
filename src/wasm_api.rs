@@ -7105,6 +7105,331 @@ mod tests {
     }
 
     #[test]
+    fn tayam_black_lotus_color_choice_keeps_paid_mana_state() {
+        let mut wasm = WasmGame::new();
+        let alice = PlayerId::from_index(0);
+
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        let tayam_id = wasm
+            .add_card_to_zone(
+                alice.0,
+                "Tayam, Luminous Enigma".to_string(),
+                "battlefield".to_string(),
+                true,
+            )
+            .expect("should add Tayam to battlefield");
+        let ornithopter_ids: Vec<ObjectId> = (0..3)
+            .map(|_| {
+                ObjectId::from_raw(
+                    wasm.add_card_to_zone(
+                        alice.0,
+                        "Ornithopter".to_string(),
+                        "battlefield".to_string(),
+                        false,
+                    )
+                    .expect("should add Ornithopter to battlefield"),
+                )
+            })
+            .collect();
+        let lotus_id = ObjectId::from_raw(
+            wasm.add_card_to_zone(
+                alice.0,
+                "Black Lotus".to_string(),
+                "battlefield".to_string(),
+                true,
+            )
+            .expect("should add Black Lotus to battlefield"),
+        );
+
+        for ornithopter_id in &ornithopter_ids {
+            let ornithopter = wasm
+                .game
+                .object(*ornithopter_id)
+                .expect("ornithopter should exist");
+            assert_eq!(
+                ornithopter
+                    .counters
+                    .get(&crate::object::CounterType::Vigilance)
+                    .copied(),
+                Some(1),
+                "Tayam should grant each Ornithopter a vigilance counter"
+            );
+        }
+
+        wasm.priority_epoch_checkpoint = Some(wasm.capture_replay_checkpoint());
+        wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(
+            alice,
+            compute_legal_actions(&wasm.game, alice),
+        )));
+
+        let priority_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => ctx,
+            other => panic!("expected priority decision, got {other:?}"),
+        };
+        let activate_index = priority_ctx
+            .actions
+            .iter()
+            .position(|action| matches!(action, LegalAction::ActivateAbility { source, .. } if *source == tayam_id))
+            .expect("expected Tayam activation action");
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "priority_action",
+                "action_index": activate_index,
+            }))
+            .expect("priority action command should serialize"),
+        )
+        .expect("activating Tayam should begin its cost-payment chain");
+
+        let next_cost_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectOptions(ctx)) => ctx,
+            other => panic!("expected next-cost chooser after activating Tayam, got {other:?}"),
+        };
+        let mana_choice = next_cost_ctx
+            .options
+            .iter()
+            .find(|option| option.legal && option.description.contains("Pay {3}"))
+            .map(|option| option.index)
+            .unwrap_or(0);
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": [mana_choice],
+            }))
+            .expect("next-cost choice command should serialize"),
+        )
+        .expect("choosing Tayam's mana cost should advance to mana payment");
+
+        let mana_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectOptions(ctx)) => ctx,
+            other => panic!("expected mana payment prompt after choosing mana, got {other:?}"),
+        };
+        let lotus_option = mana_ctx
+            .options
+            .iter()
+            .find(|option| option.legal && option.description.contains("Black Lotus"))
+            .map(|option| option.index)
+            .expect("mana payment prompt should offer Black Lotus");
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": [lotus_option],
+            }))
+            .expect("Black Lotus mana payment command should serialize"),
+        )
+        .expect("activating Black Lotus during Tayam payment should succeed");
+
+        assert!(
+            !wasm.game.battlefield.contains(&lotus_id),
+            "Black Lotus should be sacrificed immediately once selected"
+        );
+        assert!(
+            matches!(wasm.pending_decision, Some(DecisionContext::Colors(_))),
+            "Black Lotus should surface a color-choice prompt"
+        );
+
+        let colors_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Colors(ctx)) => ctx,
+            other => panic!("expected color-choice decision, got {other:?}"),
+        };
+        let green_option = colors_for_context(colors_ctx)
+            .iter()
+            .position(|color| *color == crate::color::Color::Green)
+            .expect("green should be a legal Black Lotus color choice");
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": [green_option],
+            }))
+            .expect("color choice command should serialize"),
+        )
+        .expect("choosing a Black Lotus color should replay the payment chain");
+
+        assert!(
+            !wasm.game.battlefield.contains(&lotus_id),
+            "Black Lotus should remain sacrificed after the replayed color choice resolves"
+        );
+        let pool = &wasm.game.player(alice).expect("alice should exist").mana_pool;
+        assert_eq!(
+            pool.green, 2,
+            "one of the three chosen mana should pay the current generic pip and two should remain"
+        );
+
+        let pending_activation = wasm
+            .priority_state
+            .pending_activation
+            .as_ref()
+            .expect("Tayam activation should still be in progress");
+        assert_eq!(
+            pending_activation.remaining_mana_pips.len(),
+            2,
+            "paying Black Lotus into Tayam should consume exactly one generic pip"
+        );
+        assert!(
+            matches!(wasm.pending_decision, Some(DecisionContext::SelectOptions(_))),
+            "after choosing the color, the UI should advance to the next payment prompt"
+        );
+    }
+
+    #[test]
+    fn tayam_counter_choice_keeps_removed_counters_state() {
+        let mut wasm = WasmGame::new();
+        let alice = PlayerId::from_index(0);
+
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        let tayam_id = wasm
+            .add_card_to_zone(
+                alice.0,
+                "Tayam, Luminous Enigma".to_string(),
+                "battlefield".to_string(),
+                true,
+            )
+            .expect("should add Tayam to battlefield");
+        let ornithopter_ids: Vec<ObjectId> = (0..3)
+            .map(|_| {
+                ObjectId::from_raw(
+                    wasm.add_card_to_zone(
+                        alice.0,
+                        "Ornithopter".to_string(),
+                        "battlefield".to_string(),
+                        false,
+                    )
+                    .expect("should add Ornithopter to battlefield"),
+                )
+            })
+            .collect();
+
+        wasm.priority_epoch_checkpoint = Some(wasm.capture_replay_checkpoint());
+        wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(
+            alice,
+            compute_legal_actions(&wasm.game, alice),
+        )));
+
+        let priority_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => ctx,
+            other => panic!("expected priority decision, got {other:?}"),
+        };
+        let activate_index = priority_ctx
+            .actions
+            .iter()
+            .position(|action| matches!(action, LegalAction::ActivateAbility { source, .. } if *source == tayam_id))
+            .expect("expected Tayam activation action");
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "priority_action",
+                "action_index": activate_index,
+            }))
+            .expect("priority action command should serialize"),
+        )
+        .expect("activating Tayam should begin its cost-payment chain");
+
+        let next_cost_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectOptions(ctx)) => ctx,
+            other => panic!("expected next-cost chooser after activating Tayam, got {other:?}"),
+        };
+        let counter_choice = next_cost_ctx
+            .options
+            .iter()
+            .find(|option| option.legal && option.description.contains("Remove three counters"))
+            .map(|option| option.index)
+            .unwrap_or(1);
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": [counter_choice],
+            }))
+            .expect("counter-cost choice command should serialize"),
+        )
+        .expect("choosing Tayam's counter cost should open distribution");
+
+        let distribute_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Distribute(ctx)) => ctx,
+            other => panic!("expected counter distribution prompt, got {other:?}"),
+        };
+        let distribution_indices: Vec<usize> = ornithopter_ids
+            .iter()
+            .map(|ornithopter_id| {
+                distribute_ctx
+                    .targets
+                    .iter()
+                    .position(|target| target.target == Target::Object(*ornithopter_id))
+                    .expect("each Ornithopter should be a legal distribution target")
+            })
+            .collect();
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": distribution_indices,
+            }))
+            .expect("distribution command should serialize"),
+        )
+        .expect("distributing Tayam's counters across the Ornithopters should succeed");
+
+        for ornithopter_id in &ornithopter_ids {
+            let counters_ctx = match wasm.pending_decision.as_ref() {
+                Some(DecisionContext::Counters(ctx)) => ctx,
+                other => panic!("expected counter-removal prompt, got {other:?}"),
+            };
+            assert_eq!(
+                counters_ctx.target,
+                *ornithopter_id,
+                "counter-removal replay should advance through the distributed targets in order"
+            );
+
+            wasm.dispatch(
+                serde_wasm_bindgen::to_value(&json!({
+                    "type": "select_options",
+                    "option_indices": [0],
+                }))
+                .expect("counter selection command should serialize"),
+            )
+            .expect("removing the selected vigilance counter should succeed");
+
+            let ornithopter = wasm
+                .game
+                .object(*ornithopter_id)
+                .expect("ornithopter should still exist");
+            assert_eq!(
+                ornithopter
+                    .counters
+                    .get(&crate::object::CounterType::Vigilance)
+                    .copied()
+                    .unwrap_or(0),
+                0,
+                "selected Ornithopter should keep its counter removed after replay"
+            );
+        }
+
+        let pending_activation = wasm
+            .priority_state
+            .pending_activation
+            .as_ref()
+            .expect("Tayam activation should still be in progress");
+        assert!(
+            pending_activation.remaining_cost_steps.is_empty(),
+            "after removing all three counters, the counter-payment step should be complete"
+        );
+        assert!(
+            matches!(wasm.pending_decision, Some(DecisionContext::SelectOptions(_))),
+            "after paying the counter cost, the UI should advance to the remaining mana payment"
+        );
+    }
+
+    #[test]
     fn committed_resolution_prompt_is_not_cancelable() {
         let mut wasm = WasmGame::new();
         let alice = PlayerId::from_index(0);

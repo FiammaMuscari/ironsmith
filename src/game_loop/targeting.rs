@@ -1,3 +1,5 @@
+use super::*;
+
 // ============================================================================
 // Target Extraction
 // ============================================================================
@@ -22,7 +24,7 @@ pub fn requires_target_selection(spec: &ChooseSpec) -> bool {
 }
 
 /// Queue trigger matches for all triggered abilities that see this event.
-fn queue_triggers_for_event(
+pub(super) fn queue_triggers_for_event(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     event: TriggerEvent,
@@ -35,7 +37,7 @@ fn queue_triggers_for_event(
 }
 
 /// Ingest an event into trigger system with optional delayed-trigger checks.
-fn queue_triggers_from_event(
+pub(super) fn queue_triggers_from_event(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     event: TriggerEvent,
@@ -127,7 +129,7 @@ fn queue_triggers_from_event(
 }
 
 /// Queue trigger matches for each event in this list.
-fn queue_triggers_for_events(
+pub(super) fn queue_triggers_for_events(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     events: Vec<TriggerEvent>,
@@ -137,7 +139,7 @@ fn queue_triggers_for_events(
     }
 }
 
-fn target_events_from_targets(
+pub(super) fn target_events_from_targets(
     targets: &[Target],
     source: ObjectId,
     source_controller: PlayerId,
@@ -158,7 +160,7 @@ fn target_events_from_targets(
         .collect()
 }
 
-fn is_crime_target(game: &GameState, committer: PlayerId, target: &Target) -> bool {
+pub(super) fn is_crime_target(game: &GameState, committer: PlayerId, target: &Target) -> bool {
     match target {
         Target::Player(player) => *player != committer,
         Target::Object(object_id) => {
@@ -174,13 +176,17 @@ fn is_crime_target(game: &GameState, committer: PlayerId, target: &Target) -> bo
     }
 }
 
-fn targets_commit_crime(game: &GameState, committer: PlayerId, targets: &[Target]) -> bool {
+pub(super) fn targets_commit_crime(
+    game: &GameState,
+    committer: PlayerId,
+    targets: &[Target],
+) -> bool {
     targets
         .iter()
         .any(|target| is_crime_target(game, committer, target))
 }
 
-fn queue_becomes_targeted_events(
+pub(super) fn queue_becomes_targeted_events(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     targets: &[Target],
@@ -217,7 +223,7 @@ fn queue_becomes_targeted_events(
     }
 }
 
-fn queue_ability_activated_event(
+pub(super) fn queue_ability_activated_event(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     decision_maker: &mut dyn DecisionMaker,
@@ -259,7 +265,7 @@ fn queue_ability_activated_event(
     }
 }
 
-fn queue_mana_ability_event_for_action(
+pub(super) fn queue_mana_ability_event_for_action(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     decision_maker: &mut dyn DecisionMaker,
@@ -279,7 +285,7 @@ fn queue_mana_ability_event_for_action(
     }
 }
 
-fn tap_permanent_with_trigger(
+pub(super) fn tap_permanent_with_trigger(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     permanent: ObjectId,
@@ -301,21 +307,23 @@ fn tap_permanent_with_trigger(
     }
 }
 
-fn keyword_action_from_alternative_effect(effect: AlternativePaymentEffect) -> KeywordActionKind {
+pub(super) fn keyword_action_from_alternative_effect(
+    effect: AlternativePaymentEffect,
+) -> KeywordActionKind {
     match effect {
         AlternativePaymentEffect::Convoke => KeywordActionKind::Convoke,
         AlternativePaymentEffect::Improvise => KeywordActionKind::Improvise,
     }
 }
 
-fn payment_contribution_tag(effect: AlternativePaymentEffect) -> &'static str {
+pub(super) fn payment_contribution_tag(effect: AlternativePaymentEffect) -> &'static str {
     match effect {
         AlternativePaymentEffect::Convoke => "convoked_this_spell",
         AlternativePaymentEffect::Improvise => "improvised_this_spell",
     }
 }
 
-fn record_keyword_payment_contribution(
+pub(super) fn record_keyword_payment_contribution(
     contributions: &mut Vec<KeywordPaymentContribution>,
     action: &ManaPipPaymentAction,
 ) {
@@ -336,7 +344,7 @@ fn record_keyword_payment_contribution(
     }
 }
 
-fn apply_keyword_payment_tags_for_resolution(
+pub(super) fn apply_keyword_payment_tags_for_resolution(
     game: &GameState,
     entry: &StackEntry,
     ctx: &mut ExecutionContext,
@@ -400,7 +408,9 @@ pub fn extract_target_spec(effect: &Effect) -> Option<ExtractedTarget<'_>> {
     })
 }
 
-fn resolve_modal_mode_counts(choose_mode: &crate::effects::ChooseModeEffect) -> (usize, usize) {
+pub(super) fn resolve_modal_mode_counts(
+    choose_mode: &crate::effects::ChooseModeEffect,
+) -> (usize, usize) {
     let max_modes = match choose_mode.choose_count {
         crate::effect::Value::Fixed(n) => n.max(0) as usize,
         _ => 1,
@@ -413,7 +423,7 @@ fn resolve_modal_mode_counts(choose_mode: &crate::effects::ChooseModeEffect) -> 
     (min_modes, max_modes)
 }
 
-fn effect_mode_has_legal_targets_with_view(
+pub(super) fn effect_mode_has_legal_targets_with_view(
     game: &GameState,
     mode: &crate::effect::EffectMode,
     caster: PlayerId,
@@ -425,7 +435,7 @@ fn effect_mode_has_legal_targets_with_view(
     })
 }
 
-fn choose_mode_has_legal_targets_with_view(
+pub(super) fn choose_mode_has_legal_targets_with_view(
     game: &GameState,
     choose_mode: &crate::effects::ChooseModeEffect,
     caster: PlayerId,
@@ -480,7 +490,7 @@ fn choose_mode_has_legal_targets_with_view(
     }
 }
 
-fn spell_effect_has_legal_targets_with_view(
+pub(super) fn spell_effect_has_legal_targets_with_view(
     game: &GameState,
     effect: &Effect,
     caster: PlayerId,
@@ -500,7 +510,7 @@ fn spell_effect_has_legal_targets_with_view(
     )
 }
 
-fn spell_effect_has_legal_targets_internal_with_view(
+pub(super) fn spell_effect_has_legal_targets_internal_with_view(
     game: &GameState,
     effect: &Effect,
     caster: PlayerId,
@@ -547,7 +557,7 @@ fn spell_effect_has_legal_targets_internal_with_view(
     true
 }
 
-fn extract_target_requirements_from_effect_internal(
+pub(super) fn extract_target_requirements_from_effect_internal(
     game: &GameState,
     effect: &Effect,
     caster: PlayerId,
@@ -604,7 +614,7 @@ fn extract_target_requirements_from_effect_internal(
 }
 
 /// Extract target requirements from a list of effects with optional mode choices.
-fn extract_target_requirements_with_modes(
+pub(super) fn extract_target_requirements_with_modes(
     game: &GameState,
     effects: &[Effect],
     caster: PlayerId,
@@ -630,7 +640,7 @@ fn extract_target_requirements_with_modes(
 }
 
 /// Extract target requirements from a list of effects.
-fn extract_target_requirements(
+pub(super) fn extract_target_requirements(
     game: &GameState,
     effects: &[Effect],
     caster: PlayerId,
@@ -784,7 +794,7 @@ pub fn player_matches_filter_with_combat(
 /// - If SOME targets are still legal, the spell/ability resolves and does as much as possible
 ///
 /// Returns (valid_targets, all_targets_invalid)
-fn collect_validation_target_specs_from_effect(
+pub(super) fn collect_validation_target_specs_from_effect(
     effect: &Effect,
     chosen_modes: Option<&[usize]>,
     consumed_modal_selection: &mut bool,
@@ -822,7 +832,10 @@ fn collect_validation_target_specs_from_effect(
     }
 }
 
-fn stack_entry_validation_target_specs(game: &GameState, entry: &StackEntry) -> Vec<ChooseSpec> {
+pub(super) fn stack_entry_validation_target_specs(
+    game: &GameState,
+    entry: &StackEntry,
+) -> Vec<ChooseSpec> {
     let effects = if let Some(effects) = &entry.ability_effects {
         effects.clone()
     } else if let Some(obj) = game.object(entry.object_id) {
@@ -844,7 +857,7 @@ fn stack_entry_validation_target_specs(game: &GameState, entry: &StackEntry) -> 
     specs
 }
 
-fn validate_stack_entry_targets(
+pub(super) fn validate_stack_entry_targets(
     game: &GameState,
     entry: &StackEntry,
 ) -> (Vec<ResolvedTarget>, bool) {

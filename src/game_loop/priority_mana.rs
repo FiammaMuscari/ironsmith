@@ -1,8 +1,12 @@
+use super::*;
+
 // ============================================================================
 // Pip-by-Pip Mana Payment Helpers
 // ============================================================================
 
-fn decision_context_name(ctx: &crate::decisions::context::DecisionContext) -> &'static str {
+pub(super) fn decision_context_name(
+    ctx: &crate::decisions::context::DecisionContext,
+) -> &'static str {
     use crate::decisions::context::DecisionContext;
 
     match ctx {
@@ -27,7 +31,7 @@ fn decision_context_name(ctx: &crate::decisions::context::DecisionContext) -> &'
 
 /// Expand a ManaCost into individual pips, expanding X pips by the chosen value.
 /// Also applies hybrid_choices to replace multi-symbol pips with the chosen symbol.
-fn expand_mana_cost_to_pips(
+pub(super) fn expand_mana_cost_to_pips(
     cost: &crate::mana::ManaCost,
     x_value: usize,
     hybrid_choices: &[(usize, crate::mana::ManaSymbol)],
@@ -82,7 +86,7 @@ fn expand_mana_cost_to_pips(
     colored_pips
 }
 
-fn preferred_auto_pip_choice(
+pub(super) fn preferred_auto_pip_choice(
     state: &PriorityLoopState,
     options: &[ManaPipPaymentOption],
 ) -> Option<usize> {
@@ -105,7 +109,7 @@ fn preferred_auto_pip_choice(
 }
 
 /// Build payment options for a single mana pip.
-fn build_pip_payment_options(
+pub(super) fn build_pip_payment_options(
     game: &GameState,
     player: PlayerId,
     pip: &[crate::mana::ManaSymbol],
@@ -375,7 +379,7 @@ fn build_pip_payment_options(
     options
 }
 
-fn add_pip_alternative_payment_options(
+pub(super) fn add_pip_alternative_payment_options(
     game: &GameState,
     player: PlayerId,
     pip: &[crate::mana::ManaSymbol],
@@ -427,7 +431,10 @@ fn add_pip_alternative_payment_options(
     }
 }
 
-fn convoke_can_pay_pip(colors: crate::color::ColorSet, pip: &[crate::mana::ManaSymbol]) -> bool {
+pub(super) fn convoke_can_pay_pip(
+    colors: crate::color::ColorSet,
+    pip: &[crate::mana::ManaSymbol],
+) -> bool {
     pip.iter().any(|symbol| match symbol {
         crate::mana::ManaSymbol::Generic(_) => true,
         crate::mana::ManaSymbol::White => colors.contains(crate::color::Color::White),
@@ -442,12 +449,12 @@ fn convoke_can_pay_pip(colors: crate::color::ColorSet, pip: &[crate::mana::ManaS
     })
 }
 
-fn improvise_can_pay_pip(pip: &[crate::mana::ManaSymbol]) -> bool {
+pub(super) fn improvise_can_pay_pip(pip: &[crate::mana::ManaSymbol]) -> bool {
     pip.iter()
         .any(|symbol| matches!(symbol, crate::mana::ManaSymbol::Generic(_)))
 }
 
-fn add_any_color_pool_options(
+pub(super) fn add_any_color_pool_options(
     game: &GameState,
     player: PlayerId,
     payment_source: Option<ObjectId>,
@@ -507,12 +514,12 @@ fn add_any_color_pool_options(
 }
 
 #[derive(Clone)]
-struct SpentManaInfo {
+pub(super) struct SpentManaInfo {
     symbol: crate::mana::ManaSymbol,
     restrictions: Vec<crate::ability::ManaUsageRestriction>,
 }
 
-fn payment_source_matches_restriction(
+pub(super) fn payment_source_matches_restriction(
     game: &GameState,
     unit: &crate::ability::RestrictedManaUnit,
     restriction: &crate::ability::ManaUsageRestriction,
@@ -553,7 +560,7 @@ fn payment_source_matches_restriction(
     }
 }
 
-fn restricted_unit_is_payable(
+pub(super) fn restricted_unit_is_payable(
     game: &GameState,
     unit: &crate::ability::RestrictedManaUnit,
     payment_source: Option<ObjectId>,
@@ -563,7 +570,7 @@ fn restricted_unit_is_payable(
     })
 }
 
-fn pool_symbol_count(
+pub(super) fn pool_symbol_count(
     game: &GameState,
     player: PlayerId,
     symbol: crate::mana::ManaSymbol,
@@ -595,7 +602,7 @@ fn pool_symbol_count(
         .saturating_add(restricted_payable)
 }
 
-fn spend_pool_symbol(
+pub(super) fn spend_pool_symbol(
     game: &mut GameState,
     player: PlayerId,
     symbol: crate::mana::ManaSymbol,
@@ -644,7 +651,7 @@ fn spend_pool_symbol(
     None
 }
 
-fn apply_spent_mana_bonuses(
+pub(super) fn apply_spent_mana_bonuses(
     game: &mut GameState,
     payment_source: Option<ObjectId>,
     restrictions: &[crate::ability::ManaUsageRestriction],
@@ -683,7 +690,7 @@ fn apply_spent_mana_bonuses(
 }
 
 /// Check if a mana ability can produce mana that pays the given pip.
-fn mana_ability_can_pay_pip(
+pub(super) fn mana_ability_can_pay_pip(
     game: &GameState,
     perm_id: ObjectId,
     ability_index: usize,
@@ -797,7 +804,7 @@ pub(crate) fn mana_ability_is_undo_safe(
     })
 }
 
-fn pip_mana_color_restriction(
+pub(super) fn pip_mana_color_restriction(
     pip: &[crate::mana::ManaSymbol],
     allow_any_color: bool,
 ) -> Option<Vec<crate::color::Color>> {
@@ -846,7 +853,7 @@ fn pip_mana_color_restriction(
 }
 
 #[cfg(feature = "net")]
-fn record_pip_payment_action(trace: &mut Vec<CostStep>, action: &ManaPipPaymentAction) {
+pub(super) fn record_pip_payment_action(trace: &mut Vec<CostStep>, action: &ManaPipPaymentAction) {
     match action {
         ManaPipPaymentAction::UseFromPool(symbol) => {
             trace.push(CostStep::Mana(ManaSymbolSpec::from(*symbol)));
@@ -876,10 +883,14 @@ fn record_pip_payment_action(trace: &mut Vec<CostStep>, action: &ManaPipPaymentA
 }
 
 #[cfg(not(feature = "net"))]
-fn record_pip_payment_action(_trace: &mut Vec<CostStep>, _action: &ManaPipPaymentAction) {}
+pub(super) fn record_pip_payment_action(
+    _trace: &mut Vec<CostStep>,
+    _action: &ManaPipPaymentAction,
+) {
+}
 
 #[cfg(feature = "net")]
-fn record_immediate_cost_payment(
+pub(super) fn record_immediate_cost_payment(
     trace: &mut Vec<CostStep>,
     cost: &crate::costs::Cost,
     source: ObjectId,
@@ -922,7 +933,7 @@ fn record_immediate_cost_payment(
 }
 
 #[cfg(not(feature = "net"))]
-fn record_immediate_cost_payment(
+pub(super) fn record_immediate_cost_payment(
     _trace: &mut Vec<CostStep>,
     _cost: &crate::costs::Cost,
     _source: ObjectId,
@@ -930,7 +941,7 @@ fn record_immediate_cost_payment(
 }
 
 #[cfg(feature = "net")]
-fn record_cast_mana_ability_payment(
+pub(super) fn record_cast_mana_ability_payment(
     pending: &mut PendingCast,
     source: ObjectId,
     ability_index: usize,
@@ -944,7 +955,7 @@ fn record_cast_mana_ability_payment(
 }
 
 #[cfg(not(feature = "net"))]
-fn record_cast_mana_ability_payment(
+pub(super) fn record_cast_mana_ability_payment(
     _pending: &mut PendingCast,
     _source: ObjectId,
     _ability_index: usize,
@@ -952,7 +963,7 @@ fn record_cast_mana_ability_payment(
 }
 
 #[cfg(feature = "net")]
-fn record_activation_mana_ability_payment(
+pub(super) fn record_activation_mana_ability_payment(
     pending: &mut PendingActivation,
     source: ObjectId,
     ability_index: usize,
@@ -966,7 +977,7 @@ fn record_activation_mana_ability_payment(
 }
 
 #[cfg(not(feature = "net"))]
-fn record_activation_mana_ability_payment(
+pub(super) fn record_activation_mana_ability_payment(
     _pending: &mut PendingActivation,
     _source: ObjectId,
     _ability_index: usize,
@@ -977,7 +988,7 @@ fn record_activation_mana_ability_payment(
 /// Execute a pip payment action.
 /// Returns true if the pip was actually paid (mana consumed or life paid),
 /// false if we only generated mana (need to continue processing this pip).
-fn execute_pip_payment_action(
+pub(super) fn execute_pip_payment_action(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     player: PlayerId,
@@ -1084,7 +1095,10 @@ fn execute_pip_payment_action(
     }
 }
 
-fn mana_pool_delta_symbols(before: &ManaPool, after: &ManaPool) -> Vec<crate::mana::ManaSymbol> {
+pub(super) fn mana_pool_delta_symbols(
+    before: &ManaPool,
+    after: &ManaPool,
+) -> Vec<crate::mana::ManaSymbol> {
     use crate::mana::ManaSymbol;
 
     let mut produced = Vec::new();
@@ -1106,7 +1120,7 @@ fn mana_pool_delta_symbols(before: &ManaPool, after: &ManaPool) -> Vec<crate::ma
     produced
 }
 
-fn spend_pool_mana_for_pip(
+pub(super) fn spend_pool_mana_for_pip(
     game: &mut GameState,
     player: PlayerId,
     payment_source: Option<ObjectId>,
@@ -1157,7 +1171,7 @@ fn spend_pool_mana_for_pip(
     None
 }
 
-fn symbol_can_pay_pip(
+pub(super) fn symbol_can_pay_pip(
     symbol: crate::mana::ManaSymbol,
     pip: &[crate::mana::ManaSymbol],
     allow_any_color: bool,
@@ -1205,7 +1219,7 @@ fn symbol_can_pay_pip(
     })
 }
 
-fn track_spent_mana_symbol(pool: &mut ManaPool, symbol: crate::mana::ManaSymbol) {
+pub(super) fn track_spent_mana_symbol(pool: &mut ManaPool, symbol: crate::mana::ManaSymbol) {
     use crate::mana::ManaSymbol;
     match symbol {
         ManaSymbol::White
@@ -1219,7 +1233,7 @@ fn track_spent_mana_symbol(pool: &mut ManaPool, symbol: crate::mana::ManaSymbol)
 }
 
 /// Format a pip for display.
-fn format_pip(pip: &[crate::mana::ManaSymbol]) -> String {
+pub(super) fn format_pip(pip: &[crate::mana::ManaSymbol]) -> String {
     use crate::mana::ManaSymbol;
 
     if pip.len() == 1 {
@@ -1260,7 +1274,7 @@ fn format_pip(pip: &[crate::mana::ManaSymbol]) -> String {
 /// Apply a modes response to the pending cast.
 ///
 /// This handles the player's mode selection for modal spells per MTG rule 601.2b.
-fn apply_modes_response(
+pub(super) fn apply_modes_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1303,7 +1317,7 @@ fn apply_modes_response(
 }
 
 /// Apply an optional costs response to the pending cast.
-fn apply_optional_costs_response(
+pub(super) fn apply_optional_costs_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1328,7 +1342,7 @@ fn apply_optional_costs_response(
 /// Per MTG rule 601.2b (and 602.2b for abilities), players announce how they'll pay
 /// hybrid/Phyrexian costs before choosing targets. This handler stores the choice
 /// and either prompts for the next pip or continues to target selection.
-fn apply_next_hybrid_choice(
+pub(super) fn apply_next_hybrid_choice(
     pending_hybrid_pips: &mut Vec<(usize, Vec<crate::mana::ManaSymbol>)>,
     hybrid_choices: &mut Vec<(usize, crate::mana::ManaSymbol)>,
     choice: usize,
@@ -1353,7 +1367,7 @@ fn apply_next_hybrid_choice(
     Ok(())
 }
 
-fn apply_hybrid_choice_response(
+pub(super) fn apply_hybrid_choice_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1412,7 +1426,7 @@ fn apply_hybrid_choice_response(
 /// The choice index corresponds to either:
 /// - A mana ability to activate (index < num_mana_abilities)
 /// - The "pay mana cost" option (last option)
-fn apply_mana_payment_response(
+pub(super) fn apply_mana_payment_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1472,7 +1486,7 @@ fn apply_mana_payment_response(
 ///
 /// Mana abilities don't use the stack, so when the player can pay,
 /// we immediately execute the ability.
-fn apply_mana_payment_response_mana_ability(
+pub(super) fn apply_mana_payment_response_mana_ability(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1618,7 +1632,7 @@ fn apply_mana_payment_response_mana_ability(
 }
 
 /// Execute a pending mana ability after its mana cost has been paid.
-fn execute_pending_mana_ability(
+pub(super) fn execute_pending_mana_ability(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     pending: &PendingManaAbility,
@@ -1688,7 +1702,7 @@ fn execute_pending_mana_ability(
 }
 
 /// Apply a mana payment response for a pending activation.
-fn apply_mana_payment_response_activation(
+pub(super) fn apply_mana_payment_response_activation(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1797,7 +1811,7 @@ fn apply_mana_payment_response_activation(
 }
 
 /// Apply a pip payment response for a pending activation.
-fn apply_pip_payment_response_activation(
+pub(super) fn apply_pip_payment_response_activation(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1878,7 +1892,7 @@ fn apply_pip_payment_response_activation(
 }
 
 /// Apply a pip payment response for a pending spell cast.
-fn apply_pip_payment_response_cast(
+pub(super) fn apply_pip_payment_response_cast(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -1959,7 +1973,7 @@ fn apply_pip_payment_response_cast(
     continue_spell_cast_mana_payment(game, trigger_queue, state, pending, decision_maker)
 }
 
-fn apply_next_cost_choice_response(
+pub(super) fn apply_next_cost_choice_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -2033,7 +2047,7 @@ fn apply_next_cost_choice_response(
 }
 
 /// Apply an object-selection response for a pending activation.
-fn apply_sacrifice_target_response(
+pub(super) fn apply_sacrifice_target_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -2337,7 +2351,7 @@ fn apply_sacrifice_target_response(
 }
 
 /// Apply a card/object choice response for a pending spell cast cost.
-fn apply_card_cost_choice_response(
+pub(super) fn apply_card_cost_choice_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -2650,7 +2664,7 @@ fn apply_card_cost_choice_response(
 }
 
 /// Apply a casting method choice response for a pending spell with multiple methods.
-fn apply_casting_method_choice_response(
+pub(super) fn apply_casting_method_choice_response(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -2767,7 +2781,7 @@ fn apply_casting_method_choice_response(
 /// If casting fails later (e.g., can't pay costs), the spell should be reverted.
 ///
 /// Returns the new ObjectId on the stack.
-fn propose_spell_cast(
+pub(super) fn propose_spell_cast(
     game: &mut GameState,
     spell_id: ObjectId,
     _from_zone: Zone,
@@ -2803,7 +2817,7 @@ fn propose_spell_cast(
 /// Per MTG rules, if casting fails at any point before completion,
 /// the game state returns to before the cast was proposed.
 #[allow(dead_code)]
-fn revert_spell_cast(game: &mut GameState, stack_id: ObjectId, original_zone: Zone) {
+pub(super) fn revert_spell_cast(game: &mut GameState, stack_id: ObjectId, original_zone: Zone) {
     // Move spell back to original zone
     game.move_object(stack_id, original_zone);
     // Note: Mana abilities activated during casting are NOT reverted per rules
@@ -2811,20 +2825,20 @@ fn revert_spell_cast(game: &mut GameState, stack_id: ObjectId, original_zone: Zo
 }
 
 /// Result of finalizing a spell cast, containing info needed for triggers.
-struct SpellCastResult {
+pub(super) struct SpellCastResult {
     /// The new object ID of the spell on the stack
-    new_id: ObjectId,
+    pub(super) new_id: ObjectId,
     /// Who cast the spell
-    caster: PlayerId,
+    pub(super) caster: PlayerId,
     /// Which zone the spell was cast from.
-    from_zone: Zone,
+    pub(super) from_zone: Zone,
 }
 
 /// Finalize a spell cast by paying remaining costs and creating the stack entry.
 /// Returns the spell cast info for trigger checking.
 ///
 /// `stack_id` is the spell already moved to stack during proposal (per 601.2a).
-fn finalize_spell_cast(
+pub(super) fn finalize_spell_cast(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     _state: &mut PriorityLoopState,
@@ -3394,7 +3408,7 @@ pub(crate) fn apply_decision_context_with_dm<D: DecisionMaker>(
     }
 }
 
-fn apply_priority_action_with_dm(
+pub(super) fn apply_priority_action_with_dm(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
     state: &mut PriorityLoopState,
@@ -3435,7 +3449,7 @@ fn apply_priority_action_with_dm(
 
 /// Check if we should auto-pass priority for a context-based decision.
 /// Returns true if this is a Priority decision with only PassPriority available.
-fn should_auto_pass_ctx(ctx: &crate::decisions::context::DecisionContext) -> bool {
+pub(super) fn should_auto_pass_ctx(ctx: &crate::decisions::context::DecisionContext) -> bool {
     if let crate::decisions::context::DecisionContext::Priority(pctx) = ctx {
         pctx.actions.len() == 1 && matches!(pctx.actions[0], LegalAction::PassPriority)
     } else {
@@ -3444,7 +3458,7 @@ fn should_auto_pass_ctx(ctx: &crate::decisions::context::DecisionContext) -> boo
 }
 
 /// Get the player from a context-based decision, if it's a Priority decision.
-fn get_priority_player_from_ctx(
+pub(super) fn get_priority_player_from_ctx(
     ctx: &crate::decisions::context::DecisionContext,
 ) -> Option<PlayerId> {
     if let crate::decisions::context::DecisionContext::Priority(pctx) = ctx {

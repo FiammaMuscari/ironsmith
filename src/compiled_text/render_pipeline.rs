@@ -1,8 +1,10 @@
+use super::*;
+
 pub fn compiled_lines(def: &CardDefinition) -> Vec<String> {
     stacker::maybe_grow(1024 * 1024, 8 * 1024 * 1024, || compiled_lines_inner(def))
 }
 
-fn compiled_lines_inner(def: &CardDefinition) -> Vec<String> {
+pub(super) fn compiled_lines_inner(def: &CardDefinition) -> Vec<String> {
     let mut out = Vec::new();
     let subject = subject_for_card(&def.card);
     let rewrite_it_deals = def.card.card_types.contains(&CardType::Creature)
@@ -266,11 +268,11 @@ fn compiled_lines_inner(def: &CardDefinition) -> Vec<String> {
         .collect()
 }
 
-fn card_self_reference_phrase(def: &CardDefinition) -> &'static str {
+pub(super) fn card_self_reference_phrase(def: &CardDefinition) -> &'static str {
     card_self_reference_phrase_for_card(&def.card)
 }
 
-fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String {
+pub(super) fn normalize_rendered_line_for_card(def: &CardDefinition, line: &str) -> String {
     let self_ref = card_self_reference_phrase(def);
     let self_ref_cap = capitalize_first(self_ref);
     fn strip_rebalance_prefix(name: &str) -> &str {

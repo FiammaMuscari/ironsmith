@@ -94,10 +94,10 @@ pub struct SessionId(pub [u8; 32]);
 pub type SeqNum = u64;
 
 // Game-identity wrappers for network encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct GamePlayerId(pub u8);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct GameObjectId(pub u64);
 
 impl From<PlayerId> for GamePlayerId {

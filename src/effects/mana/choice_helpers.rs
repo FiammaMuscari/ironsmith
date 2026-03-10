@@ -75,14 +75,6 @@ pub(crate) fn choose_mana_colors(
     chosen
 }
 
-/// Credit mana symbols to a player's mana pool.
-pub(crate) fn credit_mana_symbols<I>(game: &mut GameState, player_id: PlayerId, symbols: I)
-where
-    I: IntoIterator<Item = ManaSymbol>,
-{
-    credit_mana_symbols_with_context(game, player_id, symbols, None, &[], None);
-}
-
 pub(crate) fn credit_mana_symbols_from_context<I>(
     game: &mut GameState,
     player_id: PlayerId,
@@ -125,16 +117,6 @@ fn credit_mana_symbols_with_context<I>(
             }
         }
     }
-}
-
-/// Credit one repeated mana symbol to a player's mana pool.
-pub(crate) fn credit_repeated_mana_symbol(
-    game: &mut GameState,
-    player_id: PlayerId,
-    symbol: ManaSymbol,
-    count: u32,
-) {
-    credit_repeated_mana_symbol_with_context(game, player_id, symbol, count, None, &[], None);
 }
 
 pub(crate) fn credit_repeated_mana_symbol_from_context(

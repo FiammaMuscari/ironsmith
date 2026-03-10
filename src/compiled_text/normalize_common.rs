@@ -1,21 +1,12 @@
-use std::cell::Cell;
+use super::*;
 
-use crate::ability::{Ability, AbilityKind, ActivationTiming};
-use crate::alternative_cast::AlternativeCastingMethod;
-use crate::effect::{
-    ChoiceCount, Comparison, Condition, EffectPredicate, EventValueSpec, Until, Value,
-};
-use crate::effect_text_shared;
-use crate::object::CounterType;
-use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
-use crate::types::{Subtype, Supertype};
-use crate::{CardDefinition, CardType, Effect, ManaSymbol, TagKey, Zone};
+use std::cell::Cell;
 
 thread_local! {
     static EFFECT_RENDER_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
-fn with_effect_render_depth<F: FnOnce() -> String>(render: F) -> String {
+pub(super) fn with_effect_render_depth<F: FnOnce() -> String>(render: F) -> String {
     EFFECT_RENDER_DEPTH.with(|depth| {
         let current = depth.get();
         if current >= 128 {
@@ -28,7 +19,7 @@ fn with_effect_render_depth<F: FnOnce() -> String>(render: F) -> String {
     })
 }
 
-fn describe_player_filter(filter: &PlayerFilter) -> String {
+pub(super) fn describe_player_filter(filter: &PlayerFilter) -> String {
     match filter {
         PlayerFilter::You => "you".to_string(),
         PlayerFilter::NotYou => "a player other than you".to_string(),
@@ -76,7 +67,7 @@ fn describe_player_filter(filter: &PlayerFilter) -> String {
     }
 }
 
-fn describe_player_set_filter(filter: &PlayerFilter) -> String {
+pub(super) fn describe_player_set_filter(filter: &PlayerFilter) -> String {
     match filter {
         PlayerFilter::Opponent => "your opponents".to_string(),
         PlayerFilter::Any => "players".to_string(),
@@ -86,7 +77,7 @@ fn describe_player_set_filter(filter: &PlayerFilter) -> String {
     }
 }
 
-fn describe_cast_limit_spell_filter(filter: &ObjectFilter) -> String {
+pub(super) fn describe_cast_limit_spell_filter(filter: &ObjectFilter) -> String {
     if filter == &ObjectFilter::default() {
         return "spell".to_string();
     }
@@ -108,7 +99,7 @@ fn describe_cast_limit_spell_filter(filter: &ObjectFilter) -> String {
     }
 }
 
-fn describe_cast_ban_spell_filter(filter: &ObjectFilter) -> String {
+pub(super) fn describe_cast_ban_spell_filter(filter: &ObjectFilter) -> String {
     if filter == &ObjectFilter::default() {
         return "spells".to_string();
     }
@@ -126,14 +117,14 @@ fn describe_cast_ban_spell_filter(filter: &ObjectFilter) -> String {
     }
 }
 
-fn strip_leading_article(text: &str) -> &str {
+pub(super) fn strip_leading_article(text: &str) -> &str {
     text.strip_prefix("a ")
         .or_else(|| text.strip_prefix("an "))
         .or_else(|| text.strip_prefix("the "))
         .unwrap_or(text)
 }
 
-fn capitalize_first(text: &str) -> String {
+pub(super) fn capitalize_first(text: &str) -> String {
     let mut chars = text.chars();
     match chars.next() {
         Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
@@ -141,7 +132,7 @@ fn capitalize_first(text: &str) -> String {
     }
 }
 
-fn lowercase_first(text: &str) -> String {
+pub(super) fn lowercase_first(text: &str) -> String {
     let mut chars = text.chars();
     match chars.next() {
         Some(first) => format!("{}{}", first.to_ascii_lowercase(), chars.as_str()),
@@ -149,7 +140,7 @@ fn lowercase_first(text: &str) -> String {
     }
 }
 
-fn lowercase_may_clause(text: &str) -> String {
+pub(super) fn lowercase_may_clause(text: &str) -> String {
     // Oracle uses lowercase imperatives after "may" ("you may put...", "that player may search...").
     // Avoid lowercasing leading proper nouns/plurals (e.g. creature types like "Allies").
     let Some(first) = text.split_whitespace().next() else {
@@ -195,7 +186,7 @@ fn lowercase_may_clause(text: &str) -> String {
     text.to_string()
 }
 
-fn describe_mana_pool_owner(filter: &PlayerFilter) -> String {
+pub(super) fn describe_mana_pool_owner(filter: &PlayerFilter) -> String {
     let player = describe_player_filter(filter);
     if player == "you" || player == "target you" {
         "your mana pool".to_string()
@@ -206,7 +197,7 @@ fn describe_mana_pool_owner(filter: &PlayerFilter) -> String {
     }
 }
 
-fn describe_possessive_player_filter(filter: &PlayerFilter) -> String {
+pub(super) fn describe_possessive_player_filter(filter: &PlayerFilter) -> String {
     let player = describe_player_filter(filter);
     if player == "you" || player == "target you" {
         "your".to_string()
@@ -217,7 +208,7 @@ fn describe_possessive_player_filter(filter: &PlayerFilter) -> String {
     }
 }
 
-fn describe_possessive_choose_spec(spec: &ChooseSpec) -> String {
+pub(super) fn describe_possessive_choose_spec(spec: &ChooseSpec) -> String {
     let subject = describe_choose_spec(spec);
     if subject == "you" || subject == "target you" {
         "your".to_string()
@@ -230,7 +221,7 @@ fn describe_possessive_choose_spec(spec: &ChooseSpec) -> String {
     }
 }
 
-fn join_with_and(parts: &[String]) -> String {
+pub(super) fn join_with_and(parts: &[String]) -> String {
     match parts.len() {
         0 => String::new(),
         1 => parts[0].clone(),
@@ -244,7 +235,7 @@ fn join_with_and(parts: &[String]) -> String {
     }
 }
 
-fn join_with_or(parts: &[String]) -> String {
+pub(super) fn join_with_or(parts: &[String]) -> String {
     match parts.len() {
         0 => String::new(),
         1 => parts[0].clone(),
@@ -258,22 +249,22 @@ fn join_with_or(parts: &[String]) -> String {
     }
 }
 
-fn repeated_energy_symbols(count: usize) -> String {
+pub(super) fn repeated_energy_symbols(count: usize) -> String {
     "{E}".repeat(count)
 }
 
-fn describe_energy_payment_amount(value: &Value) -> String {
+pub(super) fn describe_energy_payment_amount(value: &Value) -> String {
     match value {
         Value::Fixed(amount) if *amount > 0 => repeated_energy_symbols(*amount as usize),
         _ => format!("{} energy counter(s)", describe_value(value)),
     }
 }
 
-fn describe_card_type_word_local(card_type: CardType) -> &'static str {
+pub(super) fn describe_card_type_word_local(card_type: CardType) -> &'static str {
     card_type.name()
 }
 
-fn describe_pt_value(value: crate::card::PtValue) -> String {
+pub(super) fn describe_pt_value(value: crate::card::PtValue) -> String {
     match value {
         crate::card::PtValue::Fixed(n) => n.to_string(),
         crate::card::PtValue::Star => "*".to_string(),
@@ -281,7 +272,10 @@ fn describe_pt_value(value: crate::card::PtValue) -> String {
     }
 }
 
-fn describe_token_color_words(colors: crate::color::ColorSet, include_colorless: bool) -> String {
+pub(super) fn describe_token_color_words(
+    colors: crate::color::ColorSet,
+    include_colorless: bool,
+) -> String {
     if colors.is_empty() {
         return if include_colorless {
             "colorless".to_string()
@@ -348,7 +342,7 @@ fn describe_token_color_words(colors: crate::color::ColorSet, include_colorless:
     join_with_and(&names)
 }
 
-fn describe_token_blueprint(token: &CardDefinition) -> String {
+pub(super) fn describe_token_blueprint(token: &CardDefinition) -> String {
     let card = &token.card;
     if card.subtypes.contains(&crate::types::Subtype::Role)
         && !card.name.trim().is_empty()
@@ -517,7 +511,7 @@ fn describe_token_blueprint(token: &CardDefinition) -> String {
     text
 }
 
-fn quote_token_granted_ability_text(text: &str) -> String {
+pub(super) fn quote_token_granted_ability_text(text: &str) -> String {
     let trimmed = text.trim().trim_end_matches('.').trim();
     if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
         return trimmed.to_string();
@@ -525,7 +519,7 @@ fn quote_token_granted_ability_text(text: &str) -> String {
     format!("\"{trimmed}\"")
 }
 
-fn normalize_token_granted_static_ability_text(text: &str) -> String {
+pub(super) fn normalize_token_granted_static_ability_text(text: &str) -> String {
     let mut normalized = normalize_sentence_surface_style(text);
     if let Some(rest) = normalized.strip_prefix("This creature ") {
         normalized = format!("This token {rest}");
@@ -535,7 +529,11 @@ fn normalize_token_granted_static_ability_text(text: &str) -> String {
     normalized
 }
 
-fn player_verb(subject: &str, you_form: &'static str, other_form: &'static str) -> &'static str {
+pub(super) fn player_verb(
+    subject: &str,
+    you_form: &'static str,
+    other_form: &'static str,
+) -> &'static str {
     if subject == "you" {
         you_form
     } else {
@@ -543,7 +541,7 @@ fn player_verb(subject: &str, you_form: &'static str, other_form: &'static str) 
     }
 }
 
-fn normalize_you_verb_phrase(text: &str) -> String {
+pub(super) fn normalize_you_verb_phrase(text: &str) -> String {
     let replacements = [
         ("pays ", "pay "),
         ("loses ", "lose "),
@@ -564,7 +562,7 @@ fn normalize_you_verb_phrase(text: &str) -> String {
     text.to_string()
 }
 
-fn normalize_third_person_verb_phrase(text: &str) -> String {
+pub(super) fn normalize_third_person_verb_phrase(text: &str) -> String {
     let replacements = [
         ("pay ", "pays "),
         ("lose ", "loses "),
@@ -586,7 +584,7 @@ fn normalize_third_person_verb_phrase(text: &str) -> String {
 }
 
 #[allow(dead_code)]
-fn normalize_you_subject_phrase(text: &str) -> String {
+pub(super) fn normalize_you_subject_phrase(text: &str) -> String {
     if let Some(rest) = text.strip_prefix("you ") {
         return format!("you {}", normalize_you_verb_phrase(rest));
     }
@@ -596,7 +594,7 @@ fn normalize_you_subject_phrase(text: &str) -> String {
     text.to_string()
 }
 
-fn normalize_cost_amount_token(text: &str) -> String {
+pub(super) fn normalize_cost_amount_token(text: &str) -> String {
     let cleaned = text.trim().trim_end_matches('.').trim_matches('"').trim();
     if cleaned.is_empty() {
         return cleaned.to_string();
@@ -610,7 +608,7 @@ fn normalize_cost_amount_token(text: &str) -> String {
     cleaned.to_string()
 }
 
-fn small_number_word(n: u32) -> Option<&'static str> {
+pub(super) fn small_number_word(n: u32) -> Option<&'static str> {
     match n {
         0 => Some("zero"),
         1 => Some("one"),
@@ -637,7 +635,7 @@ fn small_number_word(n: u32) -> Option<&'static str> {
     }
 }
 
-fn render_small_number_or_raw(text: &str) -> String {
+pub(super) fn render_small_number_or_raw(text: &str) -> String {
     text.trim()
         .parse::<u32>()
         .ok()
@@ -646,7 +644,7 @@ fn render_small_number_or_raw(text: &str) -> String {
         .unwrap_or_else(|| text.trim().to_string())
 }
 
-fn looks_like_trigger_condition(head: &str) -> bool {
+pub(super) fn looks_like_trigger_condition(head: &str) -> bool {
     let lower = head.trim().to_ascii_lowercase();
     if lower.is_empty() {
         return false;
@@ -696,7 +694,7 @@ fn looks_like_trigger_condition(head: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
-fn normalize_trigger_colon_clause(line: &str) -> Option<String> {
+pub(super) fn normalize_trigger_colon_clause(line: &str) -> Option<String> {
     let (line_prefix, body) = if let Some((prefix, rest)) = line.split_once(": ")
         && is_render_heading_prefix(prefix)
     {
@@ -749,7 +747,7 @@ fn normalize_trigger_colon_clause(line: &str) -> Option<String> {
     }
 }
 
-fn normalize_inline_earthbend_phrasing(text: &str) -> Option<String> {
+pub(super) fn normalize_inline_earthbend_phrasing(text: &str) -> Option<String> {
     let needle = "Earthbend target land you control with ";
     let suffix = " +1/+1 counter(s)";
 
@@ -781,7 +779,7 @@ fn normalize_inline_earthbend_phrasing(text: &str) -> Option<String> {
     if changed { Some(out) } else { None }
 }
 
-fn looks_like_creature_type_list_subject(subject: &str) -> bool {
+pub(super) fn looks_like_creature_type_list_subject(subject: &str) -> bool {
     let trimmed = subject.trim();
     if trimmed.is_empty() {
         return false;
@@ -815,7 +813,7 @@ fn looks_like_creature_type_list_subject(subject: &str) -> bool {
     true
 }
 
-fn normalize_enchanted_creature_dies_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_enchanted_creature_dies_clause(text: &str) -> Option<String> {
     let trimmed = text.trim();
     let tail = strip_prefix_ascii_ci(trimmed, "Whenever a enchanted creature dies, ")
         .or_else(|| strip_prefix_ascii_ci(trimmed, "When a enchanted creature dies, "))
@@ -872,7 +870,7 @@ fn normalize_enchanted_creature_dies_clause(text: &str) -> Option<String> {
     None
 }
 
-fn normalize_chosen_creature_type_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_chosen_creature_type_clause(text: &str) -> Option<String> {
     let rest = strip_prefix_ascii_ci(
         text.trim(),
         "You choose exactly 1 creature in the battlefield and tags it as 'chosen_creature_type_ref'. ",
@@ -926,7 +924,7 @@ fn normalize_chosen_creature_type_clause(text: &str) -> Option<String> {
         })
 }
 
-fn normalize_subject_signature_for_get_gain(subject: &str) -> String {
+pub(super) fn normalize_subject_signature_for_get_gain(subject: &str) -> String {
     let mut words = Vec::new();
     for raw_word in subject.split_whitespace() {
         let lower = raw_word
@@ -969,7 +967,7 @@ fn normalize_subject_signature_for_get_gain(subject: &str) -> String {
     words.join(" ")
 }
 
-fn normalize_sacrifice_implied_choice(sentence: &str) -> Option<String> {
+pub(super) fn normalize_sacrifice_implied_choice(sentence: &str) -> Option<String> {
     let trimmed = sentence.trim();
     let lower = trimmed.to_ascii_lowercase();
     if !lower.contains("sacrifice") || lower.contains("choice") {
@@ -1062,7 +1060,7 @@ fn normalize_sacrifice_implied_choice(sentence: &str) -> Option<String> {
     Some(rewritten)
 }
 
-fn normalize_choose_sacrifice_subject(chosen: &str) -> String {
+pub(super) fn normalize_choose_sacrifice_subject(chosen: &str) -> String {
     let mut chosen = chosen.trim().trim_end_matches('.').to_string();
     if let Some((before, _)) = split_once_ascii_ci(&chosen, " and tag it as ") {
         chosen = before.to_string();
@@ -1097,7 +1095,7 @@ fn normalize_choose_sacrifice_subject(chosen: &str) -> String {
     pluralize_noun_phrase(&chosen)
 }
 
-fn normalize_two_sentence_pump_and_gain_until_end_of_turn(
+pub(super) fn normalize_two_sentence_pump_and_gain_until_end_of_turn(
     left: &str,
     right: &str,
 ) -> Option<String> {
@@ -1166,7 +1164,7 @@ fn normalize_two_sentence_pump_and_gain_until_end_of_turn(
     ))
 }
 
-fn normalize_pump_and_gain_until_end_of_turn(line: &str) -> Option<String> {
+pub(super) fn normalize_pump_and_gain_until_end_of_turn(line: &str) -> Option<String> {
     let segments: Vec<&str> = line.split(". ").collect();
     if segments.len() < 2 {
         return None;
@@ -1186,7 +1184,7 @@ fn normalize_pump_and_gain_until_end_of_turn(line: &str) -> Option<String> {
     ))
 }
 
-fn normalize_create_named_token_article(line: &str) -> String {
+pub(super) fn normalize_create_named_token_article(line: &str) -> String {
     if let Some((head, tail)) = split_once_ascii_ci(line, "create a ")
         && tail
             .chars()
@@ -1199,7 +1197,7 @@ fn normalize_create_named_token_article(line: &str) -> String {
     line.to_string()
 }
 
-fn normalize_exile_named_token_until_source_leaves(line: &str) -> String {
+pub(super) fn normalize_exile_named_token_until_source_leaves(line: &str) -> String {
     let marker = "Exile target a token named ";
     let Some(start) = line.find(marker) else {
         return line.to_string();
@@ -1219,7 +1217,7 @@ fn normalize_exile_named_token_until_source_leaves(line: &str) -> String {
     line.to_string()
 }
 
-fn normalize_granted_named_token_leaves_sacrifice_source(line: &str) -> String {
+pub(super) fn normalize_granted_named_token_leaves_sacrifice_source(line: &str) -> String {
     let marker = "Grant When token named ";
     let Some(start) = line.find(marker) else {
         return line.to_string();
@@ -1240,7 +1238,7 @@ fn normalize_granted_named_token_leaves_sacrifice_source(line: &str) -> String {
     line.to_string()
 }
 
-fn normalize_same_name_search_bundle_clause(line: &str) -> Option<String> {
+pub(super) fn normalize_same_name_search_bundle_clause(line: &str) -> Option<String> {
     let (before_search, search_tail) =
         split_once_ascii_ci(line, "Search its controller's library for ")?;
     let (search_clause, rest_after_library) = split_once_ascii_ci(
@@ -1278,7 +1276,7 @@ fn normalize_same_name_search_bundle_clause(line: &str) -> Option<String> {
     Some(rewritten)
 }
 
-fn normalize_repeated_dynamic_buff(line: &str) -> Option<String> {
+pub(super) fn normalize_repeated_dynamic_buff(line: &str) -> Option<String> {
     let (before_until, after_until) = split_once_ascii_ci(line, " until end of turn")?;
     let (subject, buff) = split_once_ascii_ci(before_until, " gets ")?;
     let (left, right) = buff.split_once('/')?;
@@ -1310,7 +1308,7 @@ fn normalize_repeated_dynamic_buff(line: &str) -> Option<String> {
     Some(rewritten)
 }
 
-fn normalize_singular_tagged_play_permission(line: &str) -> Option<String> {
+pub(super) fn normalize_singular_tagged_play_permission(line: &str) -> Option<String> {
     let lower = line.to_ascii_lowercase();
     let singular_source = lower.contains("exile the top card")
         || lower.contains("reveal the top card")
@@ -1350,7 +1348,7 @@ fn normalize_singular_tagged_play_permission(line: &str) -> Option<String> {
     None
 }
 
-fn normalize_common_semantic_phrasing(line: &str) -> String {
+pub(super) fn normalize_common_semantic_phrasing(line: &str) -> String {
     let mut normalized = line.trim().to_string();
     if let Some(rewritten) = normalize_granted_activated_ability_clause(&normalized) {
         normalized = rewritten;
@@ -4108,7 +4106,7 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     normalized
 }
 
-fn normalize_reveal_match_filter(filter: &str) -> String {
+pub(super) fn normalize_reveal_match_filter(filter: &str) -> String {
     let mut normalized = filter.trim().to_string();
     if !normalized.ends_with("card") && !normalized.ends_with("cards") {
         normalized.push_str(" card");
@@ -4136,7 +4134,7 @@ fn normalize_reveal_match_filter(filter: &str) -> String {
     format!("{article} {normalized}")
 }
 
-fn normalize_reveal_tagged_draw_clause(line: &str) -> Option<String> {
+pub(super) fn normalize_reveal_tagged_draw_clause(line: &str) -> Option<String> {
     for prefix in [
         "Reveal the top card of your library and tag it as 'revealed_0'. If the tagged object 'revealed_0' matches ",
         "you may Reveal the top card of your library and tag it as 'revealed_0'. If the tagged object 'revealed_0' matches ",
@@ -4176,12 +4174,12 @@ fn normalize_reveal_tagged_draw_clause(line: &str) -> Option<String> {
     None
 }
 
-fn normalize_zero_pt_prefix(text: &str) -> String {
+pub(super) fn normalize_zero_pt_prefix(text: &str) -> String {
     text.replace(" gets 0/+", " gets +0/+")
         .replace(" gets 0/", " gets +0/")
 }
 
-fn strip_square_bracketed_segments(text: &str) -> String {
+pub(super) fn strip_square_bracketed_segments(text: &str) -> String {
     if !text.contains('[') {
         return text.to_string();
     }
@@ -4203,7 +4201,7 @@ fn strip_square_bracketed_segments(text: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn strip_parenthetical_segments(text: &str) -> String {
+pub(super) fn strip_parenthetical_segments(text: &str) -> String {
     if !text.contains('(') {
         return text.trim().to_string();
     }
@@ -4226,7 +4224,7 @@ fn strip_parenthetical_segments(text: &str) -> String {
 }
 
 #[allow(dead_code)]
-fn mana_word_to_symbol(word: &str) -> Option<&'static str> {
+pub(super) fn mana_word_to_symbol(word: &str) -> Option<&'static str> {
     match word {
         "w" => Some("{W}"),
         "u" => Some("{U}"),
@@ -4239,7 +4237,7 @@ fn mana_word_to_symbol(word: &str) -> Option<&'static str> {
 }
 
 #[allow(dead_code)]
-fn normalize_sliver_grant_clause(subject: &str, rest: &str) -> Option<String> {
+pub(super) fn normalize_sliver_grant_clause(subject: &str, rest: &str) -> Option<String> {
     let rest = strip_parenthetical_segments(rest);
     let rest = rest.trim().trim_matches('"').trim();
     let subject_prefix = if subject.eq_ignore_ascii_case("all slivers") {
@@ -4353,7 +4351,7 @@ fn normalize_sliver_grant_clause(subject: &str, rest: &str) -> Option<String> {
     }
 }
 
-fn describe_card_count(value: &Value) -> String {
+pub(super) fn describe_card_count(value: &Value) -> String {
     match value {
         Value::Fixed(1) => "a card".to_string(),
         Value::Fixed(n) => {
@@ -4375,7 +4373,7 @@ fn describe_card_count(value: &Value) -> String {
     }
 }
 
-fn describe_discard_count(value: &Value, filter: Option<&ObjectFilter>) -> String {
+pub(super) fn describe_discard_count(value: &Value, filter: Option<&ObjectFilter>) -> String {
     let Some(filter) = filter else {
         return describe_card_count(value);
     };
@@ -4410,7 +4408,7 @@ fn describe_discard_count(value: &Value, filter: Option<&ObjectFilter>) -> Strin
     }
 }
 
-fn describe_discard_card_phrase(filter: &ObjectFilter) -> String {
+pub(super) fn describe_discard_card_phrase(filter: &ObjectFilter) -> String {
     let mut bare = filter.clone();
     bare.controller = None;
     bare.owner = None;
@@ -4431,7 +4429,7 @@ fn describe_discard_card_phrase(filter: &ObjectFilter) -> String {
     phrase
 }
 
-fn pluralize_discard_card_phrase(phrase: &str) -> String {
+pub(super) fn pluralize_discard_card_phrase(phrase: &str) -> String {
     if phrase.ends_with('s') {
         phrase.to_string()
     } else {
@@ -4439,7 +4437,7 @@ fn pluralize_discard_card_phrase(phrase: &str) -> String {
     }
 }
 
-fn describe_effect_count_backref(value: &Value) -> Option<String> {
+pub(super) fn describe_effect_count_backref(value: &Value) -> Option<String> {
     match value {
         Value::EffectValue(_) => Some("that many".to_string()),
         Value::EffectValueOffset(_, offset) => {
@@ -4457,7 +4455,7 @@ fn describe_effect_count_backref(value: &Value) -> Option<String> {
     }
 }
 
-fn is_generic_owned_card_search_filter(filter: &ObjectFilter) -> bool {
+pub(super) fn is_generic_owned_card_search_filter(filter: &ObjectFilter) -> bool {
     filter.zone.is_none()
         && filter.controller.is_none()
         && (filter.owner.is_none() || matches!(filter.owner, Some(PlayerFilter::You)))
@@ -4507,7 +4505,7 @@ fn is_generic_owned_card_search_filter(filter: &ObjectFilter) -> bool {
         && !filter.source
 }
 
-fn describe_object_count(value: &Value) -> String {
+pub(super) fn describe_object_count(value: &Value) -> String {
     match value {
         Value::Fixed(1) => "a".to_string(),
         Value::Fixed(n) if *n > 1 && *n <= 20 => small_number_word(*n as u32)
@@ -4517,7 +4515,7 @@ fn describe_object_count(value: &Value) -> String {
     }
 }
 
-fn describe_count_filter_value_subject(filter: &ObjectFilter) -> String {
+pub(super) fn describe_count_filter_value_subject(filter: &ObjectFilter) -> String {
     let mut subject = strip_indefinite_article(&filter.description())
         .trim()
         .to_string();
@@ -4557,7 +4555,7 @@ fn describe_count_filter_value_subject(filter: &ObjectFilter) -> String {
     subject
 }
 
-fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
+pub(super) fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
     let mut bare = filter.clone();
     let controller = bare.controller.clone();
     let owner = bare.owner.clone();
@@ -4661,7 +4659,7 @@ fn describe_for_each_count_filter(filter: &ObjectFilter) -> String {
     subject
 }
 
-fn describe_for_each_spells_cast_this_turn(
+pub(super) fn describe_for_each_spells_cast_this_turn(
     player: &PlayerFilter,
     other_than_first: bool,
 ) -> String {
@@ -4679,7 +4677,7 @@ fn describe_for_each_spells_cast_this_turn(
     base
 }
 
-fn describe_demonstrative_tagged_object_filter(
+pub(super) fn describe_demonstrative_tagged_object_filter(
     filter: &crate::filter::ObjectFilter,
 ) -> Option<String> {
     let implicit_constraints = filter
@@ -4711,14 +4709,14 @@ fn describe_demonstrative_tagged_object_filter(
     }
 }
 
-fn describe_demonstrative_tagged_object_spec(spec: &ChooseSpec) -> Option<String> {
+pub(super) fn describe_demonstrative_tagged_object_spec(spec: &ChooseSpec) -> Option<String> {
     let ChooseSpec::Object(filter) = spec else {
         return None;
     };
     describe_demonstrative_tagged_object_filter(filter)
 }
 
-fn describe_choose_spec(spec: &ChooseSpec) -> String {
+pub(super) fn describe_choose_spec(spec: &ChooseSpec) -> String {
     match spec {
         ChooseSpec::Target(inner) => {
             if let Some(tagged_text) = describe_demonstrative_tagged_object_spec(inner.as_ref()) {
@@ -4885,7 +4883,7 @@ fn describe_choose_spec(spec: &ChooseSpec) -> String {
     }
 }
 
-fn describe_attach_objects_spec(spec: &ChooseSpec) -> String {
+pub(super) fn describe_attach_objects_spec(spec: &ChooseSpec) -> String {
     if let ChooseSpec::All(filter) = spec
         && filter.tagged_constraints.iter().any(|constraint| {
             constraint.relation == crate::filter::TaggedOpbjectRelation::IsTaggedObject
@@ -4904,7 +4902,7 @@ fn describe_attach_objects_spec(spec: &ChooseSpec) -> String {
     describe_choose_spec(spec)
 }
 
-fn describe_goad_target(spec: &ChooseSpec) -> String {
+pub(super) fn describe_goad_target(spec: &ChooseSpec) -> String {
     match spec {
         ChooseSpec::Tagged(tag) => {
             if tag.as_str().starts_with("counters_") {
@@ -4952,7 +4950,7 @@ fn describe_goad_target(spec: &ChooseSpec) -> String {
     }
 }
 
-fn describe_transform_target(spec: &ChooseSpec) -> String {
+pub(super) fn describe_transform_target(spec: &ChooseSpec) -> String {
     match spec {
         // Oracle text overwhelmingly uses "this creature" for source transforms
         // and this keeps compiled wording aligned with parser normalization.
@@ -4961,14 +4959,17 @@ fn describe_transform_target(spec: &ChooseSpec) -> String {
     }
 }
 
-fn describe_flip_target(spec: &ChooseSpec) -> String {
+pub(super) fn describe_flip_target(spec: &ChooseSpec) -> String {
     match spec {
         ChooseSpec::Source => "it".to_string(),
         _ => describe_choose_spec(spec),
     }
 }
 
-fn owner_for_zone_from_spec(spec: &ChooseSpec, zone: Zone) -> Option<Option<PlayerFilter>> {
+pub(super) fn owner_for_zone_from_spec(
+    spec: &ChooseSpec,
+    zone: Zone,
+) -> Option<Option<PlayerFilter>> {
     match spec {
         ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
             owner_for_zone_from_spec(inner, zone)
@@ -4984,15 +4985,15 @@ fn owner_for_zone_from_spec(spec: &ChooseSpec, zone: Zone) -> Option<Option<Play
     }
 }
 
-fn graveyard_owner_from_spec(spec: &ChooseSpec) -> Option<Option<PlayerFilter>> {
+pub(super) fn graveyard_owner_from_spec(spec: &ChooseSpec) -> Option<Option<PlayerFilter>> {
     owner_for_zone_from_spec(spec, Zone::Graveyard)
 }
 
-fn hand_owner_from_spec(spec: &ChooseSpec) -> Option<Option<PlayerFilter>> {
+pub(super) fn hand_owner_from_spec(spec: &ChooseSpec) -> Option<Option<PlayerFilter>> {
     owner_for_zone_from_spec(spec, Zone::Hand)
 }
 
-fn is_you_owned_battlefield_object_spec(spec: &ChooseSpec) -> bool {
+pub(super) fn is_you_owned_battlefield_object_spec(spec: &ChooseSpec) -> bool {
     match spec {
         ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
             is_you_owned_battlefield_object_spec(inner)
@@ -5004,7 +5005,7 @@ fn is_you_owned_battlefield_object_spec(spec: &ChooseSpec) -> bool {
     }
 }
 
-fn describe_card_choice_count(count: ChoiceCount) -> String {
+pub(super) fn describe_card_choice_count(count: ChoiceCount) -> String {
     if count.is_dynamic_x() {
         return "X cards".to_string();
     }
@@ -5018,7 +5019,7 @@ fn describe_card_choice_count(count: ChoiceCount) -> String {
     }
 }
 
-fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
+pub(super) fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
     match spec {
         ChooseSpec::Target(inner) => {
             if let Some(tagged_text) = describe_demonstrative_tagged_object_spec(inner.as_ref()) {
@@ -5192,7 +5193,7 @@ fn describe_choose_spec_without_graveyard_zone(spec: &ChooseSpec) -> String {
     }
 }
 
-fn describe_choice_count(count: &ChoiceCount) -> String {
+pub(super) fn describe_choice_count(count: &ChoiceCount) -> String {
     let base = if count.is_dynamic_x() {
         "X".to_string()
     } else {
@@ -5211,7 +5212,7 @@ fn describe_choice_count(count: &ChoiceCount) -> String {
     }
 }
 
-fn ensure_trailing_period(text: &str) -> String {
+pub(super) fn ensure_trailing_period(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return String::new();
@@ -5229,7 +5230,7 @@ fn ensure_trailing_period(text: &str) -> String {
 }
 
 #[allow(dead_code)]
-fn normalize_modal_text(text: &str) -> String {
+pub(super) fn normalize_modal_text(text: &str) -> String {
     text.chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() {
@@ -5245,11 +5246,11 @@ fn normalize_modal_text(text: &str) -> String {
 }
 
 #[allow(dead_code)]
-fn modal_text_equivalent(description: &str, compiled: &str) -> bool {
+pub(super) fn modal_text_equivalent(description: &str, compiled: &str) -> bool {
     normalize_modal_text(description) == normalize_modal_text(compiled)
 }
 
-fn number_word(value: i32) -> Option<&'static str> {
+pub(super) fn number_word(value: i32) -> Option<&'static str> {
     match value {
         1 => Some("one"),
         2 => Some("two"),
@@ -5260,7 +5261,7 @@ fn number_word(value: i32) -> Option<&'static str> {
     }
 }
 
-fn describe_search_selection_with_cards(selection: &str) -> String {
+pub(super) fn describe_search_selection_with_cards(selection: &str) -> String {
     let selection = selection.trim();
     if selection.is_empty() {
         return "a card".to_string();
@@ -5336,7 +5337,7 @@ fn describe_search_selection_with_cards(selection: &str) -> String {
     format!("{} card", with_indefinite_article(selection))
 }
 
-fn normalize_search_you_own_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_search_you_own_clause(text: &str) -> Option<String> {
     let rest = text.strip_prefix("Search your library for ")?;
     let (selection, tail) = rest.split_once(" you own")?;
     let selection = describe_search_selection_with_cards(selection);
@@ -5364,7 +5365,7 @@ fn normalize_search_you_own_clause(text: &str) -> Option<String> {
     Some(format!("Search your library for {selection}{tail}"))
 }
 
-fn normalize_split_search_battlefield_then_hand_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_split_search_battlefield_then_hand_clause(text: &str) -> Option<String> {
     let trimmed = text.trim().trim_end_matches('.');
     let (first, second) = trimmed.split_once(". ")?;
 
@@ -5409,7 +5410,7 @@ fn normalize_split_search_battlefield_then_hand_clause(text: &str) -> Option<Str
 }
 
 #[allow(dead_code)]
-fn normalize_choose_between_modes_clause(text: &str) -> Option<String> {
+pub(super) fn normalize_choose_between_modes_clause(text: &str) -> Option<String> {
     let (prefix, rest) = if let Some(rest) = text.strip_prefix("Choose between ") {
         ("", rest)
     } else if let Some((prefix, rest)) = text.split_once("Choose between ") {
@@ -5442,7 +5443,7 @@ fn normalize_choose_between_modes_clause(text: &str) -> Option<String> {
     }
 }
 
-fn describe_mode_choice_header(max: &Value, min: Option<&Value>) -> String {
+pub(super) fn describe_mode_choice_header(max: &Value, min: Option<&Value>) -> String {
     match (min, max) {
         (Some(Value::Fixed(min_value)), Value::Fixed(max_value)) => {
             match (*min_value, *max_value) {
@@ -5483,7 +5484,7 @@ fn describe_mode_choice_header(max: &Value, min: Option<&Value>) -> String {
     }
 }
 
-fn describe_compact_protection_choice(effect: &Effect) -> Option<String> {
+pub(super) fn describe_compact_protection_choice(effect: &Effect) -> Option<String> {
     let choose_mode = effect.downcast_ref::<crate::effects::ChooseModeEffect>()?;
     if choose_mode.min_choose_count.is_some()
         || !matches!(choose_mode.choose_count, Value::Fixed(1))
@@ -5538,7 +5539,7 @@ fn describe_compact_protection_choice(effect: &Effect) -> Option<String> {
     })
 }
 
-fn describe_compact_keyword_choice(effect: &Effect) -> Option<String> {
+pub(super) fn describe_compact_keyword_choice(effect: &Effect) -> Option<String> {
     let choose_mode = effect.downcast_ref::<crate::effects::ChooseModeEffect>()?;
     if choose_mode.min_choose_count.is_some()
         || !matches!(choose_mode.choose_count, Value::Fixed(1))
@@ -5617,7 +5618,7 @@ fn describe_compact_keyword_choice(effect: &Effect) -> Option<String> {
     ))
 }
 
-fn describe_mana_symbol(symbol: ManaSymbol) -> String {
+pub(super) fn describe_mana_symbol(symbol: ManaSymbol) -> String {
     match symbol {
         ManaSymbol::White => "{W}".to_string(),
         ManaSymbol::Blue => "{U}".to_string(),
@@ -5632,7 +5633,7 @@ fn describe_mana_symbol(symbol: ManaSymbol) -> String {
     }
 }
 
-fn describe_mana_alternatives(symbols: &[ManaSymbol]) -> String {
+pub(super) fn describe_mana_alternatives(symbols: &[ManaSymbol]) -> String {
     let rendered = symbols
         .iter()
         .copied()
@@ -5651,7 +5652,7 @@ fn describe_mana_alternatives(symbols: &[ManaSymbol]) -> String {
     }
 }
 
-fn describe_counter_type(counter_type: CounterType) -> String {
+pub(super) fn describe_counter_type(counter_type: CounterType) -> String {
     counter_type.description().into_owned()
 }
 
@@ -5957,7 +5958,7 @@ pub(crate) fn describe_value(value: &Value) -> String {
     }
 }
 
-fn party_size_multiplier(value: &Value) -> Option<(PlayerFilter, i32)> {
+pub(super) fn party_size_multiplier(value: &Value) -> Option<(PlayerFilter, i32)> {
     match value {
         Value::PartySize(filter) => Some((filter.clone(), 1)),
         Value::Add(left, right) => {
@@ -5973,7 +5974,7 @@ fn party_size_multiplier(value: &Value) -> Option<(PlayerFilter, i32)> {
     }
 }
 
-fn spells_cast_this_turn_multiplier(value: &Value) -> Option<(PlayerFilter, i32)> {
+pub(super) fn spells_cast_this_turn_multiplier(value: &Value) -> Option<(PlayerFilter, i32)> {
     match value {
         Value::SpellsCastThisTurn(filter) => Some((filter.clone(), 1)),
         Value::Add(left, right) => {
@@ -5989,7 +5990,7 @@ fn spells_cast_this_turn_multiplier(value: &Value) -> Option<(PlayerFilter, i32)
     }
 }
 
-fn describe_spells_cast_this_turn_each(filter: &PlayerFilter) -> String {
+pub(super) fn describe_spells_cast_this_turn_each(filter: &PlayerFilter) -> String {
     match filter {
         PlayerFilter::You => "spell you've cast this turn".to_string(),
         PlayerFilter::Opponent => "spell an opponent has cast this turn".to_string(),
@@ -6001,7 +6002,7 @@ fn describe_spells_cast_this_turn_each(filter: &PlayerFilter) -> String {
     }
 }
 
-fn describe_signed_value(value: &Value) -> String {
+pub(super) fn describe_signed_value(value: &Value) -> String {
     match value {
         Value::Fixed(n) if *n >= 0 => format!("+{n}"),
         Value::X => "+X".to_string(),
@@ -6021,7 +6022,10 @@ fn describe_signed_value(value: &Value) -> String {
     }
 }
 
-fn describe_toughness_delta_with_power_context(power: &Value, toughness: &Value) -> String {
+pub(super) fn describe_toughness_delta_with_power_context(
+    power: &Value,
+    toughness: &Value,
+) -> String {
     if matches!(power, Value::Fixed(n) if *n < 0) && matches!(toughness, Value::Fixed(0)) {
         "-0".to_string()
     } else {
@@ -6029,7 +6033,7 @@ fn describe_toughness_delta_with_power_context(power: &Value, toughness: &Value)
     }
 }
 
-fn describe_dynamic_runtime_pt_with_where_x(
+pub(super) fn describe_dynamic_runtime_pt_with_where_x(
     target: &str,
     plural_target: bool,
     power: &Value,
@@ -6074,7 +6078,7 @@ fn describe_dynamic_runtime_pt_with_where_x(
     None
 }
 
-fn describe_signed_i32(value: i32) -> String {
+pub(super) fn describe_signed_i32(value: i32) -> String {
     if value >= 0 {
         format!("+{value}")
     } else {
@@ -6082,11 +6086,11 @@ fn describe_signed_i32(value: i32) -> String {
     }
 }
 
-fn choose_spec_is_plural(spec: &ChooseSpec) -> bool {
+pub(super) fn choose_spec_is_plural(spec: &ChooseSpec) -> bool {
     effect_text_shared::choose_spec_is_plural(spec)
 }
 
-fn choose_spec_allows_multiple(spec: &ChooseSpec) -> bool {
+pub(super) fn choose_spec_allows_multiple(spec: &ChooseSpec) -> bool {
     match spec {
         ChooseSpec::Target(inner) => choose_spec_allows_multiple(inner),
         ChooseSpec::All(_) | ChooseSpec::EachPlayer(_) => true,
@@ -6103,7 +6107,7 @@ fn choose_spec_allows_multiple(spec: &ChooseSpec) -> bool {
     }
 }
 
-fn owner_hand_phrase_for_spec(spec: &ChooseSpec) -> &'static str {
+pub(super) fn owner_hand_phrase_for_spec(spec: &ChooseSpec) -> &'static str {
     if choose_spec_is_plural(spec) {
         "their owners' hands"
     } else {
@@ -6111,7 +6115,7 @@ fn owner_hand_phrase_for_spec(spec: &ChooseSpec) -> &'static str {
     }
 }
 
-fn owner_library_phrase_for_spec(spec: &ChooseSpec) -> &'static str {
+pub(super) fn owner_library_phrase_for_spec(spec: &ChooseSpec) -> &'static str {
     if choose_spec_is_plural(spec) {
         "their owners' libraries"
     } else {
@@ -6119,7 +6123,7 @@ fn owner_library_phrase_for_spec(spec: &ChooseSpec) -> &'static str {
     }
 }
 
-fn describe_put_counter_phrase(count: &Value, counter_type: CounterType) -> String {
+pub(super) fn describe_put_counter_phrase(count: &Value, counter_type: CounterType) -> String {
     let counter_name = counter_type.description().into_owned();
     match count {
         Value::Fixed(1) => with_indefinite_article(&format!("{counter_name} counter")),
@@ -6134,7 +6138,7 @@ fn describe_put_counter_phrase(count: &Value, counter_type: CounterType) -> Stri
     }
 }
 
-fn describe_apply_continuous_target(
+pub(super) fn describe_apply_continuous_target(
     effect: &crate::effects::ApplyContinuousEffect,
 ) -> (String, bool) {
     effect_text_shared::describe_apply_continuous_target(effect, describe_choose_spec, |filter| {
@@ -6142,7 +6146,7 @@ fn describe_apply_continuous_target(
     })
 }
 
-fn describe_apply_continuous_clauses(
+pub(super) fn describe_apply_continuous_clauses(
     effect: &crate::effects::ApplyContinuousEffect,
     plural_target: bool,
 ) -> Vec<String> {
@@ -6285,7 +6289,7 @@ fn describe_apply_continuous_clauses(
     clauses
 }
 
-fn describe_apply_continuous_tail(
+pub(super) fn describe_apply_continuous_tail(
     effect: &crate::effects::ApplyContinuousEffect,
 ) -> Option<String> {
     if let Some(condition) = &effect.condition
@@ -6302,7 +6306,7 @@ fn describe_apply_continuous_tail(
     None
 }
 
-fn describe_doesnt_untap_apply_continuous_effect(
+pub(super) fn describe_doesnt_untap_apply_continuous_effect(
     effect: &crate::effects::ApplyContinuousEffect,
     target: &str,
     plural_target: bool,
@@ -6328,7 +6332,7 @@ fn describe_doesnt_untap_apply_continuous_effect(
     Some(text)
 }
 
-fn describe_apply_continuous_animation_effect(
+pub(super) fn describe_apply_continuous_animation_effect(
     effect: &crate::effects::ApplyContinuousEffect,
     target: &str,
     plural_target: bool,
@@ -6433,7 +6437,7 @@ fn describe_apply_continuous_animation_effect(
     Some(text)
 }
 
-fn describe_apply_continuous_effect(
+pub(super) fn describe_apply_continuous_effect(
     effect: &crate::effects::ApplyContinuousEffect,
 ) -> Option<String> {
     let (target, plural_target) = describe_apply_continuous_target(effect);
@@ -6506,7 +6510,7 @@ fn describe_apply_continuous_effect(
     Some(text)
 }
 
-fn describe_compact_apply_continuous_pair(
+pub(super) fn describe_compact_apply_continuous_pair(
     first: &crate::effects::ApplyContinuousEffect,
     second: &crate::effects::ApplyContinuousEffect,
 ) -> Option<String> {
@@ -6533,7 +6537,7 @@ fn describe_compact_apply_continuous_pair(
     Some(text)
 }
 
-fn choose_spec_references_tag(spec: &ChooseSpec, tag: &str) -> bool {
+pub(super) fn choose_spec_references_tag(spec: &ChooseSpec, tag: &str) -> bool {
     match spec {
         ChooseSpec::Tagged(candidate) => candidate.as_str() == tag,
         ChooseSpec::Target(inner) | ChooseSpec::WithCount(inner, _) => {
@@ -6543,7 +6547,7 @@ fn choose_spec_references_tag(spec: &ChooseSpec, tag: &str) -> bool {
     }
 }
 
-fn describe_attached_object_for_tag(tag: &str, spec: Option<&ChooseSpec>) -> String {
+pub(super) fn describe_attached_object_for_tag(tag: &str, spec: Option<&ChooseSpec>) -> String {
     let default = match tag {
         "enchanted" => "enchanted permanent",
         "equipped" => "equipped creature",
@@ -6578,7 +6582,7 @@ fn describe_attached_object_for_tag(tag: &str, spec: Option<&ChooseSpec>) -> Str
     default.to_string()
 }
 
-fn describe_tag_attached_then_tap_or_untap(
+pub(super) fn describe_tag_attached_then_tap_or_untap(
     tag_attached: &crate::effects::TagAttachedToSourceEffect,
     next: &Effect,
 ) -> Option<String> {
@@ -6602,15 +6606,15 @@ fn describe_tag_attached_then_tap_or_untap(
     None
 }
 
-fn is_generated_internal_tag(tag: &str) -> bool {
+pub(super) fn is_generated_internal_tag(tag: &str) -> bool {
     effect_text_shared::is_generated_internal_tag(tag)
 }
 
-fn is_implicit_reference_tag(tag: &str) -> bool {
+pub(super) fn is_implicit_reference_tag(tag: &str) -> bool {
     effect_text_shared::is_implicit_reference_tag(tag)
 }
 
-fn describe_until(until: &Until) -> String {
+pub(super) fn describe_until(until: &Until) -> String {
     match until {
         Until::Forever => "forever".to_string(),
         Until::EndOfTurn => "until end of turn".to_string(),
@@ -6625,7 +6629,7 @@ fn describe_until(until: &Until) -> String {
     }
 }
 
-fn describe_damage_filter(filter: &crate::prevention::DamageFilter) -> String {
+pub(super) fn describe_damage_filter(filter: &crate::prevention::DamageFilter) -> String {
     let mut parts = Vec::new();
     if filter.combat_only {
         parts.push("combat damage".to_string());
@@ -6665,7 +6669,9 @@ fn describe_damage_filter(filter: &crate::prevention::DamageFilter) -> String {
     parts.join(" ")
 }
 
-fn describe_prevention_target(target: &crate::prevention::PreventionTarget) -> &'static str {
+pub(super) fn describe_prevention_target(
+    target: &crate::prevention::PreventionTarget,
+) -> &'static str {
     match target {
         crate::prevention::PreventionTarget::Player(_) => "that player",
         crate::prevention::PreventionTarget::Permanent(_) => "that permanent",
@@ -6679,7 +6685,7 @@ fn describe_prevention_target(target: &crate::prevention::PreventionTarget) -> &
     }
 }
 
-fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
+pub(super) fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
     match restriction {
         crate::effect::Restriction::AdditionalLandPlays(filter, count) => {
             if *count == 1 {
@@ -6834,7 +6840,7 @@ fn describe_restriction(restriction: &crate::effect::Restriction) -> String {
     }
 }
 
-fn describe_comparison(cmp: &Comparison) -> String {
+pub(super) fn describe_comparison(cmp: &Comparison) -> String {
     match cmp {
         Comparison::GreaterThan(n) => format!("is greater than {n}"),
         Comparison::GreaterThanOrEqual(n) => format!("is at least {n}"),
@@ -6845,7 +6851,7 @@ fn describe_comparison(cmp: &Comparison) -> String {
     }
 }
 
-fn basic_land_types_multiplier(value: &Value) -> Option<(&ObjectFilter, i32)> {
+pub(super) fn basic_land_types_multiplier(value: &Value) -> Option<(&ObjectFilter, i32)> {
     match value {
         Value::BasicLandTypesAmong(filter) => Some((filter, 1)),
         Value::Add(left, right) => {
@@ -6861,7 +6867,7 @@ fn basic_land_types_multiplier(value: &Value) -> Option<(&ObjectFilter, i32)> {
     }
 }
 
-fn describe_basic_land_type_scope(filter: &ObjectFilter) -> String {
+pub(super) fn describe_basic_land_type_scope(filter: &ObjectFilter) -> String {
     let lands = describe_for_each_filter(filter);
     if lands == "land" {
         return "lands".to_string();
@@ -6875,18 +6881,18 @@ fn describe_basic_land_type_scope(filter: &ObjectFilter) -> String {
     lands
 }
 
-fn describe_basic_land_types_among(filter: &ObjectFilter) -> String {
+pub(super) fn describe_basic_land_types_among(filter: &ObjectFilter) -> String {
     format!(
         "basic land type among {}",
         describe_basic_land_type_scope(filter)
     )
 }
 
-fn describe_colors_among(filter: &ObjectFilter) -> String {
+pub(super) fn describe_colors_among(filter: &ObjectFilter) -> String {
     format!("color among {}", describe_for_each_filter(filter))
 }
 
-fn describe_effect_predicate(predicate: &EffectPredicate) -> String {
+pub(super) fn describe_effect_predicate(predicate: &EffectPredicate) -> String {
     match predicate {
         EffectPredicate::Succeeded => "succeeded".to_string(),
         EffectPredicate::Failed => "failed".to_string(),
@@ -6899,7 +6905,7 @@ fn describe_effect_predicate(predicate: &EffectPredicate) -> String {
     }
 }
 
-fn tag_action_from_name(tag: &str) -> Option<&'static str> {
+pub(super) fn tag_action_from_name(tag: &str) -> Option<&'static str> {
     let base = tag.split('_').next().unwrap_or(tag);
     match base {
         "sacrificed" => Some("sacrificed"),
@@ -6911,7 +6917,7 @@ fn tag_action_from_name(tag: &str) -> Option<&'static str> {
     }
 }
 
-fn describe_player_tagged_object_text(tag: &TagKey, filter: &ObjectFilter) -> String {
+pub(super) fn describe_player_tagged_object_text(tag: &TagKey, filter: &ObjectFilter) -> String {
     let card_context = tag.as_str().starts_with("discarded_")
         || tag.as_str().starts_with("exiled_")
         || tag.as_str().starts_with("revealed_");
@@ -6943,14 +6949,17 @@ fn describe_player_tagged_object_text(tag: &TagKey, filter: &ObjectFilter) -> St
     with_indefinite_article(&desc)
 }
 
-fn is_owned_player_zone(zone: Option<Zone>) -> bool {
+pub(super) fn is_owned_player_zone(zone: Option<Zone>) -> bool {
     matches!(
         zone,
         Some(Zone::Graveyard | Zone::Hand | Zone::Library | Zone::Command)
     )
 }
 
-fn describe_owned_player_zone_filter(player: &PlayerFilter, filter: &ObjectFilter) -> String {
+pub(super) fn describe_owned_player_zone_filter(
+    player: &PlayerFilter,
+    filter: &ObjectFilter,
+) -> String {
     let mut described = filter.clone();
     if described.owner.is_none() {
         described.owner = Some(player.clone());
@@ -6958,7 +6967,7 @@ fn describe_owned_player_zone_filter(player: &PlayerFilter, filter: &ObjectFilte
     described.description()
 }
 
-fn describe_player_relative_condition(condition: &Condition) -> Option<String> {
+pub(super) fn describe_player_relative_condition(condition: &Condition) -> Option<String> {
     match condition {
         Condition::PlayerTappedLandForManaThisTurn { player } => {
             if *player != PlayerFilter::IteratedPlayer {
@@ -6995,7 +7004,7 @@ fn describe_player_relative_condition(condition: &Condition) -> Option<String> {
     }
 }
 
-fn describe_condition(condition: &Condition) -> String {
+pub(super) fn describe_condition(condition: &Condition) -> String {
     match condition {
         Condition::YouControl(filter) => format!("you control {}", filter.description()),
         Condition::OpponentControls(filter) => {

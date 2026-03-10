@@ -1,4 +1,6 @@
-fn strip_render_heading(line: &str) -> String {
+use super::*;
+
+pub(super) fn strip_render_heading(line: &str) -> String {
     let Some((prefix, rest)) = line.split_once(':') else {
         return line.trim().to_string();
     };
@@ -9,7 +11,7 @@ fn strip_render_heading(line: &str) -> String {
     }
 }
 
-fn is_keyword_phrase(phrase: &str) -> bool {
+pub(super) fn is_keyword_phrase(phrase: &str) -> bool {
     let lower = phrase.trim().to_ascii_lowercase();
     if lower.is_empty() {
         return false;
@@ -55,7 +57,7 @@ fn is_keyword_phrase(phrase: &str) -> bool {
     )
 }
 
-fn split_have_clause(clause: &str) -> Option<(String, String)> {
+pub(super) fn split_have_clause(clause: &str) -> Option<(String, String)> {
     let trimmed = clause.trim();
     for verb in [" have ", " has "] {
         if let Some(idx) = trimmed.to_ascii_lowercase().find(verb) {
@@ -74,7 +76,7 @@ fn split_have_clause(clause: &str) -> Option<(String, String)> {
     None
 }
 
-fn split_lose_all_abilities_clause(clause: &str) -> Option<String> {
+pub(super) fn split_lose_all_abilities_clause(clause: &str) -> Option<String> {
     let trimmed = clause.trim().trim_end_matches('.');
     for verb in [" loses all abilities", " lose all abilities"] {
         if let Some(subject) = trimmed.strip_suffix(verb) {
@@ -87,7 +89,7 @@ fn split_lose_all_abilities_clause(clause: &str) -> Option<String> {
     None
 }
 
-fn extract_base_pt_tail_for_subject(line: &str, subject: &str) -> Option<String> {
+pub(super) fn extract_base_pt_tail_for_subject(line: &str, subject: &str) -> Option<String> {
     if let Some(pt) = line.strip_prefix("Affected permanents have base power and toughness ") {
         return Some(pt.trim().to_string());
     }
@@ -100,7 +102,7 @@ fn extract_base_pt_tail_for_subject(line: &str, subject: &str) -> Option<String>
     None
 }
 
-fn normalize_global_subject_number(subject: &str) -> String {
+pub(super) fn normalize_global_subject_number(subject: &str) -> String {
     let trimmed = subject.trim();
     if trimmed.eq_ignore_ascii_case("Creature") {
         return "Creatures".to_string();
@@ -120,7 +122,7 @@ fn normalize_global_subject_number(subject: &str) -> String {
     trimmed.to_string()
 }
 
-fn subject_is_plural(subject: &str) -> bool {
+pub(super) fn subject_is_plural(subject: &str) -> bool {
     let lower = subject.trim().to_ascii_lowercase();
     lower.starts_with("all ")
         || lower.starts_with("other ")
@@ -130,7 +132,7 @@ fn subject_is_plural(subject: &str) -> bool {
 }
 
 #[allow(dead_code)]
-fn normalize_activation_cost_add_punctuation(line: &str) -> String {
+pub(super) fn normalize_activation_cost_add_punctuation(line: &str) -> String {
     if line.contains(':') {
         return line.to_string();
     }
@@ -146,7 +148,7 @@ fn normalize_activation_cost_add_punctuation(line: &str) -> String {
 }
 
 #[allow(dead_code)]
-fn normalize_cost_payment_wording(line: &str) -> String {
+pub(super) fn normalize_cost_payment_wording(line: &str) -> String {
     let Some((cost, effect)) = line.split_once(": ") else {
         return line.to_string();
     };
@@ -173,7 +175,7 @@ fn normalize_cost_payment_wording(line: &str) -> String {
     format!("{normalized_cost}: {normalized_effect}")
 }
 
-fn split_subject_predicate_clause(line: &str) -> Option<(&str, &str, &str)> {
+pub(super) fn split_subject_predicate_clause(line: &str) -> Option<(&str, &str, &str)> {
     for verb in [
         " gets ", " get ", " has ", " have ", " gains ", " gain ", " is ", " are ",
     ] {
@@ -188,7 +190,7 @@ fn split_subject_predicate_clause(line: &str) -> Option<(&str, &str, &str)> {
     None
 }
 
-fn can_merge_subject_predicates(left_verb: &str, right_verb: &str) -> bool {
+pub(super) fn can_merge_subject_predicates(left_verb: &str, right_verb: &str) -> bool {
     let is_get = |verb: &str| matches!(verb, "gets" | "get");
     let is_trait = |verb: &str| matches!(verb, "has" | "have" | "gains" | "gain");
     let is_state = |verb: &str| matches!(verb, "is" | "are");
@@ -201,7 +203,7 @@ fn can_merge_subject_predicates(left_verb: &str, right_verb: &str) -> bool {
         || (is_state(left_verb) && is_state(right_verb))
 }
 
-fn normalize_keyword_predicate_case(predicate: &str) -> String {
+pub(super) fn normalize_keyword_predicate_case(predicate: &str) -> String {
     let trimmed = predicate.trim();
     if is_keyword_phrase(trimmed) {
         return trimmed.to_ascii_lowercase();
@@ -225,7 +227,7 @@ fn normalize_keyword_predicate_case(predicate: &str) -> String {
     trimmed.to_string()
 }
 
-fn normalize_keyword_list_phrase(text: &str) -> Option<String> {
+pub(super) fn normalize_keyword_list_phrase(text: &str) -> Option<String> {
     let parts = text
         .split(',')
         .map(str::trim)
@@ -246,7 +248,7 @@ fn normalize_keyword_list_phrase(text: &str) -> Option<String> {
     )
 }
 
-fn normalize_keyword_and_phrase(text: &str) -> Option<String> {
+pub(super) fn normalize_keyword_and_phrase(text: &str) -> Option<String> {
     let parts = text
         .split(" and ")
         .map(str::trim)
@@ -267,7 +269,7 @@ fn normalize_keyword_and_phrase(text: &str) -> Option<String> {
     )
 }
 
-fn normalize_gains_tail(predicate: &str) -> String {
+pub(super) fn normalize_gains_tail(predicate: &str) -> String {
     let normalized = normalize_keyword_predicate_case(predicate);
     if let Some((first, second)) = normalized.split_once(", and gains ")
         && let Some(second) = second.strip_suffix(" until end of turn")
@@ -283,7 +285,7 @@ fn normalize_gains_tail(predicate: &str) -> String {
     normalized
 }
 
-fn merge_sentence_subject_predicates(line: &str) -> Option<String> {
+pub(super) fn merge_sentence_subject_predicates(line: &str) -> Option<String> {
     let (left, right) = line.split_once(". ")?;
     let (left_subject, left_verb, left_rest) = split_subject_predicate_clause(left)?;
     let (right_subject, right_verb, right_rest) = split_subject_predicate_clause(right)?;
@@ -307,7 +309,7 @@ fn merge_sentence_subject_predicates(line: &str) -> Option<String> {
     ))
 }
 
-fn merge_adjacent_subject_predicate_lines(lines: Vec<String>) -> Vec<String> {
+pub(super) fn merge_adjacent_subject_predicate_lines(lines: Vec<String>) -> Vec<String> {
     let mut merged = Vec::new();
     let mut idx = 0usize;
 
@@ -424,7 +426,7 @@ fn merge_adjacent_subject_predicate_lines(lines: Vec<String>) -> Vec<String> {
     merged
 }
 
-fn merge_blockability_lines(lines: Vec<String>) -> Vec<String> {
+pub(super) fn merge_blockability_lines(lines: Vec<String>) -> Vec<String> {
     let mut merged = Vec::with_capacity(lines.len());
     let mut idx = 0usize;
     while idx < lines.len() {
@@ -445,7 +447,7 @@ fn merge_blockability_lines(lines: Vec<String>) -> Vec<String> {
     merged
 }
 
-fn merge_lose_all_transform_lines(lines: Vec<String>) -> Vec<String> {
+pub(super) fn merge_lose_all_transform_lines(lines: Vec<String>) -> Vec<String> {
     let mut merged = Vec::with_capacity(lines.len());
     let mut idx = 0usize;
 
@@ -557,7 +559,7 @@ fn merge_lose_all_transform_lines(lines: Vec<String>) -> Vec<String> {
     merged
 }
 
-fn parse_simple_mana_add_line(line: &str) -> Option<(&str, &str)> {
+pub(super) fn parse_simple_mana_add_line(line: &str) -> Option<(&str, &str)> {
     let (cost, rest) = line.split_once(": ")?;
     let symbol = rest.strip_prefix("Add ")?;
     let symbol = symbol.trim().trim_end_matches('.');
@@ -574,7 +576,7 @@ fn parse_simple_mana_add_line(line: &str) -> Option<(&str, &str)> {
     Some((cost, symbol))
 }
 
-fn format_mana_symbol_alternatives(symbols: &[String]) -> String {
+pub(super) fn format_mana_symbol_alternatives(symbols: &[String]) -> String {
     match symbols.len() {
         0 => String::new(),
         1 => symbols[0].clone(),
@@ -588,7 +590,7 @@ fn format_mana_symbol_alternatives(symbols: &[String]) -> String {
     }
 }
 
-fn merge_adjacent_simple_mana_add_lines(lines: Vec<String>) -> Vec<String> {
+pub(super) fn merge_adjacent_simple_mana_add_lines(lines: Vec<String>) -> Vec<String> {
     let mut merged = Vec::with_capacity(lines.len());
     let mut idx = 0usize;
     while idx < lines.len() {
@@ -630,7 +632,7 @@ fn merge_adjacent_simple_mana_add_lines(lines: Vec<String>) -> Vec<String> {
     merged
 }
 
-fn have_verb_for_subject(subject: &str) -> &'static str {
+pub(super) fn have_verb_for_subject(subject: &str) -> &'static str {
     let lower = subject.to_ascii_lowercase();
     if lower.starts_with("enchanted ")
         || lower.starts_with("equipped ")
@@ -667,7 +669,7 @@ fn have_verb_for_subject(subject: &str) -> &'static str {
     }
 }
 
-fn merge_subject_has_keyword_lines(lines: Vec<String>) -> Vec<String> {
+pub(super) fn merge_subject_has_keyword_lines(lines: Vec<String>) -> Vec<String> {
     let mut merged = Vec::with_capacity(lines.len());
     let mut idx = 0usize;
     while idx < lines.len() {
@@ -724,7 +726,7 @@ fn merge_subject_has_keyword_lines(lines: Vec<String>) -> Vec<String> {
     merged
 }
 
-fn normalize_repeated_has_keyword_list(tail: &str) -> String {
+pub(super) fn normalize_repeated_has_keyword_list(tail: &str) -> String {
     let mut normalized = tail.trim().trim_end_matches('.').to_string();
     if normalized.is_empty() {
         return normalized;
@@ -766,7 +768,7 @@ fn normalize_repeated_has_keyword_list(tail: &str) -> String {
     format!("{}, and {}", parts.join(", "), last)
 }
 
-fn merge_subject_is_legendary_gets_then_has_lines(lines: Vec<String>) -> Vec<String> {
+pub(super) fn merge_subject_is_legendary_gets_then_has_lines(lines: Vec<String>) -> Vec<String> {
     if lines.len() != 2 {
         return lines;
     }
@@ -809,7 +811,7 @@ fn merge_subject_is_legendary_gets_then_has_lines(lines: Vec<String>) -> Vec<Str
     )]
 }
 
-fn drop_redundant_spell_cost_lines(lines: Vec<String>) -> Vec<String> {
+pub(super) fn drop_redundant_spell_cost_lines(lines: Vec<String>) -> Vec<String> {
     let has_this_spell_cost_clause = lines.iter().any(|line| {
         line.trim()
             .to_ascii_lowercase()
@@ -829,7 +831,7 @@ fn drop_redundant_spell_cost_lines(lines: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn is_keyword_style_line(line: &str) -> bool {
+pub(super) fn is_keyword_style_line(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return false;
