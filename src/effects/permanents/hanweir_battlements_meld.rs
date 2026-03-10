@@ -35,23 +35,20 @@ impl EffectExecutor for HanweirBattlementsMeldEffect {
             return Ok(EffectOutcome::resolved());
         }
 
-        let garrison_id = game
-            .battlefield
-            .iter()
-            .copied()
-            .find(|&id| {
-                game.object(id).is_some_and(|obj| {
-                    obj.name == "Hanweir Garrison"
-                        && obj.owner == ctx.controller
-                        && obj.controller == ctx.controller
-                })
-            });
+        let garrison_id = game.battlefield.iter().copied().find(|&id| {
+            game.object(id).is_some_and(|obj| {
+                obj.name == "Hanweir Garrison"
+                    && obj.owner == ctx.controller
+                    && obj.controller == ctx.controller
+            })
+        });
 
         let Some(garrison_id) = garrison_id else {
             return Ok(EffectOutcome::resolved());
         };
 
-        let Some(result_def) = crate::cards::builtin_registry().get("Hanweir, the Writhing Township")
+        let Some(result_def) =
+            crate::cards::builtin_registry().get("Hanweir, the Writhing Township")
         else {
             return Ok(EffectOutcome::resolved());
         };

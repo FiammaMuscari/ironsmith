@@ -468,13 +468,23 @@ pub(crate) fn run_choose_objects(
     let spec = ChooseObjectsSpec::new(ctx.source, description, candidates.clone(), min, Some(max));
     let chosen: Vec<ObjectId> =
         make_decision(game, ctx.decision_maker, chooser_id, Some(ctx.source), spec);
+    if ctx.decision_maker.awaiting_choice() {
+        ctx.clear_object_tag(effect.tag.as_str());
+        return Ok(EffectOutcome::count(0));
+    }
     let chosen = normalize_chosen_objects(chosen, &candidates, min, max);
     let chosen =
         enforce_single_graveyard_choice_constraint(effect, game, &candidates, chosen, min, max);
 
     let snapshots = snapshot_chosen_objects(game, &chosen);
     if !snapshots.is_empty() {
-        ctx.tag_objects(effect.tag.clone(), snapshots);
+        if effect.replace_tagged_objects {
+            ctx.set_tagged_objects(effect.tag.clone(), snapshots);
+        } else {
+            ctx.tag_objects(effect.tag.clone(), snapshots);
+        }
+    } else {
+        ctx.clear_object_tag(effect.tag.as_str());
     }
 
     Ok(EffectOutcome::from_result(EffectResult::Objects(chosen)))
@@ -484,6 +494,7 @@ pub(crate) fn run_choose_objects(
 mod tests {
     use super::*;
     use crate::card::CardBuilder;
+    use crate::decision::DecisionMaker;
     use crate::effect::EffectResult;
     use crate::executor::ExecutionContext;
     use crate::filter::ObjectFilter;
@@ -514,6 +525,30 @@ mod tests {
             .card_types(vec![CardType::Creature])
             .build();
         game.create_object_from_card(&card, owner, Zone::Hand)
+    }
+
+    struct PromptCapturingDecisionMaker {
+        captured: bool,
+    }
+
+    impl DecisionMaker for PromptCapturingDecisionMaker {
+        fn awaiting_choice(&self) -> bool {
+            self.captured
+        }
+
+        fn decide_objects(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::SelectObjectsContext,
+        ) -> Vec<ObjectId> {
+            self.captured = true;
+            ctx.candidates
+                .iter()
+                .filter(|candidate| candidate.legal)
+                .map(|candidate| candidate.id)
+                .take(ctx.min)
+                .collect()
+        }
     }
 
     #[test]
@@ -748,5 +783,142 @@ mod tests {
         assert_eq!(chosen.len(), 2);
         assert!(chosen.contains(&hand_card));
         assert!(chosen.contains(&library_card));
+    }
+
+    #[test]
+    fn test_choose_objects_accumulates_existing_tagged_objects_by_default() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let first = create_graveyard_card(&mut game, "First", alice);
+        let second = create_graveyard_card(&mut game, "Second", alice);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        let tag = crate::tag::TagKey::from("chosen");
+
+        let first_effect = ChooseObjectsEffect::new(
+            ObjectFilter::default().in_zone(Zone::Graveyard),
+            1,
+            PlayerFilter::You,
+            tag.clone(),
+        )
+        .in_zone(Zone::Graveyard);
+        let first_outcome =
+            run_choose_objects(&first_effect, &mut game, &mut ctx).expect("first choose resolves");
+        let EffectResult::Objects(first_choice) = first_outcome.result else {
+            panic!("expected object selection result");
+        };
+        assert_eq!(first_choice, vec![first]);
+
+        let second_effect = ChooseObjectsEffect::new(
+            ObjectFilter::default()
+                .in_zone(Zone::Graveyard)
+                .not_tagged(tag.clone()),
+            1,
+            PlayerFilter::You,
+            tag.clone(),
+        )
+        .in_zone(Zone::Graveyard);
+        let second_outcome = run_choose_objects(&second_effect, &mut game, &mut ctx)
+            .expect("second choose resolves");
+        let EffectResult::Objects(second_choice) = second_outcome.result else {
+            panic!("expected object selection result");
+        };
+        assert_eq!(second_choice, vec![second]);
+
+        let tagged = ctx
+            .tagged_objects
+            .get(&tag)
+            .expect("tag should remain populated");
+        let tagged_ids: Vec<ObjectId> = tagged.iter().map(|snapshot| snapshot.object_id).collect();
+        assert_eq!(tagged_ids, vec![first, second]);
+    }
+
+    #[test]
+    fn test_choose_objects_can_replace_existing_tagged_objects() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let first = create_graveyard_card(&mut game, "First", alice);
+        let second = create_graveyard_card(&mut game, "Second", alice);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+        let tag = crate::tag::TagKey::from("chosen");
+
+        let first_effect = ChooseObjectsEffect::new(
+            ObjectFilter::default().in_zone(Zone::Graveyard),
+            1,
+            PlayerFilter::You,
+            tag.clone(),
+        )
+        .in_zone(Zone::Graveyard)
+        .replace_tagged_objects();
+        let first_outcome =
+            run_choose_objects(&first_effect, &mut game, &mut ctx).expect("first choose resolves");
+        let EffectResult::Objects(first_choice) = first_outcome.result else {
+            panic!("expected object selection result");
+        };
+        assert_eq!(first_choice, vec![first]);
+
+        let second_effect = ChooseObjectsEffect::new(
+            ObjectFilter::default()
+                .in_zone(Zone::Graveyard)
+                .not_tagged(tag.clone()),
+            1,
+            PlayerFilter::You,
+            tag.clone(),
+        )
+        .in_zone(Zone::Graveyard)
+        .replace_tagged_objects();
+        let second_outcome = run_choose_objects(&second_effect, &mut game, &mut ctx)
+            .expect("second choose resolves");
+        let EffectResult::Objects(second_choice) = second_outcome.result else {
+            panic!("expected object selection result");
+        };
+        assert_eq!(second_choice, vec![second]);
+
+        let tagged = ctx
+            .tagged_objects
+            .get(&tag)
+            .expect("tag should remain populated");
+        let tagged_ids: Vec<ObjectId> = tagged.iter().map(|snapshot| snapshot.object_id).collect();
+        assert_eq!(tagged_ids, vec![second]);
+    }
+
+    #[test]
+    fn test_choose_objects_does_not_commit_fallback_choice_while_prompt_is_pending() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let first = create_hand_card(&mut game, "First", alice);
+        let _second = create_hand_card(&mut game, "Second", alice);
+        let mut dm = PromptCapturingDecisionMaker { captured: false };
+        let mut ctx = ExecutionContext::new_default(source, alice).with_decision_maker(&mut dm);
+        ctx.tag_objects(
+            "chosen",
+            vec![crate::snapshot::ObjectSnapshot::from_object(
+                game.object(first).expect("first object should exist"),
+                &game,
+            )],
+        );
+
+        let effect = ChooseObjectsEffect::new(
+            ObjectFilter::default().in_zone(Zone::Hand),
+            1,
+            PlayerFilter::You,
+            "chosen",
+        )
+        .in_zone(Zone::Hand)
+        .replace_tagged_objects();
+
+        let outcome = run_choose_objects(&effect, &mut game, &mut ctx).expect("choose resolves");
+
+        assert_eq!(
+            outcome.result,
+            EffectResult::Count(0),
+            "prompt discovery should not commit a fallback object choice"
+        );
+        assert!(
+            ctx.get_tagged("chosen").is_none(),
+            "stale chosen-object tags must be cleared while waiting for the real selection"
+        );
     }
 }

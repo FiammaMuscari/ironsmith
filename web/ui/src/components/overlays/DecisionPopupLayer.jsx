@@ -10,6 +10,7 @@ import { animate, cancelMotion, snappySpring, stagger } from "@/lib/motion/anime
 import { SymbolText } from "@/lib/mana-symbols";
 import { nextPriorityAdvanceLabel } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { getVisibleStackObjects } from "@/lib/stack-targets";
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -871,8 +872,8 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
   const isCombatDecision = decision?.kind === "attackers" || decision?.kind === "blockers";
   const decisionActions = useMemo(() => decision?.actions || [], [decision]);
   const displayedStackObject = useMemo(
-    () => resolveDecisionMiniInspectorStackObject(state?.stack_objects || [], selectedObjectId),
-    [selectedObjectId, state?.stack_objects]
+    () => resolveDecisionMiniInspectorStackObject(getVisibleStackObjects(state), selectedObjectId),
+    [selectedObjectId, state]
   );
   const passAction = useMemo(
     () => decisionActions.find((action) => action.kind === "pass_priority"),
@@ -901,8 +902,8 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
   );
   const priorityActionCount = otherActions.length;
   const objectNameById = useMemo(
-    () => buildObjectNameById(state?.players, state?.stack_objects),
-    [state?.players, state?.stack_objects]
+    () => buildObjectNameById(state?.players, getVisibleStackObjects(state)),
+    [state]
   );
   const viewedCards = state?.viewed_cards || null;
   const viewedCardsLabel = viewedCards?.visibility === "public" ? "Revealed" : "Look";

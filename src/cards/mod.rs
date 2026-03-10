@@ -447,6 +447,8 @@ impl CardRegistry {
         maybe_register!(generous_gift);
         maybe_register!(godless_shrine);
         maybe_register!(hanweir_battlements);
+        maybe_register!(hanweir_garrison);
+        maybe_register!(hanweir_the_writhing_township);
         maybe_register!(innocent_blood);
         maybe_register!(mana_vault);
         maybe_register!(merciless_executioner);

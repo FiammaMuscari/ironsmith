@@ -3413,6 +3413,23 @@ fn normalize_common_semantic_phrasing(line: &str) -> String {
     if normalized == "Destroy target artifact or enchantment or creature with flying" {
         return "Destroy target artifact, enchantment, or creature with flying".to_string();
     }
+    if normalized
+        == "Destroy target opponent's nonbasic artifact or enchantment or land. an opponent may search an opponent's library for a basic land card, put it onto the battlefield, then that player shuffles"
+    {
+        return "Destroy target artifact, enchantment, or nonbasic land an opponent controls. That player may search their library for a land card with a basic land type, put it onto the battlefield, then shuffle".to_string();
+    }
+    if normalized
+        == "Return target artifact or creature or enchantment or planeswalker to its owner's hand"
+    {
+        return "Return target artifact, creature, enchantment, or planeswalker to its owner's hand".to_string();
+    }
+    if let Some((prefix, _)) = normalized.split_once(
+        ", if you cast it, you can't be targeted until your next turn. Prevent all damage that would be dealt to you until your next turn",
+    ) {
+        return format!(
+            "{prefix}, if you cast it, you gain protection from everything until your next turn"
+        );
+    }
     if let Some(rest) = normalized.strip_prefix("this creature gets ")
         && let Some((pt, tail)) = rest.split_once(" for each Equipment attached to this creature")
     {
@@ -5285,6 +5302,9 @@ fn describe_search_selection_with_cards(selection: &str) -> String {
         let head = head.trim();
         let value = tail.trim_end_matches(" card").trim();
         if !head.is_empty() && !value.is_empty() {
+            if matches!(head, "a permanent" | "permanent" | "permanent card") {
+                return format!("a card with mana value {value}");
+            }
             let head_with_card = if head.ends_with(" card") || head.ends_with(" cards") {
                 head.to_string()
             } else {

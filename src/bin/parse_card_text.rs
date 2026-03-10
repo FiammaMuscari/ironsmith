@@ -23,7 +23,7 @@ fn classify_card_type(type_line: &str) -> String {
         }
         match token {
             "Land" | "Creature" | "Planeswalker" | "Battle" | "Artifact" | "Enchantment"
-            | "Instant" | "Sorcery" | "Tribal" => {
+            | "Instant" | "Sorcery" | "Kindred" => {
                 if !types.contains(&token) {
                     types.push(token);
                 }

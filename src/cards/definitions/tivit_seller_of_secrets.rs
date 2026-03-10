@@ -516,6 +516,8 @@ mod tests {
                 "0", // Pay {B}
                 "0", // Pay {1}
                 "0", // Pay {1} (final {1} auto-paid if only one option remains)
+                "",  // Pass priority
+                "",  // Pass priority
                 // ETB trigger resolves: council's dilemma voting
                 "1", // Tivit controller votes an additional time
                 "1", // Player 1 vote 1: bribery

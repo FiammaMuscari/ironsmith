@@ -61,6 +61,9 @@ pub(crate) fn parse_effect_chain(tokens: &[Token]) -> Result<Vec<EffectAst>, Car
         for effect in &mut effects {
             bind_implicit_player_context(effect, player);
         }
+        if leading_may_is_permission_clause(&stripped)? {
+            return Ok(effects);
+        }
         return Ok(vec![EffectAst::MayByPlayer { player, effects }]);
     }
 
@@ -69,6 +72,9 @@ pub(crate) fn parse_effect_chain(tokens: &[Token]) -> Result<Vec<EffectAst>, Car
         && !starts_with_each_player
     {
         let stripped = remove_first_word(tokens, "may");
+        if leading_may_is_permission_clause(&stripped)? {
+            return parse_effect_chain(&stripped);
+        }
         let effects = parse_effect_chain(&stripped)?;
         return Ok(vec![EffectAst::May { effects }]);
     }
@@ -78,6 +84,12 @@ pub(crate) fn parse_effect_chain(tokens: &[Token]) -> Result<Vec<EffectAst>, Car
     }
 
     parse_effect_chain_with_sentence_primitives(tokens)
+}
+
+fn leading_may_is_permission_clause(tokens: &[Token]) -> Result<bool, CardTextError> {
+    Ok(parse_additional_land_plays_clause(tokens)?.is_some()
+        || parse_cast_or_play_tagged_clause(tokens)?.is_some()
+        || parse_unsupported_play_cast_permission_clause(tokens)?.is_some())
 }
 
 pub(crate) fn parse_or_action_clause(tokens: &[Token]) -> Result<Option<EffectAst>, CardTextError> {
@@ -129,6 +141,29 @@ pub(crate) fn parse_or_action_clause(tokens: &[Token]) -> Result<Option<EffectAs
         alternative: second_effects,
         player: PlayerAst::Implicit,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::cards::builders::CardDefinitionBuilder;
+    use crate::ids::CardId;
+
+    #[test]
+    fn leading_may_land_play_permission_does_not_lower_to_may_effect() {
+        let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Explore")
+            .parse_text("You may play an additional land this turn.\nDraw a card.")
+            .expect("explore-style text should parse");
+
+        let spell_debug = format!("{:?}", def.spell_effect.as_ref().expect("spell effects"));
+        assert!(
+            spell_debug.contains("AdditionalLandPlaysEffect"),
+            "expected Explore-style permission text to lower to additional land plays, got {spell_debug}"
+        );
+        assert!(
+            !spell_debug.contains("MayEffect"),
+            "permission-granting land-play text should not become a MayEffect: {spell_debug}"
+        );
+    }
 }
 
 pub(crate) fn parse_effect_chain_with_sentence_primitives(

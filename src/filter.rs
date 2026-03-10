@@ -971,6 +971,9 @@ pub struct ObjectFilter {
     /// Color filter (object must have at least one of these colors, if set)
     pub colors: Option<ColorSet>,
 
+    /// If true, object must have the color previously chosen for the source.
+    pub chosen_color: bool,
+
     /// Excluded colors (object must have none of these colors)
     pub excluded_colors: ColorSet,
 
@@ -1529,6 +1532,12 @@ impl ObjectFilter {
     /// Require the object to have certain colors.
     pub fn with_colors(mut self, colors: ColorSet) -> Self {
         self.colors = Some(colors);
+        self
+    }
+
+    /// Require the object to have the previously chosen color of the source.
+    pub fn of_chosen_color(mut self) -> Self {
+        self.chosen_color = true;
         self
     }
 
@@ -2272,6 +2281,14 @@ impl ObjectFilter {
                 return false;
             }
         }
+        if self.chosen_color {
+            let Some(chosen_color) = ctx.source.and_then(|source| game.chosen_color(source)) else {
+                return false;
+            };
+            if !object.colors().contains(chosen_color) {
+                return false;
+            }
+        }
 
         // Excluded colors check
         if !self.excluded_colors.is_empty()
@@ -2685,6 +2702,14 @@ impl ObjectFilter {
         {
             return false;
         }
+        if self.chosen_color {
+            let Some(chosen_color) = ctx.source.and_then(|source| game.chosen_color(source)) else {
+                return false;
+            };
+            if !snapshot.colors.contains(chosen_color) {
+                return false;
+            }
+        }
 
         // Excluded colors check
         if !self.excluded_colors.is_empty()
@@ -3040,6 +3065,9 @@ impl ObjectFilter {
                     parts.push(color_words.join(" or "));
                 }
             }
+        }
+        if self.chosen_color {
+            post_noun_qualifiers.push("of the chosen color".to_string());
         }
         for constraint in &self.tagged_constraints {
             match constraint.relation {
@@ -4626,6 +4654,12 @@ mod tests {
                 .union(ColorSet::from_color(crate::color::Color::Red)),
         );
         assert_eq!(filter.description(), "nonblack nonred creature");
+    }
+
+    #[test]
+    fn test_filter_description_includes_chosen_color_clause() {
+        let filter = ObjectFilter::spell().of_chosen_color();
+        assert_eq!(filter.description(), "spell of the chosen color");
     }
 
     #[test]

@@ -10314,9 +10314,7 @@ pub(crate) fn parse_additional_land_play_line(
     }
     let rest_words = &words[rest_word_idx..];
     let is_match = rest_words == ["additional", "land", "on", "each", "of", "your", "turns"]
-        || rest_words == ["additional", "land", "this", "turn"]
-        || rest_words == ["additional", "lands", "on", "each", "of", "your", "turns"]
-        || rest_words == ["additional", "lands", "this", "turn"];
+        || rest_words == ["additional", "lands", "on", "each", "of", "your", "turns"];
     if !is_match {
         return Ok(None);
     }

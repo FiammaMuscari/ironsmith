@@ -69,6 +69,8 @@ pub struct ChooseObjectsEffect {
     pub reveal: bool,
     /// Restrict selection to top-most matching objects in ordered zones.
     pub top_only: bool,
+    /// Replace any prior snapshots stored under `tag` instead of accumulating.
+    pub replace_tagged_objects: bool,
 }
 
 impl ChooseObjectsEffect {
@@ -90,6 +92,7 @@ impl ChooseObjectsEffect {
             is_search: false,
             reveal: false,
             top_only: false,
+            replace_tagged_objects: false,
         }
     }
 
@@ -134,6 +137,12 @@ impl ChooseObjectsEffect {
     /// Restrict selection to top-most matching objects in ordered zones.
     pub fn top_only(mut self) -> Self {
         self.top_only = true;
+        self
+    }
+
+    /// Replace previously tagged objects instead of accumulating with them.
+    pub fn replace_tagged_objects(mut self) -> Self {
+        self.replace_tagged_objects = true;
         self
     }
 

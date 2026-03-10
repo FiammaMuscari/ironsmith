@@ -62,6 +62,8 @@ export default function LobbyOverlay({
   onClose,
   defaultName = "Player",
   defaultStartingLife = 20,
+  initialMode = "create",
+  initialJoinCode = "",
 }) {
   const {
     multiplayer,
@@ -73,11 +75,13 @@ export default function LobbyOverlay({
     updateLobbyDeck,
     status,
   } = useGame();
-  const [mode, setMode] = useState("create");
+  const [mode, setMode] = useState(
+    initialMode === "join" ? "join" : "create"
+  );
   const [createFormat, setCreateFormat] = useState(MATCH_FORMAT_NORMAL);
   const [createName, setCreateName] = useState(defaultName);
   const [joinName, setJoinName] = useState(defaultName);
-  const [joinCode, setJoinCode] = useState("");
+  const [joinCode, setJoinCode] = useState(String(initialJoinCode || ""));
   const [desiredPlayers, setDesiredPlayers] = useState(2);
   const [startingLife, setStartingLife] = useState(defaultStartingLife);
   const [createDeckText, setCreateDeckText] = useState("");

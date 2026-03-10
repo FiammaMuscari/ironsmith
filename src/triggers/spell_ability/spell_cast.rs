@@ -340,7 +340,14 @@ fn describe_spell_filter(filter: &ObjectFilter) -> String {
     if fallback == "permanent" {
         "a spell".to_string()
     } else if fallback.to_ascii_lowercase().contains("spell") {
-        fallback
+        if fallback.to_ascii_lowercase().contains("spells") {
+            fallback
+        } else {
+            match fallback.split_whitespace().next() {
+                Some("a" | "an" | "the" | "another" | "target") => fallback,
+                _ => format!("a {fallback}"),
+            }
+        }
     } else {
         format!("{fallback} spell")
     }
@@ -505,5 +512,64 @@ mod tests {
             trigger.display(),
             "Whenever you cast a spell that targets this creature"
         );
+    }
+
+    #[test]
+    fn test_display_chosen_color_spell_filter() {
+        let trigger = SpellCastTrigger::new(
+            Some(ObjectFilter::spell().of_chosen_color()),
+            PlayerFilter::Any,
+        );
+        assert_eq!(
+            trigger.display(),
+            "Whenever a player casts a spell of the chosen color"
+        );
+    }
+
+    #[test]
+    fn test_matches_chosen_color_spell_filter() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        let source = CardBuilder::new(CardId::new(), "Curse Source")
+            .card_types(vec![CardType::Enchantment])
+            .build();
+        let source_id = game.create_object_from_card(&source, alice, Zone::Battlefield);
+        game.set_chosen_color(source_id, crate::color::Color::Black);
+
+        let black_spell = CardBuilder::new(CardId::new(), "Black Spell")
+            .mana_cost(crate::mana::ManaCost::from_pips(vec![vec![
+                crate::mana::ManaSymbol::Black,
+            ]]))
+            .card_types(vec![CardType::Sorcery])
+            .build();
+        let black_spell_id = game.create_object_from_card(&black_spell, bob, Zone::Stack);
+
+        let red_spell = CardBuilder::new(CardId::new(), "Red Spell")
+            .mana_cost(crate::mana::ManaCost::from_pips(vec![vec![
+                crate::mana::ManaSymbol::Red,
+            ]]))
+            .card_types(vec![CardType::Sorcery])
+            .build();
+        let red_spell_id = game.create_object_from_card(&red_spell, bob, Zone::Stack);
+
+        let trigger = SpellCastTrigger::new(
+            Some(ObjectFilter::spell().of_chosen_color()),
+            PlayerFilter::Any,
+        );
+        let ctx = TriggerContext::for_source(source_id, alice, &game);
+
+        let black_cast = TriggerEvent::new_with_provenance(
+            SpellCastEvent::new(black_spell_id, bob, Zone::Hand),
+            crate::provenance::ProvNodeId::default(),
+        );
+        assert!(trigger.matches(&black_cast, &ctx));
+
+        let red_cast = TriggerEvent::new_with_provenance(
+            SpellCastEvent::new(red_spell_id, bob, Zone::Hand),
+            crate::provenance::ProvNodeId::default(),
+        );
+        assert!(!trigger.matches(&red_cast, &ctx));
     }
 }

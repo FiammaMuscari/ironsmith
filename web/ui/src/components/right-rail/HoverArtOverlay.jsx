@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useGame } from "@/context/GameContext";
 import { scryfallImageUrl } from "@/lib/scryfall";
 import { ManaCostIcons, SymbolText } from "@/lib/mana-symbols";
+import { getVisibleStackObjects, getVisibleTopStackObject } from "@/lib/stack-targets";
 import { cn } from "@/lib/utils";
 import { animate, cancelMotion, uiSpring } from "@/lib/motion/anime";
 import { Check, Copy } from "lucide-react";
@@ -234,7 +235,7 @@ function buildObjectNameMaps(state) {
     }
   }
 
-  for (const stackObject of state?.stack_objects || []) {
+  for (const stackObject of getVisibleStackObjects(state)) {
     for (const candidateId of [stackObject.id, stackObject.inspect_object_id]) {
       setObjectName(byId, candidateId, stackObject.name);
     }
@@ -537,11 +538,11 @@ export default function HoverArtOverlay({
 
   const details = objectIdKey ? (detailsCache[objectIdKey] || null) : null;
   const hoveredStackObject = useMemo(
-    () => (state?.stack_objects || []).find((entry) => (
+    () => getVisibleStackObjects(state).find((entry) => (
       String(entry.id) === String(objectIdNum)
       || String(entry.inspect_object_id) === String(objectIdNum)
     )),
-    [state?.stack_objects, objectIdNum]
+    [state, objectIdNum]
   );
   const isFullArtMode = displayMode === "full-art";
   const artStackObject = useMemo(() => {
@@ -612,7 +613,7 @@ export default function HoverArtOverlay({
   const artObjectName = stableLinkedObjectName || objectName;
   const imageUrl = artObjectName ? scryfallImageUrl(artObjectName, "art_crop") : "";
   const imageErrored = !!imageUrl && failedImageUrl === imageUrl;
-  const topStackObject = (state?.stack_objects || [])[0] || null;
+  const topStackObject = getVisibleTopStackObject(state);
   const detailAbilities = Array.isArray(details?.abilities) ? details.abilities : null;
   const detailStableId = details?.stable_id != null ? String(details.stable_id) : null;
   const topStackId = topStackObject?.inspect_object_id != null

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
+import { getVisibleTopStackObject } from "@/lib/stack-targets";
 import { useHover } from "@/context/HoverContext";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -304,13 +305,13 @@ function SingleSelectDecision({
   );
   const spellCastPaymentDecision = useMemo(() => {
     if (!paymentDecision) return false;
-    const topStackObject = (state?.stack_objects || [])[0] || null;
+    const topStackObject = getVisibleTopStackObject(state);
     if (!topStackObject || topStackObject.ability_kind) return false;
     if (decision?.source_name && topStackObject.name && decision.source_name !== topStackObject.name) {
       return false;
     }
     return true;
-  }, [paymentDecision, state?.stack_objects, decision?.source_name]);
+  }, [paymentDecision, state, decision?.source_name]);
   const canSubmitPayment = canAct && !!payOption && payOption.legal !== false;
   const paymentProgressLabel = canSubmitPayment ? "Submit (1/1)" : "Submit (0/1)";
   const submitPayment = useCallback(() => {

@@ -1824,6 +1824,7 @@ pub(crate) fn merge_filters(base: &ObjectFilter, specific: &ObjectFilter) -> Obj
                 .map_or(colors, |existing| existing.union(colors)),
         );
     }
+    merged.chosen_color |= specific.chosen_color;
     if merged.zone.is_none() {
         merged.zone = specific.zone;
     }

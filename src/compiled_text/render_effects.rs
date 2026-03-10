@@ -245,6 +245,17 @@ fn describe_effect_list(effects: &[Effect]) -> String {
                 filtered[idx].downcast_ref::<crate::effects::ChooseObjectsEffect>()
             && let Some(move_to_zone) =
                 filtered[idx + 1].downcast_ref::<crate::effects::MoveToZoneEffect>()
+            && let Some(compact) = describe_choose_then_move_to_battlefield(choose, move_to_zone)
+        {
+            parts.push(compact);
+            idx += 2;
+            continue;
+        }
+        if idx + 1 < filtered.len()
+            && let Some(choose) =
+                filtered[idx].downcast_ref::<crate::effects::ChooseObjectsEffect>()
+            && let Some(move_to_zone) =
+                filtered[idx + 1].downcast_ref::<crate::effects::MoveToZoneEffect>()
             && let Some(compact) = describe_choose_then_move_to_library(choose, move_to_zone)
         {
             parts.push(compact);
@@ -2445,6 +2456,14 @@ fn move_to_library_uses_chosen_tag(
         && matches!(move_to_zone.target.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
 }
 
+fn move_to_battlefield_uses_chosen_tag(
+    move_to_zone: &crate::effects::MoveToZoneEffect,
+    tag: &str,
+) -> bool {
+    move_to_zone.zone == Zone::Battlefield
+        && matches!(move_to_zone.target.base(), ChooseSpec::Tagged(t) if t.as_str() == tag)
+}
+
 fn describe_choose_zone_origin(
     choose: &crate::effects::ChooseObjectsEffect,
     zone_text: &str,
@@ -2457,6 +2476,61 @@ fn describe_choose_zone_origin(
         ),
         None => format!("from a {zone_text}"),
     }
+}
+
+fn describe_choose_then_move_to_battlefield(
+    choose: &crate::effects::ChooseObjectsEffect,
+    move_to_zone: &crate::effects::MoveToZoneEffect,
+) -> Option<String> {
+    if choose.is_search || !move_to_battlefield_uses_chosen_tag(move_to_zone, choose.tag.as_str()) {
+        return None;
+    }
+
+    let origin = match choose.zone {
+        Zone::Hand => describe_choose_zone_origin(choose, "hand"),
+        Zone::Graveyard => describe_choose_zone_origin(choose, "graveyard"),
+        Zone::Library => {
+            if choose.top_only {
+                match choose.filter.owner.as_ref() {
+                    Some(PlayerFilter::IteratedPlayer) => {
+                        "from the top of their library".to_string()
+                    }
+                    Some(owner) => format!(
+                        "from the top of {} library",
+                        describe_possessive_player_filter(owner)
+                    ),
+                    None => "from the top of a library".to_string(),
+                }
+            } else {
+                describe_choose_zone_origin(choose, "library")
+            }
+        }
+        _ => return None,
+    };
+
+    let chooser = describe_player_filter(&choose.chooser);
+    let put_verb = player_verb(&chooser, "put", "puts");
+    let chosen = describe_choose_selection(choose);
+    let tapped = if move_to_zone.enters_tapped {
+        " tapped"
+    } else {
+        ""
+    };
+    let control_suffix = match move_to_zone.battlefield_controller {
+        crate::effects::BattlefieldController::Preserve => String::new(),
+        crate::effects::BattlefieldController::Owner => " under its owner's control".to_string(),
+        crate::effects::BattlefieldController::You => {
+            if chooser == "you" {
+                String::new()
+            } else {
+                " under your control".to_string()
+            }
+        }
+    };
+
+    Some(format!(
+        "{chooser} {put_verb} {chosen} {origin} onto the battlefield{tapped}{control_suffix}"
+    ))
 }
 
 fn describe_choose_then_move_to_library(
@@ -3534,56 +3608,54 @@ fn describe_search_choose_for_each(
         "that player shuffles".to_string()
     };
 
-    let move_effect = if let Some(tagged) =
-        for_each.effects[0].downcast_ref::<crate::effects::TaggedEffect>()
-    {
-        tagged.effect.as_ref()
-    } else {
-        &for_each.effects[0]
-    };
+    let move_effect =
+        if let Some(tagged) = for_each.effects[0].downcast_ref::<crate::effects::TaggedEffect>() {
+            tagged.effect.as_ref()
+        } else {
+            &for_each.effects[0]
+        };
 
-    let destination = if let Some(put) =
-        move_effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>()
-    {
-        if !matches_search_move_target(&put.target, choose.tag.as_str()) {
-            return None;
-        }
-        SearchDestination::Battlefield {
-            tapped: put.tapped,
-            controller: put.controller.clone(),
-        }
-    } else if let Some(return_to_hand) =
-        move_effect.downcast_ref::<crate::effects::ReturnToHandEffect>()
-    {
-        if !matches_search_move_target(&return_to_hand.spec, choose.tag.as_str()) {
-            return None;
-        }
-        SearchDestination::Hand
-    } else if let Some(move_to_zone) =
-        move_effect.downcast_ref::<crate::effects::MoveToZoneEffect>()
-    {
-        if !matches_search_move_target(&move_to_zone.target, choose.tag.as_str()) {
-            return None;
-        }
-        if move_to_zone.zone == Zone::Battlefield {
-            SearchDestination::Battlefield {
-                tapped: false,
-                controller: choose.chooser.clone(),
+    let destination =
+        if let Some(put) = move_effect.downcast_ref::<crate::effects::PutOntoBattlefieldEffect>() {
+            if !matches_search_move_target(&put.target, choose.tag.as_str()) {
+                return None;
             }
-        } else if move_to_zone.zone == Zone::Hand {
+            SearchDestination::Battlefield {
+                tapped: put.tapped,
+                controller: put.controller.clone(),
+            }
+        } else if let Some(return_to_hand) =
+            move_effect.downcast_ref::<crate::effects::ReturnToHandEffect>()
+        {
+            if !matches_search_move_target(&return_to_hand.spec, choose.tag.as_str()) {
+                return None;
+            }
             SearchDestination::Hand
-        } else if move_to_zone.zone == Zone::Graveyard {
-            SearchDestination::Graveyard
-        } else if move_to_zone.zone == Zone::Exile {
-            SearchDestination::Exile
-        } else if move_to_zone.zone == Zone::Library && move_to_zone.to_top {
-            SearchDestination::LibraryTop
+        } else if let Some(move_to_zone) =
+            move_effect.downcast_ref::<crate::effects::MoveToZoneEffect>()
+        {
+            if !matches_search_move_target(&move_to_zone.target, choose.tag.as_str()) {
+                return None;
+            }
+            if move_to_zone.zone == Zone::Battlefield {
+                SearchDestination::Battlefield {
+                    tapped: false,
+                    controller: choose.chooser.clone(),
+                }
+            } else if move_to_zone.zone == Zone::Hand {
+                SearchDestination::Hand
+            } else if move_to_zone.zone == Zone::Graveyard {
+                SearchDestination::Graveyard
+            } else if move_to_zone.zone == Zone::Exile {
+                SearchDestination::Exile
+            } else if move_to_zone.zone == Zone::Library && move_to_zone.to_top {
+                SearchDestination::LibraryTop
+            } else {
+                return None;
+            }
         } else {
             return None;
-        }
-    } else {
-        return None;
-    };
+        };
 
     if let Some(shuffle) = shuffle
         && shuffle.player != *search_owner_filter
@@ -5724,6 +5796,17 @@ fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
         return describe_effect(&with_id.effect);
     }
+    if let Some(repeat) = effect.downcast_ref::<crate::effects::RepeatProcessEffect>() {
+        let body = describe_effect_list(&repeat.effects);
+        let body = body.trim().trim_end_matches('.');
+        if body.is_empty() {
+            return "Repeat this process".to_string();
+        }
+        if body.contains("If you do,") || body.contains("if you do,") {
+            return format!("{body} and repeat this process");
+        }
+        return format!("{body}. Repeat this process");
+    }
     if let Some(conditional) = effect.downcast_ref::<crate::effects::ConditionalEffect>() {
         if let Some(compact) = describe_conditional_damage_instead(conditional) {
             return compact;
@@ -6952,6 +7035,24 @@ fn describe_effect_impl(effect: &Effect) -> String {
             "Until end of turn, {player} may play lands and cast spells from {graveyard_owner} graveyard"
         );
     }
+    if let Some(additional_land_plays) =
+        effect.downcast_ref::<crate::effects::AdditionalLandPlaysEffect>()
+    {
+        let player = describe_player_filter(&additional_land_plays.player);
+        let count = describe_value(&additional_land_plays.count);
+        let land_text = if matches!(additional_land_plays.count, Value::Fixed(1)) {
+            "an additional land".to_string()
+        } else {
+            format!("{count} additional lands")
+        };
+        return match additional_land_plays.duration {
+            Until::EndOfTurn => format!("{player} may play {land_text} this turn"),
+            _ => format!(
+                "{player} may play {land_text} {}",
+                describe_until(&additional_land_plays.duration)
+            ),
+        };
+    }
     if let Some(control_player) = effect.downcast_ref::<crate::effects::ControlPlayerEffect>() {
         return format!(
             "Control {} during their next turn",
@@ -7816,16 +7917,31 @@ fn describe_ability(
                     return vec![format!("Keyword ability {index}: {normalized}")];
                 }
             }
+            fn has_keyword_label_prefix(text: &str, keyword: &str) -> bool {
+                if text.eq_ignore_ascii_case(keyword) {
+                    return true;
+                }
+                let lower = text.to_ascii_lowercase();
+                let Some(rest) = lower.strip_prefix(keyword) else {
+                    return false;
+                };
+                let rest = rest.trim_start();
+                rest.is_empty() || rest.starts_with('—') || rest.starts_with('-')
+            }
+
             let mut line = format!("Activated ability {index}");
             let mut pre = Vec::new();
-            let has_boast_label = ability
-                .text
-                .as_deref()
-                .is_some_and(|text| text.eq_ignore_ascii_case("boast"));
-            let has_renew_label = ability
-                .text
-                .as_deref()
-                .is_some_and(|text| text.eq_ignore_ascii_case("renew"));
+            let ability_label = ability.text.as_deref().map(str::trim);
+            let has_boast_label =
+                ability_label.is_some_and(|text| has_keyword_label_prefix(text, "boast"));
+            let has_renew_label =
+                ability_label.is_some_and(|text| has_keyword_label_prefix(text, "renew"));
+            let has_channel_label =
+                ability_label.is_some_and(|text| has_keyword_label_prefix(text, "channel"));
+            let transmute_label = ability_label.filter(|text| {
+                text.get(..10)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("transmute "))
+            });
             if has_boast_label {
                 let mut label = "Boast".to_string();
                 if !activated.mana_cost.costs().is_empty() {
@@ -7840,6 +7956,15 @@ fn describe_ability(
                     label.push_str(&describe_cost_list(activated.mana_cost.costs()));
                 }
                 pre.push(label);
+            } else if has_channel_label {
+                let mut label = "Channel".to_string();
+                if !activated.mana_cost.costs().is_empty() {
+                    label.push_str(" \u{2014} ");
+                    label.push_str(&describe_cost_list(activated.mana_cost.costs()));
+                }
+                pre.push(label);
+            } else if let Some(label) = transmute_label {
+                pre.push(label.to_string());
             } else if !activated.mana_cost.costs().is_empty() {
                 pre.push(describe_cost_list(activated.mana_cost.costs()));
             }

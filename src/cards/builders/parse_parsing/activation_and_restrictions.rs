@@ -1031,14 +1031,16 @@ pub(crate) fn parse_transmute_line(
     ));
     let mana_cost = crate::ability::merge_cost_effects(base_cost.clone(), full_cost_effects);
 
-    let mana_value_idx = words_all
-        .windows(2)
-        .position(|window| window == ["mana", "value"])
-        .map(|idx| idx + 2);
-    let filter = if let Some(mana_value) = mana_value_idx
-        .and_then(|idx| words_all.get(idx).copied())
-        .and_then(parse_cardinal_u32)
-    {
+    let mut parsed_mana_value: Option<u32> = None;
+    for idx in 0..tokens.len().saturating_sub(2) {
+        if tokens[idx].is_word("mana") && tokens[idx + 1].is_word("value") {
+            parsed_mana_value = parse_number(&tokens[idx + 2..]).map(|(value, _)| value);
+            if parsed_mana_value.is_some() {
+                break;
+            }
+        }
+    }
+    let filter = if let Some(mana_value) = parsed_mana_value {
         ObjectFilter::default().with_mana_value(crate::filter::Comparison::Equal(mana_value as i32))
     } else {
         ObjectFilter::default().with_mana_value(crate::filter::Comparison::EqualExpr(Box::new(
@@ -9191,6 +9193,12 @@ pub(crate) fn parse_spell_activity_trigger(
                             let mut filter = ObjectFilter::spell();
                             filter.colors = Some(colors);
                             return Ok(Some(filter));
+                        }
+                        if matches!(
+                            color_words.as_slice(),
+                            ["of", "the", "chosen", "color"] | ["of", "chosen", "color"]
+                        ) {
+                            return Ok(Some(ObjectFilter::spell().of_chosen_color()));
                         }
                     }
                     if let Some(origin_filter) = parse_spell_origin_zone_filter() {

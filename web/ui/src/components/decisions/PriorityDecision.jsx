@@ -1,12 +1,11 @@
 import { useGame } from "@/context/GameContext";
 import { SymbolText } from "@/lib/mana-symbols";
+import { getVisibleTopStackObject } from "@/lib/stack-targets";
 
 export default function PriorityDecision() {
   const { state } = useGame();
-  const stackSize = state?.stack_size || 0;
-  const isResolvingStack = stackSize > 0;
-  const topOfStack = (state?.stack_objects || [])[0];
-  const resolvingAbilityText = isResolvingStack && topOfStack?.ability_kind
+  const topOfStack = getVisibleTopStackObject(state);
+  const resolvingAbilityText = topOfStack?.ability_kind
     ? (topOfStack.ability_text || topOfStack.effect_text || null)
     : null;
 

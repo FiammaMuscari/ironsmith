@@ -20,6 +20,7 @@ export default function Shell() {
     setStatus,
     multiplayer,
     semanticThreshold,
+    joinLobby,
   } = useGame();
   const [playerNames, setPlayerNames] = useState("Alice,Bob,Charlie,Diana");
   const [startingLife, setStartingLife] = useState(20);
@@ -29,6 +30,8 @@ export default function Shell() {
   const [deckLoadingMode, setDeckLoadingMode] = useState(false);
   const [notices, setNotices] = useState([]);
   const nextNoticeIdRef = useRef(1);
+  const autoJoinAttemptedLobbyRef = useRef("");
+  const initialLobbyCodeRef = useRef(readLobbyQueryParam());
 
   const pushNotice = useCallback((notice) => {
     const id = nextNoticeIdRef.current++;
@@ -46,6 +49,20 @@ export default function Shell() {
       setDeckLoadingMode(false);
     }
   }, [multiplayer.matchStarted]);
+
+  useEffect(() => {
+    if (loading || wasmError || !state || multiplayer.mode !== "idle") return;
+
+    const lobbyCode = initialLobbyCodeRef.current;
+    if (!lobbyCode || autoJoinAttemptedLobbyRef.current === lobbyCode) return;
+
+    autoJoinAttemptedLobbyRef.current = lobbyCode;
+    setLobbyOpen(true);
+    joinLobby({
+      name: parseNames(playerNames)[0] || "Player",
+      lobbyId: lobbyCode,
+    });
+  }, [joinLobby, loading, multiplayer.mode, playerNames, state, wasmError]);
 
   // Initialize game when WASM loads
   useEffect(() => {
@@ -231,6 +248,8 @@ export default function Shell() {
           onClose={() => setLobbyOpen(false)}
           defaultName={parseNames(playerNames)[0] || "Player"}
           defaultStartingLife={startingLife}
+          initialMode={initialLobbyCodeRef.current ? "join" : "create"}
+          initialJoinCode={initialLobbyCodeRef.current}
         />
       ) : null}
     </div>
@@ -239,4 +258,9 @@ export default function Shell() {
 
 async function addStartingBattlefieldPreset(game) {
   await game.addCardToZone(0, "Omniscience", "battlefield", true);
+}
+
+function readLobbyQueryParam() {
+  if (typeof window === "undefined") return "";
+  return String(new URLSearchParams(window.location.search).get("lobby") || "").trim();
 }

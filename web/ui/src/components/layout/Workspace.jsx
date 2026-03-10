@@ -11,7 +11,11 @@ import CastParticles from "@/components/overlays/CastParticles";
 import ArrowOverlay from "@/components/overlays/ArrowOverlay";
 import { animate, cancelMotion, uiSpring } from "@/lib/motion/anime";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { buildStackTargetPresentation, normalizeZoneViews } from "@/lib/stack-targets";
+import {
+  buildStackTargetPresentation,
+  getVisibleStackObjects,
+  normalizeZoneViews,
+} from "@/lib/stack-targets";
 
 const HAND_PEEK_HEIGHT = 46;
 const HAND_REVEAL_HEIGHT = 164;
@@ -41,7 +45,7 @@ function objectExistsInState(state, objectId) {
     }
   }
 
-  for (const entry of state?.stack_objects || []) {
+  for (const entry of getVisibleStackObjects(state)) {
     if (String(entry?.id) === needle) return true;
     if (String(entry?.inspect_object_id) === needle) return true;
   }
@@ -221,7 +225,7 @@ export default function Workspace({
   }, [activeViewedCardIds, activeViewedCards?.card_ids, selectedObjectId]);
 
   useEffect(() => {
-    const stackObjects = state?.stack_objects || [];
+    const stackObjects = getVisibleStackObjects(state);
     const currentStackIds = stackObjects.flatMap((entry) => stackSelectionKeys(entry));
     const previousStackIds = previousStackIdsRef.current;
     const removedIds = previousStackIds.filter((id) => !currentStackIds.includes(id));
@@ -247,7 +251,7 @@ export default function Workspace({
     }
 
     previousStackIdsRef.current = currentStackIds;
-  }, [state?.stack_objects, selectedObjectId, combatDeclarationActive]);
+  }, [state, selectedObjectId, combatDeclarationActive]);
 
   useEffect(() => {
     if (!combatDeclarationActive) return;

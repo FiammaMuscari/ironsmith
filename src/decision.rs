@@ -7,7 +7,6 @@
 
 use crate::alternative_cast::CastingMethod;
 use crate::combat_state::{AttackTarget, CombatState};
-use crate::cost::can_pay_cost;
 use crate::derived_view::DerivedGameView;
 use crate::effects::helpers::resolve_value;
 use crate::executor::ExecutionContext;
@@ -784,20 +783,11 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                     if !game.can_activate_non_mana_abilities(player) {
                         continue;
                     }
-                    // Validate the ability's cost can be paid
-                    if can_pay_ability_cost_with_view(
-                        game,
-                        perm_id,
-                        player,
-                        &activated.mana_cost,
-                        &view,
-                    ) {
-                        if can_activate_ability_with_restrictions(game, perm_id, i, activated) {
-                            actions.push(LegalAction::ActivateAbility {
-                                source: perm_id,
-                                ability_index: i,
-                            });
-                        }
+                    if can_activate_ability_with_restrictions(game, perm_id, i, activated) {
+                        actions.push(LegalAction::ActivateAbility {
+                            source: perm_id,
+                            ability_index: i,
+                        });
                     }
                 }
             }
@@ -858,16 +848,6 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                     if !game.can_activate_non_mana_abilities(player) {
                         continue;
                     }
-                    if !can_pay_ability_cost_with_view(
-                        game,
-                        source_id,
-                        player,
-                        &activated.mana_cost,
-                        &view,
-                    ) {
-                        continue;
-                    }
-
                     if can_activate_ability_with_restrictions(game, source_id, i, activated) {
                         actions.push(LegalAction::ActivateAbility {
                             source: source_id,
@@ -1017,53 +997,6 @@ fn commander_action_indices(actions: &[LegalAction]) -> Vec<usize> {
             _ => None,
         })
         .collect()
-}
-
-fn can_pay_ability_cost_with_view(
-    game: &GameState,
-    source_id: ObjectId,
-    player: PlayerId,
-    cost: &crate::cost::TotalCost,
-    view: &DerivedGameView<'_>,
-) -> bool {
-    let effective_cost =
-        calculate_effective_activation_total_cost_with_view(game, player, source_id, cost, view);
-    if can_pay_cost(game, source_id, player, &effective_cost).is_ok() {
-        return true;
-    }
-
-    // For legality/UI surfacing we only need to know whether the activation
-    // can plausibly be paid during the payment subflow, not fully simulate that
-    // subflow here. Use the cost system's potential-payability checks so mixed
-    // costs like "{B}{B}, discard a card" remain visible when mana can be
-    // generated during payment (e.g. via Black Lotus).
-    can_potentially_pay_total_cost(game, source_id, player, &effective_cost)
-}
-
-/// Check if a player could potentially pay a TotalCost.
-///
-/// This uses the new costs module to check each cost component, considering:
-/// - Mana costs: includes potential mana from untapped sources
-/// - Non-mana costs: checks if requirements can be met
-///
-/// This is useful for UI to show actions that could be afforded after
-/// tapping mana sources.
-pub fn can_potentially_pay_total_cost(
-    game: &GameState,
-    source_id: ObjectId,
-    player: PlayerId,
-    cost: &crate::cost::TotalCost,
-) -> bool {
-    use crate::costs::{CostCheckContext, can_potentially_pay_with_check_context};
-
-    let ctx = CostCheckContext::new(source_id, player);
-
-    for c in cost.costs() {
-        if can_potentially_pay_with_check_context(&*c.0, game, &ctx).is_err() {
-            return false;
-        }
-    }
-    true
 }
 
 /// Calculate activated-ability cost after applying battlefield static cost modifiers.
@@ -1953,19 +1886,15 @@ fn can_cast_with_alternative_from_hand_with_view(
                 return false;
             }
 
-            let mana_cost = method.mana_cost();
-            // Check mana cost if present
-            if let Some(mana) = mana_cost
-                && !can_cast_with_cost_with_view(
-                    game,
-                    player,
-                    spell,
-                    spell_id,
-                    Some(mana),
-                    &AdditionalCastRequirements::default(),
-                    view,
-                )
-            {
+            if !can_cast_with_cost_with_view(
+                game,
+                player,
+                spell,
+                spell_id,
+                method.mana_cost(),
+                &AdditionalCastRequirements::default(),
+                view,
+            ) {
                 return false;
             }
 
@@ -3629,6 +3558,12 @@ pub trait DecisionMaker {
     /// The game state is restored to the checkpoint before the action started.
     /// Default implementation does nothing.
     fn on_action_cancelled(&mut self, _game: &GameState, _reason: &str) {}
+
+    /// True when the decision maker is only surfacing a prompt and execution
+    /// should avoid committing fallback choices to game state.
+    fn awaiting_choice(&self) -> bool {
+        false
+    }
 
     // ========================================================================
     // Primitive-specific methods
@@ -9055,13 +8990,14 @@ mod tests {
             .push(activated_ability);
         game.remove_summoning_sickness(creature_id);
 
-        // Without mana, should not be able to activate
+        // Cost payment is validated during the activation flow, so the action
+        // should still surface even before the player floats mana.
         let actions = compute_legal_actions(&game, alice);
         assert!(
-            !actions
+            actions
                 .iter()
                 .any(|a| matches!(a, LegalAction::ActivateAbility { source, .. } if *source == creature_id)),
-            "Should NOT be able to activate without mana"
+            "Should surface the activation even before mana is available"
         );
 
         // Add mana to pool
@@ -9178,12 +9114,12 @@ mod tests {
 
         let actions = compute_legal_actions(&game, alice);
         assert!(
-            !actions.iter().any(|action| matches!(
+            actions.iter().any(|action| matches!(
                 action,
                 LegalAction::ActivateAbility { source, ability_index }
                     if *source == tayam_id && *ability_index == tayam_ability_index
             )),
-            "Tayam activation should not be legal when Wall of Roots cannot be activated again this turn"
+            "Tayam activation should still surface even when the payment flow will reject it"
         );
     }
 
@@ -9250,14 +9186,14 @@ mod tests {
 
         let actions_without_mana = compute_legal_actions(&game, alice);
         assert!(
-            !actions_without_mana.iter().any(|action| matches!(
+            actions_without_mana.iter().any(|action| matches!(
                 action,
                 LegalAction::ActivateAbility {
                     source,
                     ability_index: 0
                 } if *source == creature_id
             )),
-            "with no mana, reduced {{2}} ability should still be unavailable"
+            "reduced activated abilities should still surface before mana is floated"
         );
 
         game.player_mut(alice)

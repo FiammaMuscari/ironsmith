@@ -417,6 +417,79 @@ struct StackObjectSnapshot {
     targets: Vec<TargetChoiceView>,
 }
 
+fn build_stack_object_snapshot(
+    game: &GameState,
+    entry: &crate::game_state::StackEntry,
+) -> StackObjectSnapshot {
+    let obj = game.object(entry.object_id);
+    let source_stable_id = entry.source_stable_id.map(|stable_id| stable_id.0.0);
+    let inspect_object_id = if entry.is_ability {
+        entry
+            .source_stable_id
+            .and_then(|stable_id| game.find_object_by_stable_id(stable_id))
+            .or_else(|| obj.map(|o| o.id))
+            .map(|id| id.0)
+    } else {
+        obj.map(|o| o.id.0)
+    };
+    let stable_id = obj.map(|o| o.stable_id.0.0);
+    let name = obj
+        .map(|o| o.name.clone())
+        .or_else(|| entry.source_name.clone())
+        .unwrap_or_else(|| format!("Object#{}", entry.object_id.0));
+    let targets = entry
+        .targets
+        .iter()
+        .map(|target| target_choice_view(game, target))
+        .collect();
+
+    if entry.is_ability {
+        let ability_kind = if entry.triggering_event.is_some() {
+            "Triggered"
+        } else {
+            "Activated"
+        };
+        let ability_text = stack_entry_ability_text(entry, obj);
+        StackObjectSnapshot {
+            id: entry.object_id.0,
+            inspect_object_id,
+            stable_id,
+            source_stable_id,
+            controller: entry.controller.0,
+            name,
+            mana_cost: None,
+            effect_text: None,
+            ability_kind: Some(ability_kind.to_string()),
+            ability_text,
+            targets,
+        }
+    } else {
+        let effect_text = if let Some(o) = obj {
+            let lines = crate::compiled_text::compiled_lines(&o.to_card_definition());
+            if lines.is_empty() {
+                None
+            } else {
+                Some(lines.join("; "))
+            }
+        } else {
+            None
+        };
+        StackObjectSnapshot {
+            id: entry.object_id.0,
+            inspect_object_id,
+            stable_id,
+            source_stable_id,
+            controller: entry.controller.0,
+            name,
+            mana_cost: obj.and_then(|o| o.mana_cost.as_ref().map(|mc| mc.to_oracle())),
+            effect_text,
+            ability_kind: None,
+            ability_text: None,
+            targets,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct CounterSnapshot {
     kind: String,
@@ -472,6 +545,7 @@ struct GameSnapshot {
     stack_size: usize,
     stack_preview: Vec<String>,
     stack_objects: Vec<StackObjectSnapshot>,
+    resolving_stack_object: Option<StackObjectSnapshot>,
     battlefield_size: usize,
     exile_size: usize,
     players: Vec<PlayerSnapshot>,
@@ -599,6 +673,7 @@ impl GameSnapshot {
         decision: Option<&DecisionContext>,
         game_over: Option<&GameResult>,
         pending_cast_stack_id: Option<ObjectId>,
+        resolving_stack_object: Option<StackObjectSnapshot>,
         battlefield_transitions: Vec<BattlefieldTransitionSnapshot>,
         viewed_cards: Option<&ActiveViewedCards>,
         cancelable: bool,
@@ -757,78 +832,7 @@ impl GameSnapshot {
             .stack
             .iter()
             .rev()
-            .map(|entry| {
-                let obj = game.object(entry.object_id);
-                let source_stable_id = entry.source_stable_id.map(|stable_id| stable_id.0.0);
-                let inspect_object_id = if entry.is_ability {
-                    entry
-                        .source_stable_id
-                        .and_then(|stable_id| game.find_object_by_stable_id(stable_id))
-                        .or_else(|| obj.map(|o| o.id))
-                        .map(|id| id.0)
-                } else {
-                    obj.map(|o| o.id.0)
-                };
-                let stable_id = if entry.is_ability {
-                    obj.map(|o| o.stable_id.0.0)
-                } else {
-                    obj.map(|o| o.stable_id.0.0)
-                };
-                let name = obj
-                    .map(|o| o.name.clone())
-                    .or_else(|| entry.source_name.clone())
-                    .unwrap_or_else(|| format!("Object#{}", entry.object_id.0));
-                let targets = entry
-                    .targets
-                    .iter()
-                    .map(|target| target_choice_view(game, target))
-                    .collect();
-                if entry.is_ability {
-                    let ability_kind = if entry.triggering_event.is_some() {
-                        "Triggered"
-                    } else {
-                        "Activated"
-                    };
-                    let ability_text = stack_entry_ability_text(entry, obj);
-                    StackObjectSnapshot {
-                        id: entry.object_id.0,
-                        inspect_object_id,
-                        stable_id,
-                        source_stable_id,
-                        controller: entry.controller.0,
-                        name,
-                        mana_cost: None,
-                        effect_text: None,
-                        ability_kind: Some(ability_kind.to_string()),
-                        ability_text,
-                        targets,
-                    }
-                } else {
-                    let effect_text = if let Some(o) = obj {
-                        let lines = crate::compiled_text::compiled_lines(&o.to_card_definition());
-                        if lines.is_empty() {
-                            None
-                        } else {
-                            Some(lines.join("; "))
-                        }
-                    } else {
-                        None
-                    };
-                    StackObjectSnapshot {
-                        id: entry.object_id.0,
-                        inspect_object_id,
-                        stable_id,
-                        source_stable_id,
-                        controller: entry.controller.0,
-                        name,
-                        mana_cost: obj.and_then(|o| o.mana_cost.as_ref().map(|mc| mc.to_oracle())),
-                        effect_text,
-                        ability_kind: None,
-                        ability_text: None,
-                        targets,
-                    }
-                }
-            })
+            .map(|entry| build_stack_object_snapshot(game, entry))
             .collect();
         let mut stack_size = game.stack.len();
 
@@ -876,6 +880,7 @@ impl GameSnapshot {
             stack_size,
             stack_preview,
             stack_objects,
+            resolving_stack_object,
             battlefield_size: game.battlefield.len(),
             exile_size: game.exile.len(),
             players,
@@ -1588,6 +1593,10 @@ impl WasmReplayDecisionMaker {
 }
 
 impl DecisionMaker for WasmReplayDecisionMaker {
+    fn awaiting_choice(&self) -> bool {
+        self.pending_context.is_some()
+    }
+
     fn decide_boolean(
         &mut self,
         game: &GameState,
@@ -1933,6 +1942,8 @@ pub struct WasmGame {
     snapshot_serial: u64,
     /// Most recent transient card-view event visible to the current perspective.
     active_viewed_cards: Option<ActiveViewedCards>,
+    /// UI-only top stack entry that is currently resolving while a prompt is open.
+    active_resolving_stack_object: Option<StackObjectSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2021,6 +2032,7 @@ impl WasmGame {
             semantic_threshold: 0.0,
             snapshot_serial: 0,
             active_viewed_cards: None,
+            active_resolving_stack_object: None,
         }
     }
 
@@ -2135,6 +2147,7 @@ impl WasmGame {
             self.pending_decision.as_ref(),
             self.game_over.as_ref(),
             pending_cast_stack_id,
+            self.active_resolving_stack_object.clone(),
             battlefield_transitions,
             self.active_viewed_cards.as_ref(),
             cancelable,
@@ -2228,6 +2241,7 @@ impl WasmGame {
             self.pending_decision.as_ref(),
             self.game_over.as_ref(),
             pending_cast_stack_id,
+            self.active_resolving_stack_object.clone(),
             battlefield_transitions,
             self.active_viewed_cards.as_ref(),
             cancelable,
@@ -2640,6 +2654,7 @@ impl WasmGame {
         self.priority_epoch_undo_locked_by_mana = false;
         self.priority_epoch_undo_land_stable_id = None;
         self.active_viewed_cards = None;
+        self.clear_active_resolving_stack_object();
         self.recompute_ui_decision()?;
         self.snapshot()
     }
@@ -2649,6 +2664,7 @@ impl WasmGame {
     pub fn dispatch(&mut self, command: JsValue) -> Result<JsValue, JsValue> {
         let command: UiCommand = serde_wasm_bindgen::from_value(command)
             .map_err(|e| JsValue::from_str(&format!("invalid command payload: {e}")))?;
+        self.clear_active_resolving_stack_object();
 
         let pending_ctx = self
             .pending_decision
@@ -2670,14 +2686,6 @@ impl WasmGame {
                     return Err(err);
                 }
             };
-            let response = match self.command_to_response(&pending_ctx, command) {
-                Ok(response) => response,
-                Err(err) => {
-                    self.pending_decision = Some(pending_ctx);
-                    self.pending_replay_action = Some(replay);
-                    return Err(err);
-                }
-            };
             replay.nested_answers.push(answer);
             let should_track_action_checkpoint = self.pending_action_checkpoint.is_none()
                 && Self::replay_answers_start_cancelable_action_chain(
@@ -2685,38 +2693,72 @@ impl WasmGame {
                     &replay.nested_answers,
                 );
             let live_checkpoint = self.capture_replay_checkpoint();
-            let mut live_dm = WasmReplayDecisionMaker::new(&[]);
-            let result = apply_priority_response_with_dm(
-                &mut self.game,
-                &mut self.trigger_queue,
-                &mut self.priority_state,
-                &response,
-                &mut live_dm,
-            );
-            let (pending_context, viewed_cards) = live_dm.finish();
-            self.active_viewed_cards = viewed_cards;
-
-            if let Some(next_ctx) = pending_context {
-                if should_track_action_checkpoint {
-                    self.pending_action_checkpoint = Some(replay.checkpoint.clone());
+            let progress = if replay_decision_requires_root_reexecution(&pending_ctx) {
+                match self.execute_with_replay(
+                    &replay.checkpoint,
+                    &replay.root,
+                    &replay.nested_answers,
+                ) {
+                    Ok(ReplayOutcome::NeedsDecision(next_ctx)) => {
+                        if should_track_action_checkpoint {
+                            self.pending_action_checkpoint = Some(replay.checkpoint.clone());
+                        }
+                        self.pending_decision = Some(next_ctx);
+                        self.pending_replay_action = Some(replay);
+                        return self.snapshot();
+                    }
+                    Ok(ReplayOutcome::Complete(progress)) => progress,
+                    Err(err) => {
+                        self.restore_replay_checkpoint(&live_checkpoint);
+                        self.pending_decision = Some(pending_ctx);
+                        self.pending_replay_action = Some(replay);
+                        return Err(err);
+                    }
                 }
-                self.pending_decision = Some(next_ctx);
-                self.pending_replay_action = Some(replay);
-                return self.snapshot();
-            }
+            } else {
+                let response = match self.command_to_response(&pending_ctx, command) {
+                    Ok(response) => response,
+                    Err(err) => {
+                        self.pending_decision = Some(pending_ctx);
+                        self.pending_replay_action = Some(replay);
+                        return Err(err);
+                    }
+                };
+                let mut live_dm = WasmReplayDecisionMaker::new(&[]);
+                let result = apply_priority_response_with_dm(
+                    &mut self.game,
+                    &mut self.trigger_queue,
+                    &mut self.priority_state,
+                    &response,
+                    &mut live_dm,
+                );
+                let (pending_context, viewed_cards) = live_dm.finish();
+                self.active_viewed_cards = viewed_cards;
 
-            let progress = match result {
-                Ok(progress) => progress,
-                Err(err) => {
-                    self.restore_replay_checkpoint(&live_checkpoint);
-                    self.pending_decision = Some(pending_ctx);
+                if let Some(next_ctx) = pending_context {
+                    self.update_active_resolving_stack_object_from_checkpoint(&live_checkpoint);
+                    if should_track_action_checkpoint {
+                        self.pending_action_checkpoint = Some(replay.checkpoint.clone());
+                    }
+                    self.pending_decision = Some(next_ctx);
                     self.pending_replay_action = Some(replay);
-                    return Err(JsValue::from_str(&format!("dispatch failed: {err}")));
+                    return self.snapshot();
+                }
+
+                match result {
+                    Ok(progress) => progress,
+                    Err(err) => {
+                        self.restore_replay_checkpoint(&live_checkpoint);
+                        self.pending_decision = Some(pending_ctx);
+                        self.pending_replay_action = Some(replay);
+                        return Err(JsValue::from_str(&format!("dispatch failed: {err}")));
+                    }
                 }
             };
 
             match progress {
                 GameProgress::NeedsDecisionCtx(next_ctx) => {
+                    self.update_active_resolving_stack_object_from_checkpoint(&live_checkpoint);
                     if self.priority_action_chain_still_pending() {
                         if should_track_action_checkpoint {
                             self.pending_action_checkpoint = Some(replay.checkpoint.clone());
@@ -2735,6 +2777,7 @@ impl WasmGame {
                     self.snapshot()
                 }
                 progress => {
+                    self.clear_active_resolving_stack_object();
                     if Self::replay_root_starts_undoable_action(&replay.root) {
                         self.priority_epoch_has_undoable_action = true;
                     }
@@ -2777,6 +2820,7 @@ impl WasmGame {
             };
             match outcome {
                 ReplayOutcome::NeedsDecision(next_ctx) => {
+                    self.update_active_resolving_stack_object_from_checkpoint(&checkpoint);
                     if should_track_action_checkpoint {
                         self.pending_action_checkpoint = Some(checkpoint.clone());
                     }
@@ -2791,6 +2835,7 @@ impl WasmGame {
                 ReplayOutcome::Complete(progress) => {
                     match progress {
                         GameProgress::NeedsDecisionCtx(next_ctx) => {
+                            self.update_active_resolving_stack_object_from_checkpoint(&checkpoint);
                             if self.priority_action_chain_still_pending() {
                                 if should_track_action_checkpoint {
                                     self.pending_action_checkpoint = Some(checkpoint.clone());
@@ -2813,6 +2858,7 @@ impl WasmGame {
                             self.snapshot()
                         }
                         progress => {
+                            self.clear_active_resolving_stack_object();
                             if Self::replay_root_starts_undoable_action(&root) {
                                 self.priority_epoch_has_undoable_action = true;
                             }
@@ -3694,6 +3740,7 @@ impl WasmGame {
         self.priority_epoch_undo_locked_by_mana = false;
         self.priority_epoch_undo_land_stable_id = None;
         self.active_viewed_cards = None;
+        self.clear_active_resolving_stack_object();
         self.game_over = None;
         self.runner = None;
         self.runner_awaiting_priority = false;
@@ -3714,6 +3761,7 @@ impl WasmGame {
         self.priority_epoch_undo_locked_by_mana = false;
         self.priority_epoch_undo_land_stable_id = None;
         self.active_viewed_cards = None;
+        self.clear_active_resolving_stack_object();
         if self.game_over.is_some() {
             return Ok(());
         }
@@ -3755,6 +3803,7 @@ impl WasmGame {
                     TurnAction::Continue => continue,
 
                     TurnAction::Decision(ctx) => {
+                        self.clear_active_resolving_stack_object();
                         // Auto-resolve cleanup discards when the flag is set.
                         if self.should_auto_resolve_cleanup_discard(&ctx)
                             && let DecisionContext::SelectObjects(ref obj) = ctx
@@ -3835,6 +3884,7 @@ impl WasmGame {
                 }
                 ReplayOutcome::Complete(progress) => match progress {
                     GameProgress::NeedsDecisionCtx(ctx) => {
+                        self.clear_active_resolving_stack_object();
                         self.pending_decision = Some(ctx);
                         self.runner_pending_decision = false;
                         return Ok(());
@@ -3849,6 +3899,7 @@ impl WasmGame {
                         self.priority_epoch_undo_locked_by_mana = false;
                         self.priority_epoch_undo_land_stable_id = None;
                         self.pending_decision = None;
+                        self.clear_active_resolving_stack_object();
                         continue;
                     }
                     GameProgress::StackResolved => {
@@ -3858,11 +3909,13 @@ impl WasmGame {
                         self.priority_epoch_has_undoable_action = false;
                         self.priority_epoch_undo_locked_by_mana = false;
                         self.priority_epoch_undo_land_stable_id = None;
+                        self.clear_active_resolving_stack_object();
                         continue;
                     }
                     GameProgress::GameOver(result) => {
                         self.pending_action_checkpoint = None;
                         self.pending_decision = None;
+                        self.clear_active_resolving_stack_object();
                         self.game_over = Some(result);
                         return Ok(());
                     }
@@ -3878,6 +3931,7 @@ impl WasmGame {
     fn apply_progress(&mut self, progress: GameProgress) -> Result<(), JsValue> {
         match progress {
             GameProgress::NeedsDecisionCtx(ctx) => {
+                self.clear_active_resolving_stack_object();
                 self.pending_decision = Some(ctx);
                 Ok(())
             }
@@ -3893,11 +3947,13 @@ impl WasmGame {
                 self.priority_epoch_undo_locked_by_mana = false;
                 self.priority_epoch_undo_land_stable_id = None;
                 self.pending_decision = None;
+                self.clear_active_resolving_stack_object();
                 self.advance_until_decision()
             }
             GameProgress::GameOver(result) => {
                 self.pending_action_checkpoint = None;
                 self.pending_decision = None;
+                self.clear_active_resolving_stack_object();
                 self.game_over = Some(result);
                 Ok(())
             }
@@ -3908,6 +3964,7 @@ impl WasmGame {
                 self.priority_epoch_undo_locked_by_mana = false;
                 self.priority_epoch_undo_land_stable_id = None;
                 self.pending_decision = None;
+                self.clear_active_resolving_stack_object();
                 self.advance_until_decision()
             }
         }
@@ -4001,6 +4058,37 @@ impl WasmGame {
         self.game_over = checkpoint.game_over.clone();
     }
 
+    fn clear_active_resolving_stack_object(&mut self) {
+        self.active_resolving_stack_object = None;
+    }
+
+    fn resolving_stack_object_from_checkpoint(
+        &self,
+        checkpoint: &ReplayCheckpoint,
+    ) -> Option<StackObjectSnapshot> {
+        let entry = checkpoint.game.stack.last()?;
+        if checkpoint.game.stack.len() != self.game.stack.len() + 1 {
+            return None;
+        }
+        if self
+            .game
+            .stack
+            .iter()
+            .any(|current| current.object_id == entry.object_id)
+        {
+            return None;
+        }
+        Some(build_stack_object_snapshot(&self.game, entry))
+    }
+
+    fn update_active_resolving_stack_object_from_checkpoint(
+        &mut self,
+        checkpoint: &ReplayCheckpoint,
+    ) {
+        self.active_resolving_stack_object =
+            self.resolving_stack_object_from_checkpoint(checkpoint);
+    }
+
     fn execute_with_replay(
         &mut self,
         checkpoint: &ReplayCheckpoint,
@@ -4009,6 +4097,7 @@ impl WasmGame {
     ) -> Result<ReplayOutcome, JsValue> {
         self.restore_replay_checkpoint(checkpoint);
         self.active_viewed_cards = None;
+        self.clear_active_resolving_stack_object();
 
         let mut replay_dm = WasmReplayDecisionMaker::new(nested_answers);
 
@@ -4031,14 +4120,22 @@ impl WasmGame {
         self.active_viewed_cards = viewed_cards;
 
         if let Some(next_ctx) = pending_context {
-            self.restore_replay_checkpoint(checkpoint);
+            self.update_active_resolving_stack_object_from_checkpoint(checkpoint);
             return Ok(ReplayOutcome::NeedsDecision(next_ctx));
         }
 
         match result {
-            Ok(progress) => Ok(ReplayOutcome::Complete(progress)),
+            Ok(progress) => {
+                if matches!(progress, GameProgress::NeedsDecisionCtx(_)) {
+                    self.update_active_resolving_stack_object_from_checkpoint(checkpoint);
+                } else {
+                    self.clear_active_resolving_stack_object();
+                }
+                Ok(ReplayOutcome::Complete(progress))
+            }
             Err(e) => {
                 self.active_viewed_cards = None;
+                self.clear_active_resolving_stack_object();
                 self.restore_replay_checkpoint(checkpoint);
                 Err(JsValue::from_str(&format!("dispatch failed: {e}")))
             }
@@ -5183,6 +5280,19 @@ fn decision_context_kind(ctx: &DecisionContext) -> &'static str {
     }
 }
 
+fn replay_decision_requires_root_reexecution(ctx: &DecisionContext) -> bool {
+    matches!(
+        ctx,
+        DecisionContext::Boolean(_)
+            | DecisionContext::Order(_)
+            | DecisionContext::Distribute(_)
+            | DecisionContext::Colors(_)
+            | DecisionContext::Counters(_)
+            | DecisionContext::Partition(_)
+            | DecisionContext::Proliferate(_)
+    )
+}
+
 fn validate_attacker_declarations(
     attackers: &crate::decisions::context::AttackersContext,
     declarations: &[AttackerDeclarationInput],
@@ -5661,6 +5771,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Vec::new(),
             None,
             false,
@@ -6033,6 +6144,7 @@ mod tests {
             wasm.pending_decision.as_ref(),
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
             Vec::new(),
             None,
             cancelable,
@@ -6148,6 +6260,7 @@ mod tests {
             wasm.pending_decision.as_ref(),
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
             Vec::new(),
             None,
             wasm.is_cancelable(),
@@ -6197,6 +6310,7 @@ mod tests {
             wasm.pending_decision.as_ref(),
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
             Vec::new(),
             None,
             wasm.is_cancelable(),
@@ -6238,6 +6352,7 @@ mod tests {
             wasm.pending_decision.as_ref(),
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
             Vec::new(),
             None,
             wasm.is_cancelable(),
@@ -6446,6 +6561,7 @@ mod tests {
             wasm.pending_decision.as_ref(),
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
             Vec::new(),
             None,
             cancelable,
@@ -6508,6 +6624,7 @@ mod tests {
             wasm.pending_decision.as_ref(),
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
             Vec::new(),
             None,
             cancelable,
@@ -6609,7 +6726,10 @@ mod tests {
             .expect("activating Yawgmoth proliferate should open next-cost chooser");
 
             assert!(
-                matches!(wasm.pending_decision, Some(DecisionContext::SelectOptions(_))),
+                matches!(
+                    wasm.pending_decision,
+                    Some(DecisionContext::SelectOptions(_))
+                ),
                 "Yawgmoth proliferate should begin on a next-cost chooser"
             );
 
@@ -6657,7 +6777,9 @@ mod tests {
 
         let discard_ctx = match discard_wasm.pending_decision.as_ref() {
             Some(DecisionContext::SelectObjects(ctx)) => ctx,
-            other => panic!("expected discard selection prompt after choosing discard, got {other:?}"),
+            other => {
+                panic!("expected discard selection prompt after choosing discard, got {other:?}")
+            }
         };
         assert!(
             discard_ctx.description.to_lowercase().contains("discard"),
@@ -6764,6 +6886,7 @@ mod tests {
             wasm.pending_decision.as_ref(),
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
             Vec::new(),
             None,
             wasm.is_cancelable(),
@@ -6913,6 +7036,7 @@ mod tests {
             wasm.pending_decision.as_ref(),
             wasm.game_over.as_ref(),
             pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
             Vec::new(),
             wasm.active_viewed_cards.as_ref(),
             wasm.is_cancelable(),
@@ -7065,7 +7189,418 @@ mod tests {
         assert_eq!(
             wasm.game.stack.len(),
             1,
-            "replay should restore the checkpoint while waiting on the target decision"
+            "replay should leave the live game advanced to the pending target decision"
+        );
+    }
+
+    #[test]
+    fn replay_only_decision_detection_routes_boolean_prompts_through_root_reexecution() {
+        let boolean = DecisionContext::Boolean(BooleanContext::new(
+            PlayerId::from_index(0),
+            None,
+            "play an additional land this turn",
+        ));
+        let select_options =
+            DecisionContext::SelectOptions(crate::decisions::context::SelectOptionsContext::new(
+                PlayerId::from_index(0),
+                "choose a mode",
+                1,
+                1,
+                vec![crate::decision::ChoiceOption {
+                    index: 0,
+                    description: "Only option".to_string(),
+                }],
+            ));
+
+        assert!(
+            replay_decision_requires_root_reexecution(&boolean),
+            "boolean prompts should replay from the original root response"
+        );
+        assert!(
+            !replay_decision_requires_root_reexecution(&select_options),
+            "normal select-options prompts should keep using direct live responses"
+        );
+    }
+
+    #[test]
+    fn cultivator_colossus_etb_does_not_repeat_may_prompt_before_next_land_choice() {
+        let mut wasm = WasmGame::new();
+
+        let forest_a = wasm
+            .add_card_to_zone(0, "Forest".to_string(), "hand".to_string(), true)
+            .expect("first Forest should be added to hand");
+        let forest_b = wasm
+            .add_card_to_zone(0, "Forest".to_string(), "hand".to_string(), true)
+            .expect("second Forest should be added to hand");
+        wasm.add_card_to_zone(0, "Grizzly Bears".to_string(), "library".to_string(), true)
+            .expect("first library filler should be added");
+        wasm.add_card_to_zone(0, "Grizzly Bears".to_string(), "library".to_string(), true)
+            .expect("second library filler should be added");
+
+        wasm.add_card_to_zone(
+            0,
+            "Cultivator Colossus".to_string(),
+            "battlefield".to_string(),
+            false,
+        )
+        .expect("Cultivator Colossus should enter with ETB processing");
+
+        let first_may = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Boolean(ctx)) => ctx,
+            other => panic!("expected Cultivator Colossus may prompt, got {other:?}"),
+        };
+        assert!(
+            first_may
+                .description
+                .to_ascii_lowercase()
+                .contains("put a land card from your hand onto the battlefield tapped"),
+            "expected Cultivator Colossus may text, got {:?}",
+            first_may.description
+        );
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": [1],
+            }))
+            .expect("yes choice should serialize"),
+        )
+        .expect("accepting the first Cultivator iteration should succeed");
+
+        let first_land_choice = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectObjects(ctx)) => ctx,
+            other => panic!("expected first land selection prompt, got {other:?}"),
+        };
+        let mut first_candidates: Vec<u64> = first_land_choice
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.legal)
+            .map(|candidate| candidate.id.0)
+            .collect();
+        first_candidates.sort_unstable();
+        assert_eq!(
+            first_candidates,
+            vec![forest_a, forest_b],
+            "first land selection should offer both lands in hand"
+        );
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_objects",
+                "object_ids": [forest_a],
+            }))
+            .expect("first land selection should serialize"),
+        )
+        .expect("choosing the first land should succeed");
+
+        assert_eq!(
+            wasm.game
+                .player(PlayerId::from_index(0))
+                .expect("player should exist")
+                .hand
+                .len(),
+            1,
+            "after choosing a land, the live game state should keep that land out of hand"
+        );
+        let lands_on_battlefield = wasm
+            .game
+            .battlefield
+            .iter()
+            .filter(|&&id| {
+                wasm.game.object(id).is_some_and(|object| {
+                    object.is_land() && object.owner == PlayerId::from_index(0)
+                })
+            })
+            .count();
+        assert_eq!(
+            lands_on_battlefield, 1,
+            "the chosen land should already be on the battlefield before the next repeat decision"
+        );
+
+        let second_may = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Boolean(ctx)) => ctx,
+            other => panic!("expected second Cultivator may prompt, got {other:?}"),
+        };
+        assert!(
+            second_may
+                .description
+                .to_ascii_lowercase()
+                .contains("put a land card from your hand onto the battlefield tapped"),
+            "expected repeated Cultivator may text, got {:?}",
+            second_may.description
+        );
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": [1],
+            }))
+            .expect("second yes choice should serialize"),
+        )
+        .expect("accepting the second Cultivator iteration should succeed");
+
+        let second_land_choice = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::SelectObjects(ctx)) => ctx,
+            other => panic!("expected second land selection prompt, got {other:?}"),
+        };
+        let second_candidates: Vec<u64> = second_land_choice
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.legal)
+            .map(|candidate| candidate.id.0)
+            .collect();
+        assert_eq!(
+            second_candidates,
+            vec![forest_b],
+            "after one land is chosen, the next prompt should go straight to the remaining land"
+        );
+    }
+
+    #[test]
+    fn cultivator_colossus_snapshot_tracks_repeat_iteration_state() {
+        let mut wasm = WasmGame::new();
+        let alice = PlayerId::from_index(0);
+
+        let forest_a = wasm
+            .add_card_to_zone(0, "Forest".to_string(), "hand".to_string(), true)
+            .expect("first Forest should be added to hand");
+        let forest_b = wasm
+            .add_card_to_zone(0, "Forest".to_string(), "hand".to_string(), true)
+            .expect("second Forest should be added to hand");
+        wasm.add_card_to_zone(0, "Grizzly Bears".to_string(), "library".to_string(), true)
+            .expect("first library filler should be added");
+        wasm.add_card_to_zone(0, "Grizzly Bears".to_string(), "library".to_string(), true)
+            .expect("second library filler should be added");
+
+        wasm.add_card_to_zone(
+            0,
+            "Cultivator Colossus".to_string(),
+            "battlefield".to_string(),
+            false,
+        )
+        .expect("Cultivator Colossus should enter with ETB processing");
+
+        let pending_cast_stack_id = wasm
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
+        let snapshot = GameSnapshot::from_game(
+            &wasm.game,
+            wasm.perspective,
+            wasm.pending_decision.as_ref(),
+            wasm.game_over.as_ref(),
+            pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
+            Vec::new(),
+            wasm.active_viewed_cards.as_ref(),
+            wasm.is_cancelable(),
+            None,
+            0,
+        );
+        let resolving_stack_object = snapshot
+            .resolving_stack_object
+            .as_ref()
+            .expect("Cultivator ETB prompt should expose the resolving trigger in the snapshot");
+        assert_eq!(resolving_stack_object.name, "Cultivator Colossus");
+        assert_eq!(
+            resolving_stack_object.ability_kind.as_deref(),
+            Some("Triggered"),
+            "the pinned resolving entry should surface Cultivator's ETB as a triggered ability"
+        );
+        assert!(
+            snapshot.stack_objects.is_empty(),
+            "the real stack should stay empty while the UI-only resolving entry is shown separately"
+        );
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": [1],
+            }))
+            .expect("yes choice should serialize"),
+        )
+        .expect("accepting the first Cultivator iteration should succeed");
+
+        let pending_cast_stack_id = wasm
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
+        let snapshot = GameSnapshot::from_game(
+            &wasm.game,
+            wasm.perspective,
+            wasm.pending_decision.as_ref(),
+            wasm.game_over.as_ref(),
+            pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
+            Vec::new(),
+            wasm.active_viewed_cards.as_ref(),
+            wasm.is_cancelable(),
+            None,
+            0,
+        );
+        let me = snapshot
+            .players
+            .iter()
+            .find(|player| player.id == alice.0)
+            .expect("perspective player should exist in snapshot");
+        let mut hand_ids: Vec<u64> = me.hand_cards.iter().map(|card| card.id).collect();
+        hand_ids.sort_unstable();
+        assert_eq!(
+            hand_ids,
+            vec![forest_a, forest_b],
+            "first land-choice snapshot should still show both lands in hand"
+        );
+        let first_choice = match snapshot
+            .decision
+            .as_ref()
+            .expect("snapshot should include first land-choice decision")
+        {
+            super::DecisionView::SelectObjects(view) => view,
+            other => panic!("expected select_objects snapshot, got {other:?}"),
+        };
+        let mut first_candidates: Vec<u64> = first_choice
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.legal)
+            .map(|candidate| candidate.id)
+            .collect();
+        first_candidates.sort_unstable();
+        assert_eq!(
+            first_candidates,
+            vec![forest_a, forest_b],
+            "first land-choice snapshot should offer both lands"
+        );
+        assert!(
+            snapshot.resolving_stack_object.is_some(),
+            "the resolving Cultivator trigger should stay visible during the land-choice step"
+        );
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_objects",
+                "object_ids": [forest_a],
+            }))
+            .expect("first land selection should serialize"),
+        )
+        .expect("choosing the first land should succeed");
+
+        let pending_cast_stack_id = wasm
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
+        let snapshot = GameSnapshot::from_game(
+            &wasm.game,
+            wasm.perspective,
+            wasm.pending_decision.as_ref(),
+            wasm.game_over.as_ref(),
+            pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
+            Vec::new(),
+            wasm.active_viewed_cards.as_ref(),
+            wasm.is_cancelable(),
+            None,
+            1,
+        );
+        let me = snapshot
+            .players
+            .iter()
+            .find(|player| player.id == alice.0)
+            .expect("perspective player should exist in snapshot");
+        let hand_ids: Vec<u64> = me.hand_cards.iter().map(|card| card.id).collect();
+        assert_eq!(
+            hand_ids,
+            vec![forest_b],
+            "after the first land move, the snapshot hand should only show the remaining land"
+        );
+        let forest_count = me
+            .battlefield
+            .iter()
+            .filter(|permanent| permanent.name == "Forest")
+            .map(|permanent| permanent.count)
+            .sum::<usize>();
+        assert_eq!(
+            forest_count, 1,
+            "after the first land move, the snapshot battlefield should already show one Forest"
+        );
+        match snapshot
+            .decision
+            .as_ref()
+            .expect("snapshot should include the repeated may decision")
+        {
+            super::DecisionView::SelectOptions(view) => {
+                let option_text: Vec<&str> = view
+                    .options
+                    .iter()
+                    .map(|option| option.description.as_str())
+                    .collect();
+                assert_eq!(option_text, vec!["Yes", "No"]);
+            }
+            other => panic!("expected repeat yes/no snapshot, got {other:?}"),
+        }
+        assert!(
+            snapshot.resolving_stack_object.is_some(),
+            "the resolving Cultivator trigger should stay visible across repeat iterations"
+        );
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "select_options",
+                "option_indices": [1],
+            }))
+            .expect("second yes choice should serialize"),
+        )
+        .expect("accepting the second Cultivator iteration should succeed");
+
+        let pending_cast_stack_id = wasm
+            .priority_state
+            .pending_cast
+            .as_ref()
+            .map(|p| p.stack_id);
+        let snapshot = GameSnapshot::from_game(
+            &wasm.game,
+            wasm.perspective,
+            wasm.pending_decision.as_ref(),
+            wasm.game_over.as_ref(),
+            pending_cast_stack_id,
+            wasm.active_resolving_stack_object.clone(),
+            Vec::new(),
+            wasm.active_viewed_cards.as_ref(),
+            wasm.is_cancelable(),
+            None,
+            2,
+        );
+        let me = snapshot
+            .players
+            .iter()
+            .find(|player| player.id == alice.0)
+            .expect("perspective player should exist in snapshot");
+        let hand_ids: Vec<u64> = me.hand_cards.iter().map(|card| card.id).collect();
+        assert_eq!(
+            hand_ids,
+            vec![forest_b],
+            "before the second land is chosen, the snapshot hand should still show only the remaining land"
+        );
+        let second_choice = match snapshot
+            .decision
+            .as_ref()
+            .expect("snapshot should include second land-choice decision")
+        {
+            super::DecisionView::SelectObjects(view) => view,
+            other => panic!("expected second select_objects snapshot, got {other:?}"),
+        };
+        let second_candidates: Vec<u64> = second_choice
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.legal)
+            .map(|candidate| candidate.id)
+            .collect();
+        assert_eq!(
+            second_candidates,
+            vec![forest_b],
+            "second land-choice snapshot should only offer the remaining land"
         );
     }
 }

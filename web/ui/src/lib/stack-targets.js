@@ -16,6 +16,26 @@ export function normalizeZoneViews(zoneViews) {
   return normalized.length > 0 ? normalized : ["battlefield"];
 }
 
+export function getVisibleStackObjects(state) {
+  const realStackObjects = Array.isArray(state?.stack_objects) ? state.stack_objects : [];
+  const resolvingStackObject = state?.resolving_stack_object || null;
+  if (!resolvingStackObject) return realStackObjects;
+
+  const resolvingId = Number(resolvingStackObject?.id);
+  if (
+    Number.isFinite(resolvingId)
+    && realStackObjects.some((entry) => Number(entry?.id) === resolvingId)
+  ) {
+    return realStackObjects;
+  }
+
+  return [resolvingStackObject, ...realStackObjects];
+}
+
+export function getVisibleTopStackObject(state) {
+  return getVisibleStackObjects(state)[0] || null;
+}
+
 function indexObject(map, objectId, renderedId, zone, playerId) {
   const numericObjectId = Number(objectId);
   if (!Number.isFinite(numericObjectId)) return;
@@ -52,7 +72,7 @@ export function buildRenderableObjectIndex(state) {
     indexPlayerZone(index, player?.command_cards || [], "command", playerId);
   }
 
-  for (const stackEntry of state?.stack_objects || []) {
+  for (const stackEntry of getVisibleStackObjects(state)) {
     const stackObjectId = Number(stackEntry?.id);
     if (!Number.isFinite(stackObjectId)) continue;
     indexObject(index, stackObjectId, stackObjectId, "stack", null);
@@ -75,7 +95,7 @@ function resolveActiveStackObject(stackObjects = [], selectedObjectId = null) {
 }
 
 export function buildStackTargetPresentation(state, zoneViews = [], selectedObjectId = null) {
-  const stackObjects = state?.stack_objects || [];
+  const stackObjects = getVisibleStackObjects(state);
   const activeStackObject = resolveActiveStackObject(stackObjects, selectedObjectId);
   if (!activeStackObject) {
     return {

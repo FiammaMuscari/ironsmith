@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/context/GameContext";
 import InspectorStackTimeline from "./InspectorStackTimeline";
 import { cn } from "@/lib/utils";
+import { getVisibleStackObjects } from "@/lib/stack-targets";
 
 const STACK_RAIL_WIDTH = "clamp(240px, 24vw, 360px)";
 const STACK_HORIZONTAL_ENTRY_WIDTH = 230;
@@ -20,7 +21,7 @@ export default function StackTimelineRail({
   const { state } = useGame();
   const decision = state?.decision || null;
   const canAct = !!decision && decision.player === state?.perspective;
-  const stackObjects = state?.stack_objects || [];
+  const stackObjects = getVisibleStackObjects(state);
   const stackPreview = state?.stack_preview || [];
   const stackSignature = stackObjects.map((entry) => String(entry.id)).join("|");
   const rawStackEntryCount = Math.max(stackObjects.length, stackPreview.length);

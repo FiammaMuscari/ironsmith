@@ -4,6 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import useNewCards from "@/hooks/useNewCards";
 import StackCard from "@/components/cards/StackCard";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { getVisibleStackObjects } from "@/lib/stack-targets";
 
 export default function StackPanel({
   onInspect,
@@ -12,7 +13,7 @@ export default function StackPanel({
   onContentHeightChange,
 }) {
   const { state } = useGame();
-  const objects = state?.stack_objects || [];
+  const objects = getVisibleStackObjects(state);
   const previews = state?.stack_preview || [];
   const hasContent = objects.length > 0 || previews.length > 0;
   const itemCount = objects.length || previews.length;

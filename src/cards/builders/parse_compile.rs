@@ -7441,6 +7441,50 @@ fn try_compile_object_zone_and_exchange_effect(
             } else {
                 None
             };
+            if resolved_attach_spec.is_none()
+                && *zone == Zone::Battlefield
+                && let ChooseSpec::WithCount(inner, count) = &spec
+                && !inner.is_target()
+                && let ChooseSpec::Object(filter) = inner.base()
+                && filter.zone == Some(Zone::Hand)
+            {
+                let chooser = filter
+                    .owner
+                    .clone()
+                    .or_else(|| filter.controller.clone())
+                    .unwrap_or(PlayerFilter::You);
+                let chosen_tag = ctx.next_tag("chosen");
+                let choose = Effect::new(
+                    crate::effects::ChooseObjectsEffect::new(
+                        filter.clone(),
+                        count.clone(),
+                        chooser,
+                        chosen_tag.clone(),
+                    )
+                    .in_zone(Zone::Hand)
+                    .replace_tagged_objects(),
+                );
+                let spec = ChooseSpec::tagged(chosen_tag);
+                let move_effect =
+                    crate::effects::MoveToZoneEffect::new(spec.clone(), *zone, *to_top);
+                let move_effect = if *zone == Zone::Battlefield && *battlefield_tapped {
+                    move_effect.tapped()
+                } else {
+                    move_effect
+                };
+                let move_effect = match battlefield_controller {
+                    ReturnControllerAst::Preserve => move_effect,
+                    ReturnControllerAst::Owner => move_effect.under_owner_control(),
+                    ReturnControllerAst::You => move_effect.under_you_control(),
+                };
+                let mut effect = Effect::new(move_effect);
+                if choose_spec_targets_object(&spec) && ctx.auto_tag_object_targets {
+                    let tag = ctx.next_tag("moved");
+                    ctx.last_object_tag = Some(tag.clone());
+                    effect = effect.tag(tag);
+                }
+                return Ok(Some((vec![choose, effect], choices)));
+            }
             let move_effect = crate::effects::MoveToZoneEffect::new(spec.clone(), *zone, *to_top);
             let move_effect = if *zone == Zone::Battlefield && *battlefield_tapped {
                 move_effect.tapped()

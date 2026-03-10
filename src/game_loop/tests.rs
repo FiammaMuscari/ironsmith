@@ -3890,7 +3890,8 @@ mod tests {
             &choose_target,
             &mut dm,
         )
-        .expect("should choose damage target") {
+        .expect("should choose damage target")
+        {
             crate::decision::GameProgress::NeedsDecisionCtx(
                 crate::decisions::context::DecisionContext::SelectOptions(ctx),
             ) => ctx,
@@ -4240,7 +4241,10 @@ mod tests {
         };
 
         assert!(
-            next_cost_ctx.description.to_lowercase().contains("choose the next cost to pay"),
+            next_cost_ctx
+                .description
+                .to_lowercase()
+                .contains("choose the next cost to pay"),
             "expected next-cost prompt, got description: {}",
             next_cost_ctx.description
         );
@@ -6226,10 +6230,17 @@ mod tests {
             )) => {
                 assert_eq!(ctx.player, alice);
                 assert_eq!(ctx.source, Some(bolt_id));
-                assert_eq!(ctx.options.len(), 2, "Should offer normal and free cast methods");
+                assert_eq!(
+                    ctx.options.len(),
+                    2,
+                    "Should offer normal and free cast methods"
+                );
                 assert!(
                     ctx.options.iter().any(|option| {
-                        option.description.to_ascii_lowercase().contains("without paying mana cost")
+                        option
+                            .description
+                            .to_ascii_lowercase()
+                            .contains("without paying mana cost")
                             || option.description.to_ascii_lowercase().contains("free")
                     }),
                     "expected a free-cast option in ChooseCastingMethod, got {:?}",
@@ -6241,6 +6252,55 @@ mod tests {
                 other
             ),
         }
+    }
+
+    #[test]
+    fn test_omniscience_does_not_bypass_sorcery_timing_restrictions() {
+        use crate::decision::compute_legal_actions;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        game.turn.active_player = bob;
+        game.turn.phase = Phase::Combat;
+        game.turn.step = Some(Step::DeclareAttackers);
+        game.turn.priority_player = Some(alice);
+
+        let omniscience = CardDefinitionBuilder::new(CardId::from_raw(9003), "Omniscience Test")
+            .card_types(vec![CardType::Enchantment])
+            .parse_text("You may cast spells from your hand without paying their mana costs.")
+            .expect("Omniscience text should parse");
+        game.create_object_from_definition(&omniscience, alice, Zone::Battlefield);
+
+        let sorcery = CardBuilder::new(CardId::from_raw(9004), "Omniscience Sorcery Test")
+            .card_types(vec![CardType::Sorcery])
+            .mana_cost(crate::mana::ManaCost::from_symbols(vec![
+                crate::mana::ManaSymbol::Blue,
+            ]))
+            .build();
+        let sorcery_id = game.create_object_from_card(&sorcery, alice, Zone::Hand);
+
+        let actions = compute_legal_actions(&game, alice);
+        let free_cast = actions.iter().find(|action| {
+            matches!(
+                action,
+                LegalAction::CastSpell {
+                    spell_id,
+                    from_zone: Zone::Hand,
+                    casting_method: CastingMethod::PlayFrom {
+                        zone: Zone::Hand,
+                        use_alternative: Some(_),
+                        ..
+                    },
+                } if *spell_id == sorcery_id
+            )
+        });
+
+        assert!(
+            free_cast.is_none(),
+            "Omniscience should not let sorceries ignore normal timing restrictions"
+        );
     }
 
     // =========================================================================
@@ -8530,6 +8590,93 @@ mod tests {
         assert!(
             game.object(library_basic_id).is_none(),
             "the searched basic land should become a new battlefield object"
+        );
+    }
+
+    #[test]
+    fn cultivator_colossus_etb_only_asks_may_once_per_land_put() {
+        use crate::cards::definitions::{basic_forest, grizzly_bears};
+        use crate::executor::{ExecutionContext, execute_effect};
+        use crate::ids::ObjectId;
+
+        #[derive(Default)]
+        struct CountCultivatorChoices {
+            boolean_calls: usize,
+            object_calls: usize,
+        }
+
+        impl DecisionMaker for CountCultivatorChoices {
+            fn decide_boolean(
+                &mut self,
+                _game: &GameState,
+                _ctx: &crate::decisions::context::BooleanContext,
+            ) -> bool {
+                self.boolean_calls += 1;
+                self.boolean_calls <= 2
+            }
+
+            fn decide_objects(
+                &mut self,
+                _game: &GameState,
+                ctx: &crate::decisions::context::SelectObjectsContext,
+            ) -> Vec<ObjectId> {
+                self.object_calls += 1;
+                ctx.candidates
+                    .iter()
+                    .filter(|candidate| candidate.legal)
+                    .map(|candidate| candidate.id)
+                    .take(1)
+                    .collect()
+            }
+        }
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+
+        let cultivator = CardDefinitionBuilder::new(CardId::new(), "Cultivator Colossus")
+            .card_types(vec![CardType::Creature])
+            .parse_text(
+                "When this creature enters, you may put a land card from your hand onto the battlefield tapped. If you do, draw a card and repeat this process.",
+            )
+            .expect("Cultivator Colossus ETB text should parse");
+        let rendered = crate::compiled_text::compiled_lines(&cultivator)
+            .join(" ")
+            .to_ascii_lowercase();
+        assert!(
+            rendered.contains(
+                "when this creature enters, you may put a land card from your hand onto the battlefield tapped. if you do, draw a card and repeat this process"
+            ),
+            "compiled text should preserve Cultivator Colossus wording, got {rendered}"
+        );
+        let source_id = game.create_object_from_definition(&cultivator, alice, Zone::Battlefield);
+        game.create_object_from_definition(&basic_forest(), alice, Zone::Hand);
+        game.create_object_from_definition(&basic_forest(), alice, Zone::Hand);
+        game.create_object_from_definition(&grizzly_bears(), alice, Zone::Library);
+        game.create_object_from_definition(&grizzly_bears(), alice, Zone::Library);
+
+        let triggered = cultivator
+            .abilities
+            .iter()
+            .find_map(|ability| match &ability.kind {
+                AbilityKind::Triggered(triggered) => Some(triggered),
+                _ => None,
+            })
+            .expect("Cultivator Colossus should have an ETB trigger");
+
+        let mut dm = CountCultivatorChoices::default();
+        let mut ctx = ExecutionContext::new_default(source_id, alice).with_decision_maker(&mut dm);
+
+        for effect in &triggered.effects {
+            execute_effect(&mut game, effect, &mut ctx).expect("Cultivator ETB should resolve");
+        }
+
+        assert_eq!(
+            dm.object_calls, 2,
+            "two lands in hand should lead to exactly two land-selection prompts"
+        );
+        assert_eq!(
+            dm.boolean_calls, 3,
+            "two accepted iterations should require two yes decisions and one final no"
         );
     }
 

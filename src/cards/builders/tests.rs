@@ -7756,6 +7756,55 @@ fn parse_play_an_additional_land_this_turn_clause() {
 }
 
 #[test]
+fn parse_newline_additional_land_this_turn_clause_stays_a_spell_effect() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Explore")
+        .parse_text("You may play an additional land this turn.\nDraw a card.")
+        .expect("newline additional land play clause should parse");
+
+    let abilities_debug = format!("{:?}", def.abilities);
+    let spell_debug = format!("{:?}", def.spell_effect.as_ref().expect("spell effects"));
+    assert!(
+        !abilities_debug.contains("AdditionalLandPlay"),
+        "temporary additional land play should not become a battlefield static ability: {abilities_debug}"
+    );
+    assert!(
+        spell_debug.contains("AdditionalLandPlaysEffect")
+            && spell_debug.contains("duration: EndOfTurn"),
+        "expected end-of-turn additional-land-play spell effect, got {spell_debug}"
+    );
+}
+
+#[test]
+fn parse_additional_land_this_turn_clause_is_not_wrapped_in_may() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Explore")
+        .parse_text("You may play an additional land this turn.\nDraw a card.")
+        .expect("explore-style text should parse");
+
+    let spell_debug = format!("{:?}", def.spell_effect.as_ref().expect("spell effects"));
+    assert!(
+        !spell_debug.contains("MayEffect"),
+        "permission-granting land-play text should not become a MayEffect: {spell_debug}"
+    );
+}
+
+#[test]
+fn compiled_text_keeps_additional_land_this_turn_duration() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Explore")
+        .parse_text("You may play an additional land this turn.\nDraw a card.")
+        .expect("explore-style text should parse");
+
+    let rendered = oracle_like_lines(&def).join(" ");
+    assert!(
+        rendered.contains("You may play an additional land this turn"),
+        "compiled text should keep temporary land-play duration, got {rendered}"
+    );
+    assert!(
+        rendered.contains("Draw a card"),
+        "compiled text should preserve draw effect, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_spell_next_upkeep_trigger_stays_in_spell_effects() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Pact Variant")
         .parse_text(
@@ -14622,6 +14671,82 @@ fn parse_lose_half_your_life_rounded_up_clause() {
     );
 }
 
+#[test]
+fn oracle_render_regression_named_cards_compile_cleanly() {
+    let cultivator =
+        oracle_like_lines(&parse_oracle_card_definition("Cultivator Colossus")).join("\n");
+    assert!(
+        cultivator.contains(
+            "When Cultivator Colossus enters, you may put a land card from your hand onto the battlefield tapped. If you do, draw a card and repeat this process."
+        ),
+        "expected Cultivator Colossus repeat-process text, got {cultivator}"
+    );
+    assert!(
+        !cultivator.to_ascii_lowercase().contains("unsupported"),
+        "expected Cultivator Colossus to render without unsupported markers, got {cultivator}"
+    );
+
+    let one_ring = oracle_like_lines(&parse_oracle_card_definition("The One Ring")).join("\n");
+    assert!(
+        one_ring.contains("gain protection from everything until your next turn"),
+        "expected The One Ring protection wording, got {one_ring}"
+    );
+    assert!(
+        one_ring.contains("burden counter"),
+        "expected The One Ring burden-counter text, got {one_ring}"
+    );
+
+    let boseiju =
+        oracle_like_lines(&parse_oracle_card_definition("Boseiju, Who Endures")).join("\n");
+    assert!(
+        boseiju.contains("Channel")
+            && boseiju.contains("Destroy target")
+            && boseiju.contains("artifact")
+            && boseiju.contains("enchantment")
+            && boseiju.contains("land")
+            && boseiju.contains(
+                "This ability costs {1} less to activate for each legendary creature you control"
+            ),
+        "expected Boseiju channel rendering, got {boseiju}"
+    );
+
+    let hanweir =
+        oracle_like_lines(&parse_oracle_card_definition("Hanweir Battlements")).join("\n");
+    assert!(
+        hanweir.contains("Hanweir Garrison") || hanweir.contains("hanweir garrison"),
+        "expected Hanweir Battlements meld clause to compile, got {hanweir}"
+    );
+    assert!(
+        !hanweir.to_ascii_lowercase().contains("unsupported"),
+        "expected Hanweir Battlements to render without unsupported markers, got {hanweir}"
+    );
+
+    let otawara =
+        oracle_like_lines(&parse_oracle_card_definition("Otawara, Soaring City")).join("\n");
+    assert!(
+        otawara.contains("Channel")
+            && otawara.contains("Return target")
+            && otawara.contains("artifact")
+            && otawara.contains("creature")
+            && otawara.contains("enchantment")
+            && otawara.contains("planeswalker")
+            && otawara.contains(
+                "This ability costs {1} less to activate for each legendary creature you control"
+            ),
+        "expected Otawara channel rendering, got {otawara}"
+    );
+
+    let tolaria = oracle_like_lines(&parse_oracle_card_definition("Tolaria West")).join("\n");
+    assert!(
+        tolaria.contains("Transmute {1}{U}{U}") && tolaria.contains("mana value"),
+        "expected Tolaria West transmute rendering, got {tolaria}"
+    );
+    assert!(
+        !tolaria.contains("permanent card"),
+        "expected Tolaria West to avoid placeholder search text, got {tolaria}"
+    );
+}
+
 #[derive(serde::Deserialize)]
 struct RegressionCardFaceJson {
     name: String,
@@ -14632,12 +14757,19 @@ struct RegressionCardFaceJson {
 struct RegressionCardJson {
     name: String,
     oracle_text: Option<String>,
+    type_line: Option<String>,
     card_faces: Option<Vec<RegressionCardFaceJson>>,
     lang: Option<String>,
 }
 
-fn oracle_text_by_name() -> &'static HashMap<String, String> {
-    static ORACLE_BY_NAME: OnceLock<HashMap<String, String>> = OnceLock::new();
+#[derive(Clone)]
+struct RegressionOracleCardInfo {
+    oracle_text: String,
+    type_line: Option<String>,
+}
+
+fn oracle_card_info_by_name() -> &'static HashMap<String, RegressionOracleCardInfo> {
+    static ORACLE_BY_NAME: OnceLock<HashMap<String, RegressionOracleCardInfo>> = OnceLock::new();
     ORACLE_BY_NAME.get_or_init(|| {
         let raw =
             std::fs::read_to_string("cards.json").expect("read cards.json for regression tests");
@@ -14675,18 +14807,78 @@ fn oracle_text_by_name() -> &'static HashMap<String, String> {
                 continue;
             };
 
-            out.entry(full_name.clone()).or_insert(primary_text.clone());
+            out.entry(full_name.clone())
+                .or_insert(RegressionOracleCardInfo {
+                    oracle_text: primary_text.clone(),
+                    type_line: card.type_line.clone(),
+                });
             if full_name.contains(" // ") {
                 for part in full_name.split(" // ") {
-                    out.entry(part.to_string()).or_insert(primary_text.clone());
+                    out.entry(part.to_string())
+                        .or_insert(RegressionOracleCardInfo {
+                            oracle_text: primary_text.clone(),
+                            type_line: card.type_line.clone(),
+                        });
                 }
             }
             for (face_name, face_text) in face_entries {
-                out.entry(face_name).or_insert(face_text);
+                out.entry(face_name).or_insert(RegressionOracleCardInfo {
+                    oracle_text: face_text,
+                    type_line: card.type_line.clone(),
+                });
             }
         }
         out
     })
+}
+
+fn oracle_text_by_name() -> &'static HashMap<String, String> {
+    static ORACLE_TEXT_BY_NAME: OnceLock<HashMap<String, String>> = OnceLock::new();
+    ORACLE_TEXT_BY_NAME.get_or_init(|| {
+        oracle_card_info_by_name()
+            .iter()
+            .map(|(name, info)| (name.clone(), info.oracle_text.clone()))
+            .collect()
+    })
+}
+
+fn card_types_from_type_line(type_line: &str) -> Vec<CardType> {
+    type_line
+        .split('—')
+        .next()
+        .unwrap_or(type_line)
+        .split_whitespace()
+        .filter_map(
+            |word| match word.trim_matches(|ch: char| !ch.is_ascii_alphabetic()) {
+                "Artifact" => Some(CardType::Artifact),
+                "Battle" => Some(CardType::Battle),
+                "Creature" => Some(CardType::Creature),
+                "Enchantment" => Some(CardType::Enchantment),
+                "Instant" => Some(CardType::Instant),
+                "Land" => Some(CardType::Land),
+                "Planeswalker" => Some(CardType::Planeswalker),
+                "Sorcery" => Some(CardType::Sorcery),
+                "Kindred" => Some(CardType::Kindred),
+                _ => None,
+            },
+        )
+        .collect()
+}
+
+fn parse_oracle_card_definition(name: &str) -> CardDefinition {
+    let info = oracle_card_info_by_name()
+        .get(name)
+        .unwrap_or_else(|| panic!("missing oracle text for regression card '{name}'"));
+    let mut builder = CardDefinitionBuilder::new(CardId::new(), name);
+    if let Some(type_line) = info.type_line.as_deref() {
+        let card_types = card_types_from_type_line(type_line);
+        if !card_types.is_empty() {
+            builder = builder.card_types(card_types);
+        }
+    }
+    builder
+        .parse_text(info.oracle_text.clone())
+        .unwrap_or_else(|err| panic!("strict parser regression failed for '{name}': {err:?}"))
 }
 
 fn assert_oracle_card_parses_strict(name: &str) {

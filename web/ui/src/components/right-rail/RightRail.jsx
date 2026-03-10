@@ -4,6 +4,7 @@ import HoverArtOverlay from "./HoverArtOverlay";
 import { useHoveredObjectId } from "@/context/HoverContext";
 import { useGame } from "@/context/GameContext";
 import { animate, cancelMotion, uiSpring } from "@/lib/motion/anime";
+import { getVisibleStackObjects } from "@/lib/stack-targets";
 import { cn } from "@/lib/utils";
 
 const INSPECTOR_OVERLAY_WIDTH = "clamp(240px, 24vw, 360px)";
@@ -50,7 +51,7 @@ function objectExistsInState(state, objectId) {
     }
   }
 
-  for (const entry of state?.stack_objects || []) {
+  for (const entry of getVisibleStackObjects(state)) {
     if (String(entry?.id) === needle) return true;
   }
 
@@ -103,7 +104,7 @@ function locateObjectInState(state, objectId) {
     }
   }
 
-  for (const entry of state?.stack_objects || []) {
+  for (const entry of getVisibleStackObjects(state)) {
     if (String(entry?.id) === needle || String(entry?.inspect_object_id) === needle) {
       return { side: "stack", zone: "stack" };
     }
@@ -229,7 +230,7 @@ export default function RightRail({
   const [expandedInlineHeight, setExpandedInlineHeight] = useState(INLINE_EXPANDED_DEFAULT_HEIGHT);
   const hoveredObjectId = useHoveredObjectId();
   const decision = state?.decision || null;
-  const stackObjects = state?.stack_objects || [];
+  const stackObjects = getVisibleStackObjects(state);
   const hasStackEntries = stackObjects.length > 0 || (state?.stack_preview || []).length > 0;
   const topStackObject = stackObjects[0];
   const topStackObjectId = topStackObject
@@ -251,24 +252,18 @@ export default function RightRail({
         : null
     )
     : pinnedInspectorObjectId;
-  const relevantHoveredObjectId = focusedDecision && hoveredObjectId != null
-    ? (
-      decisionReferencesObject(decision, hoveredObjectId) || isViewedCardObject(state, hoveredObjectId)
-        ? hoveredObjectId
-        : null
-    )
-    : hoveredObjectId;
+  const relevantHoveredObjectId = hoveredObjectId;
   const fallbackDecisionObjectId = suppressFallback ? null : (resolvingCastObjectId ?? topStackObjectId);
 
-  // During non-priority decision steps, keep the casting spell as a fallback,
-  // but allow inspected/hovered objects to take precedence.
+  // During focused decision steps, keep the resolving stack object as a fallback.
+  // Live hover should always win, even if the current decision does not reference it.
   const decisionLockedObjectId = focusedDecision
-    ? (relevantPinnedObjectId ?? relevantHoveredObjectId ?? fallbackDecisionObjectId)
+    ? (relevantHoveredObjectId ?? relevantPinnedObjectId ?? fallbackDecisionObjectId)
     : null;
 
   const selectedObjectId = focusedDecision
     ? decisionLockedObjectId
-    : (relevantPinnedObjectId ?? relevantHoveredObjectId ?? fallbackDecisionObjectId);
+    : (relevantHoveredObjectId ?? relevantPinnedObjectId ?? fallbackDecisionObjectId);
   const validSelectedObjectId = objectExistsInState(state, selectedObjectId)
     ? selectedObjectId
     : null;

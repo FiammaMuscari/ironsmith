@@ -582,11 +582,15 @@ impl StaticAbilityKind for ActivatedAbilityCostReduction {
     }
 
     fn display(&self) -> String {
-        let mut line = format!(
-            "Activated abilities of {} cost {{{}}} less to activate",
-            self.filter.description(),
-            self.reduction
-        );
+        let mut line = if self.filter == ObjectFilter::source() {
+            format!("This ability costs {{{}}} less to activate", self.reduction)
+        } else {
+            format!(
+                "Activated abilities of {} cost {{{}}} less to activate",
+                self.filter.description(),
+                self.reduction
+            )
+        };
         if let Some(filter) = &self.per_matching_objects {
             line.push_str(&format!(" for each {}", filter.description()));
         }

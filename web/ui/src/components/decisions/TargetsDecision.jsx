@@ -9,6 +9,7 @@ import { getPlayerAccent } from "@/lib/player-colors";
 import { usePointerClickGuard } from "@/lib/usePointerClickGuard";
 import { X, ArrowRight } from "lucide-react";
 import DecisionSummary from "./DecisionSummary";
+import { getVisibleStackObjects, getVisibleTopStackObject } from "@/lib/stack-targets";
 
 const STRIP_ITEM_BASE_CLASS = "h-8 max-w-[360px] min-w-[120px] justify-start self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] px-2.5 text-[12px] font-semibold text-[rgba(206,223,242,0.52)] transition-all hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]";
 const STRIP_ITEM_ACTIVE_CLASS = "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]";
@@ -74,7 +75,7 @@ function buildTargetNameMaps(state) {
     }
   }
 
-  for (const stackObject of state?.stack_objects || []) {
+  for (const stackObject of getVisibleStackObjects(state)) {
     const stackId = Number(stackObject?.id);
     if (Number.isFinite(stackId) && stackObject?.name) {
       objectNames.set(stackId, stackObject.name);
@@ -90,7 +91,7 @@ function normalizeNumericId(value) {
 }
 
 function resolveTargetDecisionSourceId(state, decision) {
-  const topStackObject = (state?.stack_objects || [])[0] || null;
+  const topStackObject = getVisibleTopStackObject(state);
   const decisionSourceId = normalizeNumericId(decision?.source_id);
   const decisionSourceName = String(decision?.source_name || "").trim().toLowerCase();
 
@@ -119,7 +120,7 @@ function resolveTargetDecisionSourceId(state, decision) {
 }
 
 function resolveTargetDecisionColor(state, decision) {
-  const topStackObject = (state?.stack_objects || [])[0] || null;
+  const topStackObject = getVisibleTopStackObject(state);
   const controllerId = normalizeNumericId(topStackObject?.controller) ?? normalizeNumericId(decision?.player);
   const accent = getPlayerAccent(state?.players || [], controllerId);
   return accent?.hex || "#ff3b30";

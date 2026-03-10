@@ -1079,6 +1079,51 @@ pub(crate) fn parse_predicate(tokens: &[Token]) -> Result<PredicateAst, CardText
         return Ok(predicate);
     }
 
+    if filtered.len() >= 8
+        && filtered[0] == "you"
+        && filtered[1] == "both"
+        && filtered[2] == "own"
+        && filtered[3] == "and"
+        && (filtered[4] == "control" || filtered[4] == "controls")
+        && let Some(and_idx) = filtered[5..].iter().rposition(|word| *word == "and")
+    {
+        let and_idx = 5 + and_idx;
+        let left_tokens = filtered[5..and_idx]
+            .iter()
+            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .collect::<Vec<_>>();
+        let right_tokens = filtered[and_idx + 1..]
+            .iter()
+            .map(|word| Token::Word((*word).to_string(), TextSpan::synthetic()))
+            .collect::<Vec<_>>();
+        if !left_tokens.is_empty() && !right_tokens.is_empty() {
+            let mut left_filter = parse_object_filter(&left_tokens, false).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported own-and-control predicate subject (predicate: '{}')",
+                    filtered.join(" ")
+                ))
+            })?;
+            left_filter.controller = Some(PlayerFilter::You);
+            let mut right_filter = parse_object_filter(&right_tokens, false).map_err(|_| {
+                CardTextError::ParseError(format!(
+                    "unsupported own-and-control predicate tail (predicate: '{}')",
+                    filtered.join(" ")
+                ))
+            })?;
+            right_filter.controller = Some(PlayerFilter::You);
+            return Ok(PredicateAst::And(
+                Box::new(PredicateAst::PlayerControls {
+                    player: PlayerAst::You,
+                    filter: left_filter,
+                }),
+                Box::new(PredicateAst::PlayerControls {
+                    player: PlayerAst::You,
+                    filter: right_filter,
+                }),
+            ));
+        }
+    }
+
     // Handle simple conjunction predicates like "... and have no cards in hand".
     if let Some(and_idx) = filtered.iter().position(|word| *word == "and")
         && and_idx > 0
