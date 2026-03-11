@@ -3,7 +3,8 @@ import { normalizeDecisionText } from "@/components/decisions/decisionText";
 export function isTriggerOrderingDecision(decision) {
   if (!decision || decision.kind !== "select_options") return false;
   const reason = String(decision.reason || "").toLowerCase();
-  if (reason !== "ordering") return false;
+  const isOrderingReason = reason === "ordering" || reason.startsWith("order ");
+  if (!isOrderingReason) return false;
   const optionCount = (decision.options || []).length;
   if (optionCount <= 1) return false;
   const description = String(decision.description || "").toLowerCase();
@@ -13,6 +14,7 @@ export function isTriggerOrderingDecision(decision) {
   return (
     description.includes("trigger")
     || description.includes("stack")
+    || reason.includes("trigger")
     || contextText.includes("trigger")
     || contextText.includes("stack")
     || consequenceText.includes("trigger")
