@@ -1041,6 +1041,7 @@ fn value_references_pt(value: &Value) -> bool {
         Value::PowerOf(_) | Value::ToughnessOf(_) => true,
         Value::TotalPower(_) | Value::TotalToughness(_) | Value::GreatestPower(_) => true,
         Value::Add(left, right) => value_references_pt(left) || value_references_pt(right),
+        Value::Scaled(value, _) => value_references_pt(value),
 
         // EffectValue could reference P/T from a prior effect
         Value::EffectValue(_) | Value::EffectValueOffset(_, _) => true,

@@ -2334,6 +2334,9 @@ fn resolve_value_with_context(
             resolve_value_with_context(left, ctx, source, controller)
                 + resolve_value_with_context(right, ctx, source, controller)
         }
+        Value::Scaled(value, multiplier) => {
+            resolve_value_with_context(value, ctx, source, controller) * *multiplier
+        }
 
         Value::X => 0, // X is 0 unless specified (resolved at cast time, not layer time)
 
