@@ -459,6 +459,11 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     if normalized.eq_ignore_ascii_case("Whenever a creature you control enters, effect") {
         normalized = "Soulbond".to_string();
     }
+    if normalized.eq_ignore_ascii_case("Daybound")
+        || normalized.eq_ignore_ascii_case("Nightbound")
+    {
+        normalized = "Daybound/Nightbound".to_string();
+    }
     let normalized_lower = normalized.to_ascii_lowercase();
     if normalized_lower.starts_with(
         "whenever this creature attacks the player with the most life or tied for most life, put a +1/+1 counter on this creature",
@@ -503,6 +508,10 @@ fn split_common_clause_conjunctions(text: &str) -> String {
         "whenever this creature attacks, untap target defending player's creature. target defending player's creature gains blocks each combat if able until end of combat",
     ) {
         normalized = "Provoke".to_string();
+    }
+    if normalized_lower == "at the beginning of each player's upkeep, if this creature is transformed, if two or more spells were cast last turn, transform this creature. otherwise, if no spells were cast last turn, transform this creature"
+    {
+        normalized = "Daybound/Nightbound".to_string();
     }
     for (from, to) in [
         (
@@ -3470,6 +3479,25 @@ Pay 3 life: Add {R}.";
         assert!(
             !mismatch,
             "expected no mismatch for mentor keyword scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_hookhand_mariner_daybound_keyword_scaffolding() {
+        let oracle =
+            "Daybound (If a player casts no spells during their own turn, it becomes night next turn.)";
+        let compiled = vec![String::from(
+            "Triggered ability 1: At the beginning of each player's upkeep, if this creature is transformed, if two or more spells were cast last turn, transform this creature. Otherwise, if no spells were cast last turn, transform this creature.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected daybound/nightbound keyword normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for daybound/nightbound keyword scaffolding"
         );
     }
 
