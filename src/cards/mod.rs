@@ -474,7 +474,6 @@ impl CardRegistry {
         maybe_register!(rex_cyber_hound);
         maybe_register!(tivit_seller_of_secrets);
         maybe_register!(wall_of_roots);
-        maybe_register!(war_report);
     }
 
     /// Register a card definition.

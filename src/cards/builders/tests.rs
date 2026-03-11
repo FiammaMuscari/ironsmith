@@ -14966,11 +14966,8 @@ fn parse_oracle_barkweave_crusher_enlist_render_regression() {
 }
 
 #[test]
-fn load_war_report_handwritten_sum_regression() {
-    let registry = crate::cards::CardRegistry::with_builtin_cards_for_names(["War Report"]);
-    let def = registry
-        .get("War Report")
-        .expect("expected handwritten War Report definition to load");
+fn parse_oracle_war_report_summed_battlefield_count_regression() {
+    let def = parse_oracle_card_definition("War Report");
 
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
