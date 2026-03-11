@@ -25,6 +25,7 @@ const LIVE_DAMAGE_ANIMATION_MS = 300;
 const GHOST_BASE_ANIMATION_MS = 520;
 const MAX_BATTLEFIELD_CARD_ZONE_WIDTH_RATIO = 0.15;
 const BATTLEFIELD_GRID_GAP_PX = 8;
+const COMPACT_SCROLL_COLUMN_MAX_WIDTH = 200;
 
 function normalizeBattlefieldLane(lane) {
   const normalized = String(lane || "").toLowerCase();
@@ -342,6 +343,7 @@ export default function BattlefieldRow({
   activatableMap,
   legalTargetObjectIds = new Set(),
   allowVerticalScroll = false,
+  forceSingleColumn = false,
 }) {
   const rowRef = useRef(null);
   const previousCardsRef = useRef(cards);
@@ -391,6 +393,7 @@ export default function BattlefieldRow({
     cardsLength: -1,
     compact: null,
     allowVerticalScroll: null,
+    forceSingleColumn: null,
     layoutSignature: "",
   });
   const syncOverflowMode = useCallback((layout) => {
@@ -458,6 +461,18 @@ export default function BattlefieldRow({
           cardHeight: Math.max(minHeight, cardHeight),
         };
       }
+    } else if (forceSingleColumn) {
+      const cardWidth = Math.max(
+        22,
+        Math.floor(Math.min(width, COMPACT_SCROLL_COLUMN_MAX_WIDTH))
+      );
+      const cardHeight = Math.max(minHeight, Math.floor(cardWidth / aspect));
+      best = {
+        rows: cards.length,
+        cols: 1,
+        cardWidth,
+        cardHeight,
+      };
     } else {
       const maxRows = Math.min(cards.length, compact ? 8 : 10);
       for (let rows = 1; rows <= maxRows; rows++) {
@@ -493,7 +508,9 @@ export default function BattlefieldRow({
       }
     }
 
-    const maxCardWidth = Math.max(22, Math.floor(width * MAX_BATTLEFIELD_CARD_ZONE_WIDTH_RATIO));
+    const maxCardWidth = forceSingleColumn
+      ? Math.max(22, Math.floor(width - 4))
+      : Math.max(22, Math.floor(width * MAX_BATTLEFIELD_CARD_ZONE_WIDTH_RATIO));
     best = {
       ...best,
       cardWidth: Math.min(best.cardWidth, maxCardWidth),
@@ -518,6 +535,7 @@ export default function BattlefieldRow({
     battlefieldSide,
     cards.length,
     compact,
+    forceSingleColumn,
     isPaperBattlefieldLayout,
     paperLayout.maxCols,
     paperLayout.rowCount,
@@ -541,6 +559,7 @@ export default function BattlefieldRow({
         || prev.cardsLength !== cards.length
         || prev.compact !== compact
         || prev.allowVerticalScroll !== allowVerticalScroll
+        || prev.forceSingleColumn !== forceSingleColumn
         || prev.layoutSignature !== paperLayout.signature
       );
       const forceNow = pendingForceFitRef.current;
@@ -553,11 +572,12 @@ export default function BattlefieldRow({
         cardsLength: cards.length,
         compact,
         allowVerticalScroll,
+        forceSingleColumn,
         layoutSignature: paperLayout.signature,
       };
       fitCards();
     });
-  }, [allowVerticalScroll, cards.length, compact, fitCards, paperLayout.signature]);
+  }, [allowVerticalScroll, cards.length, compact, fitCards, forceSingleColumn, paperLayout.signature]);
 
   useLayoutEffect(() => {
     scheduleFitCards(true);

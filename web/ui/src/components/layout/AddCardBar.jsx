@@ -15,7 +15,7 @@ function formatPercent(value, digits = 1) {
   return `${(amount * 100).toFixed(digits)}%`;
 }
 
-function formatCardLoadDiagnosticsClipboard(diagnostics, fallbackName, fallbackError) {
+function formatCardLoadDiagnosticsClipboard(diagnostics, fallbackName, fallbackError, includeDebug = false) {
   const compiledText = Array.isArray(diagnostics?.compiledText) && diagnostics.compiledText.length > 0
     ? diagnostics.compiledText.join("\n")
     : "-";
@@ -30,7 +30,9 @@ function formatCardLoadDiagnosticsClipboard(diagnostics, fallbackName, fallbackE
     diagnostics?.query ? `Query: ${diagnostics.query}` : "",
     primaryError ? `Error: ${primaryError}` : "",
     parseError && parseError !== primaryError ? `Parse error: ${parseError}` : "",
-    formatPercent(diagnostics?.semanticScore) ? `Similarity score: ${formatPercent(diagnostics?.semanticScore)}` : "",
+    includeDebug && formatPercent(diagnostics?.semanticScore)
+      ? `Similarity score: ${formatPercent(diagnostics?.semanticScore)}`
+      : "",
     Number.isFinite(diagnostics?.thresholdPercent) ? `Threshold: ${diagnostics.thresholdPercent.toFixed(0)}%` : "",
     `Oracle text:\n${diagnostics?.oracleText || "-"}`,
     `Compiled text:\n${compiledText}`,
@@ -53,6 +55,7 @@ export default function AddCardBar({
     semanticThreshold,
     setSemanticThreshold,
     cardsMeetingThreshold,
+    inspectorDebug,
     multiplayer,
   } = useGame();
   const [cardName, setCardName] = useState("");
@@ -147,7 +150,7 @@ export default function AddCardBar({
         if (game && typeof game.cardLoadDiagnostics === "function") {
           try {
             const diagnostics = await game.cardLoadDiagnostics(name, errMsg);
-            copyText = formatCardLoadDiagnosticsClipboard(diagnostics, name, errMsg);
+            copyText = formatCardLoadDiagnosticsClipboard(diagnostics, name, errMsg, inspectorDebug);
           } catch (diagnosticsError) {
             console.warn("cardLoadDiagnostics failed:", diagnosticsError);
           }
@@ -173,6 +176,7 @@ export default function AddCardBar({
     skipTriggers,
     refresh,
     setStatus,
+    inspectorDebug,
   ]);
 
   const handleAutocompletePick = useCallback((name) => {

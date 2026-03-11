@@ -646,7 +646,8 @@ export default function HoverArtOverlay({
       || hoveredStackEffectText
       || String(oracleText || "")
     );
-  const showCompiledText = inspectorDebug && objectIdKey != null && compiledViewObjectKey === objectIdKey;
+  const activeCompiledViewObjectKey = inspectorDebug ? compiledViewObjectKey : null;
+  const showCompiledText = objectIdKey != null && activeCompiledViewObjectKey === objectIdKey;
   const oracleRulesLines = useMemo(() => {
     return String(details?.oracle_text || "")
       .split("\n")
@@ -680,6 +681,15 @@ export default function HoverArtOverlay({
     return compiledRulesLines;
   }, [compiledRulesLines, oracleRulesLines, showCompiledText]);
   const displayRulesText = displayRulesLines.join("\n");
+  const rulesRenderKey = useMemo(
+    () => [
+      objectIdKey || "none",
+      inspectorDebug ? "debug" : "normal",
+      showCompiledText ? "compiled" : "oracle",
+      displayRulesText,
+    ].join("|"),
+    [displayRulesText, inspectorDebug, objectIdKey, showCompiledText]
+  );
   const inspectorScaleSessionKey = useMemo(
     () => (
       compact || displayMode !== "inspector"
@@ -694,6 +704,7 @@ export default function HoverArtOverlay({
     ),
     [compact, displayMode, displayRulesText, metadataText, objectIdKey, statsText]
   );
+
   const preferredInlineWidth = useMemo(() => {
     if (!compact || typeof document === "undefined") return null;
     const canvas = document.createElement("canvas");
@@ -975,7 +986,7 @@ export default function HoverArtOverlay({
     </div>
   ) : null;
 
-  const similarityBadge = (
+  const similarityBadge = inspectorDebug ? (
     <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2">
       <div
         className="rounded-full border border-[#78afdc]/38 bg-[rgba(5,11,20,0.84)] px-3 py-1 text-[12px] font-extrabold leading-none tracking-[0.08em] text-[#e6f4ff] shadow-[0_10px_28px_rgba(0,0,0,0.5)] backdrop-blur-[8px]"
@@ -984,7 +995,7 @@ export default function HoverArtOverlay({
         {similarityBadgeLabel}
       </div>
     </div>
-  );
+  ) : null;
 
   useLayoutEffect(() => {
     if (compact || displayMode !== "inspector") return undefined;
@@ -1484,6 +1495,7 @@ export default function HoverArtOverlay({
           </div>
         )}
         <div
+          key={rulesRenderKey}
           ref={oracleScrollRef}
           className="inspector-oracle-scroll absolute inset-x-0 top-0 overflow-y-auto pointer-events-auto overscroll-contain touch-pan-y"
           style={{ bottom: `${Math.max(0, stackTimelineHeight - 4)}px` }}

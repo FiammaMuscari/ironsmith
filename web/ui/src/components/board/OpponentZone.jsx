@@ -17,6 +17,7 @@ const ZONE_LABELS = {
   exile: "Exile",
   command: "Command",
 };
+const SIDE_ZONE_COLUMN_WIDTH = 240;
 
 function normalizeZoneViews(zoneViews) {
   const normalized = Array.isArray(zoneViews)
@@ -83,6 +84,10 @@ function zoneCounts(player) {
     { label: "Exile", count: exileCards.length },
     { label: "Command", count: player.command_size ?? commandCards.length },
   ];
+}
+
+function shouldReserveSideColumn(zone, visibleZones) {
+  return visibleZones.has("battlefield") && (zone === "graveyard" || zone === "exile");
 }
 
 function collectCardObjectIds(card) {
@@ -367,14 +372,17 @@ function OpponentSlot({
       <div className="flex gap-1 min-h-0 h-full overflow-visible">
         {zoneEntries.map((entry) => {
           const isVisible = entry.active && visibleZones.has(entry.zone);
+          const reserveSideColumn = shouldReserveSideColumn(entry.zone, visibleZones);
+          const zoneMinWidth = reserveSideColumn ? `${SIDE_ZONE_COLUMN_WIDTH}px` : "0px";
           return (
             <div
               key={entry.zone}
               className="min-h-0 h-full"
               style={{
-                flexGrow: isVisible ? 1 : 0,
-                flexShrink: 1,
-                flexBasis: "0%",
+                flexGrow: isVisible ? (reserveSideColumn ? 0 : 1) : 0,
+                flexShrink: reserveSideColumn ? 0 : 1,
+                flexBasis: reserveSideColumn ? zoneMinWidth : "0%",
+                minWidth: isVisible ? zoneMinWidth : "0px",
                 maxWidth: isVisible ? "100%" : "0px",
                 opacity: isVisible ? 1 : 0,
                 transform: isVisible ? "translateY(0)" : "translateY(4px)",
@@ -405,7 +413,8 @@ function OpponentSlot({
                     onCardPointerDown={handleCardPointerDown}
                     onExpandInspector={entry.zone === "battlefield" ? onExpandInspector : undefined}
                     legalTargetObjectIds={legalTargetObjectIds}
-                    allowVerticalScroll={entry.zone === "hand"}
+                    allowVerticalScroll={entry.zone === "hand" || reserveSideColumn}
+                    forceSingleColumn={reserveSideColumn}
                   />
                 )}
               </div>

@@ -106,7 +106,7 @@ export default function Workspace({
   onDismissNotice,
 }) {
   const [selectedObjectId, setSelectedObjectId] = useState(null);
-  const [pinnedInspectorObjectId, setPinnedInspectorObjectId] = useState(null);
+  const [, setPinnedInspectorObjectId] = useState(null);
   const [expandedInspectorObjectId, setExpandedInspectorObjectId] = useState(null);
   const [suppressFallbackInspector, setSuppressFallbackInspector] = useState(false);
   const [handLaneHovered, setHandLaneHovered] = useState(false);
@@ -134,9 +134,7 @@ export default function Workspace({
   const perspective = state?.perspective;
   const me = players.find((p) => p.id === perspective) || players[0];
   const selectedObjectIsValid = objectExistsInState(state, selectedObjectId);
-  const forceInlineInspectorExpanded =
-    sameObjectId(pinnedInspectorObjectId, selectedObjectId)
-    || sameObjectId(expandedInspectorObjectId, selectedObjectId);
+  const forceInlineInspectorExpanded = sameObjectId(expandedInspectorObjectId, selectedObjectId);
   const forceInlineInspectorFullArt = sameObjectId(expandedInspectorObjectId, selectedObjectId);
   const inlineInspectorExpanded =
     shouldExpandInlineInspector(me, selectedObjectId) || forceInlineInspectorExpanded;

@@ -4,6 +4,7 @@ import { animate, cancelMotion } from "@/lib/motion/anime";
 import { getCardElement, getCardRect, getPlayerTargetRect, centerOf } from "@/hooks/useCardPositions";
 
 const ARROW_DASH_ARRAY = "8 4";
+const STACK_ROUTE_GAP = 6;
 
 function curvedArrowPath(x1, y1, x2, y2) {
   const dx = x2 - x1;
@@ -16,6 +17,25 @@ function curvedArrowPath(x1, y1, x2, y2) {
   const cx = (x1 + x2) / 2 + nx * bow;
   const cy = (y1 + y2) / 2 + ny * bow;
   return `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
+}
+
+function stackedRoutedArrowPath(from, to, fromRect, toRect) {
+  const baseY = Math.max(fromRect.bottom, toRect.bottom) + STACK_ROUTE_GAP;
+  const span = Math.abs(to.x - from.x);
+  const horizontalLead = Math.max(26, Math.min(72, span * 0.32));
+  const verticalDip = Math.max(14, Math.min(44, span * 0.15));
+  const c1x = from.x + (to.x >= from.x ? horizontalLead : -horizontalLead);
+  const c1y = baseY + verticalDip;
+  const c2x = to.x - (to.x >= from.x ? horizontalLead : -horizontalLead);
+  const c2y = baseY + verticalDip;
+  return `M ${from.x} ${from.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${to.x} ${to.y}`;
+}
+
+function rectBottomAnchor(rect, gap = 0) {
+  return {
+    x: (rect.left + rect.right) / 2,
+    y: rect.bottom + gap,
+  };
 }
 
 function segmentEntryOnRect(from, to, rect) {
@@ -135,25 +155,40 @@ export default function ArrowOverlay() {
       const fromEl = getCardElement(arrow.fromId);
       const fromRect = getCardRect(arrow.fromId);
       let toRect = null;
+      let toEl = null;
       if (arrow.toPlayerId != null) {
         toRect = getPlayerTargetRect(arrow.toPlayerId);
       } else if (arrow.toId != null) {
+        toEl = getCardElement(arrow.toId);
         toRect = getCardRect(arrow.toId);
       }
       if (!fromRect || !toRect || !fromEl) continue;
 
       const sourceCenter = centerOf(fromRect);
       const sourceIsStackAnchor = fromEl.getAttribute("data-arrow-anchor") === "stack";
+      const targetIsStackAnchor = toEl?.getAttribute("data-arrow-anchor") === "stack";
       const initialTo = arrow.toPlayerId != null
-        ? pointBeforeRect(sourceCenter, toRect, 9)
+        || targetIsStackAnchor
+        ? pointBeforeRect(sourceCenter, toRect, targetIsStackAnchor ? 14 : 9)
         : centerOf(toRect);
-      const from = sourceIsStackAnchor
-        ? pointAfterRect(fromRect, initialTo, 10)
-        : sourceCenter;
-      const to = arrow.toPlayerId != null
-        ? pointBeforeRect(from, toRect, 9)
-        : centerOf(toRect);
-      const d = curvedArrowPath(from.x, from.y, to.x, to.y);
+      const stackToStack = sourceIsStackAnchor && targetIsStackAnchor;
+      const from = stackToStack
+        ? rectBottomAnchor(fromRect, 2)
+        : (
+          sourceIsStackAnchor
+            ? pointAfterRect(fromRect, initialTo, 10)
+            : sourceCenter
+        );
+      const to = stackToStack
+        ? rectBottomAnchor(toRect, 2)
+        : (
+          arrow.toPlayerId != null || targetIsStackAnchor
+            ? pointBeforeRect(from, toRect, targetIsStackAnchor ? 14 : 9)
+            : centerOf(toRect)
+        );
+      const d = stackToStack
+        ? stackedRoutedArrowPath(from, to, fromRect, toRect)
+        : curvedArrowPath(from.x, from.y, to.x, to.y);
       result.push({ d, color: arrow.color || "#ff3b30", key: arrow.key });
     }
     return result;
