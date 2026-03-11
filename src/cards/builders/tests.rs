@@ -15061,6 +15061,31 @@ fn parse_oracle_glint_sleeve_artisan_fabricate_one_regression() {
 }
 
 #[test]
+fn parse_oracle_arwen_weaver_of_hope_dynamic_etb_counters_regression() {
+    let def = parse_oracle_card_definition("Arwen, Weaver of Hope");
+
+    let raw = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        raw.contains("enterwithcountersforfilter")
+            && raw.contains("toughness")
+            && raw.contains("other creature"),
+        "expected raw compiled definition to retain toughness-based ETB counters, got {raw}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains(
+            "each other creature you control enters with a number of additional +1/+1 counters on it equal to arwen's toughness"
+        ),
+        "expected Arwen, Weaver of Hope to render toughness-based ETB counters, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("enter the battlefield with counters"),
+        "expected Arwen, Weaver of Hope to avoid generic ETB counter placeholder text, got {rendered}"
+    );
+}
+
+#[test]
 fn oracle_render_regression_named_cards_compile_cleanly() {
     let cultivator =
         oracle_like_lines(&parse_oracle_card_definition("Cultivator Colossus")).join("\n");
