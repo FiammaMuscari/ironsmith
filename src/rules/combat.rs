@@ -230,6 +230,23 @@ pub(crate) fn can_block_with_view(
         }
     }
 
+    // "Creatures with power less than this creature's power can't block it"
+    if attacker_has(StaticAbilityId::CantBeBlockedByLowerPowerThanSource) {
+        let attacker_power = attacker_chars
+            .as_ref()
+            .and_then(|c| c.power)
+            .or_else(|| attacker.power());
+        let blocker_power = blocker_chars
+            .as_ref()
+            .and_then(|c| c.power)
+            .or_else(|| blocker.power());
+        if let (Some(attacker_power), Some(blocker_power)) = (attacker_power, blocker_power)
+            && blocker_power < attacker_power
+        {
+            return false;
+        }
+    }
+
     // Landwalk: unblockable if defending player controls the required land subtype.
     for required_land_subtype in attacker_abilities
         .iter()
@@ -713,6 +730,24 @@ mod tests {
         assert!(can_block(&attacker, &small_blocker, &game));
         assert!(!can_block(&attacker, &equal_power_blocker, &game));
         assert!(!can_block(&attacker, &big_blocker, &game));
+    }
+
+    #[test]
+    fn test_cant_be_blocked_by_creatures_with_lower_power_than_source() {
+        let game = test_game_state();
+        let mut attacker = make_creature("Wandering Wolf", 2, 1);
+        add_ability(
+            &mut attacker,
+            StaticAbility::cant_be_blocked_by_lower_power_than_source(),
+        );
+
+        let small_blocker = make_creature("Small", 1, 1);
+        let equal_power_blocker = make_creature("Equal", 2, 2);
+        let big_blocker = make_creature("Big", 3, 3);
+
+        assert!(!can_block(&attacker, &small_blocker, &game));
+        assert!(can_block(&attacker, &equal_power_blocker, &game));
+        assert!(can_block(&attacker, &big_blocker, &game));
     }
 
     #[test]

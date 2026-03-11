@@ -8331,6 +8331,40 @@ fn parse_cant_be_blocked_by_creatures_with_power_or_greater_line() {
 }
 
 #[test]
+fn parse_wandering_wolf_relative_power_blocking_clause() {
+    let def = CardDefinitionBuilder::new(CardId::new(), "Wandering Wolf")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Creatures with power less than this creature's power can't block it.")
+        .expect("wandering wolf blocking clause should parse");
+
+    let ids: Vec<_> = def
+        .abilities
+        .iter()
+        .filter_map(|ability| match &ability.kind {
+            AbilityKind::Static(static_ability) => Some(static_ability.id()),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        ids.contains(&crate::static_abilities::StaticAbilityId::CantBeBlockedByLowerPowerThanSource),
+        "expected relative-power blocking static ability, got {ids:?}"
+    );
+    assert!(
+        !ids.contains(&crate::static_abilities::StaticAbilityId::Skulk),
+        "wandering wolf text must not collapse into skulk, got {ids:?}"
+    );
+
+    let compiled = crate::compiled_text::compiled_lines(&def).join("\n");
+    assert!(
+        compiled
+            .to_ascii_lowercase()
+            .contains("creatures with power less than this creature's power can't block it"),
+        "expected compiled text to preserve wandering wolf wording, got {compiled}"
+    );
+}
+
+#[test]
 fn parse_cant_attack_unless_defending_player_controls_island_line() {
     let def = CardDefinitionBuilder::new(CardId::new(), "Deep-Sea Serpent Variant")
         .card_types(vec![CardType::Creature])

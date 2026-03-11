@@ -583,7 +583,7 @@ pub(crate) fn parse_skulk_rules_text_line(
         return Ok(None);
     }
 
-    Ok(Some(StaticAbility::skulk()))
+    Ok(Some(StaticAbility::cant_be_blocked_by_lower_power_than_source()))
 }
 
 pub(crate) fn parse_ward_static_ability_line(

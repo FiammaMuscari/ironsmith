@@ -64,6 +64,7 @@ pub enum StaticAbilityId {
     MaxCreaturesCanBlockEachCombat,
     CantBeBlockedByPowerOrLess,
     CantBeBlockedByPowerOrGreater,
+    CantBeBlockedByLowerPowerThanSource,
     CantBeBlockedByMoreThan,
     CanAttackAsThoughNoDefender,
     MustAttack,
@@ -273,6 +274,7 @@ impl StaticAbilityId {
             | MaxCreaturesCanBlockEachCombat
             | CantBeBlockedByPowerOrLess
             | CantBeBlockedByPowerOrGreater
+            | CantBeBlockedByLowerPowerThanSource
             | CantBeBlockedByMoreThan
             | CanAttackAsThoughNoDefender
             | MustAttack
@@ -462,6 +464,7 @@ impl StaticAbilityId {
                 | FlyingOnlyRestriction
                 | CantBeBlockedByPowerOrLess
                 | CantBeBlockedByPowerOrGreater
+                | CantBeBlockedByLowerPowerThanSource
                 | CantBeBlockedByMoreThan
                 | Landwalk
                 | CantBeBlockedAsLongAsDefendingPlayerControlsCardType
@@ -500,6 +503,7 @@ impl StaticAbilityId {
                 | MaxCreaturesCanBlockEachCombat
                 | CantBeBlockedByPowerOrLess
                 | CantBeBlockedByPowerOrGreater
+                | CantBeBlockedByLowerPowerThanSource
                 | CantBeBlockedByMoreThan
                 | CantBeBlockedAsLongAsDefendingPlayerControlsCardType
                 | CantBeBlockedAsLongAsDefendingPlayerControlsCardTypes

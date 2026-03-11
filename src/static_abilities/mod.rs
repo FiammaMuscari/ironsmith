@@ -1475,6 +1475,10 @@ impl StaticAbility {
         Self::new(CantBeBlockedByPowerOrGreater::new(threshold))
     }
 
+    pub fn cant_be_blocked_by_lower_power_than_source() -> Self {
+        Self::new(CantBeBlockedByLowerPowerThanSource)
+    }
+
     pub fn cant_be_blocked_by_more_than(max_blockers: usize) -> Self {
         Self::new(CantBeBlockedByMoreThan::new(max_blockers))
     }
