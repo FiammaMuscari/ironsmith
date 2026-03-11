@@ -489,6 +489,11 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     {
         normalized = "Unleash".to_string();
     }
+    if normalized_lower
+        == "when this creature dies, create two 1/1 white and black spirit creature tokens with flying"
+    {
+        normalized = "Afterlife 2".to_string();
+    }
     for (from, to) in [
         (
             "Exile all cards from target player's graveyard",
@@ -3340,6 +3345,24 @@ Pay 3 life: Add {R}.";
         assert!(
             !mismatch,
             "expected no mismatch for unleash keyword scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_debtors_transport_afterlife_keyword_scaffolding() {
+        let oracle = "Afterlife 2 (When this creature dies, create two 1/1 white and black Spirit creature tokens with flying.)";
+        let compiled = vec![String::from(
+            "Triggered ability 1: When this creature dies, create two 1/1 white and black Spirit creature tokens with flying.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected afterlife keyword normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for afterlife keyword scaffolding"
         );
     }
 
