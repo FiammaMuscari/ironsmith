@@ -426,7 +426,6 @@ impl CardRegistry {
         maybe_register!(tainted_field);
         maybe_register!(high_market);
         maybe_register!(humility);
-        maybe_register!(human_frailty);
         maybe_register!(vampiric_tutor);
         maybe_register!(flooded_strand);
         maybe_register!(mana_tithe);

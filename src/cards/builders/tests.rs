@@ -14915,11 +14915,8 @@ fn parse_oracle_infinite_obliteration_typed_card_name_regression() {
 }
 
 #[test]
-fn load_human_frailty_handwritten_regression() {
-    let registry = crate::cards::CardRegistry::with_builtin_cards_for_names(["Human Frailty"]);
-    let def = registry
-        .get("Human Frailty")
-        .expect("expected handwritten Human Frailty definition to load");
+fn parse_oracle_human_frailty_targeted_subtype_regression() {
+    let def = parse_oracle_card_definition("Human Frailty");
 
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
