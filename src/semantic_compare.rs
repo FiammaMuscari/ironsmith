@@ -465,6 +465,15 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     ) {
         normalized = "Dethrone".to_string();
     }
+    if normalized_lower.starts_with(
+        "whenever this creature attacks, another attacking creature you control get +1/+0 until end of turn",
+    ) || normalized_lower.starts_with(
+        "whenever this creature attacks, other attacking creatures you control get +1/+0 until end of turn",
+    ) || normalized_lower.starts_with(
+        "whenever this creature attacks, each other attacking creature gets +1/+0 until end of turn",
+    ) {
+        normalized = "Battle cry".to_string();
+    }
     for (from, to) in [
         (
             "Exile all cards from target player's graveyard",
@@ -3255,6 +3264,25 @@ Pay 3 life: Add {R}.";
         assert!(
             !mismatch,
             "expected no mismatch for dethrone keyword scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_accorder_paladin_battle_cry_keyword_scaffolding() {
+        let oracle =
+            "Battle cry (Whenever this creature attacks, each other attacking creature gets +1/+0 until end of turn.)";
+        let compiled = vec![String::from(
+            "Triggered ability 1: Whenever this creature attacks, another attacking creature you control get +1/+0 until end of turn.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected battle cry keyword normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for battle cry keyword scaffolding"
         );
     }
 
