@@ -3,6 +3,12 @@ import { useWasmGame } from "@/hooks/useWasmGame";
 import { usePeerLobby } from "@/hooks/usePeerLobby";
 import { isCombatPhase, isEndingPhase, isMainPhase } from "@/lib/constants";
 import { cardsMeetingThresholdFromStats, loadSemanticStats } from "@/lib/semanticCache";
+import {
+  buildTriggerOrderingKey,
+  defaultTriggerOrderingOrder,
+  isTriggerOrderingDecision,
+  normalizeTriggerOrderingOrder,
+} from "@/lib/trigger-ordering";
 
 const GameContext = createContext(null);
 
@@ -108,16 +114,6 @@ function tryBuildAutoResolveCommand(decision) {
       return {
         cmd: { type: "select_options", option_indices: [legal[0].index] },
         label: `Auto: ${legal[0].description}`,
-      };
-    }
-  }
-
-  if (decision.kind === "select_objects") {
-    const legal = (decision.candidates || []).filter((c) => c.legal);
-    if (legal.length > 0 && legal.length === decision.min && decision.min === decision.max) {
-      return {
-        cmd: { type: "select_objects", object_ids: legal.map((c) => c.id) },
-        label: `Auto: ${legal.map((c) => c.name).join(", ")}`,
       };
     }
   }
@@ -316,6 +312,14 @@ function resolveSyncedCommand(command, currentState) {
   return command;
 }
 
+function currentOrderForDecision(triggerOrderingState, decision, key = buildTriggerOrderingKey(decision)) {
+  if (!isTriggerOrderingDecision(decision)) return [];
+  if (triggerOrderingState?.key === key) {
+    return normalizeTriggerOrderingOrder(triggerOrderingState.order, decision);
+  }
+  return defaultTriggerOrderingOrder(decision);
+}
+
 export function GameProvider({ children }) {
   const {
     game,
@@ -332,6 +336,7 @@ export function GameProvider({ children }) {
   const [holdRule, setHoldRule] = useState("never");
   const [confirmEnabled, setConfirmEnabled] = useState(false);
   const [inspectorDebug, setInspectorDebug] = useState(false);
+  const [triggerOrderingState, setTriggerOrderingState] = useState({ key: "", order: [] });
   const [semanticThreshold, setSemanticThresholdRaw] = useState(96);
   const [cardsMeetingThreshold, setCardsMeetingThreshold] = useState(0);
   const [semanticStats, setSemanticStats] = useState(null);
@@ -379,6 +384,45 @@ export function GameProvider({ children }) {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  const moveTriggerOrderingItem = useCallback((position, direction) => {
+    const decision = stateRef.current?.decision || null;
+    if (!isTriggerOrderingDecision(decision)) return;
+    const key = buildTriggerOrderingKey(decision);
+
+    setTriggerOrderingState((current) => {
+      const currentOrder = current.key === key
+        ? normalizeTriggerOrderingOrder(current.order, decision)
+        : defaultTriggerOrderingOrder(decision);
+      const nextPosition = Number(position) + Number(direction);
+      if (
+        !Number.isInteger(position)
+        || !Number.isInteger(direction)
+        || nextPosition < 0
+        || nextPosition >= currentOrder.length
+      ) {
+        return current;
+      }
+
+      const nextOrder = [...currentOrder];
+      [nextOrder[position], nextOrder[nextPosition]] = [nextOrder[nextPosition], nextOrder[position]];
+      return {
+        key,
+        order: nextOrder,
+      };
+    });
+  }, []);
+
+  const activeTriggerOrderingState = useMemo(() => {
+    const decision = state?.decision || null;
+    if (!isTriggerOrderingDecision(decision)) return null;
+
+    const key = buildTriggerOrderingKey(decision);
+    return {
+      key,
+      order: currentOrderForDecision(triggerOrderingState, decision, key),
+    };
+  }, [state?.decision, triggerOrderingState]);
 
   const setSemanticThreshold = useCallback(
     async (value) => {
@@ -889,6 +933,8 @@ export function GameProvider({ children }) {
       setConfirmEnabled,
       inspectorDebug,
       setInspectorDebug,
+      triggerOrderingState: activeTriggerOrderingState,
+      moveTriggerOrderingItem,
       semanticThreshold,
       setSemanticThreshold,
       cardsMeetingThreshold,
@@ -914,6 +960,7 @@ export function GameProvider({ children }) {
       status,
       setStatus,
       dispatch, cancelDecision, refresh, autoPassEnabled, holdRule, confirmEnabled, inspectorDebug,
+      activeTriggerOrderingState, moveTriggerOrderingItem,
       semanticThreshold, setSemanticThreshold, cardsMeetingThreshold,
       logEntries, pushLog,
       multiplayer, canStartHostedMatch, createLobby, joinLobby, leaveLobby, startHostedMatch, updateLobbyDeck,

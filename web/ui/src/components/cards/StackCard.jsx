@@ -6,8 +6,9 @@ import { scryfallImageUrl } from "@/lib/scryfall";
 import { ManaCostIcons } from "@/lib/mana-symbols";
 import { cn } from "@/lib/utils";
 import AnimatedCircuitFrame from "@/components/cards/AnimatedCircuitFrame";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 
-const STACK_CARD_CIRCUIT_PATH = "M4.5 2.5H95.5";
+const STACK_CARD_CIRCUIT_PATH = "M4.5 2.5H95.5 M4.5 93.5H95.5";
 
 export default function StackCard({
   entry,
@@ -16,6 +17,7 @@ export default function StackCard({
   isLeaving = false,
   className = "",
   onClick,
+  reorderControls = null,
 }) {
   const { state } = useGame();
   const name = entry.name || `Object#${entry.id}`;
@@ -36,6 +38,8 @@ export default function StackCard({
       "--glow-rgb": stackAccent.rgb,
     }
     : undefined;
+  const subtitle = String(entry?.__subtitle || "").trim();
+  const hasReorderControls = !!reorderControls;
   const rootRef = useRef(null);
   const motionRef = useRef(null);
 
@@ -80,8 +84,10 @@ export default function StackCard({
     <div
       ref={rootRef}
       className={cn(
-        "game-card stack-card stack-card-circuit w-full min-w-0 min-h-[96px] cursor-pointer overflow-hidden",
+        "game-card stack-card stack-card-circuit w-full min-w-0 min-h-[96px] overflow-hidden",
+        onClick ? "cursor-pointer" : "cursor-default",
         isActive && "stack-card-active",
+        hasReorderControls && "stack-card-reorderable",
         isLeaving && "pointer-events-none",
         className
       )}
@@ -102,7 +108,7 @@ export default function StackCard({
         />
       )}
 
-      {scryfallUrl && (
+      {scryfallUrl && !hasReorderControls && (
         <a
           className="absolute top-1 right-1 bg-[#0a1118] text-[#9ec3ea] no-underline uppercase text-[12px] tracking-wide px-1 py-px rounded-sm leading-tight z-2 opacity-0 hover:opacity-100 transition-opacity"
           href={scryfallUrl}
@@ -114,7 +120,41 @@ export default function StackCard({
         </a>
       )}
 
-      <div className="stack-card-body relative z-2 flex min-h-[96px] flex-col px-2.5 py-2">
+      {hasReorderControls && (
+        <>
+          <button
+            type="button"
+            className="stack-card-reorder-button stack-card-reorder-button-left"
+            disabled={!reorderControls.canMoveLeft}
+            onClick={(event) => {
+              event.stopPropagation();
+              reorderControls.onMoveLeft?.();
+            }}
+            aria-label={reorderControls.leftLabel || `Move ${name} toward the top of the stack`}
+            title={reorderControls.leftTitle || "Move toward the top of the stack"}
+          >
+            <ArrowLeft className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            className="stack-card-reorder-button stack-card-reorder-button-right"
+            disabled={!reorderControls.canMoveRight}
+            onClick={(event) => {
+              event.stopPropagation();
+              reorderControls.onMoveRight?.();
+            }}
+            aria-label={reorderControls.rightLabel || `Move ${name} toward the bottom of the stack`}
+            title={reorderControls.rightTitle || "Move toward the bottom of the stack"}
+          >
+            <ArrowRight className="size-3.5" />
+          </button>
+        </>
+      )}
+
+      <div className={cn(
+        "stack-card-body relative z-2 flex min-h-[96px] flex-col py-2",
+        hasReorderControls ? "px-12" : "px-2.5"
+      )}>
         <div className="flex items-start gap-2">
           <div className="relative h-7 w-7 shrink-0 overflow-hidden rounded-md bg-[#0b121b]">
             {artUrl && (
@@ -134,6 +174,11 @@ export default function StackCard({
             <div className="mt-1 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-[#8ec4ff]">
               <span>{kindLabel}</span>
             </div>
+            {subtitle && (
+              <div className="stack-card-effect mt-1 text-[11px] font-semibold uppercase leading-[1.2] tracking-[0.08em] text-[#91cdfc]">
+                {subtitle}
+              </div>
+            )}
           </div>
           {isCastEntry && entry.mana_cost && (
             <span className="shrink-0 pt-0.5">

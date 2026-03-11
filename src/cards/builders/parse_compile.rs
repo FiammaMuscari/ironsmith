@@ -34,11 +34,11 @@ use crate::cards::builders::{
     ObjectRefAst, ParseAnnotations, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
     PreventNextTimeDamageTargetAst, ReferenceEnv, ReferenceExports, ReferenceImports,
     RetargetModeAst, ReturnControllerAst, SharedTypeConstraintAst, TagKey, TargetAst, TriggerSpec,
-    choose_spec_targets_object, infer_player_filter_from_object_filter, lower_static_ability_ast,
-    object_filter_as_tagged_reference, resolve_attach_object_spec, resolve_choose_spec_it_tag,
-    resolve_it_tag, resolve_it_tag_key, resolve_non_target_player_filter,
-    resolve_restriction_it_tag, resolve_target_spec_with_choices, resolve_unless_player_filter,
-    resolve_value_it_tag, watch_tag_from_filter,
+    choose_spec_targets_object, infer_player_filter_from_object_filter,
+    lower_granted_abilities_ast, object_filter_as_tagged_reference, resolve_attach_object_spec,
+    resolve_choose_spec_it_tag, resolve_it_tag, resolve_it_tag_key,
+    resolve_non_target_player_filter, resolve_restriction_it_tag, resolve_target_spec_with_choices,
+    resolve_unless_player_filter, resolve_value_it_tag, watch_tag_from_filter,
 };
 #[allow(unused_imports)]
 use crate::color::ColorSet;
@@ -3097,29 +3097,6 @@ pub(crate) fn compile_effect(
     stacker::maybe_grow(1024 * 1024, 2 * 1024 * 1024, || {
         compile_effect_inner(effect, ctx)
     })
-}
-
-fn lower_granted_ability_ast(ability: &GrantedAbilityAst) -> Result<StaticAbility, CardTextError> {
-    match ability {
-        GrantedAbilityAst::StaticAbility(ability) => lower_static_ability_ast(ability.clone()),
-        GrantedAbilityAst::ParsedObjectAbility { ability, display } => {
-            let mut lowered = lower_parsed_ability(ability.clone())?.ability;
-            if lowered.text.is_none() {
-                lowered.text = Some(display.clone());
-            }
-            Ok(StaticAbility::grant_object_ability_for_filter(
-                ObjectFilter::source(),
-                lowered,
-                display.clone(),
-            ))
-        }
-    }
-}
-
-fn lower_granted_abilities_ast(
-    abilities: &[GrantedAbilityAst],
-) -> Result<Vec<StaticAbility>, CardTextError> {
-    abilities.iter().map(lower_granted_ability_ast).collect()
 }
 
 fn compile_effect_inner(
@@ -7355,6 +7332,46 @@ fn try_compile_object_zone_and_exchange_effect(
             let from_exile_tag = choose_spec_references_exiled_tag(&spec);
             let use_move_to_zone =
                 from_exile_tag || !matches!(controller, ReturnControllerAst::Preserve);
+            let mut effects = Vec::new();
+            let resolved_spec = if !spec.is_target() {
+                match &spec {
+                    ChooseSpec::Object(filter)
+                        if filter.tagged_constraints.is_empty()
+                            && filter.zone == Some(Zone::Graveyard) =>
+                    {
+                        let tag = ctx.next_tag("chosen_return");
+                        ctx.last_object_tag = Some(tag.clone());
+                        effects.push(Effect::choose_objects(
+                            filter.clone(),
+                            1usize,
+                            PlayerFilter::You,
+                            tag.clone(),
+                        ));
+                        ChooseSpec::tagged(tag)
+                    }
+                    ChooseSpec::WithCount(inner, count)
+                        if count.is_single()
+                            && matches!(inner.base(), ChooseSpec::Object(filter) if filter.tagged_constraints.is_empty() && filter.zone == Some(Zone::Graveyard)) =>
+                    {
+                        let ChooseSpec::Object(filter) = inner.base() else {
+                            unreachable!("guard ensures graveyard object base")
+                        };
+                        let tag = ctx.next_tag("chosen_return");
+                        ctx.last_object_tag = Some(tag.clone());
+                        effects.push(Effect::choose_objects(
+                            filter.clone(),
+                            count.clone(),
+                            PlayerFilter::You,
+                            tag.clone(),
+                        ));
+                        ChooseSpec::tagged(tag)
+                    }
+                    _ => spec.clone(),
+                }
+            } else {
+                spec.clone()
+            };
+
             let mut effect = tag_object_target_effect(
                 if use_move_to_zone {
                     // Blink-style "exile ... then return it" should move the tagged
@@ -7362,7 +7379,7 @@ fn try_compile_object_zone_and_exchange_effect(
                     // MoveToZone for explicit controller overrides so "under your control"
                     // semantics are preserved for tagged references like "that card".
                     let move_back = crate::effects::MoveToZoneEffect::new(
-                        spec.clone(),
+                        resolved_spec.clone(),
                         Zone::Battlefield,
                         false,
                     );
@@ -7378,19 +7395,22 @@ fn try_compile_object_zone_and_exchange_effect(
                     };
                     Effect::new(move_back)
                 } else {
-                    Effect::return_from_graveyard_to_battlefield(spec.clone(), *tapped)
+                    Effect::return_from_graveyard_to_battlefield(resolved_spec.clone(), *tapped)
                 },
-                &spec,
+                &resolved_spec,
                 ctx,
                 "returned",
             );
-            if ctx.auto_tag_object_targets && !spec.is_target() && choose_spec_targets_object(&spec)
+            if ctx.auto_tag_object_targets
+                && !resolved_spec.is_target()
+                && choose_spec_targets_object(&resolved_spec)
             {
                 let tag = ctx.next_tag("returned");
                 ctx.last_object_tag = Some(tag.clone());
                 effect = effect.tag(tag);
             }
-            (vec![effect], choices)
+            effects.push(effect);
+            (effects, choices)
         }
         EffectAst::MoveToLibrarySecondFromTop { target } => {
             let (spec, choices) =

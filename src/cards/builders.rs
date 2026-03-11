@@ -280,6 +280,155 @@ impl KeywordAction {
                 | Self::MarkerText(_)
         )
     }
+
+    pub(crate) fn display_text(&self) -> String {
+        fn title_case_words(text: &str) -> String {
+            text.split_whitespace()
+                .map(|word| {
+                    let mut chars = word.chars();
+                    let Some(first) = chars.next() else {
+                        return String::new();
+                    };
+                    let mut out = String::new();
+                    out.extend(first.to_uppercase());
+                    out.push_str(chars.as_str());
+                    out
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+
+        fn single_color_name(colors: ColorSet) -> Option<&'static str> {
+            if colors == ColorSet::WHITE {
+                return Some("white");
+            }
+            if colors == ColorSet::BLUE {
+                return Some("blue");
+            }
+            if colors == ColorSet::BLACK {
+                return Some("black");
+            }
+            if colors == ColorSet::RED {
+                return Some("red");
+            }
+            if colors == ColorSet::GREEN {
+                return Some("green");
+            }
+            None
+        }
+
+        match self {
+            Self::Flying => "Flying".to_string(),
+            Self::Menace => "Menace".to_string(),
+            Self::Hexproof => "Hexproof".to_string(),
+            Self::Haste => "Haste".to_string(),
+            Self::Improvise => "Improvise".to_string(),
+            Self::Convoke => "Convoke".to_string(),
+            Self::AffinityForArtifacts => "Affinity for artifacts".to_string(),
+            Self::Delve => "Delve".to_string(),
+            Self::FirstStrike => "First strike".to_string(),
+            Self::DoubleStrike => "Double strike".to_string(),
+            Self::Deathtouch => "Deathtouch".to_string(),
+            Self::Lifelink => "Lifelink".to_string(),
+            Self::Vigilance => "Vigilance".to_string(),
+            Self::Trample => "Trample".to_string(),
+            Self::Reach => "Reach".to_string(),
+            Self::Defender => "Defender".to_string(),
+            Self::Flash => "Flash".to_string(),
+            Self::Phasing => "Phasing".to_string(),
+            Self::Indestructible => "Indestructible".to_string(),
+            Self::Shroud => "Shroud".to_string(),
+            Self::Ward(amount) => format!("Ward {{{amount}}}"),
+            Self::Wither => "Wither".to_string(),
+            Self::Afterlife(amount) => format!("Afterlife {amount}"),
+            Self::Fabricate(amount) => format!("Fabricate {amount}"),
+            Self::Infect => "Infect".to_string(),
+            Self::Undying => "Undying".to_string(),
+            Self::Persist => "Persist".to_string(),
+            Self::Prowess => "Prowess".to_string(),
+            Self::Exalted => "Exalted".to_string(),
+            Self::Cascade => "Cascade".to_string(),
+            Self::Storm => "Storm".to_string(),
+            Self::Toxic(amount) => format!("Toxic {amount}"),
+            Self::BattleCry => "Battle cry".to_string(),
+            Self::Dethrone => "Dethrone".to_string(),
+            Self::Evolve => "Evolve".to_string(),
+            Self::Ingest => "Ingest".to_string(),
+            Self::Mentor => "Mentor".to_string(),
+            Self::Skulk => "Skulk".to_string(),
+            Self::Training => "Training".to_string(),
+            Self::Myriad => "Myriad".to_string(),
+            Self::Riot => "Riot".to_string(),
+            Self::Unleash => "Unleash".to_string(),
+            Self::Renown(amount) => format!("Renown {amount}"),
+            Self::Modular(amount) => format!("Modular {amount}"),
+            Self::ModularSunburst => "Modular-Sunburst".to_string(),
+            Self::Graft(amount) => format!("Graft {amount}"),
+            Self::Soulbond => "Soulbond".to_string(),
+            Self::Soulshift(amount) => format!("Soulshift {amount}"),
+            Self::Outlast(cost) => format!("Outlast {}", cost.to_oracle()),
+            Self::Unearth(cost) => format!("Unearth {}", cost.to_oracle()),
+            Self::Ninjutsu(cost) => format!("Ninjutsu {}", cost.to_oracle()),
+            Self::Echo { text, .. } => text.clone(),
+            Self::CumulativeUpkeep { text, .. } => text.clone(),
+            Self::Casualty(amount) => format!("Casualty {amount}"),
+            Self::Conspire => "Conspire".to_string(),
+            Self::Devour(amount) => format!("Devour {amount}"),
+            Self::Ravenous => "Ravenous".to_string(),
+            Self::Ascend => "Ascend".to_string(),
+            Self::Daybound => "Daybound".to_string(),
+            Self::Nightbound => "Nightbound".to_string(),
+            Self::Haunt => "Haunt".to_string(),
+            Self::Provoke => "Provoke".to_string(),
+            Self::Undaunted => "Undaunted".to_string(),
+            Self::Enlist => "Enlist".to_string(),
+            Self::Extort => "Extort".to_string(),
+            Self::Partner => "Partner".to_string(),
+            Self::Assist => "Assist".to_string(),
+            Self::SplitSecond => "Split second".to_string(),
+            Self::Rebound => "Rebound".to_string(),
+            Self::Sunburst => "Sunburst".to_string(),
+            Self::Fading(amount) => format!("Fading {amount}"),
+            Self::Vanishing(amount) => format!("Vanishing {amount}"),
+            Self::Fear => "Fear".to_string(),
+            Self::Intimidate => "Intimidate".to_string(),
+            Self::Shadow => "Shadow".to_string(),
+            Self::Horsemanship => "Horsemanship".to_string(),
+            Self::Flanking => "Flanking".to_string(),
+            Self::Landwalk(subtype) => {
+                let mut subtype = subtype.to_string().to_ascii_lowercase();
+                subtype.push_str("walk");
+                title_case_words(&subtype)
+            }
+            Self::Bloodthirst(amount) => format!("Bloodthirst {amount}"),
+            Self::Rampage(amount) => format!("Rampage {amount}"),
+            Self::Bushido(amount) => format!("Bushido {amount}"),
+            Self::Changeling => "Changeling".to_string(),
+            Self::ProtectionFrom(colors) => single_color_name(*colors)
+                .map(|name| format!("Protection from {name}"))
+                .unwrap_or_else(|| "Protection from colors".to_string()),
+            Self::ProtectionFromAllColors => "Protection from all colors".to_string(),
+            Self::ProtectionFromColorless => "Protection from colorless".to_string(),
+            Self::ProtectionFromEverything => "Protection from everything".to_string(),
+            Self::ProtectionFromCardType(card_type) => format!(
+                "Protection from {}",
+                card_type.to_string().to_ascii_lowercase()
+            ),
+            Self::ProtectionFromSubtype(subtype) => format!(
+                "Protection from {}",
+                subtype.to_string().to_ascii_lowercase()
+            ),
+            Self::Unblockable => "This can't be blocked".to_string(),
+            Self::Devoid => "Devoid".to_string(),
+            Self::Annihilator(amount) => format!("Annihilator {amount}"),
+            Self::ForMirrodin => "For Mirrodin!".to_string(),
+            Self::LivingWeapon => "Living weapon".to_string(),
+            Self::Crew { amount, .. } => format!("Crew {amount}"),
+            Self::Saddle { amount, .. } => format!("Saddle {amount}"),
+            Self::Marker(name) => (*name).to_string(),
+            Self::MarkerText(text) => text.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -372,8 +521,13 @@ pub(crate) struct ParsedAbility {
 #[derive(Debug, Clone)]
 pub(crate) enum StaticAbilityAst {
     Static(StaticAbility),
-    ConditionalAbility {
+    KeywordAction(KeywordAction),
+    ConditionalStaticAbility {
         ability: Box<StaticAbilityAst>,
+        condition: ConditionExpr,
+    },
+    ConditionalKeywordAction {
+        action: KeywordAction,
         condition: ConditionExpr,
     },
     GrantStaticAbility {
@@ -381,31 +535,31 @@ pub(crate) enum StaticAbilityAst {
         ability: Box<StaticAbilityAst>,
         condition: Option<ConditionExpr>,
     },
+    GrantKeywordAction {
+        filter: ObjectFilter,
+        action: KeywordAction,
+        condition: Option<ConditionExpr>,
+    },
     RemoveStaticAbility {
         filter: ObjectFilter,
         ability: Box<StaticAbilityAst>,
+    },
+    RemoveKeywordAction {
+        filter: ObjectFilter,
+        action: KeywordAction,
     },
     AttachedStaticAbilityGrant {
         ability: Box<StaticAbilityAst>,
         display: String,
         condition: Option<ConditionExpr>,
     },
-    EquipmentStaticAbilitiesGrant {
-        abilities: Vec<StaticAbilityAst>,
-    },
-    KeywordAction(KeywordAction),
-    ConditionalKeywordAction {
+    AttachedKeywordActionGrant {
         action: KeywordAction,
-        condition: ConditionExpr,
-    },
-    GrantKeywordAction {
-        filter: ObjectFilter,
-        action: KeywordAction,
+        display: String,
         condition: Option<ConditionExpr>,
     },
-    RemoveKeywordAction {
-        filter: ObjectFilter,
-        action: KeywordAction,
+    EquipmentKeywordActionsGrant {
+        actions: Vec<KeywordAction>,
     },
     GrantObjectAbility {
         filter: ObjectFilter,
@@ -417,9 +571,6 @@ pub(crate) enum StaticAbilityAst {
         ability: ParsedAbility,
         display: String,
         condition: Option<ConditionExpr>,
-    },
-    SoulbondSharedStaticAbility {
-        ability: Box<StaticAbilityAst>,
     },
     SoulbondSharedObjectAbility {
         ability: ParsedAbility,
@@ -435,22 +586,22 @@ impl From<StaticAbility> for StaticAbilityAst {
 
 #[derive(Debug, Clone)]
 pub(crate) enum GrantedAbilityAst {
-    StaticAbility(StaticAbilityAst),
+    KeywordAction(KeywordAction),
+    MustAttack,
+    MustBlock,
+    CanAttackAsThoughNoDefender,
+    CanBlockAdditionalCreatureEachCombat {
+        additional: usize,
+    },
     ParsedObjectAbility {
         ability: ParsedAbility,
         display: String,
     },
 }
 
-impl From<StaticAbilityAst> for GrantedAbilityAst {
-    fn from(ability: StaticAbilityAst) -> Self {
-        Self::StaticAbility(ability)
-    }
-}
-
-impl From<StaticAbility> for GrantedAbilityAst {
-    fn from(ability: StaticAbility) -> Self {
-        Self::StaticAbility(StaticAbilityAst::Static(ability))
+impl From<KeywordAction> for GrantedAbilityAst {
+    fn from(action: KeywordAction) -> Self {
+        Self::KeywordAction(action)
     }
 }
 

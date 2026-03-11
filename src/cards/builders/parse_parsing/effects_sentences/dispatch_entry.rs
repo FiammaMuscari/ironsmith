@@ -3,8 +3,8 @@ use crate::cards::builders::effect_ast_traversal::{
 };
 #[allow(unused_imports)]
 use crate::cards::builders::{
-    CardTextError, CarryContext, EffectAst, IT_TAG, IfResultPredicate, PlayerAst, SubjectAst,
-    TagKey, TargetAst, TextSpan, Token, TokenCopyFollowup,
+    CardTextError, CarryContext, EffectAst, GrantedAbilityAst, IT_TAG, IfResultPredicate,
+    KeywordAction, PlayerAst, SubjectAst, TagKey, TargetAst, TextSpan, Token, TokenCopyFollowup,
     append_token_reminder_to_last_create_effect, build_may_cast_tagged_effect,
     collapse_token_copy_end_of_combat_exile_followup,
     collapse_token_copy_next_end_step_exile_followup, effect_creates_any_token,
@@ -26,7 +26,6 @@ use crate::cards::builders::{
     token_index_for_word_index, trim_commas, value_contains_unbound_x, words,
 };
 use crate::effect::{ChoiceCount, Until, Value};
-use crate::static_abilities::StaticAbility;
 use crate::target::{
     ChooseSpec, ObjectFilter, PlayerFilter, TaggedObjectConstraint, TaggedOpbjectRelation,
 };
@@ -2482,12 +2481,12 @@ fn apply_unapplied_token_copy_followup(
     let effects = match followup {
         TokenCopyFollowup::HasHaste => vec![EffectAst::GrantAbilitiesToTarget {
             target: TargetAst::Tagged(TagKey::from(IT_TAG), span),
-            abilities: vec![StaticAbility::haste().into()],
+            abilities: vec![GrantedAbilityAst::KeywordAction(KeywordAction::Haste)],
             duration: Until::Forever,
         }],
         TokenCopyFollowup::GainHasteUntilEndOfTurn => vec![EffectAst::GrantAbilitiesToTarget {
             target: TargetAst::Tagged(TagKey::from(IT_TAG), span),
-            abilities: vec![StaticAbility::haste().into()],
+            abilities: vec![GrantedAbilityAst::KeywordAction(KeywordAction::Haste)],
             duration: Until::EndOfTurn,
         }],
         TokenCopyFollowup::SacrificeAtNextEndStep => vec![EffectAst::DelayedUntilNextEndStep {

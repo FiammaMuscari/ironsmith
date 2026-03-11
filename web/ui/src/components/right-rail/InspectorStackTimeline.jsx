@@ -10,12 +10,18 @@ import { scryfallImageUrl } from "@/lib/scryfall";
 import { stagger } from "@/lib/motion/anime";
 import useLayoutReflow from "@/lib/motion/useLayoutReflow";
 import { cn } from "@/lib/utils";
+import { ArrowLeft, ArrowRight } from "lucide-react";
+import {
+  buildTriggerOrderingEntries,
+  buildTriggerOrderingKey,
+  isTriggerOrderingDecision,
+} from "@/lib/trigger-ordering";
 
 const STACK_LEAVE_ANIMATION_MS = 360;
 const HORIZONTAL_STACK_ENTRY_WIDTH = "clamp(180px, 17vw, 230px)";
 const HORIZONTAL_STACK_ENTRY_MIN_HEIGHT = 50;
 const HORIZONTAL_STACK_BADGE_TOP = 27;
-const HORIZONTAL_STACK_CIRCUIT_PATH = "M2.5 2.5H97.5";
+const HORIZONTAL_STACK_CIRCUIT_PATH = "M2.5 2.5H97.5 M2.5 47.5H97.5";
 
 function isFocusedDecision(decision) {
   return (
@@ -59,10 +65,12 @@ function HorizontalStackEntry({
   isActive = false,
   accent = null,
   onClick,
+  reorderControls = null,
 }) {
   const name = entry?.name || `Object#${entry?.id}`;
   const artUrl = scryfallImageUrl(name, "art_crop");
   const kindLabel = horizontalStackKindLabel(entry);
+  const subtitle = String(entry?.__subtitle || "").trim();
   const isSpell = !entry?.ability_kind;
   const pt = entry?.power_toughness
     || (entry?.power != null && entry?.toughness != null
@@ -77,7 +85,10 @@ function HorizontalStackEntry({
 
   return (
     <div
-      className="stack-timeline-entry relative shrink-0"
+      className={cn(
+        "stack-timeline-entry relative shrink-0",
+        reorderControls && "stack-card-reorderable"
+      )}
       style={{
         width: HORIZONTAL_STACK_ENTRY_WIDTH,
         minHeight: `${HORIZONTAL_STACK_ENTRY_MIN_HEIGHT}px`,
@@ -85,10 +96,35 @@ function HorizontalStackEntry({
       data-arrow-anchor="stack"
       data-object-id={entry?.id}
     >
+      {reorderControls && (
+        <>
+          <button
+            type="button"
+            className="stack-card-reorder-button stack-card-reorder-button-left"
+            disabled={!reorderControls.canMoveLeft}
+            onClick={() => reorderControls.onMoveLeft?.()}
+            aria-label={reorderControls.leftLabel || `Move ${name} toward the top of the stack`}
+            title={reorderControls.leftTitle || "Move toward the top of the stack"}
+          >
+            <ArrowLeft className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            className="stack-card-reorder-button stack-card-reorder-button-right"
+            disabled={!reorderControls.canMoveRight}
+            onClick={() => reorderControls.onMoveRight?.()}
+            aria-label={reorderControls.rightLabel || `Move ${name} toward the bottom of the stack`}
+            title={reorderControls.rightTitle || "Move toward the bottom of the stack"}
+          >
+            <ArrowRight className="size-3.5" />
+          </button>
+        </>
+      )}
       <button
         type="button"
         className={cn(
           "stack-timeline-entry-surface stack-timeline-circuit relative grid h-full w-full grid-cols-[24px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-0 overflow-hidden bg-[linear-gradient(180deg,rgba(7,16,27,0.94),rgba(6,12,21,0.98))] px-2 py-[5px] text-left transition-[background,box-shadow,transform] duration-150",
+          reorderControls && "pl-8 pr-8",
           !isActive && "hover:shadow-[0_0_16px_-8px_rgba(var(--player-accent-rgb,127,190,244),0.9),0_10px_18px_rgba(0,0,0,0.22)]",
           isActive && "stack-timeline-item-active",
           isActive && "bg-[linear-gradient(180deg,rgba(10,22,37,0.98),rgba(7,16,28,1))]"
@@ -141,7 +177,7 @@ function HorizontalStackEntry({
             </div>
           </div>
           <div className="absolute inset-x-0 bottom-0 truncate text-[9px] font-bold uppercase leading-none tracking-[0.12em] text-[#8ec4ff]">
-            {kindLabel}
+            {subtitle || kindLabel}
           </div>
         </div>
       </button>
@@ -165,7 +201,11 @@ export default function InspectorStackTimeline({
   onToggleCollapsed = null,
   maxBodyHeight = null,
 }) {
-  const { state } = useGame();
+  const {
+    state,
+    triggerOrderingState,
+    moveTriggerOrderingItem,
+  } = useGame();
   const players = state?.players || [];
   const [leavingEntries, setLeavingEntries] = useState([]);
   const previousStackRef = useRef([]);
@@ -173,6 +213,8 @@ export default function InspectorStackTimeline({
   const bodyRef = useRef(null);
   const horizontalScrollRef = useRef(null);
   const focusedDecision = isFocusedDecision(decision) && canAct;
+  const triggerOrderingActive = isTriggerOrderingDecision(decision);
+  const triggerOrderingKey = buildTriggerOrderingKey(decision);
   const hasStackEntries = stackObjects.length > 0 || leavingEntries.length > 0 || stackPreview.length > 0;
   const stackIds = useMemo(() => stackObjects.map((entry) => entry.id), [stackObjects]);
   const { newIds } = useNewCards(stackIds);
@@ -180,8 +222,17 @@ export default function InspectorStackTimeline({
     () => resolveActiveStackInspectId(stackObjects, selectedObjectId),
     [selectedObjectId, stackObjects]
   );
+  const pendingTriggerEntries = useMemo(() => {
+    if (!triggerOrderingActive || triggerOrderingState?.key !== triggerOrderingKey) return [];
+    return buildTriggerOrderingEntries(decision, triggerOrderingState.order).map((entry) => ({
+      ...entry,
+      __timeline_key: `pending-${entry.__trigger_ordering_option_index}`,
+      __leaving: false,
+    }));
+  }, [decision, triggerOrderingActive, triggerOrderingKey, triggerOrderingState]);
   const timelineEntries = useMemo(
     () => [
+      ...pendingTriggerEntries,
       ...stackObjects.map((entry) => ({
         ...entry,
         __timeline_key: `live-${entry.id}`,
@@ -193,9 +244,9 @@ export default function InspectorStackTimeline({
         __leaving: true,
       })),
     ],
-    [leavingEntries, stackObjects]
+    [leavingEntries, pendingTriggerEntries, stackObjects]
   );
-  const itemCount = stackObjects.length || leavingEntries.length || stackPreview.length;
+  const itemCount = timelineEntries.length || stackPreview.length;
   const timelineSignature = timelineEntries.map((entry) => entry.__timeline_key).join("|");
   const isHorizontal = layout === "horizontal";
   const horizontalEntries = timelineEntries;
@@ -277,11 +328,17 @@ export default function InspectorStackTimeline({
     };
   }, [isHorizontal, itemCount, timelineSignature, horizontalPreviewEntries]);
 
-  if (!hasStackEntries) return null;
+  if (!hasStackEntries && pendingTriggerEntries.length === 0) return null;
 
   const embeddedExpandedMaxHeight = Number.isFinite(maxBodyHeight) && maxBodyHeight > 0
     ? Math.max(96, Math.round(maxBodyHeight))
     : 380;
+
+  const positionLabelForIndex = (index) => {
+    if (index !== 0) return `#${timelineEntries.length - index}`;
+    if (focusedDecision && !triggerOrderingActive) return "Resolving";
+    return "Top";
+  };
 
   if (isHorizontal) {
     return (
@@ -303,16 +360,25 @@ export default function InspectorStackTimeline({
                   <HorizontalStackEntry
                     key={entry.__timeline_key}
                     entry={entry}
-                    positionLabel={index === 0 ? "Top" : `#${horizontalEntries.length - index}`}
+                    positionLabel={positionLabelForIndex(index)}
                     isActive={
                       !entry.__leaving
+                      && !entry.__trigger_ordering
                       && activeStackInspectId != null
                       && String(activeStackInspectId) === String(stackInspectObjectId(entry))
                     }
                     accent={
                       !entry.__leaving ? getPlayerAccent(players, entry.controller) : null
                     }
-                    onClick={entry.__leaving ? undefined : onInspectObject}
+                    onClick={entry.__leaving || entry.__trigger_ordering ? undefined : onInspectObject}
+                    reorderControls={entry.__trigger_ordering
+                      ? {
+                          canMoveLeft: canAct && index > 0,
+                          canMoveRight: canAct && index < (pendingTriggerEntries.length - 1),
+                          onMoveLeft: () => moveTriggerOrderingItem(index, -1),
+                          onMoveRight: () => moveTriggerOrderingItem(index, 1),
+                        }
+                      : null}
                   />
                 ))
               : horizontalPreviewEntries.map((name, index) => (
@@ -389,21 +455,28 @@ export default function InspectorStackTimeline({
                     className="stack-timeline-entry relative"
                   >
                     <span className="pointer-events-none absolute left-1.5 top-1.5 z-10 rounded bg-[rgba(8,18,30,0.86)] px-1 py-[2px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#8ec4ff]">
-                      {index === 0
-                        ? (focusedDecision ? "Resolving" : "Top")
-                        : `#${timelineEntries.length - index}`}
+                      {positionLabelForIndex(index)}
                     </span>
                     <StackCard
                       entry={entry}
-                      isNew={!entry.__leaving && newIds.has(entry.id)}
+                      isNew={!entry.__leaving && !entry.__trigger_ordering && newIds.has(entry.id)}
                       isLeaving={entry.__leaving}
                       isActive={
                         !entry.__leaving
+                        && !entry.__trigger_ordering
                         && activeStackInspectId != null
                         && String(activeStackInspectId) === String(stackInspectObjectId(entry))
                       }
                       className="pt-4"
-                      onClick={entry.__leaving ? undefined : onInspectObject}
+                      onClick={entry.__leaving || entry.__trigger_ordering ? undefined : onInspectObject}
+                      reorderControls={entry.__trigger_ordering
+                        ? {
+                            canMoveLeft: canAct && index > 0,
+                            canMoveRight: canAct && index < (pendingTriggerEntries.length - 1),
+                            onMoveLeft: () => moveTriggerOrderingItem(index, -1),
+                            onMoveRight: () => moveTriggerOrderingItem(index, 1),
+                          }
+                        : null}
                     />
                   </div>
                 ))
@@ -430,21 +503,28 @@ export default function InspectorStackTimeline({
                     className="stack-timeline-entry relative"
                   >
                     <span className="pointer-events-none absolute left-1.5 top-1.5 z-10 rounded bg-[rgba(8,18,30,0.86)] px-1 py-[2px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#8ec4ff]">
-                      {index === 0
-                        ? (focusedDecision ? "Resolving" : "Top")
-                        : `#${timelineEntries.length - index}`}
+                      {positionLabelForIndex(index)}
                     </span>
                     <StackCard
                       entry={entry}
-                      isNew={!entry.__leaving && newIds.has(entry.id)}
+                      isNew={!entry.__leaving && !entry.__trigger_ordering && newIds.has(entry.id)}
                       isLeaving={entry.__leaving}
                       isActive={
                         !entry.__leaving
+                        && !entry.__trigger_ordering
                         && activeStackInspectId != null
                         && String(activeStackInspectId) === String(stackInspectObjectId(entry))
                       }
                       className="pt-4"
-                      onClick={entry.__leaving ? undefined : onInspectObject}
+                      onClick={entry.__leaving || entry.__trigger_ordering ? undefined : onInspectObject}
+                      reorderControls={entry.__trigger_ordering
+                        ? {
+                            canMoveLeft: canAct && index > 0,
+                            canMoveRight: canAct && index < (pendingTriggerEntries.length - 1),
+                            onMoveLeft: () => moveTriggerOrderingItem(index, -1),
+                            onMoveRight: () => moveTriggerOrderingItem(index, 1),
+                          }
+                        : null}
                     />
                   </div>
                 ))

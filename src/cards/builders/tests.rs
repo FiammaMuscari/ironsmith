@@ -3647,6 +3647,10 @@ fn parse_tayam_oracle_text_regression() {
         "expected mill effect in tayam activated ability, got {effects_debug}"
     );
     assert!(
+        effects_debug.contains("ChooseObjectsEffect"),
+        "expected runtime graveyard choice in tayam activated ability, got {effects_debug}"
+    );
+    assert!(
         effects_debug.contains("ReturnFromGraveyardToBattlefieldEffect"),
         "expected return-from-graveyard effect in tayam activated ability, got {effects_debug}"
     );

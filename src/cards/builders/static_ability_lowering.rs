@@ -1,6 +1,6 @@
 use crate::ability::Ability;
 use crate::cards::builders::{
-    CardTextError, KeywordAction, StaticAbilityAst, lower_parsed_ability,
+    CardTextError, GrantedAbilityAst, KeywordAction, StaticAbilityAst, lower_parsed_ability,
 };
 use crate::cost::TotalCost;
 use crate::filter::ObjectFilter;
@@ -155,72 +155,102 @@ fn lower_keyword_action_or_err(action: KeywordAction) -> Result<StaticAbility, C
     })
 }
 
+fn lower_attached_keyword_action_grant(
+    action: KeywordAction,
+    display: String,
+    condition: Option<crate::ConditionExpr>,
+) -> Result<StaticAbility, CardTextError> {
+    let granted =
+        Ability::static_ability(lower_keyword_action_or_err(action)?).with_text(display.as_str());
+    let mut grant = crate::static_abilities::AttachedAbilityGrant::new(granted, display);
+    if let Some(condition) = condition {
+        grant = grant.with_condition(condition);
+    }
+    Ok(StaticAbility::new(grant))
+}
+
+fn lower_conditional_static_ability(
+    ability: StaticAbilityAst,
+    condition: crate::ConditionExpr,
+) -> Result<StaticAbility, CardTextError> {
+    Ok(StaticAbility::new(
+        crate::static_abilities::GrantAbility::source(lower_static_ability_ast(ability)?)
+            .with_condition(condition),
+    ))
+}
+
+fn lower_grant_static_ability(
+    filter: crate::filter::ObjectFilter,
+    ability: StaticAbilityAst,
+    condition: Option<crate::ConditionExpr>,
+) -> Result<StaticAbility, CardTextError> {
+    let mut grant =
+        crate::static_abilities::GrantAbility::new(filter, lower_static_ability_ast(ability)?);
+    if let Some(condition) = condition {
+        grant = grant.with_condition(condition);
+    }
+    Ok(StaticAbility::new(grant))
+}
+
+fn lower_attached_static_ability_grant(
+    ability: StaticAbilityAst,
+    display: String,
+    condition: Option<crate::ConditionExpr>,
+) -> Result<StaticAbility, CardTextError> {
+    let granted =
+        Ability::static_ability(lower_static_ability_ast(ability)?).with_text(display.as_str());
+    let mut grant = crate::static_abilities::AttachedAbilityGrant::new(granted, display);
+    if let Some(condition) = condition {
+        grant = grant.with_condition(condition);
+    }
+    Ok(StaticAbility::new(grant))
+}
+
 pub(crate) fn lower_static_ability_ast(
     ability: StaticAbilityAst,
 ) -> Result<StaticAbility, CardTextError> {
     match ability {
         StaticAbilityAst::Static(ability) => Ok(ability),
-        StaticAbilityAst::ConditionalAbility { ability, condition } => Ok(StaticAbility::new(
-            crate::static_abilities::GrantAbility::source(lower_static_ability_ast(*ability)?)
-                .with_condition(condition),
-        )),
+        StaticAbilityAst::KeywordAction(action) => lower_keyword_action_or_err(action),
+        StaticAbilityAst::ConditionalStaticAbility { ability, condition } => {
+            lower_conditional_static_ability(*ability, condition)
+        }
+        StaticAbilityAst::ConditionalKeywordAction { action, condition } => Ok(
+            lower_conditional_static_ability(StaticAbilityAst::KeywordAction(action), condition)?,
+        ),
         StaticAbilityAst::GrantStaticAbility {
             filter,
             ability,
             condition,
-        } => {
-            let mut grant =
-                crate::static_abilities::GrantAbility::new(filter, lower_static_ability_ast(*ability)?);
-            if let Some(condition) = condition {
-                grant = grant.with_condition(condition);
-            }
-            Ok(StaticAbility::new(grant))
-        }
+        } => lower_grant_static_ability(filter, *ability, condition),
+        StaticAbilityAst::GrantKeywordAction {
+            filter,
+            action,
+            condition,
+        } => lower_grant_static_ability(filter, StaticAbilityAst::KeywordAction(action), condition),
         StaticAbilityAst::RemoveStaticAbility { filter, ability } => Ok(
             StaticAbility::remove_ability(filter, lower_static_ability_ast(*ability)?),
+        ),
+        StaticAbilityAst::RemoveKeywordAction { filter, action } => Ok(
+            StaticAbility::remove_ability(filter, lower_keyword_action_or_err(action)?),
         ),
         StaticAbilityAst::AttachedStaticAbilityGrant {
             ability,
             display,
             condition,
-        } => {
-            let granted = Ability::static_ability(lower_static_ability_ast(*ability)?)
-                .with_text(display.as_str());
-            let mut grant = crate::static_abilities::AttachedAbilityGrant::new(granted, display);
-            if let Some(condition) = condition {
-                grant = grant.with_condition(condition);
-            }
-            Ok(StaticAbility::new(grant))
-        }
-        StaticAbilityAst::EquipmentStaticAbilitiesGrant { abilities } => {
-            let mut lowered = Vec::with_capacity(abilities.len());
-            for ability in abilities {
-                lowered.push(lower_static_ability_ast(ability)?);
+        } => lower_attached_static_ability_grant(*ability, display, condition),
+        StaticAbilityAst::AttachedKeywordActionGrant {
+            action,
+            display,
+            condition,
+        } => lower_attached_keyword_action_grant(action, display, condition),
+        StaticAbilityAst::EquipmentKeywordActionsGrant { actions } => {
+            let mut lowered = Vec::with_capacity(actions.len());
+            for action in actions {
+                lowered.push(lower_keyword_action_or_err(action)?);
             }
             Ok(StaticAbility::equipment_grant(lowered))
         }
-        StaticAbilityAst::KeywordAction(action) => lower_keyword_action_or_err(action),
-        StaticAbilityAst::ConditionalKeywordAction { action, condition } => Ok(StaticAbility::new(
-            crate::static_abilities::GrantAbility::source(lower_keyword_action_or_err(action)?)
-                .with_condition(condition),
-        )),
-        StaticAbilityAst::GrantKeywordAction {
-            filter,
-            action,
-            condition,
-        } => {
-            let mut grant = crate::static_abilities::GrantAbility::new(
-                filter,
-                lower_keyword_action_or_err(action)?,
-            );
-            if let Some(condition) = condition {
-                grant = grant.with_condition(condition);
-            }
-            Ok(StaticAbility::new(grant))
-        }
-        StaticAbilityAst::RemoveKeywordAction { filter, action } => Ok(
-            StaticAbility::remove_ability(filter, lower_keyword_action_or_err(action)?),
-        ),
         StaticAbilityAst::GrantObjectAbility {
             filter,
             ability,
@@ -253,9 +283,6 @@ pub(crate) fn lower_static_ability_ast(
             }
             Ok(StaticAbility::new(grant))
         }
-        StaticAbilityAst::SoulbondSharedStaticAbility { ability } => {
-            Ok(StaticAbility::soulbond_shared_ability(lower_static_ability_ast(*ability)?))
-        }
         StaticAbilityAst::SoulbondSharedObjectAbility { ability, display } => {
             let mut lowered = lower_parsed_ability(ability)?.ability;
             if lowered.text.is_none() {
@@ -275,9 +302,42 @@ pub(crate) fn lower_static_abilities_ast(
         .collect()
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn materialize_static_abilities_ast(
     abilities: Vec<StaticAbilityAst>,
 ) -> Result<Vec<StaticAbility>, CardTextError> {
     lower_static_abilities_ast(abilities)
+}
+
+pub(crate) fn lower_granted_ability_ast(
+    ability: &GrantedAbilityAst,
+) -> Result<StaticAbility, CardTextError> {
+    match ability {
+        GrantedAbilityAst::KeywordAction(action) => lower_keyword_action_or_err(action.clone()),
+        GrantedAbilityAst::MustAttack => Ok(StaticAbility::must_attack()),
+        GrantedAbilityAst::MustBlock => Ok(StaticAbility::must_block()),
+        GrantedAbilityAst::CanAttackAsThoughNoDefender => {
+            Ok(StaticAbility::can_attack_as_though_no_defender())
+        }
+        GrantedAbilityAst::CanBlockAdditionalCreatureEachCombat { additional } => Ok(
+            StaticAbility::can_block_additional_creature_each_combat(*additional),
+        ),
+        GrantedAbilityAst::ParsedObjectAbility { ability, display } => {
+            let mut lowered = lower_parsed_ability(ability.clone())?.ability;
+            if lowered.text.is_none() {
+                lowered.text = Some(display.clone());
+            }
+            Ok(StaticAbility::grant_object_ability_for_filter(
+                ObjectFilter::source(),
+                lowered,
+                display.clone(),
+            ))
+        }
+    }
+}
+
+pub(crate) fn lower_granted_abilities_ast(
+    abilities: &[GrantedAbilityAst],
+) -> Result<Vec<StaticAbility>, CardTextError> {
+    abilities.iter().map(lower_granted_ability_ast).collect()
 }

@@ -33,11 +33,11 @@ use crate::cards::builders::parse_parsing::targets::{
 };
 use crate::cards::builders::{
     CardTextError, DamageBySpec, EffectAst, IT_TAG, KeywordAction, LineAst, ParsedAbility,
-    PlayerAst, ReferenceImports, ReturnControllerAst, TagKey, TargetAst, TextSpan, Token,
-    TriggerSpec, find_activation_cost_start, is_article, is_source_reference_words,
-    parse_card_type, parse_color, parse_effect_sentences, parse_object_filter, parse_target_phrase,
-    parse_where_x_value_clause, span_from_tokens, split_on_period, token_index_for_word_index,
-    trim_commas, words,
+    PlayerAst, ReferenceImports, ReturnControllerAst, StaticAbilityAst, TagKey, TargetAst,
+    TextSpan, Token, TriggerSpec, find_activation_cost_start, is_article,
+    is_source_reference_words, parse_card_type, parse_color, parse_effect_sentences,
+    parse_object_filter, parse_target_phrase, parse_where_x_value_clause, span_from_tokens,
+    split_on_period, token_index_for_word_index, trim_commas, words,
 };
 use crate::color::ColorSet;
 use crate::cost::{OptionalCost, TotalCost};
@@ -3461,7 +3461,7 @@ pub(crate) fn scale_dynamic_cost_modifier_value(dynamic: Value, multiplier: i32)
 
 pub(crate) fn parse_all_creatures_able_to_block_source_line(
     tokens: &[Token],
-) -> Result<Option<StaticAbility>, CardTextError> {
+) -> Result<Option<StaticAbilityAst>, CardTextError> {
     let words = normalize_cant_words(tokens);
     if words.as_slice()
         == [
@@ -3487,10 +3487,11 @@ pub(crate) fn parse_all_creatures_able_to_block_source_line(
                 "so",
             ]
     {
-        return Ok(Some(StaticAbility::grant_ability(
-            ObjectFilter::creature(),
-            StaticAbility::must_block(),
-        )));
+        return Ok(Some(StaticAbilityAst::GrantStaticAbility {
+            filter: ObjectFilter::creature(),
+            ability: Box::new(StaticAbilityAst::Static(StaticAbility::must_block())),
+            condition: None,
+        }));
     }
     Ok(None)
 }

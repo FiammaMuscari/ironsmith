@@ -5,18 +5,21 @@ import { useHover } from "@/context/HoverContext";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SymbolText } from "@/lib/mana-symbols";
+import {
+  buildTriggerOrderingKey,
+  defaultTriggerOrderingOrder,
+  isTriggerOrderingDecision,
+  normalizeTriggerOrderingOrder,
+} from "@/lib/trigger-ordering";
 import { normalizeDecisionText } from "./decisionText";
 import DecisionSummary from "./DecisionSummary";
-import AnimatedCircuitFrame from "@/components/cards/AnimatedCircuitFrame";
 
 const STRIP_ITEM_BASE_CLASS = "h-auto min-h-8 max-w-[360px] min-w-[120px] justify-start self-stretch rounded-none border-0 border-l-2 border-l-[rgba(116,139,164,0.42)] bg-[rgba(12,22,34,0.58)] px-2.5 text-left text-[12px] font-semibold text-[rgba(206,223,242,0.52)] whitespace-nowrap transition-all hover:border-l-[rgba(236,245,255,0.92)] hover:bg-[rgba(220,236,255,0.16)] hover:text-[#f4f9ff] hover:shadow-[0_0_12px_rgba(236,245,255,0.3)]";
 const STRIP_ITEM_ACTIVE_CLASS = "border-l-[rgba(236,245,255,0.9)] bg-[rgba(220,236,255,0.16)] text-[#f4f9ff] shadow-[0_0_12px_rgba(236,245,255,0.3)]";
 const STRIP_ITEM_DISABLED_CLASS = "border-l-[rgba(63,79,98,0.6)] bg-[rgba(8,15,23,0.76)] text-[#5f7590] hover:border-l-[rgba(63,79,98,0.6)] hover:bg-[rgba(8,15,23,0.76)] hover:text-[#5f7590] hover:shadow-none";
-const TRIGGER_ORDER_CIRCUIT_PATH = "M4.5 2.5H95.5";
-
 function isPaymentOptionDescription(text) {
   return /^\s*pay\b/i.test(String(text || ""));
 }
@@ -43,24 +46,6 @@ function isSpellCastFlowDecision(decision) {
   return (decision.options || []).some((opt) => isCastOptionDescription(opt.description));
 }
 
-function isTriggerOrderingDecision(decision) {
-  if (!decision || decision.kind !== "select_options") return false;
-  const reason = String(decision.reason || "").toLowerCase();
-  const description = String(decision.description || "").toLowerCase();
-  return reason.includes("trigger") || description.includes("trigger");
-}
-
-function splitOrderingOptionText(text) {
-  const lines = String(text || "")
-    .split("\n")
-    .map((line) => normalizeDecisionText(String(line || "").trim()))
-    .filter(Boolean);
-  return {
-    title: lines[0] || "Triggered ability",
-    detail: lines.slice(1).join(" "),
-  };
-}
-
 function buildContextualOptions(options, hoveredObjectId) {
   const hasObjectBoundOptions = options.some((opt) => opt.object_id != null);
   if (!hasObjectBoundOptions) {
@@ -84,6 +69,12 @@ function buildContextualOptions(options, hoveredObjectId) {
     options: contextualOptions,
     waitingForHover: !hasMatchedHover,
   };
+}
+
+function optionsSignature(options) {
+  return (options || [])
+    .map((option) => `${Number(option?.index)}:${String(option?.description || "")}`)
+    .join("|");
 }
 
 function useAnimatedRows(rows, showRows, hideDelayMs = 180) {
@@ -627,21 +618,57 @@ function OrderingDecision({
   hideDescription = false,
   layout = "panel",
 }) {
-  const { dispatch } = useGame();
+  const { dispatch, triggerOrderingState, moveTriggerOrderingItem } = useGame();
   const stripLayout = layout === "strip";
   const triggerOrdering = isTriggerOrderingDecision(decision);
-  const [order, setOrder] = useState(
-    () => (decision.options || []).map((opt) => opt.index)
+  const triggerOrderingKey = buildTriggerOrderingKey(decision);
+  const localOrderingKey = useMemo(
+    () => `${decision.description || ""}|${optionsSignature(decision.options || [])}`,
+    [decision.description, decision.options]
+  );
+  const [localOrderState, setLocalOrderState] = useState(
+    () => ({
+      key: localOrderingKey,
+      order: defaultTriggerOrderingOrder(decision),
+    })
   );
   const options = decision.options || [];
+  const order = useMemo(() => {
+    if (!triggerOrdering) {
+      if (localOrderState.key === localOrderingKey) {
+        return normalizeTriggerOrderingOrder(localOrderState.order, decision);
+      }
+      return defaultTriggerOrderingOrder(decision);
+    }
+    if (triggerOrderingState?.key === triggerOrderingKey) {
+      return normalizeTriggerOrderingOrder(triggerOrderingState.order, decision);
+    }
+    return defaultTriggerOrderingOrder(decision);
+  }, [
+    decision,
+    localOrderState,
+    localOrderingKey,
+    triggerOrdering,
+    triggerOrderingKey,
+    triggerOrderingState,
+  ]);
 
   const move = (position, direction) => {
     const newPos = position + direction;
     if (newPos < 0 || newPos >= order.length) return;
-    setOrder((prev) => {
-      const next = [...prev];
+    if (triggerOrdering) {
+      moveTriggerOrderingItem(position, direction);
+      return;
+    }
+    setLocalOrderState((current) => {
+      const next = current.key === localOrderingKey
+        ? normalizeTriggerOrderingOrder(current.order, decision)
+        : defaultTriggerOrderingOrder(decision);
       [next[position], next[newPos]] = [next[newPos], next[position]];
-      return next;
+      return {
+        key: localOrderingKey,
+        order: next,
+      };
     });
   };
   const handleSubmit = useCallback(() => {
@@ -697,71 +724,23 @@ function OrderingDecision({
     </div>
   );
 
-  const triggerRows = (
+  const triggerOrderingHint = (
     <div className={cn(
-      "flex w-max min-w-full items-stretch gap-2",
-      stripLayout ? "px-1 py-1" : "px-1 py-1.5"
+      "rounded-sm border border-[#31506e]/80 bg-[rgba(10,20,31,0.72)] text-[#c9dff7]",
+      stripLayout ? "min-w-[280px] px-3 py-2" : "px-3 py-2.5"
     )}>
-      {order.map((optIndex, pos) => {
-        const opt = options.find((o) => o.index === optIndex);
-        if (!opt) return null;
-        const { title, detail } = splitOrderingOptionText(opt.description);
-        const positionLabel = pos === 0 ? "Top" : `#${order.length - pos}`;
-        const sideButtonClass = "absolute inset-y-0 z-[4] flex w-9 items-center justify-center border-[#86d5ff] bg-[linear-gradient(180deg,rgba(9,24,38,0.96),rgba(5,14,24,0.98))] text-[#dff4ff] shadow-[0_0_24px_rgba(88,195,255,0.18)] transition-all enabled:hover:bg-[linear-gradient(180deg,rgba(18,43,67,0.98),rgba(9,24,40,0.98))] enabled:hover:text-white disabled:text-[#57748f]";
-
-        return (
-          <div key={optIndex} className="relative min-w-[248px] max-w-[320px] self-stretch">
-            <div className="relative min-h-[96px] overflow-hidden rounded-[6px] border border-[#345473] bg-[linear-gradient(180deg,rgba(10,19,30,0.96),rgba(6,12,20,0.98))] shadow-[0_14px_32px_rgba(0,0,0,0.34),inset_0_0_0_1px_rgba(255,255,255,0.04)]">
-              <AnimatedCircuitFrame
-                seed={`trigger-order:${optIndex}:${title}`}
-                path={TRIGGER_ORDER_CIRCUIT_PATH}
-                viewBox="0 0 100 96"
-                overlayClassName="stack-circuit-overlay"
-              />
-              <button
-                type="button"
-                className={cn(sideButtonClass, "left-0 border-r-[3px]")}
-                disabled={!canAct || pos === 0}
-                onClick={() => move(pos, -1)}
-                aria-label={`Move ${title} left on the stack`}
-                title="Move toward the top of the stack"
-              >
-                <ArrowLeft className="size-4" />
-              </button>
-              <button
-                type="button"
-                className={cn(sideButtonClass, "right-0 border-l-[3px]")}
-                disabled={!canAct || pos === order.length - 1}
-                onClick={() => move(pos, 1)}
-                aria-label={`Move ${title} right on the stack`}
-                title="Move toward the bottom of the stack"
-              >
-                <ArrowRight className="size-4" />
-              </button>
-              <div className="pointer-events-none absolute left-10 top-2.5 z-[2] rounded bg-[rgba(7,18,28,0.88)] px-1.5 py-[2px] text-[10px] font-bold uppercase tracking-[0.14em] text-[#8ec4ff] shadow-[0_0_14px_rgba(71,171,255,0.18)]">
-                {positionLabel}
-              </div>
-              <div className="relative z-[2] flex min-h-[96px] flex-col justify-between px-12 py-3">
-                <div className="space-y-1">
-                  <div className="text-[15px] font-bold leading-[1.02] text-[#eef7ff]">
-                    <SymbolText text={title} />
-                  </div>
-                  {detail && (
-                    <div className="text-[11px] font-semibold uppercase leading-[1.2] tracking-[0.08em] text-[#91cdfc]">
-                      <SymbolText text={detail} />
-                    </div>
-                  )}
-                </div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#f5d08b]">
-                  Triggered ability
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })}
+      <div className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#8ec4ff]">
+        Order In Stack
+      </div>
+      <div className="mt-1 text-[13px] leading-snug text-[#dbeaff]">
+        Use the arrows on the stack cards to arrange these triggers. The leftmost arrow moves a trigger closer to the top of the stack.
+      </div>
     </div>
   );
+
+  if (triggerOrdering && stripLayout) {
+    return null;
+  }
 
   return (
     <div className={cn("flex h-full min-h-0 flex-col gap-1", stripLayout && "min-w-0")}>
@@ -774,7 +753,7 @@ function OrderingDecision({
               </div>
             )}
             <SectionHeader text={triggerOrdering ? "Stack Order" : "Order"} />
-            {triggerOrdering ? triggerRows : standardRows}
+            {triggerOrdering ? triggerOrderingHint : standardRows}
           </div>
         </div>
       ) : (
@@ -784,11 +763,7 @@ function OrderingDecision({
               <Description decision={decision} hideDescription={hideDescription} layout={layout} />
             )}
             <SectionHeader text={triggerOrdering ? "Stack Order" : "Order"} />
-            {triggerOrdering ? (
-              <div className="min-w-0 overflow-x-auto overflow-y-hidden">
-                {triggerRows}
-              </div>
-            ) : standardRows}
+            {triggerOrdering ? triggerOrderingHint : standardRows}
           </div>
         </ScrollArea>
       )}

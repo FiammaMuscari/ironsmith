@@ -9,6 +9,7 @@ import DecisionMiniInspector from "@/components/overlays/DecisionMiniInspector";
 import { animate, cancelMotion, snappySpring, stagger } from "@/lib/motion/anime";
 import { SymbolText } from "@/lib/mana-symbols";
 import { nextPriorityAdvanceLabel } from "@/lib/constants";
+import { isTriggerOrderingDecision } from "@/lib/trigger-ordering";
 import { cn } from "@/lib/utils";
 import { getVisibleStackObjects } from "@/lib/stack-targets";
 
@@ -995,6 +996,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     && !!submitAction
     && !submitAction.disabled
     && typeof submitAction.onSubmit === "function";
+  const triggerOrderingDecision = isTriggerOrderingDecision(decision);
   const canAdvanceViewedCardsStep = !!decision;
   const completeViewedCardsStep = useCallback(() => {
     if (!viewedCardsToken) return;
@@ -1145,7 +1147,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                     showActionCount={false}
                     className="min-w-[104px]"
                   />
-                  {!showDecisionMiniInspector && (
+                  {!showDecisionMiniInspector && !triggerOrderingDecision && (
                     <div className="min-w-[86px] self-stretch flex flex-col justify-center py-1.5">
                       <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
                         {resolveDecisionTitle(decision)}
@@ -1167,7 +1169,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                         sourceName={viewedCardsSourceName}
                         cards={viewedCardEntries}
                       />
-                    ) : (
+                    ) : (!triggerOrderingDecision && (
                       <DecisionRouter
                         decision={decision}
                         canAct={canAct}
@@ -1176,7 +1178,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                         hideDescription={showDecisionMiniInspector}
                         layout="strip"
                       />
-                    )
+                    ))
                   ) : (
                     <span className="text-[12px] text-[#b8d2ef] whitespace-nowrap">
                       Waiting for opponent
@@ -1301,7 +1303,8 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 showActionCount={false}
                 className="min-w-[104px]"
               />
-              <div className="self-stretch flex flex-col justify-center py-1.5">
+              {!triggerOrderingDecision && (
+                <div className="self-stretch flex flex-col justify-center py-1.5">
                 <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#93c7ff]">
                   {resolveDecisionTitle(decision)}
                 </div>
@@ -1310,7 +1313,8 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                     {normalizeDecisionText(decision.source_name)}
                   </div>
                 )}
-              </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1345,7 +1349,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 sourceName={viewedCardsSourceName}
                 cards={viewedCardEntries}
               />
-            ) : (
+            ) : (!triggerOrderingDecision && (
               <DecisionRouter
                 decision={decision}
                 canAct={canAct}
@@ -1354,7 +1358,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
                 hideDescription={false}
                 layout="strip"
               />
-            )}
+            ))}
           </div>
         )}
       </div>

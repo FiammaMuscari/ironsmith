@@ -1,38 +1,22 @@
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, EffectAst, GrantedAbilityAst, IT_TAG, KeywordAction, LineAst, ReferenceImports,
-    StaticAbilityAst, TagKey, TargetAst, Token, Verb, find_verb, is_article, is_source_reference_words,
-    is_until_end_of_turn, parse_ability_line,
-    parse_ability_phrase, parse_activated_line, parse_effect_chain, parse_object_filter,
-    parse_pt_modifier_values, parse_target_phrase, parse_triggered_line, parsed_triggered_ability,
-    reject_unimplemented_keyword_actions, span_from_tokens, split_on_or,
-    starts_with_until_end_of_turn, token_index_for_word_index, trim_commas, try_build_unless,
-    words,
+    TagKey, TargetAst, Token, Verb, find_verb, is_article, is_source_reference_words,
+    is_until_end_of_turn, parse_ability_line, parse_ability_phrase, parse_activated_line,
+    parse_effect_chain, parse_object_filter, parse_pt_modifier_values, parse_target_phrase,
+    parse_triggered_line, parsed_triggered_ability, reject_unimplemented_keyword_actions,
+    span_from_tokens, split_on_or, starts_with_until_end_of_turn, token_index_for_word_index,
+    trim_commas, try_build_unless, words,
 };
 use crate::effect::Until;
-use crate::static_abilities::StaticAbility;
 use crate::target::PlayerFilter;
 use crate::zone::Zone;
 
 fn grants_protection_from_everything(ability: &GrantedAbilityAst) -> bool {
-    match ability {
-        GrantedAbilityAst::StaticAbility(StaticAbilityAst::KeywordAction(
-            KeywordAction::ProtectionFromEverything,
-        )) => true,
-        GrantedAbilityAst::StaticAbility(StaticAbilityAst::Static(static_ability)) => matches!(
-            static_ability.protection_from(),
-            Some(crate::ability::ProtectionFrom::Everything)
-        ),
-        _ => false,
-    }
-}
-
-fn granted_keyword_actions(actions: Vec<KeywordAction>) -> Vec<GrantedAbilityAst> {
-    actions
-        .into_iter()
-        .filter(|action| action.lowers_to_static_ability())
-        .map(|action| GrantedAbilityAst::StaticAbility(StaticAbilityAst::KeywordAction(action)))
-        .collect()
+    matches!(
+        ability,
+        GrantedAbilityAst::KeywordAction(KeywordAction::ProtectionFromEverything)
+    )
 }
 
 pub(crate) fn parse_simple_ability_duration(
@@ -146,7 +130,10 @@ pub(crate) fn parse_simple_ability_modifier_clause(
 
     let mut abilities = if let Some(actions) = parse_ability_line(&ability_tokens) {
         reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
-        granted_keyword_actions(actions)
+        actions
+            .into_iter()
+            .map(GrantedAbilityAst::from)
+            .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
@@ -377,11 +364,17 @@ pub(crate) fn parse_gain_ability_sentence(
     let mut grant_is_choice = false;
     let mut abilities = if let Some(actions) = parse_ability_line(&ability_tokens) {
         reject_unimplemented_keyword_actions(&actions, &word_list.join(" "))?;
-        granted_keyword_actions(actions)
+        actions
+            .into_iter()
+            .map(GrantedAbilityAst::from)
+            .collect::<Vec<_>>()
     } else if !losing && let Some(actions) = parse_choice_of_abilities(&ability_tokens) {
         grant_is_choice = true;
         reject_unimplemented_keyword_actions(&actions, &word_list.join(" "))?;
-        granted_keyword_actions(actions)
+        actions
+            .into_iter()
+            .map(GrantedAbilityAst::from)
+            .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
@@ -396,9 +389,7 @@ pub(crate) fn parse_gain_ability_sentence(
         return Ok(None);
     }
     if grants_must_attack {
-        abilities.push(GrantedAbilityAst::StaticAbility(StaticAbilityAst::Static(
-            StaticAbility::must_attack(),
-        )));
+        abilities.push(GrantedAbilityAst::MustAttack);
     }
 
     // Check for "gets +X/+Y and gains/has/loses ..." patterns - if there's a pump
