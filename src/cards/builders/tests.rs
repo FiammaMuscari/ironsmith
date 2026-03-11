@@ -14989,12 +14989,8 @@ fn parse_oracle_war_report_summed_battlefield_count_regression() {
 }
 
 #[test]
-fn load_descent_into_avernus_handwritten_regression() {
-    let registry =
-        crate::cards::CardRegistry::with_builtin_cards_for_names(["Descent into Avernus"]);
-    let def = registry
-        .get("Descent into Avernus")
-        .expect("expected handwritten Descent into Avernus definition to load");
+fn parse_oracle_descent_into_avernus_scaling_trigger_regression() {
+    let def = parse_oracle_card_definition("Descent into Avernus");
 
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
