@@ -481,6 +481,14 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     ) {
         normalized = "Mentor".to_string();
     }
+    if normalized_lower
+        .starts_with("when this creature enters, you may put a +1/+1 counter on this creature")
+        || normalized_lower.starts_with(
+            "this creature can't block as long as it has a +1/+1 counter on it",
+        )
+    {
+        normalized = "Unleash".to_string();
+    }
     for (from, to) in [
         (
             "Exile all cards from target player's graveyard",
@@ -3309,6 +3317,29 @@ Pay 3 life: Add {R}.";
         assert!(
             !mismatch,
             "expected no mismatch for mentor keyword scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_dead_reveler_unleash_keyword_scaffolding() {
+        let oracle = "Unleash (You may have this creature enter with a +1/+1 counter on it. It can't block as long as it has a +1/+1 counter on it.)";
+        let compiled = vec![
+            String::from(
+                "Triggered ability 1: When this creature enters, you may put a +1/+1 counter on this creature.",
+            ),
+            String::from(
+                "Static ability 2: This creature can't block as long as it has a +1/+1 counter on it.",
+            ),
+        ];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected unleash keyword normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for unleash keyword scaffolding"
         );
     }
 
