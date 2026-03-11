@@ -3308,6 +3308,56 @@ pub(super) fn describe_may_search_library_and_or_nonlibrary(
     Some(text)
 }
 
+pub(super) fn describe_may_enlist(may: &crate::effects::MayEffect) -> Option<String> {
+    if may.decider.is_some() || may.effects.len() != 4 {
+        return None;
+    }
+
+    let tag_triggering = may.effects[0]
+        .downcast_ref::<crate::effects::TagTriggeringObjectEffect>()?;
+    if tag_triggering.tag.as_str() != "enlist_attacker" {
+        return None;
+    }
+
+    let choose = may.effects[1].downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
+    if choose.chooser != PlayerFilter::You || choose.tag.as_str() != "enlisted_creature" {
+        return None;
+    }
+
+    let tap = may.effects[2].downcast_ref::<crate::effects::TapEffect>()?;
+    if !matches!(&tap.spec, ChooseSpec::Tagged(tag) if tag.as_str() == "enlisted_creature") {
+        return None;
+    }
+
+    let modify = may.effects[3]
+        .downcast_ref::<crate::effects::ModifyPowerToughnessForEachEffect>()?;
+    if !matches!(&modify.target, ChooseSpec::Tagged(tag) if tag.as_str() == "enlist_attacker")
+        || modify.power_per != 1
+        || modify.toughness_per != 0
+        || modify.duration != crate::effect::Until::EndOfTurn
+        || !matches!(
+            &modify.count,
+            Value::PowerOf(spec)
+                if matches!(spec.as_ref(), ChooseSpec::Tagged(tag) if tag.as_str() == "enlisted_creature")
+        )
+    {
+        return None;
+    }
+
+    let enlisted_desc = strip_leading_article(&choose.filter.description())
+        .replace(" in the battlefield", "");
+    let enlisted = if enlisted_desc.starts_with("another ") {
+        enlisted_desc
+    } else {
+        with_indefinite_article(&enlisted_desc)
+    };
+    Some(
+        format!(
+            "you may tap {enlisted}. When you do, this creature gets +X/+0 until end of turn, where X is that creature's power"
+        ),
+    )
+}
+
 pub(super) fn describe_may_search_choose_for_each_with_shuffle(
     may: &crate::effects::MayEffect,
     shuffle: &crate::effects::ShuffleLibraryEffect,
@@ -6069,6 +6119,9 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
         return text;
     }
     if let Some(may) = effect.downcast_ref::<crate::effects::MayEffect>() {
+        if let Some(compact) = describe_may_enlist(may) {
+            return compact;
+        }
         if let Some(compact) = describe_may_search_library_and_or_nonlibrary(may) {
             return compact;
         }

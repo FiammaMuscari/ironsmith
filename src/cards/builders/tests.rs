@@ -14939,6 +14939,36 @@ fn load_human_frailty_handwritten_regression() {
 }
 
 #[test]
+fn parse_oracle_barkweave_crusher_enlist_render_regression() {
+    let def = parse_oracle_card_definition("Barkweave Crusher");
+
+    let raw = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        raw.contains("enlisted_creature")
+            && raw.contains("enlist_attacker")
+            && raw.contains("powerof"),
+        "expected raw compiled definition to retain enlist power-lifting scaffolding, got {raw}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("you may tap another nonattacking creature you control"),
+        "expected Barkweave Crusher to keep the enlist tap clause, got {rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "when you do, this creature gets +x/+0 until end of turn, where x is that creature's power"
+        ),
+        "expected Barkweave Crusher to compact enlist power text, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("tag the triggering object")
+            && !rendered.contains("for each the tagged object"),
+        "expected Barkweave Crusher to avoid raw enlist scaffolding in rendered text, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_oracle_myr_landshaper_type_addition_render_regression() {
     let def = parse_oracle_card_definition("Myr Landshaper");
 
