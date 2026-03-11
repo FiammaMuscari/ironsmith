@@ -14915,6 +14915,30 @@ fn parse_oracle_infinite_obliteration_typed_card_name_regression() {
 }
 
 #[test]
+fn load_human_frailty_handwritten_regression() {
+    let registry = crate::cards::CardRegistry::with_builtin_cards_for_names(["Human Frailty"]);
+    let def = registry
+        .get("Human Frailty")
+        .expect("expected handwritten Human Frailty definition to load");
+
+    let raw = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        raw.contains("movetozoneeffect") && raw.contains("human") && raw.contains("creature"),
+        "expected raw compiled definition to keep Human-target destroy effect, got {raw}"
+    );
+
+    let rendered = compiled_lines(def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("destroy target human creature"),
+        "expected Human Frailty to preserve Human-target destroy wording, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("destroy this spell"),
+        "expected Human Frailty to avoid self-destroy fallback text, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_oracle_myr_landshaper_type_addition_render_regression() {
     let def = parse_oracle_card_definition("Myr Landshaper");
 
