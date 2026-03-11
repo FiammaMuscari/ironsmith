@@ -14969,6 +14969,32 @@ fn parse_oracle_barkweave_crusher_enlist_render_regression() {
 }
 
 #[test]
+fn load_war_report_handwritten_sum_regression() {
+    let registry = crate::cards::CardRegistry::with_builtin_cards_for_names(["War Report"]);
+    let def = registry
+        .get("War Report")
+        .expect("expected handwritten War Report definition to load");
+
+    let raw = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        raw.contains("add(") && raw.contains("creature") && raw.contains("artifact"),
+        "expected raw compiled definition to keep the summed creature-plus-artifact value, got {raw}"
+    );
+
+    let rendered = compiled_lines(def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains(
+            "you gain life equal to the number of creatures on the battlefield plus the number of artifacts on the battlefield"
+        ),
+        "expected War Report to preserve the summed battlefield-count wording, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("creature artifact"),
+        "expected War Report to avoid collapsed creature-artifact count wording, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_oracle_myr_landshaper_type_addition_render_regression() {
     let def = parse_oracle_card_definition("Myr Landshaper");
 

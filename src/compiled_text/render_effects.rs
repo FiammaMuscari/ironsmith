@@ -5218,7 +5218,9 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
         }
         if matches!(
             gain.amount,
-            Value::SourcePower
+            Value::Add(_, _)
+                | Value::CountScaled(_, _)
+                | Value::SourcePower
                 | Value::SourceToughness
                 | Value::PowerOf(_)
                 | Value::ToughnessOf(_)
