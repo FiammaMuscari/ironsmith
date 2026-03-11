@@ -4210,9 +4210,11 @@ impl WasmGame {
         &mut self,
         progress: GameProgress,
         action_checkpoint: Option<ReplayCheckpoint>,
+        resolving_checkpoint: Option<ReplayCheckpoint>,
     ) -> Result<JsValue, JsValue> {
         match progress {
             GameProgress::NeedsDecisionCtx(next_ctx) => {
+                self.sync_active_resolving_stack_object(resolving_checkpoint.as_ref());
                 let action_still_pending = self.priority_action_chain_still_pending();
                 let committed_resolution_checkpoint = self
                     .pending_action_checkpoint
@@ -4326,6 +4328,7 @@ impl WasmGame {
         self.active_viewed_cards = viewed_cards;
 
         if let Some(next_ctx) = pending_context {
+            self.sync_active_resolving_stack_object(Some(&step_checkpoint));
             if self.priority_action_chain_still_pending() {
                 if let Some(checkpoint) = action_checkpoint {
                     self.pending_action_checkpoint.get_or_insert(checkpoint);
@@ -4344,7 +4347,9 @@ impl WasmGame {
         }
 
         match result {
-            Ok(progress) => self.finish_live_priority_dispatch(progress, action_checkpoint),
+            Ok(progress) => {
+                self.finish_live_priority_dispatch(progress, action_checkpoint, Some(step_checkpoint))
+            }
             Err(err) => {
                 self.restore_replay_checkpoint(&step_checkpoint);
                 if should_track_action_checkpoint {
@@ -4426,6 +4431,7 @@ impl WasmGame {
         self.active_viewed_cards = viewed_cards;
 
         if let Some(next_ctx) = pending_context {
+            self.sync_active_resolving_stack_object(Some(&continuation.checkpoint));
             self.priority_state.pending_continuation = None;
             continuation.checkpoint.diag_tag = "continuation_dm_capture";
             self.pending_live_continuation = Some(continuation);
@@ -4434,7 +4440,11 @@ impl WasmGame {
         }
 
         match result {
-            Ok(progress) => self.finish_live_priority_dispatch(progress, None),
+            Ok(progress) => self.finish_live_priority_dispatch(
+                progress,
+                None,
+                Some(continuation.checkpoint.clone()),
+            ),
             Err(err) => {
                 self.restore_replay_checkpoint(&continuation.checkpoint);
                 self.priority_state.pending_continuation = None;
@@ -4474,6 +4484,14 @@ impl WasmGame {
 
     fn clear_active_resolving_stack_object(&mut self) {
         self.active_resolving_stack_object = None;
+    }
+
+    fn sync_active_resolving_stack_object(&mut self, checkpoint: Option<&ReplayCheckpoint>) {
+        if let Some(checkpoint) = checkpoint {
+            self.update_active_resolving_stack_object_from_checkpoint(checkpoint);
+        } else {
+            self.clear_active_resolving_stack_object();
+        }
     }
 
     fn resolving_stack_object_from_checkpoint(
@@ -8364,6 +8382,58 @@ mod tests {
             second_candidates,
             vec![forest_b],
             "after one land is chosen, the next prompt should go straight to the remaining land"
+        );
+    }
+
+    #[test]
+    fn live_resolution_follow_up_prompts_restore_resolving_stack_object() {
+        let mut wasm = WasmGame::new();
+
+        wasm.add_card_to_zone(0, "Forest".to_string(), "hand".to_string(), true)
+            .expect("first Forest should be added to hand");
+        wasm.add_card_to_zone(0, "Grizzly Bears".to_string(), "library".to_string(), true)
+            .expect("library filler should be added");
+
+        wasm.add_card_to_zone(
+            0,
+            "Cultivator Colossus".to_string(),
+            "battlefield".to_string(),
+            false,
+        )
+        .expect("Cultivator Colossus should enter with ETB processing");
+
+        let resolving_checkpoint = wasm
+            .pending_replay_action
+            .as_ref()
+            .map(|replay| replay.checkpoint.clone())
+            .expect("Cultivator ETB prompt should retain the pre-resolution checkpoint");
+        let next_ctx = wasm
+            .pending_decision
+            .clone()
+            .expect("Cultivator ETB prompt should be pending");
+        let expected_resolving_id = wasm
+            .active_resolving_stack_object
+            .as_ref()
+            .map(|entry| entry.id)
+            .expect("Cultivator ETB prompt should expose the resolving stack entry");
+
+        wasm.clear_active_resolving_stack_object();
+        assert!(
+            wasm.active_resolving_stack_object.is_none(),
+            "test setup should clear the resolving entry before simulating live dispatch"
+        );
+
+        wasm.finish_live_priority_dispatch(
+            GameProgress::NeedsDecisionCtx(next_ctx),
+            None,
+            Some(resolving_checkpoint),
+        )
+        .expect("live follow-up prompt should snapshot cleanly");
+
+        assert_eq!(
+            wasm.active_resolving_stack_object.as_ref().map(|entry| entry.id),
+            Some(expected_resolving_id),
+            "live follow-up prompts should restore the resolving stack entry from the pre-resolution checkpoint"
         );
     }
 
