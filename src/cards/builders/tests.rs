@@ -15044,6 +15044,36 @@ fn parse_oracle_ugins_insight_where_x_tail_regression() {
 }
 
 #[test]
+fn parse_oracle_soul_partition_exile_and_recast_regression() {
+    let def = parse_oracle_card_definition("Soul Partition");
+
+    let raw = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        raw.contains("grantplaytagged") && raw.contains("opponent") && raw.contains("exile"),
+        "expected raw compiled definition to keep exile-plus-recast scaffolding, got {raw}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("exile target nonland permanent"),
+        "expected Soul Partition to preserve the exile clause, got {rendered}"
+    );
+    assert!(
+        rendered.contains("for as long as that card remains exiled, its owner may play it"),
+        "expected Soul Partition to preserve the exiled-card play permission, got {rendered}"
+    );
+    assert!(
+        rendered.contains("a spell cast by an opponent this way costs {2} more to cast"),
+        "expected Soul Partition to preserve the opponent recast tax, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("you may effect(grantplaytaggedeffect")
+            && !rendered.contains("target nonland permanent in the battlefield"),
+        "expected Soul Partition to avoid raw grant-play fallback text, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_oracle_myr_landshaper_type_addition_render_regression() {
     let def = parse_oracle_card_definition("Myr Landshaper");
 
