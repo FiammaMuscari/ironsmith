@@ -14924,7 +14924,7 @@ fn parse_oracle_human_frailty_targeted_subtype_regression() {
         "expected raw compiled definition to keep Human-target destroy effect, got {raw}"
     );
 
-    let rendered = compiled_lines(def).join(" ").to_ascii_lowercase();
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
         rendered.contains("destroy target human creature"),
         "expected Human Frailty to preserve Human-target destroy wording, got {rendered}"
@@ -14975,7 +14975,7 @@ fn parse_oracle_war_report_summed_battlefield_count_regression() {
         "expected raw compiled definition to keep the summed creature-plus-artifact value, got {raw}"
     );
 
-    let rendered = compiled_lines(def).join(" ").to_ascii_lowercase();
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
         rendered.contains(
             "you gain life equal to the number of creatures on the battlefield plus the number of artifacts on the battlefield"
@@ -15000,7 +15000,7 @@ fn parse_oracle_descent_into_avernus_scaling_trigger_regression() {
         "expected raw compiled definition to keep descent counters and treasure scaling, got {raw}"
     );
 
-    let rendered = compiled_lines(def).join(" ").to_ascii_lowercase();
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
         rendered.contains("put two descent counters on this enchantment"),
         "expected Descent into Avernus to keep named counter wording, got {rendered}"
@@ -15083,7 +15083,7 @@ fn parse_oracle_curious_herd_targeted_artifact_count_regression() {
             && raw.contains("createtokeneffect")
             && raw.contains("controller: some")
             && raw.contains("opponent")
-            && raw.contains("artifact")
+            && raw.contains("artifact"),
         "expected raw compiled definition to target an opponent and count their artifacts, got {raw}"
     );
 

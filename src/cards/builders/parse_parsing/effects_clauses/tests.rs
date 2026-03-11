@@ -3084,7 +3084,7 @@ fn parse_target_land_becomes_fixed_basic_land_type_clause() {
     assert!(matches!(
         effect,
         EffectAst::BecomeBasicLandType {
-            target: TargetAst::Target(_),
+            target: TargetAst::Object(_, _, _),
             subtype: Subtype::Island,
             duration: Until::EndOfTurn,
         }
