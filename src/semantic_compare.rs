@@ -513,6 +513,11 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     {
         normalized = "Daybound/Nightbound".to_string();
     }
+    if normalized_lower == "when this creature enters, choose one — • this creature enters with a +1/+1 counter on it. • this creature gains haste until end of turn"
+        || normalized_lower == "when this creature enters, choose one - • this creature enters with a +1/+1 counter on it. • this creature gains haste until end of turn"
+    {
+        normalized = "Riot".to_string();
+    }
     if normalized_lower.starts_with(
         "whenever this creature deals combat damage to a player, if this creature isn't renowned, put ",
     ) && normalized_lower.contains(" +1/+1 counter on it and it becomes renowned")
@@ -3610,6 +3615,24 @@ Pay 3 life: Add {R}.";
         assert!(
             !mismatch,
             "expected no mismatch for unleash keyword scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_rampaging_rendhorn_riot_keyword_scaffolding() {
+        let oracle = "Riot (This creature enters with your choice of a +1/+1 counter or haste.)";
+        let compiled = vec![String::from(
+            "Triggered ability 1: When this creature enters, choose one — • This creature enters with a +1/+1 counter on it. • This creature gains haste until end of turn.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected riot keyword normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for riot keyword scaffolding"
         );
     }
 
