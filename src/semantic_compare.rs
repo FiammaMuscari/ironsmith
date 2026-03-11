@@ -3702,6 +3702,42 @@ Pay 3 life: Add {R}.";
     }
 
     #[test]
+    fn compare_semantics_normalizes_weaponcraft_enthusiast_fabricate_keyword_scaffolding() {
+        let oracle = "Fabricate 2 (When this creature enters, put two +1/+1 counters on it or create two 1/1 colorless Servo artifact creature tokens.)";
+        let compiled = vec![String::from(
+            "Triggered ability 1: When this creature enters, choose one — • Put two +1/+1 counters on this creature. • Create two 1/1 colorless Servo artifact creature tokens.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected fabricate keyword normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for fabricate keyword scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_zhur_taa_goblin_riot_keyword_scaffolding() {
+        let oracle = "Riot (This creature enters with your choice of a +1/+1 counter or haste.)";
+        let compiled = vec![String::from(
+            "Triggered ability 1: When this creature enters, choose one — • This creature enters with a +1/+1 counter on it. • This creature gains haste until end of turn.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected riot keyword normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for riot keyword scaffolding"
+        );
+    }
+
+    #[test]
     fn compare_semantics_normalizes_echo_counter_scaffolding() {
         let oracle = "Flying, protection from black
 Echo {3}{W}{W}
