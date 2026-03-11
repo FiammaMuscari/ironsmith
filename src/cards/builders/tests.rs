@@ -2547,6 +2547,25 @@ fn test_parse_unleash_keyword_line() {
 }
 
 #[test]
+fn test_parse_zhur_taa_goblin_riot_keyword_line() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Zhur-Taa Goblin")
+        .card_types(vec![CardType::Creature])
+        .parse_text("Riot")
+        .expect("zhur-taa goblin riot line should parse");
+
+    let abilities_debug = format!("{:?}", def.abilities);
+    assert!(
+        abilities_debug.contains("ChooseModeEffect"),
+        "expected riot to compile into a modal ETB choice, got {abilities_debug}"
+    );
+    assert!(
+        !abilities_debug.contains("StaticAbilityId::KeywordMarker")
+            && !abilities_debug.contains("StaticAbilityId::RuleTextPlaceholder"),
+        "zhur-taa goblin riot should not remain a placeholder marker ability, got {abilities_debug}"
+    );
+}
+
+#[test]
 fn test_parse_training_keyword_line() {
     let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Training Probe")
         .card_types(vec![CardType::Creature])
