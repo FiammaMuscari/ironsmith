@@ -1276,10 +1276,12 @@ fn apply_trait_enter_with_counters(
     match event.kind() {
         EventKind::EnterBattlefield => {
             let etb = downcast_event::<EnterBattlefieldEvent>(event.inner())?;
-            Some(event.rewrap(
-                etb.with_counters(counter_type, count)
-                    .with_added_subtypes(added_subtypes),
-            ))
+            Some(
+                event.rewrap(
+                    etb.with_counters(counter_type, count)
+                        .with_added_subtypes(added_subtypes),
+                ),
+            )
         }
         EventKind::ZoneChange => {
             let zone_change = downcast_event::<ZoneChangeEvent>(event.inner())?;

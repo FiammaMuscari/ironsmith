@@ -65,6 +65,7 @@ impl EffectExecutor for LookAtHandEffect {
                     let mut view_ctx =
                         ViewCardsContext::look_at_hand(viewer, player_id, Some(ctx.source));
                     view_ctx.description = "Reveal that player's hand".to_string();
+                    view_ctx.public = true;
                     ctx.decision_maker
                         .view_cards(game, viewer, &cards, &view_ctx);
                 }

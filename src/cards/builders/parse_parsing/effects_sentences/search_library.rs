@@ -481,6 +481,20 @@ pub(crate) fn parse_search_library_sentence(
             .unwrap_or(raw_filter_tokens.len());
         filter_tokens = trim_commas(&raw_filter_tokens[..base_end]);
         same_name_reference = Some(SameNameReference::TaggedIt);
+    } else if raw_filter_words.len() >= 4
+        && raw_filter_words[raw_filter_words.len() - 4..] == ["with", "the", "chosen", "name"]
+    {
+        let base_end = token_index_for_word_index(&raw_filter_tokens, raw_filter_words.len() - 4)
+            .unwrap_or(raw_filter_tokens.len());
+        filter_tokens = trim_commas(&raw_filter_tokens[..base_end]);
+        same_name_reference = Some(SameNameReference::TaggedIt);
+    } else if raw_filter_words.len() >= 3
+        && raw_filter_words[raw_filter_words.len() - 3..] == ["with", "chosen", "name"]
+    {
+        let base_end = token_index_for_word_index(&raw_filter_tokens, raw_filter_words.len() - 3)
+            .unwrap_or(raw_filter_tokens.len());
+        filter_tokens = trim_commas(&raw_filter_tokens[..base_end]);
+        same_name_reference = Some(SameNameReference::TaggedIt);
     } else if let Some((base_filter_tokens, reference_tokens)) =
         split_search_same_name_reference_filter(&raw_filter_tokens)
     {

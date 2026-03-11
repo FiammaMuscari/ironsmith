@@ -899,7 +899,32 @@ pub(crate) fn parse_where_x_is_aggregate_filter_value(tokens: &[Token]) -> Optio
 
     let object_start_token_idx = token_index_for_word_index(tokens, idx)?;
     let filter_tokens = &tokens[object_start_token_idx..];
-    let filter = parse_object_filter(filter_tokens, false).ok()?;
+    let filter_words = words(filter_tokens);
+    let should_try_split = filter_words.contains(&"and")
+        && filter_words.contains(&"graveyard")
+        && filter_words
+            .iter()
+            .any(|word| matches!(*word, "control" | "controls" | "own" | "owns"));
+    let filter = (if should_try_split {
+        let segments = split_on_and(filter_tokens);
+        let mut branches = Vec::new();
+        for segment in segments {
+            let trimmed = trim_commas(&segment);
+            if trimmed.is_empty() {
+                return None;
+            }
+            branches.push(parse_object_filter(&trimmed, false).ok()?);
+        }
+        if branches.len() < 2 {
+            return None;
+        }
+        let mut combined = ObjectFilter::default();
+        combined.any_of = branches;
+        Some(combined)
+    } else {
+        None
+    })
+    .or_else(|| parse_object_filter(filter_tokens, false).ok())?;
 
     match (aggregate, value_kind) {
         ("total", "power") => Some(Value::TotalPower(filter)),
@@ -1012,6 +1037,9 @@ pub(crate) fn parse_where_x_is_number_of_filter_value(tokens: &[Token]) -> Optio
     let object_start_token_idx = object_start_token_idx?;
     let filter_tokens = &tokens[object_start_token_idx..];
     let filter_words = words(filter_tokens);
+    if let Some(value) = parse_number_of_counters_on_source_value(&filter_words) {
+        return Some(value);
+    }
     if filter_words.starts_with(&["basic", "land", "type", "among"])
         || filter_words.starts_with(&["basic", "land", "types", "among"])
     {
@@ -1059,6 +1087,53 @@ pub(crate) fn parse_where_x_is_number_of_filter_value(tokens: &[Token]) -> Optio
     }
     let filter = parse_object_filter(filter_tokens, false).ok()?;
     Some(Value::Count(filter))
+}
+
+fn parse_number_of_counters_on_source_value(filter_words: &[&str]) -> Option<Value> {
+    let mut idx = 0usize;
+    if filter_words
+        .get(idx)
+        .is_some_and(|word| is_article(word) || *word == "one")
+    {
+        idx += 1;
+    }
+    let counter_word = *filter_words.get(idx)?;
+    let counter_type = parse_counter_type_word(counter_word)
+        .or_else(|| {
+            counter_word
+                .chars()
+                .all(|ch| ch.is_ascii_alphabetic())
+                .then_some(CounterType::Named(intern_counter_name(counter_word)))
+        })?;
+    idx += 1;
+    if !matches!(filter_words.get(idx).copied(), Some("counter" | "counters")) {
+        return None;
+    }
+    idx += 1;
+    if filter_words.get(idx).copied() != Some("on") {
+        return None;
+    }
+    idx += 1;
+    match filter_words.get(idx..) {
+        Some(["it"])
+        | Some(["this"])
+        | Some(["this", "card"])
+        | Some(["this", "creature"])
+        | Some(["this", "permanent"])
+        | Some(["this", "source"])
+        | Some(["this", "artifact"])
+        | Some(["this", "land"])
+        | Some(["this", "enchantment"])
+        | Some(["thiss"])
+        | Some(["thiss", "card"])
+        | Some(["thiss", "creature"])
+        | Some(["thiss", "permanent"])
+        | Some(["thiss", "source"])
+        | Some(["thiss", "artifact"])
+        | Some(["thiss", "land"])
+        | Some(["thiss", "enchantment"]) => Some(Value::CountersOnSource(counter_type)),
+        _ => None,
+    }
 }
 
 pub(crate) fn parse_where_x_is_fixed_plus_number_of_filter_value(

@@ -471,8 +471,7 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     if normalized.eq_ignore_ascii_case("Whenever a creature you control enters, effect") {
         normalized = "Soulbond".to_string();
     }
-    if normalized.eq_ignore_ascii_case("Daybound")
-        || normalized.eq_ignore_ascii_case("Nightbound")
+    if normalized.eq_ignore_ascii_case("Daybound") || normalized.eq_ignore_ascii_case("Nightbound")
     {
         normalized = "Daybound/Nightbound".to_string();
     }
@@ -500,9 +499,8 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     }
     if normalized_lower
         .starts_with("when this creature enters, you may put a +1/+1 counter on this creature")
-        || normalized_lower.starts_with(
-            "this creature can't block as long as it has a +1/+1 counter on it",
-        )
+        || normalized_lower
+            .starts_with("this creature can't block as long as it has a +1/+1 counter on it")
     {
         normalized = "Unleash".to_string();
     }
@@ -512,7 +510,8 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     {
         normalized = "Afterlife 2".to_string();
     }
-    if let Some((cost, _)) = normalized.split_once(", Return an unblocked attacker you control to its owner's hand:")
+    if let Some((cost, _)) =
+        normalized.split_once(", Return an unblocked attacker you control to its owner's hand:")
         && normalized_lower.contains("put this card onto the battlefield tapped and attacking")
     {
         normalized = format!("Ninjutsu {}", cost.trim());
@@ -2963,7 +2962,10 @@ mod tests {
             similarity >= 0.75,
             "expected choose-background scaffolding to preserve strong similarity, got {similarity}"
         );
-        assert!(!mismatch, "expected no mismatch for choose-background scaffolding");
+        assert!(
+            !mismatch,
+            "expected no mismatch for choose-background scaffolding"
+        );
     }
 
     #[test]
@@ -3384,8 +3386,7 @@ Pay 3 life: Add {R}.";
 
     #[test]
     fn compare_semantics_normalizes_accorder_paladin_battle_cry_keyword_scaffolding() {
-        let oracle =
-            "Battle cry (Whenever this creature attacks, each other attacking creature gets +1/+0 until end of turn.)";
+        let oracle = "Battle cry (Whenever this creature attacks, each other attacking creature gets +1/+0 until end of turn.)";
         let compiled = vec![String::from(
             "Triggered ability 1: Whenever this creature attacks, another attacking creature you control get +1/+0 until end of turn.",
         )];
@@ -3403,8 +3404,7 @@ Pay 3 life: Add {R}.";
 
     #[test]
     fn compare_semantics_normalizes_blade_instructor_mentor_keyword_scaffolding() {
-        let oracle =
-            "Mentor (Whenever this creature attacks, put a +1/+1 counter on target attacking creature with lesser power.)";
+        let oracle = "Mentor (Whenever this creature attacks, put a +1/+1 counter on target attacking creature with lesser power.)";
         let compiled = vec![String::from(
             "Triggered ability 1: Whenever this creature attacks, put a +1/+1 counter on target attacking creature with power less than this creature's power.",
         )];
@@ -3499,8 +3499,7 @@ Pay 3 life: Add {R}.";
 
     #[test]
     fn compare_semantics_normalizes_goblin_wardriver_battle_cry_keyword_scaffolding() {
-        let oracle =
-            "Battle cry (Whenever this creature attacks, each other attacking creature gets +1/+0 until end of turn.)";
+        let oracle = "Battle cry (Whenever this creature attacks, each other attacking creature gets +1/+0 until end of turn.)";
         let compiled = vec![String::from(
             "Triggered ability 1: Whenever this creature attacks, another attacking creature you control get +1/+0 until end of turn.",
         )];
@@ -3541,8 +3540,7 @@ Pay 3 life: Add {R}.";
 
     #[test]
     fn compare_semantics_normalizes_hammer_dropper_mentor_keyword_scaffolding() {
-        let oracle =
-            "Mentor (Whenever this creature attacks, put a +1/+1 counter on target attacking creature with lesser power.)";
+        let oracle = "Mentor (Whenever this creature attacks, put a +1/+1 counter on target attacking creature with lesser power.)";
         let compiled = vec![String::from(
             "Triggered ability 1: Whenever this creature attacks, put a +1/+1 counter on target attacking creature with power less than this creature's power.",
         )];
@@ -3560,8 +3558,7 @@ Pay 3 life: Add {R}.";
 
     #[test]
     fn compare_semantics_normalizes_hookhand_mariner_daybound_keyword_scaffolding() {
-        let oracle =
-            "Daybound (If a player casts no spells during their own turn, it becomes night next turn.)";
+        let oracle = "Daybound (If a player casts no spells during their own turn, it becomes night next turn.)";
         let compiled = vec![String::from(
             "Triggered ability 1: At the beginning of each player's upkeep, if this creature is transformed, if two or more spells were cast last turn, transform this creature. Otherwise, if no spells were cast last turn, transform this creature.",
         )];
@@ -3579,8 +3576,7 @@ Pay 3 life: Add {R}.";
 
     #[test]
     fn compare_semantics_normalizes_knight_of_the_pilgrims_road_renown_keyword_scaffolding() {
-        let oracle =
-            "Renown 1 (When this creature deals combat damage to a player, if it isn't renowned, put a +1/+1 counter on it and it becomes renowned.)";
+        let oracle = "Renown 1 (When this creature deals combat damage to a player, if it isn't renowned, put a +1/+1 counter on it and it becomes renowned.)";
         let compiled = vec![String::from(
             "Triggered ability 1: Whenever this creature deals combat damage to a player, if this creature isn't renowned, put 1 +1/+1 counter on it and it becomes renowned.",
         )];
@@ -3598,8 +3594,7 @@ Pay 3 life: Add {R}.";
 
     #[test]
     fn compare_semantics_normalizes_loxodon_partisan_battle_cry_keyword_scaffolding() {
-        let oracle =
-            "Battle cry (Whenever this creature attacks, each other attacking creature gets +1/+0 until end of turn.)";
+        let oracle = "Battle cry (Whenever this creature attacks, each other attacking creature gets +1/+0 until end of turn.)";
         let compiled = vec![String::from(
             "Triggered ability 1: Whenever this creature attacks, another attacking creature you control get +1/+0 until end of turn.",
         )];
@@ -3717,8 +3712,7 @@ Pay 3 life: Add {R}.";
 
     #[test]
     fn compare_semantics_normalizes_tavern_ruffian_daybound_keyword_scaffolding() {
-        let oracle =
-            "Daybound (If a player casts no spells during their own turn, it becomes night next turn.)";
+        let oracle = "Daybound (If a player casts no spells during their own turn, it becomes night next turn.)";
         let compiled = vec![String::from(
             "Triggered ability 1: At the beginning of each player's upkeep, if this creature is transformed, if two or more spells were cast last turn, transform this creature. Otherwise, if no spells were cast last turn, transform this creature.",
         )];

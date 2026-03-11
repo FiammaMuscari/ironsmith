@@ -3142,6 +3142,9 @@ pub(super) fn finalize_spell_cast(
         .with_chosen_modes(chosen_modes)
         .with_tagged_objects(stack_entry_tagged_objects)
         .with_keyword_payment_contributions(keyword_payment_contributions);
+    if let Some(spell_obj) = game.object(new_id) {
+        entry = entry.with_source_info(spell_obj.stable_id, spell_obj.name.clone());
+    }
     if let Some(x) = x_value {
         entry = entry.with_x(x);
     }

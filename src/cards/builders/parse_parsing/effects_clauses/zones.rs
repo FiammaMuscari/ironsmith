@@ -1228,6 +1228,15 @@ pub(crate) fn parse_equal_to_number_of_filter_value(tokens: &[Token]) -> Option<
     {
         return None;
     }
+
+    let value_start_token_idx = token_index_for_word_index(tokens, number_word_idx)?;
+    let value_tokens = trim_edge_punctuation(&tokens[value_start_token_idx..]);
+    if let Some((value, used)) = parse_value(&value_tokens)
+        && words(&value_tokens[used..]).is_empty()
+    {
+        return Some(value);
+    }
+
     let filter_start_word_idx = number_word_idx + 2;
     let filter_start_token_idx = token_index_for_word_index(tokens, filter_start_word_idx)?;
     let filter_tokens = trim_edge_punctuation(&tokens[filter_start_token_idx..]);

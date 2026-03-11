@@ -358,6 +358,12 @@ pub(crate) fn resolve_choose_spec_it_tag(
 ) -> Result<ChooseSpec, CardTextError> {
     match spec {
         ChooseSpec::Tagged(tag) if tag.as_str() == IT_TAG => {
+            if refs
+                .known_last_object_tag()
+                .is_some_and(|tag| tag.as_str() == IT_TAG)
+            {
+                return Ok(ChooseSpec::Iterated);
+            }
             if let Some(resolved) = refs.known_last_object_tag() {
                 return Ok(ChooseSpec::Tagged(TagKey::from(resolved.as_str())));
             }
@@ -639,5 +645,18 @@ mod tests {
             resolved,
             ChooseSpec::Player(PlayerFilter::ControllerOf(ObjectRef::tagged("exiled_1")))
         );
+    }
+
+    #[test]
+    fn resolve_choose_spec_it_tag_uses_iterated_object_in_loop_context() {
+        let refs = ReferenceEnv {
+            last_object_tag: crate::cards::builders::RefState::Known(TagKey::from(IT_TAG)),
+            ..ReferenceEnv::default()
+        };
+
+        let resolved = resolve_choose_spec_it_tag(&ChooseSpec::Tagged(TagKey::from(IT_TAG)), &refs)
+            .expect("resolve iterated choose spec");
+
+        assert_eq!(resolved, ChooseSpec::Iterated);
     }
 }

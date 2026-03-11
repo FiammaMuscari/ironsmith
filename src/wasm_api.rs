@@ -423,19 +423,20 @@ fn build_stack_object_snapshot(
     entry: &crate::game_state::StackEntry,
 ) -> StackObjectSnapshot {
     let obj = game.object(entry.object_id);
+    let source_obj = entry
+        .source_stable_id
+        .and_then(|stable_id| game.find_object_by_stable_id(stable_id))
+        .and_then(|id| game.object(id));
     let source_stable_id = entry.source_stable_id.map(|stable_id| stable_id.0.0);
     let inspect_object_id = if entry.is_ability {
-        entry
-            .source_stable_id
-            .and_then(|stable_id| game.find_object_by_stable_id(stable_id))
-            .or_else(|| obj.map(|o| o.id))
-            .map(|id| id.0)
+        source_obj.or(obj).map(|object| object.id.0)
     } else {
-        obj.map(|o| o.id.0)
+        obj.or(source_obj).map(|object| object.id.0)
     };
-    let stable_id = obj.map(|o| o.stable_id.0.0);
+    let stable_id = obj.or(source_obj).map(|o| o.stable_id.0.0);
     let name = obj
         .map(|o| o.name.clone())
+        .or_else(|| source_obj.map(|o| o.name.clone()))
         .or_else(|| entry.source_name.clone())
         .unwrap_or_else(|| format!("Object#{}", entry.object_id.0));
     let targets = entry
@@ -465,7 +466,7 @@ fn build_stack_object_snapshot(
             targets,
         }
     } else {
-        let effect_text = if let Some(o) = obj {
+        let effect_text = if let Some(o) = obj.or(source_obj) {
             let lines = crate::compiled_text::compiled_lines(&o.to_card_definition());
             if lines.is_empty() {
                 None
@@ -482,7 +483,9 @@ fn build_stack_object_snapshot(
             source_stable_id,
             controller: entry.controller.0,
             name,
-            mana_cost: obj.and_then(|o| o.mana_cost.as_ref().map(|mc| mc.to_oracle())),
+            mana_cost: obj
+                .or(source_obj)
+                .and_then(|o| o.mana_cost.as_ref().map(|mc| mc.to_oracle())),
             effect_text,
             ability_kind: None,
             ability_text: None,
@@ -572,6 +575,48 @@ struct ActiveViewedCards {
     public: bool,
     source: Option<ObjectId>,
     description: String,
+}
+
+fn merge_active_viewed_cards(
+    current: &mut Option<ActiveViewedCards>,
+    viewer: PlayerId,
+    cards: &[ObjectId],
+    ctx: &crate::decisions::context::ViewCardsContext,
+) {
+    let can_merge = current.as_ref().is_some_and(|existing| {
+        existing.public == ctx.public
+            && existing.zone == ctx.zone
+            && existing.source == ctx.source
+            && existing.description == ctx.description
+            && if existing.zone == Zone::Hand {
+                existing.subject == ctx.subject
+            } else if ctx.public {
+                true
+            } else {
+                existing.viewer == viewer && existing.subject == ctx.subject
+            }
+    });
+
+    if can_merge {
+        if let Some(existing) = current.as_mut() {
+            for &card in cards {
+                if !existing.cards.contains(&card) {
+                    existing.cards.push(card);
+                }
+            }
+        }
+        return;
+    }
+
+    *current = Some(ActiveViewedCards {
+        viewer,
+        subject: ctx.subject,
+        zone: ctx.zone,
+        cards: cards.to_vec(),
+        public: ctx.public,
+        source: ctx.source,
+        description: ctx.description.clone(),
+    });
 }
 
 fn normalize_stack_display_text(text: &str) -> Option<String> {
@@ -1893,15 +1938,7 @@ impl DecisionMaker for WasmReplayDecisionMaker {
         cards: &[ObjectId],
         ctx: &crate::decisions::context::ViewCardsContext,
     ) {
-        self.viewed_cards = Some(ActiveViewedCards {
-            viewer,
-            subject: ctx.subject,
-            zone: ctx.zone,
-            cards: cards.to_vec(),
-            public: ctx.description.to_ascii_lowercase().contains("reveal"),
-            source: ctx.source,
-            description: ctx.description.clone(),
-        });
+        merge_active_viewed_cards(&mut self.viewed_cards, viewer, cards, ctx);
     }
 }
 
@@ -3132,6 +3169,37 @@ impl WasmGame {
                 && !self.select_objects_uses_live_priority_response()
     }
 
+    fn select_options_uses_live_priority_response(
+        &self,
+        _ctx: &crate::decisions::context::SelectOptionsContext,
+    ) -> bool {
+        self.game.pending_replacement_choice.is_some()
+            || self.priority_state.pending_method_selection.is_some()
+            || self.priority_state.pending_mana_ability.is_some()
+            || self
+                .priority_state
+                .pending_cast
+                .as_ref()
+                .is_some_and(|pending| {
+                    matches!(
+                        pending.stage,
+                        CastStage::ChoosingOptionalCosts
+                            | CastStage::ChoosingNextCost
+                            | CastStage::PayingMana
+                    )
+                })
+            || self
+                .priority_state
+                .pending_activation
+                .as_ref()
+                .is_some_and(|pending| {
+                    matches!(
+                        pending.stage,
+                        ActivationStage::ChoosingNextCost | ActivationStage::PayingMana
+                    )
+                })
+    }
+
     fn decision_uses_live_priority_response(&self, ctx: &DecisionContext) -> bool {
         if self.priority_state.pending_continuation.is_some() {
             return true;
@@ -3140,10 +3208,12 @@ impl WasmGame {
         match ctx {
             DecisionContext::Priority(_)
             | DecisionContext::Number(_)
-            | DecisionContext::SelectOptions(_)
             | DecisionContext::Modes(_)
             | DecisionContext::HybridChoice(_)
             | DecisionContext::Targets(_) => true,
+            DecisionContext::SelectOptions(ctx) => {
+                self.select_options_uses_live_priority_response(ctx)
+            }
             DecisionContext::SelectObjects(_) => self.select_objects_uses_live_priority_response(),
             _ => false,
         }
@@ -4347,9 +4417,11 @@ impl WasmGame {
         }
 
         match result {
-            Ok(progress) => {
-                self.finish_live_priority_dispatch(progress, action_checkpoint, Some(step_checkpoint))
-            }
+            Ok(progress) => self.finish_live_priority_dispatch(
+                progress,
+                action_checkpoint,
+                Some(step_checkpoint),
+            ),
             Err(err) => {
                 self.restore_replay_checkpoint(&step_checkpoint);
                 if should_track_action_checkpoint {
@@ -6001,7 +6073,7 @@ fn convert_and_validate_targets(
 mod tests {
     use super::{
         GameSnapshot, PendingReplayAction, ReplayOutcome, ReplayRoot, TargetChoiceView, WasmGame,
-        build_object_details_snapshot,
+        build_object_details_snapshot, build_stack_object_snapshot,
     };
     use crate::ability::Ability;
     use crate::card::CardBuilder;
@@ -6010,18 +6082,23 @@ mod tests {
         urzas_saga, yawgmoth_thran_physician,
     };
     use crate::continuous::ContinuousEffect;
+    use crate::cost::OptionalCostsPaid;
     use crate::decision::LegalAction;
     use crate::decision::compute_legal_actions;
     use crate::decisions::context::{
         BooleanContext, DecisionContext, PriorityContext, SelectObjectsContext, SelectableObject,
+        SelectableOption,
     };
     use crate::effect::{Effect, Until};
     use crate::events::spells::SpellCastEvent;
-    use crate::game_loop::{PendingManaAbility, PriorityResponse};
+    use crate::game_loop::{
+        CastStage, CastingMethod, PendingCast, PendingManaAbility, PriorityResponse,
+    };
     use crate::game_state::{GameState, Phase, StackEntry, Step, Target};
     use crate::ids::{CardId, ObjectId, PlayerId};
     use crate::mana::{ManaCost, ManaSymbol};
     use crate::object::CounterType;
+    use crate::provenance::ProvNodeId;
     use crate::triggers::{Trigger, TriggerEvent, check_triggers};
     use crate::types::CardType;
     use crate::wasm_api::colors_for_context;
@@ -6050,6 +6127,32 @@ mod tests {
             build_object_details_snapshot(&game, bears_id).expect("expected object details");
         assert_eq!(details.power, Some(5));
         assert_eq!(details.toughness, Some(2));
+    }
+
+    #[test]
+    fn resolving_spell_snapshot_uses_current_source_object_name_after_stack_exit() {
+        let mut game = GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20);
+        let alice = PlayerId::from_index(0);
+        let aura = CardBuilder::new(CardId::from_raw(70_001), "Tall as a Beanstalk")
+            .card_types(vec![CardType::Enchantment])
+            .build();
+
+        let stack_id = game.create_object_from_card(&aura, alice, Zone::Stack);
+        let stack_obj = game.object(stack_id).expect("spell should exist on stack");
+        let entry = StackEntry::new(stack_id, alice)
+            .with_source_info(stack_obj.stable_id, stack_obj.name.clone());
+
+        let battlefield_id = game
+            .move_object(stack_id, Zone::Battlefield)
+            .expect("spell should resolve to battlefield");
+        let snapshot = build_stack_object_snapshot(&game, &entry);
+
+        assert_eq!(snapshot.name, "Tall as a Beanstalk");
+        assert_eq!(snapshot.inspect_object_id, Some(battlefield_id.0));
+        assert_eq!(
+            snapshot.source_stable_id,
+            game.object(battlefield_id).map(|obj| obj.stable_id.0.0)
+        );
     }
 
     #[test]
@@ -8211,7 +8314,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_only_decision_detection_routes_boolean_prompts_through_root_reexecution() {
+    fn priority_decision_routing_uses_replay_for_generic_modal_choices() {
         let boolean = DecisionContext::Boolean(BooleanContext::new(
             PlayerId::from_index(0),
             None,
@@ -8228,26 +8331,62 @@ mod tests {
         let select_options =
             DecisionContext::SelectOptions(crate::decisions::context::SelectOptionsContext::new(
                 PlayerId::from_index(0),
+                None,
                 "choose a mode",
+                vec![SelectableOption::new(0, "Only option")],
                 1,
                 1,
-                vec![crate::decision::ChoiceOption {
-                    index: 0,
-                    description: "Only option".to_string(),
-                }],
             ));
+        let wasm = WasmGame::new();
 
         assert!(
-            WasmGame::new().decision_requires_root_reexecution(&boolean),
+            wasm.decision_requires_root_reexecution(&boolean),
             "boolean prompts should replay from the original root response"
         );
         assert!(
-            WasmGame::new().decision_requires_root_reexecution(&select_objects),
+            wasm.decision_requires_root_reexecution(&select_objects),
             "resolution-time object prompts should replay from the original root response"
         );
         assert!(
-            !WasmGame::new().decision_requires_root_reexecution(&select_options),
-            "normal select-options prompts should keep using direct live responses"
+            !wasm.decision_requires_root_reexecution(&select_options),
+            "generic select-options prompts do not require full root reexecution"
+        );
+        assert!(
+            !wasm.decision_uses_live_priority_response(&select_options),
+            "generic select-options prompts should route through replay continuations, not the live priority responder"
+        );
+    }
+
+    #[test]
+    fn priority_decision_routing_keeps_cost_option_prompts_on_live_responder() {
+        let mut wasm = WasmGame::new();
+        wasm.priority_state.pending_cast = Some(PendingCast::new(
+            ObjectId::from_raw(1),
+            Zone::Hand,
+            PlayerId::from_index(0),
+            ProvNodeId::default(),
+            CastStage::ChoosingOptionalCosts,
+            None,
+            Vec::new(),
+            CastingMethod::Cast,
+            OptionalCostsPaid::new(1),
+            None,
+            ObjectId::from_raw(1),
+        ));
+
+        let select_options =
+            DecisionContext::SelectOptions(crate::decisions::context::SelectOptionsContext::new(
+                PlayerId::from_index(0),
+                Some(ObjectId::from_raw(1)),
+                "Choose optional costs",
+                vec![SelectableOption::new(0, "Kicker")],
+                0,
+                1,
+            ));
+
+        assert!(
+            wasm.decision_uses_live_priority_response(&select_options),
+            "cost-selection select-options prompts should stay on the live priority responder"
         );
     }
 
@@ -8431,7 +8570,9 @@ mod tests {
         .expect("live follow-up prompt should snapshot cleanly");
 
         assert_eq!(
-            wasm.active_resolving_stack_object.as_ref().map(|entry| entry.id),
+            wasm.active_resolving_stack_object
+                .as_ref()
+                .map(|entry| entry.id),
             Some(expected_resolving_id),
             "live follow-up prompts should restore the resolving stack entry from the pre-resolution checkpoint"
         );

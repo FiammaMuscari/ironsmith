@@ -1,5 +1,6 @@
 //! Reveal top card effect implementation.
 
+use crate::decisions::context::ViewCardsContext;
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::resolve_player_filter;
@@ -53,6 +54,78 @@ impl EffectExecutor for RevealTopEffect {
             ctx.set_tagged_objects(tag.clone(), vec![snapshot]);
         }
 
+        for viewer_idx in 0..game.players.len() {
+            let viewer = crate::ids::PlayerId::from_index(viewer_idx as u8);
+            let view_ctx = ViewCardsContext::new(
+                viewer,
+                player_id,
+                Some(ctx.source),
+                crate::zone::Zone::Library,
+                "Reveal the top card of a library",
+            )
+            .with_public(true);
+            ctx.decision_maker
+                .view_cards(game, viewer, &[card_id], &view_ctx);
+        }
+
         Ok(EffectOutcome::from_result(EffectResult::Count(1)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card::CardBuilder;
+    use crate::decision::DecisionMaker;
+    use crate::executor::ExecutionContext;
+    use crate::ids::{CardId, PlayerId};
+    use crate::types::CardType;
+    use crate::zone::Zone;
+
+    #[derive(Debug, Default)]
+    struct CaptureViewDm {
+        calls: Vec<(PlayerId, PlayerId, Zone, bool, Vec<crate::ids::ObjectId>)>,
+    }
+
+    impl DecisionMaker for CaptureViewDm {
+        fn view_cards(
+            &mut self,
+            _game: &GameState,
+            viewer: PlayerId,
+            cards: &[crate::ids::ObjectId],
+            ctx: &crate::decisions::context::ViewCardsContext,
+        ) {
+            self.calls
+                .push((viewer, ctx.subject, ctx.zone, ctx.public, cards.to_vec()));
+        }
+    }
+
+    fn setup_game() -> GameState {
+        crate::tests::test_helpers::setup_two_player_game()
+    }
+
+    fn add_card_to_library(game: &mut GameState, owner: PlayerId, name: &str, id: u32) {
+        let card = CardBuilder::new(CardId::from_raw(id), name)
+            .card_types(vec![CardType::Sorcery])
+            .build();
+        game.create_object_from_card(&card, owner, Zone::Library);
+    }
+
+    #[test]
+    fn reveal_top_emits_public_view_for_all_players() {
+        let mut game = setup_game();
+        let bob = PlayerId::from_index(1);
+        let source = game.new_object_id();
+        add_card_to_library(&mut game, bob, "Top Card", 101);
+
+        let mut dm = CaptureViewDm::default();
+        let mut ctx = ExecutionContext::new(source, bob, &mut dm);
+        let effect = RevealTopEffect::new(PlayerFilter::You, None);
+        effect.execute(&mut game, &mut ctx).expect("reveal top");
+
+        assert_eq!(dm.calls.len(), 2);
+        assert!(dm.calls.iter().all(|(_, subject, zone, public, cards)| {
+            *subject == bob && *zone == Zone::Library && *public && cards.len() == 1
+        }));
     }
 }

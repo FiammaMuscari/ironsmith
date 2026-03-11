@@ -4,6 +4,7 @@ import HoverArtOverlay from "./HoverArtOverlay";
 import { useHoveredObjectId } from "@/context/HoverContext";
 import { useGame } from "@/context/GameContext";
 import { animate, cancelMotion, uiSpring } from "@/lib/motion/anime";
+import { playerAccentVars } from "@/lib/player-colors";
 import { getVisibleStackObjects } from "@/lib/stack-targets";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +24,15 @@ const INLINE_EXPANDED_SAFE_GAP = 12;
 const INLINE_EXPANDED_BOTTOM_GAP = 4;
 const INLINE_EXPANDED_RIGHT_BLEED = 8;
 const VIEWED_CARD_COMPACT_HEIGHT = 74;
+
+function inspectorBorderStyle(accent) {
+  if (!accent) return undefined;
+  return {
+    ...playerAccentVars(accent),
+    borderColor: accent.hex,
+    boxShadow: `0 0 0 1px rgba(${accent.rgb}, 0.38), 0 18px 42px rgba(0,0,0,0.24), 0 0 24px rgba(${accent.rgb}, 0.18)`,
+  };
+}
 
 function clampNumber(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -228,6 +238,7 @@ export default function RightRail({
   const compactMotionRef = useRef(null);
   const expandedMotionRef = useRef(null);
   const [expandedInlineHeight, setExpandedInlineHeight] = useState(INLINE_EXPANDED_DEFAULT_HEIGHT);
+  const [inspectorAccent, setInspectorAccent] = useState(null);
   const hoveredObjectId = useHoveredObjectId();
   const decision = state?.decision || null;
   const stackObjects = getVisibleStackObjects(state);
@@ -254,6 +265,16 @@ export default function RightRail({
     : pinnedInspectorObjectId;
   const relevantHoveredObjectId = hoveredObjectId;
   const fallbackDecisionObjectId = suppressFallback ? null : (resolvingCastObjectId ?? topStackObjectId);
+  const viewedCardIds = useMemo(
+    () => state?.viewed_cards?.card_ids || [],
+    [state?.viewed_cards?.card_ids]
+  );
+  const preferredViewedObjectId = useMemo(() => {
+    if (viewedCardIds.length === 0) return null;
+    if (isViewedCardObject(state, relevantHoveredObjectId)) return relevantHoveredObjectId;
+    if (isViewedCardObject(state, relevantPinnedObjectId)) return relevantPinnedObjectId;
+    return String(viewedCardIds[0]);
+  }, [relevantHoveredObjectId, relevantPinnedObjectId, state, viewedCardIds]);
 
   // During focused decision steps, keep the resolving stack object as a fallback.
   // Live hover should always win, even if the current decision does not reference it.
@@ -261,9 +282,12 @@ export default function RightRail({
     ? (relevantHoveredObjectId ?? relevantPinnedObjectId ?? fallbackDecisionObjectId)
     : null;
 
-  const selectedObjectId = focusedDecision
-    ? decisionLockedObjectId
-    : (relevantHoveredObjectId ?? relevantPinnedObjectId ?? fallbackDecisionObjectId);
+  const selectedObjectId = preferredViewedObjectId
+    ?? (
+      focusedDecision
+        ? decisionLockedObjectId
+        : (relevantHoveredObjectId ?? relevantPinnedObjectId ?? fallbackDecisionObjectId)
+    );
   const validSelectedObjectId = objectExistsInState(state, selectedObjectId)
     ? selectedObjectId
     : null;
@@ -286,10 +310,6 @@ export default function RightRail({
   const preferredPlacement = useMemo(
     () => preferredInlinePlacement(selectedObjectLocation),
     [selectedObjectLocation]
-  );
-  const viewedCardIds = useMemo(
-    () => state?.viewed_cards?.card_ids || [],
-    [state?.viewed_cards?.card_ids]
   );
   const viewedCardIndex = validSelectedObjectId == null
     ? -1
@@ -329,20 +349,10 @@ export default function RightRail({
   const shouldRenderExpandedInlineInspector =
     inline
     && shouldShowRail
-    && (inlineExpanded || hoveredObjectId != null);
+    && (inlineExpanded || hoveredObjectId != null || pinnedInspectorObjectId != null);
   const useExpandedInlineInspector =
     shouldRenderExpandedInlineInspector
-    && (
-      forceInlineExpanded
-      || hoveredObjectId != null
-      || (
-        hoveredObjectId != null
-        && pinnedInspectorObjectId != null
-        && validSelectedObjectId != null
-        && String(hoveredObjectId) === String(pinnedInspectorObjectId)
-        && String(validSelectedObjectId) === String(pinnedInspectorObjectId)
-      )
-    );
+    && (forceInlineExpanded || hoveredObjectId != null || pinnedInspectorObjectId != null);
   const inspectorSuppressStableId = focusedDecision ? null : resolvingCastStableId;
   const inlineWidth = useMemo(() => {
     const preferred = Number.isFinite(preferredInlineWidth)
@@ -580,6 +590,7 @@ export default function RightRail({
               : "rounded",
             shouldShowRail ? "pointer-events-auto" : "pointer-events-none"
           )}
+          style={inspectorBorderStyle(inspectorAccent)}
         >
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
             {showViewedCardsHeader && (
@@ -598,6 +609,7 @@ export default function RightRail({
                 suppressStableId={inspectorSuppressStableId}
                 compact={inline}
                 onPreferredWidthChange={inline ? setPreferredInlineWidth : null}
+                onInspectorAccentChange={useExpandedInlineInspector ? null : setInspectorAccent}
               />
             </div>
           </div>
@@ -613,6 +625,7 @@ export default function RightRail({
               width: "100%",
               height: `${expandedInlineHeight}px`,
               ...expandedInlineShellOffset,
+              ...inspectorBorderStyle(inspectorAccent),
             }}
           >
             <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -636,6 +649,7 @@ export default function RightRail({
                   onPreferredInspectorWidthChange={
                     fullArtInlineExpanded ? null : setPreferredExpandedInlineWidth
                   }
+                  onInspectorAccentChange={useExpandedInlineInspector ? setInspectorAccent : null}
                 />
               </div>
             </div>

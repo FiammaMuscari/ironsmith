@@ -5,6 +5,14 @@ pub fn compile_effect_list(effects: &[Effect]) -> String {
     describe_effect_list(effects)
 }
 
+fn choose_primary_zone(choose: &crate::effects::ChooseObjectsEffect) -> Option<Zone> {
+    choose.filter.zone.or(choose.zone)
+}
+
+fn choose_search_zones(choose: &crate::effects::ChooseObjectsEffect) -> Option<Vec<Zone>> {
+    choose.search_zones().ok()
+}
+
 pub(super) fn describe_effect_list(effects: &[Effect]) -> String {
     let has_non_target_only = effects.iter().any(|effect| {
         effect
@@ -303,8 +311,7 @@ pub(super) fn describe_effect_list(effects: &[Effect]) -> String {
                 filtered[idx].downcast_ref::<crate::effects::LookAtTopCardsEffect>()
             && let Some(reveal_tagged) =
                 filtered[idx + 1].downcast_ref::<crate::effects::RevealTaggedEffect>()
-            && let Some(distribute) =
-                filtered[idx + 2].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+            && let Some((_, distribute)) = for_each_tagged_for_compaction(filtered[idx + 2])
             && let Some(compact) =
                 describe_look_at_top_then_reveal_put_matching_onto_battlefield_rest_graveyard(
                     look_at_top,
@@ -321,8 +328,7 @@ pub(super) fn describe_effect_list(effects: &[Effect]) -> String {
                 filtered[idx].downcast_ref::<crate::effects::LookAtTopCardsEffect>()
             && let Some(reveal_tagged) =
                 filtered[idx + 1].downcast_ref::<crate::effects::RevealTaggedEffect>()
-            && let Some(distribute) =
-                filtered[idx + 2].downcast_ref::<crate::effects::ForEachTaggedEffect>()
+            && let Some((_, distribute)) = for_each_tagged_for_compaction(filtered[idx + 2])
             && let Some(compact) =
                 describe_look_at_top_then_reveal_put_matching_into_hand_rest_graveyard(
                     look_at_top,
@@ -1637,7 +1643,7 @@ pub(super) fn describe_for_players_choose_types_then_sacrifice_rest(
 
     let mut chosen_types = Vec::new();
     for choose in chooses {
-        if choose.zone != Zone::Battlefield
+        if choose_primary_zone(choose) != Some(Zone::Battlefield)
             || choose.is_search
             || !choose.count.is_single()
             || choose.chooser != PlayerFilter::IteratedPlayer
@@ -1682,7 +1688,7 @@ pub(super) fn describe_for_players_choose_then_sacrifice(
     }
     let choose = for_players.effects[0].downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
     let sacrifice = for_players.effects[1].downcast_ref::<crate::effects::SacrificeEffect>()?;
-    if choose.zone != Zone::Battlefield
+    if choose_primary_zone(choose) != Some(Zone::Battlefield)
         || choose.is_search
         || !choose.count.is_single()
         || choose.chooser != PlayerFilter::IteratedPlayer
@@ -1712,7 +1718,7 @@ pub(super) fn describe_choose_then_sacrifice(
         Value::Fixed(value) if value > 0 => value as usize,
         _ => return None,
     };
-    if choose.zone != Zone::Battlefield
+    if choose_primary_zone(choose) != Some(Zone::Battlefield)
         || choose.is_search
         || choose_exact != sacrifice_count
         || sacrifice.player != choose.chooser
@@ -1751,7 +1757,10 @@ pub(super) fn describe_choose_then_destroy(
     choose: &crate::effects::ChooseObjectsEffect,
     destroy: &crate::effects::DestroyEffect,
 ) -> Option<String> {
-    if choose.zone != Zone::Battlefield || choose.is_search || !choose.count.is_single() {
+    if choose_primary_zone(choose) != Some(Zone::Battlefield)
+        || choose.is_search
+        || !choose.count.is_single()
+    {
         return None;
     }
     let ChooseSpec::Tagged(tag) = &destroy.spec else {
@@ -1829,7 +1838,7 @@ pub(super) fn describe_choose_then_cant_block(
     if cant.duration != crate::effect::Until::EndOfTurn {
         return None;
     }
-    if choose.zone != Zone::Battlefield || choose.is_search {
+    if choose_primary_zone(choose) != Some(Zone::Battlefield) || choose.is_search {
         return None;
     }
     if !filter.tagged_constraints.iter().any(|constraint| {
@@ -1912,7 +1921,7 @@ pub(super) fn describe_choose_then_tap_cost(
     choose: &crate::effects::ChooseObjectsEffect,
     tap: &crate::effects::TapEffect,
 ) -> Option<String> {
-    if choose.zone != Zone::Battlefield || choose.is_search {
+    if choose_primary_zone(choose) != Some(Zone::Battlefield) || choose.is_search {
         return None;
     }
     if !tap_uses_chosen_tag(&tap.spec, choose.tag.as_str()) {
@@ -2265,10 +2274,9 @@ fn is_graveyard_same_stable_tagged_spec(spec: &ChooseSpec) -> bool {
         return false;
     };
     filter.zone == Some(Zone::Graveyard)
-        && filter
-            .tagged_constraints
-            .iter()
-            .any(|constraint| constraint.relation == crate::filter::TaggedOpbjectRelation::SameStableId)
+        && filter.tagged_constraints.iter().any(|constraint| {
+            constraint.relation == crate::filter::TaggedOpbjectRelation::SameStableId
+        })
 }
 
 pub(super) fn value_is_iterated_object_count(value: &Value) -> bool {
@@ -2494,7 +2502,7 @@ pub(super) fn describe_choose_then_exile(
         return None;
     }
 
-    let zone_text = match choose.zone {
+    let zone_text = match choose_primary_zone(choose)? {
         Zone::Hand => "hand",
         Zone::Graveyard => "graveyard",
         Zone::Library => "library",
@@ -2503,7 +2511,7 @@ pub(super) fn describe_choose_then_exile(
     let chooser = describe_player_filter(&choose.chooser);
     let verb = player_verb(&chooser, "exile", "exiles");
     let chosen = describe_choose_selection(choose);
-    let origin = if choose.zone == Zone::Library && choose.top_only {
+    let origin = if choose_primary_zone(choose) == Some(Zone::Library) && choose.top_only {
         format!(
             "of {} {zone_text}",
             describe_possessive_player_filter(&choose.chooser)
@@ -2558,7 +2566,7 @@ pub(super) fn describe_choose_then_move_to_battlefield(
         return None;
     }
 
-    let origin = match choose.zone {
+    let origin = match choose_primary_zone(choose)? {
         Zone::Hand => describe_choose_zone_origin(choose, "hand"),
         Zone::Graveyard => describe_choose_zone_origin(choose, "graveyard"),
         Zone::Library => {
@@ -2613,7 +2621,7 @@ pub(super) fn describe_choose_then_move_to_library(
         return None;
     }
 
-    let origin = match choose.zone {
+    let origin = match choose_primary_zone(choose)? {
         Zone::Hand => describe_choose_zone_origin(choose, "hand"),
         Zone::Graveyard => describe_choose_zone_origin(choose, "graveyard"),
         Zone::Library => {
@@ -2706,7 +2714,10 @@ pub(super) fn describe_look_at_top_then_choose_exile_text(
     choose: &crate::effects::ChooseObjectsEffect,
     face_down: bool,
 ) -> Option<String> {
-    if choose.zone != Zone::Library || choose.is_search || !choose.count.is_single() {
+    if choose_primary_zone(choose) != Some(Zone::Library)
+        || choose.is_search
+        || !choose.count.is_single()
+    {
         return None;
     }
     let references_looked = choose.filter.tagged_constraints.iter().any(|constraint| {
@@ -2867,7 +2878,10 @@ pub(super) fn describe_choose_filter_from_looked_cards(
     look_at_top: &crate::effects::LookAtTopCardsEffect,
     choose: &crate::effects::ChooseObjectsEffect,
 ) -> Option<String> {
-    if choose.zone != Zone::Library || choose.is_search || choose.count.max != Some(1) {
+    if choose_primary_zone(choose) != Some(Zone::Library)
+        || choose.is_search
+        || choose.count.max != Some(1)
+    {
         return None;
     }
     let references_looked = choose.filter.tagged_constraints.iter().any(|constraint| {
@@ -3073,6 +3087,28 @@ pub(super) fn for_each_moves_matching_to_zone_else_graveyard<'a>(
     for_each: &'a crate::effects::ForEachTaggedEffect,
     looked_tag: &str,
 ) -> Option<(&'a crate::filter::ObjectFilter, Zone)> {
+    fn move_to_zone_for_compaction(effect: &Effect) -> Option<&crate::effects::MoveToZoneEffect> {
+        if let Some(move_to_zone) = effect.downcast_ref::<crate::effects::MoveToZoneEffect>() {
+            return Some(move_to_zone);
+        }
+        if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
+            return tagged
+                .effect
+                .downcast_ref::<crate::effects::MoveToZoneEffect>();
+        }
+        if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
+            return with_id
+                .effect
+                .downcast_ref::<crate::effects::MoveToZoneEffect>();
+        }
+        None
+    }
+
+    fn uses_iterated_or_looked_tag(spec: &ChooseSpec, looked_tag: &str) -> bool {
+        matches!(spec, ChooseSpec::Iterated)
+            || matches!(spec, ChooseSpec::Tagged(tag) if tag.as_str() == looked_tag)
+    }
+
     if for_each.tag.as_str() != looked_tag || for_each.effects.len() != 1 {
         return None;
     }
@@ -3080,21 +3116,27 @@ pub(super) fn for_each_moves_matching_to_zone_else_graveyard<'a>(
     if conditional.if_true.len() != 1 || conditional.if_false.len() != 1 {
         return None;
     }
-    let move_to_hand = conditional.if_true[0].downcast_ref::<crate::effects::MoveToZoneEffect>()?;
-    let move_to_graveyard =
-        conditional.if_false[0].downcast_ref::<crate::effects::MoveToZoneEffect>()?;
+    let move_to_hand = move_to_zone_for_compaction(&conditional.if_true[0])?;
+    let move_to_graveyard = move_to_zone_for_compaction(&conditional.if_false[0])?;
     if move_to_graveyard.zone != Zone::Graveyard
-        || !matches!(move_to_hand.target, ChooseSpec::Iterated)
-        || !matches!(move_to_graveyard.target, ChooseSpec::Iterated)
+        || !uses_iterated_or_looked_tag(&move_to_hand.target, looked_tag)
+        || !uses_iterated_or_looked_tag(&move_to_graveyard.target, looked_tag)
     {
         return None;
     }
-    let crate::effect::Condition::TaggedObjectMatches(tag, filter) = &conditional.condition else {
-        return None;
+    let filter = match &conditional.condition {
+        crate::effect::Condition::TaggedObjectMatches(tag, filter)
+            if tag.as_str() == "__it__" || tag.as_str() == looked_tag =>
+        {
+            filter
+        }
+        crate::effect::Condition::PlayerTaggedObjectMatches { tag, filter, .. }
+            if tag.as_str() == "__it__" || tag.as_str() == looked_tag =>
+        {
+            filter
+        }
+        _ => return None,
     };
-    if tag.as_str() != "__it__" {
-        return None;
-    }
     Some((filter, move_to_hand.zone))
 }
 
@@ -3119,8 +3161,15 @@ pub(super) fn describe_look_at_top_then_reveal_put_matching_into_hand_rest_grave
     }
     let filter =
         for_each_moves_matching_to_hand_else_graveyard(distribute, look_at_top.tag.as_str())?;
-    let owner = describe_possessive_player_filter(&look_at_top.player);
-    let (count_text, noun, _) = describe_look_count_and_noun(&look_at_top.count);
+    let owner = if look_at_top.player == PlayerFilter::IteratedPlayer {
+        "their".to_string()
+    } else {
+        describe_possessive_player_filter(&look_at_top.player)
+    };
+    let (mut count_text, noun, _) = describe_look_count_and_noun(&look_at_top.count);
+    if look_at_top.player == PlayerFilter::IteratedPlayer {
+        count_text = count_text.replace("that player controls", "they control");
+    }
     let matching =
         pluralize_noun_phrase(&describe_search_selection_with_cards(&filter.description()));
 
@@ -3142,8 +3191,15 @@ pub(super) fn describe_look_at_top_then_reveal_put_matching_onto_battlefield_res
     if zone != Zone::Battlefield {
         return None;
     }
-    let owner = describe_possessive_player_filter(&look_at_top.player);
-    let (count_text, noun, _) = describe_look_count_and_noun(&look_at_top.count);
+    let owner = if look_at_top.player == PlayerFilter::IteratedPlayer {
+        "their".to_string()
+    } else {
+        describe_possessive_player_filter(&look_at_top.player)
+    };
+    let (mut count_text, noun, _) = describe_look_count_and_noun(&look_at_top.count);
+    if look_at_top.player == PlayerFilter::IteratedPlayer {
+        count_text = count_text.replace("that player controls", "they control");
+    }
     let matching =
         pluralize_noun_phrase(&describe_search_selection_with_cards(&filter.description()));
 
@@ -3277,7 +3333,7 @@ pub(super) fn describe_may_search_library_and_or_nonlibrary(
     };
 
     let choose = choose_effect.downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
-    if choose.zone == Zone::Library
+    if choose_primary_zone(choose) == Some(Zone::Library)
         || choose.is_search
         || choose.count.min != 0
         || choose.count.max != Some(1)
@@ -3328,7 +3384,7 @@ pub(super) fn describe_may_search_library_and_or_nonlibrary(
         return None;
     }
 
-    let nonlibrary_zone = zone_name(choose.zone)?;
+    let nonlibrary_zone = zone_name(choose_primary_zone(choose)?)?;
     let actor = may.decider.as_ref().unwrap_or(&search.player);
     let actor_text = describe_player_filter(actor);
     let actor_sentence = capitalize_first(&actor_text);
@@ -3360,53 +3416,77 @@ pub(super) fn describe_may_search_library_and_or_nonlibrary(
 }
 
 pub(super) fn describe_may_enlist(may: &crate::effects::MayEffect) -> Option<String> {
-    if may.decider.is_some() || may.effects.len() != 4 {
+    fn unwrap_effect(effect: &Effect) -> &Effect {
+        if let Some(tagged) = effect.downcast_ref::<crate::effects::TaggedEffect>() {
+            tagged.effect.as_ref()
+        } else if let Some(with_id) = effect.downcast_ref::<crate::effects::WithIdEffect>() {
+            with_id.effect.as_ref()
+        } else {
+            effect
+        }
+    }
+
+    if may.effects.len() != 4 {
         return None;
     }
 
-    let tag_triggering = may.effects[0]
-        .downcast_ref::<crate::effects::TagTriggeringObjectEffect>()?;
-    if tag_triggering.tag.as_str() != "enlist_attacker" {
-        return None;
-    }
-
-    let choose = may.effects[1].downcast_ref::<crate::effects::ChooseObjectsEffect>()?;
-    if choose.chooser != PlayerFilter::You || choose.tag.as_str() != "enlisted_creature" {
-        return None;
-    }
-
-    let tap = may.effects[2].downcast_ref::<crate::effects::TapEffect>()?;
-    if !matches!(&tap.spec, ChooseSpec::Tagged(tag) if tag.as_str() == "enlisted_creature") {
-        return None;
-    }
-
-    let modify = may.effects[3]
-        .downcast_ref::<crate::effects::ModifyPowerToughnessForEachEffect>()?;
-    if !matches!(&modify.target, ChooseSpec::Tagged(tag) if tag.as_str() == "enlist_attacker")
-        || modify.power_per != 1
-        || modify.toughness_per != 0
-        || modify.duration != crate::effect::Until::EndOfTurn
-        || !matches!(
+    if let Some(tag_triggering) =
+        unwrap_effect(&may.effects[0]).downcast_ref::<crate::effects::TagTriggeringObjectEffect>()
+        && tag_triggering.tag.as_str() == "enlist_attacker"
+        && let Some(choose) =
+            unwrap_effect(&may.effects[1]).downcast_ref::<crate::effects::ChooseObjectsEffect>()
+        && choose.chooser == PlayerFilter::You
+        && choose.tag.as_str() == "enlisted_creature"
+        && let Some(tap) =
+            unwrap_effect(&may.effects[2]).downcast_ref::<crate::effects::TapEffect>()
+        && matches!(&tap.spec, ChooseSpec::Tagged(tag) if tag.as_str() == "enlisted_creature")
+        && let Some(modify) = unwrap_effect(&may.effects[3])
+            .downcast_ref::<crate::effects::ModifyPowerToughnessForEachEffect>()
+        && matches!(&modify.target, ChooseSpec::Tagged(tag) if tag.as_str() == "enlist_attacker")
+        && modify.power_per == 1
+        && modify.toughness_per == 0
+        && modify.duration == crate::effect::Until::EndOfTurn
+        && matches!(
             &modify.count,
             Value::PowerOf(spec)
                 if matches!(spec.as_ref(), ChooseSpec::Tagged(tag) if tag.as_str() == "enlisted_creature")
         )
     {
-        return None;
+        let enlisted_desc =
+            strip_leading_article(&choose.filter.description()).replace(" in the battlefield", "");
+        let enlisted = if enlisted_desc.starts_with("another ") {
+            enlisted_desc
+        } else {
+            with_indefinite_article(&enlisted_desc)
+        };
+        return Some(format!(
+            "you may tap {enlisted}. When you do, this creature gets +X/+0 until end of turn, where X is that creature's power"
+        ));
     }
 
-    let enlisted_desc = strip_leading_article(&choose.filter.description())
-        .replace(" in the battlefield", "");
-    let enlisted = if enlisted_desc.starts_with("another ") {
-        enlisted_desc
-    } else {
-        with_indefinite_article(&enlisted_desc)
-    };
-    Some(
-        format!(
+    let tag_text = describe_effect(unwrap_effect(&may.effects[0])).to_ascii_lowercase();
+    let choose_text = describe_effect(unwrap_effect(&may.effects[1])).to_ascii_lowercase();
+    let tap_text = describe_effect(unwrap_effect(&may.effects[2])).to_ascii_lowercase();
+    let pump_text = describe_effect(unwrap_effect(&may.effects[3])).to_ascii_lowercase();
+    if tag_text == "tag the triggering object as 'enlist_attacker'"
+        && choose_text.starts_with("you choose exactly 1 ")
+        && choose_text.contains(" and tags it as 'enlisted_creature'")
+        && tap_text == "tap target tagged object 'enlisted_creature'"
+        && pump_text
+            == "the tagged object 'enlist_attacker' gets +1/+0 until end of turn for each the tagged object 'enlisted_creature''s power"
+    {
+        let enlisted = choose_text
+            .trim_start_matches("you choose exactly 1 ")
+            .split(" and tags it as 'enlisted_creature'")
+            .next()
+            .unwrap_or("another nonattacking creature you control")
+            .replace(" in the battlefield", "");
+        return Some(format!(
             "you may tap {enlisted}. When you do, this creature gets +X/+0 until end of turn, where X is that creature's power"
-        ),
-    )
+        ));
+    }
+
+    None
 }
 
 pub(super) fn describe_may_search_choose_for_each_with_shuffle(
@@ -3445,7 +3525,9 @@ pub(super) fn describe_may_search_choose_for_each_with_shuffle(
     }
 
     let compact = describe_search_choose_for_each(&choose, for_each, Some(shuffle), false)?;
-    let compact = if choose.search_zones().len() > 1 && compact.ends_with(", then shuffle") {
+    let compact = if choose_search_zones(&choose).is_some_and(|zones| zones.len() > 1)
+        && compact.ends_with(", then shuffle")
+    {
         compact.trim_end_matches(", then shuffle").to_string()
             + ". If you search your library this way, shuffle"
     } else {
@@ -3754,10 +3836,7 @@ enum SearchDestination {
 pub(super) fn describe_search_origin_zones(
     choose: &crate::effects::ChooseObjectsEffect,
 ) -> Option<String> {
-    let zones = choose.search_zones();
-    if zones.is_empty() {
-        return None;
-    }
+    let zones = choose_search_zones(choose)?;
 
     let owner = choose.filter.owner.as_ref().unwrap_or(&choose.chooser);
     let owner_text = describe_possessive_player_filter(owner);
@@ -3815,7 +3894,8 @@ pub(super) fn describe_search_choose_for_each(
     }
 
     let search_like = choose.is_search
-        || (choose.zone == Zone::Library && choose.tag.as_str().starts_with("searched_"));
+        || (choose_primary_zone(choose) == Some(Zone::Library)
+            && choose.tag.as_str().starts_with("searched_"));
     if !search_like {
         return None;
     }
@@ -3824,7 +3904,8 @@ pub(super) fn describe_search_choose_for_each(
     }
     let search_owner_filter = choose.filter.owner.as_ref().unwrap_or(&choose.chooser);
     let search_origin = describe_search_origin_zones(choose)?;
-    let searched_library = choose.search_zones().contains(&Zone::Library);
+    let searched_library =
+        choose_search_zones(choose).is_some_and(|zones| zones.contains(&Zone::Library));
     let shuffle_clause = if describe_player_filter(search_owner_filter) == "you" {
         "shuffle".to_string()
     } else {
@@ -3915,7 +3996,33 @@ pub(super) fn describe_search_choose_for_each(
         }
         format!("{count_text} {filter_text}")
     };
-    let selection_text = describe_search_selection_with_cards(&selection_text);
+    let selection_text = if is_same_name_search(&choose.filter)
+        && (!choose.filter.card_types.is_empty()
+            || !choose.filter.all_card_types.is_empty()
+            || !choose.filter.subtypes.is_empty()
+            || choose.filter.name.is_some())
+    {
+        let mut typed_filter = choose.filter.clone();
+        typed_filter.tagged_constraints.retain(|constraint| {
+            constraint.relation != crate::filter::TaggedOpbjectRelation::SameNameAsTagged
+        });
+        let typed_text = if typed_filter == ObjectFilter::default() {
+            "card".to_string()
+        } else {
+            typed_filter.description()
+        };
+        let type_cards = describe_search_selection_with_cards(&typed_text);
+        let count_prefix = if choose.count.max == Some(1) {
+            "a".to_string()
+        } else if choose.count.max.is_some() {
+            describe_choice_count(&choose.count)
+        } else {
+            "all".to_string()
+        };
+        format!("{count_prefix} {type_cards} with that name")
+    } else {
+        describe_search_selection_with_cards(&selection_text)
+    };
     let pronoun = if choose.count.max == Some(1) {
         "it"
     } else {
@@ -4080,7 +4187,11 @@ pub(super) fn describe_reveal_until_sequence(
     let for_each = sequence.effects[1].downcast_ref::<crate::effects::ForEachTaggedEffect>()?;
     let shuffle = sequence.effects[2].downcast_ref::<crate::effects::ShuffleLibraryEffect>()?;
 
-    if choose.zone != Zone::Library || !choose.top_only || !choose.reveal || choose.is_search {
+    if choose_primary_zone(choose) != Some(Zone::Library)
+        || !choose.top_only
+        || !choose.reveal
+        || choose.is_search
+    {
         return None;
     }
     if for_each.tag != choose.tag {
@@ -4489,7 +4600,8 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
         let chooser = describe_player_filter(&choose.chooser);
         let choose_verb = player_verb(&chooser, "choose", "chooses");
         let search_like = choose.is_search
-            || (choose.zone == Zone::Library && choose.tag.as_str().starts_with("searched_"));
+            || (choose_primary_zone(choose) == Some(Zone::Library)
+                && choose.tag.as_str().starts_with("searched_"));
         let filter_text = choose.filter.description();
         let choice_text = if choose.top_only {
             if let Some(exact) = choose_exact_count(choose) {
@@ -4510,17 +4622,18 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
         } else {
             format!("{} {}", describe_choice_count(&choose.count), filter_text)
         };
-        let (zone_phrase, zone_keyword) = match choose.zone {
-            Zone::Battlefield => ("the battlefield", "battlefield"),
-            Zone::Hand => ("a hand", "hand"),
-            Zone::Graveyard => ("a graveyard", "graveyard"),
-            Zone::Library => ("a library", "library"),
-            Zone::Stack => ("the stack", "stack"),
-            Zone::Exile => ("exile", "exile"),
-            Zone::Command => ("the command zone", "command"),
+        let (zone_phrase, zone_keyword) = match choose_primary_zone(choose) {
+            Some(Zone::Battlefield) => ("the battlefield", "battlefield"),
+            Some(Zone::Hand) => ("a hand", "hand"),
+            Some(Zone::Graveyard) => ("a graveyard", "graveyard"),
+            Some(Zone::Library) => ("a library", "library"),
+            Some(Zone::Stack) => ("the stack", "stack"),
+            Some(Zone::Exile) => ("exile", "exile"),
+            Some(Zone::Command) => ("the command zone", "command"),
+            None => ("an unspecified zone", ""),
         };
         let filter_lower = filter_text.to_ascii_lowercase();
-        let includes_zone_already = filter_lower.contains(zone_keyword);
+        let includes_zone_already = zone_keyword.is_empty() || filter_lower.contains(zone_keyword);
         let location_suffix = if includes_zone_already {
             String::new()
         } else {
@@ -6743,9 +6856,7 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             };
             let target = describe_choose_spec(&become_basic.target);
             if become_basic.until == Until::EndOfTurn {
-                return format!(
-                    "{target} becomes {article} {subtype} until end of turn"
-                );
+                return format!("{target} becomes {article} {subtype} until end of turn");
             }
             return format!(
                 "{target} becomes {article} {subtype} {}",

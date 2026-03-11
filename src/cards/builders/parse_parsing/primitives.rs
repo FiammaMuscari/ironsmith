@@ -444,6 +444,54 @@ fn parse_value_expr_term_words(words: &[&str]) -> Option<(Value, usize)> {
         return Some((Value::Fixed(value), 1));
     }
 
+    if matches!(
+        words.get(..2),
+        Some(["its", "power"]) | Some(["this", "power"]) | Some(["thiss", "power"])
+    ) {
+        return Some((Value::SourcePower, 2));
+    }
+    if matches!(
+        words.get(..3),
+        Some(["this", "creature", "power"])
+            | Some(["thiss", "creature", "power"])
+            | Some(["this", "creatures", "power"])
+            | Some(["thiss", "creatures", "power"])
+    ) {
+        return Some((Value::SourcePower, 3));
+    }
+    if matches!(
+        words.get(..2),
+        Some(["its", "toughness"]) | Some(["this", "toughness"]) | Some(["thiss", "toughness"])
+    ) {
+        return Some((Value::SourceToughness, 2));
+    }
+    if matches!(
+        words.get(..3),
+        Some(["this", "creature", "toughness"])
+            | Some(["thiss", "creature", "toughness"])
+            | Some(["this", "creatures", "toughness"])
+            | Some(["thiss", "creatures", "toughness"])
+    ) {
+        return Some((Value::SourceToughness, 3));
+    }
+    if matches!(
+        words.get(..3),
+        Some(["its", "mana", "value"])
+            | Some(["this", "mana", "value"])
+            | Some(["thiss", "mana", "value"])
+    ) {
+        return Some((Value::ManaValueOf(Box::new(ChooseSpec::Source)), 3));
+    }
+    if matches!(
+        words.get(..4),
+        Some(["this", "creature", "mana", "value"])
+            | Some(["thiss", "creature", "mana", "value"])
+            | Some(["this", "creatures", "mana", "value"])
+            | Some(["thiss", "creatures", "mana", "value"])
+    ) {
+        return Some((Value::ManaValueOf(Box::new(ChooseSpec::Source)), 4));
+    }
+
     let mut idx = 0usize;
     if words[idx] == "the" {
         idx += 1;

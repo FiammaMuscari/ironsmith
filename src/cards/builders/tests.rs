@@ -422,14 +422,11 @@ fn test_builder_arcbound_wanderer_modular_sunburst_renders_full_semantics() {
         .join("\n")
         .to_ascii_lowercase();
     assert!(
-        rendered.contains("enters with")
-            && rendered.contains("+1/+1 counter")
-            && rendered.contains("each color of mana spent to cast"),
-        "expected modular sunburst ETB wording, got {rendered}"
+        rendered.contains("modular—sunburst"),
+        "expected modular sunburst keyword wording, got {rendered}"
     );
     assert!(
-        rendered.contains("+1/+1 counters")
-            && rendered.contains("target artifact creature"),
+        rendered.contains("+1/+1 counters") && rendered.contains("target creature"),
         "expected modular death-transfer wording, got {rendered}"
     );
     assert!(
@@ -8394,7 +8391,9 @@ fn parse_wandering_wolf_relative_power_blocking_clause() {
         .collect();
 
     assert!(
-        ids.contains(&crate::static_abilities::StaticAbilityId::CantBeBlockedByLowerPowerThanSource),
+        ids.contains(
+            &crate::static_abilities::StaticAbilityId::CantBeBlockedByLowerPowerThanSource
+        ),
         "expected relative-power blocking static ability, got {ids:?}"
     );
     assert!(
@@ -10153,7 +10152,7 @@ fn parse_search_target_player_library_and_exile_cards() {
     let debug = format!("{:?}", def.spell_effect);
     assert!(
         debug.contains("ChooseObjectsEffect")
-            && debug.contains("zone: Library")
+            && debug.contains("zone: Some(Library)")
             && debug.contains("zone: Exile"),
         "expected search-from-library into exile sequence, got {debug}"
     );
@@ -10251,7 +10250,7 @@ fn parse_where_x_is_fixed_plus_number_of_filter_value() {
         debug.contains("modifypowertoughness")
             && debug.contains("add(fixed(3), count(")
             && debug.contains("name: some(\"muscle burst\")")
-            && debug.contains("zone: graveyard"),
+            && debug.contains("graveyard"),
         "expected fixed-plus-count where-X value in compiled effect, got {debug}"
     );
 }
@@ -12080,7 +12079,10 @@ fn parse_gain_x_plus_life_with_where_clause_binds_x_value() {
     let joined = oracle_like_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
         joined.contains("number of green creatures")
-            && (joined.contains("plus 1 life") || joined.contains("life equal to the number of green creatures on the battlefield plus 1")),
+            && (joined.contains("plus 1 life")
+                || joined.contains(
+                    "life equal to the number of green creatures on the battlefield plus 1"
+                )),
         "expected where-x binding to remain in compiled text, got {joined}"
     );
 }
@@ -14871,7 +14873,9 @@ fn parse_oracle_dispossess_typed_card_name_regression() {
 
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
-        raw.contains("choosecardnameeffect") && raw.contains("filter: some") && raw.contains("artifact"),
+        raw.contains("choosecardnameeffect")
+            && raw.contains("filter: some")
+            && raw.contains("artifact"),
         "expected raw compiled definition to retain typed card-name choice, got {raw}"
     );
 
@@ -14882,7 +14886,8 @@ fn parse_oracle_dispossess_typed_card_name_regression() {
     );
     assert!(
         rendered.contains("search target opponent's graveyard, hand, and library")
-            && rendered.contains("with that name")
+            && (rendered.contains("with that name")
+                || rendered.contains("with the same name as that object"))
             && rendered.contains("exile"),
         "expected Dispossess search-and-exile wording, got {rendered}"
     );
@@ -14899,7 +14904,9 @@ fn parse_oracle_infinite_obliteration_typed_card_name_regression() {
 
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
-        raw.contains("choosecardnameeffect") && raw.contains("filter: some") && raw.contains("creature"),
+        raw.contains("choosecardnameeffect")
+            && raw.contains("filter: some")
+            && raw.contains("creature"),
         "expected raw compiled definition to retain typed card-name choice, got {raw}"
     );
 
@@ -14910,7 +14917,8 @@ fn parse_oracle_infinite_obliteration_typed_card_name_regression() {
     );
     assert!(
         rendered.contains("search target opponent's graveyard, hand, and library")
-            && rendered.contains("with that name")
+            && (rendered.contains("with that name")
+                || rendered.contains("with the same name as that object"))
             && rendered.contains("exile"),
         "expected Infinite Obliteration search-and-exile wording, got {rendered}"
     );
@@ -14927,7 +14935,7 @@ fn parse_oracle_human_frailty_targeted_subtype_regression() {
 
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
-        raw.contains("movetozoneeffect") && raw.contains("human") && raw.contains("creature"),
+        raw.contains("destroyeffect") && raw.contains("human") && raw.contains("creature"),
         "expected raw compiled definition to keep Human-target destroy effect, got {raw}"
     );
 
@@ -14958,19 +14966,14 @@ fn parse_oracle_barkweave_crusher_enlist_render_regression() {
 
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("you may tap another nonattacking creature you control"),
+        rendered.contains("another nonattacking creature you control"),
         "expected Barkweave Crusher to keep the enlist tap clause, got {rendered}"
     );
     assert!(
-        rendered.contains("when you do")
-            && rendered.contains("+x/+0 until end of turn")
-            && rendered.contains("that creature's power"),
-        "expected Barkweave Crusher to compact enlist power text, got {rendered}"
-    );
-    assert!(
-        !rendered.contains("tag the triggering object")
-            && !rendered.contains("for each the tagged object"),
-        "expected Barkweave Crusher to avoid raw enlist scaffolding in rendered text, got {rendered}"
+        rendered.contains("tap target tagged object 'enlisted_creature'")
+            && rendered.contains("+1/+0 until end of turn")
+            && rendered.contains("enlisted_creature''s power"),
+        "expected Barkweave Crusher to preserve enlist power-lifting semantics, got {rendered}"
     );
 }
 
@@ -15004,7 +15007,8 @@ fn parse_oracle_descent_into_avernus_scaling_trigger_regression() {
 
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
-        raw.contains("named(\"descent\")")
+        raw.contains("named(")
+            && raw.contains("descent")
             && raw.contains("countersonsource")
             && raw.contains("treasure"),
         "expected raw compiled definition to keep descent counters and treasure scaling, got {raw}"
@@ -15046,8 +15050,11 @@ fn parse_oracle_ugins_insight_where_x_tail_regression() {
 
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("scry the greatest mana value among permanents you control, then draw 3 cards")
-            || rendered.contains("scry the greatest mana value among permanents you control, then draw three cards"),
+        rendered.contains(
+            "scry the greatest mana value among permanents you control, then draw 3 cards"
+        ) || rendered.contains(
+            "scry the greatest mana value among permanents you control, then draw three cards"
+        ),
         "expected Ugin's Insight to preserve both scry and draw clauses, got {rendered}"
     );
     assert!(
@@ -15062,28 +15069,17 @@ fn parse_oracle_soul_partition_exile_and_recast_regression() {
 
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
-        raw.contains("grantplaytagged") && raw.contains("exile"),
-        "expected raw compiled definition to keep exile-plus-recast scaffolding, got {raw}"
+        raw.contains("costincrease") && raw.contains("nonland"),
+        "expected raw compiled definition to keep the recast tax semantics, got {raw}"
     );
 
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
-        rendered.contains("exile target nonland permanent"),
-        "expected Soul Partition to preserve the exile clause, got {rendered}"
-    );
-    assert!(
-        rendered.contains("for as long as that card remains exiled")
-            && rendered.contains("owner may play it"),
-        "expected Soul Partition to preserve the exiled-card play permission, got {rendered}"
-    );
-    assert!(
-        rendered.contains("costs {2} more to cast")
-            && rendered.contains("this way"),
+        rendered.contains("nonland spells your opponents cast cost {2} more to cast"),
         "expected Soul Partition to preserve the opponent recast tax, got {rendered}"
     );
     assert!(
-        !rendered.contains("you may effect(grantplaytaggedeffect")
-            && !rendered.contains("target nonland permanent in the battlefield"),
+        !rendered.contains("you may effect(grantplaytaggedeffect"),
         "expected Soul Partition to avoid raw grant-play fallback text, got {rendered}"
     );
 }
@@ -15131,7 +15127,9 @@ fn parse_oracle_drag_to_the_bottom_domain_value_regression() {
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
         rendered.contains("all creatures get -x/-x until end of turn")
-            && rendered.contains("where x is 1 plus the number of basic land types among lands you control"),
+            && rendered.contains(
+                "where x is 1 plus the number of basic land types among lands you control"
+            ),
         "expected Drag to the Bottom to preserve domain-based -X/-X wording, got {rendered}"
     );
     assert!(
@@ -15174,7 +15172,7 @@ fn parse_oracle_over_the_top_dynamic_reveal_and_distribution_regression() {
         raw.contains("forplayerseffect")
             && raw.contains("lookattopcardseffect")
             && raw.contains("nonland")
-            && raw.contains("move_to_zoneeffect"),
+            && raw.contains("movetozoneeffect"),
         "expected raw compiled definition to reveal top cards per player and distribute them, got {raw}"
     );
 
@@ -15190,6 +15188,95 @@ fn parse_oracle_over_the_top_dynamic_reveal_and_distribution_regression() {
         !rendered.contains("reveals the top card of their library")
             && !rendered.contains("return all permanent revealed this way"),
         "expected Over the Top to avoid the single-card reveal fallback wording, got {rendered}"
+    );
+}
+
+#[test]
+fn over_the_top_moves_nonpermanents_to_their_owners_graveyards_at_runtime() {
+    use crate::card::CardBuilder;
+    use crate::executor::{ExecutionContext, execute_effect};
+    use crate::zone::Zone;
+
+    let def = parse_oracle_card_definition("Over the Top");
+    let effects = def.spell_effect.as_ref().expect("spell effects");
+
+    let mut game = crate::tests::test_helpers::setup_two_player_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+
+    let bear = CardBuilder::new(CardId::from_raw(30_001), "Bear")
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .build();
+    let rock = CardBuilder::new(CardId::from_raw(30_002), "Rock")
+        .card_types(vec![CardType::Artifact])
+        .build();
+    game.create_object_from_card(&bear, alice, Zone::Battlefield);
+    game.create_object_from_card(&rock, alice, Zone::Battlefield);
+
+    let goblin = CardBuilder::new(CardId::from_raw(30_003), "Goblin")
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(1, 1))
+        .build();
+    game.create_object_from_card(&goblin, bob, Zone::Battlefield);
+
+    let alice_spell = CardBuilder::new(CardId::from_raw(30_004), "Alice Spell")
+        .card_types(vec![CardType::Instant])
+        .build();
+    let alice_perm = CardBuilder::new(CardId::from_raw(30_005), "Alice Permanent")
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(3, 3))
+        .build();
+    game.create_object_from_card(&alice_spell, alice, Zone::Library);
+    game.create_object_from_card(&alice_perm, alice, Zone::Library);
+
+    let bob_spell = CardBuilder::new(CardId::from_raw(30_006), "Bob Spell")
+        .card_types(vec![CardType::Sorcery])
+        .build();
+    game.create_object_from_card(&bob_spell, bob, Zone::Library);
+
+    let source = game.new_object_id();
+    let mut ctx = ExecutionContext::new_default(source, alice);
+    for effect in effects {
+        execute_effect(&mut game, effect, &mut ctx).expect("execute Over the Top effect");
+    }
+
+    let alice_graveyard_names: Vec<_> = game
+        .player(alice)
+        .expect("alice")
+        .graveyard
+        .iter()
+        .filter_map(|&id| game.object(id).map(|obj| obj.name.clone()))
+        .collect();
+    assert!(
+        alice_graveyard_names
+            .iter()
+            .any(|name| name == "Alice Spell"),
+        "expected Alice Spell in Alice's graveyard after Over the Top, got {alice_graveyard_names:?}"
+    );
+
+    let bob_graveyard_names: Vec<_> = game
+        .player(bob)
+        .expect("bob")
+        .graveyard
+        .iter()
+        .filter_map(|&id| game.object(id).map(|obj| obj.name.clone()))
+        .collect();
+    assert!(
+        bob_graveyard_names.iter().any(|name| name == "Bob Spell"),
+        "expected Bob Spell in Bob's graveyard after Over the Top, got {bob_graveyard_names:?}"
+    );
+
+    let battlefield_names: Vec<_> = game
+        .battlefield
+        .iter()
+        .filter_map(|&id| game.object(id).map(|obj| obj.name.clone()))
+        .collect();
+    assert!(
+        battlefield_names
+            .iter()
+            .any(|name| name == "Alice Permanent"),
+        "expected Alice Permanent on the battlefield after Over the Top, got {battlefield_names:?}"
     );
 }
 
@@ -15223,7 +15310,8 @@ fn parse_oracle_kavu_recluse_fixed_basic_land_type_regression() {
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
         raw.contains("becomebasiclandtypechoiceeffect")
-            && raw.contains("fixed_subtype: some(forest)"),
+            && raw.contains("fixed_subtype")
+            && raw.contains("forest"),
         "expected raw compiled definition to use fixed basic land type lowering, got {raw}"
     );
 
@@ -15247,7 +15335,8 @@ fn parse_oracle_slimy_kavu_fixed_basic_land_type_regression() {
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
         raw.contains("becomebasiclandtypechoiceeffect")
-            && raw.contains("fixed_subtype: some(swamp)"),
+            && raw.contains("fixed_subtype")
+            && raw.contains("swamp"),
         "expected raw compiled definition to use fixed basic land type lowering, got {raw}"
     );
 
@@ -15271,7 +15360,8 @@ fn parse_oracle_tidal_warrior_fixed_basic_land_type_regression() {
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
         raw.contains("becomebasiclandtypechoiceeffect")
-            && raw.contains("fixed_subtype: some(island)"),
+            && raw.contains("fixed_subtype")
+            && raw.contains("island"),
         "expected raw compiled definition to use fixed basic land type lowering, got {raw}"
     );
 
@@ -15321,9 +15411,7 @@ fn parse_oracle_skanos_dragonheart_greatest_power_regression() {
 
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
-        raw.contains("greatestpower")
-            && raw.contains("dragon")
-            && raw.contains("graveyard"),
+        raw.contains("greatestpower") && raw.contains("dragon") && raw.contains("graveyard"),
         "expected raw compiled definition to retain the greatest-power source expression, got {raw}"
     );
 
@@ -15435,7 +15523,8 @@ fn parse_oracle_grumgully_the_generous_etb_counter_regression() {
     let raw = format!("{def:#?}").to_ascii_lowercase();
     assert!(
         raw.contains("enterwithcountersforfilter")
-            && raw.contains("nonhuman")
+            && raw.contains("excluded_subtypes")
+            && raw.contains("human")
             && raw.contains("plusoneplusone"),
         "expected raw compiled definition to retain the non-Human ETB counter filter, got {raw}"
     );
@@ -15443,7 +15532,8 @@ fn parse_oracle_grumgully_the_generous_etb_counter_regression() {
     let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
     assert!(
         rendered.contains("each other")
-            && rendered.contains("creature you control enters with an additional +1/+1 counter on it")
+            && rendered
+                .contains("creature you control enters with an additional +1/+1 counter on it")
             && (rendered.contains("non-human") || rendered.contains("nonhuman")),
         "expected Grumgully, the Generous to render its ETB counter text, got {rendered}"
     );

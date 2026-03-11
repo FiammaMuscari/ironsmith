@@ -145,12 +145,12 @@ fn effective_search_zones(
     effect: &ChooseObjectsEffect,
     game: &GameState,
     chooser_id: PlayerId,
-) -> Vec<Zone> {
-    let mut zones = effect.search_zones();
+) -> Result<Vec<Zone>, ExecutionError> {
+    let mut zones = effect.search_zones()?;
     if effect.is_search && zones.contains(&Zone::Library) && !game.can_search_library(chooser_id) {
         zones.retain(|zone| *zone != Zone::Library);
     }
-    zones
+    Ok(zones)
 }
 
 fn collect_candidates_in_zone(
@@ -275,7 +275,7 @@ fn collect_candidates(
     chooser_id: PlayerId,
 ) -> Result<Vec<ObjectId>, ExecutionError> {
     let mut candidates = Vec::new();
-    for zone in effective_search_zones(effect, game, chooser_id) {
+    for zone in effective_search_zones(effect, game, chooser_id)? {
         for id in collect_candidates_in_zone(effect, game, ctx, chooser_id, zone)? {
             if !candidates.contains(&id) {
                 candidates.push(id);
@@ -323,7 +323,9 @@ fn enforce_single_graveyard_choice_constraint(
     min: usize,
     max: usize,
 ) -> Vec<ObjectId> {
-    let search_zone = effect.filter.zone.unwrap_or(effect.zone);
+    let Some(search_zone) = effect.filter.zone.or(effect.zone) else {
+        return chosen;
+    };
     if search_zone != Zone::Graveyard || !effect.filter.single_graveyard {
         return chosen;
     }
@@ -411,13 +413,15 @@ pub(crate) fn run_choose_objects(
 ) -> Result<EffectOutcome, ExecutionError> {
     let chooser_id = resolve_player_filter(game, &effect.chooser, ctx)?;
 
+    let search_zones = effect.search_zones()?;
+
     if effect.is_search
-        && effect.search_zones() == vec![Zone::Library]
+        && search_zones == vec![Zone::Library]
         && !game.can_search_library(chooser_id)
     {
         return Ok(EffectOutcome::from_result(EffectResult::Prevented));
     }
-    if effect.is_search && effect.search_zones().contains(&Zone::Library) {
+    if effect.is_search && search_zones.contains(&Zone::Library) {
         game.library_searches_this_turn.insert(chooser_id);
     }
 

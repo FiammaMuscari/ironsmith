@@ -156,6 +156,8 @@ pub struct ViewCardsContext {
     pub zone: Zone,
     /// Description of why the cards are being viewed.
     pub description: String,
+    /// Whether the viewed cards are publicly revealed to all players.
+    pub public: bool,
 }
 
 impl ViewCardsContext {
@@ -173,6 +175,7 @@ impl ViewCardsContext {
             source,
             zone,
             description: description.into(),
+            public: false,
         }
     }
 
@@ -185,6 +188,11 @@ impl ViewCardsContext {
             Zone::Hand,
             "Look at target player's hand",
         )
+    }
+
+    pub fn with_public(mut self, public: bool) -> Self {
+        self.public = public;
+        self
     }
 }
 

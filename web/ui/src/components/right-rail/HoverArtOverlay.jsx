@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useGame } from "@/context/GameContext";
 import { scryfallImageUrl } from "@/lib/scryfall";
 import { ManaCostIcons, SymbolText } from "@/lib/mana-symbols";
+import { getPlayerAccent } from "@/lib/player-colors";
 import { getVisibleStackObjects, getVisibleTopStackObject } from "@/lib/stack-targets";
 import { cn } from "@/lib/utils";
 import { animate, cancelMotion, uiSpring } from "@/lib/motion/anime";
@@ -484,6 +485,7 @@ export default function HoverArtOverlay({
   onOracleTextHeightChange = null,
   onPreferredWidthChange = null,
   onPreferredInspectorWidthChange = null,
+  onInspectorAccentChange = null,
 }) {
   const { state, game, inspectorDebug } = useGame();
   const playerNameById = useMemo(() => buildPlayerNameMap(state), [state]);
@@ -605,6 +607,10 @@ export default function HoverArtOverlay({
 
     return lines;
   }, [details, normalizedCounters, playerNameById]);
+  const inspectorAccent = useMemo(() => {
+    const controllerId = details?.controller ?? hoveredStackObject?.controller ?? null;
+    return controllerId == null ? null : getPlayerAccent(state?.players || [], controllerId);
+  }, [details?.controller, hoveredStackObject?.controller, state?.players]);
   const headerDetailLines = useMemo(
     () => [typeLine, zoneLine, ...metadataLines].filter(Boolean),
     [metadataLines, typeLine, zoneLine]
@@ -1161,6 +1167,18 @@ export default function HoverArtOverlay({
       }
     },
     [onPreferredInspectorWidthChange]
+  );
+  useEffect(() => {
+    if (typeof onInspectorAccentChange !== "function") return undefined;
+    onInspectorAccentChange(inspectorAccent || null);
+  }, [inspectorAccent, onInspectorAccentChange]);
+  useEffect(
+    () => () => {
+      if (typeof onInspectorAccentChange === "function") {
+        onInspectorAccentChange(null);
+      }
+    },
+    [onInspectorAccentChange]
   );
 
   useLayoutEffect(() => {

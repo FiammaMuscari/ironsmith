@@ -1524,7 +1524,8 @@ pub(crate) fn parse_sentence_each_player_reveals_top_count_put_permanents_onto_b
     if !reveal_words.starts_with(&reveal_prefix) {
         return Ok(None);
     }
-    let Some(count_token_idx) = token_index_for_word_index(&reveal_tokens, reveal_prefix.len()) else {
+    let Some(count_token_idx) = token_index_for_word_index(&reveal_tokens, reveal_prefix.len())
+    else {
         return Ok(None);
     };
     let mut synthetic_where_tokens = vec![
@@ -1577,7 +1578,7 @@ pub(crate) fn parse_sentence_each_player_reveals_top_count_put_permanents_onto_b
             EffectAst::ForEachTagged {
                 tag: revealed_tag_key,
                 effects: vec![EffectAst::Conditional {
-                    predicate: PredicateAst::ItMatches(ObjectFilter::permanent()),
+                    predicate: PredicateAst::ItMatches(ObjectFilter::permanent_card()),
                     if_true: vec![EffectAst::MoveToZone {
                         target: iterated_target.clone(),
                         zone: Zone::Battlefield,

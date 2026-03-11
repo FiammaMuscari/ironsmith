@@ -1,5 +1,6 @@
 //! Look at top cards effect implementation.
 
+use crate::decisions::context::ViewCardsContext;
 use crate::effect::{EffectOutcome, EffectResult, Value};
 use crate::effects::EffectExecutor;
 use crate::effects::helpers::{resolve_player_filter, resolve_value};
@@ -59,6 +60,15 @@ impl EffectExecutor for LookAtTopCardsEffect {
         }
 
         ctx.set_tagged_objects(self.tag.clone(), snapshots.clone());
+        let view_ctx = ViewCardsContext::new(
+            ctx.controller,
+            player_id,
+            Some(ctx.source),
+            crate::zone::Zone::Library,
+            "Look at cards from the top of a library",
+        );
+        ctx.decision_maker
+            .view_cards(game, ctx.controller, &top_cards, &view_ctx);
         Ok(EffectOutcome::from_result(EffectResult::Count(
             snapshots.len() as i32,
         )))
@@ -69,9 +79,42 @@ impl EffectExecutor for LookAtTopCardsEffect {
 mod tests {
     use super::*;
     use crate::card::CardBuilder;
+    use crate::decision::DecisionMaker;
     use crate::effect::EffectResult;
     use crate::ids::{CardId, PlayerId};
     use crate::zone::Zone;
+
+    #[derive(Debug)]
+    struct ViewCall {
+        viewer: PlayerId,
+        subject: PlayerId,
+        zone: Zone,
+        public: bool,
+        cards: Vec<crate::ids::ObjectId>,
+    }
+
+    #[derive(Debug, Default)]
+    struct CaptureViewDm {
+        calls: Vec<ViewCall>,
+    }
+
+    impl DecisionMaker for CaptureViewDm {
+        fn view_cards(
+            &mut self,
+            _game: &GameState,
+            viewer: PlayerId,
+            cards: &[crate::ids::ObjectId],
+            ctx: &crate::decisions::context::ViewCardsContext,
+        ) {
+            self.calls.push(ViewCall {
+                viewer,
+                subject: ctx.subject,
+                zone: ctx.zone,
+                public: ctx.public,
+                cards: cards.to_vec(),
+            });
+        }
+    }
 
     fn setup_game() -> GameState {
         crate::tests::test_helpers::setup_two_player_game()
@@ -130,5 +173,28 @@ mod tests {
                 .map(|snapshots| snapshots.len()),
             Some(3)
         );
+    }
+
+    #[test]
+    fn look_at_top_emits_private_view_cards_event() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        add_cards_to_library(&mut game, alice, 4);
+
+        let mut dm = CaptureViewDm::default();
+        let mut ctx = ExecutionContext::new(source, alice, &mut dm);
+        let effect = LookAtTopCardsEffect::new(PlayerFilter::You, 2, "looked");
+        effect
+            .execute(&mut game, &mut ctx)
+            .expect("execute look-at-top");
+
+        assert_eq!(dm.calls.len(), 1);
+        let call = &dm.calls[0];
+        assert_eq!(call.viewer, alice);
+        assert_eq!(call.subject, alice);
+        assert_eq!(call.zone, Zone::Library);
+        assert!(!call.public);
+        assert_eq!(call.cards.len(), 2);
     }
 }

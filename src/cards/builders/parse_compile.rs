@@ -2655,8 +2655,10 @@ pub(crate) fn compile_effects_in_iterated_player_context(
     let mut iterated_frame = saved_frame.clone();
     iterated_frame.iterated_player = true;
     iterated_frame.last_effect_id = None;
-    if let Some(tag) = tagged_object.clone() {
-        iterated_frame.last_object_tag = Some(tag);
+    if tagged_object.is_some() {
+        // Inside per-object iteration, implicit "it" should bind to the current
+        // iterated object, not to the outer tag collection being traversed.
+        iterated_frame.last_object_tag = Some(IT_TAG.to_string());
     }
 
     let mut id_gen = ctx.id_gen_context();
@@ -2957,7 +2959,7 @@ pub(crate) fn lower_counted_non_target_exile_target(
     };
 
     let mut resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
-    let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
+    let choice_zone = resolved_filter.ensure_zone(Zone::Battlefield);
     if choice_zone != Zone::Library {
         return Ok(None);
     }
@@ -3024,7 +3026,7 @@ pub(crate) fn lower_single_non_target_exile_target(
     };
 
     let mut resolved_filter = resolve_it_tag(filter, &current_reference_env(ctx))?;
-    let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
+    let choice_zone = resolved_filter.ensure_zone(Zone::Battlefield);
     if choice_zone != Zone::Library {
         return Ok(None);
     }
@@ -7068,7 +7070,7 @@ fn try_compile_object_zone_and_exchange_effect(
                 resolved_filter.owner = ctx.last_player_filter.clone();
             }
             preserve_chooser_relative_player_filters(filter, &mut resolved_filter, &chooser);
-            let choice_zone = resolved_filter.zone.unwrap_or(Zone::Battlefield);
+            let choice_zone = resolved_filter.ensure_zone(Zone::Battlefield);
             if choice_zone == Zone::Battlefield
                 && resolved_filter.controller.is_none()
                 && resolved_filter.tagged_constraints.is_empty()
@@ -9602,9 +9604,13 @@ mod parse_compile_tests {
     use super::*;
     use crate::cards::TextSpan;
     use crate::cards::builders::RefState;
-    use crate::effect::Value;
-    use crate::effects::{GrantPlayTaggedEffect, InvestigateEffect};
+    use crate::effect::{Condition, Value};
+    use crate::effects::{
+        ConditionalEffect, ForEachTaggedEffect, GrantPlayTaggedEffect, InvestigateEffect,
+        MoveToZoneEffect,
+    };
     use crate::ids::CardId;
+    use crate::target::ChooseSpec;
     use crate::types::CardType;
 
     #[test]
@@ -9794,5 +9800,59 @@ mod parse_compile_tests {
             .expect("grant-play-tagged effect");
         assert_eq!(grant.tag.as_str(), "destroyed_0");
         assert_eq!(frame_out.last_object_tag.as_deref(), Some("destroyed_0"));
+    }
+
+    #[test]
+    fn compile_for_each_tagged_rewrites_it_targets_to_iterated_object() {
+        let effects = vec![EffectAst::ForEachTagged {
+            tag: TagKey::from("revealed_0"),
+            effects: vec![EffectAst::Conditional {
+                predicate: PredicateAst::ItMatches(ObjectFilter::permanent()),
+                if_true: vec![EffectAst::MoveToZone {
+                    target: TargetAst::Tagged(TagKey::from(IT_TAG), None),
+                    zone: Zone::Battlefield,
+                    to_top: false,
+                    battlefield_controller: ReturnControllerAst::Owner,
+                    battlefield_tapped: false,
+                    attached_to: None,
+                }],
+                if_false: vec![EffectAst::MoveToZone {
+                    target: TargetAst::Tagged(TagKey::from(IT_TAG), None),
+                    zone: Zone::Graveyard,
+                    to_top: false,
+                    battlefield_controller: ReturnControllerAst::Preserve,
+                    battlefield_tapped: false,
+                    attached_to: None,
+                }],
+            }],
+        }];
+
+        let (compiled, _, _) = compile_effects_with_explicit_frame(
+            &effects,
+            &mut IdGenContext::default(),
+            LoweringFrame::default(),
+        )
+        .expect("compile for-each-tagged");
+
+        let for_each = compiled[0]
+            .downcast_ref::<ForEachTaggedEffect>()
+            .expect("for-each-tagged effect");
+        let conditional = for_each.effects[0]
+            .downcast_ref::<ConditionalEffect>()
+            .expect("conditional effect");
+        let move_true = conditional.if_true[0]
+            .downcast_ref::<MoveToZoneEffect>()
+            .expect("true branch move");
+        let move_false = conditional.if_false[0]
+            .downcast_ref::<MoveToZoneEffect>()
+            .expect("false branch move");
+
+        assert!(matches!(
+            conditional.condition,
+            Condition::TaggedObjectMatches(ref tag, _)
+                if tag.as_str() == IT_TAG
+        ));
+        assert!(matches!(move_true.target, ChooseSpec::Iterated));
+        assert!(matches!(move_false.target, ChooseSpec::Iterated));
     }
 }

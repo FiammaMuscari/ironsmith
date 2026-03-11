@@ -242,7 +242,9 @@ pub(super) fn max_x_from_non_mana_costs(
                 Ok(id) => id,
                 Err(_) => caster,
             };
-            let zone = choose.filter.zone.unwrap_or(choose.zone);
+            let Some(zone) = choose.filter.zone.or(choose.zone) else {
+                continue;
+            };
 
             let mut matches = |id: &ObjectId| -> bool {
                 let Some(obj) = game.object(*id) else {

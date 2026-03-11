@@ -97,6 +97,11 @@ function stackSelectionKeys(entry) {
   return Array.from(new Set(keys));
 }
 
+function getPrimaryViewedCardId(viewedCards) {
+  const nextViewedId = viewedCards?.card_ids?.[0];
+  return nextViewedId == null ? null : String(nextViewedId);
+}
+
 export default function Workspace({
   zoneViews,
   deckLoadingMode,
@@ -106,7 +111,7 @@ export default function Workspace({
   onDismissNotice,
 }) {
   const [selectedObjectId, setSelectedObjectId] = useState(null);
-  const [, setPinnedInspectorObjectId] = useState(null);
+  const [pinnedInspectorObjectId, setPinnedInspectorObjectId] = useState(null);
   const [expandedInspectorObjectId, setExpandedInspectorObjectId] = useState(null);
   const [suppressFallbackInspector, setSuppressFallbackInspector] = useState(false);
   const [handLaneHovered, setHandLaneHovered] = useState(false);
@@ -166,6 +171,10 @@ export default function Workspace({
     return ids;
   }, [decision]);
   const activeViewedCards = state?.viewed_cards || null;
+  const primaryViewedCardId = useMemo(
+    () => getPrimaryViewedCardId(activeViewedCards),
+    [activeViewedCards]
+  );
   const activeViewedCardIds = useMemo(
     () => new Set((activeViewedCards?.card_ids || []).map((id) => String(id))),
     [activeViewedCards?.card_ids]
@@ -208,19 +217,16 @@ export default function Workspace({
   }, [selectedObjectId, selectedObjectIsValid]);
 
   useEffect(() => {
-    const viewedIds = activeViewedCards?.card_ids || [];
-    if (viewedIds.length === 0) return;
+    if (primaryViewedCardId == null) return;
     const selectedKey = selectedObjectId == null ? null : String(selectedObjectId);
     if (selectedKey != null && activeViewedCardIds.has(selectedKey)) return;
-    const nextViewedId = viewedIds[0];
-    if (nextViewedId == null) return;
     queueMicrotask(() => {
-      setSelectedObjectId(nextViewedId);
-      setPinnedInspectorObjectId(String(nextViewedId));
+      setSelectedObjectId(primaryViewedCardId);
+      setPinnedInspectorObjectId(primaryViewedCardId);
       setExpandedInspectorObjectId(null);
       setSuppressFallbackInspector(false);
     });
-  }, [activeViewedCardIds, activeViewedCards?.card_ids, selectedObjectId]);
+  }, [activeViewedCardIds, primaryViewedCardId, selectedObjectId]);
 
   useEffect(() => {
     const stackObjects = getVisibleStackObjects(state);
@@ -602,10 +608,10 @@ export default function Workspace({
       );
       if (!inDeadZone) return;
 
-      setSelectedObjectId(null);
-      setPinnedInspectorObjectId(null);
+      setSelectedObjectId(primaryViewedCardId);
+      setPinnedInspectorObjectId(primaryViewedCardId);
       setExpandedInspectorObjectId(null);
-      setSuppressFallbackInspector(true);
+      setSuppressFallbackInspector(primaryViewedCardId == null);
       clearHover();
     };
 
@@ -613,7 +619,7 @@ export default function Workspace({
     return () => {
       document.removeEventListener("pointerdown", onDeadZonePointerDown, true);
     };
-  }, [clearHover, decision, state?.perspective]);
+  }, [clearHover, decision, primaryViewedCardId, state?.perspective]);
 
   return (
     <section
@@ -701,7 +707,7 @@ export default function Workspace({
         >
           <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
             <RightRail
-              pinnedObjectId={selectedObjectId}
+              pinnedObjectId={pinnedInspectorObjectId}
               onInspectObject={handleInspectObject}
               suppressFallback={suppressFallbackInspector}
               inline
@@ -724,7 +730,7 @@ export default function Workspace({
         >
           <div className="pointer-events-none relative flex h-full shrink-0 items-start gap-1.5 self-start overflow-visible">
             <RightRail
-              pinnedObjectId={selectedObjectId}
+              pinnedObjectId={pinnedInspectorObjectId}
               onInspectObject={handleInspectObject}
               suppressFallback={suppressFallbackInspector}
               inline
@@ -781,7 +787,7 @@ export default function Workspace({
         </div>
         <div className="pointer-events-none relative flex shrink-0 items-end gap-1.5 self-end overflow-visible">
           <RightRail
-            pinnedObjectId={selectedObjectId}
+            pinnedObjectId={pinnedInspectorObjectId}
             onInspectObject={handleInspectObject}
             suppressFallback={suppressFallbackInspector}
             inline
@@ -802,7 +808,7 @@ export default function Workspace({
         >
           <div className="pointer-events-none relative flex h-full shrink-0 items-start gap-1.5 self-start overflow-visible">
             <RightRail
-              pinnedObjectId={selectedObjectId}
+              pinnedObjectId={pinnedInspectorObjectId}
               onInspectObject={handleInspectObject}
               suppressFallback={suppressFallbackInspector}
               inline

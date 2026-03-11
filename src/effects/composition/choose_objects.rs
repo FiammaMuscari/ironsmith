@@ -23,7 +23,7 @@ use crate::zone::Zone;
 /// * `filter` - Filter for which objects can be chosen
 /// * `count` - Number of objects to choose
 /// * `chooser` - Which player makes the choice
-/// * `zone` - Zone to search for objects (default: Battlefield)
+/// * `zone` - Optional fallback zone to search when the filter itself is zone-less
 /// * `tag` - Tag name to store chosen objects under
 /// * `description` - Human-readable description for the UI
 /// * `reveal` - Whether chosen cards are revealed before moving them
@@ -55,8 +55,8 @@ pub struct ChooseObjectsEffect {
     pub count: ChoiceCount,
     /// Which player makes the choice.
     pub chooser: PlayerFilter,
-    /// Zone to search for objects.
-    pub zone: Zone,
+    /// Fallback zone to search for objects when the filter has no explicit zone.
+    pub zone: Option<Zone>,
     /// Additional zones to search for objects.
     pub additional_zones: Vec<Zone>,
     /// Tag name to store chosen objects under.
@@ -85,7 +85,7 @@ impl ChooseObjectsEffect {
             filter,
             count: count.into(),
             chooser,
-            zone: Zone::Battlefield,
+            zone: None,
             additional_zones: Vec::new(),
             tag: tag.into(),
             description: "Choose",
@@ -98,7 +98,7 @@ impl ChooseObjectsEffect {
 
     /// Set the zone to search for objects.
     pub fn in_zone(mut self, zone: Zone) -> Self {
-        self.zone = zone;
+        self.zone = Some(zone);
         self.additional_zones.clear();
         self
     }
@@ -107,10 +107,10 @@ impl ChooseObjectsEffect {
     pub fn in_zones(mut self, zones: Vec<Zone>) -> Self {
         let mut iter = zones.into_iter();
         if let Some(first) = iter.next() {
-            self.zone = first;
+            self.zone = Some(first);
             self.additional_zones = iter.collect();
         } else {
-            self.zone = Zone::Battlefield;
+            self.zone = None;
             self.additional_zones.clear();
         }
         self
@@ -160,14 +160,20 @@ impl ChooseObjectsEffect {
         self.count.max.unwrap_or(self.count.min).max(1)
     }
 
-    pub(crate) fn search_zones(&self) -> Vec<Zone> {
-        let mut zones = vec![self.filter.zone.unwrap_or(self.zone)];
+    pub(crate) fn search_zones(&self) -> Result<Vec<Zone>, ExecutionError> {
+        let Some(primary_zone) = self.filter.zone.or(self.zone) else {
+            return Err(ExecutionError::UnresolvableValue(
+                "ChooseObjectsEffect requires an explicit search zone".to_string(),
+            ));
+        };
+
+        let mut zones = vec![primary_zone];
         for zone in &self.additional_zones {
             if !zones.contains(zone) {
                 zones.push(*zone);
             }
         }
-        zones
+        Ok(zones)
     }
 }
 
@@ -240,10 +246,10 @@ impl EffectExecutor for ChooseObjectsEffect {
             "card".to_string()
         };
 
-        let zone_desc = match self.filter.zone.unwrap_or(self.zone) {
-            Zone::Hand => "from your hand",
-            Zone::Graveyard => "from your graveyard",
-            Zone::Battlefield => "",
+        let zone_desc = match self.filter.zone.or(self.zone) {
+            Some(Zone::Hand) => "from your hand",
+            Some(Zone::Graveyard) => "from your graveyard",
+            Some(Zone::Battlefield) | None => "",
             _ => "",
         };
 
@@ -320,7 +326,11 @@ impl CostExecutableEffect for ChooseObjectsEffect {
         };
 
         // Find candidates based on the zone - check the filter's zone if set
-        let search_zone = self.filter.zone.unwrap_or(self.zone);
+        let Some(search_zone) = self.filter.zone.or(self.zone) else {
+            return Err(CostValidationError::Other(
+                "ChooseObjectsEffect requires an explicit search zone".to_string(),
+            ));
+        };
         let top_only_limit = self.top_only_selection_limit(None);
 
         let candidate_count = match search_zone {
@@ -596,6 +606,26 @@ mod tests {
             ChooseObjectsEffect::new(ObjectFilter::creature(), 1, PlayerFilter::You, "target")
                 .in_zone(Zone::Graveyard);
 
-        assert_eq!(effect.zone, Zone::Graveyard);
+        assert_eq!(effect.zone, Some(Zone::Graveyard));
+    }
+
+    #[test]
+    fn test_choose_objects_requires_explicit_search_zone() {
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        let source = game.new_object_id();
+        let mut ctx = ExecutionContext::new_default(source, alice);
+
+        let effect =
+            ChooseObjectsEffect::new(ObjectFilter::default(), 1, PlayerFilter::You, "selected");
+        let err = effect
+            .execute(&mut game, &mut ctx)
+            .expect_err("zone-less choose effect should fail explicitly");
+
+        assert!(matches!(
+            err,
+            ExecutionError::UnresolvableValue(message)
+                if message.contains("explicit search zone")
+        ));
     }
 }

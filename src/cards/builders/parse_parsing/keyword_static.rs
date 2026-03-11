@@ -8,8 +8,8 @@ use crate::cards::builders::ability_lowering::parsed_triggered_ability;
 use crate::cards::builders::materialize_static_abilities_ast;
 #[allow(unused_imports)]
 use crate::cards::builders::parse_parsing::{
-    color_from_color_set, contains_until_end_of_turn, is_article, is_at_trigger_intro,
-    is_land_subtype, is_negated_untap_clause, is_source_reference_words,
+    color_from_color_set, contains_until_end_of_turn, intern_counter_name, is_article,
+    is_at_trigger_intro, is_land_subtype, is_negated_untap_clause, is_source_reference_words,
     is_untap_during_each_other_players_untap_step_words, keyword_title, merge_spell_filters,
     normalize_cant_words, parse_ability_phrase, parse_activated_line, parse_activation_cost,
     parse_all_creatures_able_to_block_source_line, parse_cant_clauses, parse_card_type,
@@ -583,7 +583,9 @@ pub(crate) fn parse_skulk_rules_text_line(
         return Ok(None);
     }
 
-    Ok(Some(StaticAbility::cant_be_blocked_by_lower_power_than_source()))
+    Ok(Some(
+        StaticAbility::cant_be_blocked_by_lower_power_than_source(),
+    ))
 }
 
 pub(crate) fn parse_ward_static_ability_line(

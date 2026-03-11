@@ -2361,7 +2361,7 @@ pub(crate) fn parse_activation_cost(tokens: &[Token]) -> Result<TotalCost, CardT
 
             let tag = format!("exile_cost_{exile_tag_id}");
             exile_tag_id += 1;
-            let choice_zone = filter.zone.unwrap_or(Zone::Battlefield);
+            let choice_zone = filter.ensure_zone(Zone::Battlefield);
             let mut choose_effect = crate::effects::ChooseObjectsEffect::new(
                 filter,
                 generic_count,

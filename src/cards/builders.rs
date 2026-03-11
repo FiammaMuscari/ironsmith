@@ -8419,10 +8419,10 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
 
         let attacker_def =
             CardDefinitionBuilder::new(CardId::from_raw(70101), "Wandering Wolf Rules Text")
-            .card_types(vec![CardType::Creature])
-            .power_toughness(PowerToughness::fixed(2, 2))
-            .parse_text("Creatures with power less than this creature's power can't block it.")
-            .expect("parse wandering wolf rules text line");
+                .card_types(vec![CardType::Creature])
+                .power_toughness(PowerToughness::fixed(2, 2))
+                .parse_text("Creatures with power less than this creature's power can't block it.")
+                .expect("parse wandering wolf rules text line");
 
         let equal_blocker_def =
             CardDefinitionBuilder::new(CardId::from_raw(70102), "Equal Blocker")
@@ -9679,7 +9679,8 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             debug.contains("milleffect")
                 && debug.contains("chooseobjectseffect")
-                && debug.contains("zone: graveyard")
+                && debug.contains("zone: some(")
+                && debug.contains("graveyard")
                 && debug.contains("putcounterseffect"),
             "expected mill -> choose-from-graveyard -> fallback-counter lowering, got {debug}"
         );
@@ -9697,7 +9698,8 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             debug.contains("milleffect")
                 && debug.contains("chooseobjectseffect")
-                && debug.contains("zone: graveyard"),
+                && debug.contains("zone: some(")
+                && debug.contains("graveyard"),
             "expected mill -> choose-from-graveyard lowering, got {debug}"
         );
     }

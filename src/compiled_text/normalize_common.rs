@@ -6051,7 +6051,10 @@ pub(super) fn describe_signed_value(value: &Value) -> String {
     match value {
         Value::Fixed(n) if *n >= 0 => format!("+{n}"),
         Value::Scaled(value, factor) if *factor > 0 => {
-            format!("+{}", describe_value(&Value::Scaled(value.clone(), *factor)))
+            format!(
+                "+{}",
+                describe_value(&Value::Scaled(value.clone(), *factor))
+            )
         }
         Value::X => "+X".to_string(),
         Value::XTimes(factor) if *factor > 0 => {
@@ -6103,8 +6106,7 @@ pub(super) fn describe_dynamic_runtime_pt_with_where_x(
     let power_is_variable = !matches!(power, Value::Fixed(_));
     let toughness_is_variable = !matches!(toughness, Value::Fixed(_));
 
-    if let (Value::Scaled(power_inner, -1), Value::Scaled(toughness_inner, -1)) =
-        (power, toughness)
+    if let (Value::Scaled(power_inner, -1), Value::Scaled(toughness_inner, -1)) = (power, toughness)
         && power_inner == toughness_inner
     {
         return Some(format!(

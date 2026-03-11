@@ -1,6 +1,7 @@
 //! Reveal cards from hand.
 
 use crate::decision::FallbackStrategy;
+use crate::decisions::context::ViewCardsContext;
 use crate::decisions::{ChooseObjectsSpec, make_decision_with_fallback};
 use crate::effect::{EffectOutcome, EffectResult};
 use crate::effects::helpers::normalize_object_selection;
@@ -111,6 +112,20 @@ impl EffectExecutor for RevealFromHandEffect {
             normalize_object_selection(chosen, &valid_cards, required)
         };
 
+        for viewer_idx in 0..game.players.len() {
+            let viewer = crate::ids::PlayerId::from_index(viewer_idx as u8);
+            let view_ctx = ViewCardsContext::new(
+                viewer,
+                ctx.controller,
+                Some(ctx.source),
+                crate::zone::Zone::Hand,
+                "Reveal cards from hand",
+            )
+            .with_public(true);
+            ctx.decision_maker
+                .view_cards(game, viewer, &cards_to_reveal, &view_ctx);
+        }
+
         Ok(EffectOutcome::from_result(EffectResult::Count(
             cards_to_reveal.len() as i32,
         )))
@@ -140,8 +155,28 @@ mod tests {
     use super::*;
     use crate::card::CardBuilder;
     use crate::costs::{Cost, CostContext, CostPaymentResult};
+    use crate::decision::DecisionMaker;
+    use crate::executor::{ExecutionContext, ResolvedTarget};
     use crate::ids::{CardId, PlayerId};
     use crate::zone::Zone;
+
+    #[derive(Debug, Default)]
+    struct CaptureViewDm {
+        calls: Vec<(PlayerId, PlayerId, Zone, bool, Vec<ObjectId>)>,
+    }
+
+    impl DecisionMaker for CaptureViewDm {
+        fn view_cards(
+            &mut self,
+            _game: &GameState,
+            viewer: PlayerId,
+            cards: &[ObjectId],
+            ctx: &crate::decisions::context::ViewCardsContext,
+        ) {
+            self.calls
+                .push((viewer, ctx.subject, ctx.zone, ctx.public, cards.to_vec()));
+        }
+    }
 
     fn create_test_game() -> GameState {
         GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
@@ -179,5 +214,26 @@ mod tests {
         let mut ctx = CostContext::new(source, alice, &mut dm).with_pre_chosen_cards(vec![id1]);
 
         assert_eq!(cost.pay(&mut game, &mut ctx), Ok(CostPaymentResult::Paid));
+    }
+
+    #[test]
+    fn reveal_from_hand_emits_public_view_cards_event() {
+        let mut game = create_test_game();
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(999);
+        let id1 = game.create_object_from_card(&simple_card("Card 1", 1), alice, Zone::Hand);
+
+        let mut dm = CaptureViewDm::default();
+        let mut ctx = ExecutionContext::new(source, alice, &mut dm)
+            .with_targets(vec![ResolvedTarget::Object(id1)]);
+
+        RevealFromHandEffect::new(1, None)
+            .execute(&mut game, &mut ctx)
+            .expect("reveal from hand");
+
+        assert_eq!(dm.calls.len(), 2);
+        assert!(dm.calls.iter().all(|(_, subject, zone, public, cards)| {
+            *subject == alice && *zone == Zone::Hand && *public && cards == &vec![id1]
+        }));
     }
 }

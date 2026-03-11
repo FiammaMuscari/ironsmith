@@ -337,7 +337,7 @@ pub(super) fn choose_tagged_cost_step(
     }
 
     if let Some(exile) = next_effect.downcast_ref::<crate::effects::ExileEffect>() {
-        let zone = choose.filter.zone.unwrap_or(choose.zone);
+        let zone = choose.filter.zone.or(choose.zone)?;
         let description = match zone {
             Zone::Hand => crate::costs::CostProcessingMode::ExileFromHand {
                 count: 1,

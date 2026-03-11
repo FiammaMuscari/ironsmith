@@ -1155,6 +1155,21 @@ impl ObjectFilter {
         }
     }
 
+    /// Create a filter for any permanent card in a non-battlefield zone.
+    pub fn permanent_card() -> Self {
+        Self {
+            card_types: vec![
+                CardType::Artifact,
+                CardType::Creature,
+                CardType::Enchantment,
+                CardType::Land,
+                CardType::Planeswalker,
+                CardType::Battle,
+            ],
+            ..Default::default()
+        }
+    }
+
     /// Create a filter that matches a specific object ID.
     pub fn specific(id: ObjectId) -> Self {
         Self {
@@ -1295,6 +1310,17 @@ impl ObjectFilter {
     pub fn in_zone(mut self, zone: Zone) -> Self {
         self.zone = Some(zone);
         self
+    }
+
+    /// Ensure the filter has an explicit zone, applying `zone` only when absent.
+    pub fn with_default_zone(mut self, zone: Zone) -> Self {
+        self.zone.get_or_insert(zone);
+        self
+    }
+
+    /// Mutate the filter to carry an explicit zone and return it.
+    pub fn ensure_zone(&mut self, zone: Zone) -> Zone {
+        *self.zone.get_or_insert(zone)
     }
 
     /// Require the object to be a spell/ability on the stack targeting a player

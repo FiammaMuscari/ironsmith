@@ -918,9 +918,7 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
     [viewedCards]
   );
   const [acknowledgedViewedCardsToken, setAcknowledgedViewedCardsToken] = useState("");
-  const viewedCardsToken = viewedCardsIdentity
-    ? `${state?.snapshot_id ?? "live"}:${viewedCardsIdentity}`
-    : "";
+  const viewedCardsToken = viewedCardsIdentity || "";
   const showViewedCardsStep = Boolean(viewedCardsToken)
     && acknowledgedViewedCardsToken !== viewedCardsToken;
   const viewedCardEntries = useMemo(
@@ -1020,6 +1018,11 @@ function PriorityBar({ anchor = null, inline = false, selectedObjectId = null })
   const completeViewedCardsStep = useCallback(() => {
     if (!viewedCardsToken) return;
     setAcknowledgedViewedCardsToken(viewedCardsToken);
+  }, [viewedCardsToken]);
+
+  useEffect(() => {
+    if (viewedCardsToken) return;
+    setAcknowledgedViewedCardsToken("");
   }, [viewedCardsToken]);
 
   if (!decision || isCombatDecision) return null;

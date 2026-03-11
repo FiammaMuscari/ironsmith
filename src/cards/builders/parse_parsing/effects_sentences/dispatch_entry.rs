@@ -1063,6 +1063,13 @@ fn split_reveal_filter_segments(tokens: &[Token]) -> Vec<Vec<Token>> {
 
 fn parse_looked_card_reveal_filter(tokens: &[Token]) -> Option<ObjectFilter> {
     let words_all = words(tokens);
+    if matches!(
+        words_all.as_slice(),
+        ["permanent", "card"] | ["permanent", "cards"]
+    ) {
+        return Some(ObjectFilter::permanent_card());
+    }
+
     if words_all.contains(&"or") {
         let shared_card_suffix = matches!(words_all.last().copied(), Some("card" | "cards"));
         let segments = split_reveal_filter_segments(tokens);
