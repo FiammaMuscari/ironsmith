@@ -15143,6 +15143,29 @@ fn parse_oracle_drag_to_the_bottom_domain_value_regression() {
 }
 
 #[test]
+fn parse_oracle_lucid_dreams_card_types_in_graveyard_regression() {
+    let def = parse_oracle_card_definition("Lucid Dreams");
+
+    let raw = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        raw.contains("drawcardseffect") && raw.contains("cardtypesingraveyard"),
+        "expected raw compiled definition to count card types in graveyard, got {raw}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains("draw")
+            && (rendered.contains("number of distinct card types in your graveyard")
+                || rendered.contains("number of card types among cards in your graveyard")),
+        "expected Lucid Dreams to render a card-types-in-graveyard draw count, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("for each card in your graveyard"),
+        "expected Lucid Dreams to avoid plain graveyard card-count fallback wording, got {rendered}"
+    );
+}
+
+#[test]
 fn parse_oracle_myr_landshaper_type_addition_render_regression() {
     let def = parse_oracle_card_definition("Myr Landshaper");
 

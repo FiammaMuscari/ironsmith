@@ -1038,6 +1038,25 @@ pub(crate) fn parse_where_x_is_number_of_filter_value(tokens: &[Token]) -> Optio
         let scope_filter = parse_object_filter(scope_tokens, false).ok()?;
         return Some(Value::ColorsAmong(scope_filter));
     }
+    if (filter_words.starts_with(&["card", "type", "among", "cards"])
+        || filter_words.starts_with(&["card", "types", "among", "cards"]))
+        && filter_words.contains(&"graveyard")
+    {
+        let player = if filter_words
+            .windows(2)
+            .any(|pair| pair == ["your", "graveyard"])
+        {
+            PlayerFilter::You
+        } else if filter_words
+            .windows(2)
+            .any(|pair| pair == ["opponents", "graveyard"] || pair == ["opponent", "graveyard"])
+        {
+            PlayerFilter::Opponent
+        } else {
+            PlayerFilter::You
+        };
+        return Some(Value::CardTypesInGraveyard(player));
+    }
     let filter = parse_object_filter(filter_tokens, false).ok()?;
     Some(Value::Count(filter))
 }
