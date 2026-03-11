@@ -96,10 +96,18 @@ impl CostPayer for CostEffect {
         if ctx.x_value.is_none()
             && let crate::effect::EffectResult::Count(count) = outcome.result
             && count > 0
-            && self
+            && (self
                 .effect
                 .downcast_ref::<crate::effects::RemoveCountersEffect>()
                 .is_some_and(|effect| matches!(effect.target, crate::target::ChooseSpec::Source))
+                || self
+                    .effect
+                    .downcast_ref::<crate::effects::RemoveAnyCountersAmongEffect>()
+                    .is_some()
+                || self
+                    .effect
+                    .downcast_ref::<crate::effects::RemoveAnyCountersFromSourceEffect>()
+                    .is_some())
         {
             ctx.x_value = Some(count as u32);
         }
@@ -197,14 +205,23 @@ impl CostPayer for CostEffect {
         self.effect
             .downcast_ref::<crate::effects::RemoveCountersEffect>()
             .is_some()
+            || self
+                .effect
+                .downcast_ref::<crate::effects::RemoveAnyCountersAmongEffect>()
+                .is_some()
+            || self
+                .effect
+                .downcast_ref::<crate::effects::RemoveAnyCountersFromSourceEffect>()
+                .is_some()
     }
 
     fn processing_mode(&self) -> crate::costs::CostProcessingMode {
         use crate::costs::CostProcessingMode;
         use crate::effects::{
             DiscardEffect, DiscardHandEffect, ExileEffect, MillEffect, PayEnergyEffect,
-            PutCountersEffect, RemoveCountersEffect, ReturnToHandEffect, SacrificeEffect,
-            SacrificeTargetEffect, TapEffect, UntapEffect,
+            PutCountersEffect, RemoveAnyCountersFromSourceEffect, RemoveCountersEffect,
+            ReturnToHandEffect, RevealFromHandEffect, SacrificeEffect, SacrificeTargetEffect,
+            TapEffect, UntapEffect,
         };
         use crate::target::{ChooseSpec, PlayerFilter};
 
@@ -242,10 +259,25 @@ impl CostPayer for CostEffect {
             return CostProcessingMode::Immediate;
         }
 
+        if self
+            .effect
+            .downcast_ref::<RemoveAnyCountersFromSourceEffect>()
+            .is_some()
+        {
+            return CostProcessingMode::Immediate;
+        }
+
         if let Some(effect) = self.effect.downcast_ref::<DiscardHandEffect>()
             && effect.player == PlayerFilter::You
         {
             return CostProcessingMode::Immediate;
+        }
+
+        if let Some(effect) = self.effect.downcast_ref::<RevealFromHandEffect>() {
+            return CostProcessingMode::RevealFromHand {
+                count: effect.count,
+                card_type: effect.card_type,
+            };
         }
 
         if let Some(effect) = self.effect.downcast_ref::<SacrificeTargetEffect>()
@@ -329,5 +361,9 @@ impl CostPayer for CostEffect {
 
     fn effect_ref(&self) -> Option<&crate::effect::Effect> {
         Some(&self.effect)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }

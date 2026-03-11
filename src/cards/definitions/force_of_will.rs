@@ -72,7 +72,11 @@ mod tests {
                 "Should have 2 non-mana costs: pay life, exile from hand"
             );
 
-            assert_eq!(costs[0].life_amount(), Some(1), "First cost should be pay 1 life");
+            assert_eq!(
+                costs[0].life_amount(),
+                Some(1),
+                "First cost should be pay 1 life"
+            );
 
             let debug_str_1 = format!("{:?}", &costs[1]);
             assert!(

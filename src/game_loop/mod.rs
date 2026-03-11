@@ -112,9 +112,6 @@ pub use self::targeting::{
 pub use self::turn_execution::*;
 pub use self::types::*;
 
-pub(crate) use self::priority_apply::{
-    apply_priority_response_with_suspension, resume_pending_priority_continuation_with_dm,
-};
 pub(crate) use self::priority_mana::{apply_decision_context_with_dm, mana_ability_is_undo_safe};
 pub(crate) use self::targeting::{
     drain_pending_trigger_events, spell_has_legal_targets_with_modes,

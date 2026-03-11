@@ -516,14 +516,20 @@ mod tests {
                 "0", // Pay {B}
                 "0", // Pay {1}
                 "0", // Pay {1} (final {1} auto-paid if only one option remains)
-                "",  // Pass priority
-                "",  // Pass priority
+                "",  // Pass priority after casting
+                "",  // Keep default triggered-ability order
+                "",  // Player 1 passes priority with ETB trigger on stack
+                "",  // Player 2 passes priority with ETB trigger on stack
                 // ETB trigger resolves: council's dilemma voting
                 "1", // Tivit controller votes an additional time
                 "1", // Player 1 vote 1: bribery
                 "1", // Player 1 vote 2: bribery
                 "0", // Player 2 vote: evidence
                 "0", // Player 3 vote: evidence
+                "",  // Keep default post-vote trigger order
+                "",  // Player 1 passes priority after token triggers are stacked
+                "",  // Player 2 passes priority after token triggers are stacked
+                "",  // Player 3 passes priority after token triggers are stacked
             ],
             ReplayTestConfig::new()
                 .p1_hand(vec!["Tivit, Seller of Secrets"])

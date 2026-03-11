@@ -8,7 +8,6 @@ export function scryfallImageUrl(cardName, version = "normal") {
   });
   return `https://api.scryfall.com/cards/named?${params.toString()}`;
 }
-
 const namedCardMetaCache = new Map();
 
 export async function fetchScryfallCardMeta(cardName) {

@@ -2,6 +2,7 @@
 //!
 //! This module defines the `CostPayer` trait used by `Cost` and `CostEffect`.
 
+use std::any::Any;
 use std::collections::HashMap;
 
 use crate::cost::CostPaymentError;
@@ -228,7 +229,7 @@ where
     }
 }
 
-pub trait CostPayer: std::fmt::Debug + Send + Sync + CostPayerClone {
+pub trait CostPayer: std::fmt::Debug + Send + Sync + CostPayerClone + Any {
     /// Check if this cost can be paid RIGHT NOW.
     ///
     /// For mana costs, this checks if the mana is in the pool.
@@ -375,6 +376,9 @@ pub trait CostPayer: std::fmt::Debug + Send + Sync + CostPayerClone {
     fn effect_ref(&self) -> Option<&crate::effect::Effect> {
         None
     }
+
+    /// Downcast support for staged cost handling.
+    fn as_any(&self) -> &dyn Any;
 }
 
 // Implement Clone for Box<dyn CostPayer>
@@ -407,6 +411,10 @@ mod tests {
 
         fn display(&self) -> String {
             "Test".to_string()
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
         }
     }
 

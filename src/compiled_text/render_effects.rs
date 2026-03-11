@@ -4916,6 +4916,16 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
             describe_choose_spec(&remove_counters.target)
         );
     }
+    if let Some(remove_counters_among) =
+        effect.downcast_ref::<crate::effects::RemoveAnyCountersAmongEffect>()
+    {
+        return remove_counters_among.cost_display();
+    }
+    if let Some(remove_any_from_source) =
+        effect.downcast_ref::<crate::effects::RemoveAnyCountersFromSourceEffect>()
+    {
+        return remove_any_from_source.cost_display();
+    }
     if let Some(remove_up_to_counters) =
         effect.downcast_ref::<crate::effects::RemoveUpToCountersEffect>()
     {
@@ -4936,6 +4946,9 @@ pub(super) fn describe_effect_impl(effect: &Effect) -> String {
     if let Some(proliferate) = effect.downcast_ref::<crate::effects::ProliferateEffect>() {
         let _ = proliferate;
         return "Proliferate".to_string();
+    }
+    if let Some(reveal_from_hand) = effect.downcast_ref::<crate::effects::RevealFromHandEffect>() {
+        return reveal_from_hand.cost_display();
     }
     if let Some(return_to_battlefield) =
         effect.downcast_ref::<crate::effects::ReturnFromGraveyardToBattlefieldEffect>()

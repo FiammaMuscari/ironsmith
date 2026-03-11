@@ -2390,6 +2390,30 @@ impl Effect {
         Self::new(RemoveCountersEffect::new(counter_type, count, target))
     }
 
+    /// Create an effect for removing counters from among matching permanents.
+    pub fn remove_any_counters_among(
+        count: u32,
+        filter: crate::filter::ObjectFilter,
+        counter_type: Option<CounterType>,
+    ) -> Self {
+        use crate::effects::RemoveAnyCountersAmongEffect;
+        Self::new(RemoveAnyCountersAmongEffect::new(count, filter).with_counter_type(counter_type))
+    }
+
+    /// Create an effect for removing any number of counters from the source.
+    pub fn remove_any_counters_from_source(
+        counter_type: Option<CounterType>,
+        display_x: bool,
+    ) -> Self {
+        use crate::effects::RemoveAnyCountersFromSourceEffect;
+        let effect = if display_x {
+            RemoveAnyCountersFromSourceEffect::x(counter_type)
+        } else {
+            RemoveAnyCountersFromSourceEffect::any_number(counter_type)
+        };
+        Self::new(effect)
+    }
+
     /// Create a "remove up to N counters from target" effect (player chooses how many).
     pub fn remove_up_to_counters(
         counter_type: CounterType,
@@ -2408,6 +2432,12 @@ impl Effect {
     pub fn remove_up_to_any_counters(max_count: impl Into<Value>, target: ChooseSpec) -> Self {
         use crate::effects::RemoveUpToAnyCountersEffect;
         Self::new(RemoveUpToAnyCountersEffect::new(max_count, target))
+    }
+
+    /// Create an effect that reveals cards from your hand.
+    pub fn reveal_from_hand(count: u32, card_type: Option<crate::types::CardType>) -> Self {
+        use crate::effects::RevealFromHandEffect;
+        Self::new(RevealFromHandEffect::new(count, card_type))
     }
 
     /// Create a "move counters from one permanent to another" effect.

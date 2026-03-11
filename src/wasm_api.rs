@@ -6,6 +6,7 @@
 //! - read a serializable snapshot
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::OnceLock;
 
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::StdRng};
@@ -19,9 +20,8 @@ use crate::decision::{
 };
 use crate::decisions::context::DecisionContext;
 use crate::game_loop::{
-    ActivationStage, CastStage, PriorityLoopState, PriorityResponse, advance_priority_with_dm,
-    apply_priority_response_with_dm, apply_priority_response_with_suspension,
-    resume_pending_priority_continuation_with_dm,
+    ActivationStage, CastStage, PendingPriorityContinuation, PriorityLoopState, PriorityResponse,
+    advance_priority_with_dm, apply_decision_context_with_dm, apply_priority_response_with_dm,
 };
 use crate::game_state::{GameState, Target};
 use crate::ids::{
@@ -1538,6 +1538,8 @@ struct ReplayCheckpoint {
     priority_state: PriorityLoopState,
     game_over: Option<GameResult>,
     id_counters: crate::ids::IdCountersSnapshot,
+    /// Diagnostic tag identifying where this checkpoint was captured.
+    diag_tag: &'static str,
 }
 
 /// Distinguishes user-action replays from auto-advance replays.
@@ -1554,6 +1556,13 @@ struct PendingReplayAction {
     checkpoint: ReplayCheckpoint,
     root: ReplayRoot,
     nested_answers: Vec<ReplayDecisionAnswer>,
+}
+
+#[derive(Debug, Clone)]
+struct LivePriorityContinuation {
+    checkpoint: ReplayCheckpoint,
+    root: PendingPriorityContinuation,
+    answers: Vec<ReplayDecisionAnswer>,
 }
 
 #[derive(Debug, Clone)]
@@ -1914,6 +1923,9 @@ pub struct WasmGame {
     pending_action_checkpoint: Option<ReplayCheckpoint>,
     /// Root priority response for the current live action chain.
     pending_live_action_root: Option<PriorityResponse>,
+    /// Replayable suspended live priority computation plus any nested answers
+    /// already provided for it.
+    pending_live_continuation: Option<LivePriorityContinuation>,
     game_over: Option<GameResult>,
     perspective: PlayerId,
     /// The unified turn state machine. Created lazily on first advance.
@@ -1978,6 +1990,8 @@ struct CardLoadDiagnostics {
     threshold_percent: Option<f32>,
 }
 
+static AUTOCOMPLETE_CARD_NAMES: OnceLock<Vec<(String, String)>> = OnceLock::new();
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MatchSetupInput {
@@ -2023,6 +2037,7 @@ impl WasmGame {
             pending_replay_action: None,
             pending_action_checkpoint: None,
             pending_live_action_root: None,
+            pending_live_continuation: None,
             game_over: None,
             perspective: PlayerId::from_index(0),
             runner: None,
@@ -2254,6 +2269,67 @@ impl WasmGame {
         );
         serde_json::to_string_pretty(&snap)
             .map_err(|e| JsValue::from_str(&format!("json encode failed: {e}")))
+    }
+
+    /// Return locally-known card name suggestions from the generated registry.
+    #[wasm_bindgen(js_name = autocompleteCardNames)]
+    pub fn autocomplete_card_names(
+        &self,
+        query: String,
+        limit: Option<usize>,
+    ) -> Result<JsValue, JsValue> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return serde_wasm_bindgen::to_value(&Vec::<String>::new()).map_err(|e| {
+                JsValue::from_str(&format!("autocompleteCardNames encode failed: {e}"))
+            });
+        }
+
+        let query_lower = trimmed.to_lowercase();
+        let capped_limit = limit.unwrap_or(5).clamp(1, 25);
+        let threshold = self.semantic_threshold;
+        let mut matches = Self::autocomplete_name_corpus()
+            .iter()
+            .filter_map(|(name, lower)| {
+                let rank = if lower == &query_lower {
+                    0u8
+                } else if lower.starts_with(&query_lower) {
+                    1
+                } else if lower
+                    .split_whitespace()
+                    .any(|word| word.starts_with(&query_lower))
+                {
+                    2
+                } else if lower.contains(&query_lower) {
+                    3
+                } else {
+                    return None;
+                };
+
+                if threshold > 0.0
+                    && let Some(score) = Self::semantic_score_for_name(name.as_str())
+                    && score < threshold
+                {
+                    return None;
+                }
+
+                Some((rank, name.len(), name))
+            })
+            .collect::<Vec<_>>();
+        matches.sort_unstable_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.cmp(right.2))
+        });
+        let suggestions: Vec<String> = matches
+            .into_iter()
+            .take(capped_limit)
+            .map(|(_, _, name)| name.clone())
+            .collect();
+
+        serde_wasm_bindgen::to_value(&suggestions)
+            .map_err(|e| JsValue::from_str(&format!("autocompleteCardNames encode failed: {e}")))
     }
 
     /// Set a player's life total.
@@ -2655,6 +2731,7 @@ impl WasmGame {
         self.pending_replay_action = None;
         self.pending_action_checkpoint = None;
         self.pending_live_action_root = None;
+        self.pending_live_continuation = None;
         self.priority_epoch_has_undoable_action = false;
         self.priority_epoch_undo_locked_by_mana = false;
         self.priority_epoch_undo_land_stable_id = None;
@@ -2682,7 +2759,7 @@ impl WasmGame {
             return self.dispatch_runner_decision(pending_ctx, command);
         }
 
-        if self.priority_state.pending_continuation.is_some() {
+        if self.pending_live_continuation.is_some() {
             return self.dispatch_live_priority_continuation(pending_ctx, command);
         }
 
@@ -2788,7 +2865,7 @@ impl WasmGame {
                     // the action that just finished paying its costs.
                     self.pending_action_checkpoint = None;
                     self.pending_decision = Some(next_ctx);
-                    self.pending_replay_action = None;
+                    self.pending_replay_action = Some(replay);
                     self.snapshot()
                 }
                 progress => {
@@ -2869,7 +2946,11 @@ impl WasmGame {
                             // the action that just finished paying its costs.
                             self.pending_action_checkpoint = None;
                             self.pending_decision = Some(next_ctx);
-                            self.pending_replay_action = None;
+                            self.pending_replay_action = Some(PendingReplayAction {
+                                checkpoint,
+                                root,
+                                nested_answers: Vec::new(),
+                            });
                             self.snapshot()
                         }
                         progress => {
@@ -3286,6 +3367,21 @@ impl WasmGame {
 
     fn semantic_score_for_name(card_name: &str) -> Option<f32> {
         CardRegistry::generated_parser_semantic_score(card_name)
+    }
+
+    fn autocomplete_name_corpus() -> &'static [(String, String)] {
+        AUTOCOMPLETE_CARD_NAMES.get_or_init(|| {
+            let mut names = CardRegistry::generated_parser_card_names();
+            names.sort_unstable();
+            names.dedup();
+            names
+                .into_iter()
+                .map(|name| {
+                    let lower = name.to_lowercase();
+                    (name, lower)
+                })
+                .collect()
+        })
     }
 
     fn has_demo_supported_cost_symbols(cost: &crate::mana::ManaCost) -> bool {
@@ -4117,21 +4213,53 @@ impl WasmGame {
     ) -> Result<JsValue, JsValue> {
         match progress {
             GameProgress::NeedsDecisionCtx(next_ctx) => {
-                if self.priority_action_chain_still_pending() {
+                let action_still_pending = self.priority_action_chain_still_pending();
+                let committed_resolution_checkpoint = self
+                    .pending_action_checkpoint
+                    .clone()
+                    .or_else(|| action_checkpoint.clone());
+                if action_still_pending {
                     if let Some(checkpoint) = action_checkpoint {
                         self.pending_action_checkpoint.get_or_insert(checkpoint);
                     }
-                    self.pending_decision = Some(next_ctx);
-                    return self.snapshot();
+                } else {
+                    self.pending_action_checkpoint = None;
                 }
 
-                self.pending_action_checkpoint = None;
-                self.pending_live_action_root = None;
+                if !action_still_pending {
+                    self.priority_state.pending_continuation = None;
+                    self.pending_live_continuation = None;
+                    if let (Some(root_response), Some(checkpoint)) = (
+                        self.pending_live_action_root.take(),
+                        committed_resolution_checkpoint,
+                    ) {
+                        self.pending_replay_action = Some(PendingReplayAction {
+                            checkpoint,
+                            root: ReplayRoot::Response(root_response),
+                            nested_answers: Vec::new(),
+                        });
+                    } else {
+                        self.pending_replay_action = None;
+                    }
+                } else if self.decision_uses_live_priority_response(&next_ctx) {
+                    self.priority_state.pending_continuation = None;
+                    self.pending_live_continuation = None;
+                    self.pending_replay_action = None;
+                } else {
+                    self.priority_state.pending_continuation = None;
+                    self.pending_live_continuation = Some(LivePriorityContinuation {
+                        checkpoint: self.capture_replay_checkpoint_tagged("finish_live_dispatch"),
+                        root: PendingPriorityContinuation::ApplyDecisionContext(next_ctx.clone()),
+                        answers: Vec::new(),
+                    });
+                    self.pending_replay_action = None;
+                }
                 self.pending_decision = Some(next_ctx);
                 self.snapshot()
             }
             progress => {
                 self.clear_active_resolving_stack_object();
+                self.priority_state.pending_continuation = None;
                 if let Some(root_response) = self.pending_live_action_root.take() {
                     self.priority_epoch_has_undoable_action |=
                         Self::response_starts_cancelable_action_chain(&root_response);
@@ -4155,6 +4283,7 @@ impl WasmGame {
                 }
 
                 self.pending_action_checkpoint = None;
+                self.pending_live_continuation = None;
                 self.pending_replay_action = None;
                 self.apply_progress(progress)?;
                 self.snapshot()
@@ -4184,8 +4313,9 @@ impl WasmGame {
             self.pending_live_action_root = Some(response.clone());
         }
 
+        let step_checkpoint = self.capture_replay_checkpoint_tagged("live_response_dm_capture");
         let mut live_dm = WasmReplayDecisionMaker::new(&[]);
-        let result = apply_priority_response_with_suspension(
+        let result = apply_priority_response_with_dm(
             &mut self.game,
             &mut self.trigger_queue,
             &mut self.priority_state,
@@ -4196,9 +4326,19 @@ impl WasmGame {
         self.active_viewed_cards = viewed_cards;
 
         if let Some(next_ctx) = pending_context {
-            if let Some(checkpoint) = action_checkpoint {
-                self.pending_action_checkpoint.get_or_insert(checkpoint);
+            if self.priority_action_chain_still_pending() {
+                if let Some(checkpoint) = action_checkpoint {
+                    self.pending_action_checkpoint.get_or_insert(checkpoint);
+                }
+            } else {
+                self.pending_action_checkpoint = None;
             }
+            self.priority_state.pending_continuation = None;
+            self.pending_live_continuation = Some(LivePriorityContinuation {
+                checkpoint: step_checkpoint,
+                root: PendingPriorityContinuation::ApplyResponse(response),
+                answers: Vec::new(),
+            });
             self.pending_decision = Some(next_ctx);
             return self.snapshot();
         }
@@ -4206,6 +4346,7 @@ impl WasmGame {
         match result {
             Ok(progress) => self.finish_live_priority_dispatch(progress, action_checkpoint),
             Err(err) => {
+                self.restore_replay_checkpoint(&step_checkpoint);
                 if should_track_action_checkpoint {
                     self.pending_live_action_root = None;
                 }
@@ -4220,25 +4361,74 @@ impl WasmGame {
         pending_ctx: DecisionContext,
         command: UiCommand,
     ) -> Result<JsValue, JsValue> {
+        let mut continuation = self
+            .pending_live_continuation
+            .take()
+            .ok_or_else(|| JsValue::from_str("no live continuation checkpoint to resume"))?;
         let answer = match self.command_to_replay_answer(&pending_ctx, command) {
             Ok(answer) => answer,
             Err(err) => {
                 self.pending_decision = Some(pending_ctx);
+                self.pending_live_continuation = Some(continuation);
                 return Err(err);
             }
         };
+        continuation.answers.push(answer);
 
-        let mut live_dm = WasmReplayDecisionMaker::new(&[answer]);
-        let result = resume_pending_priority_continuation_with_dm(
-            &mut self.game,
-            &mut self.trigger_queue,
-            &mut self.priority_state,
-            &mut live_dm,
-        );
+        // Diagnostic: record whether checkpoint has pending_activation before restore
+        let checkpoint_diag_tag = continuation.checkpoint.diag_tag;
+        let checkpoint_has_pa = continuation
+            .checkpoint
+            .priority_state
+            .pending_activation
+            .is_some();
+        let checkpoint_pa_debug = continuation
+            .checkpoint
+            .priority_state
+            .pending_activation
+            .as_ref()
+            .map(|p| {
+                format!(
+                    "stage={}, staged_remove={}, remaining_costs={}",
+                    p.stage,
+                    p.pending_remove_counters_among.is_some(),
+                    p.remaining_cost_steps.len()
+                )
+            });
+        let live_pa_before = self.priority_state.pending_activation.is_some();
+
+        self.restore_replay_checkpoint(&continuation.checkpoint);
+        self.priority_state.pending_continuation = None;
+
+        let live_pa_after = self.priority_state.pending_activation.is_some();
+        let mut live_dm = WasmReplayDecisionMaker::new(&continuation.answers);
+        let result = match &continuation.root {
+            PendingPriorityContinuation::ApplyResponse(response) => {
+                apply_priority_response_with_dm(
+                    &mut self.game,
+                    &mut self.trigger_queue,
+                    &mut self.priority_state,
+                    response,
+                    &mut live_dm,
+                )
+            }
+            PendingPriorityContinuation::ApplyDecisionContext(ctx) => {
+                apply_decision_context_with_dm(
+                    &mut self.game,
+                    &mut self.trigger_queue,
+                    &mut self.priority_state,
+                    ctx,
+                    &mut live_dm,
+                )
+            }
+        };
         let (pending_context, viewed_cards) = live_dm.finish();
         self.active_viewed_cards = viewed_cards;
 
         if let Some(next_ctx) = pending_context {
+            self.priority_state.pending_continuation = None;
+            continuation.checkpoint.diag_tag = "continuation_dm_capture";
+            self.pending_live_continuation = Some(continuation);
             self.pending_decision = Some(next_ctx);
             return self.snapshot();
         }
@@ -4246,20 +4436,32 @@ impl WasmGame {
         match result {
             Ok(progress) => self.finish_live_priority_dispatch(progress, None),
             Err(err) => {
+                self.restore_replay_checkpoint(&continuation.checkpoint);
+                self.priority_state.pending_continuation = None;
+                self.pending_live_continuation = Some(continuation);
                 self.pending_decision = Some(pending_ctx);
-                Err(JsValue::from_str(&format!("dispatch failed: {err}")))
+                Err(JsValue::from_str(&format!(
+                    "dispatch failed: {err} [diag: tag={checkpoint_diag_tag}, checkpoint_has_pa={checkpoint_has_pa}, \
+                     checkpoint_pa={checkpoint_pa_debug:?}, \
+                     live_pa_before={live_pa_before}, live_pa_after={live_pa_after}]"
+                )))
             }
         }
     }
 
-    fn capture_replay_checkpoint(&self) -> ReplayCheckpoint {
+    fn capture_replay_checkpoint_tagged(&self, tag: &'static str) -> ReplayCheckpoint {
         ReplayCheckpoint {
             game: self.game.clone(),
             trigger_queue: self.trigger_queue.clone(),
             priority_state: self.priority_state.clone(),
             game_over: self.game_over.clone(),
             id_counters: snapshot_id_counters(),
+            diag_tag: tag,
         }
+    }
+
+    fn capture_replay_checkpoint(&self) -> ReplayCheckpoint {
+        self.capture_replay_checkpoint_tagged("untagged")
     }
 
     fn restore_replay_checkpoint(&mut self, checkpoint: &ReplayCheckpoint) {
@@ -4875,9 +5077,10 @@ impl WasmGame {
             | (DecisionContext::Blockers(_), UiCommand::DeclareAttackers { .. }) => Err(
                 JsValue::from_str("command type does not match pending decision"),
             ),
-            (_, _) => Err(JsValue::from_str(
-                "pending decision type is not yet supported in WASM dispatch",
-            )),
+            (_, _) => Err(JsValue::from_str(&format!(
+                "pending decision type is not yet supported in WASM dispatch: {}",
+                decision_context_kind(ctx)
+            ))),
         }
     }
 
@@ -5342,6 +5545,8 @@ fn decision_reason(ctx: &DecisionContext) -> Option<String> {
                 Some("Order blockers".into())
             } else if d.contains("attacker") {
                 Some("Order attackers".into())
+            } else if d.contains("trigger") {
+                Some("Order triggers".into())
             } else {
                 Some("Ordering".into())
             }
@@ -7622,6 +7827,251 @@ mod tests {
                 Some(DecisionContext::SelectOptions(_))
             ),
             "after paying the counter cost, the UI should advance to the remaining mana payment"
+        );
+    }
+
+    #[test]
+    fn tayam_activation_can_resolve_and_choose_graveyard_return_target() {
+        let mut wasm = WasmGame::new();
+        let alice = PlayerId::from_index(0);
+        let bob = PlayerId::from_index(1);
+
+        wasm.game.turn.active_player = alice;
+        wasm.game.turn.priority_player = Some(alice);
+        wasm.game.turn.phase = Phase::FirstMain;
+        wasm.game.turn.step = None;
+
+        let tayam_id = ObjectId::from_raw(
+            wasm.add_card_to_zone(
+                alice.0,
+                "Tayam, Luminous Enigma".to_string(),
+                "battlefield".to_string(),
+                true,
+            )
+            .expect("should add Tayam to battlefield"),
+        );
+        let wall_id = ObjectId::from_raw(
+            wasm.add_card_to_zone(
+                alice.0,
+                "Wall of Roots".to_string(),
+                "battlefield".to_string(),
+                false,
+            )
+            .expect("should add Wall of Roots to battlefield"),
+        );
+        let ornithopter_id = ObjectId::from_raw(
+            wasm.add_card_to_zone(
+                alice.0,
+                "Ornithopter".to_string(),
+                "battlefield".to_string(),
+                false,
+            )
+            .expect("should add Ornithopter to battlefield"),
+        );
+        let forest_a = ObjectId::from_raw(
+            wasm.add_card_to_zone(
+                alice.0,
+                "Forest".to_string(),
+                "battlefield".to_string(),
+                false,
+            )
+            .expect("should add first Forest to battlefield"),
+        );
+        let forest_b = ObjectId::from_raw(
+            wasm.add_card_to_zone(
+                alice.0,
+                "Forest".to_string(),
+                "battlefield".to_string(),
+                false,
+            )
+            .expect("should add second Forest to battlefield"),
+        );
+        let return_target = ObjectId::from_raw(
+            wasm.add_card_to_zone(
+                alice.0,
+                "Forest".to_string(),
+                "graveyard".to_string(),
+                false,
+            )
+            .expect("should add return target to graveyard"),
+        );
+
+        assert!(
+            wasm.game.player(bob).is_some(),
+            "second player should exist for priority passing"
+        );
+
+        wasm.priority_epoch_checkpoint = Some(wasm.capture_replay_checkpoint());
+        wasm.pending_decision = Some(DecisionContext::Priority(PriorityContext::new(
+            alice,
+            compute_legal_actions(&wasm.game, alice),
+        )));
+
+        let priority_ctx = match wasm.pending_decision.as_ref() {
+            Some(DecisionContext::Priority(ctx)) => ctx,
+            other => panic!("expected priority decision, got {other:?}"),
+        };
+        let activate_index = priority_ctx
+            .actions
+            .iter()
+            .position(|action| matches!(action, LegalAction::ActivateAbility { source, .. } if *source == tayam_id))
+            .expect("expected Tayam activation action");
+
+        wasm.dispatch(
+            serde_wasm_bindgen::to_value(&json!({
+                "type": "priority_action",
+                "action_index": activate_index,
+            }))
+            .expect("priority action command should serialize"),
+        )
+        .expect("activating Tayam should begin its cost-payment chain");
+
+        loop {
+            let pending = wasm
+                .pending_decision
+                .clone()
+                .expect("Tayam activation should still have a pending decision");
+            match pending {
+                DecisionContext::SelectOptions(ctx) => {
+                    let choice = if ctx.prompt.contains("Choose next cost") {
+                        ctx.options
+                            .iter()
+                            .find(|option| option.legal && option.description.contains("Pay {3}"))
+                            .map(|option| option.index)
+                            .expect("next-cost chooser should offer the mana payment")
+                    } else if ctx.prompt.contains("Pay mana") {
+                        if let Some(option) = ctx.options.iter().find(|option| {
+                            option.legal && option.description.contains("Wall of Roots")
+                        }) {
+                            option.index
+                        } else {
+                            ctx.options
+                                .iter()
+                                .find(|option| {
+                                    option.legal && option.description.contains("Forest")
+                                })
+                                .map(|option| option.index)
+                                .expect("mana payment prompt should offer a legal mana source")
+                        }
+                    } else if ctx.prompt.contains("Choose next cost") {
+                        unreachable!("handled above")
+                    } else {
+                        ctx.options
+                            .iter()
+                            .find(|option| {
+                                option.legal && option.description.contains("Remove three counters")
+                            })
+                            .map(|option| option.index)
+                            .or_else(|| {
+                                ctx.options
+                                    .iter()
+                                    .find(|option| {
+                                        option.legal && option.description.contains("Pass")
+                                    })
+                                    .map(|option| option.index)
+                            })
+                            .unwrap_or_else(|| {
+                                ctx.options
+                                    .iter()
+                                    .find(|option| option.legal)
+                                    .map(|option| option.index)
+                                    .expect("select-options prompt should offer a legal choice")
+                            })
+                    };
+
+                    wasm.dispatch(
+                        serde_wasm_bindgen::to_value(&json!({
+                            "type": "select_options",
+                            "option_indices": [choice],
+                        }))
+                        .expect("select-options command should serialize"),
+                    )
+                    .expect("dispatching Tayam select-options step should succeed");
+                }
+                DecisionContext::Distribute(ctx) => {
+                    let wall_index = ctx
+                        .targets
+                        .iter()
+                        .position(|target| target.target == Target::Object(wall_id))
+                        .expect("Wall of Roots should be a legal distribution target");
+                    let ornithopter_index = ctx
+                        .targets
+                        .iter()
+                        .position(|target| target.target == Target::Object(ornithopter_id))
+                        .expect("Ornithopter should be a legal distribution target");
+                    let indices = vec![wall_index, wall_index, ornithopter_index];
+                    wasm.dispatch(
+                        serde_wasm_bindgen::to_value(&json!({
+                            "type": "select_options",
+                            "option_indices": indices,
+                        }))
+                        .expect("distribute command should serialize"),
+                    )
+                    .expect("counter distribution should succeed");
+                }
+                DecisionContext::Counters(ctx) => {
+                    let counter_index = ctx
+                        .available_counters
+                        .iter()
+                        .position(|(_, available)| *available > 0)
+                        .expect("counter prompt should offer at least one removable counter");
+                    wasm.dispatch(
+                        serde_wasm_bindgen::to_value(&json!({
+                            "type": "select_options",
+                            "option_indices": [counter_index],
+                        }))
+                        .expect("counter selection command should serialize"),
+                    )
+                    .expect("counter removal should succeed");
+                }
+                DecisionContext::Priority(ctx) => {
+                    let pass_index = ctx
+                        .actions
+                        .iter()
+                        .position(|action| matches!(action, LegalAction::PassPriority))
+                        .expect("priority prompt should include pass");
+                    wasm.dispatch(
+                        serde_wasm_bindgen::to_value(&json!({
+                            "type": "priority_action",
+                            "action_index": pass_index,
+                        }))
+                        .expect("priority pass command should serialize"),
+                    )
+                    .expect("priority pass during Tayam line should succeed");
+                }
+                DecisionContext::SelectObjects(ctx) => {
+                    let target_id = ctx
+                        .candidates
+                        .iter()
+                        .find(|candidate| candidate.legal && candidate.id == return_target)
+                        .map(|candidate| candidate.id.0)
+                        .expect("graveyard return target should be legal");
+                    wasm.dispatch(
+                        serde_wasm_bindgen::to_value(&json!({
+                            "type": "select_objects",
+                            "object_ids": [target_id],
+                        }))
+                        .expect("graveyard target command should serialize"),
+                    )
+                    .expect("selecting Tayam's graveyard return target should succeed");
+                    break;
+                }
+                other => panic!("unexpected Tayam resolution decision: {other:?}"),
+            }
+        }
+
+        assert!(
+            !wasm.game.battlefield.contains(&forest_a)
+                || !wasm.game.battlefield.contains(&forest_b),
+            "at least one Forest should remain tapped after paying Tayam's mana cost"
+        );
+        assert!(
+            wasm.game.battlefield.iter().any(|id| {
+                wasm.game
+                    .object(*id)
+                    .is_some_and(|obj| obj.name == "Forest" && obj.owner == alice)
+            }),
+            "a Forest should still exist on the battlefield after Tayam resolves"
         );
     }
 

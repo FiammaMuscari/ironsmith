@@ -3519,16 +3519,18 @@ mod tests {
 
     #[test]
     fn additional_cost_choose_one_renders_inline_or_phrase() {
-        let effects = vec![crate::costs::Cost::validated_effect(crate::effect::Effect::choose_one(
-            vec![crate::effect::EffectMode {
-                description: "sacrifice a creature".to_string(),
-                effects: Vec::new(),
-            },
-            crate::effect::EffectMode {
-                description: "pay 3".to_string(),
-                effects: Vec::new(),
-            }],
-        ))];
+        let effects = vec![crate::costs::Cost::validated_effect(
+            crate::effect::Effect::choose_one(vec![
+                crate::effect::EffectMode {
+                    description: "sacrifice a creature".to_string(),
+                    effects: Vec::new(),
+                },
+                crate::effect::EffectMode {
+                    description: "pay 3".to_string(),
+                    effects: Vec::new(),
+                },
+            ]),
+        )];
         assert_eq!(
             describe_additional_costs(&effects),
             "sacrifice a creature or pay {3}"

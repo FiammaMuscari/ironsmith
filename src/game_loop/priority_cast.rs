@@ -181,6 +181,10 @@ pub(super) fn cost_references_x(cost: &crate::costs::Cost) -> bool {
     if let Some(choose) = effect.downcast_ref::<crate::effects::ChooseObjectsEffect>() {
         return choose.count.dynamic_x;
     }
+    if let Some(remove) = effect.downcast_ref::<crate::effects::RemoveAnyCountersFromSourceEffect>()
+    {
+        return remove.display_x;
+    }
 
     false
 }
@@ -302,6 +306,30 @@ pub(super) fn max_x_from_non_mana_costs(
                 _ => 0,
             } as u32;
 
+            max_x = Some(max_x.map_or(matching, |prev| prev.min(matching)));
+            continue;
+        }
+
+        if let Some(remove) =
+            effect.downcast_ref::<crate::effects::RemoveAnyCountersFromSourceEffect>()
+        {
+            if !remove.display_x {
+                continue;
+            }
+
+            let matching = game
+                .object(source)
+                .map(|obj| {
+                    if obj.zone != Zone::Battlefield {
+                        return 0;
+                    }
+                    if let Some(counter_type) = remove.counter_type {
+                        obj.counters.get(&counter_type).copied().unwrap_or(0)
+                    } else {
+                        obj.counters.values().copied().sum::<u32>()
+                    }
+                })
+                .unwrap_or(0);
             max_x = Some(max_x.map_or(matching, |prev| prev.min(matching)));
         }
     }
@@ -1997,6 +2025,269 @@ pub(super) fn activation_stage_after_announcements(pending: &PendingActivation) 
     }
 }
 
+pub(super) fn remove_any_counters_among_effect(
+    cost: &crate::costs::Cost,
+) -> Option<&crate::effects::RemoveAnyCountersAmongEffect> {
+    cost.effect_ref()?
+        .downcast_ref::<crate::effects::RemoveAnyCountersAmongEffect>()
+}
+
+fn staged_remove_counters_among_allocations(
+    game: &GameState,
+    cost: &crate::effects::RemoveAnyCountersAmongEffect,
+    source: ObjectId,
+    payer: PlayerId,
+    tagged_objects: &std::collections::HashMap<crate::tag::TagKey, Vec<ObjectSnapshot>>,
+    distribution: Vec<(Target, u32)>,
+) -> Result<std::collections::VecDeque<(ObjectId, u32)>, GameLoopError> {
+    let valid_targets = cost.valid_targets_with_tags(game, source, payer, tagged_objects);
+
+    let mut allocations: std::collections::HashMap<ObjectId, u32> =
+        std::collections::HashMap::new();
+    for (target, amount) in distribution {
+        if let Target::Object(object_id) = target {
+            *allocations.entry(object_id).or_insert(0) += amount;
+        }
+    }
+
+    let distributed_total: u32 = allocations.values().copied().sum();
+    if distributed_total != cost.count {
+        return Err(GameLoopError::InvalidState(format!(
+            "counter distribution must assign exactly {} counters (got {})",
+            cost.count, distributed_total
+        )));
+    }
+
+    let mut ordered = std::collections::VecDeque::new();
+    for object_id in valid_targets {
+        let amount = allocations.remove(&object_id).unwrap_or(0);
+        if amount > 0 {
+            ordered.push_back((object_id, amount));
+        }
+    }
+    Ok(ordered)
+}
+
+pub(super) fn continue_activation_remove_counters_among_payment(
+    game: &mut GameState,
+    trigger_queue: &mut TriggerQueue,
+    state: &mut PriorityLoopState,
+    mut pending: PendingActivation,
+    decision_maker: &mut impl DecisionMaker,
+    provided_ctx: Option<&crate::decisions::context::DecisionContext>,
+) -> Result<GameProgress, GameLoopError> {
+    let cost = if let Some(staged) = pending.pending_remove_counters_among.as_ref() {
+        staged.cost.clone()
+    } else {
+        pending
+            .remaining_cost_steps
+            .first()
+            .and_then(|step| match step {
+                ActivationCostStep::Cost(cost) => remove_any_counters_among_effect(cost).cloned(),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                GameLoopError::InvalidState(
+                    "No remove-counters-among activation cost is currently pending".to_string(),
+                )
+            })?
+    };
+
+    let staged = pending
+        .pending_remove_counters_among
+        .get_or_insert_with(|| PendingRemoveCountersAmongChoice {
+            cost: cost.clone(),
+            distribution_ready: false,
+            allocations: std::collections::VecDeque::new(),
+            removed_total: 0,
+        });
+
+    if !staged.distribution_ready {
+        let distribute_ctx =
+            if let Some(crate::decisions::context::DecisionContext::Distribute(ctx)) = provided_ctx
+            {
+                ctx.clone()
+            } else {
+                let targets: Vec<Target> = cost
+                    .valid_targets_with_tags(
+                        game,
+                        pending.source,
+                        pending.activator,
+                        &pending.tagged_objects,
+                    )
+                    .into_iter()
+                    .map(Target::Object)
+                    .collect();
+                let spec = crate::decisions::specs::DistributeSpec::counters(
+                    pending.source,
+                    cost.count,
+                    targets,
+                );
+                match crate::decisions::spec::DecisionSpec::build_context(
+                    &spec,
+                    pending.activator,
+                    Some(pending.source),
+                    game,
+                ) {
+                    crate::decisions::context::DecisionContext::Distribute(ctx) => ctx,
+                    _ => {
+                        unreachable!("counter distribution spec should build a distribute context")
+                    }
+                }
+            };
+
+        let distribution = decision_maker.decide_distribute(game, &distribute_ctx);
+        if decision_maker.awaiting_choice() {
+            state.pending_activation = Some(pending);
+            return Ok(GameProgress::Continue);
+        }
+
+        staged.allocations = staged_remove_counters_among_allocations(
+            game,
+            &cost,
+            pending.source,
+            pending.activator,
+            &pending.tagged_objects,
+            distribution,
+        )?;
+        staged.distribution_ready = true;
+    }
+
+    let mut used_provided_counters_ctx = false;
+    loop {
+        let Some(staged) = pending.pending_remove_counters_among.as_mut() else {
+            break;
+        };
+        let Some((object_id, amount_for_target)) = staged.allocations.front().copied() else {
+            let removed_total = staged.removed_total;
+            pending.pending_remove_counters_among = None;
+            if removed_total != cost.count {
+                return Err(GameLoopError::InvalidState(
+                    "staged counter payment removed the wrong number of counters".to_string(),
+                ));
+            }
+            let paid_cost = crate::costs::Cost::effect(cost.clone());
+            record_immediate_cost_payment(&mut pending.payment_trace, &paid_cost, pending.source);
+            pending.remaining_cost_steps.remove(0);
+            drain_pending_trigger_events(game, trigger_queue);
+            pending.stage = activation_stage_after_targets(&pending);
+            return continue_activation(game, trigger_queue, state, pending, decision_maker);
+        };
+
+        if let Some(counter_type) = cost.counter_type {
+            let removed = game
+                .remove_counters(
+                    object_id,
+                    counter_type,
+                    amount_for_target,
+                    Some(pending.source),
+                    Some(pending.activator),
+                )
+                .map(|(removed, event)| {
+                    game.queue_trigger_event(pending.provenance, event);
+                    removed
+                })
+                .unwrap_or(0);
+            if removed != amount_for_target {
+                return Err(GameLoopError::InvalidState(
+                    "failed to remove the allocated counters".to_string(),
+                ));
+            }
+            staged.removed_total += removed;
+            staged.allocations.pop_front();
+            continue;
+        }
+
+        let available_counters: Vec<(CounterType, u32)> = game
+            .object(object_id)
+            .map(|obj| {
+                obj.counters
+                    .iter()
+                    .filter(|(_, count)| **count > 0)
+                    .map(|(counter_type, count)| (*counter_type, *count))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let available_total: u32 = available_counters.iter().map(|(_, count)| *count).sum();
+        if available_total < amount_for_target {
+            return Err(GameLoopError::InvalidState(
+                "allocated target no longer has enough counters".to_string(),
+            ));
+        }
+
+        let counters_ctx = if !used_provided_counters_ctx {
+            if let Some(crate::decisions::context::DecisionContext::Counters(ctx)) = provided_ctx {
+                if ctx.target == object_id {
+                    used_provided_counters_ctx = true;
+                    Some(ctx.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+        .unwrap_or_else(|| {
+            let spec = crate::decisions::specs::CounterRemovalSpec::new(
+                pending.source,
+                object_id,
+                amount_for_target,
+                available_counters.clone(),
+            );
+            match crate::decisions::spec::DecisionSpec::build_context(
+                &spec,
+                pending.activator,
+                Some(pending.source),
+                game,
+            ) {
+                crate::decisions::context::DecisionContext::Counters(ctx) => ctx,
+                _ => unreachable!("counter removal spec should build a counters context"),
+            }
+        });
+
+        let selections = decision_maker.decide_counters(game, &counters_ctx);
+        if decision_maker.awaiting_choice() {
+            state.pending_activation = Some(pending);
+            return Ok(GameProgress::Continue);
+        }
+
+        let mut removed_from_target = 0u32;
+        for (counter_type, requested) in selections {
+            if removed_from_target >= amount_for_target {
+                break;
+            }
+            let remaining = amount_for_target - removed_from_target;
+            let to_remove = requested.min(remaining);
+            if to_remove == 0 {
+                continue;
+            }
+            if let Some((removed, event)) = game.remove_counters(
+                object_id,
+                counter_type,
+                to_remove,
+                Some(pending.source),
+                Some(pending.activator),
+            ) {
+                game.queue_trigger_event(pending.provenance, event);
+                removed_from_target += removed;
+            }
+        }
+        if removed_from_target != amount_for_target {
+            return Err(GameLoopError::InvalidState(
+                "failed to remove the requested counters".to_string(),
+            ));
+        }
+        staged.removed_total += removed_from_target;
+        staged.allocations.pop_front();
+    }
+
+    Err(GameLoopError::InvalidState(
+        "remove-counters-among payment fell through unexpectedly".to_string(),
+    ))
+}
+
 pub(super) fn continue_activation_cost_payment(
     game: &mut GameState,
     trigger_queue: &mut TriggerQueue,
@@ -2011,6 +2302,27 @@ pub(super) fn continue_activation_cost_payment(
 
     match step {
         ActivationCostStep::Cost(cost) => {
+            if remove_any_counters_among_effect(&cost).is_none()
+                && cost.display().to_ascii_lowercase().contains("from among")
+            {
+                return Err(GameLoopError::InvalidState(format!(
+                    "remove-counters-among cost lost effect-backed staged type: {:?}",
+                    cost
+                )));
+            }
+            if pending.pending_remove_counters_among.is_some()
+                || remove_any_counters_among_effect(&cost).is_some()
+            {
+                return continue_activation_remove_counters_among_payment(
+                    game,
+                    trigger_queue,
+                    state,
+                    pending,
+                    decision_maker,
+                    None,
+                );
+            }
+
             let mut cost_ctx =
                 CostContext::new(pending.source, pending.activator, &mut *decision_maker)
                     .with_provenance(pending.provenance);

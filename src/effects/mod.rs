@@ -64,8 +64,9 @@ pub use executor_trait::{CostExecutableEffect, CostValidationError, EffectExecut
 pub use cards::{
     ClashEffect, ConniveEffect, DiscardEffect, DiscardHandEffect, DrawCardsEffect,
     DrawForEachTaggedMatchingEffect, ExileTopOfLibraryEffect, LookAtHandEffect,
-    LookAtTopCardsEffect, MillEffect, RevealTaggedEffect, RevealTopEffect, ScryEffect,
-    SearchLibraryEffect, ShuffleGraveyardIntoLibraryEffect, ShuffleLibraryEffect, SurveilEffect,
+    LookAtTopCardsEffect, MillEffect, RevealFromHandEffect, RevealTaggedEffect, RevealTopEffect,
+    ScryEffect, SearchLibraryEffect, ShuffleGraveyardIntoLibraryEffect, ShuffleLibraryEffect,
+    SurveilEffect,
 };
 pub use combat::{
     EnterAttackingEffect, FightEffect, GoadEffect, GrantAbilitiesAllEffect,
@@ -88,7 +89,8 @@ pub use continuous::ApplyContinuousEffect;
 pub use control::{ExchangeControlEffect, GainControlEffect, SharedTypeConstraint};
 pub use counters::{
     ForEachCounterKindPutOrRemoveEffect, MoveAllCountersEffect, MoveCountersEffect,
-    ProliferateEffect, PutCountersEffect, RemoveCountersEffect, RemoveUpToAnyCountersEffect,
+    ProliferateEffect, PutCountersEffect, RemoveAnyCountersAmongEffect,
+    RemoveAnyCountersFromSourceEffect, RemoveCountersEffect, RemoveUpToAnyCountersEffect,
     RemoveUpToCountersEffect,
 };
 pub use damage::{

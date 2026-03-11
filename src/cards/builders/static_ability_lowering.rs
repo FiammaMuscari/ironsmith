@@ -1,0 +1,283 @@
+use crate::ability::Ability;
+use crate::cards::builders::{
+    CardTextError, KeywordAction, StaticAbilityAst, lower_parsed_ability,
+};
+use crate::cost::TotalCost;
+use crate::filter::ObjectFilter;
+use crate::mana::{ManaCost, ManaSymbol};
+use crate::static_abilities::StaticAbility;
+
+pub(crate) fn static_ability_for_keyword_action(action: KeywordAction) -> Option<StaticAbility> {
+    if !action.lowers_to_static_ability() {
+        return None;
+    }
+
+    match action {
+        KeywordAction::Flying => Some(StaticAbility::flying()),
+        KeywordAction::Menace => Some(StaticAbility::menace()),
+        KeywordAction::Hexproof => Some(StaticAbility::hexproof()),
+        KeywordAction::Haste => Some(StaticAbility::haste()),
+        KeywordAction::Improvise => Some(StaticAbility::improvise()),
+        KeywordAction::Convoke => Some(StaticAbility::convoke()),
+        KeywordAction::AffinityForArtifacts => Some(StaticAbility::affinity_for_artifacts()),
+        KeywordAction::Delve => Some(StaticAbility::delve()),
+        KeywordAction::FirstStrike => Some(StaticAbility::first_strike()),
+        KeywordAction::DoubleStrike => Some(StaticAbility::double_strike()),
+        KeywordAction::Deathtouch => Some(StaticAbility::deathtouch()),
+        KeywordAction::Lifelink => Some(StaticAbility::lifelink()),
+        KeywordAction::Vigilance => Some(StaticAbility::vigilance()),
+        KeywordAction::Trample => Some(StaticAbility::trample()),
+        KeywordAction::Reach => Some(StaticAbility::reach()),
+        KeywordAction::Defender => Some(StaticAbility::defender()),
+        KeywordAction::Flash => Some(StaticAbility::flash()),
+        KeywordAction::Phasing => Some(StaticAbility::phasing()),
+        KeywordAction::Indestructible => Some(StaticAbility::indestructible()),
+        KeywordAction::Shroud => Some(StaticAbility::shroud()),
+        KeywordAction::Ward(amount) => u8::try_from(amount).ok().map(|generic| {
+            StaticAbility::ward(TotalCost::mana(ManaCost::from_symbols(vec![
+                ManaSymbol::Generic(generic),
+            ])))
+        }),
+        KeywordAction::Wither => Some(StaticAbility::wither()),
+        KeywordAction::Afterlife(amount) => {
+            Some(StaticAbility::keyword_marker(format!("afterlife {amount}")))
+        }
+        KeywordAction::Fabricate(amount) => {
+            Some(StaticAbility::keyword_marker(format!("fabricate {amount}")))
+        }
+        KeywordAction::Infect => Some(StaticAbility::infect()),
+        KeywordAction::Undying => Some(StaticAbility::keyword_marker("undying".to_string())),
+        KeywordAction::Persist => Some(StaticAbility::keyword_marker("persist".to_string())),
+        KeywordAction::Prowess => Some(StaticAbility::keyword_marker("prowess".to_string())),
+        KeywordAction::Exalted => Some(StaticAbility::keyword_marker("exalted".to_string())),
+        KeywordAction::Cascade => Some(StaticAbility::cascade()),
+        KeywordAction::Storm => Some(StaticAbility::keyword_marker("storm".to_string())),
+        KeywordAction::Toxic(amount) => {
+            Some(StaticAbility::keyword_marker(format!("toxic {amount}")))
+        }
+        KeywordAction::BattleCry => Some(StaticAbility::keyword_marker("battle cry".to_string())),
+        KeywordAction::Dethrone => Some(StaticAbility::keyword_marker("dethrone".to_string())),
+        KeywordAction::Evolve => Some(StaticAbility::keyword_marker("evolve".to_string())),
+        KeywordAction::Ingest => Some(StaticAbility::keyword_marker("ingest".to_string())),
+        KeywordAction::Mentor => Some(StaticAbility::keyword_marker("mentor".to_string())),
+        KeywordAction::Skulk => Some(StaticAbility::skulk()),
+        KeywordAction::Training => Some(StaticAbility::keyword_marker("training".to_string())),
+        KeywordAction::Riot => Some(StaticAbility::keyword_marker("riot".to_string())),
+        KeywordAction::Unleash => Some(StaticAbility::unleash()),
+        KeywordAction::Renown(amount) => {
+            Some(StaticAbility::keyword_marker(format!("renown {amount}")))
+        }
+        KeywordAction::Modular(amount) => {
+            Some(StaticAbility::keyword_marker(format!("modular {amount}")))
+        }
+        KeywordAction::Graft(amount) => {
+            Some(StaticAbility::keyword_marker(format!("graft {amount}")))
+        }
+        KeywordAction::Soulbond => Some(StaticAbility::keyword_marker("soulbond".to_string())),
+        KeywordAction::Soulshift(amount) => {
+            Some(StaticAbility::keyword_marker(format!("soulshift {amount}")))
+        }
+        KeywordAction::Outlast(cost) => Some(StaticAbility::keyword_marker(format!(
+            "outlast {}",
+            cost.to_oracle()
+        ))),
+        KeywordAction::Unearth(cost) => Some(StaticAbility::keyword_marker(format!(
+            "unearth {}",
+            cost.to_oracle()
+        ))),
+        KeywordAction::Ninjutsu(cost) => Some(StaticAbility::keyword_marker(format!(
+            "ninjutsu {}",
+            cost.to_oracle()
+        ))),
+        KeywordAction::Extort => Some(StaticAbility::keyword_marker("extort".to_string())),
+        KeywordAction::Partner => Some(StaticAbility::partner()),
+        KeywordAction::Assist => Some(StaticAbility::assist()),
+        KeywordAction::SplitSecond => Some(StaticAbility::split_second()),
+        KeywordAction::Rebound => Some(StaticAbility::rebound()),
+        KeywordAction::Sunburst => Some(StaticAbility::keyword_marker("sunburst".to_string())),
+        KeywordAction::Fading(amount) => {
+            Some(StaticAbility::keyword_marker(format!("fading {amount}")))
+        }
+        KeywordAction::Vanishing(amount) => {
+            Some(StaticAbility::keyword_marker(format!("vanishing {amount}")))
+        }
+        KeywordAction::Fear => Some(StaticAbility::fear()),
+        KeywordAction::Intimidate => Some(StaticAbility::intimidate()),
+        KeywordAction::Shadow => Some(StaticAbility::shadow()),
+        KeywordAction::Horsemanship => Some(StaticAbility::horsemanship()),
+        KeywordAction::Flanking => Some(StaticAbility::flanking()),
+        KeywordAction::Landwalk(subtype) => Some(StaticAbility::landwalk(subtype)),
+        KeywordAction::Bloodthirst(amount) => Some(StaticAbility::bloodthirst(amount)),
+        KeywordAction::Rampage(amount) => {
+            Some(StaticAbility::keyword_marker(format!("rampage {amount}")))
+        }
+        KeywordAction::Bushido(amount) => {
+            Some(StaticAbility::keyword_marker(format!("bushido {amount}")))
+        }
+        KeywordAction::Changeling => Some(StaticAbility::changeling()),
+        KeywordAction::ProtectionFrom(colors) => Some(StaticAbility::protection(
+            crate::ability::ProtectionFrom::Color(colors),
+        )),
+        KeywordAction::ProtectionFromAllColors => Some(StaticAbility::protection(
+            crate::ability::ProtectionFrom::AllColors,
+        )),
+        KeywordAction::ProtectionFromColorless => Some(StaticAbility::protection(
+            crate::ability::ProtectionFrom::Colorless,
+        )),
+        KeywordAction::ProtectionFromEverything => Some(StaticAbility::protection(
+            crate::ability::ProtectionFrom::Everything,
+        )),
+        KeywordAction::ProtectionFromCardType(card_type) => Some(StaticAbility::protection(
+            crate::ability::ProtectionFrom::CardType(card_type),
+        )),
+        KeywordAction::ProtectionFromSubtype(subtype) => {
+            Some(StaticAbility::keyword_marker(format!(
+                "protection from {}",
+                subtype.to_string().to_ascii_lowercase()
+            )))
+        }
+        KeywordAction::Unblockable => Some(StaticAbility::unblockable()),
+        KeywordAction::Devoid => Some(StaticAbility::make_colorless(ObjectFilter::source())),
+        KeywordAction::Annihilator(amount) => Some(StaticAbility::keyword_marker(format!(
+            "annihilator {amount}"
+        ))),
+        KeywordAction::Marker(name) => Some(StaticAbility::keyword_marker(name)),
+        KeywordAction::MarkerText(text) => Some(StaticAbility::keyword_marker(text)),
+        _ => None,
+    }
+}
+
+fn lower_keyword_action_or_err(action: KeywordAction) -> Result<StaticAbility, CardTextError> {
+    static_ability_for_keyword_action(action).ok_or_else(|| {
+        CardTextError::InvariantViolation(
+            "static-ability lowering received a non-static keyword action".to_string(),
+        )
+    })
+}
+
+pub(crate) fn lower_static_ability_ast(
+    ability: StaticAbilityAst,
+) -> Result<StaticAbility, CardTextError> {
+    match ability {
+        StaticAbilityAst::Static(ability) => Ok(ability),
+        StaticAbilityAst::ConditionalAbility { ability, condition } => Ok(StaticAbility::new(
+            crate::static_abilities::GrantAbility::source(lower_static_ability_ast(*ability)?)
+                .with_condition(condition),
+        )),
+        StaticAbilityAst::GrantStaticAbility {
+            filter,
+            ability,
+            condition,
+        } => {
+            let mut grant =
+                crate::static_abilities::GrantAbility::new(filter, lower_static_ability_ast(*ability)?);
+            if let Some(condition) = condition {
+                grant = grant.with_condition(condition);
+            }
+            Ok(StaticAbility::new(grant))
+        }
+        StaticAbilityAst::RemoveStaticAbility { filter, ability } => Ok(
+            StaticAbility::remove_ability(filter, lower_static_ability_ast(*ability)?),
+        ),
+        StaticAbilityAst::AttachedStaticAbilityGrant {
+            ability,
+            display,
+            condition,
+        } => {
+            let granted = Ability::static_ability(lower_static_ability_ast(*ability)?)
+                .with_text(display.as_str());
+            let mut grant = crate::static_abilities::AttachedAbilityGrant::new(granted, display);
+            if let Some(condition) = condition {
+                grant = grant.with_condition(condition);
+            }
+            Ok(StaticAbility::new(grant))
+        }
+        StaticAbilityAst::EquipmentStaticAbilitiesGrant { abilities } => {
+            let mut lowered = Vec::with_capacity(abilities.len());
+            for ability in abilities {
+                lowered.push(lower_static_ability_ast(ability)?);
+            }
+            Ok(StaticAbility::equipment_grant(lowered))
+        }
+        StaticAbilityAst::KeywordAction(action) => lower_keyword_action_or_err(action),
+        StaticAbilityAst::ConditionalKeywordAction { action, condition } => Ok(StaticAbility::new(
+            crate::static_abilities::GrantAbility::source(lower_keyword_action_or_err(action)?)
+                .with_condition(condition),
+        )),
+        StaticAbilityAst::GrantKeywordAction {
+            filter,
+            action,
+            condition,
+        } => {
+            let mut grant = crate::static_abilities::GrantAbility::new(
+                filter,
+                lower_keyword_action_or_err(action)?,
+            );
+            if let Some(condition) = condition {
+                grant = grant.with_condition(condition);
+            }
+            Ok(StaticAbility::new(grant))
+        }
+        StaticAbilityAst::RemoveKeywordAction { filter, action } => Ok(
+            StaticAbility::remove_ability(filter, lower_keyword_action_or_err(action)?),
+        ),
+        StaticAbilityAst::GrantObjectAbility {
+            filter,
+            ability,
+            display,
+            condition,
+        } => {
+            let mut lowered = lower_parsed_ability(ability)?.ability;
+            if lowered.text.is_none() {
+                lowered.text = Some(display.clone());
+            }
+            let mut grant =
+                crate::static_abilities::GrantObjectAbilityForFilter::new(filter, lowered, display);
+            if let Some(condition) = condition {
+                grant = grant.with_condition(condition);
+            }
+            Ok(StaticAbility::new(grant))
+        }
+        StaticAbilityAst::AttachedObjectAbilityGrant {
+            ability,
+            display,
+            condition,
+        } => {
+            let mut lowered = lower_parsed_ability(ability)?.ability;
+            if lowered.text.is_none() {
+                lowered.text = Some(display.clone());
+            }
+            let mut grant = crate::static_abilities::AttachedAbilityGrant::new(lowered, display);
+            if let Some(condition) = condition {
+                grant = grant.with_condition(condition);
+            }
+            Ok(StaticAbility::new(grant))
+        }
+        StaticAbilityAst::SoulbondSharedStaticAbility { ability } => {
+            Ok(StaticAbility::soulbond_shared_ability(lower_static_ability_ast(*ability)?))
+        }
+        StaticAbilityAst::SoulbondSharedObjectAbility { ability, display } => {
+            let mut lowered = lower_parsed_ability(ability)?.ability;
+            if lowered.text.is_none() {
+                lowered.text = Some(display);
+            }
+            Ok(StaticAbility::soulbond_shared_object_ability(lowered))
+        }
+    }
+}
+
+pub(crate) fn lower_static_abilities_ast(
+    abilities: Vec<StaticAbilityAst>,
+) -> Result<Vec<StaticAbility>, CardTextError> {
+    abilities
+        .into_iter()
+        .map(lower_static_ability_ast)
+        .collect()
+}
+
+#[allow(dead_code)]
+pub(crate) fn materialize_static_abilities_ast(
+    abilities: Vec<StaticAbilityAst>,
+) -> Result<Vec<StaticAbility>, CardTextError> {
+    lower_static_abilities_ast(abilities)
+}

@@ -174,22 +174,27 @@ impl TriggerMatcher for SpellCastTrigger {
                     PlayerFilter::You => format!("your {ordinal} spell each turn"),
                     PlayerFilter::Any => format!("their {ordinal} spell each turn"),
                     PlayerFilter::Active => format!("their {ordinal} spell each turn"),
-                    PlayerFilter::Opponent | PlayerFilter::Specific(_) => {
+                    PlayerFilter::Opponent => format!("their {ordinal} spell each turn"),
+                    PlayerFilter::Specific(_) => {
                         format!("that player's {ordinal} spell each turn")
                     }
                     _ => format!("the {ordinal} spell each turn"),
                 };
             } else {
-                let exact_suffix = match &self.caster {
-                    PlayerFilter::You => format!(" as your {ordinal} spell this turn"),
-                    PlayerFilter::Any => format!(" as the {ordinal} spell this turn"),
-                    PlayerFilter::Active => format!(" as that player's {ordinal} spell this turn"),
-                    PlayerFilter::Opponent | PlayerFilter::Specific(_) => {
-                        format!(" as that player's {ordinal} spell this turn")
+                let base_spell_text = strip_leading_spell_article(&spell_text);
+                spell_text = match &self.caster {
+                    PlayerFilter::You => format!("your {ordinal} {base_spell_text} each turn"),
+                    PlayerFilter::Any | PlayerFilter::Active => {
+                        format!("their {ordinal} {base_spell_text} each turn")
                     }
-                    _ => format!(" as the {ordinal} spell this turn"),
+                    PlayerFilter::Opponent => {
+                        format!("their {ordinal} {base_spell_text} each turn")
+                    }
+                    PlayerFilter::Specific(_) => {
+                        format!("that player's {ordinal} {base_spell_text} each turn")
+                    }
+                    _ => format!("the {ordinal} {base_spell_text} each turn"),
                 };
-                suffix.push_str(&exact_suffix);
             }
         } else if self.min_spells_this_turn == Some(2)
             && matches!(self.caster, PlayerFilter::Any)
@@ -369,6 +374,14 @@ fn ordinal_word(value: u32) -> &'static str {
     }
 }
 
+fn strip_leading_spell_article(text: &str) -> &str {
+    text.strip_prefix("a ")
+        .or_else(|| text.strip_prefix("an "))
+        .or_else(|| text.strip_prefix("another "))
+        .or_else(|| text.strip_prefix("the "))
+        .unwrap_or(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,6 +512,42 @@ mod tests {
         assert_eq!(
             trigger.display(),
             "Whenever you cast your third spell each turn"
+        );
+    }
+
+    #[test]
+    fn test_qualified_first_noncreature_spell_opponent_display() {
+        let trigger = SpellCastTrigger::qualified(
+            Some(ObjectFilter::noncreature_spell()),
+            PlayerFilter::Opponent,
+            None,
+            None,
+            Some(1),
+            false,
+        );
+        assert_eq!(
+            trigger.display(),
+            "Whenever an opponent casts their first noncreature spell each turn"
+        );
+    }
+
+    #[test]
+    fn test_qualified_first_spell_from_graveyard_you_display() {
+        let trigger = SpellCastTrigger::qualified(
+            Some(
+                ObjectFilter::spell()
+                    .in_zone(Zone::Graveyard)
+                    .owned_by(PlayerFilter::You),
+            ),
+            PlayerFilter::You,
+            None,
+            None,
+            Some(1),
+            false,
+        );
+        assert_eq!(
+            trigger.display(),
+            "Whenever you cast your first spell from your graveyard each turn"
         );
     }
 

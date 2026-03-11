@@ -27,8 +27,8 @@ use crate::cards::builders::parse_parsing::{
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, ClashOpponentAst, EffectAst, GrantedAbilityAst, IT_TAG, LineAst, PlayerAst,
-    PredicateAst, ReferenceImports, RetargetModeAst, SubjectAst, TagKey, TargetAst, TextSpan,
-    Token, TriggerSpec, is_article, parse_effect_clause, parse_effect_sentence,
+    PredicateAst, ReferenceImports, RetargetModeAst, StaticAbilityAst, SubjectAst, TagKey,
+    TargetAst, TextSpan, Token, TriggerSpec, is_article, parse_effect_clause, parse_effect_sentence,
     parse_keyword_mechanic_clause, parse_predicate, parse_subject, parse_target_phrase,
     parse_triggered_line, parse_value, span_from_tokens, split_on_or, trim_commas, words,
 };
@@ -1819,8 +1819,8 @@ pub(crate) fn parse_attack_or_block_this_turn_if_able_clause(
         parse_target_phrase(&subject_tokens)?
     };
     let abilities = vec![
-        StaticAbility::must_attack().into(),
-        StaticAbility::must_block().into(),
+        GrantedAbilityAst::StaticAbility(StaticAbilityAst::Static(StaticAbility::must_attack())),
+        GrantedAbilityAst::StaticAbility(StaticAbilityAst::Static(StaticAbility::must_block())),
     ];
 
     if subject_tokens.is_empty() || starts_with_target_indicator(&subject_tokens) {
@@ -1870,7 +1870,8 @@ pub(crate) fn parse_attack_this_turn_if_able_clause(
     } else {
         parse_target_phrase(&subject_tokens)?
     };
-    let ability: GrantedAbilityAst = StaticAbility::must_attack().into();
+    let ability =
+        GrantedAbilityAst::StaticAbility(StaticAbilityAst::Static(StaticAbility::must_attack()));
 
     if subject_tokens.is_empty() || starts_with_target_indicator(&subject_tokens) {
         return Ok(Some(EffectAst::GrantAbilitiesToTarget {
@@ -1968,7 +1969,8 @@ pub(crate) fn parse_must_block_if_able_clause(
             return Ok(None);
         }
         let target = parse_target_phrase(&subject_tokens)?;
-        let ability: GrantedAbilityAst = StaticAbility::must_block().into();
+        let ability =
+            GrantedAbilityAst::StaticAbility(StaticAbilityAst::Static(StaticAbility::must_block()));
 
         if starts_with_target_indicator(&subject_tokens) {
             return Ok(Some(EffectAst::GrantAbilitiesToTarget {

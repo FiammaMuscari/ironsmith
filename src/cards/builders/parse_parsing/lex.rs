@@ -1,3 +1,4 @@
+use crate::ManaSymbol;
 use crate::cards::TextSpan;
 use crate::cards::builders::{
     CardTextError, Token, find_verb, parse_ability_line,
@@ -6,7 +7,6 @@ use crate::cards::builders::{
     parse_must_block_if_able_clause, parse_prevent_all_damage_clause,
     parse_prevent_next_damage_clause, parse_single_word_keyword_action, trim_commas,
 };
-use crate::ManaSymbol;
 
 pub(crate) fn tokenize_line(line: &str, line_index: usize) -> Vec<Token> {
     let mut tokens = Vec::new();

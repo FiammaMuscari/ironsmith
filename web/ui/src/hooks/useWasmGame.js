@@ -4,6 +4,7 @@ const MIN_INIT_PHASE_MS = 180;
 
 const WORKER_METHODS = [
   "addCardToHand",
+  "autocompleteCardNames",
   "addCardToZone",
   "addLifeDelta",
   "advancePhase",

@@ -34,7 +34,7 @@ use crate::cards::builders::{
     ObjectRefAst, ParseAnnotations, PlayerAst, PredicateAst, PreventNextTimeDamageSourceAst,
     PreventNextTimeDamageTargetAst, ReferenceEnv, ReferenceExports, ReferenceImports,
     RetargetModeAst, ReturnControllerAst, SharedTypeConstraintAst, TagKey, TargetAst, TriggerSpec,
-    choose_spec_targets_object, infer_player_filter_from_object_filter,
+    choose_spec_targets_object, infer_player_filter_from_object_filter, lower_static_ability_ast,
     object_filter_as_tagged_reference, resolve_attach_object_spec, resolve_choose_spec_it_tag,
     resolve_it_tag, resolve_it_tag_key, resolve_non_target_player_filter,
     resolve_restriction_it_tag, resolve_target_spec_with_choices, resolve_unless_player_filter,
@@ -3101,7 +3101,7 @@ pub(crate) fn compile_effect(
 
 fn lower_granted_ability_ast(ability: &GrantedAbilityAst) -> Result<StaticAbility, CardTextError> {
     match ability {
-        GrantedAbilityAst::Static(ability) => Ok(ability.clone()),
+        GrantedAbilityAst::StaticAbility(ability) => lower_static_ability_ast(ability.clone()),
         GrantedAbilityAst::ParsedObjectAbility { ability, display } => {
             let mut lowered = lower_parsed_ability(ability.clone())?.ability;
             if lowered.text.is_none() {

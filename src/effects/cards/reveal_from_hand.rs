@@ -1,0 +1,183 @@
+//! Reveal cards from hand.
+
+use crate::decision::FallbackStrategy;
+use crate::decisions::{ChooseObjectsSpec, make_decision_with_fallback};
+use crate::effect::{EffectOutcome, EffectResult};
+use crate::effects::helpers::normalize_object_selection;
+use crate::effects::{CostExecutableEffect, CostValidationError, EffectExecutor};
+use crate::executor::{ExecutionContext, ExecutionError};
+use crate::game_state::GameState;
+use crate::ids::ObjectId;
+use crate::types::CardType;
+
+/// Effect that reveals cards from the controller's hand.
+///
+/// Revealing is informational only in this engine model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RevealFromHandEffect {
+    pub count: u32,
+    pub card_type: Option<CardType>,
+}
+
+impl RevealFromHandEffect {
+    pub fn new(count: u32, card_type: Option<CardType>) -> Self {
+        Self { count, card_type }
+    }
+
+    fn valid_cards(
+        &self,
+        game: &GameState,
+        player: crate::ids::PlayerId,
+        source: crate::ids::ObjectId,
+    ) -> Vec<ObjectId> {
+        game.player(player)
+            .map(|p| {
+                p.hand
+                    .iter()
+                    .copied()
+                    .filter(|card_id| {
+                        if *card_id == source {
+                            return false;
+                        }
+                        self.card_type.map_or(true, |card_type| {
+                            game.object(*card_id)
+                                .is_some_and(|obj| obj.has_card_type(card_type))
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn cost_display(&self) -> String {
+        let type_str = self
+            .card_type
+            .map_or("card".to_string(), |ct| ct.card_phrase().to_string());
+        if self.count == 1 {
+            format!("Reveal a {} from your hand", type_str)
+        } else {
+            format!("Reveal {} {}s from your hand", self.count, type_str)
+        }
+    }
+}
+
+impl EffectExecutor for RevealFromHandEffect {
+    fn as_cost_executable(&self) -> Option<&dyn CostExecutableEffect> {
+        Some(self)
+    }
+
+    fn execute(
+        &self,
+        game: &mut GameState,
+        ctx: &mut ExecutionContext,
+    ) -> Result<EffectOutcome, ExecutionError> {
+        let valid_cards = self.valid_cards(game, ctx.controller, ctx.source);
+        let required = (self.count as usize).min(valid_cards.len());
+        if required == 0 {
+            return Ok(EffectOutcome::count(0));
+        }
+
+        let explicit_cards: Vec<_> = ctx
+            .targets
+            .iter()
+            .filter_map(|target| match target {
+                crate::executor::ResolvedTarget::Object(id) => Some(*id),
+                crate::executor::ResolvedTarget::Player(_) => None,
+            })
+            .collect();
+
+        let cards_to_reveal = if !explicit_cards.is_empty() {
+            normalize_object_selection(explicit_cards, &valid_cards, required)
+        } else {
+            let spec = ChooseObjectsSpec::new(
+                ctx.source,
+                format!(
+                    "Choose {} card{} to reveal",
+                    required,
+                    if required == 1 { "" } else { "s" }
+                ),
+                valid_cards.clone(),
+                required,
+                Some(required),
+            );
+            let chosen: Vec<_> = make_decision_with_fallback(
+                game,
+                &mut ctx.decision_maker,
+                ctx.controller,
+                Some(ctx.source),
+                spec,
+                FallbackStrategy::Maximum,
+            );
+            normalize_object_selection(chosen, &valid_cards, required)
+        };
+
+        Ok(EffectOutcome::from_result(EffectResult::Count(
+            cards_to_reveal.len() as i32,
+        )))
+    }
+
+    fn cost_description(&self) -> Option<String> {
+        Some(self.cost_display())
+    }
+}
+
+impl CostExecutableEffect for RevealFromHandEffect {
+    fn can_execute_as_cost(
+        &self,
+        game: &GameState,
+        source: crate::ids::ObjectId,
+        controller: crate::ids::PlayerId,
+    ) -> Result<(), CostValidationError> {
+        if self.valid_cards(game, controller, source).len() < self.count as usize {
+            return Err(CostValidationError::NotEnoughCards);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::card::CardBuilder;
+    use crate::costs::{Cost, CostContext, CostPaymentResult};
+    use crate::ids::{CardId, PlayerId};
+    use crate::zone::Zone;
+
+    fn create_test_game() -> GameState {
+        GameState::new(vec!["Alice".to_string(), "Bob".to_string()], 20)
+    }
+
+    fn simple_card(name: &str, id: u32) -> crate::card::Card {
+        CardBuilder::new(CardId::from_raw(id), name)
+            .card_types(vec![CardType::Creature])
+            .build()
+    }
+
+    #[test]
+    fn display_text() {
+        assert_eq!(
+            RevealFromHandEffect::new(1, None).cost_display(),
+            "Reveal a card from your hand"
+        );
+        assert_eq!(
+            RevealFromHandEffect::new(1, Some(CardType::Land)).cost_display(),
+            "Reveal a land card from your hand"
+        );
+    }
+
+    #[test]
+    fn pay_with_preselected_cards() {
+        let mut game = create_test_game();
+        let alice = PlayerId::from_index(0);
+        let source = ObjectId::from_raw(999);
+
+        let card1 = simple_card("Card 1", 1);
+        let id1 = game.create_object_from_card(&card1, alice, Zone::Hand);
+
+        let cost = Cost::effect(RevealFromHandEffect::new(1, None));
+        let mut dm = crate::decision::AutoPassDecisionMaker;
+        let mut ctx = CostContext::new(source, alice, &mut dm).with_pre_chosen_cards(vec![id1]);
+
+        assert_eq!(cost.pay(&mut game, &mut ctx), Ok(CostPaymentResult::Paid));
+    }
+}

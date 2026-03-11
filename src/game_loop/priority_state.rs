@@ -142,6 +142,8 @@ pub struct PendingCast {
     pub stack_id: ObjectId,
     /// Permanents that contributed keyword-ability alternative payments while casting this spell.
     pub keyword_payment_contributions: Vec<KeywordPaymentContribution>,
+    /// Live state for staged "remove counters from among ..." cost payment.
+    pub pending_remove_counters_among: Option<PendingRemoveCountersAmongChoice>,
 }
 
 impl PendingCast {
@@ -183,8 +185,17 @@ impl PendingCast {
             pending_hybrid_pips: Vec::new(),
             stack_id,
             keyword_payment_contributions: Vec::new(),
+            pending_remove_counters_among: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingRemoveCountersAmongChoice {
+    pub cost: crate::effects::RemoveAnyCountersAmongEffect,
+    pub distribution_ready: bool,
+    pub allocations: std::collections::VecDeque<(ObjectId, u32)>,
+    pub removed_total: u32,
 }
 
 /// Stage of the ability activation process.
@@ -605,6 +616,8 @@ pub struct PendingActivation {
     /// Pending hybrid/Phyrexian pips that still need announcement.
     /// Each element is (pip_index, alternatives).
     pub pending_hybrid_pips: Vec<(usize, Vec<crate::mana::ManaSymbol>)>,
+    /// Live state for staged "remove counters from among ..." cost payment.
+    pub pending_remove_counters_among: Option<PendingRemoveCountersAmongChoice>,
 }
 
 impl PendingActivation {
@@ -652,6 +665,7 @@ impl PendingActivation {
             x_value,
             hybrid_choices: Vec::new(),
             pending_hybrid_pips,
+            pending_remove_counters_among: None,
         }
     }
 }
@@ -690,6 +704,7 @@ pub struct PendingManaAbility {
 #[derive(Debug, Clone)]
 pub enum PendingPriorityContinuation {
     ApplyResponse(PriorityResponse),
+    ApplyDecisionContext(crate::decisions::context::DecisionContext),
 }
 
 /// State for tracking the priority loop between decisions.

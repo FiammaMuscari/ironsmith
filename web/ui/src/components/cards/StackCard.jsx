@@ -7,7 +7,7 @@ import { ManaCostIcons } from "@/lib/mana-symbols";
 import { cn } from "@/lib/utils";
 import AnimatedCircuitFrame from "@/components/cards/AnimatedCircuitFrame";
 
-const STACK_CARD_CIRCUIT_PATH = "M9.5 2.5H90.5C93.26 2.5 95.5 4.74 95.5 7.5V88.5C95.5 91.26 93.26 93.5 90.5 93.5H9.5C6.74 93.5 4.5 91.26 4.5 88.5V7.5C4.5 4.74 6.74 2.5 9.5 2.5Z";
+const STACK_CARD_CIRCUIT_PATH = "M4.5 2.5H95.5";
 
 export default function StackCard({
   entry,

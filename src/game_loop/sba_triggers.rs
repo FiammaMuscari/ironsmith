@@ -103,46 +103,136 @@ pub fn put_triggers_on_stack_with_dm(
     // Flush them first so only non-mana triggers remain to be stacked.
     resolve_triggered_mana_abilities_with_dm(game, trigger_queue, decision_maker);
 
-    // Group triggers by controller (APNAP order)
-    let active_player = game.turn.active_player;
-    let mut active_triggers = Vec::new();
-    let mut other_triggers = Vec::new();
+    // Group triggers by controller, then let each controller order their own
+    // simultaneous triggers before applying APNAP stack placement.
+    let mut grouped: std::collections::HashMap<PlayerId, Vec<TriggeredAbilityEntry>> =
+        std::collections::HashMap::new();
 
     for trigger in trigger_queue.take_all() {
-        if trigger.controller == active_player {
-            active_triggers.push(trigger);
-        } else {
-            other_triggers.push(trigger);
+        grouped.entry(trigger.controller).or_default().push(trigger);
+    }
+
+    let mut controller_order = players_in_apnap_order(game);
+    for controller in grouped.keys().copied() {
+        if !controller_order.contains(&controller) {
+            controller_order.push(controller);
         }
     }
 
-    // Active player's triggers go on stack first (resolve last)
-    for trigger in active_triggers {
-        if !can_stack_trigger_this_turn(game, &trigger) {
+    for controller in controller_order {
+        let Some(triggers) = grouped.remove(&controller) else {
             continue;
-        }
-        if let Some(entry) =
-            create_triggered_stack_entry_with_targets(game, &trigger, decision_maker)
-        {
-            game.record_trigger_fired(trigger.source, trigger.trigger_identity);
-            game.push_to_stack(entry);
-        }
-    }
-
-    // Then other players' triggers (in turn order)
-    for trigger in other_triggers {
-        if !can_stack_trigger_this_turn(game, &trigger) {
-            continue;
-        }
-        if let Some(entry) =
-            create_triggered_stack_entry_with_targets(game, &trigger, decision_maker)
-        {
-            game.record_trigger_fired(trigger.source, trigger.trigger_identity);
-            game.push_to_stack(entry);
+        };
+        let ordered = order_triggers_for_controller(game, decision_maker, triggers);
+        for trigger in ordered.into_iter().rev() {
+            if !can_stack_trigger_this_turn(game, &trigger) {
+                continue;
+            }
+            if let Some(entry) =
+                create_triggered_stack_entry_with_targets(game, &trigger, decision_maker)
+            {
+                game.record_trigger_fired(trigger.source, trigger.trigger_identity);
+                game.push_to_stack(entry);
+            }
         }
     }
 
     Ok(())
+}
+
+fn players_in_apnap_order(game: &GameState) -> Vec<PlayerId> {
+    if game.turn_order.is_empty() {
+        return Vec::new();
+    }
+
+    let start = game
+        .turn_order
+        .iter()
+        .position(|&player_id| player_id == game.turn.active_player)
+        .unwrap_or(0);
+
+    (0..game.turn_order.len())
+        .filter_map(|offset| {
+            let player_id = game.turn_order[(start + offset) % game.turn_order.len()];
+            game.player(player_id)
+                .filter(|player| player.is_in_game())
+                .map(|_| player_id)
+        })
+        .collect()
+}
+
+fn describe_trigger_for_ordering(trigger: &TriggeredAbilityEntry) -> String {
+    let trigger_text = trigger.ability.trigger.display();
+    let effect_text = crate::compiled_text::compile_effect_list(&trigger.ability.effects);
+    let detail = if !effect_text.trim().is_empty() {
+        effect_text
+    } else if !trigger_text.trim().is_empty() {
+        trigger_text
+    } else {
+        "Triggered ability".to_string()
+    };
+
+    format!("{}\n{}", trigger.source_name, detail)
+}
+
+fn uniquify_trigger_labels(labels: &mut [String]) {
+    let mut totals = std::collections::HashMap::<String, usize>::new();
+    for label in labels.iter() {
+        *totals.entry(label.clone()).or_insert(0) += 1;
+    }
+
+    let mut seen = std::collections::HashMap::<String, usize>::new();
+    for label in labels.iter_mut() {
+        let total = totals.get(label).copied().unwrap_or(0);
+        if total <= 1 {
+            continue;
+        }
+        let ordinal = seen.entry(label.clone()).or_insert(0);
+        *ordinal += 1;
+        label.push_str(&format!("\nTrigger {}", *ordinal));
+    }
+}
+
+fn order_triggers_for_controller(
+    game: &GameState,
+    decision_maker: &mut dyn DecisionMaker,
+    triggers: Vec<TriggeredAbilityEntry>,
+) -> Vec<TriggeredAbilityEntry> {
+    if triggers.len() <= 1 {
+        return triggers;
+    }
+
+    let controller = triggers[0].controller;
+    let description = "Order triggered abilities. The leftmost item becomes the top of your stack.";
+    let mut labels: Vec<String> = triggers.iter().map(describe_trigger_for_ordering).collect();
+    uniquify_trigger_labels(&mut labels);
+
+    let items: Vec<(ObjectId, String)> = labels
+        .into_iter()
+        .enumerate()
+        .map(|(index, label)| (ObjectId::from_raw(u64::MAX - index as u64), label))
+        .collect();
+    let ctx = crate::decisions::context::enrich_display_hints(
+        game,
+        crate::decisions::context::DecisionContext::Order(
+            crate::decisions::context::OrderContext::new(controller, None, description, items),
+        ),
+    )
+    .into_order();
+    let response = decision_maker.decide_order(game, &ctx);
+
+    let mut remaining: Vec<(ObjectId, TriggeredAbilityEntry)> =
+        ctx.items.iter().map(|(id, _)| *id).zip(triggers).collect();
+    let mut ordered = Vec::with_capacity(remaining.len());
+
+    for id in response {
+        if let Some(position) = remaining.iter().position(|(item_id, _)| *item_id == id) {
+            ordered.push(remaining.remove(position).1);
+        }
+    }
+
+    ordered.extend(remaining.into_iter().map(|(_, trigger)| trigger));
+    ordered
 }
 
 pub(super) fn is_triggered_mana_ability(game: &GameState, trigger: &TriggeredAbilityEntry) -> bool {

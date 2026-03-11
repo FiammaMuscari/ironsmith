@@ -10,13 +10,13 @@ use crate::cards::builders::{
     apply_instead_followup_statement_to_last_ability, collect_tag_spans_from_effects_with_context,
     combine_mana_activation_condition, effects_reference_it_tag, effects_reference_its_controller,
     effects_reference_tag, ensure_concrete_trigger_spec, inferred_trigger_player_filter,
-    keyword_action_to_static_ability, lower_prepared_ability,
-    lower_prepared_additional_cost_choice_modes_with_exports,
+    lower_prepared_ability, lower_prepared_additional_cost_choice_modes_with_exports,
     lower_prepared_effects_with_trigger_context, lower_prepared_statement_effects,
     lower_static_abilities_ast, lower_static_ability_ast, normalize_effects_ast,
     parse_activate_only_timing, parse_activation_condition, parse_mana_output_options_for_line,
     parse_mana_usage_restriction_sentence, parse_triggered_times_each_turn_from_words,
-    parsed_triggered_ability, tokenize_line, trigger_supports_event_value, words,
+    parsed_triggered_ability, static_ability_for_keyword_action, tokenize_line,
+    trigger_supports_event_value, words,
 };
 use crate::color::ColorSet;
 use crate::cost::OptionalCost;
@@ -243,7 +243,9 @@ fn prepare_effects_from_normalized(
     })
 }
 
-fn runtime_effects_to_costs(effects: Vec<Effect>) -> Result<Vec<crate::costs::Cost>, CardTextError> {
+fn runtime_effects_to_costs(
+    effects: Vec<Effect>,
+) -> Result<Vec<crate::costs::Cost>, CardTextError> {
     effects
         .into_iter()
         .map(|effect| {
@@ -728,7 +730,7 @@ fn lower_level_ability_ast(level: ParsedLevelAbilityAst) -> Result<LevelAbility,
             }
             ParsedLevelAbilityItemAst::KeywordActions(actions) => {
                 for action in actions {
-                    if let Some(ability) = keyword_action_to_static_ability(action) {
+                    if let Some(ability) = static_ability_for_keyword_action(action) {
                         lowered.abilities.push(ability);
                     }
                 }

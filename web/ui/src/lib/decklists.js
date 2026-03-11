@@ -3,6 +3,7 @@ export const MATCH_FORMAT_COMMANDER = "commander";
 export const LOBBY_DECK_SIZE = 60;
 export const COMMANDER_DECK_SIZE = 99;
 export const PARTNER_DECK_SIZE = 98;
+const SAVED_DECK_PRESETS_STORAGE_KEY = "ironsmith.savedDeckPresets";
 
 const MAIN_DECK_HEADER = /^Deck$/i;
 const COMMANDER_HEADER = /^(Commander|Commanders)$/i;
@@ -13,6 +14,63 @@ function normalizeCardName(raw) {
   return String(raw || "")
     .replace(/\s*\([A-Z0-9]+\)\s*\d*\*?\s*$/, "")
     .trim();
+}
+
+function normalizeDeckPresetName(raw) {
+  return String(raw || "").trim();
+}
+
+function sanitizeDeckPresetTexts(texts) {
+  if (!Array.isArray(texts)) return [];
+  return texts.map((text) => String(text || ""));
+}
+
+function canUseLocalStorage() {
+  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function readSavedDeckPresets() {
+  if (!canUseLocalStorage()) return [];
+
+  try {
+    const raw = window.localStorage.getItem(SAVED_DECK_PRESETS_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((entry) => {
+        const name = normalizeDeckPresetName(entry?.name);
+        if (!name) return null;
+        return {
+          name,
+          texts: sanitizeDeckPresetTexts(entry?.texts),
+          updatedAt: Number(entry?.updatedAt) || 0,
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => {
+        if (right.updatedAt !== left.updatedAt) return right.updatedAt - left.updatedAt;
+        return left.name.localeCompare(right.name);
+      });
+  } catch (error) {
+    console.warn("Failed to read saved deck presets:", error);
+    return [];
+  }
+}
+
+function writeSavedDeckPresets(entries) {
+  if (!canUseLocalStorage()) return;
+
+  try {
+    window.localStorage.setItem(
+      SAVED_DECK_PRESETS_STORAGE_KEY,
+      JSON.stringify(entries)
+    );
+  } catch (error) {
+    console.warn("Failed to write saved deck presets:", error);
+  }
 }
 
 export function parseDeckList(text) {
@@ -79,6 +137,60 @@ export function parseCommanderList(text) {
   }
 
   return cards;
+}
+
+export function listSavedDeckPresets() {
+  return readSavedDeckPresets();
+}
+
+export function findSavedDeckPreset(name) {
+  const normalizedName = normalizeDeckPresetName(name);
+  if (!normalizedName) return null;
+
+  const expectedKey = normalizedName.toLowerCase();
+  return (
+    readSavedDeckPresets().find(
+      (entry) => entry.name.toLowerCase() === expectedKey
+    ) || null
+  );
+}
+
+export function saveSavedDeckPreset(name, texts) {
+  const normalizedName = normalizeDeckPresetName(name);
+  if (!normalizedName) {
+    return {
+      saved: false,
+      replaced: false,
+      entry: null,
+      entries: readSavedDeckPresets(),
+    };
+  }
+
+  const now = Date.now();
+  const nextEntry = {
+    name: normalizedName,
+    texts: sanitizeDeckPresetTexts(texts),
+    updatedAt: now,
+  };
+  const normalizedKey = normalizedName.toLowerCase();
+  const entries = readSavedDeckPresets();
+  const existingIndex = entries.findIndex(
+    (entry) => entry.name.toLowerCase() === normalizedKey
+  );
+  const replaced = existingIndex >= 0;
+
+  if (replaced) {
+    entries.splice(existingIndex, 1);
+  }
+  entries.unshift(nextEntry);
+  writeSavedDeckPresets(entries);
+
+  return {
+    saved: true,
+    replaced,
+    entry: nextEntry,
+    entries,
+  };
 }
 
 export function normalizeMatchFormat(raw) {

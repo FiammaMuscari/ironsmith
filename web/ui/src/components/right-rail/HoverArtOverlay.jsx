@@ -636,6 +636,9 @@ export default function HoverArtOverlay({
 
   const semanticScore = Number(details?.semantic_score);
   const hasSemanticScore = Number.isFinite(semanticScore);
+  const similarityBadgeLabel = hasSemanticScore
+    ? `Similarity ${(semanticScore * 100).toFixed(1)}%`
+    : "Similarity --";
   const compiledText = detailAbilities && detailAbilities.length > 0
     ? stripInspectorAbilityPrefixes(detailAbilities.join("\n"))
     : stripInspectorAbilityPrefixes(
@@ -953,6 +956,35 @@ export default function HoverArtOverlay({
     const timer = setTimeout(() => setCopiedDebug(false), 1400);
     return () => clearTimeout(timer);
   }, [copiedDebug]);
+
+  const copyDebugButton = inspectorDebug ? (
+    <div className="absolute right-3 top-3 z-20 pointer-events-auto">
+      <button
+        type="button"
+        className={`inline-flex h-7 w-7 items-center justify-center rounded-full border bg-[rgba(5,11,20,0.88)] shadow-[0_10px_26px_rgba(0,0,0,0.46)] backdrop-blur-[6px] transition-colors ${
+          canCopyDebug
+            ? "border-[#4d78a0] text-[#a8d4ff] hover:border-[#7fb5ea] hover:text-[#eef8ff]"
+            : "border-[#2a3d52] text-[#627d98] opacity-60"
+        }`}
+        disabled={!canCopyDebug}
+        title={canCopyDebug ? "Copy compiled + raw definition" : "No debug text available"}
+        onClick={copyDebugPayload}
+      >
+        {copiedDebug ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      </button>
+    </div>
+  ) : null;
+
+  const similarityBadge = (
+    <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2">
+      <div
+        className="rounded-full border border-[#78afdc]/38 bg-[rgba(5,11,20,0.84)] px-3 py-1 text-[12px] font-extrabold leading-none tracking-[0.08em] text-[#e6f4ff] shadow-[0_10px_28px_rgba(0,0,0,0.5)] backdrop-blur-[8px]"
+        style={METADATA_TEXT_STYLE}
+      >
+        {similarityBadgeLabel}
+      </div>
+    </div>
+  );
 
   useLayoutEffect(() => {
     if (compact || displayMode !== "inspector") return undefined;
@@ -1298,6 +1330,8 @@ export default function HoverArtOverlay({
             fullArt
             onError={setFailedImageUrl}
           />
+          {copyDebugButton}
+          {similarityBadge}
         </div>
         <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-start justify-between gap-2">
           <div className="flex max-w-[72%] flex-col items-start gap-1.5">
@@ -1374,6 +1408,7 @@ export default function HoverArtOverlay({
           onError={setFailedImageUrl}
         />
       </div>
+      {copyDebugButton}
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.08)_0%,rgba(0,0,0,0.16)_48%,rgba(0,0,0,0.3)_100%)]" />
       <div className="absolute inset-0 overflow-hidden">
         <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[34%] bg-[linear-gradient(180deg,rgba(0,0,0,0)_0%,rgba(0,0,0,0.52)_46%,rgba(0,0,0,0.74)_100%)]" />
@@ -1448,24 +1483,6 @@ export default function HoverArtOverlay({
             )}
           </div>
         )}
-        {inspectorDebug && (
-          <div className="absolute top-0 right-0 z-20 p-1 pointer-events-auto">
-            <button
-              type="button"
-              className={`inline-flex h-6 w-6 items-center justify-center rounded border bg-[rgba(5,11,20,0.84)] shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-colors ${
-                canCopyDebug
-                  ? "border-[#436183] text-[#9dc9f8] hover:border-[#6e9ccc] hover:text-[#d9ecff]"
-                  : "border-[#2a3d52] text-[#627d98] opacity-60"
-              }`}
-              disabled={!canCopyDebug}
-              title={canCopyDebug ? "Copy compiled + raw definition" : "No debug text available"}
-              onClick={copyDebugPayload}
-            >
-              {copiedDebug ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-            </button>
-          </div>
-        )}
-
         <div
           ref={oracleScrollRef}
           className="inspector-oracle-scroll absolute inset-x-0 top-0 overflow-y-auto pointer-events-auto overscroll-contain touch-pan-y"
@@ -1504,6 +1521,7 @@ export default function HoverArtOverlay({
           </div>
         </div>
       </div>
+      {similarityBadge}
     </div>
   );
 }

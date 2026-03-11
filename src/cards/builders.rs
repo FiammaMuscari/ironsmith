@@ -196,6 +196,92 @@ pub(crate) enum KeywordAction {
     MarkerText(String),
 }
 
+impl KeywordAction {
+    pub(crate) fn lowers_to_static_ability(&self) -> bool {
+        matches!(
+            self,
+            Self::Flying
+                | Self::Menace
+                | Self::Hexproof
+                | Self::Haste
+                | Self::Improvise
+                | Self::Convoke
+                | Self::AffinityForArtifacts
+                | Self::Delve
+                | Self::FirstStrike
+                | Self::DoubleStrike
+                | Self::Deathtouch
+                | Self::Lifelink
+                | Self::Vigilance
+                | Self::Trample
+                | Self::Reach
+                | Self::Defender
+                | Self::Flash
+                | Self::Phasing
+                | Self::Indestructible
+                | Self::Shroud
+                | Self::Ward(_)
+                | Self::Wither
+                | Self::Afterlife(_)
+                | Self::Fabricate(_)
+                | Self::Infect
+                | Self::Undying
+                | Self::Persist
+                | Self::Prowess
+                | Self::Exalted
+                | Self::Cascade
+                | Self::Storm
+                | Self::Toxic(_)
+                | Self::BattleCry
+                | Self::Dethrone
+                | Self::Evolve
+                | Self::Ingest
+                | Self::Mentor
+                | Self::Skulk
+                | Self::Training
+                | Self::Riot
+                | Self::Unleash
+                | Self::Renown(_)
+                | Self::Modular(_)
+                | Self::Graft(_)
+                | Self::Soulbond
+                | Self::Soulshift(_)
+                | Self::Outlast(_)
+                | Self::Unearth(_)
+                | Self::Ninjutsu(_)
+                | Self::Extort
+                | Self::Partner
+                | Self::Assist
+                | Self::SplitSecond
+                | Self::Rebound
+                | Self::Sunburst
+                | Self::Fading(_)
+                | Self::Vanishing(_)
+                | Self::Fear
+                | Self::Intimidate
+                | Self::Shadow
+                | Self::Horsemanship
+                | Self::Flanking
+                | Self::Landwalk(_)
+                | Self::Bloodthirst(_)
+                | Self::Rampage(_)
+                | Self::Bushido(_)
+                | Self::Changeling
+                | Self::ProtectionFrom(_)
+                | Self::ProtectionFromAllColors
+                | Self::ProtectionFromColorless
+                | Self::ProtectionFromEverything
+                | Self::ProtectionFromCardType(_)
+                | Self::ProtectionFromSubtype(_)
+                | Self::Unblockable
+                | Self::Devoid
+                | Self::Annihilator(_)
+                | Self::Marker(_)
+                | Self::MarkerText(_)
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextSpan {
     pub line: usize,
@@ -286,6 +372,41 @@ pub(crate) struct ParsedAbility {
 #[derive(Debug, Clone)]
 pub(crate) enum StaticAbilityAst {
     Static(StaticAbility),
+    ConditionalAbility {
+        ability: Box<StaticAbilityAst>,
+        condition: ConditionExpr,
+    },
+    GrantStaticAbility {
+        filter: ObjectFilter,
+        ability: Box<StaticAbilityAst>,
+        condition: Option<ConditionExpr>,
+    },
+    RemoveStaticAbility {
+        filter: ObjectFilter,
+        ability: Box<StaticAbilityAst>,
+    },
+    AttachedStaticAbilityGrant {
+        ability: Box<StaticAbilityAst>,
+        display: String,
+        condition: Option<ConditionExpr>,
+    },
+    EquipmentStaticAbilitiesGrant {
+        abilities: Vec<StaticAbilityAst>,
+    },
+    KeywordAction(KeywordAction),
+    ConditionalKeywordAction {
+        action: KeywordAction,
+        condition: ConditionExpr,
+    },
+    GrantKeywordAction {
+        filter: ObjectFilter,
+        action: KeywordAction,
+        condition: Option<ConditionExpr>,
+    },
+    RemoveKeywordAction {
+        filter: ObjectFilter,
+        action: KeywordAction,
+    },
     GrantObjectAbility {
         filter: ObjectFilter,
         ability: ParsedAbility,
@@ -296,6 +417,9 @@ pub(crate) enum StaticAbilityAst {
         ability: ParsedAbility,
         display: String,
         condition: Option<ConditionExpr>,
+    },
+    SoulbondSharedStaticAbility {
+        ability: Box<StaticAbilityAst>,
     },
     SoulbondSharedObjectAbility {
         ability: ParsedAbility,
@@ -311,16 +435,22 @@ impl From<StaticAbility> for StaticAbilityAst {
 
 #[derive(Debug, Clone)]
 pub(crate) enum GrantedAbilityAst {
-    Static(StaticAbility),
+    StaticAbility(StaticAbilityAst),
     ParsedObjectAbility {
         ability: ParsedAbility,
         display: String,
     },
 }
 
+impl From<StaticAbilityAst> for GrantedAbilityAst {
+    fn from(ability: StaticAbilityAst) -> Self {
+        Self::StaticAbility(ability)
+    }
+}
+
 impl From<StaticAbility> for GrantedAbilityAst {
     fn from(ability: StaticAbility) -> Self {
-        Self::Static(ability)
+        Self::StaticAbility(StaticAbilityAst::Static(ability))
     }
 }
 
@@ -1657,6 +1787,9 @@ const IT_TAG: &str = "__it__";
 mod ability_lowering;
 pub(crate) use ability_lowering::*;
 
+mod static_ability_lowering;
+pub(crate) use static_ability_lowering::*;
+
 mod cost_components;
 pub(crate) use cost_components::*;
 
@@ -2774,11 +2907,7 @@ impl CardDefinitionBuilder {
     /// - This permanent enters with an internal Echo counter.
     /// - At the beginning of each upkeep, remove one Echo counter from this permanent.
     /// - If a counter was removed this way, pay the echo cost or sacrifice this permanent.
-    pub fn echo(
-        self,
-        total_cost: TotalCost,
-        text: String,
-    ) -> Self {
+    pub fn echo(self, total_cost: TotalCost, text: String) -> Self {
         let payment_effects = total_cost_to_payment_effects(&total_cost);
 
         self.with_ability(
@@ -6972,16 +7101,17 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .expect("expected activated ability");
         let cost_debug = format!("{:?}", activated.mana_cost);
         assert!(
-            cost_debug.contains("RemoveAnyCountersAmongCost"),
-            "expected distributed counter-removal cost, got {cost_debug}"
+            cost_debug.contains("CostEffect")
+                && cost_debug.contains("RemoveAnyCountersAmongEffect"),
+            "expected effect-backed distributed counter-removal cost, got {cost_debug}"
         );
         assert!(
             cost_debug.contains("count: 3"),
-            "expected count 3 in distributed counter-removal cost, got {cost_debug}"
+            "expected count 3 in distributed counter-removal cost effect, got {cost_debug}"
         );
         assert!(
             cost_debug.contains("card_types: [Creature]"),
-            "expected creature filter in distributed counter-removal cost, got {cost_debug}"
+            "expected creature filter in distributed counter-removal cost effect, got {cost_debug}"
         );
     }
 
@@ -7004,12 +7134,13 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             .expect("expected activated ability");
         let cost_debug = format!("{:?}", activated.mana_cost);
         assert!(
-            cost_debug.contains("RemoveAnyCountersAmongCost"),
-            "expected distributed counter-removal cost, got {cost_debug}"
+            cost_debug.contains("CostEffect")
+                && cost_debug.contains("RemoveAnyCountersAmongEffect"),
+            "expected effect-backed distributed counter-removal cost, got {cost_debug}"
         );
         assert!(
             cost_debug.contains("counter_type: Some(MinusOneMinusOne)"),
-            "expected typed distributed counter-removal cost, got {cost_debug}"
+            "expected typed distributed counter-removal cost effect, got {cost_debug}"
         );
         assert!(
             cost_debug.contains("card_types: [Creature]"),
@@ -7044,8 +7175,9 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
 
         let cost_debug = format!("{:?}", activated.mana_cost);
         assert!(
-            cost_debug.contains("RemoveAnyCountersAmongCost"),
-            "expected remove-counters-among activation cost, got {cost_debug}"
+            cost_debug.contains("CostEffect")
+                && cost_debug.contains("RemoveAnyCountersAmongEffect"),
+            "expected effect-backed remove-counters-among activation cost, got {cost_debug}"
         );
 
         let lines = compiled_lines(&def);
@@ -7110,7 +7242,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             "expected source remove-counters effect-backed cost, got {cost_debug}"
         );
         assert!(
-            !cost_debug.contains("RemoveAnyCountersAmongCost"),
+            !cost_debug.contains("RemoveAnyCountersAmongEffect"),
             "expected source-specific cost, got distributed remove cost: {cost_debug}"
         );
     }
@@ -9799,7 +9931,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
             "expected source-specific remove-counters effect-backed cost, got {cost_debug}"
         );
         assert!(
-            !cost_debug.contains("RemoveAnyCountersAmongCost"),
+            !cost_debug.contains("RemoveAnyCountersAmongEffect"),
             "expected no distributed remove-counter fallback, got {cost_debug}"
         );
     }

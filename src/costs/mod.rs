@@ -12,8 +12,7 @@
 //!   cost_effect.rs      - Effect-backed CostPayer implementation
 //!   payer_trait.rs      - CostPayer trait definition and CostContext
 //!   mana.rs             - ManaPaymentCost implementation
-//!   counters.rs         - RemoveCountersCost, AddCountersCost
-//!   reveal.rs           - RevealFromHandCost
+//!   non-mana costs      - Effect-backed via CostEffect
 //! ```
 //!
 //! # Usage
@@ -33,11 +32,9 @@
 //! ```
 
 mod cost_effect;
-mod counters;
 mod mana;
 mod payer_trait;
 mod processing_mode;
-mod reveal;
 
 // Re-export the trait and context
 pub use payer_trait::{
@@ -48,12 +45,7 @@ pub use processing_mode::CostProcessingMode;
 
 // Re-export all cost implementations
 pub use cost_effect::CostEffect;
-pub use counters::{
-    AddCountersCost, RemoveAnyCountersAmongCost, RemoveAnyCountersFromSourceCost,
-    RemoveCountersCost,
-};
 pub use mana::ManaPaymentCost;
-pub use reveal::RevealFromHandCost;
 
 use crate::color::ColorSet;
 use crate::filter::ObjectFilter;
@@ -242,7 +234,18 @@ impl Cost {
 
     /// Create a reveal from hand cost.
     pub fn reveal_from_hand(count: u32, card_type: Option<CardType>) -> Self {
-        Self::new(RevealFromHandCost::new(count, card_type))
+        Self::validated_effect(crate::effect::Effect::reveal_from_hand(count, card_type))
+    }
+
+    /// Create a remove-any-counters-from-source cost.
+    pub fn remove_any_counters_from_source(
+        counter_type: Option<CounterType>,
+        display_x: bool,
+    ) -> Self {
+        Self::validated_effect(crate::effect::Effect::remove_any_counters_from_source(
+            counter_type,
+            display_x,
+        ))
     }
 
     /// Create a return self to hand cost.
@@ -383,6 +386,10 @@ impl Cost {
     pub fn processing_mode(&self) -> CostProcessingMode {
         self.0.processing_mode()
     }
+
+    pub fn downcast_ref<C: 'static>(&self) -> Option<&C> {
+        (&*self.0 as &dyn std::any::Any).downcast_ref::<C>()
+    }
 }
 
 #[cfg(test)]
@@ -513,5 +520,19 @@ mod tests {
             crate::target::ChooseSpec::Object(filter)
                 if filter.zone == Some(crate::zone::Zone::Graveyard)
         ));
+    }
+
+    #[test]
+    fn test_remove_any_counters_among_effect_ref_survives_trait_object() {
+        let cost = Cost::effect(crate::effects::RemoveAnyCountersAmongEffect::new(
+            3,
+            crate::filter::ObjectFilter::creature().you_control(),
+        ));
+        assert!(
+            cost.effect_ref().is_some_and(|effect| effect
+                .downcast_ref::<crate::effects::RemoveAnyCountersAmongEffect>()
+                .is_some()),
+            "effect-backed remove-counters-among ref should survive Cost trait-object wrapping"
+        );
     }
 }

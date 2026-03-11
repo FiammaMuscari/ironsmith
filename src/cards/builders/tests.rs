@@ -3626,8 +3626,19 @@ fn parse_tayam_oracle_text_regression() {
 
     let cost_debug = format!("{:?}", activated.mana_cost);
     assert!(
-        cost_debug.contains("RemoveAnyCountersAmongCost") && cost_debug.contains("count: 3"),
-        "expected remove-three-counters-among cost primitive, got {cost_debug}"
+        cost_debug.contains("CostEffect")
+            && cost_debug.contains("RemoveAnyCountersAmongEffect")
+            && cost_debug.contains("count: 3"),
+        "expected effect-backed remove-three-counters-among cost, got {cost_debug}"
+    );
+    assert!(
+        activated
+            .mana_cost
+            .non_mana_costs()
+            .any(|cost| cost.effect_ref().is_some_and(|effect| effect
+                .downcast_ref::<crate::effects::RemoveAnyCountersAmongEffect>()
+                .is_some())),
+        "expected Tayam activation to expose an effect-backed staged remove-counters-among cost"
     );
 
     let effects_debug = format!("{:?}", activated.effects);

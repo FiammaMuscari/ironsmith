@@ -3491,13 +3491,50 @@ pub(crate) fn apply_decision_context_with_dm<D: DecisionMaker>(
                 "Unsupported SelectOptions decision in priority loop".to_string(),
             ))
         }
+        DecisionContext::Distribute(_) | DecisionContext::Counters(_) => {
+            if state.pending_activation.as_ref().is_some_and(|pending| {
+                pending.pending_remove_counters_among.is_some()
+                    || matches!(
+                        pending.remaining_cost_steps.first(),
+                        Some(ActivationCostStep::Cost(cost))
+                            if remove_any_counters_among_effect(cost).is_some()
+                    )
+            }) {
+                let pending = state.pending_activation.take().ok_or_else(|| {
+                    GameLoopError::InvalidState(
+                        "No pending activation for staged counter-cost decision".to_string(),
+                    )
+                })?;
+                return continue_activation_remove_counters_among_payment(
+                    game,
+                    trigger_queue,
+                    state,
+                    pending,
+                    decision_maker,
+                    Some(ctx),
+                );
+            }
+
+            let activation_debug = state.pending_activation.as_ref().map(|pending| {
+                format!(
+                    "stage={}, staged_remove={}, remaining_costs={}",
+                    pending.stage,
+                    pending.pending_remove_counters_among.is_some(),
+                    pending.remaining_cost_steps.len()
+                )
+            });
+            Err(GameLoopError::InvalidState(format!(
+                "Unsupported decision context in priority loop: {} (pending_activation={activation_debug:?}, pending_cast={}, pending_mana_ability={})",
+                decision_context_name(ctx),
+                state.pending_cast.is_some(),
+                state.pending_mana_ability.is_some()
+            )))
+        }
         DecisionContext::Boolean(_)
         | DecisionContext::Order(_)
         | DecisionContext::Attackers(_)
         | DecisionContext::Blockers(_)
-        | DecisionContext::Distribute(_)
         | DecisionContext::Colors(_)
-        | DecisionContext::Counters(_)
         | DecisionContext::Partition(_)
         | DecisionContext::Proliferate(_) => Err(GameLoopError::InvalidState(format!(
             "Unsupported decision context in priority loop: {}",

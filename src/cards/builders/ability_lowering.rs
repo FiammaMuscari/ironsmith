@@ -3,15 +3,13 @@ use crate::cards::ParseAnnotations;
 use crate::cards::builders::{
     CardDefinitionBuilder, CardTextError, EffectAst, LineInfo, LoweredEffects,
     NormalizedAdditionalCostChoiceOptionAst, NormalizedParsedAbility, NormalizedPreparedAbility,
-    ParsedAbility, PreparedEffectsForLowering, ReferenceExports, ReferenceImports,
-    StaticAbilityAst, TriggerSpec, collect_tag_spans_from_effects_with_context,
-    compile_trigger_spec, materialize_prepared_effects_with_trigger_context,
-    materialize_prepared_statement_effects, materialize_prepared_triggered_effects,
-    prepare_effects_for_lowering, prepare_effects_with_trigger_context_for_lowering,
-    prepare_triggered_effects_for_lowering,
+    ParsedAbility, PreparedEffectsForLowering, ReferenceExports, ReferenceImports, TriggerSpec,
+    collect_tag_spans_from_effects_with_context, compile_trigger_spec,
+    materialize_prepared_effects_with_trigger_context, materialize_prepared_statement_effects,
+    materialize_prepared_triggered_effects, prepare_effects_for_lowering,
+    prepare_effects_with_trigger_context_for_lowering, prepare_triggered_effects_for_lowering,
 };
 use crate::effect::{Effect, EffectMode};
-use crate::static_abilities::StaticAbility;
 use crate::zone::Zone;
 
 pub(crate) fn lower_prepared_statement_effects(
@@ -167,12 +165,6 @@ pub(crate) fn lower_prepared_ability(
     lower_parsed_ability_internal(normalized.parsed, normalized.prepared)
 }
 
-pub(crate) fn materialize_static_abilities_ast(
-    abilities: Vec<StaticAbilityAst>,
-) -> Result<Vec<StaticAbility>, CardTextError> {
-    lower_static_abilities_ast(abilities)
-}
-
 pub(crate) fn apply_instead_followup_statement_to_last_ability(
     builder: &mut CardDefinitionBuilder,
     last_restrictable_ability: Option<usize>,
@@ -263,60 +255,4 @@ pub(crate) fn parsed_triggered_ability(
 
 pub(crate) fn lower_parsed_ability(parsed: ParsedAbility) -> Result<ParsedAbility, CardTextError> {
     lower_parsed_ability_internal(parsed, None)
-}
-
-pub(crate) fn lower_static_ability_ast(
-    ability: StaticAbilityAst,
-) -> Result<StaticAbility, CardTextError> {
-    match ability {
-        StaticAbilityAst::Static(ability) => Ok(ability),
-        StaticAbilityAst::GrantObjectAbility {
-            filter,
-            ability,
-            display,
-            condition,
-        } => {
-            let mut lowered = lower_parsed_ability(ability)?.ability;
-            if lowered.text.is_none() {
-                lowered.text = Some(display.clone());
-            }
-            let mut grant =
-                crate::static_abilities::GrantObjectAbilityForFilter::new(filter, lowered, display);
-            if let Some(condition) = condition {
-                grant = grant.with_condition(condition);
-            }
-            Ok(StaticAbility::new(grant))
-        }
-        StaticAbilityAst::AttachedObjectAbilityGrant {
-            ability,
-            display,
-            condition,
-        } => {
-            let mut lowered = lower_parsed_ability(ability)?.ability;
-            if lowered.text.is_none() {
-                lowered.text = Some(display.clone());
-            }
-            let mut grant = crate::static_abilities::AttachedAbilityGrant::new(lowered, display);
-            if let Some(condition) = condition {
-                grant = grant.with_condition(condition);
-            }
-            Ok(StaticAbility::new(grant))
-        }
-        StaticAbilityAst::SoulbondSharedObjectAbility { ability, display } => {
-            let mut lowered = lower_parsed_ability(ability)?.ability;
-            if lowered.text.is_none() {
-                lowered.text = Some(display);
-            }
-            Ok(StaticAbility::soulbond_shared_object_ability(lowered))
-        }
-    }
-}
-
-pub(crate) fn lower_static_abilities_ast(
-    abilities: Vec<StaticAbilityAst>,
-) -> Result<Vec<StaticAbility>, CardTextError> {
-    abilities
-        .into_iter()
-        .map(lower_static_ability_ast)
-        .collect()
 }

@@ -430,6 +430,199 @@ fn emrakul_cast_trigger_prompts_for_opponent_in_four_player_game() {
 }
 
 #[test]
+fn put_triggers_on_stack_uses_controller_selected_order_for_simultaneous_triggers() {
+    use crate::ability::TriggeredAbility;
+    use crate::events::phase::BeginningOfUpkeepEvent;
+    use crate::target::PlayerFilter;
+
+    #[derive(Debug, Default)]
+    struct TriggerOrderDecisionMaker {
+        prompts: Vec<String>,
+    }
+
+    impl DecisionMaker for TriggerOrderDecisionMaker {
+        fn decide_order(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::OrderContext,
+        ) -> Vec<ObjectId> {
+            self.prompts.push(ctx.description.clone());
+            ctx.items.iter().rev().map(|(id, _)| *id).collect()
+        }
+    }
+
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let upkeep_event = TriggerEvent::new_with_provenance(
+        BeginningOfUpkeepEvent::new(alice),
+        crate::provenance::ProvNodeId::default(),
+    );
+
+    let alpha_id = game.create_object_from_card(
+        &CardBuilder::new(CardId::new(), "Alpha Trigger")
+            .card_types(vec![CardType::Enchantment])
+            .build(),
+        alice,
+        Zone::Battlefield,
+    );
+    let beta_id = game.create_object_from_card(
+        &CardBuilder::new(CardId::new(), "Beta Trigger")
+            .card_types(vec![CardType::Enchantment])
+            .build(),
+        alice,
+        Zone::Battlefield,
+    );
+
+    let alpha_stable_id = game.object(alpha_id).expect("alpha exists").stable_id;
+    let beta_stable_id = game.object(beta_id).expect("beta exists").stable_id;
+    let ability = TriggeredAbility {
+        trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
+        effects: vec![],
+        choices: vec![],
+        intervening_if: None,
+    };
+
+    let mut trigger_queue = TriggerQueue::new();
+    trigger_queue.add(TriggeredAbilityEntry {
+        source: alpha_id,
+        controller: alice,
+        x_value: None,
+        ability: ability.clone(),
+        triggering_event: upkeep_event.clone(),
+        source_stable_id: alpha_stable_id,
+        source_name: "Alpha Trigger".to_string(),
+        tagged_objects: std::collections::HashMap::new(),
+        trigger_identity: crate::triggers::compute_trigger_identity(&ability),
+    });
+    trigger_queue.add(TriggeredAbilityEntry {
+        source: beta_id,
+        controller: alice,
+        x_value: None,
+        ability: ability.clone(),
+        triggering_event: upkeep_event,
+        source_stable_id: beta_stable_id,
+        source_name: "Beta Trigger".to_string(),
+        tagged_objects: std::collections::HashMap::new(),
+        trigger_identity: crate::triggers::compute_trigger_identity(&ability),
+    });
+
+    let mut dm = TriggerOrderDecisionMaker::default();
+    put_triggers_on_stack_with_dm(&mut game, &mut trigger_queue, &mut dm)
+        .expect("trigger ordering should succeed");
+
+    assert_eq!(dm.prompts.len(), 1, "expected a trigger ordering prompt");
+    assert!(
+        dm.prompts[0].contains("leftmost item becomes the top"),
+        "trigger ordering prompt should explain stack direction"
+    );
+    assert_eq!(game.stack.len(), 2, "both triggers should be stacked");
+    assert_eq!(
+        game.stack
+            .last()
+            .and_then(|entry| entry.source_name.as_deref()),
+        Some("Beta Trigger"),
+        "the selected first trigger should become the top of the stack"
+    );
+}
+
+#[test]
+fn put_triggers_on_stack_orders_each_controller_in_apnap_order() {
+    use crate::ability::TriggeredAbility;
+    use crate::events::phase::BeginningOfUpkeepEvent;
+    use crate::target::PlayerFilter;
+
+    #[derive(Debug, Default)]
+    struct RecordingTriggerOrderDecisionMaker {
+        players: Vec<PlayerId>,
+    }
+
+    impl DecisionMaker for RecordingTriggerOrderDecisionMaker {
+        fn decide_order(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::OrderContext,
+        ) -> Vec<ObjectId> {
+            self.players.push(ctx.player);
+            ctx.items.iter().rev().map(|(id, _)| *id).collect()
+        }
+    }
+
+    let mut game = setup_game();
+    let alice = PlayerId::from_index(0);
+    let bob = PlayerId::from_index(1);
+    game.turn.active_player = alice;
+
+    let upkeep_event = TriggerEvent::new_with_provenance(
+        BeginningOfUpkeepEvent::new(alice),
+        crate::provenance::ProvNodeId::default(),
+    );
+    let ability = TriggeredAbility {
+        trigger: Trigger::beginning_of_upkeep(PlayerFilter::You),
+        effects: vec![],
+        choices: vec![],
+        intervening_if: None,
+    };
+
+    let make_trigger = |game: &mut GameState, name: &str, controller: PlayerId| {
+        let object_id = game.create_object_from_card(
+            &CardBuilder::new(CardId::new(), name)
+                .card_types(vec![CardType::Enchantment])
+                .build(),
+            controller,
+            Zone::Battlefield,
+        );
+        let stable_id = game
+            .object(object_id)
+            .expect("trigger source exists")
+            .stable_id;
+        TriggeredAbilityEntry {
+            source: object_id,
+            controller,
+            x_value: None,
+            ability: ability.clone(),
+            triggering_event: upkeep_event.clone(),
+            source_stable_id: stable_id,
+            source_name: name.to_string(),
+            tagged_objects: std::collections::HashMap::new(),
+            trigger_identity: crate::triggers::compute_trigger_identity(&ability),
+        }
+    };
+
+    let mut trigger_queue = TriggerQueue::new();
+    trigger_queue.add(make_trigger(&mut game, "Alice One", alice));
+    trigger_queue.add(make_trigger(&mut game, "Alice Two", alice));
+    trigger_queue.add(make_trigger(&mut game, "Bob One", bob));
+    trigger_queue.add(make_trigger(&mut game, "Bob Two", bob));
+
+    let mut dm = RecordingTriggerOrderDecisionMaker::default();
+    put_triggers_on_stack_with_dm(&mut game, &mut trigger_queue, &mut dm)
+        .expect("trigger ordering should succeed");
+
+    assert_eq!(
+        dm.players,
+        vec![alice, bob],
+        "controllers should order their triggers in APNAP order"
+    );
+    let stack_names: Vec<&str> = game
+        .stack
+        .iter()
+        .map(|entry| entry.source_name.as_deref().unwrap_or("?"))
+        .collect();
+    assert_eq!(
+        stack_names,
+        vec!["Alice One", "Alice Two", "Bob One", "Bob Two"],
+        "each controller's chosen order should be preserved within APNAP stacking"
+    );
+    assert_eq!(
+        game.stack
+            .last()
+            .and_then(|entry| entry.source_name.as_deref()),
+        Some("Bob Two"),
+        "the non-active player's first chosen trigger should resolve first"
+    );
+}
+
+#[test]
 fn test_drain_pending_events_checks_delayed_zone_change_triggers() {
     let mut game = setup_game();
     let mut trigger_queue = TriggerQueue::new();

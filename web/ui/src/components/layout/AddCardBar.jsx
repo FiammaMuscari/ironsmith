@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useGame } from "@/context/GameContext";
 import { formatStep } from "@/lib/constants";
 import { Badge } from "@/components/ui/badge";
@@ -59,17 +59,71 @@ export default function AddCardBar({
   const [zone, setZone] = useState("battlefield");
   const [playerIndex, setPlayerIndex] = useState(0);
   const [skipTriggers, setSkipTriggers] = useState(false);
+  const [autocompleteOptions, setAutocompleteOptions] = useState([]);
+  const [autocompleteOpen, setAutocompleteOpen] = useState(false);
+  const [autocompleteIndex, setAutocompleteIndex] = useState(-1);
+  const autocompleteRef = useRef(null);
+  const suppressAutocompleteRef = useRef(false);
+  const autocompleteRequestRef = useRef(0);
 
   const players = state?.players || [];
   const perspective = state?.perspective ?? 0;
   const addLocked = multiplayer.mode !== "idle";
+  const visibleAutocompleteOptions =
+    addLocked || !cardName.trim() ? [] : autocompleteOptions;
+  const autocompleteVisible =
+    autocompleteOpen && visibleAutocompleteOptions.length > 0;
 
-  const handleAdd = useCallback(async () => {
+  useEffect(() => {
+    const query = cardName.trim();
+    if (addLocked || !query || !game || typeof game.autocompleteCardNames !== "function") return;
+
+    if (suppressAutocompleteRef.current) {
+      suppressAutocompleteRef.current = false;
+      return;
+    }
+
+    const requestId = autocompleteRequestRef.current + 1;
+    autocompleteRequestRef.current = requestId;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const matches = await game.autocompleteCardNames(query, 5);
+        if (autocompleteRequestRef.current !== requestId) return;
+        setAutocompleteOptions(matches);
+        setAutocompleteOpen(matches.length > 0);
+        setAutocompleteIndex(matches.length === 1 ? 0 : -1);
+      } catch (error) {
+        if (autocompleteRequestRef.current !== requestId) return;
+        console.warn("Autocomplete lookup failed:", error);
+        setAutocompleteOptions([]);
+        setAutocompleteOpen(false);
+        setAutocompleteIndex(-1);
+      }
+    }, 150);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [addLocked, cardName, game]);
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (!autocompleteRef.current?.contains(event.target)) {
+        setAutocompleteOpen(false);
+        setAutocompleteIndex(-1);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
+  const handleAdd = useCallback(async (requestedName = cardName) => {
     if (addLocked) {
       setStatus("Card injection is disabled while a lobby is active", true);
       return;
     }
-    const name = cardName.trim();
+    const name = String(requestedName || "").trim();
     if (!name) {
       setStatus("Enter a card name to add", true);
       return;
@@ -81,6 +135,9 @@ export default function AddCardBar({
     try {
       await game.addCardToZone(playerIndex || perspective, name, zone, skipTriggers);
       setCardName("");
+      setAutocompleteOptions([]);
+      setAutocompleteOpen(false);
+      setAutocompleteIndex(-1);
       await refresh(`Added ${name} to ${zone}`);
     } catch (err) {
       const errMsg = String(err?.message || err);
@@ -118,6 +175,14 @@ export default function AddCardBar({
     setStatus,
   ]);
 
+  const handleAutocompletePick = useCallback((name) => {
+    suppressAutocompleteRef.current = true;
+    setCardName(name);
+    setAutocompleteOptions([]);
+    setAutocompleteOpen(false);
+    setAutocompleteIndex(-1);
+  }, []);
+
   return (
     <div className="panel-gradient flex items-center gap-1.5 rounded px-2.5 py-1">
       <Badge
@@ -128,19 +193,85 @@ export default function AddCardBar({
         Add
       </Badge>
 
-      <input
-        className={`${inputPill} w-36`}
-        placeholder="Card name"
-        value={cardName}
-        disabled={addLocked}
-        onChange={(e) => setCardName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            handleAdd();
-          }
-        }}
-      />
+      <div className="relative" ref={autocompleteRef}>
+        <input
+          className={`${inputPill} w-36`}
+          placeholder="Card name"
+          value={cardName}
+          disabled={addLocked}
+          onChange={(e) => {
+            setCardName(e.target.value);
+            setAutocompleteOpen(true);
+            setAutocompleteIndex(-1);
+          }}
+          onFocus={() => {
+            if (visibleAutocompleteOptions.length > 0) {
+              setAutocompleteOpen(true);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown" && visibleAutocompleteOptions.length > 0) {
+              e.preventDefault();
+              setAutocompleteOpen(true);
+              setAutocompleteIndex((prev) =>
+                prev >= visibleAutocompleteOptions.length - 1 ? 0 : prev + 1
+              );
+              return;
+            }
+
+            if (e.key === "ArrowUp" && visibleAutocompleteOptions.length > 0) {
+              e.preventDefault();
+              setAutocompleteOpen(true);
+              setAutocompleteIndex((prev) =>
+                prev <= 0 ? visibleAutocompleteOptions.length - 1 : prev - 1
+              );
+              return;
+            }
+
+            if (e.key === "Escape") {
+              setAutocompleteOpen(false);
+              setAutocompleteIndex(-1);
+              return;
+            }
+
+            if (e.key === "Enter") {
+              e.preventDefault();
+              if (
+                autocompleteVisible &&
+                autocompleteIndex >= 0 &&
+                visibleAutocompleteOptions[autocompleteIndex]
+              ) {
+                handleAdd(visibleAutocompleteOptions[autocompleteIndex]);
+                return;
+              }
+              if (visibleAutocompleteOptions.length === 1) {
+                handleAdd(visibleAutocompleteOptions[0]);
+                return;
+              }
+              handleAdd();
+            }
+          }}
+        />
+        {autocompleteVisible ? (
+          <div className="absolute left-0 top-[calc(100%+0.35rem)] z-40 w-64 overflow-hidden rounded-md border border-[#344a61] bg-[#0b1118] shadow-[0_12px_30px_rgba(0,0,0,0.42)]">
+            {visibleAutocompleteOptions.map((option, index) => (
+              <button
+                key={option}
+                type="button"
+                className={`block w-full px-3 py-2 text-left text-[13px] transition-colors ${
+                  index === autocompleteIndex
+                    ? "bg-primary/20 text-foreground"
+                    : "text-[#a4bdd7] hover:bg-white/5"
+                }`}
+                onMouseEnter={() => setAutocompleteIndex(index)}
+                onClick={() => handleAutocompletePick(option)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
 
       <select
         className={selectPill}

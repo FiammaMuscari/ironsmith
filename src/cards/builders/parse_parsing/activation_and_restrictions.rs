@@ -519,9 +519,12 @@ pub(crate) fn parse_loyalty_shorthand_activation_cost(
     }
     if let Some(rest) = word.strip_prefix('-') {
         if rest.eq_ignore_ascii_case("x") {
-            return Some(TotalCost::from_cost(crate::costs::Cost::new(
-                crate::costs::RemoveAnyCountersFromSourceCost::x(Some(CounterType::Loyalty)),
-            )));
+            return Some(TotalCost::from_cost(
+                crate::costs::Cost::remove_any_counters_from_source(
+                    Some(CounterType::Loyalty),
+                    true,
+                ),
+            ));
         }
         if let Ok(amount) = rest.parse::<u32>() {
             return Some(TotalCost::from_cost(crate::costs::Cost::remove_counters(
@@ -2459,9 +2462,12 @@ pub(crate) fn parse_activation_cost(tokens: &[Token]) -> Result<TotalCost, CardT
                     filter.zone = Some(Zone::Battlefield);
                 }
                 let max_count = if any_number { u32::MAX / 4 } else { count };
-                explicit_costs.push(crate::costs::Cost::new(
-                    crate::costs::RemoveAnyCountersAmongCost::new(max_count, filter)
-                        .with_counter_type(counter_type),
+                explicit_costs.push(crate::costs::Cost::validated_effect(
+                    crate::effect::Effect::remove_any_counters_among(
+                        max_count,
+                        filter,
+                        counter_type,
+                    ),
                 ));
                 continue;
             }
@@ -2484,14 +2490,10 @@ pub(crate) fn parse_activation_cost(tokens: &[Token]) -> Result<TotalCost, CardT
                     ))
                 })?;
                 if any_number {
-                    let source_cost = if variable_x {
-                        crate::costs::RemoveAnyCountersFromSourceCost::x(Some(counter_type))
-                    } else {
-                        crate::costs::RemoveAnyCountersFromSourceCost::any_number(Some(
-                            counter_type,
-                        ))
-                    };
-                    explicit_costs.push(crate::costs::Cost::new(source_cost));
+                    explicit_costs.push(crate::costs::Cost::remove_any_counters_from_source(
+                        Some(counter_type),
+                        variable_x,
+                    ));
                 } else {
                     explicit_costs.push(crate::costs::Cost::remove_counters(counter_type, count));
                 }
@@ -2504,9 +2506,12 @@ pub(crate) fn parse_activation_cost(tokens: &[Token]) -> Result<TotalCost, CardT
                     filter.zone = Some(Zone::Battlefield);
                 }
                 let max_count = if any_number { u32::MAX / 4 } else { count };
-                explicit_costs.push(crate::costs::Cost::new(
-                    crate::costs::RemoveAnyCountersAmongCost::new(max_count, filter)
-                        .with_counter_type(counter_type),
+                explicit_costs.push(crate::costs::Cost::validated_effect(
+                    crate::effect::Effect::remove_any_counters_among(
+                        max_count,
+                        filter,
+                        counter_type,
+                    ),
                 ));
             }
             continue;
@@ -5959,10 +5964,7 @@ pub(crate) fn parse_ability_phrase(tokens: &[Token]) -> Option<KeywordAction> {
                     format!("Echo—{normalized}")
                 }
             };
-            return Some(KeywordAction::Echo {
-                total_cost,
-                text,
-            });
+            return Some(KeywordAction::Echo { total_cost, text });
         }
 
         if words.len() == 1 {

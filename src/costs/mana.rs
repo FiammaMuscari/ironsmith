@@ -113,6 +113,10 @@ impl CostPayer for ManaPaymentCost {
             cost: self.cost.clone(),
         }
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Format a ManaCost for display.

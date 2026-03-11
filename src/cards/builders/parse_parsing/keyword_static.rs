@@ -3,9 +3,7 @@ use crate::ability::{Ability, AbilityKind, TriggeredAbility};
 #[allow(unused_imports)]
 use crate::alternative_cast::AlternativeCastingMethod;
 #[allow(unused_imports)]
-use crate::cards::builders::ability_lowering::{
-    materialize_static_abilities_ast, parsed_triggered_ability,
-};
+use crate::cards::builders::ability_lowering::parsed_triggered_ability;
 #[allow(unused_imports)]
 use crate::cards::builders::parse_parsing::{
     color_from_color_set, contains_until_end_of_turn, is_article, is_at_trigger_intro,
@@ -31,7 +29,8 @@ use crate::cards::builders::parse_parsing::{
 #[allow(unused_imports)]
 use crate::cards::builders::{
     CardTextError, GrantedAbilityAst, IT_TAG, KeywordAction, LineAst, ParsedAbility,
-    ReferenceImports, StaticAbilityAst, TagKey, TextSpan, Token,
+    ReferenceImports, StaticAbilityAst, TagKey, TextSpan, Token, materialize_static_abilities_ast,
+    static_ability_for_keyword_action,
 };
 #[allow(unused_imports)]
 use crate::color::ColorSet;
@@ -170,157 +169,7 @@ pub(crate) fn parse_protection_chain(tokens: &[Token]) -> Option<Vec<KeywordActi
 }
 
 pub(crate) fn keyword_action_to_static_ability(action: KeywordAction) -> Option<StaticAbility> {
-    match action {
-        KeywordAction::Flying => Some(StaticAbility::flying()),
-        KeywordAction::Menace => Some(StaticAbility::menace()),
-        KeywordAction::Hexproof => Some(StaticAbility::hexproof()),
-        KeywordAction::Haste => Some(StaticAbility::haste()),
-        KeywordAction::Improvise => Some(StaticAbility::improvise()),
-        KeywordAction::Convoke => Some(StaticAbility::convoke()),
-        KeywordAction::AffinityForArtifacts => Some(StaticAbility::affinity_for_artifacts()),
-        KeywordAction::Delve => Some(StaticAbility::delve()),
-        KeywordAction::FirstStrike => Some(StaticAbility::first_strike()),
-        KeywordAction::DoubleStrike => Some(StaticAbility::double_strike()),
-        KeywordAction::Deathtouch => Some(StaticAbility::deathtouch()),
-        KeywordAction::Lifelink => Some(StaticAbility::lifelink()),
-        KeywordAction::Vigilance => Some(StaticAbility::vigilance()),
-        KeywordAction::Trample => Some(StaticAbility::trample()),
-        KeywordAction::Reach => Some(StaticAbility::reach()),
-        KeywordAction::Defender => Some(StaticAbility::defender()),
-        KeywordAction::Flash => Some(StaticAbility::flash()),
-        KeywordAction::Phasing => Some(StaticAbility::phasing()),
-        KeywordAction::Indestructible => Some(StaticAbility::indestructible()),
-        KeywordAction::Shroud => Some(StaticAbility::shroud()),
-        KeywordAction::Ward(amount) => u8::try_from(amount).ok().map(|generic| {
-            StaticAbility::ward(TotalCost::mana(ManaCost::from_symbols(vec![
-                ManaSymbol::Generic(generic),
-            ])))
-        }),
-        KeywordAction::Wither => Some(StaticAbility::wither()),
-        KeywordAction::Afterlife(amount) => {
-            Some(StaticAbility::keyword_marker(format!("afterlife {amount}")))
-        }
-        KeywordAction::Fabricate(amount) => {
-            Some(StaticAbility::keyword_marker(format!("fabricate {amount}")))
-        }
-        KeywordAction::Infect => Some(StaticAbility::infect()),
-        KeywordAction::Undying => Some(StaticAbility::keyword_marker("undying".to_string())),
-        KeywordAction::Persist => Some(StaticAbility::keyword_marker("persist".to_string())),
-        KeywordAction::Prowess => Some(StaticAbility::keyword_marker("prowess".to_string())),
-        KeywordAction::Exalted => Some(StaticAbility::keyword_marker("exalted".to_string())),
-        KeywordAction::Cascade => Some(StaticAbility::cascade()),
-        KeywordAction::Storm => Some(StaticAbility::keyword_marker("storm".to_string())),
-        KeywordAction::Toxic(amount) => {
-            Some(StaticAbility::keyword_marker(format!("toxic {amount}")))
-        }
-        KeywordAction::BattleCry => Some(StaticAbility::keyword_marker("battle cry".to_string())),
-        KeywordAction::Dethrone => Some(StaticAbility::keyword_marker("dethrone".to_string())),
-        KeywordAction::Evolve => Some(StaticAbility::keyword_marker("evolve".to_string())),
-        KeywordAction::Ingest => Some(StaticAbility::keyword_marker("ingest".to_string())),
-        KeywordAction::Mentor => Some(StaticAbility::keyword_marker("mentor".to_string())),
-        KeywordAction::Skulk => Some(StaticAbility::skulk()),
-        KeywordAction::Training => Some(StaticAbility::keyword_marker("training".to_string())),
-        KeywordAction::Myriad => None,
-        KeywordAction::Riot => Some(StaticAbility::keyword_marker("riot".to_string())),
-        KeywordAction::Unleash => Some(StaticAbility::unleash()),
-        KeywordAction::Renown(amount) => {
-            Some(StaticAbility::keyword_marker(format!("renown {amount}")))
-        }
-        KeywordAction::Modular(amount) => {
-            Some(StaticAbility::keyword_marker(format!("modular {amount}")))
-        }
-        KeywordAction::ModularSunburst => None,
-        KeywordAction::Graft(amount) => {
-            Some(StaticAbility::keyword_marker(format!("graft {amount}")))
-        }
-        KeywordAction::Soulbond => Some(StaticAbility::keyword_marker("soulbond".to_string())),
-        KeywordAction::Soulshift(amount) => {
-            Some(StaticAbility::keyword_marker(format!("soulshift {amount}")))
-        }
-        KeywordAction::Outlast(cost) => Some(StaticAbility::keyword_marker(format!(
-            "outlast {}",
-            cost.to_oracle()
-        ))),
-        KeywordAction::Unearth(cost) => Some(StaticAbility::keyword_marker(format!(
-            "unearth {}",
-            cost.to_oracle()
-        ))),
-        KeywordAction::Ninjutsu(cost) => Some(StaticAbility::keyword_marker(format!(
-            "ninjutsu {}",
-            cost.to_oracle()
-        ))),
-        KeywordAction::Echo { .. } => None,
-        KeywordAction::CumulativeUpkeep { .. } => None,
-        KeywordAction::Extort => Some(StaticAbility::keyword_marker("extort".to_string())),
-        KeywordAction::Partner => Some(StaticAbility::partner()),
-        KeywordAction::Assist => Some(StaticAbility::assist()),
-        KeywordAction::SplitSecond => Some(StaticAbility::split_second()),
-        KeywordAction::Rebound => Some(StaticAbility::rebound()),
-        KeywordAction::Sunburst => Some(StaticAbility::keyword_marker("sunburst".to_string())),
-        KeywordAction::Fading(amount) => {
-            Some(StaticAbility::keyword_marker(format!("fading {amount}")))
-        }
-        KeywordAction::Vanishing(amount) => {
-            Some(StaticAbility::keyword_marker(format!("vanishing {amount}")))
-        }
-        KeywordAction::Fear => Some(StaticAbility::fear()),
-        KeywordAction::Intimidate => Some(StaticAbility::intimidate()),
-        KeywordAction::Shadow => Some(StaticAbility::shadow()),
-        KeywordAction::Horsemanship => Some(StaticAbility::horsemanship()),
-        KeywordAction::Flanking => Some(StaticAbility::flanking()),
-        KeywordAction::Landwalk(subtype) => Some(StaticAbility::landwalk(subtype)),
-        KeywordAction::Bloodthirst(amount) => Some(StaticAbility::bloodthirst(amount)),
-        KeywordAction::Rampage(amount) => {
-            Some(StaticAbility::keyword_marker(format!("rampage {amount}")))
-        }
-        KeywordAction::Bushido(amount) => {
-            Some(StaticAbility::keyword_marker(format!("bushido {amount}")))
-        }
-        KeywordAction::Changeling => Some(StaticAbility::changeling()),
-        KeywordAction::ProtectionFrom(colors) => Some(StaticAbility::protection(
-            crate::ability::ProtectionFrom::Color(colors),
-        )),
-        KeywordAction::ProtectionFromAllColors => Some(StaticAbility::protection(
-            crate::ability::ProtectionFrom::AllColors,
-        )),
-        KeywordAction::ProtectionFromColorless => Some(StaticAbility::protection(
-            crate::ability::ProtectionFrom::Colorless,
-        )),
-        KeywordAction::ProtectionFromEverything => Some(StaticAbility::protection(
-            crate::ability::ProtectionFrom::Everything,
-        )),
-        KeywordAction::ProtectionFromCardType(card_type) => Some(StaticAbility::protection(
-            crate::ability::ProtectionFrom::CardType(card_type),
-        )),
-        KeywordAction::ProtectionFromSubtype(subtype) => {
-            Some(StaticAbility::keyword_marker(format!(
-                "protection from {}",
-                subtype.to_string().to_ascii_lowercase()
-            )))
-        }
-        KeywordAction::Unblockable => Some(StaticAbility::unblockable()),
-        KeywordAction::Devoid => Some(StaticAbility::make_colorless(ObjectFilter::source())),
-        KeywordAction::Annihilator(amount) => Some(StaticAbility::keyword_marker(format!(
-            "annihilator {amount}"
-        ))),
-        KeywordAction::ForMirrodin => None,
-        KeywordAction::LivingWeapon => None,
-        KeywordAction::Crew { .. } => None,
-        KeywordAction::Saddle { .. } => None,
-        KeywordAction::Marker(name) => Some(StaticAbility::keyword_marker(name)),
-        KeywordAction::MarkerText(text) => Some(StaticAbility::keyword_marker(text)),
-        KeywordAction::Casualty(_) => None,
-        KeywordAction::Conspire => None,
-        KeywordAction::Devour(_) => None,
-        KeywordAction::Ravenous => None,
-        KeywordAction::Ascend => None,
-        KeywordAction::Daybound => None,
-        KeywordAction::Nightbound => None,
-        KeywordAction::Haunt => None,
-        KeywordAction::Provoke => None,
-        KeywordAction::Undaunted => None,
-        KeywordAction::Enlist => None,
-    }
+    static_ability_for_keyword_action(action)
 }
 
 #[derive(Clone, Copy)]
@@ -654,6 +503,7 @@ pub(crate) fn parse_static_ability_ast_line(
     Ok(None)
 }
 
+#[allow(dead_code)]
 pub(crate) fn parse_static_ability_line(
     tokens: &[Token],
 ) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
@@ -4515,7 +4365,7 @@ pub(crate) fn parse_granted_keyword_static_line(
 
     let mapped = actions
         .into_iter()
-        .filter_map(keyword_action_to_static_ability)
+        .filter(|action| action.lowers_to_static_ability())
         .collect::<Vec<_>>();
     if mapped.is_empty() && !grants_must_attack {
         return Ok(None);
@@ -4523,29 +4373,44 @@ pub(crate) fn parse_granted_keyword_static_line(
 
     let subject = parse_anthem_subject(&subject_tokens)?;
     let mut compiled = Vec::new();
-    let mut granted_abilities = mapped;
     if grants_must_attack {
-        granted_abilities.push(StaticAbility::must_attack());
-    }
-    for ability in granted_abilities {
         match &subject {
             AnthemSubjectAst::Source => {
                 if let Some(condition) = &condition {
-                    let granted = GrantAbility::source(ability).with_condition(condition.clone());
+                    let granted = GrantAbility::source(StaticAbility::must_attack())
+                        .with_condition(condition.clone());
                     compiled.push(StaticAbility::new(granted).into());
                 } else {
-                    compiled.push(ability.into());
+                    compiled.push(StaticAbility::must_attack().into());
                 }
             }
             AnthemSubjectAst::Filter(filter) => {
                 let granted = if let Some(condition) = &condition {
-                    GrantAbility::new(filter.clone(), ability).with_condition(condition.clone())
+                    GrantAbility::new(filter.clone(), StaticAbility::must_attack())
+                        .with_condition(condition.clone())
                 } else {
-                    GrantAbility::new(filter.clone(), ability)
+                    GrantAbility::new(filter.clone(), StaticAbility::must_attack())
                 };
                 compiled.push(StaticAbility::new(granted).into());
             }
         }
+    }
+    for action in mapped {
+        let ast = match &subject {
+            AnthemSubjectAst::Source => match &condition {
+                Some(condition) => StaticAbilityAst::ConditionalKeywordAction {
+                    action,
+                    condition: condition.clone(),
+                },
+                None => StaticAbilityAst::KeywordAction(action),
+            },
+            AnthemSubjectAst::Filter(filter) => StaticAbilityAst::GrantKeywordAction {
+                filter: filter.clone(),
+                action,
+                condition: condition.clone(),
+            },
+        };
+        compiled.push(ast);
     }
     Ok(Some(compiled))
 }
@@ -6097,9 +5962,9 @@ pub(crate) fn parse_soulbond_shared_line(
 
         if let Some(actions) = parse_ability_line(&ability_tokens) {
             reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
-            let abilities: Vec<StaticAbility> = actions
+            let abilities: Vec<KeywordAction> = actions
                 .into_iter()
-                .filter_map(keyword_action_to_static_ability)
+                .filter(|action| action.lowers_to_static_ability())
                 .collect();
             if abilities.is_empty() {
                 return Err(CardTextError::ParseError(format!(
@@ -6109,8 +5974,9 @@ pub(crate) fn parse_soulbond_shared_line(
             }
             let shared = abilities
                 .into_iter()
-                .map(StaticAbility::soulbond_shared_ability)
-                .map(StaticAbilityAst::from)
+                .map(|action| StaticAbilityAst::SoulbondSharedStaticAbility {
+                    ability: Box::new(StaticAbilityAst::KeywordAction(action)),
+                })
                 .collect();
             return Ok(Some(shared));
         }
@@ -6271,7 +6137,7 @@ pub(crate) fn parse_anthem_and_keyword_line(
         ability_tokens = ability_head;
     }
 
-    let mut abilities: Vec<StaticAbility> = Vec::new();
+    let mut keyword_actions: Vec<KeywordAction> = Vec::new();
     let mut granted_activated_ability: Option<ParsedAbility> = None;
     let mut granted_activated_display: Option<String> = None;
 
@@ -6284,10 +6150,10 @@ pub(crate) fn parse_anthem_and_keyword_line(
         if !keyword_tokens.is_empty() {
             if let Some(actions) = parse_ability_line(&keyword_tokens) {
                 reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
-                abilities.extend(
+                keyword_actions.extend(
                     actions
                         .into_iter()
-                        .filter_map(keyword_action_to_static_ability),
+                        .filter(|action| action.lowers_to_static_ability()),
                 );
             } else {
                 return Ok(None);
@@ -6314,15 +6180,15 @@ pub(crate) fn parse_anthem_and_keyword_line(
         }
     } else if let Some(actions) = parse_ability_line(&ability_tokens) {
         reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
-        abilities = actions
+        keyword_actions = actions
             .into_iter()
-            .filter_map(keyword_action_to_static_ability)
+            .filter(|action| action.lowers_to_static_ability())
             .collect();
     } else {
         return Ok(None);
     }
 
-    if abilities.is_empty() && granted_activated_ability.is_none() {
+    if keyword_actions.is_empty() && granted_activated_ability.is_none() {
         return Ok(None);
     }
 
@@ -6346,17 +6212,8 @@ pub(crate) fn parse_anthem_and_keyword_line(
         clause.condition = Some(condition);
     }
     let mut result = vec![build_anthem_static_ability(&clause).into()];
-    for ability in abilities {
-        let granted = match &clause.subject {
-            AnthemSubjectAst::Source => GrantAbility::source(ability),
-            AnthemSubjectAst::Filter(filter) => GrantAbility::new(filter.clone(), ability),
-        };
-        let granted = if let Some(condition) = &clause.condition {
-            granted.with_condition(condition.clone())
-        } else {
-            granted
-        };
-        result.push(StaticAbility::new(granted).into());
+    for action in keyword_actions {
+        result.push(grant_keyword_action_for_anthem_subject(&clause, action));
     }
 
     if let Some(ability) = granted_activated_ability {
@@ -6403,17 +6260,61 @@ pub(crate) fn parse_protection_from_colored_spells_line(
     )))
 }
 
-fn grant_for_anthem_subject(clause: &ParsedAnthemClause, ability: StaticAbility) -> StaticAbility {
-    let granted = match &clause.subject {
-        AnthemSubjectAst::Source => GrantAbility::source(ability),
-        AnthemSubjectAst::Filter(filter) => GrantAbility::new(filter.clone(), ability),
+fn grant_static_ability_for_anthem_subject(
+    clause: &ParsedAnthemClause,
+    ability: StaticAbilityAst,
+) -> StaticAbilityAst {
+    match &clause.subject {
+        AnthemSubjectAst::Source => match &clause.condition {
+            Some(condition) => StaticAbilityAst::ConditionalAbility {
+                ability: Box::new(ability),
+                condition: condition.clone(),
+            },
+            None => ability,
+        },
+        AnthemSubjectAst::Filter(filter) => StaticAbilityAst::GrantStaticAbility {
+            filter: filter.clone(),
+            ability: Box::new(ability),
+            condition: clause.condition.clone(),
+        },
+    }
+}
+
+fn remove_static_ability_for_anthem_subject(
+    clause: &ParsedAnthemClause,
+    ability: StaticAbilityAst,
+) -> StaticAbilityAst {
+    let filter = match &clause.subject {
+        AnthemSubjectAst::Source => ObjectFilter::source(),
+        AnthemSubjectAst::Filter(filter) => filter.clone(),
     };
-    let granted = if let Some(condition) = &clause.condition {
-        granted.with_condition(condition.clone())
-    } else {
-        granted
-    };
-    StaticAbility::new(granted)
+    grant_static_ability_for_anthem_subject(
+        clause,
+        StaticAbilityAst::RemoveStaticAbility {
+            filter,
+            ability: Box::new(ability),
+        },
+    )
+}
+
+fn grant_keyword_action_for_anthem_subject(
+    clause: &ParsedAnthemClause,
+    action: KeywordAction,
+) -> StaticAbilityAst {
+    match &clause.subject {
+        AnthemSubjectAst::Source => match &clause.condition {
+            Some(condition) => StaticAbilityAst::ConditionalKeywordAction {
+                action,
+                condition: condition.clone(),
+            },
+            None => StaticAbilityAst::KeywordAction(action),
+        },
+        AnthemSubjectAst::Filter(filter) => StaticAbilityAst::GrantKeywordAction {
+            filter: filter.clone(),
+            action,
+            condition: clause.condition.clone(),
+        },
+    }
 }
 
 fn anthem_subject_filter(subject: &AnthemSubjectAst) -> ObjectFilter {
@@ -6538,13 +6439,19 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
 
         let segment_words = normalize_cant_words(&segment);
         if segment_words.as_slice() == ["cant", "block"] {
-            extras.push(grant_for_anthem_subject(&clause, StaticAbility::cant_block()).into());
+            extras.push(grant_static_ability_for_anthem_subject(
+                &clause,
+                StaticAbilityAst::Static(StaticAbility::cant_block()),
+            ));
             continue;
         }
         if segment_words.as_slice() == ["attacks", "each", "combat", "if", "able"]
             || segment_words.as_slice() == ["attack", "each", "combat", "if", "able"]
         {
-            extras.push(grant_for_anthem_subject(&clause, StaticAbility::must_attack()).into());
+            extras.push(grant_static_ability_for_anthem_subject(
+                &clause,
+                StaticAbilityAst::Static(StaticAbility::must_attack()),
+            ));
             continue;
         }
         if segment_words.starts_with(&["cant", "be", "blocked", "by", "more", "than"]) {
@@ -6556,13 +6463,12 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
             if tail.as_slice() != ["creature"] && tail.as_slice() != ["creatures"] {
                 return Ok(None);
             }
-            extras.push(
-                grant_for_anthem_subject(
-                    &clause,
-                    StaticAbility::cant_be_blocked_by_more_than(count as usize),
-                )
-                .into(),
-            );
+            extras.push(grant_static_ability_for_anthem_subject(
+                &clause,
+                StaticAbilityAst::Static(StaticAbility::cant_be_blocked_by_more_than(
+                    count as usize,
+                )),
+            ));
             continue;
         }
         if segment_words.len() == 2 && segment_words[0] == "is" {
@@ -6595,19 +6501,16 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
             reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
             let removed = actions
                 .into_iter()
-                .filter_map(keyword_action_to_static_ability)
+                .filter(|action| action.lowers_to_static_ability())
                 .collect::<Vec<_>>();
             if removed.is_empty() {
                 return Ok(None);
             }
-            for ability in removed {
-                extras.push(
-                    grant_for_anthem_subject(
-                        &clause,
-                        StaticAbility::remove_ability(ObjectFilter::source(), ability),
-                    )
-                    .into(),
-                );
+            for action in removed {
+                extras.push(remove_static_ability_for_anthem_subject(
+                    &clause,
+                    StaticAbilityAst::KeywordAction(action),
+                ));
             }
             continue;
         }
@@ -6700,13 +6603,13 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
                 reject_unimplemented_keyword_actions(&actions, &clause_words.join(" "))?;
                 let granted = actions
                     .into_iter()
-                    .filter_map(keyword_action_to_static_ability)
+                    .filter(|action| action.lowers_to_static_ability())
                     .collect::<Vec<_>>();
                 if granted.is_empty() {
                     return Ok(None);
                 }
-                for ability in granted {
-                    extras.push(grant_for_anthem_subject(&clause, ability).into());
+                for action in granted {
+                    extras.push(grant_keyword_action_for_anthem_subject(&clause, action));
                 }
 
                 if let Some(activated) = granted_activated {
@@ -6721,7 +6624,10 @@ pub(crate) fn parse_anthem_with_trailing_segments_line(
             }
 
             if grant_must_attack {
-                extras.push(grant_for_anthem_subject(&clause, StaticAbility::must_attack()).into());
+                extras.push(grant_static_ability_for_anthem_subject(
+                    &clause,
+                    StaticAbilityAst::Static(StaticAbility::must_attack()),
+                ));
             }
             continue;
         }
@@ -8952,7 +8858,7 @@ pub(crate) fn cumulative_upkeep_granted_ability(
 
 pub(crate) fn parse_equipped_creature_has_line(
     tokens: &[Token],
-) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let words = words(tokens);
     let clause_text = words.join(" ");
     if words.len() < 4 || words[0] != "equipped" || words[1] != "creature" || words[2] != "has" {
@@ -8964,18 +8870,21 @@ pub(crate) fn parse_equipped_creature_has_line(
         return Ok(None);
     }
 
-    let mut abilities = Vec::new();
-    let mut extra_grants = Vec::new();
+    let mut actions_to_grant = Vec::new();
+    let mut extra_grants: Vec<StaticAbilityAst> = Vec::new();
     let Some(actions) = parse_ability_line(ability_tokens) else {
         return Ok(None);
     };
     for action in actions {
         reject_unimplemented_keyword_actions(std::slice::from_ref(&action), &clause_text)?;
         if let KeywordAction::Annihilator(amount) = action {
-            extra_grants.push(StaticAbility::attached_ability_grant(
-                annihilator_granted_ability(amount),
-                format!("equipped creature has annihilator {amount}"),
-            ));
+            extra_grants.push(
+                StaticAbility::attached_ability_grant(
+                    annihilator_granted_ability(amount),
+                    format!("equipped creature has annihilator {amount}"),
+                )
+                .into(),
+            );
             continue;
         }
         if let KeywordAction::CumulativeUpkeep {
@@ -8984,28 +8893,36 @@ pub(crate) fn parse_equipped_creature_has_line(
             text,
         } = action
         {
-            extra_grants.push(StaticAbility::attached_ability_grant(
-                cumulative_upkeep_granted_ability(
-                    mana_symbols_per_counter,
-                    life_per_counter,
-                    text.clone(),
-                ),
-                format!("equipped creature has {}", text.to_ascii_lowercase()),
-            ));
+            extra_grants.push(
+                StaticAbility::attached_ability_grant(
+                    cumulative_upkeep_granted_ability(
+                        mana_symbols_per_counter,
+                        life_per_counter,
+                        text.clone(),
+                    ),
+                    format!("equipped creature has {}", text.to_ascii_lowercase()),
+                )
+                .into(),
+            );
             continue;
         }
-        if let Some(ability) = keyword_action_to_static_ability(action) {
-            abilities.push(ability);
+        if action.lowers_to_static_ability() {
+            actions_to_grant.push(action);
         }
     }
 
-    if abilities.is_empty() && extra_grants.is_empty() {
+    if actions_to_grant.is_empty() && extra_grants.is_empty() {
         return Ok(None);
     }
 
     let mut out = Vec::new();
-    if !abilities.is_empty() {
-        out.push(StaticAbility::equipment_grant(abilities));
+    if !actions_to_grant.is_empty() {
+        out.push(StaticAbilityAst::EquipmentStaticAbilitiesGrant {
+            abilities: actions_to_grant
+                .into_iter()
+                .map(StaticAbilityAst::KeywordAction)
+                .collect(),
+        });
     }
     out.extend(extra_grants);
     Ok(Some(out))
@@ -9013,7 +8930,7 @@ pub(crate) fn parse_equipped_creature_has_line(
 
 pub(crate) fn parse_enchanted_creature_has_line(
     tokens: &[Token],
-) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let line_words = words(tokens);
     let clause_text = line_words.join(" ");
     if line_words.len() < 4 || line_words.first().copied() != Some("enchanted") {
@@ -9073,7 +8990,7 @@ pub(crate) fn parse_enchanted_creature_has_line(
             if let Some(condition) = &condition {
                 grant = grant.with_condition(condition.clone());
             }
-            out.push(StaticAbility::new(grant));
+            out.push(StaticAbility::new(grant).into());
             continue;
         }
         if let KeywordAction::CumulativeUpkeep {
@@ -9090,23 +9007,22 @@ pub(crate) fn parse_enchanted_creature_has_line(
             if let Some(condition) = &condition {
                 grant = grant.with_condition(condition.clone());
             }
-            out.push(StaticAbility::new(grant));
+            out.push(StaticAbility::new(grant).into());
             continue;
         }
 
-        let Some(static_ability) = keyword_action_to_static_ability(action) else {
+        let Some(static_ability) = static_ability_for_keyword_action(action.clone()) else {
             continue;
         };
         let ability_text = format!(
             "{subject} has {}",
             static_ability.display().to_ascii_lowercase()
         );
-        let granted = Ability::static_ability(static_ability).with_text(&ability_text);
-        let mut grant = crate::static_abilities::AttachedAbilityGrant::new(granted, ability_text);
-        if let Some(condition) = &condition {
-            grant = grant.with_condition(condition.clone());
-        }
-        out.push(StaticAbility::new(grant));
+        out.push(StaticAbilityAst::AttachedStaticAbilityGrant {
+            ability: Box::new(StaticAbilityAst::KeywordAction(action)),
+            display: ability_text,
+            condition: condition.clone(),
+        });
     }
 
     if out.is_empty() {
@@ -9117,7 +9033,7 @@ pub(crate) fn parse_enchanted_creature_has_line(
 
 pub(crate) fn parse_attached_has_and_loses_keywords_line(
     tokens: &[Token],
-) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 7 {
         return Ok(None);
@@ -9165,18 +9081,25 @@ pub(crate) fn parse_attached_has_and_loses_keywords_line(
 
     for action in granted_actions {
         reject_unimplemented_keyword_actions(std::slice::from_ref(&action), &clause_text)?;
-        let Some(ability) = keyword_action_to_static_ability(action) else {
+        if !action.lowers_to_static_ability() {
             return Ok(None);
-        };
-        result.push(StaticAbility::grant_ability(filter.clone(), ability));
+        }
+        result.push(StaticAbilityAst::GrantKeywordAction {
+            filter: filter.clone(),
+            action,
+            condition: None,
+        });
     }
 
     for action in removed_actions {
         reject_unimplemented_keyword_actions(std::slice::from_ref(&action), &clause_text)?;
-        let Some(ability) = keyword_action_to_static_ability(action) else {
+        if !action.lowers_to_static_ability() {
             return Ok(None);
-        };
-        result.push(StaticAbility::remove_ability(filter.clone(), ability));
+        }
+        result.push(StaticAbilityAst::RemoveKeywordAction {
+            filter: filter.clone(),
+            action,
+        });
     }
 
     if result.is_empty() {
@@ -9525,7 +9448,7 @@ pub(crate) fn parse_attached_has_keywords_and_triggered_ability_line(
     }
 
     let clause_text = line_words.join(" ");
-    let mut keyword_statics = Vec::new();
+    let mut keyword_actions = Vec::new();
     let mut extra_grants: Vec<StaticAbilityAst> = Vec::new();
     let Some(actions) = parse_ability_line(&keyword_tokens) else {
         return Ok(None);
@@ -9547,11 +9470,11 @@ pub(crate) fn parse_attached_has_keywords_and_triggered_ability_line(
                 )
                 .into(),
             );
-        } else if let Some(static_ability) = keyword_action_to_static_ability(action) {
-            keyword_statics.push(static_ability);
+        } else if action.lowers_to_static_ability() {
+            keyword_actions.push(action);
         }
     }
-    if keyword_statics.is_empty() && extra_grants.is_empty() {
+    if keyword_actions.is_empty() && extra_grants.is_empty() {
         return Ok(None);
     }
 
@@ -9596,8 +9519,12 @@ pub(crate) fn parse_attached_has_keywords_and_triggered_ability_line(
     };
 
     let mut static_abilities = Vec::new();
-    for ability in keyword_statics {
-        static_abilities.push(StaticAbility::grant_ability(filter.clone(), ability).into());
+    for action in keyword_actions {
+        static_abilities.push(StaticAbilityAst::GrantKeywordAction {
+            filter: filter.clone(),
+            action,
+            condition: None,
+        });
     }
     static_abilities.extend(extra_grants);
     let subject_text = words(&tokens[..has_idx]).join(" ");
@@ -9613,7 +9540,7 @@ pub(crate) fn parse_attached_has_keywords_and_triggered_ability_line(
 
 pub(crate) fn parse_attached_is_legendary_gets_and_has_keywords_line(
     tokens: &[Token],
-) -> Result<Option<Vec<StaticAbility>>, CardTextError> {
+) -> Result<Option<Vec<StaticAbilityAst>>, CardTextError> {
     let line_words = words(tokens);
     if line_words.len() < 10 {
         return Ok(None);
@@ -9674,10 +9601,7 @@ pub(crate) fn parse_attached_is_legendary_gets_and_has_keywords_line(
 
     let clause_text = line_words.join(" ");
     let mut out = Vec::new();
-    out.push(StaticAbility::add_supertypes(
-        filter.clone(),
-        vec![Supertype::Legendary],
-    ));
+    out.push(StaticAbility::add_supertypes(filter.clone(), vec![Supertype::Legendary]).into());
 
     let anthem_clause = ParsedAnthemClause {
         subject: AnthemSubjectAst::Filter(filter.clone()),
@@ -9685,12 +9609,16 @@ pub(crate) fn parse_attached_is_legendary_gets_and_has_keywords_line(
         toughness: AnthemValue::Fixed(toughness),
         condition: None,
     };
-    out.push(build_anthem_static_ability(&anthem_clause));
+    out.push(build_anthem_static_ability(&anthem_clause).into());
 
     for action in actions {
         reject_unimplemented_keyword_actions(std::slice::from_ref(&action), &clause_text)?;
-        if let Some(static_ability) = keyword_action_to_static_ability(action) {
-            out.push(StaticAbility::grant_ability(filter.clone(), static_ability));
+        if action.lowers_to_static_ability() {
+            out.push(StaticAbilityAst::GrantKeywordAction {
+                filter: filter.clone(),
+                action,
+                condition: None,
+            });
         }
     }
 
@@ -9745,8 +9673,8 @@ pub(crate) fn parse_attached_gets_and_has_ability_line(
         let mut out = vec![anthem.clone().into()];
         let mut granted_any = false;
         for action in actions {
-            if let Some(static_ability) = keyword_action_to_static_ability(action) {
-                out.push(grant_for_anthem_subject(&clause, static_ability).into());
+            if action.lowers_to_static_ability() {
+                out.push(grant_keyword_action_for_anthem_subject(&clause, action));
                 granted_any = true;
             }
         }
@@ -11250,7 +11178,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
                     .get(1)
                     .is_some_and(|next| next.is_word("the")))
     });
-    let mut granted_static: Vec<StaticAbility> = Vec::new();
+    let mut granted_static: Vec<StaticAbilityAst> = Vec::new();
     let mut granted_object_abilities: Vec<ParsedAbility> = Vec::new();
     if has_colon {
         let Some(parsed) = parse_activated_line(ability_tokens)? else {
@@ -11313,7 +11241,7 @@ pub(crate) fn parse_filter_has_granted_ability_line(
             reference_imports: ReferenceImports::default(),
             trigger_spec: None,
         });
-    } else if let Some(abilities) = parse_static_ability_line(ability_tokens)? {
+    } else if let Some(abilities) = parse_static_ability_ast_line(ability_tokens)? {
         granted_static = abilities;
     } else {
         return Ok(None);
@@ -11325,16 +11253,21 @@ pub(crate) fn parse_filter_has_granted_ability_line(
     let mut granted: Vec<StaticAbilityAst> = Vec::new();
     if !granted_static.is_empty() {
         for ability in granted_static {
-            let granted_ability = match &subject {
-                AnthemSubjectAst::Source => GrantAbility::source(ability),
-                AnthemSubjectAst::Filter(filter) => GrantAbility::new(filter.clone(), ability),
+            let ast = match &subject {
+                AnthemSubjectAst::Source => match &condition {
+                    Some(condition) => StaticAbilityAst::ConditionalAbility {
+                        ability: Box::new(ability),
+                        condition: condition.clone(),
+                    },
+                    None => ability,
+                },
+                AnthemSubjectAst::Filter(filter) => StaticAbilityAst::GrantStaticAbility {
+                    filter: filter.clone(),
+                    ability: Box::new(ability),
+                    condition: condition.clone(),
+                },
             };
-            let granted_ability = if let Some(condition) = &condition {
-                granted_ability.with_condition(condition.clone())
-            } else {
-                granted_ability
-            };
-            granted.push(StaticAbility::new(granted_ability).into());
+            granted.push(ast);
         }
     }
 

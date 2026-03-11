@@ -346,10 +346,7 @@ pub struct Object {
 impl Object {
     /// Returns non-mana additional cost components for this object.
     pub fn additional_non_mana_costs(&self) -> Vec<crate::costs::Cost> {
-        self.additional_cost
-            .non_mana_costs()
-            .cloned()
-            .collect()
+        self.additional_cost.non_mana_costs().cloned().collect()
     }
 
     /// Creates a new object from a card definition.
