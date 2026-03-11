@@ -794,9 +794,15 @@ fn apply_trait_replacement(
         ReplacementAction::EnterWithCounters {
             counter_type,
             count,
+            added_subtypes,
         } => {
             let resolved_count = resolve_value_for_etb(count, game, effect.source);
-            let modified = apply_trait_enter_with_counters(&event, *counter_type, resolved_count);
+            let modified = apply_trait_enter_with_counters(
+                &event,
+                *counter_type,
+                resolved_count,
+                added_subtypes,
+            );
             match modified {
                 Some(e) => TraitApplyResult::Modified(e),
                 None => TraitApplyResult::Unchanged(event),
@@ -1263,13 +1269,17 @@ fn apply_trait_enter_with_counters(
     event: &Event,
     counter_type: CounterType,
     count: u32,
+    added_subtypes: &[crate::types::Subtype],
 ) -> Option<Event> {
     use crate::events::{EnterBattlefieldEvent, ZoneChangeEvent, downcast_event};
 
     match event.kind() {
         EventKind::EnterBattlefield => {
             let etb = downcast_event::<EnterBattlefieldEvent>(event.inner())?;
-            Some(event.rewrap(etb.with_counters(counter_type, count)))
+            Some(event.rewrap(
+                etb.with_counters(counter_type, count)
+                    .with_added_subtypes(added_subtypes),
+            ))
         }
         EventKind::ZoneChange => {
             let zone_change = downcast_event::<ZoneChangeEvent>(event.inner())?;
@@ -1277,7 +1287,8 @@ fn apply_trait_enter_with_counters(
                 Some(
                     event.rewrap(
                         EnterBattlefieldEvent::new(*zone_change.objects.first()?, zone_change.from)
-                            .with_counters(counter_type, count),
+                            .with_counters(counter_type, count)
+                            .with_added_subtypes(added_subtypes),
                     ),
                 )
             } else {

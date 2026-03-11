@@ -14948,6 +14948,32 @@ fn parse_oracle_tidal_warrior_fixed_basic_land_type_regression() {
 }
 
 #[test]
+fn parse_oracle_master_biomancer_etb_mutant_regression() {
+    let def = parse_oracle_card_definition("Master Biomancer");
+
+    let raw = format!("{def:#?}").to_ascii_lowercase();
+    assert!(
+        raw.contains("enterwithcountersforfilter")
+            && raw.contains("power")
+            && raw.contains("added_subtypes")
+            && raw.contains("mutant"),
+        "expected raw compiled definition to retain dynamic ETB counters and mutant subtype, got {raw}"
+    );
+
+    let rendered = compiled_lines(&def).join(" ").to_ascii_lowercase();
+    assert!(
+        rendered.contains(
+            "each other creature you control enters with a number of additional +1/+1 counters on it equal to this creature's power and as a mutant in addition to its other types"
+        ),
+        "expected Master Biomancer ETB mutant wording, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("enter the battlefield with counters"),
+        "expected Master Biomancer to avoid generic ETB counter placeholder text, got {rendered}"
+    );
+}
+
+#[test]
 fn oracle_render_regression_named_cards_compile_cleanly() {
     let cultivator =
         oracle_like_lines(&parse_oracle_card_definition("Cultivator Colossus")).join("\n");

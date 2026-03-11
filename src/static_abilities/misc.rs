@@ -29,6 +29,7 @@ use crate::mana::ManaCost;
 use crate::object::CounterType;
 use crate::replacement::{RedirectTarget, RedirectWhich, ReplacementAction, ReplacementEffect};
 use crate::target::{ChooseSpec, ObjectFilter, PlayerFilter};
+use crate::types::Subtype;
 use crate::zone::Zone;
 
 fn card_type_word(card_type: crate::types::CardType) -> &'static str {
@@ -707,6 +708,7 @@ impl StaticAbilityKind for Bloodthirst {
                 ReplacementAction::EnterWithCounters {
                     counter_type: CounterType::PlusOnePlusOne,
                     count: Value::Fixed(self.amount as i32),
+                    added_subtypes: Vec::new(),
                 },
             )
             .self_replacing(),
@@ -835,6 +837,7 @@ impl StaticAbilityKind for EntersWithCounters {
                 ReplacementAction::EnterWithCounters {
                     counter_type: self.counter_type,
                     count: self.count.clone(),
+                    added_subtypes: Vec::new(),
                 },
             )
             .self_replacing(),
@@ -898,6 +901,7 @@ impl StaticAbilityKind for EntersWithCountersIfCondition {
                 ReplacementAction::EnterWithCounters {
                     counter_type: self.counter_type,
                     count: self.count.clone(),
+                    added_subtypes: Vec::new(),
                 },
             )
             .self_replacing(),
@@ -1550,16 +1554,23 @@ impl StaticAbilityKind for EnterUntappedForFilter {
 pub struct EnterWithCountersForFilter {
     pub filter: ObjectFilter,
     pub counter_type: CounterType,
-    pub count: u32,
+    pub count: Value,
+    pub added_subtypes: Vec<Subtype>,
 }
 
 impl EnterWithCountersForFilter {
-    pub fn new(filter: ObjectFilter, counter_type: CounterType, count: u32) -> Self {
+    pub fn new(filter: ObjectFilter, counter_type: CounterType, count: Value) -> Self {
         Self {
             filter,
             counter_type,
             count,
+            added_subtypes: Vec::new(),
         }
+    }
+
+    pub fn with_added_subtypes(mut self, subtypes: Vec<Subtype>) -> Self {
+        self.added_subtypes = subtypes;
+        self
     }
 }
 
@@ -1569,7 +1580,68 @@ impl StaticAbilityKind for EnterWithCountersForFilter {
     }
 
     fn display(&self) -> String {
-        "Permanents enter the battlefield with counters".to_string()
+        let mut subject = self.filter.description();
+        if subject.starts_with("another ") {
+            subject = subject.replacen("another ", "Each other ", 1);
+        } else {
+            subject = capitalize_first(&subject);
+        }
+        let enters = if matches!(
+            subject.split_whitespace().next(),
+            Some("A" | "An" | "This" | "That" | "Each")
+        ) {
+            "enters"
+        } else {
+            "enter"
+        };
+
+        let counter = self.counter_type.description().into_owned();
+        let counter_clause = match &self.count {
+            Value::Fixed(1) => {
+                format!("with an additional {counter} counter on it")
+            }
+            Value::Fixed(v) => {
+                let rendered = u32::try_from(*v)
+                    .ok()
+                    .and_then(number_word_u32)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string());
+                format!("with {rendered} additional {counter} counters on it")
+            }
+            value => format!(
+                "with a number of additional {counter} counters on it equal to {}",
+                describe_value(value)
+            ),
+        };
+
+        let subtype_clause = if self.added_subtypes.is_empty() {
+            String::new()
+        } else {
+            let subtype_words = self
+                .added_subtypes
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>();
+            let article = subtype_words
+                .first()
+                .map(|word| {
+                    if matches!(
+                        word.chars().next().map(|ch| ch.to_ascii_lowercase()),
+                        Some('a' | 'e' | 'i' | 'o' | 'u')
+                    ) {
+                        "an"
+                    } else {
+                        "a"
+                    }
+                })
+                .unwrap_or("a");
+            format!(
+                " and as {article} {} in addition to its other types",
+                subtype_words.join(" ")
+            )
+        };
+
+        format!("{subject} {enters} {counter_clause}{subtype_clause}")
     }
 
     fn generate_replacement_effect(
@@ -1583,7 +1655,8 @@ impl StaticAbilityKind for EnterWithCountersForFilter {
             WouldEnterBattlefieldMatcher::new(self.filter.clone()),
             ReplacementAction::EnterWithCounters {
                 counter_type: self.counter_type,
-                count: Value::Fixed(self.count as i32),
+                count: self.count.clone(),
+                added_subtypes: self.added_subtypes.clone(),
             },
         ))
     }

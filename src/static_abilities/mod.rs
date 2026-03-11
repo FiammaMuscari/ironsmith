@@ -1573,7 +1573,31 @@ impl StaticAbility {
         counter_type: crate::object::CounterType,
         count: u32,
     ) -> Self {
+        Self::new(EnterWithCountersForFilter::new(
+            filter,
+            counter_type,
+            crate::effect::Value::Fixed(count as i32),
+        ))
+    }
+
+    pub fn enters_with_counters_value_for_filter(
+        filter: crate::target::ObjectFilter,
+        counter_type: crate::object::CounterType,
+        count: crate::effect::Value,
+    ) -> Self {
         Self::new(EnterWithCountersForFilter::new(filter, counter_type, count))
+    }
+
+    pub fn enters_with_counters_and_subtypes_for_filter(
+        filter: crate::target::ObjectFilter,
+        counter_type: crate::object::CounterType,
+        count: crate::effect::Value,
+        added_subtypes: Vec<crate::types::Subtype>,
+    ) -> Self {
+        Self::new(
+            EnterWithCountersForFilter::new(filter, counter_type, count)
+                .with_added_subtypes(added_subtypes),
+        )
     }
 
     pub fn anthem(filter: crate::target::ObjectFilter, power: i32, toughness: i32) -> Self {

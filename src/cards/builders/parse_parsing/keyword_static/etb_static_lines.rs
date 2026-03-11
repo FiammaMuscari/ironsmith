@@ -1515,31 +1515,74 @@ pub(crate) fn parse_enters_with_additional_counter_for_filter_line(
         return Ok(None);
     };
 
-    let additional_idx = tokens
+    let and_as_idx = tokens
+        .windows(2)
+        .position(|window| window[0].is_word("and") && window[1].is_word("as"));
+    let base_tokens = and_as_idx.map_or(tokens, |idx| &tokens[..idx]);
+
+    let additional_idx = base_tokens
         .iter()
         .position(|token| token.is_word("additional"))
         .ok_or_else(|| {
             CardTextError::ParseError("missing 'additional' keyword for ETB counters".to_string())
         })?;
-    let mut count = 1u32;
-    if additional_idx > 0
-        && let Some((parsed, _)) = parse_number(&tokens[additional_idx - 1..additional_idx])
+    let count = if let Some(equal_idx) = base_tokens.iter().position(|token| token.is_word("equal"))
     {
-        count = parsed;
-    } else if let Some((parsed, _)) = parse_number(&tokens[additional_idx + 1..]) {
-        count = parsed;
-    }
+        let value_start = equal_idx + 2;
+        let value_tokens = trim_commas(base_tokens.get(value_start..).unwrap_or_default());
+        parse_value(&value_tokens)
+            .map(|(value, _)| value)
+            .ok_or_else(|| {
+                CardTextError::ParseError(format!(
+                    "unsupported ETB counter count value (clause: '{}')",
+                    clause_words.join(" ")
+                ))
+            })?
+    } else if additional_idx > 0
+        && let Some((parsed, _)) = parse_number(&base_tokens[additional_idx - 1..additional_idx])
+    {
+        Value::Fixed(parsed as i32)
+    } else if let Some((parsed, _)) = parse_number(&base_tokens[additional_idx + 1..]) {
+        Value::Fixed(parsed as i32)
+    } else {
+        Value::Fixed(1)
+    };
 
-    let counter_type = parse_counter_type_from_tokens(tokens).ok_or_else(|| {
+    let counter_type = parse_counter_type_from_tokens(base_tokens).ok_or_else(|| {
         CardTextError::ParseError(format!(
             "unsupported counter type for ETB replacement (clause: '{}')",
             clause_words.join(" ")
         ))
     })?;
 
-    Ok(Some(StaticAbility::enters_with_counters_for_filter(
+    let mut added_subtypes = Vec::new();
+    if let Some(idx) = and_as_idx {
+        let mut addition_tokens = tokens[idx + 1..].to_vec();
+        if let Some(Token::Word(_, span)) = addition_tokens.first() {
+            addition_tokens[0] = Token::Word("is".to_string(), *span);
+        }
+        let Some(additions) = parse_type_color_addition_clause(&addition_tokens)? else {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported ETB type-addition tail (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        };
+        if !additions.added_colors.is_empty()
+            || !additions.set_colors.is_empty()
+            || !additions.card_types.is_empty()
+        {
+            return Err(CardTextError::ParseError(format!(
+                "unsupported non-subtype ETB type addition (clause: '{}')",
+                clause_words.join(" ")
+            )));
+        }
+        added_subtypes = additions.subtypes;
+    }
+
+    Ok(Some(StaticAbility::enters_with_counters_and_subtypes_for_filter(
         filter,
         counter_type,
         count,
+        added_subtypes,
     )))
 }
