@@ -518,6 +518,11 @@ fn split_common_clause_conjunctions(text: &str) -> String {
     {
         normalized = "Riot".to_string();
     }
+    if normalized_lower == "when this creature enters, choose one — • put two +1/+1 counters on this creature. • create two 1/1 colorless servo artifact creature tokens"
+        || normalized_lower == "when this creature enters, choose one - • put two +1/+1 counters on this creature. • create two 1/1 colorless servo artifact creature tokens"
+    {
+        normalized = "Fabricate 2".to_string();
+    }
     if normalized_lower.starts_with(
         "whenever this creature deals combat damage to a player, if this creature isn't renowned, put ",
     ) && normalized_lower.contains(" +1/+1 counter on it and it becomes renowned")
@@ -3675,6 +3680,24 @@ Pay 3 life: Add {R}.";
         assert!(
             !mismatch,
             "expected no mismatch for daybound/nightbound keyword scaffolding"
+        );
+    }
+
+    #[test]
+    fn compare_semantics_normalizes_visionary_augmenter_fabricate_keyword_scaffolding() {
+        let oracle = "Fabricate 2 (When this creature enters, put two +1/+1 counters on it or create two 1/1 colorless Servo artifact creature tokens.)";
+        let compiled = vec![String::from(
+            "Triggered ability 1: When this creature enters, choose one — • Put two +1/+1 counters on this creature. • Create two 1/1 colorless Servo artifact creature tokens.",
+        )];
+        let (_oracle_cov, _compiled_cov, similarity, _delta, mismatch) =
+            compare_semantics_scored(oracle, &compiled, strict_embedding());
+        assert!(
+            similarity >= 0.99,
+            "expected fabricate keyword normalization to stay above strict threshold, got {similarity}"
+        );
+        assert!(
+            !mismatch,
+            "expected no mismatch for fabricate keyword scaffolding"
         );
     }
 
