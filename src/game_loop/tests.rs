@@ -9047,6 +9047,7 @@ fn test_direct_finalize_trace_includes_delve_exile() {
         Zone::Hand,
         alice,
         Vec::new(),
+        Vec::new(),
         None,
         CastingMethod::Normal,
         OptionalCostsPaid::default(),
