@@ -186,6 +186,17 @@ function sameOptionDescriptor(left, right) {
   return left.description === right.description && left.object_id === right.object_id;
 }
 
+function buildObjectDescriptor(candidate) {
+  return {
+    name: String(candidate?.name || ""),
+    legal: candidate?.legal !== false,
+  };
+}
+
+function sameObjectDescriptor(left, right) {
+  return left.name === right.name && left.legal === right.legal;
+}
+
 function buildOrdinalDescriptor(items, targetIndex, buildDescriptor, sameDescriptor) {
   const normalizedTargetIndex = Number(targetIndex);
   let target = null;
@@ -201,6 +212,29 @@ function buildOrdinalDescriptor(items, targetIndex, buildDescriptor, sameDescrip
   let ordinal = 0;
   for (const item of items || []) {
     if (Number(item?.index) === normalizedTargetIndex) break;
+    if (sameDescriptor(buildDescriptor(item), descriptor)) {
+      ordinal += 1;
+    }
+  }
+
+  return { ...descriptor, ordinal };
+}
+
+function buildObjectOrdinalDescriptor(items, targetObjectId, buildDescriptor, sameDescriptor) {
+  const normalizedTargetObjectId = Number(targetObjectId);
+  let target = null;
+  for (const item of items || []) {
+    if (Number(item?.id) === normalizedTargetObjectId) {
+      target = item;
+      break;
+    }
+  }
+  if (!target) return null;
+
+  const descriptor = buildDescriptor(target);
+  let ordinal = 0;
+  for (const item of items || []) {
+    if (Number(item?.id) === normalizedTargetObjectId) break;
     if (sameDescriptor(buildDescriptor(item), descriptor)) {
       ordinal += 1;
     }
@@ -261,6 +295,28 @@ function serializeMultiplayerCommand(command, currentState) {
     };
   }
 
+  if (command.type === "select_objects") {
+    const decision = currentState?.decision;
+    if (decision?.kind !== "select_objects") return command;
+    const object_refs = (command.object_ids || [])
+      .map((objectId) =>
+        buildObjectOrdinalDescriptor(
+          decision.candidates,
+          objectId,
+          buildObjectDescriptor,
+          sameObjectDescriptor
+        )
+      )
+      .filter(Boolean);
+    if (object_refs.length !== (command.object_ids || []).length) {
+      return command;
+    }
+    return {
+      type: "select_objects",
+      object_refs,
+    };
+  }
+
   return command;
 }
 
@@ -307,6 +363,29 @@ function resolveSyncedCommand(command, currentState) {
     return {
       type: "select_options",
       option_indices,
+    };
+  }
+
+  if (command.type === "select_objects" && Array.isArray(command.object_refs)) {
+    const decision = currentState?.decision;
+    if (decision?.kind !== "select_objects") {
+      throw new Error("Expected an object-selection decision while syncing a choice");
+    }
+    const object_ids = command.object_refs.map((objectRef) => {
+      const match = resolveOrdinalDescriptor(
+        decision.candidates,
+        objectRef,
+        buildObjectDescriptor,
+        sameObjectDescriptor
+      );
+      if (!match) {
+        throw new Error(`Could not resolve synced object choice: ${objectRef.name}`);
+      }
+      return Number(match.id);
+    });
+    return {
+      type: "select_objects",
+      object_ids,
     };
   }
 
@@ -370,6 +449,9 @@ function summarizeCommand(command) {
 
 function isDecisionCommandCompatible(decision, command) {
   if (!decision || !command) return false;
+  if (command.type === "cancel_decision") {
+    return true;
+  }
 
   switch (decision.kind) {
     case "priority":
@@ -874,7 +956,9 @@ export function GameProvider({ children }) {
         decision: decisionBefore,
         compatible: isDecisionCommandCompatible(stateRef.current?.decision || null, resolvedCommand),
       });
-      const st = await currentGame.dispatch(resolvedCommand);
+      const st = resolvedCommand?.type === "cancel_decision"
+        ? await currentGame.cancelDecision()
+        : await currentGame.dispatch(resolvedCommand);
       console.debug("[ironsmith] synced dispatch:success", {
         command: commandSummary,
         decision_before: decisionBefore,
@@ -1034,7 +1118,21 @@ export function GameProvider({ children }) {
     async () => {
       if (!game) return;
       if (multiplayer.matchStarted) {
-        setStatus("Undo is disabled during multiplayer matches", true);
+        const currentState = stateRef.current;
+        if (!currentState?.decision) {
+          setStatus("No pending decision to cancel", true);
+          return;
+        }
+        if (currentState.decision.player !== currentState.perspective) {
+          setStatus("Waiting for the active player");
+          return;
+        }
+        try {
+          await submitMultiplayerCommand({ type: "cancel_decision" }, "Decision cancelled");
+        } catch (err) {
+          setStatus(`Cancel failed: ${err}`, true);
+          console.error(err);
+        }
         return;
       }
       try {
@@ -1050,7 +1148,7 @@ export function GameProvider({ children }) {
         console.error(err);
       }
     },
-    [finalizeState, game, multiplayer.matchStarted, setStatus]
+    [finalizeState, game, multiplayer.matchStarted, setStatus, submitMultiplayerCommand]
   );
 
   const value = useMemo(

@@ -2198,6 +2198,130 @@ fn test_delayed_tagged_graveyard_return_does_not_follow_zone_hops() {
     );
 }
 
+fn assert_pact_upkeep_trigger_survives_fail_to_find(
+    pact_def: &crate::cards::CardDefinition,
+    spell_name: &str,
+) {
+    struct PactDecisionMaker;
+
+    impl DecisionMaker for PactDecisionMaker {
+        fn decide_boolean(
+            &mut self,
+            _game: &GameState,
+            _ctx: &crate::decisions::context::BooleanContext,
+        ) -> bool {
+            false
+        }
+
+        fn decide_objects(
+            &mut self,
+            _game: &GameState,
+            ctx: &crate::decisions::context::SelectObjectsContext,
+        ) -> Vec<ObjectId> {
+            if ctx.min == 0 {
+                Vec::new()
+            } else {
+                ctx.candidates
+                    .iter()
+                    .filter(|candidate| candidate.legal)
+                    .map(|candidate| candidate.id)
+                    .take(ctx.min)
+                    .collect()
+            }
+        }
+    }
+
+    let mut game = setup_game();
+    let mut trigger_queue = TriggerQueue::new();
+    let alice = PlayerId::from_index(0);
+    let spell_debug = format!("{:?}", pact_def.spell_effect);
+    let ability_debug = format!("{:?}", pact_def.abilities);
+
+    let green_creature = CardBuilder::new(CardId::from_raw(91_001), "Green Probe")
+        .mana_cost(crate::mana::ManaCost::from_pips(vec![vec![
+            crate::mana::ManaSymbol::Green,
+        ]]))
+        .card_types(vec![CardType::Creature])
+        .power_toughness(PowerToughness::fixed(2, 2))
+        .build();
+    game.create_object_from_card(&green_creature, alice, Zone::Library);
+    let pact_id = game.create_object_from_definition(pact_def, alice, Zone::Stack);
+    game.stack.push(StackEntry::new(pact_id, alice));
+
+    let mut dm = PactDecisionMaker;
+    resolve_stack_entry_with(&mut game, &mut dm).expect("pact spell should resolve");
+
+    assert_eq!(
+        game.player(alice).expect("alice exists").hand.len(),
+        0,
+        "{spell_name} should leave the searched creature in the library when the player fails to find"
+    );
+    assert_eq!(
+        game.delayed_triggers.len(),
+        1,
+        "{spell_name} should still schedule the upkeep payment trigger after the spell resolves; spell_effect={spell_debug}; abilities={ability_debug}"
+    );
+
+    let same_turn_upkeep = TriggerEvent::new_with_provenance(
+        crate::events::phase::BeginningOfUpkeepEvent::new(alice),
+        crate::provenance::ProvNodeId::default(),
+    );
+    assert!(
+        crate::triggers::check_delayed_triggers(&mut game, &same_turn_upkeep).is_empty(),
+        "the pact trigger should not fire again during the turn it was created"
+    );
+
+    game.turn.turn_number += 2;
+    game.turn.active_player = alice;
+    let next_upkeep = TriggerEvent::new_with_provenance(
+        crate::events::phase::BeginningOfUpkeepEvent::new(alice),
+        crate::provenance::ProvNodeId::default(),
+    );
+    for trigger in crate::triggers::check_delayed_triggers(&mut game, &next_upkeep) {
+        trigger_queue.add(trigger);
+    }
+
+    assert_eq!(
+        trigger_queue.entries.len(),
+        1,
+        "{spell_name} should fire on the next upkeep even after a fail-to-find search"
+    );
+
+    put_triggers_on_stack(&mut game, &mut trigger_queue)
+        .expect("pact delayed trigger should be put on the stack");
+    resolve_stack_entry_with(&mut game, &mut dm).expect("pact delayed trigger should resolve");
+
+    assert!(
+        game.player(alice).expect("alice exists").has_lost,
+        "declining to pay for {spell_name} should make the controller lose the game"
+    );
+}
+
+#[test]
+fn test_pact_upkeep_trigger_still_fires_after_fail_to_find() {
+    let pact_def = CardDefinitionBuilder::new(CardId::from_raw(91_002), "Summoner's Pact Probe")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Search your library for a green creature card, reveal it, put it into your hand, then shuffle. At the beginning of your next upkeep, pay {2}{G}{G}. If you don't, you lose the game.",
+        )
+        .expect("pact runtime probe should parse");
+
+    assert_pact_upkeep_trigger_survives_fail_to_find(&pact_def, "Summoner's Pact Probe");
+}
+
+#[cfg(feature = "generated-registry")]
+#[test]
+fn test_generated_summoners_pact_upkeep_trigger_survives_fail_to_find() {
+    let mut registry = crate::cards::CardRegistry::new();
+    registry.ensure_cards_loaded(["Summoner's Pact"]);
+
+    let pact_def = registry
+        .get("Summoner's Pact")
+        .expect("generated registry should load Summoner's Pact");
+
+    assert_pact_upkeep_trigger_survives_fail_to_find(pact_def, "Summoner's Pact");
+}
+
 #[test]
 fn test_fatal_push_without_revolt_does_not_destroy_four_mana_target() {
     let mut game = setup_game();
@@ -7433,8 +7557,8 @@ fn test_dauthi_voidwalker_activation_makes_void_counter_card_castable_from_exile
     use crate::alternative_cast::CastingMethod;
     use crate::decision::{LegalAction, compute_legal_actions};
     use crate::executor::{ExecutionContext, execute_effect};
+    use crate::event_processor::ZoneChangeOutcome;
     use crate::object::CounterType;
-    use crate::zone::ZoneChangeOutcome;
 
     let mut game = setup_game();
     let alice = PlayerId::from_index(0);

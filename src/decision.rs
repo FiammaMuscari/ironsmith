@@ -855,6 +855,10 @@ pub fn compute_legal_actions(game: &GameState, player: PlayerId) -> Vec<LegalAct
                 .abilities(perm_id)
                 .unwrap_or_else(|| perm.abilities.clone());
             for (i, ability) in abilities.iter().enumerate() {
+                if !ability.functions_in(&perm.zone) {
+                    continue;
+                }
+
                 // Check mana abilities
                 if ability.is_mana_ability() {
                     let action = SpecialAction::ActivateManaAbility {
@@ -981,6 +985,14 @@ pub(crate) fn can_activate_ability_with_restrictions(
 
     if let Some(obj) = game.object(source)
         && !game.can_activate_non_mana_abilities(obj.controller)
+    {
+        return false;
+    }
+
+    if let Some(obj) = game.object(source)
+        && !game
+            .current_ability(source, ability_index)
+            .is_some_and(|ability| ability.functions_in(&obj.zone))
     {
         return false;
     }
@@ -9821,6 +9833,117 @@ mod tests {
                 |a| matches!(a, LegalAction::ActivateAbility { source, .. } if *source == source_id)
             ),
             "hand-zone activated ability should be discoverable as a legal action"
+        );
+    }
+
+    #[test]
+    fn test_compute_legal_actions_excludes_hand_only_ability_from_battlefield() {
+        use crate::cards::CardDefinitionBuilder;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let def = CardDefinitionBuilder::new(CardId::from_raw(779), "Boseiju Regression Probe")
+            .card_types(vec![CardType::Land])
+            .mana_cost(ManaCost::new())
+            .parse_text(
+                "{T}: Add {G}.\nChannel — {1}{G}, Discard this card: Destroy target artifact, enchantment, or nonbasic land an opponent controls.\nThis ability costs {1} less to activate for each legendary creature you control.",
+            )
+            .expect("channel land probe should parse");
+
+        let source_id = game.create_object_from_definition(&def, alice, Zone::Battlefield);
+        game.remove_summoning_sickness(source_id);
+
+        let actions = compute_legal_actions(&game, alice);
+        assert!(
+            actions.iter().any(|action| matches!(
+                action,
+                LegalAction::ActivateManaAbility { source, .. } if *source == source_id
+            )),
+            "battlefield Boseiju should still expose its tap-for-mana ability"
+        );
+        assert!(
+            !actions.iter().any(|action| matches!(
+                action,
+                LegalAction::ActivateAbility { source, .. } if *source == source_id
+            )),
+            "battlefield Boseiju should not expose its hand-only channel ability"
+        );
+    }
+
+    #[test]
+    fn test_tap_only_activation_skips_empty_next_cost_prompt() {
+        use crate::cost::TotalCost;
+        use crate::costs::Cost;
+        use crate::game_loop::{
+            PriorityLoopState, PriorityResponse, apply_priority_response_with_dm,
+        };
+        use crate::triggers::TriggerQueue;
+
+        let mut game = setup_game();
+        let alice = PlayerId::from_index(0);
+        game.turn.phase = Phase::FirstMain;
+        game.turn.step = None;
+        game.turn.active_player = alice;
+        game.turn.priority_player = Some(alice);
+
+        let source_id = game.create_object_from_card(
+            &CardBuilder::new(CardId::from_raw(780), "Tap Probe")
+                .card_types(vec![CardType::Artifact])
+                .build(),
+            alice,
+            Zone::Battlefield,
+        );
+        game.object_mut(source_id)
+            .expect("tap probe should exist")
+            .abilities
+            .push(Ability::activated_with_costs(
+                TotalCost::free(),
+                vec![Cost::tap()],
+                vec![Effect::gain_life(1)],
+            ));
+
+        let mut trigger_queue = TriggerQueue::new();
+        let mut state = PriorityLoopState::new(game.players_in_game());
+        let mut dm = AutoPassDecisionMaker;
+
+        let progress = apply_priority_response_with_dm(
+            &mut game,
+            &mut trigger_queue,
+            &mut state,
+            &PriorityResponse::PriorityAction(LegalAction::ActivateAbility {
+                source: source_id,
+                ability_index: 0,
+            }),
+            &mut dm,
+        )
+        .expect("tap-only activation should resolve its cost flow");
+
+        assert!(
+            state.pending_activation.is_none(),
+            "tap-only activation should not get stuck in a pending cost prompt"
+        );
+        assert!(
+            game.is_tapped(source_id),
+            "tap-only activation should pay the tap cost immediately"
+        );
+        assert_eq!(
+            game.stack.len(),
+            1,
+            "tap-only activation should place the ability on the stack"
+        );
+        assert!(
+            matches!(
+                progress,
+                crate::decision::GameProgress::NeedsDecisionCtx(
+                    crate::decisions::context::DecisionContext::Priority(_)
+                )
+            ),
+            "after a tap-only activation resolves its cost, priority should continue normally"
         );
     }
 

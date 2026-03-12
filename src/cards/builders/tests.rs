@@ -8675,6 +8675,48 @@ fn parse_spell_next_upkeep_trigger_stays_in_spell_effects() {
 }
 
 #[test]
+fn parse_multiline_spell_next_upkeep_trigger_stays_in_spell_effects() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Pact Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text(
+            "Search your library for a green creature card, reveal it, put it into your hand, then shuffle.\nAt the beginning of your next upkeep, pay {2}{G}{G}. If you don't, you lose the game.",
+        )
+        .expect("multiline next-upkeep pact line should parse");
+
+    let spell_debug = format!("{:?}", def.spell_effect.as_ref().expect("spell effects"));
+    let ability_debug = format!("{:?}", def.abilities);
+    assert!(
+        spell_debug.contains("ScheduleDelayedTriggerEffect")
+            && spell_debug.contains("BeginningOfUpkeepTrigger")
+            && spell_debug.contains("start_next_turn: true"),
+        "expected multiline next-upkeep delayed trigger in spell effects, got {spell_debug}"
+    );
+    assert!(
+        !ability_debug.contains("BeginningOfUpkeepTrigger"),
+        "multiline delayed next-upkeep clause should not become a printed triggered ability: {ability_debug}"
+    );
+}
+
+#[test]
+fn parse_multiline_spell_when_you_do_followup_stays_in_spell_effects() {
+    let def = CardDefinitionBuilder::new(CardId::from_raw(1), "Followup Variant")
+        .card_types(vec![CardType::Instant])
+        .parse_text("Sacrifice a creature.\nWhen you do, draw two cards.")
+        .expect("multiline when-you-do spell should parse");
+
+    let spell_debug = format!("{:?}", def.spell_effect.as_ref().expect("spell effects"));
+    let ability_debug = format!("{:?}", def.abilities);
+    assert!(
+        spell_debug.contains("IfEffect") || spell_debug.contains("WithIdEffect"),
+        "expected multiline follow-up clause to stay in spell effects, got {spell_debug}"
+    );
+    assert!(
+        !ability_debug.contains("Triggered"),
+        "multiline when-you-do follow-up should not become a printed triggered ability: {ability_debug}"
+    );
+}
+
+#[test]
 fn parse_fastbond_additional_land_permission_is_explicitly_unsupported() {
     let err = CardDefinitionBuilder::new(CardId::from_raw(1), "Fastbond Variant")
         .card_types(vec![CardType::Enchantment])

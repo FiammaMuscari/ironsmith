@@ -1092,9 +1092,7 @@ pub(crate) fn parse_channel_line(tokens: &[Token]) -> Result<Option<ParsedAbilit
         return Ok(None);
     };
     parsed.ability.text = Some("Channel".to_string());
-    if !parsed.ability.functional_zones.contains(&Zone::Hand) {
-        parsed.ability.functional_zones.push(Zone::Hand);
-    }
+    parsed.ability.functional_zones = vec![Zone::Hand];
     Ok(Some(parsed))
 }
 

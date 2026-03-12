@@ -284,6 +284,100 @@ fn finalize_squad_abilities(mut definition: CardDefinition) -> CardDefinition {
     definition
 }
 
+fn normalize_delayed_trigger_text(text: &str) -> String {
+    text.to_ascii_lowercase()
+        .replace('’', "'")
+        .replace("'s", "s")
+}
+
+fn spell_battlefield_trigger_text_implies_delayed_schedule(
+    ability_text: &str,
+    trigger: &Trigger,
+) -> Option<bool> {
+    let normalized = normalize_delayed_trigger_text(ability_text);
+    let trigger_text = normalize_delayed_trigger_text(trigger.display().as_str());
+
+    let trigger_is_upkeep_or_end_step =
+        trigger_text.contains("beginning of") && (trigger_text.contains("upkeep") || trigger_text.contains("end step"));
+    if !trigger_is_upkeep_or_end_step {
+        return None;
+    }
+
+    if normalized.contains("next upkeep") || normalized.contains("next turns upkeep") {
+        return Some(true);
+    }
+    if normalized.contains("that turns end step")
+        || normalized.contains("that players next upkeep")
+        || normalized.contains("that players next end step")
+        || normalized.contains("end step of that players next turn")
+    {
+        return Some(true);
+    }
+    if normalized.contains("next end step") || normalized.contains("next turns end step") {
+        return Some(false);
+    }
+
+    None
+}
+
+fn convert_nonpermanent_delayed_triggered_ability_to_spell_effect(
+    ability: &Ability,
+) -> Option<Effect> {
+    if ability.functional_zones.as_slice() != [Zone::Battlefield] {
+        return None;
+    }
+
+    let AbilityKind::Triggered(triggered) = &ability.kind else {
+        return None;
+    };
+    if !triggered.choices.is_empty() || triggered.intervening_if.is_some() {
+        return None;
+    }
+
+    let ability_text = ability.text.as_deref()?;
+    let start_next_turn =
+        spell_battlefield_trigger_text_implies_delayed_schedule(ability_text, &triggered.trigger)?;
+
+    let mut delayed = crate::effects::ScheduleDelayedTriggerEffect::new(
+        triggered.trigger.clone(),
+        triggered.effects.clone(),
+        true,
+        Vec::new(),
+        PlayerFilter::You,
+    );
+    if start_next_turn {
+        delayed = delayed.starting_next_turn();
+    }
+
+    Some(Effect::new(delayed))
+}
+
+fn finalize_nonpermanent_delayed_triggered_abilities(mut definition: CardDefinition) -> CardDefinition {
+    if !definition.card.is_instant() && !definition.card.is_sorcery() {
+        return definition;
+    }
+
+    let mut rewritten_effects = Vec::new();
+    let mut remaining_abilities = Vec::with_capacity(definition.abilities.len());
+    for ability in std::mem::take(&mut definition.abilities) {
+        if let Some(effect) = convert_nonpermanent_delayed_triggered_ability_to_spell_effect(&ability)
+        {
+            rewritten_effects.push(effect);
+        } else {
+            remaining_abilities.push(ability);
+        }
+    }
+
+    definition.abilities = remaining_abilities;
+    if !rewritten_effects.is_empty() {
+        definition
+            .spell_effect
+            .get_or_insert_with(Vec::new)
+            .extend(rewritten_effects);
+    }
+    definition
+}
+
 fn finalize_definition(
     definition: CardDefinition,
     original_builder: &CardDefinitionBuilder,
@@ -292,7 +386,8 @@ fn finalize_definition(
     let definition = finalize_overload_definitions(definition, original_builder, original_text)?;
     let definition = finalize_backup_abilities(definition);
     let definition = finalize_cipher_effects(definition);
-    Ok(finalize_squad_abilities(definition))
+    let definition = finalize_squad_abilities(definition);
+    Ok(finalize_nonpermanent_delayed_triggered_abilities(definition))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -4984,6 +5079,73 @@ impl CardDefinitionBuilder {
             additional_cost: self.additional_cost,
         });
         finalize_cipher_effects(definition)
+    }
+}
+
+#[cfg(test)]
+mod delayed_trigger_finalization_tests {
+    use super::*;
+
+    #[test]
+    fn finalize_definition_rehomes_nonpermanent_delayed_battlefield_trigger() {
+        let original_builder = CardDefinitionBuilder::new(CardId::new(), "Delayed Safety Net Probe")
+            .card_types(vec![CardType::Instant]);
+        let mut definition = original_builder.clone().build();
+        definition.spell_effect = Some(vec![Effect::draw(1)]);
+        definition.abilities.push(
+            Ability::triggered(
+                Trigger::beginning_of_upkeep(PlayerFilter::You),
+                vec![Effect::unless_pays(
+                    vec![Effect::lose_the_game()],
+                    PlayerFilter::You,
+                    vec![ManaSymbol::Generic(2), ManaSymbol::Green, ManaSymbol::Green],
+                )],
+            )
+            .with_text(
+                "At the beginning of your next upkeep, pay {2}{G}{G}. If you don't, you lose the game.",
+            ),
+        );
+
+        let finalized =
+            finalize_definition(definition, &original_builder, "").expect("definition should finalize");
+
+        assert!(
+            finalized.abilities.is_empty(),
+            "battlefield-only delayed trigger should be removed from instant abilities"
+        );
+        let spell_debug = format!("{:?}", finalized.spell_effect);
+        assert!(
+            spell_debug.contains("ScheduleDelayedTriggerEffect")
+                && spell_debug.contains("start_next_turn: true"),
+            "delayed trigger should be rewritten into spell effects, got {spell_debug}"
+        );
+    }
+
+    #[test]
+    fn finalize_definition_keeps_stack_triggered_spell_abilities() {
+        let original_builder = CardDefinitionBuilder::new(CardId::new(), "Stack Trigger Probe")
+            .card_types(vec![CardType::Instant]);
+        let mut definition = original_builder.clone().build();
+        definition.spell_effect = Some(vec![Effect::draw(1)]);
+        definition.abilities.push(
+            Ability::triggered(Trigger::you_cast_this_spell(), vec![Effect::draw(1)])
+                .in_zones(vec![Zone::Stack])
+                .with_text("When you cast this spell, draw a card."),
+        );
+
+        let finalized =
+            finalize_definition(definition, &original_builder, "").expect("definition should finalize");
+
+        assert_eq!(
+            finalized.abilities.len(),
+            1,
+            "non-battlefield triggered abilities should remain untouched"
+        );
+        let spell_debug = format!("{:?}", finalized.spell_effect);
+        assert!(
+            !spell_debug.contains("ScheduleDelayedTriggerEffect"),
+            "stack trigger should not be rewritten into a delayed spell effect"
+        );
     }
 }
 
@@ -11672,7 +11834,7 @@ If a card would be put into your graveyard from anywhere this turn, exile that c
         assert!(
             debug.contains("ActivatedAbilityCostReduction")
                 && debug.contains("per_matching_objects: Some")
-                && debug.contains("functional_zones: [Battlefield, Hand"),
+                && debug.contains("functional_zones: [Hand]"),
             "expected self cost reduction with per-match filter and nonbattlefield zones, got {debug}"
         );
     }

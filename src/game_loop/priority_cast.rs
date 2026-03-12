@@ -2568,6 +2568,10 @@ pub(super) fn continue_activation(
             auto_pay_activation_tap_cost_steps(game, trigger_queue, &mut pending, decision_maker)?;
             let option_count = usize::from(pending.mana_cost_to_pay.is_some())
                 + pending.remaining_cost_steps.len();
+            if option_count == 0 {
+                pending.stage = ActivationStage::ReadyToFinalize;
+                return continue_activation(game, trigger_queue, state, pending, decision_maker);
+            }
             if option_count == 1 {
                 if pending.mana_cost_to_pay.is_some() {
                     pending.stage = ActivationStage::PayingMana;

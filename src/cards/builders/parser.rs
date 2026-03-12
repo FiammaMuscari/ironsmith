@@ -499,9 +499,8 @@ fn collect_line_infos(
     let short_name = short_name_for_self_reference(front_face_name.as_str());
     let full_lower = normalize_card_name_for_self_reference(front_face_name.as_str());
     let short_lower = normalize_card_name_for_self_reference(short_name.as_str());
-
     let mut annotations = ParseAnnotations::default();
-    let mut line_infos = Vec::new();
+    let mut line_infos: Vec<LineInfo> = Vec::new();
 
     for (line_index, raw_line) in text.lines().enumerate() {
         let line = raw_line.trim();
@@ -516,6 +515,37 @@ fn collect_line_infos(
 
         let split_lines = split_parse_line_variants(line);
         for (split_index, split_line) in split_lines.iter().enumerate() {
+            let virtual_line_index = line_index.saturating_mul(8).saturating_add(split_index);
+            if spell_card_prefers_resolution_line_merge(&builder)
+                && looks_like_spell_resolution_followup_intro(&tokenize_line(
+                    split_line,
+                    virtual_line_index,
+                ))
+                && let Some(previous) = line_infos.pop()
+            {
+                let combined_raw_line = format!("{} {}", previous.raw_line.trim(), split_line.trim());
+                let Some(normalized) = normalize_line_for_parse(
+                    combined_raw_line.as_str(),
+                    full_lower.as_str(),
+                    short_lower.as_str(),
+                ) else {
+                    line_infos.push(previous);
+                    return Err(CardTextError::ParseError(format!(
+                        "unsupported or unparseable line normalization: '{combined_raw_line}'"
+                    )));
+                };
+
+                annotations.record_original_line(previous.line_index, &normalized.original);
+                annotations.record_normalized_line(previous.line_index, &normalized.normalized);
+                annotations.record_char_map(previous.line_index, normalized.char_map.clone());
+                line_infos.push(LineInfo {
+                    line_index: previous.line_index,
+                    raw_line: combined_raw_line,
+                    normalized,
+                });
+                continue;
+            }
+
             let Some(normalized) =
                 normalize_line_for_parse(split_line, full_lower.as_str(), short_lower.as_str())
             else {
@@ -527,7 +557,6 @@ fn collect_line_infos(
                 )));
             };
 
-            let virtual_line_index = line_index.saturating_mul(8).saturating_add(split_index);
             annotations.record_original_line(virtual_line_index, &normalized.original);
             annotations.record_normalized_line(virtual_line_index, &normalized.normalized);
             annotations.record_char_map(virtual_line_index, normalized.char_map.clone());
@@ -1079,6 +1108,27 @@ fn sentence_starts_with_trigger_intro(sentence: &str, line_index: usize) -> bool
         || is_at_trigger_intro(&tokens, 0)
 }
 
+fn spell_card_prefers_resolution_line_merge(builder: &CardDefinitionBuilder) -> bool {
+    builder
+        .card_builder
+        .card_types_ref()
+        .iter()
+        .any(|card_type| {
+            matches!(
+                card_type,
+                crate::types::CardType::Instant | crate::types::CardType::Sorcery
+            )
+        })
+}
+
+fn looks_like_spell_resolution_followup_intro(tokens: &[Token]) -> bool {
+    looks_like_delayed_next_turn_intro(tokens)
+        || looks_like_when_one_or_more_this_way_followup(tokens)
+        || looks_like_when_you_do_followup(tokens)
+        || looks_like_if_result_followup(tokens)
+        || looks_like_otherwise_followup(tokens)
+}
+
 fn looks_like_delayed_next_turn_intro(tokens: &[Token]) -> bool {
     let mut idx = 0usize;
     if !tokens.get(idx).is_some_and(|token| token.is_word("at")) {
@@ -1140,6 +1190,29 @@ fn looks_like_when_you_do_followup(tokens: &[Token]) -> bool {
     let clause_words = words(tokens);
     clause_words.starts_with(&["when", "you", "do"])
         || clause_words.starts_with(&["whenever", "you", "do"])
+}
+
+fn looks_like_if_result_followup(tokens: &[Token]) -> bool {
+    let Some(first) = tokens.first() else {
+        return false;
+    };
+    if !first.is_word("if") {
+        return false;
+    }
+
+    let comma_idx = tokens
+        .iter()
+        .position(|token| matches!(token, Token::Comma(_)))
+        .unwrap_or(tokens.len());
+    if comma_idx <= 1 {
+        return false;
+    }
+
+    parse_if_result_predicate(&tokens[1..comma_idx]).is_some()
+}
+
+fn looks_like_otherwise_followup(tokens: &[Token]) -> bool {
+    tokens.first().is_some_and(|token| token.is_word("otherwise"))
 }
 
 fn split_trigger_sentence_chunks(sentences: &[String], line_index: usize) -> Vec<String> {
